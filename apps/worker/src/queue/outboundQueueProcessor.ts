@@ -41,7 +41,8 @@ async function computeNextRetryDelayMs(attemptCount: number): Promise<number> {
   return intervals[Math.min(attemptCount - 1, intervals.length - 1)] ?? 900_000;
 }
 
-async function processOne(provider: WhatsAppProvider): Promise<boolean> {
+/** Exported for direct testing — drains exactly one due message, or returns false if none are ready. */
+export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
   const message = await claimNextOutboundMessage();
   if (!message) return false;
 
