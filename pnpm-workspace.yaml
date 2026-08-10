@@ -1,0 +1,14 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Postinstall scripts pnpm blocks by default (security gate). These are all
+# well-known, necessary build steps (Prisma engine fetch, esbuild/unrs-resolver
+# native binary install) — not third-party/untrusted packages. Approved via
+# `pnpm approve-builds --all`.
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  esbuild: true
+  prisma: true
+  unrs-resolver: true

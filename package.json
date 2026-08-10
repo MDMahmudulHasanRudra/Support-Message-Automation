@@ -1,0 +1,21 @@
+{
+  "name": "support-message-automation",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev:web": "pnpm --filter @support-automation/web dev",
+    "dev:worker": "pnpm --filter @support-automation/worker dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @support-automation/db generate",
+    "db:migrate": "pnpm --filter @support-automation/db migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @support-automation/db migrate:deploy",
+    "db:seed": "pnpm --filter @support-automation/db seed"
+  }
+}

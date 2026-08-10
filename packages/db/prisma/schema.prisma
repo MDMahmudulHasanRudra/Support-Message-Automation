@@ -1,0 +1,368 @@
+// Full Phase 2 schema. See ARCHITECTURE.md section 4 for the design
+// rationale (unified AutomationRule, DB-mediated WorkerCommand channel,
+// atomic outbound queue claiming, etc).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums — kept in sync by convention with packages/shared/src/enums.ts
+// ---------------------------------------------------------------------------
+
+enum MessageDirection {
+  INCOMING
+  OUTGOING
+  SYSTEM
+}
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
+enum RuleStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+  ARCHIVED
+}
+
+enum RuleType {
+  TEAM_FILTER
+  DEFAULT_IGNORE
+  LAST_SENDER
+  EXCEPTION
+  SUPPORT_ESCALATION
+  AUTO_REPLY
+  GENERIC
+}
+
+enum MatchType {
+  EXACT
+  CONTAINS
+  KEYWORDS
+  REGEX
+  ALWAYS
+}
+
+enum ActionType {
+  IGNORE
+  TAG
+  AUTO_REPLY
+  SUPPORT_REQUIRED
+  NOTIFY_TEAMS
+  NOTIFY_WHATSAPP
+  FORWARD
+  STOP_PROCESSING
+}
+
+enum OutboundMessageStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+  RATE_LIMITED
+}
+
+enum NotificationType {
+  TEAMS
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  RETRYING
+}
+
+enum WorkerCommandType {
+  GET_QR
+  RECONNECT
+  SEND_LIVE_TEST
+  RESYNC_GROUPS
+}
+
+enum WorkerCommandStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum AutomationMode {
+  MANUAL_ONLY
+  SAFE_AUTO_REPLY
+  FULL_RULE_AUTOMATION
+}
+
+enum TeamMemberStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum WhatsAppAccountStatus {
+  CONNECTED
+  DISCONNECTED
+  RECONNECTING
+  AUTHENTICATION_REQUIRED
+  SESSION_ERROR
+  OUTBOUND_PAUSED
+  RATE_LIMITED
+  ERROR
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  createdRules AutomationRule[]
+}
+
+model WhatsAppAccount {
+  id              String                @id @default(cuid())
+  label           String
+  phoneNumber     String?
+  status          WhatsAppAccountStatus @default(DISCONNECTED)
+  qrCode          String? // data URL, written by the worker, polled by the dashboard
+  qrUpdatedAt     DateTime?
+  lastConnectedAt DateTime?
+  lastHeartbeatAt DateTime?
+  sessionDataPath String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  groups               WhatsAppGroup[]
+  messages             Message[]
+  outboundMessages     OutboundMessage[]
+  processingCheckpoint ProcessingCheckpoint?
+}
+
+model WhatsAppGroup {
+  id              String          @id @default(cuid())
+  accountId       String
+  account         WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  whatsappGroupId String // WhatsApp chat id, e.g. "1234567890-1234567890@g.us"
+  name            String
+  isMonitored     Boolean         @default(false)
+  lastSyncedAt    DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  messages Message[]
+
+  @@unique([accountId, whatsappGroupId])
+}
+
+model InternalTeamMember {
+  id          String           @id @default(cuid())
+  name        String
+  phoneNumber String           @unique
+  role        String
+  department  String?
+  status      TeamMemberStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model Message {
+  id                String           @id @default(cuid())
+  accountId         String
+  account           WhatsAppAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId           String?
+  group             WhatsAppGroup?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  whatsappMessageId String
+  chatId            String
+  senderPhone       String
+  senderName        String?
+  isFromTeamMember  Boolean          @default(false)
+  direction         MessageDirection
+  body              String
+  normalizedBody    String
+  timestampWa       DateTime
+  receivedAt        DateTime         @default(now())
+  isDuplicate       Boolean          @default(false)
+  processingStatus  ProcessingStatus @default(PENDING)
+  createdAt         DateTime         @default(now())
+
+  executions      AutomationExecution[]
+  outboundReplies OutboundMessage[]
+  notifications   Notification[]
+
+  @@unique([accountId, whatsappMessageId])
+  @@index([chatId, timestampWa])
+  @@index([groupId, timestampWa])
+  @@index([processingStatus])
+  @@index([senderPhone])
+}
+
+model AutomationRule {
+  id              String     @id @default(cuid())
+  name            String
+  description     String?
+  type            RuleType
+  matchType       MatchType
+  matchValue      String? // exact/contains/regex pattern; unused for KEYWORDS/ALWAYS
+  keywords        String[]   @default([]) // used when matchType = KEYWORDS
+  conditions      Json       @default("{}") // RuleConditions (packages/shared)
+  actions         Json       @default("[]") // RuleAction[] (packages/shared)
+  priority        Int        @default(0)
+  status          RuleStatus @default(DRAFT)
+  cooldownSeconds Int?
+  replyMessage    String?
+  replyDelayMinMs Int?
+  replyDelayMaxMs Int?
+  executionCount  Int        @default(0)
+  lastExecutedAt  DateTime?
+  createdById     String?
+  createdBy       User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  executions       AutomationExecution[]
+  outboundMessages OutboundMessage[]
+  notifications    Notification[]
+
+  @@index([status, priority])
+}
+
+model AutomationExecution {
+  id              String          @id @default(cuid())
+  messageId       String
+  message         Message         @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  ruleId          String?
+  rule            AutomationRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  matchedAt       DateTime        @default(now())
+  actionsExecuted Json // ActionType[] actually executed (post-idempotency-check)
+  decision        String // final pipeline decision, e.g. "IGNORE" | "AUTO_REPLY" | "SUPPORT_REQUIRED" | "NO_MATCH"
+  reasonTrace     Json // explainable trace: rules evaluated, matched, skipped, why
+  idempotencyKey  String          @unique
+  createdAt       DateTime        @default(now())
+
+  @@index([messageId])
+  @@index([ruleId])
+}
+
+model OutboundMessage {
+  id               String                @id @default(cuid())
+  accountId        String
+  account          WhatsAppAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId           String
+  toPhone          String
+  body             String
+  relatedMessageId String?
+  relatedMessage   Message?              @relation(fields: [relatedMessageId], references: [id], onDelete: SetNull)
+  ruleId           String?
+  rule             AutomationRule?       @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  actionType       ActionType
+  idempotencyKey   String                @unique
+  status           OutboundMessageStatus @default(PENDING)
+  scheduledAt      DateTime              @default(now())
+  attemptCount     Int                   @default(0)
+  lastAttemptAt    DateTime?
+  sentAt           DateTime?
+  failureReason    String?
+  delayMs          Int?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([toPhone, sentAt])
+  @@index([sentAt])
+}
+
+model Notification {
+  id               String             @id @default(cuid())
+  type             NotificationType
+  destination      String
+  relatedMessageId String?
+  relatedMessage   Message?           @relation(fields: [relatedMessageId], references: [id], onDelete: SetNull)
+  relatedRuleId    String?
+  relatedRule      AutomationRule?    @relation(fields: [relatedRuleId], references: [id], onDelete: SetNull)
+  payload          Json
+  status           NotificationStatus @default(PENDING)
+  attemptCount     Int                @default(0)
+  lastAttemptAt    DateTime?
+  sentAt           DateTime?
+  failureReason    String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([status])
+}
+
+model WorkerCommand {
+  id          String              @id @default(cuid())
+  type        WorkerCommandType
+  payload     Json?
+  status      WorkerCommandStatus @default(PENDING)
+  result      Json?
+  createdAt   DateTime            @default(now())
+  processedAt DateTime?
+
+  @@index([status, createdAt])
+}
+
+model ProcessingCheckpoint {
+  id                       String          @id @default(cuid())
+  accountId                String          @unique
+  account                  WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  lastProcessedTimestampWa DateTime?
+  lastProcessedMessageId   String?
+  updatedAt                DateTime        @updatedAt
+}
+
+/// Singleton row (id is always the literal string "global").
+model AutomationSettings {
+  id                          String         @id @default("global")
+  mode                        AutomationMode @default(SAFE_AUTO_REPLY)
+  automationEnabled           Boolean        @default(true)
+  maxRepliesPerClientPerHour  Int            @default(3)
+  maxRepliesPerClientPerDay   Int            @default(10)
+  globalMaxPerMinute          Int            @default(5)
+  globalMaxPerHour            Int            @default(100)
+  globalMaxPerDay             Int            @default(500)
+  rateLimitingEnabled         Boolean        @default(true)
+  defaultReplyDelayMinMs      Int            @default(3000)
+  defaultReplyDelayMaxMs      Int            @default(15000)
+  retryMaxAttempts            Int            @default(3)
+  retryIntervalsMs            Json           @default("[30000,300000,900000]")
+  teamsWebhookUrl             String?
+  whatsappNotificationGroupId String?
+  updatedAt                   DateTime       @updatedAt
+}
+
+model SystemLog {
+  id        String   @id @default(cuid())
+  level     LogLevel
+  scope     String
+  message   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([level])
+}

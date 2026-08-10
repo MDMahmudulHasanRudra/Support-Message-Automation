@@ -1,0 +1,84 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - automation_net
+
+  app:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NODE_ENV: ${NODE_ENV:-production}
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - automation_net
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NODE_ENV: ${NODE_ENV:-production}
+      PUPPETEER_EXECUTABLE_PATH: ${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium}
+      WHATSAPP_SESSION_DIR: ${WHATSAPP_SESSION_DIR:-/app/sessions}
+      WHATSAPP_SESSION_NAME: ${WHATSAPP_SESSION_NAME:-support-automation}
+      TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL}
+      WHATSAPP_NOTIFICATION_GROUP_ID: ${WHATSAPP_NOTIFICATION_GROUP_ID}
+    # No `ports:` here on purpose: the worker's health endpoint binds to
+    # 127.0.0.1 inside the container only, for its own HEALTHCHECK to use.
+    # The dashboard never talks to the worker over HTTP (see ARCHITECTURE.md).
+    volumes:
+      - whatsapp_session:/app/sessions
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:4100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - automation_net
+
+volumes:
+  pg_data:
+    name: support_automation_pg_data
+  whatsapp_session:
+    name: support_automation_whatsapp_session
+
+networks:
+  automation_net:
+    driver: bridge
