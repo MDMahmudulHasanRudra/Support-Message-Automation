@@ -1,5 +1,7 @@
-// Rule matchers, priority resolution, and the mandatory regex-safety
-// validator (save-time rejection + bounded/timeout-protected evaluation)
-// land in Phase 3. Left empty in Phase 1 so the workspace package resolves
-// and apps/web + apps/worker can already declare the dependency.
-export {};
+export * from "./types.js";
+export * from "./normalize.js";
+export * from "./regexSafety.js";
+export * from "./matchers.js";
+export * from "./conditions.js";
+export * from "./actions.js";
+export * from "./evaluate.js";
