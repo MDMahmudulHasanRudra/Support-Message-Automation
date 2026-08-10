@@ -1,0 +1,24 @@
+diff --git a/dist/controllers/initializer.js b/dist/controllers/initializer.js
+index 86c6d3adb24ad677ac0ea1dc6989df0316ebd0d8..fb628da4a4d90f48f839aeb5dedff5ed2010213a 100644
+--- a/dist/controllers/initializer.js
++++ b/dist/controllers/initializer.js	
+@@ -205,9 +205,17 @@ function create(config = {}) {
+                         yield (0, exports.screenshot)(waPage);
+                 }));
+             const WA_AUTOMATE_VERSION = `${exports.pkg.version}${(notifier === null || notifier === void 0 ? void 0 : notifier.update) && ((notifier === null || notifier === void 0 ? void 0 : notifier.update.latest) !== exports.pkg.version) ? ` UPDATE AVAILABLE: ${notifier === null || notifier === void 0 ? void 0 : notifier.update.latest}` : ''}`;
+-            yield waPage.waitForFunction('window.Debug!=undefined && window.Debug.VERSION!=undefined && require');
++            // PATCHED (Phase 5.1): current WhatsApp Web (Multi-Device) no longer
++            // exposes `window.Debug`, so the original `window.Debug!=undefined &&
++            // window.Debug.VERSION!=undefined` condition can never become true and
++            // this wait failed deterministically after the full 30s timeout on
++            // every single connection attempt (see open-wa/wa-automate-nodejs#3346).
++            // `require` becoming available is the part that actually indicates the
++            // page's module system has bootstrapped, so that's the only condition
++            // kept; an explicit timeout replaces Puppeteer's implicit 30s default.
++            yield waPage.waitForFunction('typeof require !== "undefined"', { timeout: 45000 });
+             //@ts-ignore
+-            const WA_VERSION = yield waPage.evaluate(() => window.Debug ? window.Debug.VERSION : 'I think you have been TOS_BLOCKed');
++            const WA_VERSION = yield waPage.evaluate(() => window.Debug ? window.Debug.VERSION : 'unknown (window.Debug removed by WhatsApp)');
+             const canInjectEarly = yield (0, patch_manager_1.earlyInjectionCheck)(waPage);
+             const attemptingReauth = yield waPage.evaluate(`!!(localStorage['WAToken2'] || localStorage['last-wid-md'])`);
+             let debugInfo = {

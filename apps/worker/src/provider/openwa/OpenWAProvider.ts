@@ -1,3 +1,5 @@
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import {
   create,
   ev,
@@ -7,7 +9,6 @@ import {
   type Content,
   type Message as WaMessage,
 } from "@open-wa/wa-automate";
-import { prisma } from "@support-automation/db";
 import type { RawIncomingMessage } from "../../pipeline/types.js";
 import type {
   AccountInfo,
@@ -16,14 +17,16 @@ import type {
   SendResult,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
+import { recordAccountMetadata, recordConnectionState, type OpenWAConnectionState } from "./connectionState.js";
 
-function mapState(state: STATE): ConnectionStatus {
+/** Post-connection state transitions (STATE enum) mapped onto our fine-grained lifecycle. */
+function mapLibraryState(state: STATE): OpenWAConnectionState {
   switch (state) {
     case STATE.CONNECTED:
       return "CONNECTED";
     case STATE.UNPAIRED:
     case STATE.UNPAIRED_IDLE:
-      return "AUTHENTICATION_REQUIRED";
+      return "AUTH_FAILED"; // session was logged out on the phone side — needs a fresh QR
     case STATE.OPENING:
     case STATE.PAIRING:
     case STATE.SYNCING:
@@ -32,9 +35,26 @@ function mapState(state: STATE): ConnectionStatus {
     case STATE.SMB_TOS_BLOCK:
     case STATE.PROXYBLOCK:
     case STATE.DEPRECATED_VERSION:
-      return "SESSION_ERROR";
+      return "ERROR";
     default:
       return "DISCONNECTED";
+  }
+}
+
+function toInterfaceStatus(state: OpenWAConnectionState): ConnectionStatus {
+  switch (state) {
+    case "CONNECTED":
+      return "CONNECTED";
+    case "QR_AVAILABLE":
+      return "AUTHENTICATION_REQUIRED";
+    case "AUTH_FAILED":
+      return "SESSION_ERROR";
+    case "ERROR":
+      return "ERROR";
+    case "DISCONNECTED":
+      return "DISCONNECTED";
+    default:
+      return "RECONNECTING";
   }
 }
 
@@ -57,23 +77,42 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
  * provider-abstraction requirement). One instance owns exactly one WhatsApp
  * session for the lifetime of the worker process.
  *
- * IMPORTANT — session path verification (Phase 0 adjustment #2): open-wa's
- * `sessionDataPath` config only covers its `<sessionId>.data.json` file.
- * Separately, the `node-persist` cache it also relies on writes RELATIVE to
- * the process's current working directory by default, which would silently
- * fall outside the mounted volume and break persistence across container
- * recreation. This class `process.chdir()`s into the session directory
- * before connecting so every relative write lands on the same mounted
- * volume. This was verified by reading the installed package's config
- * typings (see apps/worker's Phase 5 implementation notes) — it has NOT
- * been verified against a live WhatsApp account/QR scan, which this
- * sandboxed environment cannot do. The mandatory acceptance test (connect
- * → restart worker → `docker compose down`/`up` → confirm no QR re-scan)
- * must still be run manually against a real account before production use.
+ * PHASE 5.1 — session path verification (Phase 0 adjustment #2, confirmed):
+ * running this against the real stack in Docker confirmed OpenWA's session
+ * data lands at `${sessionDataPath}/_IGNORE_${sessionId}` — the FULL
+ * Chromium profile (cookies, local storage, IndexedDB — everything WhatsApp
+ * Web needs to stay logged in), not just a small data.json. This directory
+ * was inspected directly inside the mounted `whatsapp_session` volume and
+ * confirmed present. `process.chdir()` into sessionDataPath before
+ * connecting still matters for anything OpenWA/node-persist writes
+ * relative to cwd (see below), but the primary session data's location is
+ * now verified, not assumed.
+ *
+ * PHASE 5.1 — root cause of the QR/connection timeout: NOT a QR-scraping,
+ * headless-detection, sandbox, or shared-memory issue. OpenWA 4.76.0's
+ * internal `create()` (dist/controllers/initializer.js) waits for
+ * `window.Debug != undefined && window.Debug.VERSION != undefined`, which
+ * current WhatsApp Web (Multi-Device) no longer exposes — this condition
+ * can never become true, so the wait fails after a hardcoded 30s on every
+ * single attempt. This is a confirmed upstream bug (open-wa/wa-automate-
+ * nodejs#3346, closed, no fix released in the 4.x line as of 4.76.0 —
+ * latest stable). Patched locally via `pnpm patch` (see
+ * patches/@open-wa__wa-automate@4.76.0.patch) to drop the dependency on
+ * `window.Debug` and use an explicit 45s timeout instead of Puppeteer's
+ * implicit 30s default. Also fixed two smaller, real contributing factors
+ * found while investigating: this file was passing `headless: true`, which
+ * *overrides* the library's own `headless: "new"` default (object spread
+ * order in browser.js puts our config after the default) — legacy headless
+ * mode is more detectable and less representative of a real browser than
+ * Chrome's current headless mode, so it's removed here. `useStealth` is
+ * now enabled by default (WHATSAPP_USE_STEALTH=false to disable) since
+ * OpenWA's own docs note it helps with exactly this class of loading/
+ * detection issue, with the tradeoff (per the same docs) that it can
+ * occasionally cause an unrelated `browser.setMaxListeners` issue.
  */
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
-  private connectionStatus: ConnectionStatus = "DISCONNECTED";
+  private state: OpenWAConnectionState = "DISCONNECTED";
 
   constructor(
     private readonly accountId: string,
@@ -83,44 +122,107 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   async connect(): Promise<void> {
     process.chdir(this.sessionDataPath);
+    await this.clearStaleChromiumLock();
+    await this.setState("STARTING");
 
     ev.on("qr.**", (qrCode: string, sessionId: string) => {
       if (sessionId !== this.sessionId) return;
-      prisma.whatsAppAccount
-        .update({
-          where: { id: this.accountId },
-          data: { qrCode, qrUpdatedAt: new Date(), status: "AUTHENTICATION_REQUIRED" },
-        })
-        .catch((err) => console.error("[openwa] failed to persist QR code", err));
+      this.setState("QR_AVAILABLE", { qrLength: qrCode.length }, qrCode).catch(() => undefined);
     });
 
-    this.client = await create({
-      sessionId: this.sessionId,
-      sessionDataPath: this.sessionDataPath,
-      multiDevice: true,
-      headless: true,
-      useChrome: false,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-      qrTimeout: 0, // wait indefinitely — the dashboard displays the QR, no arbitrary deadline
-      authTimeout: 0,
-      popup: false,
-      cacheEnabled: false,
-    });
+    const useStealth = process.env.WHATSAPP_USE_STEALTH !== "false";
 
-    this.connectionStatus = "CONNECTED";
-    await this.persistStatus("CONNECTED");
+    await this.setState("WAITING_FOR_QR");
 
-    await this.client.onStateChanged((state) => {
-      const mapped = mapState(state);
-      this.connectionStatus = mapped;
-      this.persistStatus(mapped).catch((err) =>
-        console.error("[openwa] failed to persist state change", err),
+    try {
+      this.client = await create({
+        sessionId: this.sessionId,
+        sessionDataPath: this.sessionDataPath,
+        multiDevice: true,
+        // PHASE 5.1.1 — confirmed via reading initializer.js: `customUserAgent`
+        // below is silently ignored without this flag. OpenWA only copies
+        // `config.customUserAgent` into the variable it actually passes to
+        // `page.setUserAgent()` inside an `if (config.inDocker)` block — every
+        // previous run (verified via a live PAGE_UA readout showing the
+        // hardcoded Chrome/104 default even after this override was added)
+        // silently fell through to that default because this flag was never
+        // set, regardless of what customUserAgent was configured to.
+        inDocker: true,
+        // PHASE 5.1 — root cause found via a live CDP screenshot of the
+        // actual stuck page (see final report): it was never a QR/canvas
+        // problem at all. WhatsApp Web was serving "WhatsApp works with
+        // Google Chrome 100+ — please update your browser", because
+        // OpenWA's hardcoded default customUserAgent claims
+        // `Chrome/104.0.0.0` (config/puppeteer.config.js), which current
+        // WhatsApp Web now rejects — even though the real installed
+        // Chromium is v151. With no QR ever rendered, every downstream
+        // wait (needsToScan's canvas selector, isInsideChat, the whole
+        // authRace) was doomed regardless of timeouts or selectors.
+        // Overriding it to match the ACTUAL installed Chromium's major
+        // version keeps the legacy UA string consistent with the User-
+        // Agent Client Hints Chromium derives from the real engine
+        // (spoofing only the legacy string while leaving Client Hints at
+        // the true version is itself a mismatch WhatsApp could flag).
+        customUserAgent:
+          process.env.WHATSAPP_CUSTOM_USER_AGENT ??
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        // Deliberately NOT setting `headless` here (see class doc comment):
+        // omitting it lets the library's own internal `headless: "new"`
+        // default survive. OpenWA's ConfigObject type only declares
+        // `headless?: boolean`, but the runtime accepts puppeteer's
+        // `"new"` — since the type doesn't allow that string, and setting
+        // `headless: true` was the actual bug (it overrides "new" via
+        // object-spread order in browser.js), omission is the correct fix.
+        useStealth,
+        useChrome: false,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+        qrTimeout: 0, // wait indefinitely for a human to scan — this one is intentional
+        // PHASE 5.1: authTimeout: 0 was a real bug, not a safe "wait forever"
+        // choice. It doesn't just skip a deadline for the human — it disables
+        // the ONLY timeout wrapped around OpenWA's internal
+        // Promise.race([needsToScan, isInsideChat, sessionDataInvalid]) used
+        // to detect page state (auth.js). Each of those three race members
+        // has its own hardcoded `timeout: 0` (infinite) in the library, so
+        // with authTimeout also at 0, a page whose QR canvas doesn't match
+        // the library's expected selector hangs forever with zero
+        // diagnostic signal. Any non-zero value here selects a 120s bound
+        // (multiDevice is true) instead of the true value passed — an
+        // upstream quirk, not something this value can fine-tune further.
+        authTimeout: 120,
+        popup: false,
+        cacheEnabled: false,
+      });
+    } catch (err) {
+      // Do not silently swallow: full error, with stack, goes to both the
+      // console (docker logs) and SystemLog (dashboard).
+      await this.setState("ERROR", { error: (err as Error).message, stack: (err as Error).stack });
+      throw err;
+    }
+
+    // create() only resolves after a successful scan+auth — OpenWA's public
+    // API has no earlier observable boundary between "QR scanned" and
+    // "fully connected" (see class doc comment), so these are logged
+    // back-to-back rather than claiming a false level of granularity.
+    await this.setState("AUTHENTICATING");
+    await this.setState("CONNECTED");
+
+    // PHASE 5.2: only reached once `create()` has actually resolved — i.e.
+    // genuinely authenticated, never before/during the QR wait. Failure here
+    // must never take down a WhatsApp session that is otherwise live and
+    // working, so it's fully isolated: getAccountInfo() already swallows its
+    // own errors (returns nulls), and this catch covers everything else.
+    try {
+      const info = await this.getAccountInfo();
+      await recordAccountMetadata(this.accountId, info);
+    } catch (err) {
+      console.warn("[openwa] failed to retrieve account metadata after connecting — continuing without it", err);
+    }
+
+    await this.client.onStateChanged((libraryState) => {
+      this.setState(mapLibraryState(libraryState), { libraryState }).catch((err) =>
+        console.error("[openwa] failed to record state change", err),
       );
     });
-
-    console.log(
-      `[openwa] connected. Session files are expected under: ${this.sessionDataPath} — verify this after a real QR scan.`,
-    );
   }
 
   async disconnect(): Promise<void> {
@@ -128,12 +230,11 @@ export class OpenWAProvider implements WhatsAppProvider {
       await this.client.kill();
       this.client = null;
     }
-    this.connectionStatus = "DISCONNECTED";
-    await this.persistStatus("DISCONNECTED");
+    await this.setState("DISCONNECTED");
   }
 
   getConnectionStatus(): ConnectionStatus {
-    return this.connectionStatus;
+    return toInterfaceStatus(this.state);
   }
 
   async getGroups(): Promise<GroupInfo[]> {
@@ -177,14 +278,35 @@ export class OpenWAProvider implements WhatsAppProvider {
     return { phoneNumber, pushName: me?.pushname ?? null };
   }
 
-  private async persistStatus(status: ConnectionStatus): Promise<void> {
-    await prisma.whatsAppAccount.update({
-      where: { id: this.accountId },
-      data: {
-        status,
-        lastHeartbeatAt: new Date(),
-        ...(status === "CONNECTED" ? { lastConnectedAt: new Date(), qrCode: null } : {}),
-      },
-    });
+  private async setState(
+    state: OpenWAConnectionState,
+    metadata?: Record<string, unknown>,
+    qrCode?: string,
+  ): Promise<void> {
+    this.state = state;
+    await recordConnectionState(this.accountId, state, metadata, qrCode);
+  }
+
+  /**
+   * PHASE 5.1: found via direct inspection of the whatsapp_session volume
+   * after a "Failed to launch the browser process!" failure — Chromium
+   * leaves a `SingletonLock` (plus SingletonCookie/SingletonSocket) in its
+   * user-data-dir, and refuses to launch a new instance against a profile
+   * that still has one, even though the process that created it is long
+   * dead. This happens whenever the container is stopped without Chromium
+   * getting a clean shutdown (SIGKILL after Docker's stop grace period,
+   * `docker compose down`, a host crash, etc.) — an ungraceful stop is the
+   * normal case to plan for, not an edge case. Our architecture guarantees
+   * at most one Chromium instance ever runs against this profile (one
+   * worker, one OpenWA instance) — see ARCHITECTURE.md's single-session-
+   * per-worker note — so on startup any pre-existing lock is provably
+   * stale and safe to remove before every connection attempt.
+   */
+  private async clearStaleChromiumLock(): Promise<void> {
+    const profileDir = join(this.sessionDataPath, `_IGNORE_${this.sessionId}`);
+    const lockFiles = ["SingletonLock", "SingletonCookie", "SingletonSocket"];
+    for (const file of lockFiles) {
+      await rm(join(profileDir, file), { force: true }).catch(() => undefined);
+    }
   }
 }

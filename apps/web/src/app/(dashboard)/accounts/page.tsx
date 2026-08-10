@@ -2,11 +2,21 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Badge, Button, Card, PageHeader } from "@/components/ui";
 import { requestGroupResync, requestReconnect } from "@/server/actions/accounts";
+import { AutoRefresh } from "@/components/AutoRefresh";
+
+// A scanned-but-unauthenticated QR is expected to refresh every ~20-30s
+// while OpenWA waits for a scan (WhatsApp Web regenerates it automatically,
+// and our qr.** handler updates qrUpdatedAt on every refresh). If it's
+// older than this, the refresh stream has likely stalled — show a
+// "regenerating" placeholder instead of a dead image rather than letting
+// an admin scan a QR that can no longer possibly work.
+const QR_STALE_AFTER_MS = 60_000;
 
 export default async function AccountsPage() {
   await requireSession();
   const accounts = await prisma.whatsAppAccount.findMany({ orderBy: { createdAt: "asc" } });
   const pendingCommands = await prisma.workerCommand.count({ where: { status: { in: ["PENDING", "PROCESSING"] } } });
+  const anyAccountMidConnection = accounts.some((a) => a.status !== "CONNECTED");
 
   return (
     <div>
@@ -52,11 +62,20 @@ export default async function AccountsPage() {
 
               {account.status === "AUTHENTICATION_REQUIRED" && account.qrCode ? (
                 <div className="mt-4">
-                  <p className="mb-2 text-sm font-medium">Scan this QR code with WhatsApp:</p>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={account.qrCode} alt="WhatsApp QR code" className="h-56 w-56 rounded-md border border-zinc-200 dark:border-zinc-800" />
+                  {isQrStale(account.qrUpdatedAt) ? (
+                    <div className="flex h-56 w-56 flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+                      Waiting for a fresh QR code…
+                      <span className="mt-1 text-xs">(previous code expired)</span>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="mb-2 text-sm font-medium">Scan this QR code with WhatsApp:</p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={account.qrCode} alt="WhatsApp QR code" className="h-56 w-56 rounded-md border border-zinc-200 dark:border-zinc-800" />
+                    </>
+                  )}
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    Updated {account.qrUpdatedAt?.toLocaleTimeString() ?? "—"}
+                    Updated {account.qrUpdatedAt?.toLocaleTimeString() ?? "—"} · this page refreshes automatically
                   </p>
                 </div>
               ) : null}
@@ -79,6 +98,13 @@ export default async function AccountsPage() {
           {pendingCommands} command(s) waiting for the worker to pick up (polls every ~1.5s).
         </p>
       ) : null}
+
+      {anyAccountMidConnection ? <AutoRefresh /> : null}
     </div>
   );
+}
+
+function isQrStale(qrUpdatedAt: Date | null): boolean {
+  if (!qrUpdatedAt) return false;
+  return Date.now() - qrUpdatedAt.getTime() > QR_STALE_AFTER_MS;
 }

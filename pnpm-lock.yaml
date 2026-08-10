@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@open-wa/wa-automate@4.76.0': 64b4f2eb8329837b2c987eb7437336c5eff0c42446a0763fa1a9589298fa7d60
+
 importers:
 
   .: {}
@@ -61,7 +64,7 @@ importers:
     dependencies:
       '@open-wa/wa-automate':
         specifier: ^4.76.0
-        version: 4.76.0(debug@4.4.3)(lodash@4.17.21)(prom-client@14.2.0)(puppeteer-core@23.11.1)(typescript@5.9.3)(webpack@5.109.2(lightningcss@1.32.0))
+        version: 4.76.0(patch_hash=64b4f2eb8329837b2c987eb7437336c5eff0c42446a0763fa1a9589298fa7d60)(debug@4.4.3)(lodash@4.17.21)(prom-client@14.2.0)(puppeteer-core@23.11.1)(typescript@5.9.3)(webpack@5.109.2(lightningcss@1.32.0))
       '@prisma/client':
         specifier: ^5.20.0
         version: 5.22.0(prisma@5.22.0)
@@ -6065,7 +6068,7 @@ snapshots:
 
   '@open-wa/wa-automate-types-only@4.76.0': {}
 
-  '@open-wa/wa-automate@4.76.0(debug@4.4.3)(lodash@4.17.21)(prom-client@14.2.0)(puppeteer-core@23.11.1)(typescript@5.9.3)(webpack@5.109.2(lightningcss@1.32.0))':
+  '@open-wa/wa-automate@4.76.0(patch_hash=64b4f2eb8329837b2c987eb7437336c5eff0c42446a0763fa1a9589298fa7d60)(debug@4.4.3)(lodash@4.17.21)(prom-client@14.2.0)(puppeteer-core@23.11.1)(typescript@5.9.3)(webpack@5.109.2(lightningcss@1.32.0))':
     dependencies:
       '@brillout/import': 0.2.6
       '@discordjs/collection': 0.8.0

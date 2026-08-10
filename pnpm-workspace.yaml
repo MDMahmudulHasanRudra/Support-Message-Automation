@@ -19,3 +19,6 @@ allowBuilds:
   puppeteer: true
   unix-dgram: false
   unrs-resolver: true
+
+patchedDependencies:
+  '@open-wa/wa-automate@4.76.0': patches/@open-wa__wa-automate@4.76.0.patch

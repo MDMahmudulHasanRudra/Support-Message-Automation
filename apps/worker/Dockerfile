@@ -49,6 +49,11 @@ WORKDIR /app
 # ---------------------------------------------------------------------------
 FROM base AS deps
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* .npmrc* tsconfig.base.json ./
+# Phase 5.1: pnpm-workspace.yaml's patchedDependencies references
+# patches/@open-wa__wa-automate@4.76.0.patch (fixes a confirmed upstream
+# bug — see OpenWAProvider.ts) — without this copy, `pnpm install` fails
+# to find the patch file and errors out.
+COPY patches patches
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/engine/package.json packages/engine/package.json

@@ -12,6 +12,10 @@ WORKDIR /app
 # ---------------------------------------------------------------------------
 FROM base AS deps
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* .npmrc* tsconfig.base.json ./
+# pnpm-workspace.yaml's patchedDependencies (Phase 5.1, for @open-wa/wa-automate)
+# is workspace-wide — `--frozen-lockfile` validates the whole lockfile even
+# when filtered to this app, so the patch file must be present here too.
+COPY patches patches
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/engine/package.json packages/engine/package.json
