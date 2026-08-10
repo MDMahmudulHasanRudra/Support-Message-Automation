@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@prisma/client": "^5.20.0",
     "@support-automation/db": "workspace:*",
     "@support-automation/engine": "workspace:*",
     "@support-automation/shared": "workspace:*"
