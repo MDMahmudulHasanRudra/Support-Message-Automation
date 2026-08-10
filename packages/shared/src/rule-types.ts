@@ -1,4 +1,4 @@
-import type { ActionType } from "./enums";
+import type { ActionType } from "./enums.js";
 
 /**
  * Shapes for AutomationRule.conditions / AutomationRule.actions (stored as

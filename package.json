@@ -9,7 +9,8 @@
   "scripts": {
     "dev:web": "pnpm --filter @support-automation/web dev",
     "dev:worker": "pnpm --filter @support-automation/worker dev",
-    "build": "pnpm -r build",
+    "build": "pnpm -r --if-present build",
+    "build:packages": "pnpm --filter @support-automation/shared build && pnpm --filter @support-automation/engine build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

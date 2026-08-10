@@ -1,6 +1,6 @@
-import { containsWholeWord, normalizeText } from "./normalize";
-import { safeRegexTest, validateRegexSafety } from "./regexSafety";
-import type { EngineRule, MatchResult } from "./types";
+import { containsWholeWord, normalizeText } from "./normalize.js";
+import { safeRegexTest, validateRegexSafety } from "./regexSafety.js";
+import type { EngineRule, MatchResult } from "./types.js";
 
 /**
  * Text matching for a rule's trigger. Assumes `normalizedBody` was already

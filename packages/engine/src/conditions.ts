@@ -3,7 +3,7 @@ import type {
   MatchResult,
   PreviousMessageContext,
   RuleConditions,
-} from "./types";
+} from "./types.js";
 import type {
   GroupScope,
   SenderCondition,

@@ -1,11 +1,17 @@
 # syntax=docker/dockerfile:1
 
 FROM node:22-bookworm-slim AS base
+# Prisma's runtime engine-detection needs the `openssl` CLI to correctly
+# identify the OpenSSL version (bookworm ships 3.0.x); without it detection
+# silently falls back to a wrong "openssl-1.1.x" binary target and every
+# Prisma query fails at runtime with "cannot find libssl.so.1.1".
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # ---------------------------------------------------------------------------
 FROM base AS deps
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* .npmrc* ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* .npmrc* tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/engine/package.json packages/engine/package.json
@@ -20,11 +26,21 @@ COPY packages/db packages/db
 COPY packages/engine packages/engine
 COPY apps/web apps/web
 RUN pnpm --filter @support-automation/db generate
+# packages/shared and packages/engine ship compiled dist/*.js (see
+# apps/worker/Dockerfile for why) — Next's build needs the real files
+# present to resolve and trace them into the standalone output.
+RUN pnpm --filter @support-automation/shared build
+RUN pnpm --filter @support-automation/engine build
 RUN pnpm --filter @support-automation/web build
 
 # ---------------------------------------------------------------------------
 FROM base AS runtime
-ENV NODE_ENV=production
+# Docker auto-sets HOSTNAME to the container ID, and Next's standalone
+# server.js binds to process.env.HOSTNAME when set — without this override
+# it listens only on the container's bridge-network address, not loopback,
+# which silently breaks the container's own HEALTHCHECK (127.0.0.1:3000).
+ENV NODE_ENV=production \
+    HOSTNAME=0.0.0.0
 
 # Next.js standalone output already contains a minimal node_modules subset
 # and a server entrypoint — no full pnpm install needed at runtime.

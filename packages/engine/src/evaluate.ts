@@ -1,13 +1,13 @@
-import { dedupeActions, deriveFinalDecision } from "./actions";
-import { matchRuleConditions } from "./conditions";
-import { matchRuleText } from "./matchers";
-import { normalizeText } from "./normalize";
+import { dedupeActions, deriveFinalDecision } from "./actions.js";
+import { matchRuleConditions } from "./conditions.js";
+import { matchRuleText } from "./matchers.js";
+import { normalizeText } from "./normalize.js";
 import type {
   DecisionTraceEntry,
   EngineRule,
   EvaluationContext,
   EvaluationResult,
-} from "./types";
+} from "./types.js";
 
 /**
  * Evaluates every active rule against a message and returns which one (if

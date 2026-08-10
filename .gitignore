@@ -20,8 +20,9 @@ pnpm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
-# local Claude Code settings (machine/user-specific permissions)
+# local Claude Code settings and session artifacts (machine/session-specific)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 # editor
 .vscode/*
 !.vscode/extensions.json

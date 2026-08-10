@@ -1,2 +1,2 @@
-export * from "./enums";
-export * from "./rule-types";
+export * from "./enums.js";
+export * from "./rule-types.js";

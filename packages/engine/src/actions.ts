@@ -1,4 +1,4 @@
-import type { FinalDecision, RuleAction } from "./types";
+import type { FinalDecision, RuleAction } from "./types.js";
 
 /**
  * Removes exact duplicate action entries from a rule's action list. Distinct
