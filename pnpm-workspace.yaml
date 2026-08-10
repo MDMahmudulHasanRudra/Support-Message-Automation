@@ -7,8 +7,15 @@ packages:
 # native binary install) — not third-party/untrusted packages. Approved via
 # `pnpm approve-builds --all`.
 allowBuilds:
+  '@open-wa/wa-automate': true
   '@prisma/client': true
   '@prisma/engines': true
+  # Optional open-wa features we don't use: cloudflared (public tunnel) and
+  # unix-dgram (syslog transport) — skipped to avoid an extra binary
+  # download and a native (node-gyp) compile step neither is needed for.
+  cloudflared: false
   esbuild: true
   prisma: true
+  puppeteer: true
+  unix-dgram: false
   unrs-resolver: true

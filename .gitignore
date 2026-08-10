@@ -1,44 +1,40 @@
 # dependencies
 node_modules/
 .pnpm-store/
-
 # next.js
 .next/
 out/
-
 # production builds
 dist/
 build/
-
 # env
 .env
 .env.local
 .env.*.local
-
 # prisma
 packages/db/generated/
-
 # logs
 *.log
 npm-debug.log*
 pnpm-debug.log*
-
 # OS
 .DS_Store
 Thumbs.db
-
 # local Claude Code settings (machine/user-specific permissions)
 .claude/settings.local.json
-
 # editor
 .vscode/*
 !.vscode/extensions.json
 .idea/
-
 # whatsapp session (local dev only; in Docker this is a named volume)
 apps/worker/sessions/
 apps/worker/.wwebjs_auth/
-
 # misc
 *.tsbuildinfo
 coverage/
+
+# managed
+**.data.json
+**.node-persist**
+**_IGNORE_**
+# end managed

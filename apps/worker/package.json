@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@open-wa/wa-automate": "^4.76.0",
     "@prisma/client": "^5.20.0",
     "@support-automation/db": "workspace:*",
     "@support-automation/engine": "workspace:*",
