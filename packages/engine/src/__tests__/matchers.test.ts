@@ -42,6 +42,15 @@ describe("matchRuleText", () => {
     expect(matchRuleText(rule, normalizeText("internet not working")).matched).toBe(false);
   });
 
+  it("KEYWORDS does not match a short keyword as a substring of an unrelated word", () => {
+    // Regression: "hi" must not match inside "this", nor "or" inside "worker".
+    const rule = { matchType: "KEYWORDS" as const, matchValue: null, keywords: ["hi", "or"] };
+    expect(matchRuleText(rule, normalizeText("this is a totally unrelated message")).matched).toBe(false);
+    expect(matchRuleText(rule, normalizeText("the worker restarted")).matched).toBe(false);
+    expect(matchRuleText(rule, normalizeText("hi there")).matched).toBe(true);
+    expect(matchRuleText(rule, normalizeText("pay now or later")).matched).toBe(true);
+  });
+
   it("REGEX matches a safe pattern covering PPPoE/OLT support keywords", () => {
     const rule = { matchType: "REGEX" as const, matchValue: "(pppoe|olt) (disconnect|issue|down)", keywords: [] };
     expect(matchRuleText(rule, normalizeText("PPPoE disconnect হচ্ছে")).matched).toBe(true);

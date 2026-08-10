@@ -10,6 +10,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@prisma/client':
+        specifier: ^5.20.0
+        version: 5.22.0(prisma@5.22.0)
       '@support-automation/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -58,7 +61,7 @@ importers:
     dependencies:
       '@open-wa/wa-automate':
         specifier: ^4.76.0
-        version: 4.76.0(lodash@4.17.21)(prom-client@14.2.0)(puppeteer-core@23.11.1)(typescript@5.9.3)(webpack@5.109.2)
+        version: 4.76.0(debug@4.4.3)(lodash@4.17.21)(prom-client@14.2.0)(puppeteer-core@23.11.1)(typescript@5.9.3)(webpack@5.109.2)
       '@prisma/client':
         specifier: ^5.20.0
         version: 5.22.0(prisma@5.22.0)
@@ -6056,12 +6059,12 @@ snapshots:
 
   '@open-wa/wa-automate-types-only@4.76.0': {}
 
-  '@open-wa/wa-automate@4.76.0(lodash@4.17.21)(prom-client@14.2.0)(puppeteer-core@23.11.1)(typescript@5.9.3)(webpack@5.109.2)':
+  '@open-wa/wa-automate@4.76.0(debug@4.4.3)(lodash@4.17.21)(prom-client@14.2.0)(puppeteer-core@23.11.1)(typescript@5.9.3)(webpack@5.109.2)':
     dependencies:
       '@brillout/import': 0.2.6
       '@discordjs/collection': 0.8.0
       '@open-wa/wa-automate-socket-client': 3.3.0
-      '@open-wa/wa-decrypt': 4.4.0
+      '@open-wa/wa-decrypt': 4.4.0(debug@4.4.3)
       atob: 2.1.2
       aws4: 1.13.2
       axios: 1.19.0(debug@4.4.3)
@@ -6153,11 +6156,11 @@ snapshots:
       - utf-8-validate
       - webpack
 
-  '@open-wa/wa-decrypt@4.4.0':
+  '@open-wa/wa-decrypt@4.4.0(debug@4.4.3)':
     dependencies:
       '@open-wa/wa-automate-types-only': 4.76.0
       atob: 2.1.2
-      axios: 0.26.1
+      axios: 0.26.1(debug@4.4.3)
       futoin-hkdf: 1.5.3
       type-fest: 2.19.0
     transitivePeerDependencies:
@@ -6943,7 +6946,7 @@ snapshots:
     transitivePeerDependencies:
       - debug
 
-  axios@0.26.1:
+  axios@0.26.1(debug@4.4.3):
     dependencies:
       follow-redirects: 1.16.0(debug@4.4.3)
     transitivePeerDependencies:

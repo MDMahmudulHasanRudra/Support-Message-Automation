@@ -7,6 +7,7 @@ import { recoverStuckNotifications, startNotificationDispatcher } from "./notifi
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
 import { startCommandProcessor, syncGroups } from "./commands/commandProcessor.js";
+import { logSystemEvent } from "./logging/logSystemEvent.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -44,6 +45,7 @@ async function main() {
 
   const account = await findOrCreateAccount();
   console.log(`[worker] using account ${account.id} (session "${SESSION_ID}" at ${SESSION_DATA_PATH})`);
+  await logSystemEvent("INFO", "worker", "Worker starting up", { accountId: account.id, sessionId: SESSION_ID });
 
   const provider = new OpenWAProvider(account.id, SESSION_ID, SESSION_DATA_PATH);
 
@@ -52,13 +54,16 @@ async function main() {
     provider.subscribeToMessages((message) => {
       processIncomingMessage(message).catch((err) => {
         console.error("[worker] error processing incoming message", err);
+        logSystemEvent("ERROR", "pipeline", "Error processing incoming message", { error: (err as Error).message });
       });
     });
     const groupCount = await syncGroups(account.id, provider);
     console.log(`[worker] synced ${groupCount} group(s)`);
+    await logSystemEvent("INFO", "provider", "Connected to WhatsApp and synced groups", { groupCount });
   } catch (err) {
     console.error("[worker] failed to connect to WhatsApp — will remain running and retry via RECONNECT commands", err);
     await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: "ERROR" } });
+    await logSystemEvent("ERROR", "provider", "Failed to connect to WhatsApp", { error: (err as Error).message });
   }
 
   const intervals: NodeJS.Timeout[] = [

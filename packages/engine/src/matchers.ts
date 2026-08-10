@@ -1,6 +1,6 @@
-import { normalizeText } from "./normalize.js";
-import { safeRegexTest, validateRegexSafety } from "./regexSafety.js";
-import type { EngineRule, MatchResult } from "./types.js";
+import { containsWholeWord, normalizeText } from "./normalize";
+import { safeRegexTest, validateRegexSafety } from "./regexSafety";
+import type { EngineRule, MatchResult } from "./types";
 
 /**
  * Text matching for a rule's trigger. Assumes `normalizedBody` was already
@@ -46,7 +46,7 @@ export function matchRuleText(
         return { matched: false, reason: "KEYWORDS rule has no keywords configured." };
       }
       const matchedKeyword = rule.keywords.find((k) =>
-        normalizedBody.includes(normalizeText(k)),
+        containsWholeWord(normalizedBody, normalizeText(k)),
       );
       return {
         matched: Boolean(matchedKeyword),
