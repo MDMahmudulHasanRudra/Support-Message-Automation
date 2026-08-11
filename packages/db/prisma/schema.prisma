@@ -116,6 +116,9 @@ enum WorkerCommandType {
   RECONNECT
   SEND_LIVE_TEST
   RESYNC_GROUPS
+  /// On-demand, single-group participant count lookup (payload: { groupId }) — deliberately NOT
+  /// part of the bulk RESYNC_GROUPS path, which only fetches group names for cost reasons.
+  GET_GROUP_PARTICIPANT_COUNT
 }
 
 enum WorkerCommandStatus {
@@ -191,20 +194,28 @@ model WhatsAppAccount {
 }
 
 model WhatsAppGroup {
-  id              String          @id @default(cuid())
-  accountId       String
-  account         WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  whatsappGroupId String // WhatsApp chat id, e.g. "1234567890-1234567890@g.us"
-  name            String
-  isMonitored     Boolean         @default(false)
-  lastSyncedAt    DateTime?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  id               String          @id @default(cuid())
+  accountId        String
+  account          WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  whatsappGroupId  String // WhatsApp chat id, e.g. "1234567890-1234567890@g.us"
+  name             String
+  isMonitored      Boolean         @default(false)
+  /// False once a resync's getAllGroups() no longer returns this group (account left/removed) —
+  /// soft-deactivation only, never deleted, so Message history keeps a valid groupId FK.
+  isActive         Boolean         @default(true)
+  /// Best-effort, fetched on demand (never during bulk sync — too expensive across hundreds of
+  /// real groups) — null until an admin explicitly requests it for this group.
+  participantCount Int?
+  lastSyncedAt     DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   messages          Message[]
   broadcastMessages OutboundMessage[]
 
   @@unique([accountId, whatsappGroupId])
+  @@index([accountId, isActive])
+  @@index([accountId, isMonitored])
 }
 
 model InternalTeamMember {

@@ -8,6 +8,7 @@ import {
   type Client,
   type ContactId,
   type Content,
+  type GroupChatId,
   type Message as WaMessage,
 } from "@open-wa/wa-automate";
 import type { RawIncomingMessage } from "../../pipeline/types.js";
@@ -309,6 +310,17 @@ export class OpenWAProvider implements WhatsAppProvider {
       return Boolean(chat && chat.isGroup !== false);
     } catch {
       return false;
+    }
+  }
+
+  /** Single-group lookup only — see WhatsAppProvider.ts's doc comment for why this stays out of getGroups(). */
+  async getGroupParticipantCount(chatId: string): Promise<number | null> {
+    if (!this.client) return null;
+    try {
+      const members = await this.client.getGroupMembersId(chatId as GroupChatId);
+      return Array.isArray(members) ? members.length : null;
+    } catch {
+      return null;
     }
   }
 

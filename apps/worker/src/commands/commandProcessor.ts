@@ -15,7 +15,7 @@ export async function syncGroups(accountId: string, provider: WhatsAppProvider):
   for (const [i, group] of groups.entries()) {
     await prisma.whatsAppGroup.upsert({
       where: { accountId_whatsappGroupId: { accountId, whatsappGroupId: group.whatsappGroupId } },
-      update: { name: group.name, lastSyncedAt: new Date() },
+      update: { name: group.name, lastSyncedAt: new Date(), isActive: true },
       create: {
         accountId,
         whatsappGroupId: group.whatsappGroupId,
@@ -27,6 +27,26 @@ export async function syncGroups(accountId: string, provider: WhatsAppProvider):
       console.log(`[groupsync] GROUP_SYNC_PROGRESS ${i + 1}/${groups.length}`);
     }
   }
+
+  // A group the account has since left/been removed from no longer appears in getAllGroups() —
+  // soft-deactivate it (never delete: Message.groupId history must keep a valid FK). Idempotent:
+  // re-running this against the same result set is a no-op for groups already isActive: false.
+  //
+  // Guard: an empty `groups` result (e.g. getGroups() called while the provider's client is
+  // temporarily null during a reconnect) must NEVER be treated as "the account left every
+  // group" — that would mass-deactivate the entire table from a transient connection blip. Only
+  // run the sweep when we actually have a real result set to compare against.
+  if (groups.length > 0) {
+    const currentWhatsappGroupIds = groups.map((g) => g.whatsappGroupId);
+    const deactivated = await prisma.whatsAppGroup.updateMany({
+      where: { accountId, isActive: true, whatsappGroupId: { notIn: currentWhatsappGroupIds } },
+      data: { isActive: false },
+    });
+    if (deactivated.count > 0) {
+      console.log(`[groupsync] GROUP_SYNC_DEACTIVATED ${deactivated.count} group(s) no longer returned by the account`);
+    }
+  }
+
   return groups.length;
 }
 
@@ -119,7 +139,8 @@ async function claimNextCommand() {
  * reconnect, group resync, an explicit live test send) travel through this
  * DB-mediated channel — never a direct HTTP call (see ARCHITECTURE.md).
  */
-async function processOneCommand(accountId: string, provider: WhatsAppProvider): Promise<boolean> {
+/** Exported for direct testing — drains exactly one due command, or returns false if none are pending. */
+export async function processOneCommand(accountId: string, provider: WhatsAppProvider): Promise<boolean> {
   const command = await claimNextCommand();
   if (!command) return false;
 
@@ -152,6 +173,21 @@ async function processOneCommand(accountId: string, provider: WhatsAppProvider):
         await prisma.workerCommand.update({
           where: { id: command.id },
           data: { status: "DONE", processedAt: new Date(), result: { groupsSynced: count } },
+        });
+        break;
+      }
+
+      case "GET_GROUP_PARTICIPANT_COUNT": {
+        const payload = command.payload as { groupId?: string } | null;
+        if (!payload?.groupId) {
+          throw new Error("GET_GROUP_PARTICIPANT_COUNT requires { groupId } in the command payload.");
+        }
+        const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id: payload.groupId } });
+        const count = await provider.getGroupParticipantCount(group.whatsappGroupId);
+        await prisma.whatsAppGroup.update({ where: { id: group.id }, data: { participantCount: count } });
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: { status: "DONE", processedAt: new Date(), result: { groupId: group.id, participantCount: count } },
         });
         break;
       }

@@ -46,4 +46,12 @@ export interface WhatsAppProvider {
    * Returns false (never throws) if membership can't be confirmed.
    */
   verifyGroupMembership(chatId: string): Promise<boolean>;
+  /**
+   * On-demand, single-group participant count. Deliberately NOT part of
+   * getGroups()/the bulk sync path — fetching full participant metadata for
+   * every group in one call is far more expensive than fetching names alone
+   * (see Group Management audit). Returns null (never throws) if the count
+   * can't be determined.
+   */
+  getGroupParticipantCount(chatId: string): Promise<number | null>;
 }
