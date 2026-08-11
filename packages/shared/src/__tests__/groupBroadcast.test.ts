@@ -127,6 +127,31 @@ describe("matchExcelGroups", () => {
     expect(results[0]!.status).toBe("MATCHED");
     expect(results[1]!.status).toBe("DUPLICATE");
   });
+
+  it("resolves multiple distinct valid rows in a single file, each to its own correct group and message", () => {
+    const results = matchExcelGroups(
+      [
+        row("ABC ISP Support", "Maintenance tonight.", 2),
+        row("  xyz   support  ", "Please check your router.", 3), // messy casing/whitespace, still exact after normalization
+      ],
+      candidates,
+    );
+    expect(results.every((r) => r.status === "MATCHED")).toBe(true);
+    expect(results[0]!.matchedGroupId).toBe("g1");
+    expect(results[0]!.message).toBe("Maintenance tonight.");
+    expect(results[1]!.matchedGroupId).toBe("g2");
+    expect(results[1]!.message).toBe("Please check your router.");
+  });
+
+  it("keeps one ambiguous row from contaminating the other valid rows in the same batch", () => {
+    const results = matchExcelGroups(
+      [row("ABC ISP Support", null, 2), row("Client Support", null, 3), row("XYZ Support", null, 4)],
+      candidates,
+    );
+    expect(results.map((r) => r.status)).toEqual(["MATCHED", "AMBIGUOUS", "MATCHED"]);
+    expect(results[0]!.matchedGroupId).toBe("g1");
+    expect(results[2]!.matchedGroupId).toBe("g2");
+  });
 });
 
 describe("validateMessageText", () => {
