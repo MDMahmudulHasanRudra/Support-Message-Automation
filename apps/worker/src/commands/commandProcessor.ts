@@ -86,10 +86,36 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * sync in index.ts, called without awaiting so it can never block message
  * processing or take the connection down with it).
  */
+/**
+ * Module-level, not per-call: index.ts's fire-and-forget post-connect sync
+ * and an explicit RESYNC_GROUPS command are two independent call sites with
+ * no shared state otherwise — without this, they could genuinely run
+ * concurrently (ENGINEERING_STANDARDS.md §9's "conflicting group sync
+ * operations"), and the isActive deactivation sweep is only correct against
+ * a single, complete getGroups() snapshot. A second caller that arrives
+ * while one is already running gets the SAME in-flight result instead of
+ * starting a competing sync.
+ */
+let syncInFlight: Promise<number> | null = null;
+
 export async function syncGroupsWithTimeoutAndRetry(
   accountId: string,
   provider: WhatsAppProvider,
 ): Promise<number> {
+  if (syncInFlight) {
+    console.log("[groupsync] GROUP_SYNC_ALREADY_IN_PROGRESS -- reusing the in-flight sync instead of starting a second one");
+    return syncInFlight;
+  }
+
+  syncInFlight = runSyncWithRetry(accountId, provider);
+  try {
+    return await syncInFlight;
+  } finally {
+    syncInFlight = null;
+  }
+}
+
+async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): Promise<number> {
   const attempts = GROUP_SYNC_RETRY_DELAYS_MS.length + 1;
   await logSystemEvent("INFO", "provider", "GROUP_SYNC_STARTED", { accountId });
 
@@ -159,6 +185,23 @@ export async function processOneCommand(accountId: string, provider: WhatsAppPro
       }
 
       case "RECONNECT": {
+        // ENGINEERING_STANDARDS.md §9: "a command that is already running should not be started
+        // again unnecessarily" -- a queued RECONNECT that only reaches the front of the queue
+        // after the account has since reconnected on its own (e.g. via session persistence) must
+        // not blindly tear down an already-healthy session. This is the exact real incident that
+        // motivated this guard (two stale RECONNECT commands fired back-to-back into a session
+        // that had just connected, the second one broke the browser into an unresponsive state).
+        if (provider.getConnectionStatus() === "CONNECTED") {
+          await prisma.workerCommand.update({
+            where: { id: command.id },
+            data: {
+              status: "DONE",
+              processedAt: new Date(),
+              result: { reconnected: false, reason: "Already connected -- reconnect skipped as unnecessary." },
+            },
+          });
+          break;
+        }
         await provider.disconnect();
         await provider.connect();
         await prisma.workerCommand.update({
@@ -234,9 +277,22 @@ export function startCommandProcessor(
   provider: WhatsAppProvider,
   intervalMs = 1500,
 ): NodeJS.Timeout {
+  // ENGINEERING_STANDARDS.md §9 (no concurrent/conflicting commands): plain setInterval does NOT
+  // wait for its callback to resolve before scheduling the next tick. A RECONNECT can take well
+  // over intervalMs (real WhatsApp auth), so without this guard a later tick could claim and start
+  // a second command (e.g. RESYNC_GROUPS) WHILE the first is still running against the same
+  // provider/browser session. This flag makes the loop strictly serial -- never more than one
+  // processOneCommand in flight at a time.
+  let processing = false;
   return setInterval(() => {
-    processOneCommand(accountId, provider).catch((err) => {
-      console.error("[commands] unexpected error processing worker command", err);
-    });
+    if (processing) return;
+    processing = true;
+    processOneCommand(accountId, provider)
+      .catch((err) => {
+        console.error("[commands] unexpected error processing worker command", err);
+      })
+      .finally(() => {
+        processing = false;
+      });
   }, intervalMs);
 }

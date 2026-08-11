@@ -228,14 +228,27 @@ async function handleSendFailure(message: OutboundMessage, failureReason: string
   });
 }
 
-/** Starts the periodic drain loop. Processes at most one message per tick to avoid sending bursts. */
+/**
+ * Starts the periodic drain loop. Processes at most one message per tick to avoid sending bursts.
+ * Same overlap guard as startCommandProcessor (ENGINEERING_STANDARDS.md §9/§15 "no concurrent
+ * duplicate workers"): plain setInterval doesn't wait for the previous tick's promise, so a slow
+ * send (provider timeout, retry backoff wait) could otherwise let a second tick claim and process
+ * another row concurrently with the first.
+ */
 export function startOutboundQueueProcessor(
   provider: WhatsAppProvider,
   intervalMs = 2000,
 ): NodeJS.Timeout {
+  let processing = false;
   return setInterval(() => {
-    processOne(provider).catch((err) => {
-      console.error("[queue] unexpected error processing outbound message", err);
-    });
+    if (processing) return;
+    processing = true;
+    processOne(provider)
+      .catch((err) => {
+        console.error("[queue] unexpected error processing outbound message", err);
+      })
+      .finally(() => {
+        processing = false;
+      });
   }, intervalMs);
 }

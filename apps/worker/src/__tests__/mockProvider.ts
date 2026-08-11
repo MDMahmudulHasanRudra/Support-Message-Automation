@@ -1,4 +1,4 @@
-import type { GroupInfo, SendResult, WhatsAppProvider } from "../provider/WhatsAppProvider.js";
+import type { ConnectionStatus, GroupInfo, SendResult, WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 
 /**
  * A mocked WhatsAppProvider for integration tests — the outbound queue
@@ -16,8 +16,8 @@ export class MockProvider implements WhatsAppProvider {
 
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
-  getConnectionStatus() {
-    return "CONNECTED" as const;
+  getConnectionStatus(): ConnectionStatus {
+    return "CONNECTED";
   }
   async getGroups(): Promise<GroupInfo[]> {
     return [];
