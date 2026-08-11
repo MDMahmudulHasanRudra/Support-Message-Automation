@@ -81,6 +81,7 @@ export function Field({
   required,
   hint,
   error,
+  className = "",
   children,
 }: {
   label?: ReactNode;
@@ -88,10 +89,11 @@ export function Field({
   required?: boolean;
   hint?: ReactNode;
   error?: ReactNode;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <div>
+    <div className={className}>
       {label ? (
         <Label htmlFor={htmlFor} required={required}>
           {label}

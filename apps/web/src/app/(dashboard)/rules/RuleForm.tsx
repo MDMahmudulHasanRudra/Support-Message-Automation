@@ -1,13 +1,30 @@
 "use client";
 
-import { useActionState } from "react";
-import { Button, Card } from "@/components/ui";
+import { useActionState, useState } from "react";
+import { Button, Card, Checkbox, Field, Input, Select, SectionHeader, Textarea } from "@/components/ui";
 import type { RuleFormState } from "@/server/actions/rules";
 
-const RULE_TYPES = ["GENERIC", "DEFAULT_IGNORE", "LAST_SENDER", "EXCEPTION", "SUPPORT_ESCALATION", "AUTO_REPLY", "TEAM_FILTER"];
+const RULE_TYPES = [
+  "GENERIC",
+  "DEFAULT_IGNORE",
+  "LAST_SENDER",
+  "EXCEPTION",
+  "SUPPORT_ESCALATION",
+  "AUTO_REPLY",
+  "TEAM_FILTER",
+];
 const MATCH_TYPES = ["ALWAYS", "EXACT", "CONTAINS", "KEYWORDS", "REGEX"];
 const STATUSES = ["DRAFT", "ACTIVE", "DISABLED", "ARCHIVED"];
-const ACTION_TYPES = ["IGNORE", "TAG", "AUTO_REPLY", "SUPPORT_REQUIRED", "NOTIFY_TEAMS", "NOTIFY_WHATSAPP", "FORWARD", "STOP_PROCESSING"];
+const ACTION_TYPES = [
+  "IGNORE",
+  "TAG",
+  "AUTO_REPLY",
+  "SUPPORT_REQUIRED",
+  "NOTIFY_TEAMS",
+  "NOTIFY_WHATSAPP",
+  "FORWARD",
+  "STOP_PROCESSING",
+];
 
 export interface RuleFormDefaults {
   name?: string;
@@ -41,142 +58,157 @@ export function RuleForm({
   submitLabel?: string;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
-  const selectedActions = new Set(defaults.actionTypes ?? []);
+  const [matchType, setMatchType] = useState(defaults.matchType ?? "ALWAYS");
+  const [selectedActions, setSelectedActions] = useState<Set<string>>(new Set(defaults.actionTypes ?? []));
+
+  function toggleAction(type: string, checked: boolean) {
+    setSelectedActions((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(type);
+      else next.delete(type);
+      return next;
+    });
+  }
 
   return (
-    <form action={formAction} className="space-y-6">
+    <form action={formAction} className="space-y-4">
       <Card>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Basics</h2>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Field label="Name">
-            <input name="name" defaultValue={defaults.name} required className={inputClass} />
+        <SectionHeader title="Basics" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Field label="Name" required>
+            <Input name="name" defaultValue={defaults.name} required />
           </Field>
           <Field label="Type">
-            <select name="type" defaultValue={defaults.type ?? "GENERIC"} className={inputClass}>
+            <Select name="type" defaultValue={defaults.type ?? "GENERIC"}>
               {RULE_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
+                <option key={t} value={t}>
+                  {t}
+                </option>
               ))}
-            </select>
+            </Select>
           </Field>
-          <Field label="Priority (higher runs first)">
-            <input name="priority" type="number" defaultValue={defaults.priority ?? 0} className={inputClass} />
+          <Field label="Priority" hint="Higher numbers are evaluated first.">
+            <Input name="priority" type="number" defaultValue={defaults.priority ?? 0} />
           </Field>
           <Field label="Status">
-            <select name="status" defaultValue={defaults.status ?? "DRAFT"} className={inputClass}>
+            <Select name="status" defaultValue={defaults.status ?? "DRAFT"}>
               {STATUSES.map((s) => (
-                <option key={s} value={s}>{s}</option>
+                <option key={s} value={s}>
+                  {s}
+                </option>
               ))}
-            </select>
+            </Select>
           </Field>
         </div>
-        <Field label="Description" className="mt-3">
-          <textarea name="description" defaultValue={defaults.description} rows={2} className={inputClass} />
-        </Field>
+        <div className="mt-4">
+          <Field label="Description">
+            <Textarea name="description" defaultValue={defaults.description} rows={2} />
+          </Field>
+        </div>
       </Card>
 
       <Card>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Trigger</h2>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <SectionHeader title="Trigger" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field label="Match Type">
-            <select name="matchType" defaultValue={defaults.matchType ?? "ALWAYS"} className={inputClass}>
+            <Select name="matchType" value={matchType} onChange={(e) => setMatchType(e.target.value)}>
               {MATCH_TYPES.map((m) => (
-                <option key={m} value={m}>{m}</option>
+                <option key={m} value={m}>
+                  {m}
+                </option>
               ))}
-            </select>
+            </Select>
           </Field>
-          <Field label="Match Value (EXACT / CONTAINS / REGEX)">
-            <input name="matchValue" defaultValue={defaults.matchValue} className={inputClass} />
+          <Field
+            label="Match Value"
+            hint={matchType === "REGEX" ? "Validated server-side before saving (length, quantifiers, ReDoS shapes)." : undefined}
+            className={matchType === "EXACT" || matchType === "CONTAINS" || matchType === "REGEX" ? "" : "hidden"}
+          >
+            <Input name="matchValue" defaultValue={defaults.matchValue} />
+          </Field>
+          <Field label="Keywords" hint="Comma-separated." className={matchType === "KEYWORDS" ? "" : "hidden"}>
+            <Input name="keywords" defaultValue={defaults.keywords?.join(", ")} />
           </Field>
         </div>
-        <Field label="Keywords (comma-separated, used when Match Type = KEYWORDS)" className="mt-3">
-          <input name="keywords" defaultValue={defaults.keywords?.join(", ")} className={inputClass} />
-        </Field>
       </Card>
 
       <Card>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Conditions</h2>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <SectionHeader title="Conditions" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Field label="Current Sender">
-            <select name="senderType" defaultValue={defaults.senderType ?? "ANY"} className={inputClass}>
+            <Select name="senderType" defaultValue={defaults.senderType ?? "ANY"}>
               <option value="ANY">Any</option>
               <option value="TEAM_MEMBER">Team Member</option>
               <option value="CLIENT">Client</option>
-            </select>
+            </Select>
           </Field>
-          <Field label="Previous Sender (last-sender rules)">
-            <select name="previousSenderType" defaultValue={defaults.previousSenderType ?? "NONE"} className={inputClass}>
+          <Field label="Previous Sender" hint="Used by last-sender rules.">
+            <Select name="previousSenderType" defaultValue={defaults.previousSenderType ?? "NONE"}>
               <option value="NONE">Not used</option>
               <option value="ANY">Any</option>
               <option value="TEAM_MEMBER">Team Member</option>
               <option value="CLIENT">Client</option>
-            </select>
+            </Select>
           </Field>
-          <Field label="Group Scope (comma-separated group IDs, blank = all)">
-            <input name="groupIds" defaultValue={defaults.groupIds} className={inputClass} />
+          <Field label="Group Scope" hint="Comma-separated group IDs, blank = all.">
+            <Input name="groupIds" defaultValue={defaults.groupIds} />
           </Field>
         </div>
       </Card>
 
       <Card>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Actions</h2>
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        <SectionHeader title="Actions" />
+        <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
           {ACTION_TYPES.map((a) => (
-            <label key={a} className="flex items-center gap-2 text-sm">
-              <input type="checkbox" name={`action_${a}`} defaultChecked={selectedActions.has(a)} />
+            <label key={a} className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
+              <Checkbox
+                name={`action_${a}`}
+                defaultChecked={selectedActions.has(a)}
+                onChange={(e) => toggleAction(a, e.target.checked)}
+              />
               {a}
             </label>
           ))}
         </div>
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <Field label="TAG value">
-            <input name="actionTag" defaultValue={defaults.actionTag} className={inputClass} />
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Field label="TAG value" className={selectedActions.has("TAG") ? "" : "hidden"}>
+            <Input name="actionTag" defaultValue={defaults.actionTag} />
           </Field>
-          <Field label="SUPPORT_REQUIRED category">
-            <input name="actionCategory" defaultValue={defaults.actionCategory} className={inputClass} />
+          <Field
+            label="SUPPORT_REQUIRED category"
+            className={selectedActions.has("SUPPORT_REQUIRED") ? "" : "hidden"}
+          >
+            <Input name="actionCategory" defaultValue={defaults.actionCategory} />
           </Field>
-          <Field label="FORWARD target chat id">
-            <input name="actionForwardChatId" defaultValue={defaults.actionForwardChatId} className={inputClass} />
+          <Field label="FORWARD target chat id" className={selectedActions.has("FORWARD") ? "" : "hidden"}>
+            <Input name="actionForwardChatId" defaultValue={defaults.actionForwardChatId} />
           </Field>
         </div>
       </Card>
 
-      <Card>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-          Auto-Reply Safety (used when the AUTO_REPLY action is checked)
-        </h2>
+      <Card className={selectedActions.has("AUTO_REPLY") ? "" : "hidden"}>
+        <SectionHeader title="Auto-Reply Safety" description="Used when the AUTO_REPLY action is checked." />
         <Field label="Reply Message">
-          <textarea name="replyMessage" defaultValue={defaults.replyMessage} rows={3} className={inputClass} />
+          <Textarea name="replyMessage" defaultValue={defaults.replyMessage} rows={3} />
         </Field>
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
           <Field label="Cooldown (seconds)">
-            <input name="cooldownSeconds" type="number" defaultValue={defaults.cooldownSeconds ?? ""} className={inputClass} />
+            <Input name="cooldownSeconds" type="number" defaultValue={defaults.cooldownSeconds ?? ""} />
           </Field>
           <Field label="Reply delay min (ms)">
-            <input name="replyDelayMinMs" type="number" defaultValue={defaults.replyDelayMinMs ?? ""} className={inputClass} />
+            <Input name="replyDelayMinMs" type="number" defaultValue={defaults.replyDelayMinMs ?? ""} />
           </Field>
           <Field label="Reply delay max (ms)">
-            <input name="replyDelayMaxMs" type="number" defaultValue={defaults.replyDelayMaxMs ?? ""} className={inputClass} />
+            <Input name="replyDelayMaxMs" type="number" defaultValue={defaults.replyDelayMaxMs ?? ""} />
           </Field>
         </div>
       </Card>
 
-      {state.error ? <p className="text-sm text-red-600">{state.error}</p> : null}
+      {state.error ? <p className="text-sm text-[color:var(--color-danger)]">{state.error}</p> : null}
 
-      <Button type="submit" disabled={pending}>
-        {pending ? "Saving..." : submitLabel}
+      <Button type="submit" loading={pending}>
+        {submitLabel}
       </Button>
     </form>
-  );
-}
-
-const inputClass =
-  "w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900";
-
-function Field({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) {
-  return (
-    <div className={className}>
-      <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">{label}</label>
-      {children}
-    </div>
   );
 }
