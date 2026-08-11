@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Badge, EmptyState, Table, Td, Th } from "@/components/ui";
+import { ArrowUpRight } from "lucide-react";
+import { Badge, type BadgeColor, EmptyState, Table, Td, Th, Tooltip } from "@/components/ui";
 
 export interface MessageRow {
   id: string;
@@ -44,21 +45,27 @@ export function MessagesTable({ messages, hasActiveFilters }: { messages: Messag
       <tbody>
         {messages.map((m) => (
           <tr key={m.id}>
-            <Td>{m.timestampWa.toLocaleString()}</Td>
+            <Td className="whitespace-nowrap font-[family-name:var(--font-mono)] text-xs">
+              {m.timestampWa.toLocaleString()}
+            </Td>
             <Td>{m.accountLabel}</Td>
             <Td>{m.groupName ?? "—"}</Td>
             <Td>
               {m.senderName ?? m.senderPhone}
               {m.isFromTeamMember ? (
-                <span className="ml-1">
+                <span className="ml-1.5">
                   <Badge color="blue">Team</Badge>
                 </span>
               ) : null}
             </Td>
             <Td>{m.direction}</Td>
-            <Td className="max-w-xs truncate">{m.body}</Td>
+            <Td className="max-w-xs">
+              <Tooltip content={<span className="whitespace-pre-wrap">{m.body}</span>}>
+                <span className="block max-w-xs truncate">{m.body}</span>
+              </Tooltip>
+            </Td>
             <Td>
-              <Badge color={m.processingStatus === "IGNORED" ? "gray" : m.processingStatus === "FAILED" ? "red" : "green"}>
+              <Badge color={processingStatusColor(m.processingStatus)} dot>
                 {m.processingStatus}
               </Badge>
             </Td>
@@ -66,13 +73,25 @@ export function MessagesTable({ messages, hasActiveFilters }: { messages: Messag
             <Td>{m.decision ? <Badge color={decisionColor(m.decision)}>{m.decision}</Badge> : "—"}</Td>
             <Td>{m.autoReplyStatus ?? "—"}</Td>
             <Td>
-              {m.notifications.length === 0
-                ? "—"
-                : m.notifications.map((n) => `${n.type}: ${n.status}`).join(", ")}
+              {m.notifications.length === 0 ? (
+                "—"
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {m.notifications.map((n, i) => (
+                    <Badge key={i} color={notificationStatusColor(n.status)}>
+                      {n.type}: {n.status}
+                    </Badge>
+                  ))}
+                </div>
+              )}
             </Td>
             <Td>
-              <Link href={`/messages/${m.id}`} className="text-xs underline">
+              <Link
+                href={`/messages/${m.id}`}
+                className="inline-flex items-center gap-1 text-xs text-[color:var(--color-primary)] hover:underline"
+              >
                 View
+                <ArrowUpRight className="size-3" aria-hidden />
               </Link>
             </Td>
           </tr>
@@ -82,9 +101,21 @@ export function MessagesTable({ messages, hasActiveFilters }: { messages: Messag
   );
 }
 
-function decisionColor(decision: string): "green" | "red" | "yellow" | "gray" | "blue" {
+function decisionColor(decision: string): BadgeColor {
   if (decision === "SUPPORT_REQUIRED") return "red";
   if (decision === "AUTO_REPLY" || decision === "ACTIONED") return "green";
   if (decision === "IGNORE" || decision === "STOPPED") return "gray";
   return "yellow"; // NO_MATCH
+}
+
+function processingStatusColor(status: string): BadgeColor {
+  if (status === "IGNORED") return "gray";
+  if (status === "FAILED") return "red";
+  return "green";
+}
+
+function notificationStatusColor(status: string): BadgeColor {
+  if (status === "SENT") return "green";
+  if (status === "FAILED") return "red";
+  return "yellow";
 }

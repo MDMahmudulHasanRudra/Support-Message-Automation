@@ -1,8 +1,7 @@
-import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, Pagination } from "@/components/ui";
 import { MessagesFilterBar, type MessageFilters } from "./MessagesFilterBar";
 import { MessagesTable, type MessageRow } from "./MessagesTable";
 
@@ -67,7 +66,6 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
     prisma.automationRule.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const rows: MessageRow[] = messages.map((m) => ({
     id: m.id,
     senderPhone: m.senderPhone,
@@ -97,23 +95,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
       <MessagesTable messages={rows} hasActiveFilters={hasActiveFilters} />
 
       {totalCount > 0 ? (
-        <div className="mt-4 flex items-center justify-between text-sm">
-          <span className="text-zinc-500 dark:text-zinc-400">
-            Page {page} of {totalPages} ({totalCount} total)
-          </span>
-          <div className="flex gap-2">
-            {page > 1 ? (
-              <Link href={buildPageHref(params, page - 1)} className="rounded-md border border-zinc-300 px-3 py-1.5 dark:border-zinc-700">
-                Previous
-              </Link>
-            ) : null}
-            {page < totalPages ? (
-              <Link href={buildPageHref(params, page + 1)} className="rounded-md border border-zinc-300 px-3 py-1.5 dark:border-zinc-700">
-                Next
-              </Link>
-            ) : null}
-          </div>
-        </div>
+        <Pagination page={page} pageSize={PAGE_SIZE} total={totalCount} buildHref={(p) => buildPageHref(params, p)} />
       ) : null}
     </div>
   );
