@@ -1,11 +1,28 @@
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { Badge, Card, PageHeader, Table, Td, Th } from "@/components/ui";
+import { Alert, Badge, Card, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import type { BadgeColor } from "@/components/ui";
+
+const ACCOUNT_STATUS_COLOR: Record<string, BadgeColor> = {
+  CONNECTED: "green",
+  ERROR: "red",
+  SESSION_ERROR: "red",
+  RATE_LIMITED: "red",
+  RECONNECTING: "yellow",
+  DISCONNECTED: "yellow",
+  AUTHENTICATION_REQUIRED: "yellow",
+  OUTBOUND_PAUSED: "yellow",
+};
+
+function since(hoursAgo: number, nowMs: number): Date {
+  return new Date(nowMs - hoursAgo * 60 * 60 * 1000);
+}
 
 export default async function OverviewPage() {
   await requireSession();
 
-  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
+  const since24h = since(24, Date.now());
 
   const [
     accounts,
@@ -23,45 +40,64 @@ export default async function OverviewPage() {
     prisma.message.findMany({
       orderBy: { timestampWa: "desc" },
       take: 10,
-      select: { id: true, senderPhone: true, body: true, direction: true, processingStatus: true, timestampWa: true },
+      select: {
+        id: true,
+        senderPhone: true,
+        body: true,
+        direction: true,
+        processingStatus: true,
+        timestampWa: true,
+      },
     }),
   ]);
+
+  const connectedCount = accounts.filter((a) => a.status === "CONNECTED").length;
+  const disconnectedAccounts = accounts.filter((a) => a.status !== "CONNECTED");
 
   return (
     <div>
       <PageHeader title="Overview" description="Live snapshot of the automation system." />
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Card>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">Incoming messages (24h)</p>
-          <p className="mt-1 text-2xl font-semibold">{messagesLast24h}</p>
-        </Card>
-        <Card>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">Support required (24h)</p>
-          <p className="mt-1 text-2xl font-semibold">{supportRequiredLast24h}</p>
-        </Card>
-        <Card>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">Active rules</p>
-          <p className="mt-1 text-2xl font-semibold">{activeRuleCount}</p>
-        </Card>
-        <Card>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">Outbound queue (pending)</p>
-          <p className="mt-1 text-2xl font-semibold">{pendingOutbound}</p>
-        </Card>
+      {disconnectedAccounts.length > 0 ? (
+        <div className="mb-6">
+          <Alert tone="warning" title={`${disconnectedAccounts.length} account(s) not connected`}>
+            {disconnectedAccounts.map((a) => a.label).join(", ")} — check WhatsApp Accounts for details.
+          </Alert>
+        </div>
+      ) : null}
+
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
+        <StatTile
+          label="Connected accounts"
+          value={`${connectedCount}/${accounts.length}`}
+          tone={connectedCount === accounts.length && accounts.length > 0 ? "success" : "warning"}
+        />
+        <StatTile label="Incoming messages (24h)" value={messagesLast24h} />
+        <StatTile
+          label="Support required (24h)"
+          value={supportRequiredLast24h}
+          tone={supportRequiredLast24h > 0 ? "warning" : "neutral"}
+        />
+        <StatTile label="Active rules" value={activeRuleCount} />
+        <StatTile
+          label="Outbound queue (pending)"
+          value={pendingOutbound}
+          tone={pendingOutbound > 0 ? "warning" : "neutral"}
+        />
       </div>
 
       <Card className="mb-6">
-        <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">WhatsApp Accounts</h2>
+        <SectionHeader title="WhatsApp Accounts" />
         {accounts.length === 0 ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="text-sm text-[color:var(--color-muted-foreground)]">
             No accounts yet — the worker creates one automatically on first connect.
           </p>
         ) : (
           <ul className="space-y-2">
             {accounts.map((a) => (
               <li key={a.id} className="flex items-center justify-between text-sm">
-                <span>{a.label}</span>
-                <Badge color={a.status === "CONNECTED" ? "green" : a.status === "ERROR" ? "red" : "yellow"}>
+                <span className="text-[color:var(--color-foreground)]">{a.label}</span>
+                <Badge color={ACCOUNT_STATUS_COLOR[a.status] ?? "gray"} dot>
                   {a.status}
                 </Badge>
               </li>
@@ -71,9 +107,9 @@ export default async function OverviewPage() {
       </Card>
 
       <Card>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Recent Messages</h2>
+        <SectionHeader title="Recent Messages" />
         {recentMessages.length === 0 ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">No messages yet.</p>
+          <p className="text-sm text-[color:var(--color-muted-foreground)]">No messages yet.</p>
         ) : (
           <Table>
             <thead>
@@ -88,12 +124,16 @@ export default async function OverviewPage() {
             <tbody>
               {recentMessages.map((m) => (
                 <tr key={m.id}>
-                  <Td>{m.timestampWa.toLocaleString()}</Td>
-                  <Td>{m.senderPhone}</Td>
+                  <Td className="font-[family-name:var(--font-mono)] text-xs whitespace-nowrap">
+                    {m.timestampWa.toLocaleString()}
+                  </Td>
+                  <Td className="font-[family-name:var(--font-mono)] text-xs">{m.senderPhone}</Td>
                   <Td>{m.direction}</Td>
                   <Td className="max-w-md truncate">{m.body}</Td>
                   <Td>
-                    <Badge color={m.processingStatus === "IGNORED" ? "gray" : "blue"}>{m.processingStatus}</Badge>
+                    <Badge color={m.processingStatus === "IGNORED" ? "gray" : "blue"}>
+                      {m.processingStatus}
+                    </Badge>
                   </Td>
                 </tr>
               ))}
