@@ -10,19 +10,21 @@ function hashPassword(password: string): string {
 }
 
 async function main() {
+  const adminUsername = process.env.SEED_ADMIN_USERNAME ?? "admin";
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@example.com";
   const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? "ChangeMe123!";
 
   const admin = await prisma.user.upsert({
-    where: { email: adminEmail },
-    update: {},
+    where: { username: adminUsername },
+    update: { email: adminEmail, passwordHash: hashPassword(adminPassword) },
     create: {
+      username: adminUsername,
       email: adminEmail,
       name: "Administrator",
       passwordHash: hashPassword(adminPassword),
     },
   });
-  console.log(`Seeded admin user: ${admin.email}`);
+  console.log(`Seeded admin user: ${admin.username}`);
 
   const exampleTeamMembers = [
     {

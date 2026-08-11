@@ -10,7 +10,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <div className="flex min-h-screen bg-[var(--color-background)]">
       <Sidebar
-        email={session.email}
+        username={session.username}
         automationEnabled={Boolean(settings?.automationEnabled)}
         automationMode={settings?.mode ?? "SAFE_AUTO_REPLY"}
         onLogout={logout}

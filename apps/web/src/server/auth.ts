@@ -53,6 +53,7 @@ function verifySessionToken(token: string): { userId: string } | null {
 
 export interface Session {
   userId: string;
+  username: string;
   email: string;
   name: string;
 }
@@ -82,7 +83,7 @@ export async function getSession(): Promise<Session | null> {
 
   const user = await prisma.user.findUnique({ where: { id: verified.userId } });
   if (!user) return null;
-  return { userId: user.id, email: user.email, name: user.name };
+  return { userId: user.id, username: user.username, email: user.email, name: user.name };
 }
 
 /** Call at the top of any protected server component/page. */

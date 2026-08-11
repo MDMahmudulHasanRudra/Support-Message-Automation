@@ -9,16 +9,16 @@ export interface LoginState {
 }
 
 export async function login(_prevState: LoginState, formData: FormData): Promise<LoginState> {
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const username = String(formData.get("username") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
 
-  if (!email || !password) {
-    return { error: "Email and password are required." };
+  if (!username || !password) {
+    return { error: "Username and password are required." };
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({ where: { username } });
   if (!user || !verifyPassword(password, user.passwordHash)) {
-    return { error: "Invalid email or password." };
+    return { error: "Invalid username or password." };
   }
 
   await createSession(user.id);

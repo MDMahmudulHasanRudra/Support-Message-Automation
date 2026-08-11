@@ -88,12 +88,12 @@ function isNavActive(pathname: string, search: URLSearchParams, href: string) {
 }
 
 export function Sidebar({
-  email,
+  username,
   automationEnabled,
   automationMode,
   onLogout,
 }: {
-  email: string;
+  username: string;
   automationEnabled: boolean;
   automationMode: string;
   onLogout: () => Promise<void>;
@@ -110,7 +110,7 @@ export function Sidebar({
         <p className="text-sm font-semibold text-[color:var(--color-foreground)]">
           Support Automation
         </p>
-        <p className="mt-0.5 truncate text-xs text-[color:var(--color-muted-foreground)]">{email}</p>
+        <p className="mt-0.5 truncate text-xs text-[color:var(--color-muted-foreground)]">{username}</p>
       </div>
 
       <nav className="flex-1 space-y-4 overflow-y-auto px-2 py-4">
