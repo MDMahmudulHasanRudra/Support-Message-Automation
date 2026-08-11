@@ -2,7 +2,23 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  ConfirmDialog,
+  Input,
+  SectionHeader,
+  Select,
+  StatTile,
+  StepIndicator,
+  Table,
+  Td,
+  Textarea,
+  Th,
+} from "@/components/ui";
 import { createGroupBroadcastJob, previewExcelUpload } from "@/server/actions/groupBroadcast";
 import type { GroupMatchResult } from "@support-automation/shared";
 
@@ -29,7 +45,7 @@ interface SelectedTarget {
   source: "MANUAL" | "EXCEL";
 }
 
-const STEP_LABELS = ["Account & Groups", "Review Selection", "Compose Message", "Preview & Confirm"];
+const STEP_LABELS = ["Select Account", "Select Groups", "Review Selection", "Compose Message", "Preview"];
 
 export function GroupMessageSenderWizard({
   accounts,
@@ -51,6 +67,7 @@ export function GroupMessageSenderWizard({
   const [ambiguousResolutions, setAmbiguousResolutions] = useState<Map<number, string>>(new Map());
   const [commonMessage, setCommonMessage] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +81,7 @@ export function GroupMessageSenderWizard({
   }, [account, search]);
 
   const targets = useMemo(() => [...selected.values()], [selected]);
+  const overLimit = targets.length > maxPerJob;
 
   const unresolvedSkips = useMemo(() => {
     const skips: Array<{ groupName: string; reason: string }> = [];
@@ -159,12 +177,14 @@ export function GroupMessageSenderWizard({
       if (result.error) {
         setError(result.error);
         setConfirming(false);
+        setConfirmOpen(false);
         return;
       }
       router.push(`/group-message-sender/jobs/${result.jobId}`);
     } catch {
       setError("Failed to create the job. Please try again.");
       setConfirming(false);
+      setConfirmOpen(false);
     }
   }
 
@@ -178,7 +198,7 @@ export function GroupMessageSenderWizard({
   if (accounts.length === 0) {
     return (
       <Card>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-sm text-[color:var(--color-muted-foreground)]">
           No connected WhatsApp account is available. Connect an account on the Accounts page first.
         </p>
       </Card>
@@ -188,36 +208,36 @@ export function GroupMessageSenderWizard({
   return (
     <div className="space-y-6">
       {!automationEnabled ? (
-        <Card className="border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950">
-          <p className="text-sm font-medium text-red-800 dark:text-red-300">
-            Automation is currently PAUSED (kill switch). You can prepare a job, but nothing will be sent until it is
-            resumed on the Automation Control page.
-          </p>
-        </Card>
+        <Alert tone="warning" title="Automation is currently PAUSED (kill switch)">
+          You can prepare a job, but nothing will be sent until it is resumed on the Automation Control page.
+        </Alert>
       ) : null}
 
-      <StepIndicator step={step} />
+      <StepIndicator steps={STEP_LABELS} currentStep={step} />
 
       {step === 1 ? (
         <Card>
-          <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">WhatsApp Account</h2>
-          <select
+          <SectionHeader title="WhatsApp Account" />
+          <Select
             value={accountId}
             onChange={(e) => {
               setAccountId(e.target.value);
               setSelected(new Map());
               setExcelResults([]);
             }}
-            className={inputClass}
           >
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.label} ({a.status}) — {a.groups.length} synchronized group(s)
               </option>
             ))}
-          </select>
+          </Select>
+        </Card>
+      ) : null}
 
-          <h2 className="mb-3 mt-6 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Choose Groups</h2>
+      {step === 2 ? (
+        <Card>
+          <SectionHeader title="Choose Groups" />
           <div className="mb-4 flex gap-2">
             <Button variant={mode === "MANUAL" ? "primary" : "secondary"} onClick={() => setMode("MANUAL")}>
               Manual Selection
@@ -230,28 +250,28 @@ export function GroupMessageSenderWizard({
           {mode === "MANUAL" ? (
             <div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <input
+                <Input
                   placeholder="Search groups by name…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className={`${inputClass} max-w-sm`}
+                  className="max-w-sm"
                 />
-                <Button variant="secondary" onClick={selectAllFiltered}>
+                <Button variant="secondary" size="sm" onClick={selectAllFiltered}>
                   Select all filtered ({filteredGroups.length})
                 </Button>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">{selected.size} selected</span>
+                <span className="text-xs text-[color:var(--color-muted-foreground)]">{selected.size} selected</span>
               </div>
-              <div className="max-h-80 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+              <div className="max-h-80 overflow-y-auto rounded-md border border-[var(--color-border)]">
                 {filteredGroups.length === 0 ? (
-                  <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">No groups match your search.</p>
+                  <p className="p-4 text-sm text-[color:var(--color-muted-foreground)]">No groups match your search.</p>
                 ) : (
                   filteredGroups.map((g) => (
                     <label
                       key={g.id}
-                      className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2 text-sm last:border-0 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900"
+                      className="flex cursor-pointer items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2 text-sm last:border-0 hover:bg-[var(--color-neutral-bg)]"
                     >
                       <span className="flex items-center gap-2">
-                        <input type="checkbox" checked={selected.has(g.id)} onChange={() => toggleManualGroup(g)} />
+                        <Checkbox checked={selected.has(g.id)} onChange={() => toggleManualGroup(g)} />
                         {g.name}
                       </span>
                       {g.isFresh ? <Badge color="green">Verified</Badge> : <Badge color="yellow">Stale sync</Badge>}
@@ -270,84 +290,115 @@ export function GroupMessageSenderWizard({
                   const file = e.target.files?.[0];
                   if (file) handleExcelFile(file);
                 }}
-                className="mb-3 block text-sm"
+                className="mb-3 block text-sm text-[color:var(--color-foreground)]"
               />
-              <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+              <p className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
                 Required column: <strong>Group Name</strong>. Optional column: <strong>Message</strong>.
               </p>
-              {uploading ? <p className="text-sm text-zinc-500 dark:text-zinc-400">Matching against synchronized groups…</p> : null}
-              {excelFileErrors.length > 0 ? (
-                <ul className="mb-3 list-inside list-disc text-sm text-red-600">
-                  {excelFileErrors.map((err, i) => (
-                    <li key={i}>{err}</li>
-                  ))}
-                </ul>
+              {uploading ? (
+                <p className="text-sm text-[color:var(--color-muted-foreground)]">Matching against synchronized groups…</p>
               ) : null}
-              {excelResults.length > 0 ? <ExcelMatchTables results={excelResults} ambiguousResolutions={ambiguousResolutions} onResolveAmbiguous={resolveAmbiguous} /> : null}
+              {excelFileErrors.length > 0 ? (
+                <div className="mb-3">
+                  <Alert tone="danger">
+                    <ul className="list-inside list-disc">
+                      {excelFileErrors.map((err, i) => (
+                        <li key={i}>{err}</li>
+                      ))}
+                    </ul>
+                  </Alert>
+                </div>
+              ) : null}
+              {excelResults.length > 0 ? (
+                <ExcelMatchTables
+                  results={excelResults}
+                  ambiguousResolutions={ambiguousResolutions}
+                  onResolveAmbiguous={resolveAmbiguous}
+                />
+              ) : null}
             </div>
           )}
-        </Card>
-      ) : null}
-
-      {step === 2 ? (
-        <Card>
-          <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Review Selection ({targets.length} group(s))</h2>
-          {targets.length === 0 ? (
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">No groups selected yet — go back and select some.</p>
-          ) : (
-            <ul className="divide-y divide-zinc-100 dark:divide-zinc-900">
-              {targets.map((t) => (
-                <li key={t.groupId} className="flex items-center justify-between py-2 text-sm">
-                  <span>
-                    {t.groupName} <Badge color={t.source === "EXCEL" ? "blue" : "gray"}>{t.source}</Badge>
-                    {t.message ? <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">(has its own message)</span> : null}
-                  </span>
-                  <Button variant="secondary" onClick={() => removeTarget(t.groupId)}>
-                    Remove
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {unresolvedSkips.length > 0 ? (
-            <div className="mt-4 rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm dark:border-yellow-900 dark:bg-yellow-950">
-              <p className="mb-1 font-medium text-yellow-800 dark:text-yellow-300">{unresolvedSkips.length} row(s) will NOT be sent:</p>
-              <ul className="list-inside list-disc text-yellow-700 dark:text-yellow-400">
-                {unresolvedSkips.map((s, i) => (
-                  <li key={i}>
-                    {s.groupName} — {s.reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
         </Card>
       ) : null}
 
       {step === 3 ? (
         <Card>
-          <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Compose Message</h2>
-          <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            Common message (used for any group without its own Excel message)
-          </label>
-          <textarea
-            value={commonMessage}
-            onChange={(e) => setCommonMessage(e.target.value)}
-            rows={5}
-            maxLength={4096}
-            className={inputClass}
-            placeholder="e.g. Server maintenance will start at 11 PM."
-          />
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{commonMessage.length} / 4096 characters</p>
-          <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-            {targets.filter((t) => t.message).length} of {targets.length} selected group(s) have their own message from
-            the Excel file, which overrides the common message for that group only.
-          </p>
+          <SectionHeader title={`Review Selection (${targets.length} group(s))`} />
+          {targets.length === 0 ? (
+            <p className="text-sm text-[color:var(--color-muted-foreground)]">
+              No groups selected yet — go back and select some.
+            </p>
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Group</Th>
+                  <Th>Source</Th>
+                  <Th>Message</Th>
+                  <Th>{null}</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {targets.map((t) => (
+                  <tr key={t.groupId}>
+                    <Td>{t.groupName}</Td>
+                    <Td>
+                      <Badge color={t.source === "EXCEL" ? "blue" : "gray"}>{t.source}</Badge>
+                    </Td>
+                    <Td className="text-xs text-[color:var(--color-muted-foreground)]">
+                      {t.message ? "Has its own message" : "Uses common message"}
+                    </Td>
+                    <Td>
+                      <Button variant="ghost" size="sm" onClick={() => removeTarget(t.groupId)}>
+                        Remove
+                      </Button>
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+          {unresolvedSkips.length > 0 ? (
+            <div className="mt-4">
+              <Alert tone="warning" title={`${unresolvedSkips.length} row(s) will NOT be sent`}>
+                <ul className="list-inside list-disc">
+                  {unresolvedSkips.map((s, i) => (
+                    <li key={i}>
+                      {s.groupName} — {s.reason}
+                    </li>
+                  ))}
+                </ul>
+              </Alert>
+            </div>
+          ) : null}
         </Card>
       ) : null}
 
       {step === 4 ? (
-        <ConfirmStep
+        <Card>
+          <SectionHeader title="Compose Message" />
+          <label className="mb-1.5 block text-sm font-medium text-[color:var(--color-foreground)]">
+            Common message (used for any group without its own Excel message)
+          </label>
+          <Textarea
+            value={commonMessage}
+            onChange={(e) => setCommonMessage(e.target.value)}
+            rows={5}
+            maxLength={4096}
+            placeholder="e.g. Server maintenance will start at 11 PM."
+          />
+          <p className="mt-1.5 text-xs text-[color:var(--color-muted-foreground)]">
+            {commonMessage.length} / 4096 characters
+          </p>
+          <p className="mt-3 text-xs text-[color:var(--color-muted-foreground)]">
+            {targets.filter((t) => t.message).length} of {targets.length} selected group(s) have their own message
+            from the Excel file, which overrides the common message for that group only.
+          </p>
+        </Card>
+      ) : null}
+
+      {step === 5 ? (
+        <PreviewStep
           accountLabel={account?.label ?? ""}
           automationEnabled={automationEnabled}
           targets={targets}
@@ -357,48 +408,53 @@ export function GroupMessageSenderWizard({
         />
       ) : null}
 
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? (
+        <Alert tone="danger" title="Could not queue this job">
+          {error}
+        </Alert>
+      ) : null}
 
       <div className="flex justify-between">
         <Button variant="secondary" disabled={step === 1} onClick={() => setStep((s) => Math.max(1, s - 1))}>
           Back
         </Button>
-        {step < 4 ? (
+        {step < 5 ? (
           <Button
             disabled={
-              (step === 1 && targets.length === 0) ||
               (step === 2 && targets.length === 0) ||
-              (step === 3 && !commonMessage.trim())
+              (step === 3 && targets.length === 0) ||
+              (step === 4 && !commonMessage.trim())
             }
-            onClick={() => setStep((s) => Math.min(4, s + 1))}
+            onClick={() => setStep((s) => Math.min(5, s + 1))}
           >
             Next
           </Button>
         ) : (
-          <Button disabled={confirming || targets.length === 0} onClick={handleConfirm}>
-            {confirming ? "Queueing…" : "Confirm & Queue"}
+          <Button disabled={targets.length === 0 || overLimit} onClick={() => setConfirmOpen(true)}>
+            Confirm &amp; Queue
           </Button>
         )}
       </div>
-    </div>
-  );
-}
 
-function StepIndicator({ step }: { step: number }) {
-  return (
-    <div className="flex gap-2 text-xs">
-      {STEP_LABELS.map((label, i) => (
-        <div
-          key={label}
-          className={`rounded-full px-3 py-1 ${
-            i + 1 === step
-              ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900"
-              : "bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400"
-          }`}
-        >
-          {i + 1}. {label}
-        </div>
-      ))}
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={handleConfirm}
+        loading={confirming}
+        title={`Send to ${targets.length} group(s)?`}
+        description={
+          automationEnabled
+            ? "This queues the messages for immediate sending by the worker."
+            : "Automation is paused — this will queue the job, but nothing sends until the kill switch is turned back on."
+        }
+        confirmLabel="Confirm & Queue"
+      >
+        {unresolvedSkips.length > 0 ? (
+          <p className="text-sm text-[color:var(--color-muted-foreground)]">
+            {unresolvedSkips.length} additional group(s) will be skipped (see Review step for reasons).
+          </p>
+        ) : null}
+      </ConfirmDialog>
     </div>
   );
 }
@@ -421,26 +477,32 @@ function ExcelMatchTables({
     <div className="space-y-4">
       {matched.length > 0 ? (
         <div>
-          <p className="mb-1 text-sm font-medium text-green-700 dark:text-green-400">Matched ({matched.length})</p>
-          <ul className="max-h-40 overflow-y-auto rounded-md border border-zinc-200 text-sm dark:border-zinc-800">
-            {matched.map((r) => (
-              <li key={r.rowNumber} className="border-b border-zinc-100 px-3 py-1.5 last:border-0 dark:border-zinc-900">
-                {r.groupName} → {r.matchedGroupName}
-              </li>
-            ))}
-          </ul>
+          <p className="mb-1.5 text-sm font-medium text-[color:var(--color-success-fg)]">
+            Matched ({matched.length})
+          </p>
+          <Table>
+            <tbody>
+              {matched.map((r) => (
+                <tr key={r.rowNumber}>
+                  <Td>{r.groupName}</Td>
+                  <Td className="text-[color:var(--color-muted-foreground)]">→ {r.matchedGroupName}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
         </div>
       ) : null}
 
       {ambiguous.length > 0 ? (
         <div>
-          <p className="mb-1 text-sm font-medium text-yellow-700 dark:text-yellow-400">Ambiguous — pick one ({ambiguous.length})</p>
+          <p className="mb-1.5 text-sm font-medium text-[color:var(--color-warning-fg)]">
+            Ambiguous — pick one ({ambiguous.length})
+          </p>
           <ul className="space-y-2">
             {ambiguous.map((r) => (
-              <li key={r.rowNumber} className="rounded-md border border-yellow-300 p-2 text-sm dark:border-yellow-900">
-                <p className="mb-1">{r.groupName}</p>
-                <select
-                  className={inputClass}
+              <li key={r.rowNumber} className="rounded-md border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] p-3">
+                <p className="mb-1.5 text-sm text-[color:var(--color-warning-fg)]">{r.groupName}</p>
+                <Select
                   value={ambiguousResolutions.get(r.rowNumber) ?? ""}
                   onChange={(e) => e.target.value && onResolveAmbiguous(r, e.target.value)}
                 >
@@ -450,7 +512,7 @@ function ExcelMatchTables({
                       {c.name} ({c.id})
                     </option>
                   ))}
-                </select>
+                </Select>
               </li>
             ))}
           </ul>
@@ -459,34 +521,43 @@ function ExcelMatchTables({
 
       {unmatched.length > 0 ? (
         <div>
-          <p className="mb-1 text-sm font-medium text-red-700 dark:text-red-400">Unmatched — will NOT be sent ({unmatched.length})</p>
-          <ul className="max-h-40 overflow-y-auto rounded-md border border-zinc-200 text-sm dark:border-zinc-800">
-            {unmatched.map((r) => (
-              <li key={r.rowNumber} className="border-b border-zinc-100 px-3 py-1.5 last:border-0 dark:border-zinc-900">
-                {r.groupName} — {r.reason}
-              </li>
-            ))}
-          </ul>
+          <p className="mb-1.5 text-sm font-medium text-[color:var(--color-danger-fg)]">
+            Unmatched — will NOT be sent ({unmatched.length})
+          </p>
+          <Table>
+            <tbody>
+              {unmatched.map((r) => (
+                <tr key={r.rowNumber}>
+                  <Td>{r.groupName}</Td>
+                  <Td className="text-[color:var(--color-muted-foreground)]">{r.reason}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
         </div>
       ) : null}
 
       {duplicate.length > 0 ? (
         <div>
-          <p className="mb-1 text-sm font-medium text-zinc-500">Duplicate rows in file — will NOT be sent again ({duplicate.length})</p>
-          <ul className="max-h-40 overflow-y-auto rounded-md border border-zinc-200 text-sm dark:border-zinc-800">
-            {duplicate.map((r) => (
-              <li key={r.rowNumber} className="border-b border-zinc-100 px-3 py-1.5 last:border-0 dark:border-zinc-900">
-                {r.groupName}
-              </li>
-            ))}
-          </ul>
+          <p className="mb-1.5 text-sm font-medium text-[color:var(--color-muted-foreground)]">
+            Duplicate rows in file — will NOT be sent again ({duplicate.length})
+          </p>
+          <Table>
+            <tbody>
+              {duplicate.map((r) => (
+                <tr key={r.rowNumber}>
+                  <Td>{r.groupName}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
         </div>
       ) : null}
     </div>
   );
 }
 
-function ConfirmStep({
+function PreviewStep({
   accountLabel,
   automationEnabled,
   targets,
@@ -504,52 +575,48 @@ function ConfirmStep({
   const overLimit = targets.length > maxPerJob;
   return (
     <Card>
-      <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Preview &amp; Confirm</h2>
-      <dl className="mb-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-        <div>
-          <dt className="text-xs text-zinc-500 dark:text-zinc-400">Account</dt>
-          <dd>{accountLabel}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-zinc-500 dark:text-zinc-400">Target groups</dt>
-          <dd>{targets.length}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-zinc-500 dark:text-zinc-400">Skipped before queueing</dt>
-          <dd>{unresolvedSkips.length}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-zinc-500 dark:text-zinc-400">Estimated queue size</dt>
-          <dd>{targets.length}</dd>
-        </div>
-      </dl>
+      <SectionHeader title="Preview" />
+      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatTile label="Account" value={accountLabel} />
+        <StatTile label="Target groups" value={targets.length} tone={overLimit ? "danger" : "neutral"} />
+        <StatTile label="Skipped before queueing" value={unresolvedSkips.length} tone={unresolvedSkips.length > 0 ? "warning" : "neutral"} />
+        <StatTile label="Estimated queue size" value={targets.length} />
+      </div>
 
       {overLimit ? (
-        <p className="mb-3 text-sm text-red-600">
-          {targets.length} groups exceeds the configured maximum of {maxPerJob} per job. Remove some groups or raise the
-          limit in Settings before confirming.
-        </p>
+        <div className="mb-3">
+          <Alert tone="danger">
+            {targets.length} groups exceeds the configured maximum of {maxPerJob} per job. Remove some groups or raise
+            the limit in Settings before confirming.
+          </Alert>
+        </div>
       ) : null}
       {!automationEnabled ? (
-        <p className="mb-3 text-sm text-red-600">
-          Automation is paused — this job will queue but nothing will send until the kill switch is turned back on.
-        </p>
+        <div className="mb-3">
+          <Alert tone="warning">
+            Automation is paused — this job will queue but nothing will send until the kill switch is turned back on.
+          </Alert>
+        </div>
       ) : null}
 
-      <p className="mb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">Common message</p>
-      <p className="mb-4 whitespace-pre-wrap rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-800">{commonMessage}</p>
+      <p className="mb-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)]">Common message</p>
+      <p className="mb-4 whitespace-pre-wrap rounded-md border border-[var(--color-border)] p-3 text-sm text-[color:var(--color-foreground)]">
+        {commonMessage}
+      </p>
 
-      <p className="mb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">Final recipient list</p>
-      <ul className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 text-sm dark:border-zinc-800">
-        {targets.map((t) => (
-          <li key={t.groupId} className="border-b border-zinc-100 px-3 py-2 last:border-0 dark:border-zinc-900">
-            <span className="font-medium">{t.groupName}</span>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">{t.message ?? commonMessage}</p>
-          </li>
-        ))}
-      </ul>
+      <p className="mb-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)]">Final recipient list</p>
+      <div className="max-h-64 overflow-y-auto">
+        <Table>
+          <tbody>
+            {targets.map((t) => (
+              <tr key={t.groupId}>
+                <Td className="font-medium">{t.groupName}</Td>
+                <Td className="text-xs text-[color:var(--color-muted-foreground)]">{t.message ?? commonMessage}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </div>
     </Card>
   );
 }
-
-const inputClass = "w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900";

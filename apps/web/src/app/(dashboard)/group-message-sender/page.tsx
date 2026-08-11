@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { History } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { PageHeader } from "@/components/ui";
+import { Button, PageHeader } from "@/components/ui";
 import { GroupMessageSenderWizard, type WizardAccount } from "./GroupMessageSenderWizard";
 
 const GROUP_SYNC_FRESHNESS_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -41,12 +42,15 @@ export default async function GroupMessageSenderPage() {
       <PageHeader
         title="Group Message Sender"
         description="Send a custom message to selected WhatsApp groups — reuses the existing outbound queue, rate limiting, and kill switch. Never sends without explicit confirmation."
+        actions={
+          <Link href="/group-message-sender/history">
+            <Button variant="secondary" size="sm">
+              <History className="size-3.5" aria-hidden />
+              Sending History
+            </Button>
+          </Link>
+        }
       />
-      <p className="mb-4 text-sm">
-        <Link href="/group-message-sender/history" className="underline">
-          View sending history →
-        </Link>
-      </p>
       <GroupMessageSenderWizard
         accounts={wizardAccounts}
         maxPerJob={settings.maxPerJob}
