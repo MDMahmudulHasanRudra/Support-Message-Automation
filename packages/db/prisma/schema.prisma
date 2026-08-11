@@ -347,6 +347,7 @@ model OutboundMessage {
   @@index([sentAt])
   @@index([broadcastJobId, status])
   @@index([groupId, status])
+  @@index([relatedMessageId])
 }
 
 /// One row per "send this message to these groups" batch created through the
@@ -427,6 +428,7 @@ model Notification {
   updatedAt        DateTime           @updatedAt
 
   @@index([status])
+  @@index([relatedMessageId])
 }
 
 model WorkerCommand {

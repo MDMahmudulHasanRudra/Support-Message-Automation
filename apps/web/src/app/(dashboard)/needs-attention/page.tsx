@@ -1,23 +1,6 @@
-import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { PageHeader } from "@/components/ui";
-import { MessageList } from "@/components/MessageList";
+import { redirect } from "next/navigation";
 
-export default async function NeedsAttentionPage() {
-  await requireSession();
-  const messages = await prisma.message.findMany({
-    where: { executions: { some: { decision: "SUPPORT_REQUIRED" } } },
-    orderBy: { timestampWa: "desc" },
-    take: 100,
-  });
-
-  return (
-    <div>
-      <PageHeader
-        title="Needs Attention"
-        description="Messages the rule engine marked SUPPORT_REQUIRED — a support executive should contact these clients."
-      />
-      <MessageList messages={messages} />
-    </div>
-  );
+/** Preserves this URL for anyone with it bookmarked — the real implementation is the main Messages page's decision filter. */
+export default function NeedsAttentionRedirect() {
+  redirect("/messages?decision=SUPPORT_REQUIRED");
 }
