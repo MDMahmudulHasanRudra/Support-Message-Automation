@@ -20,7 +20,9 @@ function uniqueGroupJid(): string {
 }
 
 beforeEach(async () => {
-  account = await prisma.whatsAppAccount.create({ data: { label: `Command Safety Test Account ${randomUUID()}`, status: "CONNECTED" } });
+  account = await prisma.whatsAppAccount.create({
+    data: { label: `Command Safety Test Account ${randomUUID()}`, status: "CONNECTED", phoneNumber: "+8801000000000" },
+  });
 });
 
 afterEach(async () => {
@@ -130,5 +132,55 @@ describe("Command loop: never overlaps two commands", () => {
     } finally {
       clearInterval(interval);
     }
+  });
+});
+
+describe("LOGOUT", () => {
+  it("calls provider.logout(), clears the account's phone number, and marks the command DONE", async () => {
+    const provider = new MockProvider();
+
+    const command = await prisma.workerCommand.create({ data: { type: "LOGOUT" } });
+    await processOneCommand(account.id, provider);
+
+    expect(provider.loggedOut).toBe(true);
+
+    const refreshedAccount = await prisma.whatsAppAccount.findUniqueOrThrow({ where: { id: account.id } });
+    expect(refreshedAccount.phoneNumber).toBeNull();
+
+    const refreshedCommand = await prisma.workerCommand.findUniqueOrThrow({ where: { id: command.id } });
+    expect(refreshedCommand.status).toBe("DONE");
+    expect(refreshedCommand.result).toMatchObject({ loggedOut: true });
+  });
+
+  it("never touches a different account's phone number", async () => {
+    const otherAccount = await prisma.whatsAppAccount.create({
+      data: { label: `Other Account ${randomUUID()}`, status: "CONNECTED", phoneNumber: "+8801999999999" },
+    });
+    try {
+      const provider = new MockProvider();
+      await prisma.workerCommand.create({ data: { type: "LOGOUT" } });
+      await processOneCommand(account.id, provider); // logs out `account`, not `otherAccount`
+
+      const refreshedOther = await prisma.whatsAppAccount.findUniqueOrThrow({ where: { id: otherAccount.id } });
+      expect(refreshedOther.phoneNumber).toBe("+8801999999999");
+    } finally {
+      await prisma.whatsAppAccount.delete({ where: { id: otherAccount.id } });
+    }
+  });
+
+  it("still completes even if the underlying provider.logout() rejects", async () => {
+    const provider = new MockProvider();
+    provider.logout = async () => {
+      throw new Error("simulated logout failure");
+    };
+
+    const command = await prisma.workerCommand.create({ data: { type: "LOGOUT" } });
+    await processOneCommand(account.id, provider);
+
+    // The interface contract says logout() never throws; if a provider implementation breaks that
+    // contract anyway, the existing generic catch-all still reports it as FAILED rather than
+    // silently losing the command -- consistent with every other command type.
+    const refreshedCommand = await prisma.workerCommand.findUniqueOrThrow({ where: { id: command.id } });
+    expect(refreshedCommand.status).toBe("FAILED");
   });
 });

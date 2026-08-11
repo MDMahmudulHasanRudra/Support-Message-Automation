@@ -3,6 +3,7 @@ import { requireSession } from "@/server/auth";
 import { Badge, Button, Card, PageHeader } from "@/components/ui";
 import { requestGroupResync, requestReconnect } from "@/server/actions/accounts";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { LogoutButton } from "./LogoutButton";
 
 // A scanned-but-unauthenticated QR is expected to refresh every ~20-30s
 // while OpenWA waits for a scan (WhatsApp Web regenerates it automatically,
@@ -80,13 +81,14 @@ export default async function AccountsPage() {
                 </div>
               ) : null}
 
-              <div className="mt-4 flex gap-2">
+              <div className="mt-4 flex flex-wrap items-start gap-2">
                 <form action={requestReconnect}>
                   <Button variant="secondary" type="submit">Reconnect</Button>
                 </form>
                 <form action={requestGroupResync}>
                   <Button variant="secondary" type="submit">Resync Groups</Button>
                 </form>
+                <LogoutButton />
               </div>
             </Card>
           ))}

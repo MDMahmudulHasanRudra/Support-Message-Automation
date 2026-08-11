@@ -249,6 +249,26 @@ export class OpenWAProvider implements WhatsAppProvider {
     await this.setState("DISCONNECTED");
   }
 
+  /**
+   * OpenWA's own doc comment on `logout()` warns it "can exit the whole process depending on your
+   * config" — a real risk, not a hypothetical one, given the WAPI in-page call this makes. Given
+   * that, this deliberately swallows errors rather than propagating them: whether or not the
+   * remote unlink call fully completes, we still want to locally tear down and land on
+   * DISCONNECTED so a fresh QR becomes available — the same outcome RECONNECT can't guarantee
+   * (it reuses session data on purpose), but LOGOUT's entire point is to invalidate it.
+   */
+  async logout(): Promise<void> {
+    if (this.client) {
+      try {
+        await this.client.logout(false); // false = do invalidate persisted session data
+      } catch (err) {
+        console.error("[openwa] logout() call failed — still tearing down the local session", err);
+      }
+      this.client = null;
+    }
+    await this.setState("DISCONNECTED");
+  }
+
   getConnectionStatus(): ConnectionStatus {
     return toInterfaceStatus(this.state);
   }

@@ -54,4 +54,12 @@ export interface WhatsAppProvider {
    * can't be determined.
    */
   getGroupParticipantCount(chatId: string): Promise<number | null>;
+  /**
+   * Ends the current session and invalidates its persisted session data, so the NEXT connect()
+   * requires a fresh QR scan — distinct from disconnect(), which is a transient step inside
+   * RECONNECT that expects the same session to be reusable afterward. Never throws; failures are
+   * logged and swallowed since the caller (the LOGOUT command) must still report a clean local
+   * DISCONNECTED state either way (see OpenWAProvider's doc comment on why this call is risky).
+   */
+  logout(): Promise<void>;
 }

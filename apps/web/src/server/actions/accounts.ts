@@ -12,7 +12,7 @@ import { requireSession } from "@/server/auth";
  * happened — two stale RECONNECT commands queued back-to-back). Skips silently rather than
  * erroring: the existing command will still run, so there's nothing for the admin to fix.
  */
-async function enqueueCommand(type: "RECONNECT" | "RESYNC_GROUPS", payload?: Record<string, unknown>) {
+async function enqueueCommand(type: "RECONNECT" | "RESYNC_GROUPS" | "LOGOUT", payload?: Record<string, unknown>) {
   const existing = await prisma.workerCommand.findFirst({
     where: { type, status: { in: ["PENDING", "PROCESSING"] } },
   });
@@ -34,4 +34,11 @@ export async function requestGroupResync(): Promise<void> {
   await enqueueCommand("RESYNC_GROUPS");
   revalidatePath("/accounts");
   revalidatePath("/groups");
+}
+
+/** Ends the current session so a different WhatsApp account can scan a fresh QR. See ENGINEERING_STANDARDS.md §8. */
+export async function requestLogout(): Promise<void> {
+  await requireSession();
+  await enqueueCommand("LOGOUT");
+  revalidatePath("/accounts");
 }

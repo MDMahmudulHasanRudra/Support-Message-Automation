@@ -99,6 +99,7 @@ export const WORKER_COMMAND_TYPE = [
   "SEND_LIVE_TEST",
   "RESYNC_GROUPS",
   "GET_GROUP_PARTICIPANT_COUNT",
+  "LOGOUT",
 ] as const;
 export type WorkerCommandType = (typeof WORKER_COMMAND_TYPE)[number];
 

@@ -119,6 +119,9 @@ enum WorkerCommandType {
   /// On-demand, single-group participant count lookup (payload: { groupId }) — deliberately NOT
   /// part of the bulk RESYNC_GROUPS path, which only fetches group names for cost reasons.
   GET_GROUP_PARTICIPANT_COUNT
+  /// Ends the current WhatsApp session and invalidates its persisted session data so a different
+  /// account can scan a fresh QR — distinct from RECONNECT, which reuses the existing session.
+  LOGOUT
 }
 
 enum WorkerCommandStatus {

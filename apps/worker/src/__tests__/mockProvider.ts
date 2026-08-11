@@ -13,9 +13,13 @@ export class MockProvider implements WhatsAppProvider {
   public defaultMembership = true;
   public participantCountByChatId: Map<string, number | null> = new Map();
   public defaultParticipantCount: number | null = 42;
+  public loggedOut = false;
 
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
+  async logout(): Promise<void> {
+    this.loggedOut = true;
+  }
   getConnectionStatus(): ConnectionStatus {
     return "CONNECTED";
   }

@@ -211,6 +211,19 @@ export async function processOneCommand(accountId: string, provider: WhatsAppPro
         break;
       }
 
+      case "LOGOUT": {
+        // provider.logout() never throws by design (see its own doc comment) -- whatever happens
+        // remotely, we still want to land on DISCONNECTED locally and clear the stale phone number
+        // so the dashboard doesn't keep showing an account that's no longer actually connected.
+        await provider.logout();
+        await prisma.whatsAppAccount.update({ where: { id: accountId }, data: { phoneNumber: null } });
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: { status: "DONE", processedAt: new Date(), result: { loggedOut: true } },
+        });
+        break;
+      }
+
       case "RESYNC_GROUPS": {
         const count = await syncGroupsWithTimeoutAndRetry(accountId, provider);
         await prisma.workerCommand.update({
