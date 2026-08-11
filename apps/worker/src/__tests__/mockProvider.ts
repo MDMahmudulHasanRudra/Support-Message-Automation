@@ -8,6 +8,9 @@ import type { WhatsAppProvider, SendResult } from "../provider/WhatsAppProvider.
 export class MockProvider implements WhatsAppProvider {
   public sentMessages: Array<{ chatId: string; body: string }> = [];
   public nextResult: SendResult = { success: true, providerMessageId: "mock-id" };
+  /** Test-controllable: defaults to "yes, still a member" so existing tests don't need to know about this. */
+  public membershipByChatId: Map<string, boolean> = new Map();
+  public defaultMembership = true;
 
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
@@ -25,5 +28,9 @@ export class MockProvider implements WhatsAppProvider {
   async sendMessage(chatId: string, body: string): Promise<SendResult> {
     this.sentMessages.push({ chatId, body });
     return this.nextResult;
+  }
+
+  async verifyGroupMembership(chatId: string): Promise<boolean> {
+    return this.membershipByChatId.get(chatId) ?? this.defaultMembership;
   }
 }

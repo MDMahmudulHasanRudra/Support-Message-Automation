@@ -12,6 +12,31 @@ export async function setAutomationEnabled(enabled: boolean): Promise<void> {
   await requireSession();
   await getOrCreateSettings();
   await prisma.automationSettings.update({ where: { id: "global" }, data: { automationEnabled: enabled } });
+
+  // The kill switch must "immediately stop queued outbound group sending" (Group Message Sender safety
+  // requirement) — the queue processor's own per-row check (outboundQueueProcessor.ts) is a safety net for
+  // rows it hasn't reached yet, but this bulk sweep means every already-queued group message stops right now,
+  // not whenever the 2-second queue tick happens to reach each row.
+  if (!enabled) {
+    const affectedJobIds = await prisma.outboundMessage.findMany({
+      where: { actionType: "GROUP_BROADCAST", status: "PENDING", broadcastJobId: { not: null } },
+      select: { broadcastJobId: true },
+      distinct: ["broadcastJobId"],
+    });
+    await prisma.outboundMessage.updateMany({
+      where: { actionType: "GROUP_BROADCAST", status: "PENDING" },
+      data: { status: "CANCELLED", failureReason: "Stopped by kill switch." },
+    });
+    const jobIds = affectedJobIds.map((row) => row.broadcastJobId).filter((id): id is string => Boolean(id));
+    if (jobIds.length > 0) {
+      await prisma.groupBroadcastJob.updateMany({
+        where: { id: { in: jobIds }, status: { notIn: ["CANCELLED", "STOPPED_KILL_SWITCH"] } },
+        data: { status: "STOPPED_KILL_SWITCH", cancelledAt: new Date() },
+      });
+    }
+    revalidatePath("/group-message-sender");
+  }
+
   revalidatePath("/automation-control");
 }
 

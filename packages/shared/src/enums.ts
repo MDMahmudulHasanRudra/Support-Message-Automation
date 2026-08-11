@@ -54,6 +54,7 @@ export const ACTION_TYPE = [
   "NOTIFY_WHATSAPP",
   "FORWARD",
   "STOP_PROCESSING",
+  "GROUP_BROADCAST",
 ] as const;
 export type ActionType = (typeof ACTION_TYPE)[number];
 
@@ -64,8 +65,22 @@ export const OUTBOUND_MESSAGE_STATUS = [
   "FAILED",
   "CANCELLED",
   "RATE_LIMITED",
+  "SKIPPED",
 ] as const;
 export type OutboundMessageStatus = (typeof OUTBOUND_MESSAGE_STATUS)[number];
+
+/** Group Message Sender job lifecycle — see schema.prisma's GroupBroadcastJobStatus doc comment. */
+export const GROUP_BROADCAST_JOB_STATUS = [
+  "QUEUED",
+  "RUNNING",
+  "COMPLETED",
+  "CANCELLED",
+  "STOPPED_KILL_SWITCH",
+] as const;
+export type GroupBroadcastJobStatus = (typeof GROUP_BROADCAST_JOB_STATUS)[number];
+
+export const GROUP_BROADCAST_SOURCE = ["MANUAL", "EXCEL", "MIXED"] as const;
+export type GroupBroadcastSource = (typeof GROUP_BROADCAST_SOURCE)[number];
 
 export const NOTIFICATION_TYPE = ["TEAMS", "WHATSAPP"] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPE)[number];

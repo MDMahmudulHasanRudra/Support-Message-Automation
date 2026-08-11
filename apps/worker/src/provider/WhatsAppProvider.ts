@@ -37,4 +37,13 @@ export interface WhatsAppProvider {
   subscribeToMessages(handler: (message: RawIncomingMessage) => void): void;
   sendMessage(chatId: string, body: string): Promise<SendResult>;
   getAccountInfo(): Promise<AccountInfo>;
+  /**
+   * Lightweight, single-chat membership check used by the Group Message
+   * Sender immediately before sending (see safety requirement: never send
+   * blindly). Deliberately NOT a full `getGroups()` rescan — that call is
+   * expensive enough on large accounts to need its own timeout/retry
+   * wrapper (see commandProcessor.ts) and is unsuitable to run per-message.
+   * Returns false (never throws) if membership can't be confirmed.
+   */
+  verifyGroupMembership(chatId: string): Promise<boolean>;
 }

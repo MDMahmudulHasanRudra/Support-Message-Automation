@@ -16,7 +16,8 @@
     "@prisma/client": "^5.20.0",
     "@support-automation/db": "workspace:*",
     "@support-automation/engine": "workspace:*",
-    "@support-automation/shared": "workspace:*"
+    "@support-automation/shared": "workspace:*",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -111,6 +111,13 @@ async function main() {
     },
   });
   console.log("Seeded safe default automation settings (SAFE_AUTO_REPLY)");
+
+  await prisma.groupBroadcastSettings.upsert({
+    where: { id: "global" },
+    update: {},
+    create: { id: "global" },
+  });
+  console.log("Seeded conservative default Group Message Sender settings");
 }
 
 main()

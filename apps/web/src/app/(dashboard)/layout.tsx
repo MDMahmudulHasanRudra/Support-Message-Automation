@@ -13,6 +13,8 @@ const NAV_LINKS: Array<{ href: string; label: string }> = [
   { href: "/ignored", label: "Ignored Messages" },
   { href: "/rules", label: "Automation Rules" },
   { href: "/rules/tester", label: "Rule Tester" },
+  { href: "/group-message-sender", label: "Group Message Sender" },
+  { href: "/group-message-sender/history", label: "Broadcast History" },
   { href: "/automation-control", label: "Automation Control" },
   { href: "/notifications", label: "Notifications" },
   { href: "/settings", label: "Settings" },

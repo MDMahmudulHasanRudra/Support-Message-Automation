@@ -6,6 +6,7 @@ import {
   STATE,
   type ChatId,
   type Client,
+  type ContactId,
   type Content,
   type Message as WaMessage,
 } from "@open-wa/wa-automate";
@@ -290,6 +291,25 @@ export class OpenWAProvider implements WhatsAppProvider {
       this.client.getMe().catch(() => null),
     ]);
     return { phoneNumber, pushName: me?.pushname ?? null };
+  }
+
+  /**
+   * `getChatById` is a single-chat store lookup (cheap), unlike
+   * `getAllGroups()` which scans every chat and is documented elsewhere in
+   * this file as too slow to run more than occasionally. A chat still being
+   * present in the client's own chat store is the best available signal
+   * OpenWA exposes for "are we still in this group" short of a full rescan.
+   */
+  async verifyGroupMembership(chatId: string): Promise<boolean> {
+    if (!this.client) return false;
+    try {
+      // getChatById's typings only declare ContactId (a 1:1 chat id), but it works for any ChatId at
+      // runtime — a group id is structurally a valid ChatId, just not this specific narrower alias.
+      const chat = await this.client.getChatById(chatId as unknown as ContactId);
+      return Boolean(chat && chat.isGroup !== false);
+    } catch {
+      return false;
+    }
   }
 
   private async setState(

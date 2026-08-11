@@ -62,6 +62,9 @@ enum ActionType {
   NOTIFY_WHATSAPP
   FORWARD
   STOP_PROCESSING
+  /// Manual custom send to a WhatsApp group via the Group Message Sender —
+  /// never produced by the rule engine, only by a human-confirmed broadcast job.
+  GROUP_BROADCAST
 }
 
 enum OutboundMessageStatus {
@@ -71,6 +74,29 @@ enum OutboundMessageStatus {
   FAILED
   CANCELLED
   RATE_LIMITED
+  /// Group Message Sender only: queued item deliberately not sent (e.g. group
+  /// membership could not be verified, or it was skipped for duplicate-send
+  /// protection) — distinct from FAILED, which implies a send was attempted.
+  SKIPPED
+}
+
+/// Group Message Sender job lifecycle: QUEUED -> RUNNING (first item starts
+/// processing) -> COMPLETED (no items left PENDING/PROCESSING), or QUEUED/
+/// RUNNING -> CANCELLED (explicit stop) / STOPPED_KILL_SWITCH (automation
+/// paused mid-job) — both terminal and never overwritten by the normal
+/// COMPLETED transition.
+enum GroupBroadcastJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  CANCELLED
+  STOPPED_KILL_SWITCH
+}
+
+enum GroupBroadcastSource {
+  MANUAL
+  EXCEL
+  MIXED
 }
 
 enum NotificationType {
@@ -139,7 +165,9 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  createdRules AutomationRule[]
+  createdRules         AutomationRule[]
+  createdBroadcastJobs GroupBroadcastJob[]
+  createdOutboundSends OutboundMessage[]
 }
 
 model WhatsAppAccount {
@@ -158,6 +186,7 @@ model WhatsAppAccount {
   groups               WhatsAppGroup[]
   messages             Message[]
   outboundMessages     OutboundMessage[]
+  broadcastJobs        GroupBroadcastJob[]
   processingCheckpoint ProcessingCheckpoint?
 }
 
@@ -172,7 +201,8 @@ model WhatsAppGroup {
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
-  messages Message[]
+  messages          Message[]
+  broadcastMessages OutboundMessage[]
 
   @@unique([accountId, whatsappGroupId])
 }
@@ -289,9 +319,83 @@ model OutboundMessage {
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
 
+  /// Group Message Sender only (actionType = GROUP_BROADCAST) — every field
+  /// below is null for automation-generated rows.
+  groupId           String?
+  group             WhatsAppGroup?     @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  /// Group name at send time, independent of the group later being renamed/removed.
+  groupNameSnapshot String?
+  broadcastJobId    String?
+  broadcastJob      GroupBroadcastJob? @relation(fields: [broadcastJobId], references: [id], onDelete: SetNull)
+  providerMessageId String?
+  createdById       String?
+  createdBy         User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
   @@index([status, scheduledAt])
   @@index([toPhone, sentAt])
   @@index([sentAt])
+  @@index([broadcastJobId, status])
+  @@index([groupId, status])
+}
+
+/// One row per "send this message to these groups" batch created through the
+/// Group Message Sender. Each target group becomes its own OutboundMessage
+/// row (actionType = GROUP_BROADCAST) reusing the existing outbound queue —
+/// this row is only the batch header: who requested it, the safety
+/// configuration it was queued under, and its own stop/kill-switch state.
+model GroupBroadcastJob {
+  id                  String                  @id @default(cuid())
+  accountId           String
+  account             WhatsAppAccount         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdById         String?
+  createdBy           User?                   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  source              GroupBroadcastSource
+  /// Fallback message used for any target group that didn't supply its own
+  /// per-row message (e.g. from the Excel "Message" column).
+  defaultMessage      String
+  status              GroupBroadcastJobStatus @default(QUEUED)
+  /// Snapshot of how many groups were queued vs. skipped before sending even
+  /// started (unmatched/ambiguous Excel rows, duplicate rows, cooldown
+  /// skips) — kept distinct from the OutboundMessage-level SKIPPED status,
+  /// which is for a queued row skipped at send time (e.g. failed membership
+  /// check).
+  totalRequested      Int                     @default(0)
+  queuedCount         Int                     @default(0)
+  preQueueSkipped     Int                     @default(0)
+  /// [{ groupName: string, reason: string }] — rows that never became a
+  /// queue item at all, so there is no OutboundMessage row to show why.
+  preQueueSkipReasons Json                    @default("[]")
+  delayMinMs          Int
+  delayMaxMs          Int
+  maxPerMinute        Int
+  maxPerJob           Int
+  retryMaxAttempts    Int
+  createdAt           DateTime                @default(now())
+  startedAt           DateTime?
+  completedAt         DateTime?
+  cancelledAt         DateTime?
+
+  messages OutboundMessage[]
+
+  @@index([accountId, createdAt])
+  @@index([status])
+}
+
+/// Singleton row (id is always the literal string "global"), analogous to
+/// AutomationSettings but scoped to manual Group Message Sender jobs so
+/// tuning bulk-send safety never touches automation's own limits.
+model GroupBroadcastSettings {
+  id                            String   @id @default("global")
+  delayMinMs                    Int      @default(5000)
+  delayMaxMs                    Int      @default(15000)
+  maxPerMinute                  Int      @default(6)
+  maxPerJob                     Int      @default(200)
+  retryMaxAttempts              Int      @default(2)
+  /// A group that already received a SENT broadcast within this window is
+  /// skipped (not re-queued) by a new job — duplicate-send protection beyond
+  /// same-job idempotency.
+  duplicateGroupCooldownMinutes Int      @default(60)
+  updatedAt                     DateTime @updatedAt
 }
 
 model Notification {

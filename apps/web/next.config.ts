@@ -12,6 +12,12 @@ const nextConfig: NextConfig = {
     "@support-automation/engine",
     "@support-automation/shared",
   ],
+  experimental: {
+    // Default (1MB) is too small for a real Group Message Sender Excel upload.
+    serverActions: {
+      bodySizeLimit: "8mb",
+    },
+  },
 };
 
 export default nextConfig;
