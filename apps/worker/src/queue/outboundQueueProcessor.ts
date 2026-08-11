@@ -88,6 +88,7 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
         toPhone: message.toPhone,
         ruleId: message.ruleId,
         cooldownSeconds: rule.cooldownSeconds,
+        excludeOutboundMessageId: message.id,
       });
       if (cooling) {
         await prisma.outboundMessage.update({

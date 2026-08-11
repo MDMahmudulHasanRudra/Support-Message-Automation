@@ -82,6 +82,19 @@ async function main() {
   const connected = await connectWithRetry(provider, account.id);
   if (connected) {
     provider.subscribeToMessages((message) => {
+      // PHASE 6.1: the exact OpenWA -> worker event handoff point — logged
+      // here, not inside the provider, since this is the provider-agnostic
+      // boundary (per WhatsAppProvider.ts's own doc comment) that any future
+      // provider implementation would call through identically.
+      console.log(
+        `[pipeline] [${message.accountId}:${message.whatsappMessageId}] MESSAGE_RECEIVED`,
+        JSON.stringify({
+          chatId: message.chatId,
+          senderPhone: message.senderPhone,
+          direction: message.direction,
+          isGroup: Boolean(message.whatsappGroupId),
+        }),
+      );
       processIncomingMessage(message).catch((err) => {
         console.error("[worker] error processing incoming message", err);
         logSystemEvent("ERROR", "pipeline", "Error processing incoming message", { error: (err as Error).message });

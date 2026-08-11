@@ -24,7 +24,22 @@ interface ActionExecutionRecord {
  * directly). Mirrors the "FINAL SAFE MESSAGE PROCESSING FLOW" in
  * WHATSAPP ACCOUNT SAFETY AND ANTI-SPAM REQUIREMENTS.md.
  */
+/**
+ * PHASE 6.1 — observability only, added for the real-message acceptance
+ * test (no behavior change): `${accountId}:${whatsappMessageId}` is already
+ * a natural, unique correlation ID (it's the same pair the DB's own
+ * @@unique constraint uses), so it's reused here rather than minting a new
+ * one. Logged to console/docker logs only, not SystemLog — this fires on
+ * every single message, and writing that to the DB-backed Logs page would
+ * be a lasting volume/behavior change, not a test-only addition.
+ */
+function traceStage(traceId: string, stage: string, details?: Record<string, unknown>): void {
+  console.log(`[pipeline] [${traceId}] ${stage}${details ? " " + JSON.stringify(details) : ""}`);
+}
+
 export async function processIncomingMessage(raw: RawIncomingMessage): Promise<void> {
+  const traceId = `${raw.accountId}:${raw.whatsappMessageId}`;
+
   if (!raw.body || raw.body.trim().length === 0) {
     return; // unsupported/empty message type — nothing to automate
   }
@@ -36,7 +51,15 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
     return;
   }
 
+  traceStage(traceId, "MESSAGE_NORMALIZED", {
+    chatId: raw.chatId,
+    senderPhone: raw.senderPhone,
+    isGroup: Boolean(raw.whatsappGroupId),
+    bodyPreview: raw.body.slice(0, 80),
+  });
+
   const isFromTeamMember = await isActiveTeamMember(raw.senderPhone);
+  traceStage(traceId, "TEAM_MEMBER_CHECK", { isFromTeamMember });
 
   const group = raw.whatsappGroupId
     ? await prisma.whatsAppGroup.findUnique({
@@ -44,6 +67,9 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
         select: { id: true },
       })
     : null;
+  if (raw.whatsappGroupId) {
+    traceStage(traceId, "GROUP_RESOLVED", { whatsappGroupId: raw.whatsappGroupId, resolvedGroupId: group?.id ?? null });
+  }
 
   // Fetch the previous message in this chat BEFORE inserting the current
   // one, so it can never match itself.
@@ -76,10 +102,13 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
   } catch (err: any) {
     if (err?.code === "P2002") {
       // Duplicate WhatsApp event (retry, redelivery, worker restart) — already processed.
+      traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: true, result: "skipped — already processed" });
       return;
     }
     throw err;
   }
+  traceStage(traceId, "MESSAGE_PERSISTED", { messageId: message.id });
+  traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: false, result: "unique — proceeding" });
 
   const activeRuleRows = await prisma.automationRule.findMany({ where: { status: "ACTIVE" } });
   const rules: EngineRule[] = activeRuleRows.map(toEngineRule);
@@ -101,6 +130,26 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
   });
 
   const matchedRuleRow = result.matchedRule ? ruleRowById.get(result.matchedRule.id) ?? null : null;
+
+  // The engine (packages/engine/evaluate.ts) evaluates every active rule in a
+  // single priority-sorted pass rather than as separate sequential gates —
+  // these three lines map that one result onto the conceptual categories
+  // requested for tracing (which RuleType, if any, won), they are NOT
+  // separate evaluation steps in the actual engine.
+  const matchedType = matchedRuleRow?.type ?? null;
+  traceStage(traceId, "IGNORE_RULE_CHECK", {
+    matched: matchedType === "DEFAULT_IGNORE" || (matchedType === null && result.finalDecision === "IGNORE"),
+    matchedRuleType: matchedType,
+  });
+  traceStage(traceId, "DEFAULT_RULE_CHECK", {
+    matched: matchedType === "TEAM_FILTER" || matchedType === "LAST_SENDER" || matchedType === "EXCEPTION",
+    matchedRuleType: matchedType,
+  });
+  traceStage(traceId, "AUTOMATION_RULE_CHECK", {
+    matched: matchedType === "AUTO_REPLY" || matchedType === "GENERIC" || matchedType === "SUPPORT_ESCALATION",
+    matchedRuleType: matchedType,
+  });
+
   const settings = await getAutomationSettings();
   const executedActions: ActionExecutionRecord[] = [];
 
@@ -130,6 +179,13 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
         ruleId: result.matchedRule?.id ?? null,
       }),
     },
+  });
+
+  traceStage(traceId, "ACTION_DECISION", {
+    finalDecision: result.finalDecision,
+    matchedRuleId: result.matchedRule?.id ?? null,
+    matchedRuleName: result.matchedRule?.name ?? null,
+    executedActions,
   });
 
   await prisma.message.update({

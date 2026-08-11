@@ -58,13 +58,27 @@ function toInterfaceStatus(state: OpenWAConnectionState): ConnectionStatus {
   }
 }
 
+/**
+ * PHASE 6.1 — real integration bug, reproduced live: OpenWA's `message.from`
+ * is documented as "the chat from which the message was sent". For a 1:1 DM
+ * that IS the sender's own JID, but for a group message it's the GROUP's
+ * JID (identical to `chatId`) — the individual participant who actually
+ * sent it is `message.author`. Using `.from` unconditionally meant every
+ * group message's senderPhone resolved to the group's own id, confirmed via
+ * a live trace where senderPhone === chatId === the group's whatsappGroupId.
+ *
+ * Note: with WhatsApp's newer per-participant privacy defaults, `.author`
+ * can be an opaque `@lid` identifier rather than a dialable phone number —
+ * that's a WhatsApp-side privacy behavior, not something this fix attempts
+ * to resolve; it only corrects using the wrong field.
+ */
 function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomingMessage {
   return {
     accountId,
     whatsappMessageId: message.id,
     chatId: message.chatId,
     whatsappGroupId: message.isGroupMsg ? message.chatId : null,
-    senderPhone: message.from,
+    senderPhone: message.isGroupMsg ? message.author || message.from : message.from,
     senderName: message.sender?.pushname || message.sender?.formattedName || null,
     direction: message.fromMe ? "OUTGOING" : "INCOMING",
     body: message.body ?? message.text ?? "",
