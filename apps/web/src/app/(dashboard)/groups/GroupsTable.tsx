@@ -1,13 +1,29 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card } from "@/components/ui";
-import { bulkSetMonitoring, requestGroupParticipantCount, toggleGroupMonitoring, type BulkMonitoringResult } from "@/server/actions/groups";
+import {
+  Alert,
+  Badge,
+  Button,
+  Checkbox,
+  ConfirmDialog,
+  Table,
+  Td,
+  Th,
+  Tooltip,
+} from "@/components/ui";
+import {
+  bulkSetMonitoring,
+  requestGroupParticipantCount,
+  toggleGroupMonitoring,
+  type BulkMonitoringResult,
+} from "@/server/actions/groups";
 
 export interface GroupRow {
   id: string;
   name: string;
+  whatsappGroupId: string;
   accountLabel: string;
   isMonitored: boolean;
   isActive: boolean;
@@ -23,6 +39,11 @@ export function GroupsTable({ groups }: { groups: GroupRow[] }) {
   const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingBulkAction>(null);
   const [lastResult, setLastResult] = useState<BulkMonitoringResult | null>(null);
+
+  const [toggleTarget, setToggleTarget] = useState<GroupRow | null>(null);
+  const [isToggling, startToggle] = useTransition();
+  const [fetchingId, setFetchingId] = useState<string | null>(null);
+  const [isFetchingCount, startFetchCount] = useTransition();
 
   const allVisibleSelected = useMemo(
     () => groups.length > 0 && groups.every((g) => selected.has(g.id)),
@@ -68,122 +89,179 @@ export function GroupsTable({ groups }: { groups: GroupRow[] }) {
     }
   }
 
+  function confirmSingleToggle() {
+    if (!toggleTarget) return;
+    const id = toggleTarget.id;
+    startToggle(async () => {
+      await toggleGroupMonitoring(id);
+      setToggleTarget(null);
+      router.refresh();
+    });
+  }
+
+  function fetchParticipantCount(id: string) {
+    setFetchingId(id);
+    startFetchCount(async () => {
+      await requestGroupParticipantCount(id);
+      router.refresh();
+    });
+  }
+
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs text-zinc-500 dark:text-zinc-400">{selected.size} selected (of {groups.length} visible)</span>
+        <span className="text-xs text-[color:var(--color-muted-foreground)]">
+          {selected.size} selected (of {groups.length} visible)
+        </span>
         <div className="flex gap-2">
-          <Button variant="secondary" disabled={busy || selected.size === 0} onClick={() => setPendingAction("enable")}>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy || selected.size === 0}
+            onClick={() => setPendingAction("enable")}
+          >
             Bulk Enable Monitoring
           </Button>
-          <Button variant="secondary" disabled={busy || selected.size === 0} onClick={() => setPendingAction("disable")}>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy || selected.size === 0}
+            onClick={() => setPendingAction("disable")}
+          >
             Bulk Disable Monitoring
           </Button>
         </div>
       </div>
 
-      {pendingAction ? (
-        <Card className="mb-3 border-yellow-300 bg-yellow-50 dark:border-yellow-900 dark:bg-yellow-950">
-          <p className="mb-3 text-sm font-medium text-yellow-900 dark:text-yellow-200">
-            Are you sure? This will {pendingAction === "enable" ? "enable" : "disable"} monitoring for {selected.size} group(s).
-          </p>
-          <div className="flex gap-2">
-            <Button variant="secondary" disabled={busy} onClick={() => setPendingAction(null)}>
-              Cancel
-            </Button>
-            <Button disabled={busy} onClick={confirmBulk}>
-              {busy ? "Applying…" : "Confirm"}
-            </Button>
-          </div>
-        </Card>
-      ) : null}
-
       {lastResult ? (
-        <Card className="mb-3">
-          {lastResult.error ? (
-            <p className="text-sm text-red-600">{lastResult.error}</p>
-          ) : (
-            <ul className="space-y-1 text-sm text-zinc-700 dark:text-zinc-300">
-              <li>{lastResult.updated} updated successfully</li>
-              {lastResult.alreadyInTargetState > 0 ? <li>{lastResult.alreadyInTargetState} already in the requested state</li> : null}
-              {lastResult.notFound > 0 ? <li className="text-red-600">{lastResult.notFound} not found (may have been removed)</li> : null}
-            </ul>
-          )}
-          <button type="button" className="mt-2 text-xs underline" onClick={() => setLastResult(null)}>
-            Dismiss
-          </button>
-        </Card>
+        <div className="mb-3">
+          <Alert
+            tone={lastResult.error ? "danger" : "success"}
+            actions={
+              <button
+                type="button"
+                className="cursor-pointer text-xs underline"
+                onClick={() => setLastResult(null)}
+              >
+                Dismiss
+              </button>
+            }
+          >
+            {lastResult.error ? (
+              lastResult.error
+            ) : (
+              <ul className="space-y-0.5">
+                <li>{lastResult.updated} updated successfully</li>
+                {lastResult.alreadyInTargetState > 0 ? (
+                  <li>{lastResult.alreadyInTargetState} already in the requested state</li>
+                ) : null}
+                {lastResult.notFound > 0 ? (
+                  <li>{lastResult.notFound} not found (may have been removed)</li>
+                ) : null}
+              </ul>
+            )}
+          </Alert>
+        </div>
       ) : null}
 
-      <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr>
-              <th className="border-b border-zinc-200 bg-zinc-50 px-4 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-                <label className="flex items-center gap-1 whitespace-nowrap text-xs font-normal text-zinc-500 dark:text-zinc-400">
-                  <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} />
-                  All visible
-                </label>
-              </th>
-              <Th>Group</Th>
-              <Th>Account</Th>
-              <Th>Monitored</Th>
-              <Th>Status</Th>
-              <Th>Participants</Th>
-              <Th>Last Synced</Th>
-              <Th>Manage</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((g) => (
+      <Table>
+        <thead>
+          <tr>
+            <Th>
+              <label className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap font-normal normal-case">
+                <Checkbox checked={allVisibleSelected} onChange={toggleAllVisible} />
+                All visible
+              </label>
+            </Th>
+            <Th>Group</Th>
+            <Th>Account</Th>
+            <Th>Monitored</Th>
+            <Th>Status</Th>
+            <Th>Participants</Th>
+            <Th>Last Synced</Th>
+            <Th>Manage</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => {
+            const staleMonitoring = g.isMonitored && !g.isActive;
+            return (
               <tr key={g.id}>
                 <Td>
-                  <input type="checkbox" checked={selected.has(g.id)} onChange={() => toggleOne(g.id)} />
+                  <Checkbox checked={selected.has(g.id)} onChange={() => toggleOne(g.id)} />
                 </Td>
-                <Td>{g.name}</Td>
+                <Td>
+                  <Tooltip content={g.whatsappGroupId}>
+                    <span className="cursor-help underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2">
+                      {g.name}
+                    </span>
+                  </Tooltip>
+                </Td>
                 <Td>{g.accountLabel}</Td>
                 <Td>
-                  <Badge color={g.isMonitored ? "green" : "gray"}>{g.isMonitored ? "Monitored" : "Not Monitored"}</Badge>
+                  <div className="flex flex-col items-start gap-1">
+                    <Badge color={g.isMonitored ? "green" : "gray"} dot>
+                      {g.isMonitored ? "Monitored" : "Not Monitored"}
+                    </Badge>
+                    {staleMonitoring ? (
+                      <Badge color="yellow">Inactive · still monitored</Badge>
+                    ) : null}
+                  </div>
                 </Td>
                 <Td>
-                  <Badge color={g.isActive ? "blue" : "yellow"}>{g.isActive ? "Active" : "Inactive"}</Badge>
+                  <Badge color={g.isActive ? "blue" : "gray"} dot>
+                    {g.isActive ? "Active" : "Inactive"}
+                  </Badge>
                 </Td>
                 <Td>
                   {g.participantCount !== null ? (
-                    g.participantCount
+                    <span className="tabular-nums">{g.participantCount}</span>
                   ) : (
-                    <form action={requestGroupParticipantCount.bind(null, g.id)}>
-                      <button type="submit" className="text-xs underline">
-                        Fetch
-                      </button>
-                    </form>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      loading={isFetchingCount && fetchingId === g.id}
+                      onClick={() => fetchParticipantCount(g.id)}
+                    >
+                      Fetch
+                    </Button>
                   )}
                 </Td>
                 <Td>{g.lastSyncedAt ? new Date(g.lastSyncedAt).toLocaleString() : "—"}</Td>
                 <Td>
-                  <form action={toggleGroupMonitoring.bind(null, g.id)}>
-                    <Button variant="secondary" type="submit">
-                      {g.isMonitored ? "Stop Monitoring" : "Start Monitoring"}
-                    </Button>
-                  </form>
+                  <Button variant="secondary" size="sm" onClick={() => setToggleTarget(g)}>
+                    {g.isMonitored ? "Stop Monitoring" : "Start Monitoring"}
+                  </Button>
                 </Td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            );
+          })}
+        </tbody>
+      </Table>
+
+      <ConfirmDialog
+        open={pendingAction !== null}
+        onClose={() => setPendingAction(null)}
+        onConfirm={confirmBulk}
+        loading={busy}
+        title={pendingAction === "enable" ? "Enable monitoring?" : "Disable monitoring?"}
+        description={`This will ${pendingAction === "enable" ? "enable" : "disable"} monitoring for ${selected.size} group(s).`}
+        confirmLabel={pendingAction === "enable" ? "Enable Monitoring" : "Disable Monitoring"}
+      />
+
+      <ConfirmDialog
+        open={toggleTarget !== null}
+        onClose={() => setToggleTarget(null)}
+        onConfirm={confirmSingleToggle}
+        loading={isToggling}
+        title={toggleTarget?.isMonitored ? "Stop monitoring this group?" : "Start monitoring this group?"}
+        description={
+          toggleTarget
+            ? `${toggleTarget.isMonitored ? "Disable" : "Enable"} monitoring for "${toggleTarget.name}".`
+            : undefined
+        }
+        confirmLabel={toggleTarget?.isMonitored ? "Stop Monitoring" : "Start Monitoring"}
+      />
     </div>
   );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="border-b border-zinc-200 bg-zinc-50 px-4 py-2 font-medium text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-      {children}
-    </th>
-  );
-}
-
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="border-b border-zinc-100 px-4 py-2 text-zinc-800 dark:border-zinc-900 dark:text-zinc-200">{children}</td>;
 }
