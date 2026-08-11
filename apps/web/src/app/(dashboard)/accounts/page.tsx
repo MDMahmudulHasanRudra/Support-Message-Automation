@@ -1,23 +1,45 @@
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { Badge, Button, Card, PageHeader } from "@/components/ui";
-import { requestGroupResync, requestReconnect } from "@/server/actions/accounts";
+import { Alert, Card, EmptyState, PageHeader } from "@/components/ui";
+import { requestGroupResync, requestLogout, requestReconnect } from "@/server/actions/accounts";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { LogoutButton } from "./LogoutButton";
+import { AccountCard, type AccountCardData } from "./AccountCard";
 
-// A scanned-but-unauthenticated QR is expected to refresh every ~20-30s
-// while OpenWA waits for a scan (WhatsApp Web regenerates it automatically,
-// and our qr.** handler updates qrUpdatedAt on every refresh). If it's
-// older than this, the refresh stream has likely stalled — show a
-// "regenerating" placeholder instead of a dead image rather than letting
-// an admin scan a QR that can no longer possibly work.
+// A scanned-but-unauthenticated QR is expected to refresh every ~20-30s while
+// OpenWA waits for a scan; if it's older than this the refresh stream has
+// likely stalled — show a "regenerating" placeholder instead of a dead image.
 const QR_STALE_AFTER_MS = 60_000;
+
+function isQrStale(qrUpdatedAtIso: string | null, nowMs: number): boolean {
+  if (!qrUpdatedAtIso) return false;
+  return nowMs - new Date(qrUpdatedAtIso).getTime() > QR_STALE_AFTER_MS;
+}
 
 export default async function AccountsPage() {
   await requireSession();
   const accounts = await prisma.whatsAppAccount.findMany({ orderBy: { createdAt: "asc" } });
-  const pendingCommands = await prisma.workerCommand.count({ where: { status: { in: ["PENDING", "PROCESSING"] } } });
+  const pendingCommands = await prisma.workerCommand.count({
+    where: { status: { in: ["PENDING", "PROCESSING"] } },
+  });
   const anyAccountMidConnection = accounts.some((a) => a.status !== "CONNECTED");
+
+  // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
+  const nowMs = Date.now();
+  const accountData: AccountCardData[] = accounts.map((account) => {
+    const qrUpdatedAt = account.qrUpdatedAt?.toISOString() ?? null;
+    return {
+      id: account.id,
+      label: account.label,
+      phoneNumber: account.phoneNumber,
+      status: account.status,
+      lastConnectedAt: account.lastConnectedAt?.toISOString() ?? null,
+      lastHeartbeatAt: account.lastHeartbeatAt?.toISOString() ?? null,
+      sessionDataPath: account.sessionDataPath,
+      qrCode: account.qrCode,
+      qrUpdatedAt,
+      qrStale: isQrStale(qrUpdatedAt, nowMs),
+    };
+  });
 
   return (
     <div>
@@ -26,87 +48,33 @@ export default async function AccountsPage() {
         description="Actions here are relayed to the worker through the database — there is no direct connection between the dashboard and the WhatsApp session."
       />
 
-      {accounts.length === 0 ? (
+      {pendingCommands > 0 ? (
+        <div className="mb-4">
+          <Alert tone="info" title={`${pendingCommands} command(s) waiting for the worker`}>
+            The worker polls for new commands roughly every 1.5 seconds.
+          </Alert>
+        </div>
+      ) : null}
+
+      {accountData.length === 0 ? (
         <Card>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            No account yet. The worker creates one automatically on first startup.
-          </p>
+          <EmptyState>No account yet. The worker creates one automatically on first startup.</EmptyState>
         </Card>
       ) : (
         <div className="space-y-4">
-          {accounts.map((account) => (
-            <Card key={account.id}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">{account.label}</h2>
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{account.phoneNumber ?? "(number not yet known)"}</p>
-                </div>
-                <Badge color={account.status === "CONNECTED" ? "green" : account.status === "ERROR" ? "red" : "yellow"}>
-                  {account.status}
-                </Badge>
-              </div>
-
-              <dl className="mt-4 grid grid-cols-2 gap-2 text-sm md:grid-cols-3">
-                <div>
-                  <dt className="text-xs text-zinc-500 dark:text-zinc-400">Last connected</dt>
-                  <dd>{account.lastConnectedAt?.toLocaleString() ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-zinc-500 dark:text-zinc-400">Last heartbeat</dt>
-                  <dd>{account.lastHeartbeatAt?.toLocaleString() ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-zinc-500 dark:text-zinc-400">Session path</dt>
-                  <dd className="truncate">{account.sessionDataPath ?? "—"}</dd>
-                </div>
-              </dl>
-
-              {account.status === "AUTHENTICATION_REQUIRED" && account.qrCode ? (
-                <div className="mt-4">
-                  {isQrStale(account.qrUpdatedAt) ? (
-                    <div className="flex h-56 w-56 flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-                      Waiting for a fresh QR code…
-                      <span className="mt-1 text-xs">(previous code expired)</span>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="mb-2 text-sm font-medium">Scan this QR code with WhatsApp:</p>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={account.qrCode} alt="WhatsApp QR code" className="h-56 w-56 rounded-md border border-zinc-200 dark:border-zinc-800" />
-                    </>
-                  )}
-                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    Updated {account.qrUpdatedAt?.toLocaleTimeString() ?? "—"} · this page refreshes automatically
-                  </p>
-                </div>
-              ) : null}
-
-              <div className="mt-4 flex flex-wrap items-start gap-2">
-                <form action={requestReconnect}>
-                  <Button variant="secondary" type="submit">Reconnect</Button>
-                </form>
-                <form action={requestGroupResync}>
-                  <Button variant="secondary" type="submit">Resync Groups</Button>
-                </form>
-                <LogoutButton />
-              </div>
-            </Card>
+          {accountData.map((account) => (
+            <AccountCard
+              key={account.id}
+              account={account}
+              onReconnect={requestReconnect}
+              onResync={requestGroupResync}
+              onLogout={requestLogout}
+            />
           ))}
         </div>
       )}
 
-      {pendingCommands > 0 ? (
-        <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-400">
-          {pendingCommands} command(s) waiting for the worker to pick up (polls every ~1.5s).
-        </p>
-      ) : null}
-
       {anyAccountMidConnection ? <AutoRefresh /> : null}
     </div>
   );
-}
-
-function isQrStale(qrUpdatedAt: Date | null): boolean {
-  if (!qrUpdatedAt) return false;
-  return Date.now() - qrUpdatedAt.getTime() > QR_STALE_AFTER_MS;
 }
