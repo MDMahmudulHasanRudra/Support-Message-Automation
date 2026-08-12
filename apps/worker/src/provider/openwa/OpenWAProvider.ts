@@ -129,6 +129,15 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
   private state: OpenWAConnectionState = "DISCONNECTED";
+  // OpenWA's onStateChanged can fire several transitions within milliseconds of each other (e.g.
+  // OPENING -> PAIRING -> CONNECTED), and each call site below fires setState() without awaiting
+  // it. Without this chain, two of recordConnectionState()'s DB writes for the SAME account could
+  // resolve out of order — whichever round-trip happens to finish last wins, regardless of which
+  // state change actually happened last — leaving a stale status (e.g. "RECONNECTING") persisted
+  // even though the session is really CONNECTED. Chaining onto this promise instead of calling
+  // recordConnectionState directly guarantees writes for this instance commit in the same order
+  // the state changes actually occurred, no matter how their individual DB round-trips interleave.
+  private pendingStateWrite: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly accountId: string,
@@ -375,7 +384,10 @@ export class OpenWAProvider implements WhatsAppProvider {
     qrCode?: string,
   ): Promise<void> {
     this.state = state;
-    await recordConnectionState(this.accountId, state, metadata, qrCode);
+    this.pendingStateWrite = this.pendingStateWrite.then(() =>
+      recordConnectionState(this.accountId, state, metadata, qrCode),
+    );
+    await this.pendingStateWrite;
   }
 
   /**

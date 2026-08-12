@@ -14,9 +14,12 @@ async function main() {
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@example.com";
   const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? "ChangeMe123!";
 
+  // Only sets credentials on first creation, same as every other seed step below — an admin who
+  // has since changed their password through the dashboard must never have it silently reset back
+  // to the .env value by a routine restart/redeploy re-running this script.
   const admin = await prisma.user.upsert({
     where: { username: adminUsername },
-    update: { email: adminEmail, passwordHash: hashPassword(adminPassword) },
+    update: {},
     create: {
       username: adminUsername,
       email: adminEmail,

@@ -18,6 +18,30 @@ services:
     networks:
       - automation_net
 
+  # One-shot: applies every packages/db/prisma/migrations/* migration, in order, then seeds the
+  # initial admin user + safe defaults (both idempotent — safe to run on every `docker compose
+  # up`, not just the first). Reuses the worker's already-built image (it's the only one whose
+  # runtime stage keeps the Prisma CLI + packages/db/prisma around — see apps/web/Dockerfile's
+  # runtime stage, which trims those away for a lean Next.js image) rather than adding a fourth
+  # Dockerfile. Required so a fresh clone on a new machine doesn't start `app`/`worker` against an
+  # empty, unmigrated, admin-less database — see README.md.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin}
+    working_dir: /app/packages/db
+    entrypoint: ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts"]
+    networks:
+      - automation_net
+
   app:
     build:
       context: .
@@ -26,6 +50,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL}
       NODE_ENV: ${NODE_ENV:-production}
@@ -51,6 +77,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL}
       NODE_ENV: ${NODE_ENV:-production}
