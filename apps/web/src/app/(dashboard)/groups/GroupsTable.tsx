@@ -20,6 +20,7 @@ import {
   toggleGroupMonitoring,
   type BulkMonitoringResult,
 } from "@/server/actions/groups";
+import { GroupPriorityDialog, type TeamMemberOption } from "./GroupPriorityDialog";
 
 export interface GroupRow {
   id: string;
@@ -30,6 +31,10 @@ export interface GroupRow {
   isActive: boolean;
   participantCount: number | null;
   lastSyncedAt: string | null;
+  priority: "P1" | "P2" | "P3" | null;
+  assignedTeamMemberId: string | null;
+  assignedTeamMemberName: string | null;
+  escalationMonitoringEnabled: boolean;
 }
 
 type PendingBulkAction = "enable" | "disable" | null;
@@ -38,10 +43,12 @@ export function GroupsTable({
   groups,
   pageSize,
   pageSizeHrefs,
+  teamMembers = [],
 }: {
   groups: GroupRow[];
   pageSize?: number;
   pageSizeHrefs?: Array<{ size: number; href: string }>;
+  teamMembers?: TeamMemberOption[];
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -53,6 +60,7 @@ export function GroupsTable({
   const [isToggling, startToggle] = useTransition();
   const [fetchingId, setFetchingId] = useState<string | null>(null);
   const [isFetchingCount, startFetchCount] = useTransition();
+  const [priorityTarget, setPriorityTarget] = useState<GroupRow | null>(null);
 
   const allVisibleSelected = useMemo(
     () => groups.length > 0 && groups.every((g) => selected.has(g.id)),
@@ -209,6 +217,7 @@ export function GroupsTable({
             <Th>Status</Th>
             <Th>Participants</Th>
             <Th>Last Synced</Th>
+            <Th>Priority Support</Th>
             <Th>Manage</Th>
           </tr>
         </thead>
@@ -259,6 +268,24 @@ export function GroupsTable({
                 </Td>
                 <Td>{g.lastSyncedAt ? new Date(g.lastSyncedAt).toLocaleString() : "—"}</Td>
                 <Td>
+                  <div className="flex flex-col items-start gap-1">
+                    {g.priority ? (
+                      <Badge color={g.priority === "P1" ? "red" : g.priority === "P2" ? "yellow" : "blue"} dot>
+                        {g.priority}
+                        {!g.escalationMonitoringEnabled ? " (paused)" : ""}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-[color:var(--color-muted-foreground)]">Not monitored</span>
+                    )}
+                    {g.assignedTeamMemberName ? (
+                      <span className="text-xs text-[color:var(--color-muted-foreground)]">→ {g.assignedTeamMemberName}</span>
+                    ) : null}
+                    <Button variant="ghost" size="sm" onClick={() => setPriorityTarget(g)}>
+                      Configure
+                    </Button>
+                  </div>
+                </Td>
+                <Td>
                   <Button variant="secondary" size="sm" onClick={() => setToggleTarget(g)}>
                     {g.isMonitored ? "Stop Monitoring" : "Start Monitoring"}
                   </Button>
@@ -268,6 +295,10 @@ export function GroupsTable({
           })}
         </tbody>
       </Table>
+
+      {priorityTarget ? (
+        <GroupPriorityDialog group={priorityTarget} teamMembers={teamMembers} onClose={() => setPriorityTarget(null)} />
+      ) : null}
 
       <ConfirmDialog
         open={pendingAction !== null}

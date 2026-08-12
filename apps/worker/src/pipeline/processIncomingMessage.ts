@@ -10,6 +10,7 @@ import { getAutomationSettings } from "./settings.js";
 import { isActiveTeamMember } from "./teamFilter.js";
 import { toEngineRule } from "./ruleMapping.js";
 import type { RawIncomingMessage } from "./types.js";
+import { markHumanReplied, openOrContinueCase } from "../escalation/escalationQueue.js";
 
 interface ActionExecutionRecord {
   type: RuleAction["type"];
@@ -64,7 +65,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
   const group = raw.whatsappGroupId
     ? await prisma.whatsAppGroup.findUnique({
         where: { accountId_whatsappGroupId: { accountId: raw.accountId, whatsappGroupId: raw.whatsappGroupId } },
-        select: { id: true },
+        select: { id: true, priority: true, assignedTeamMemberId: true, escalationMonitoringEnabled: true },
       })
     : null;
   if (raw.whatsappGroupId) {
@@ -109,6 +110,29 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
   }
   traceStage(traceId, "MESSAGE_PERSISTED", { messageId: message.id });
   traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: false, result: "unique — proceeding" });
+
+  // Priority-Based Support Monitoring & Escalation runs alongside the rule engine, never gated
+  // by its decision — a human reply always stops escalation, and a priority group always starts
+  // monitoring, regardless of what (if anything) the rule engine matched. Fire-and-forget with
+  // its own error boundary: an escalation-tracking failure must never break message processing.
+  try {
+    if (isFromTeamMember) {
+      await markHumanReplied(raw.chatId);
+    } else if (group?.priority && group.escalationMonitoringEnabled) {
+      await openOrContinueCase({
+        accountId: raw.accountId,
+        groupId: group.id,
+        chatId: raw.chatId,
+        clientPhone: raw.senderPhone,
+        priority: group.priority,
+        assignedTeamMemberId: group.assignedTeamMemberId,
+        triggerMessageId: message.id,
+        timestampWa: raw.timestampWa,
+      });
+    }
+  } catch (err) {
+    console.error("[escalation] failed to update support escalation state", err);
+  }
 
   const activeRuleRows = await prisma.automationRule.findMany({ where: { status: "ACTIVE" } });
   const rules: EngineRule[] = activeRuleRows.map(toEngineRule);

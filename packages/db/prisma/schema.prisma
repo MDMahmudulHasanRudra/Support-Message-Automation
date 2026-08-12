@@ -119,6 +119,54 @@ enum GroupParticipantAddItemStatus {
   CANCELLED
 }
 
+/// Support tier for Priority-Based Support Monitoring & Escalation. Null on WhatsAppGroup means
+/// no tier assigned — the feature never triggers (opt-in per group).
+enum SupportPriority {
+  P1
+  P2
+  P3
+}
+
+/// A support escalation case's lifecycle. `status` records what the case is CURRENTLY waiting
+/// on; the full historical sequence (including which tier actually fired, to whom, when) lives
+/// in SupportEscalationEvent — this column is deliberately not a strict re-statement of every
+/// diagram box in the spec, just "where is this case stuck right now."
+enum EscalationStatus {
+  NEW
+  MONITORING
+  WAITING_FOR_HUMAN
+  SECOND_ALERT
+  MEMBER_ESCALATED
+  ADMIN_ESCALATED
+  FOLLOW_UP
+  HUMAN_REPLIED
+  RESOLVED
+  PAUSED
+  CANCELLED
+}
+
+enum EscalationEventType {
+  FIRST_NOTIFICATION
+  SECOND_NOTIFICATION
+  MEMBER_NOTIFICATION
+  ADMIN_NOTIFICATION
+  FOLLOW_UP
+  HUMAN_REPLIED
+  RESOLVED
+  PAUSED
+  RESUMED
+  MANUAL_ESCALATE
+  REASSIGNED
+  RESET
+}
+
+enum EscalationRecipientType {
+  GROUP
+  MEMBER
+  ADMIN
+  SYSTEM
+}
+
 enum NotificationType {
   TEAMS
   WHATSAPP
@@ -198,6 +246,8 @@ model User {
   createdParticipantAddJobs GroupParticipantAddJob[]
   createdKnowledgeItems     AiKnowledgeItem[]
   createdKnowledgeVersions  AiKnowledgeVersion[]
+  resolvedEscalationCases   SupportEscalationCase[]
+  triggeredEscalationEvents SupportEscalationEvent[]
 }
 
 model WhatsAppAccount {
@@ -219,28 +269,38 @@ model WhatsAppAccount {
   broadcastJobs        GroupBroadcastJob[]
   participantAddJobs   GroupParticipantAddJob[]
   processingCheckpoint ProcessingCheckpoint?
+  escalationCases      SupportEscalationCase[]
 }
 
 model WhatsAppGroup {
-  id               String          @id @default(cuid())
-  accountId        String
-  account          WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  whatsappGroupId  String // WhatsApp chat id, e.g. "1234567890-1234567890@g.us"
-  name             String
-  isMonitored      Boolean         @default(false)
+  id                          String              @id @default(cuid())
+  accountId                   String
+  account                     WhatsAppAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  whatsappGroupId             String // WhatsApp chat id, e.g. "1234567890-1234567890@g.us"
+  name                        String
+  isMonitored                 Boolean             @default(false)
   /// False once a resync's getAllGroups() no longer returns this group (account left/removed) —
   /// soft-deactivation only, never deleted, so Message history keeps a valid groupId FK.
-  isActive         Boolean         @default(true)
+  isActive                    Boolean             @default(true)
   /// Best-effort, fetched on demand (never during bulk sync — too expensive across hundreds of
   /// real groups) — null until an admin explicitly requests it for this group.
-  participantCount Int?
-  lastSyncedAt     DateTime?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  participantCount            Int?
+  lastSyncedAt                DateTime?
+  /// Null = no priority tier assigned — Priority-Based Support Monitoring never triggers for this
+  /// group (matches today's exact behavior; the feature is entirely opt-in per group).
+  priority                    SupportPriority?
+  assignedTeamMemberId        String?
+  assignedTeamMember          InternalTeamMember? @relation(fields: [assignedTeamMemberId], references: [id], onDelete: SetNull)
+  /// Independent kill switch from `priority` itself — lets an admin keep the priority tier
+  /// assigned but temporarily pause escalation for this one group without clearing it.
+  escalationMonitoringEnabled Boolean             @default(true)
+  createdAt                   DateTime            @default(now())
+  updatedAt                   DateTime            @updatedAt
 
   messages            Message[]
   broadcastMessages   OutboundMessage[]
   participantAddItems GroupParticipantAddItem[]
+  escalationCases     SupportEscalationCase[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([accountId, isActive])
@@ -256,6 +316,10 @@ model InternalTeamMember {
   status      TeamMemberStatus @default(ACTIVE)
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
+
+  assignedGroups            WhatsAppGroup[]
+  assignedEscalationCases   SupportEscalationCase[]
+  SupportEscalationSettings SupportEscalationSettings[]
 }
 
 model Message {
@@ -278,9 +342,10 @@ model Message {
   processingStatus  ProcessingStatus @default(PENDING)
   createdAt         DateTime         @default(now())
 
-  executions      AutomationExecution[]
-  outboundReplies OutboundMessage[]
-  notifications   Notification[]
+  executions               AutomationExecution[]
+  outboundReplies          OutboundMessage[]
+  notifications            Notification[]
+  triggeredEscalationCases SupportEscalationCase[] @relation("EscalationTriggerMessage")
 
   @@unique([accountId, whatsappMessageId])
   @@index([chatId, timestampWa])
@@ -527,6 +592,8 @@ model Notification {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
+  escalationEvents SupportEscalationEvent[]
+
   @@index([status])
   @@index([relatedMessageId])
 }
@@ -749,4 +816,110 @@ model AiKnowledgeVersion {
   createdAt       DateTime            @default(now())
 
   @@unique([itemId, version])
+}
+
+// ---------------------------------------------------------------------------
+// Priority-Based Support Monitoring & Escalation
+// ---------------------------------------------------------------------------
+
+/// One row per priority tier (seeded lazily, like every other settings singleton in this app —
+/// see getSupportPriorityPolicies()). SLA minutes are snapshotted onto each
+/// SupportEscalationCase at creation time, so editing a policy never rewrites an in-flight case.
+model SupportPriorityPolicy {
+  id                      String          @id @default(cuid())
+  priority                SupportPriority @unique
+  firstAlertMinutes       Int
+  secondAlertMinutes      Int
+  memberEscalationMinutes Int
+  adminEscalationMinutes  Int
+  followUpIntervalMinutes Int
+  maxEscalations          Int
+  updatedAt               DateTime        @updatedAt
+}
+
+/// Singleton row (id is always the literal string "global").
+model SupportEscalationSettings {
+  id                String              @id @default("global")
+  enabled           Boolean             @default(true)
+  escalationAdminId String?
+  escalationAdmin   InternalTeamMember? @relation(fields: [escalationAdminId], references: [id], onDelete: SetNull)
+  updatedAt         DateTime            @updatedAt
+}
+
+/// One open "ticket" per chat with an unanswered priority customer message. Created the moment
+/// a non-team-member message arrives in a priority-tagged group with no case already open for
+/// that chat (a second customer message before anyone replies extends the existing case rather
+/// than opening a duplicate one — see escalationQueue.ts).
+model SupportEscalationCase {
+  id          String           @id @default(cuid())
+  accountId   String
+  account     WhatsAppAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId     String
+  group       WhatsAppGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  chatId      String
+  clientPhone String
+  priority    SupportPriority
+  status      EscalationStatus @default(NEW)
+
+  triggerMessageId      String
+  triggerMessage        Message  @relation("EscalationTriggerMessage", fields: [triggerMessageId], references: [id], onDelete: Cascade)
+  lastCustomerMessageAt DateTime
+
+  escalationLevel      Int                 @default(0)
+  assignedTeamMemberId String?
+  assignedTeamMember   InternalTeamMember? @relation(fields: [assignedTeamMemberId], references: [id], onDelete: SetNull)
+
+  /// Snapshot of the matching SupportPriorityPolicy at case-creation time (see model doc comment).
+  firstAlertMinutes       Int
+  secondAlertMinutes      Int
+  memberEscalationMinutes Int
+  adminEscalationMinutes  Int
+  followUpIntervalMinutes Int
+  maxEscalations          Int
+
+  /// When the escalation worker should next evaluate this case — avoids scanning every open case
+  /// every tick, same "claim only what's due" shape as OutboundMessage.scheduledAt.
+  nextCheckAt    DateTime
+  humanRepliedAt DateTime?
+  resolvedAt     DateTime?
+  resolvedById   String?
+  resolvedBy     User?     @relation(fields: [resolvedById], references: [id], onDelete: SetNull)
+  pausedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events SupportEscalationEvent[]
+
+  @@index([status, nextCheckAt])
+  @@index([groupId])
+  @@index([chatId])
+}
+
+/// The escalation audit trail AND the duplicate-notification guard in one table: the unique
+/// constraint below makes it structurally impossible for a worker retry/restart/concurrent tick
+/// to send the same tier to the same recipient twice — see fireEscalationEvent() in
+/// escalationQueue.ts, which always tries to INSERT this row (inside the same transaction as the
+/// Notification it creates) before ever sending anything, and treats a unique-constraint failure
+/// as "already handled, skip."
+model SupportEscalationEvent {
+  id             String                  @id @default(cuid())
+  caseId         String
+  case           SupportEscalationCase   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  level          Int
+  eventType      EscalationEventType
+  recipientType  EscalationRecipientType
+  /// Stable identity of the recipient (a WhatsApp group id, an InternalTeamMember id, or the
+  /// literal "ADMIN"/"SYSTEM") — this, not recipientLabel, is what the uniqueness guarantee below
+  /// keys on, so a tier that fans out to multiple groups gets one idempotent row per group.
+  recipientKey   String
+  recipientLabel String
+  notificationId String?
+  notification   Notification?           @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+  triggeredById  String?
+  triggeredBy    User?                   @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+  createdAt      DateTime                @default(now())
+
+  @@unique([caseId, level, eventType, recipientKey])
+  @@index([caseId])
 }

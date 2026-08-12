@@ -18,6 +18,8 @@ import {
   Power,
   Send,
   Settings as SettingsIcon,
+  ShieldAlert,
+  SlidersHorizontal,
   Smartphone,
   Sparkles,
   UserPlus,
@@ -74,6 +76,13 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/group-message-sender", label: "Group Message Sender", icon: Send },
       { href: "/group-message-sender/history", label: "Broadcast History", icon: History },
       { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
+    ],
+  },
+  {
+    label: "Priority Support",
+    links: [
+      { href: "/support-escalation", label: "Dashboard", icon: ShieldAlert },
+      { href: "/support-escalation/policies", label: "Policies", icon: SlidersHorizontal },
     ],
   },
   {

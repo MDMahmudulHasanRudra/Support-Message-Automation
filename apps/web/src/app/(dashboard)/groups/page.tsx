@@ -36,11 +36,11 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
   if (filter === "active") where.isActive = true;
   if (filter === "inactive") where.isActive = false;
 
-  const [groups, totalCount, allCount, monitoredCount, unmonitoredCount, activeCount, inactiveCount] =
+  const [groups, totalCount, allCount, monitoredCount, unmonitoredCount, activeCount, inactiveCount, teamMembers] =
     await Promise.all([
       prisma.whatsAppGroup.findMany({
         where,
-        include: { account: { select: { label: true } } },
+        include: { account: { select: { label: true } }, assignedTeamMember: { select: { name: true } } },
         orderBy: { name: "asc" },
         skip: (page - 1) * PAGE_SIZE,
         take: PAGE_SIZE,
@@ -51,6 +51,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
       prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isMonitored: false } }),
       prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isActive: true } }),
       prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isActive: false } }),
+      prisma.internalTeamMember.findMany({ where: { status: "ACTIVE" }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     ]);
 
   const rows: GroupRow[] = groups.map((g) => ({
@@ -62,6 +63,10 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
     isActive: g.isActive,
     participantCount: g.participantCount,
     lastSyncedAt: g.lastSyncedAt?.toISOString() ?? null,
+    priority: g.priority,
+    assignedTeamMemberId: g.assignedTeamMemberId,
+    assignedTeamMemberName: g.assignedTeamMember?.name ?? null,
+    escalationMonitoringEnabled: g.escalationMonitoringEnabled,
   }));
 
   return (
@@ -108,6 +113,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
             groups={rows}
             pageSize={PAGE_SIZE}
             pageSizeHrefs={PAGE_SIZE_OPTIONS.map((size) => ({ size, href: buildHref(search, filter, 1, size) }))}
+            teamMembers={teamMembers}
           />
           <Pagination
             page={page}

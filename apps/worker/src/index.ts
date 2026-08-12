@@ -12,6 +12,7 @@ import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
 import { startCommandProcessor, syncGroupsWithTimeoutAndRetry } from "./commands/commandProcessor.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
+import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -127,6 +128,7 @@ async function main() {
   const intervals: NodeJS.Timeout[] = [
     startOutboundQueueProcessor(provider),
     startGroupParticipantAddProcessor(provider),
+    startEscalationProcessor(),
     startCommandProcessor(account.id, provider),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

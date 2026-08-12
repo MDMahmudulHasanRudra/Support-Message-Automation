@@ -2,7 +2,35 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
+import type { SupportPriority } from "@prisma/client";
 import { requireSession } from "@/server/auth";
+
+const PRIORITIES: SupportPriority[] = ["P1", "P2", "P3"];
+
+function isPriority(value: string): value is SupportPriority {
+  return (PRIORITIES as string[]).includes(value);
+}
+
+/** Priority-Based Support Monitoring & Escalation config, lives on the group row itself (see schema.prisma). */
+export async function setGroupPriority(
+  groupId: string,
+  formData: FormData,
+): Promise<void> {
+  await requireSession();
+  const priorityRaw = String(formData.get("priority") ?? "");
+  const assignedTeamMemberId = String(formData.get("assignedTeamMemberId") ?? "").trim() || null;
+  const escalationMonitoringEnabled = formData.get("escalationMonitoringEnabled") === "on";
+
+  await prisma.whatsAppGroup.update({
+    where: { id: groupId },
+    data: {
+      priority: isPriority(priorityRaw) ? priorityRaw : null,
+      assignedTeamMemberId,
+      escalationMonitoringEnabled,
+    },
+  });
+  revalidatePath("/groups");
+}
 
 export async function toggleGroupMonitoring(id: string): Promise<void> {
   await requireSession();

@@ -13,3 +13,8 @@ export function normalizePhoneNumber(input: string): string | null {
   if (digits.length < MIN_PHONE_DIGITS || digits.length > MAX_PHONE_DIGITS) return null;
   return digits;
 }
+
+/** Turns a normalized digits-only phone number into a 1:1 WhatsApp chat id (OpenWA's ContactId format). */
+export function buildWhatsAppContactId(digitsOnlyPhone: string): string {
+  return `${digitsOnlyPhone}@c.us`;
+}
