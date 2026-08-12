@@ -14,6 +14,8 @@ export class MockProvider implements WhatsAppProvider {
   public participantCountByChatId: Map<string, number | null> = new Map();
   public defaultParticipantCount: number | null = 42;
   public loggedOut = false;
+  public addedParticipants: Array<{ chatId: string; phoneNumber: string }> = [];
+  public nextAddParticipantResult: SendResult = { success: true };
 
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
@@ -44,5 +46,10 @@ export class MockProvider implements WhatsAppProvider {
     return this.participantCountByChatId.has(chatId)
       ? this.participantCountByChatId.get(chatId)!
       : this.defaultParticipantCount;
+  }
+
+  async addGroupParticipant(chatId: string, phoneNumber: string): Promise<SendResult> {
+    this.addedParticipants.push({ chatId, phoneNumber });
+    return this.nextAddParticipantResult;
   }
 }

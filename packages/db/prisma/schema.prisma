@@ -99,6 +99,26 @@ enum GroupBroadcastSource {
   MIXED
 }
 
+/// Add-to-Groups job lifecycle — mirrors GroupBroadcastJobStatus (see its
+/// doc comment): QUEUED -> RUNNING -> COMPLETED, or a sticky CANCELLED /
+/// STOPPED_KILL_SWITCH short-circuit.
+enum GroupParticipantAddJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  CANCELLED
+  STOPPED_KILL_SWITCH
+}
+
+enum GroupParticipantAddItemStatus {
+  PENDING
+  PROCESSING
+  ADDED
+  FAILED
+  /// Job was stopped (by a user or the kill switch) before this item's turn came up.
+  CANCELLED
+}
+
 enum NotificationType {
   TEAMS
   WHATSAPP
@@ -172,9 +192,10 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  createdRules         AutomationRule[]
-  createdBroadcastJobs GroupBroadcastJob[]
-  createdOutboundSends OutboundMessage[]
+  createdRules              AutomationRule[]
+  createdBroadcastJobs      GroupBroadcastJob[]
+  createdOutboundSends      OutboundMessage[]
+  createdParticipantAddJobs GroupParticipantAddJob[]
 }
 
 model WhatsAppAccount {
@@ -194,6 +215,7 @@ model WhatsAppAccount {
   messages             Message[]
   outboundMessages     OutboundMessage[]
   broadcastJobs        GroupBroadcastJob[]
+  participantAddJobs   GroupParticipantAddJob[]
   processingCheckpoint ProcessingCheckpoint?
 }
 
@@ -214,8 +236,9 @@ model WhatsAppGroup {
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
-  messages          Message[]
-  broadcastMessages OutboundMessage[]
+  messages             Message[]
+  broadcastMessages    OutboundMessage[]
+  participantAddItems  GroupParticipantAddItem[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([accountId, isActive])
@@ -414,6 +437,77 @@ model GroupBroadcastSettings {
   updatedAt                     DateTime @updatedAt
 }
 
+/// Batch header for the "Add to Groups" module: one phone number, added to
+/// N groups (all synchronized groups for the account, or a manual
+/// selection). Deliberately its own model rather than reusing
+/// GroupBroadcastJob/OutboundMessage — adding a participant is a distinct
+/// WhatsApp action with its own (notably stricter) ban-risk profile, so its
+/// throttling must be tunable independently (see GroupParticipantAddSettings).
+model GroupParticipantAddJob {
+  id          String                        @id @default(cuid())
+  accountId   String
+  account     WhatsAppAccount               @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdById String?
+  createdBy   User?                         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  /// Normalized digits-only phone number (no "+", no leading zeros beyond the country code).
+  phoneNumber String
+  status      GroupParticipantAddJobStatus  @default(QUEUED)
+  /// Snapshot of how many groups were requested vs. skipped before queueing even started
+  /// (e.g. "all groups" resolved to zero active groups) — distinct from a per-item FAILED result.
+  totalRequested      Int      @default(0)
+  queuedCount         Int      @default(0)
+  preQueueSkipped     Int      @default(0)
+  preQueueSkipReasons Json     @default("[]")
+  delayMinMs          Int
+  delayMaxMs          Int
+  maxPerMinute        Int
+  maxPerJob           Int
+  retryMaxAttempts    Int
+  createdAt           DateTime  @default(now())
+  startedAt           DateTime?
+  completedAt         DateTime?
+  cancelledAt         DateTime?
+
+  items GroupParticipantAddItem[]
+
+  @@index([accountId, createdAt])
+  @@index([status])
+}
+
+model GroupParticipantAddItem {
+  id                String                         @id @default(cuid())
+  jobId             String
+  job               GroupParticipantAddJob        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  groupId           String
+  group             WhatsAppGroup                  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupNameSnapshot String
+  status            GroupParticipantAddItemStatus  @default(PENDING)
+  attemptCount      Int                            @default(0)
+  failureReason     String?
+  scheduledAt       DateTime                       @default(now())
+  processedAt       DateTime?
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+
+  @@unique([jobId, groupId])
+  @@index([status, scheduledAt])
+}
+
+/// Singleton row (id is always the literal string "global"), analogous to
+/// GroupBroadcastSettings but for the Add-to-Groups module. Defaults are
+/// deliberately more conservative than GroupBroadcastSettings — WhatsApp
+/// treats bulk "add participant" actions as a stronger ban signal than
+/// bulk messaging.
+model GroupParticipantAddSettings {
+  id               String   @id @default("global")
+  delayMinMs       Int      @default(10000)
+  delayMaxMs       Int      @default(30000)
+  maxPerMinute     Int      @default(3)
+  maxPerJob        Int      @default(100)
+  retryMaxAttempts Int      @default(1)
+  updatedAt        DateTime @updatedAt
+}
+
 model Notification {
   id               String             @id @default(cuid())
   type             NotificationType
@@ -472,7 +566,7 @@ model AutomationSettings {
   retryMaxAttempts            Int            @default(3)
   retryIntervalsMs            Json           @default("[30000,300000,900000]")
   teamsWebhookUrl             String?
-  whatsappNotificationGroupId String?
+  whatsappNotificationGroupIds String[]      @default([])
   updatedAt                   DateTime       @updatedAt
 }
 

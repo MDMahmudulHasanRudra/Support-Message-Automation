@@ -344,6 +344,31 @@ export class OpenWAProvider implements WhatsAppProvider {
     }
   }
 
+  /**
+   * `addParticipant`'s declared return type is a strict `boolean`, but its
+   * own doc comment (Client.d.ts) says it actually returns a string status
+   * code on failure (`NOT_A_GROUP_CHAT`, `GROUP_DOES_NOT_EXIST`,
+   * `NOT_A_CONTACT`, `INSUFFICIENT_PERMISSIONS`) — unlike `sendText`'s
+   * `string = success id` convention, here a string means failure, so
+   * `Boolean(result)` would wrongly report success for any non-empty
+   * status string. Only a literal `true` counts as success.
+   */
+  async addGroupParticipant(chatId: string, phoneNumber: string): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      // The declared return type is a strict `boolean`, but the library's own doc comment says it
+      // actually returns a string status code on failure — cast to the true runtime union.
+      const result = (await this.client.addParticipant(
+        chatId as GroupChatId,
+        `${phoneNumber}@c.us` as ContactId,
+      )) as boolean | string;
+      if (result === true) return { success: true };
+      return { success: false, error: typeof result === "string" ? result : "Failed to add participant." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
   private async setState(
     state: OpenWAConnectionState,
     metadata?: Record<string, unknown>,

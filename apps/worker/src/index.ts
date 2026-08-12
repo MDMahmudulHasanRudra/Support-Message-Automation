@@ -3,6 +3,10 @@ import { startHealthServer, type WorkerHealthState } from "./health/server.js";
 import { OpenWAProvider } from "./provider/openwa/OpenWAProvider.js";
 import { processIncomingMessage } from "./pipeline/processIncomingMessage.js";
 import { recoverStuckOutboundMessages, startOutboundQueueProcessor } from "./queue/outboundQueueProcessor.js";
+import {
+  recoverStuckParticipantAddItems,
+  startGroupParticipantAddProcessor,
+} from "./queue/groupParticipantAddProcessor.js";
 import { recoverStuckNotifications, startNotificationDispatcher } from "./notifications/dispatcher.js";
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
@@ -67,9 +71,10 @@ async function main() {
 
   const recoveredOutbound = await recoverStuckOutboundMessages();
   const recoveredNotifications = await recoverStuckNotifications();
-  if (recoveredOutbound > 0 || recoveredNotifications > 0) {
+  const recoveredParticipantAdds = await recoverStuckParticipantAddItems();
+  if (recoveredOutbound > 0 || recoveredNotifications > 0 || recoveredParticipantAdds > 0) {
     console.log(
-      `[worker] crash recovery: requeued ${recoveredOutbound} outbound message(s), ${recoveredNotifications} notification(s)`,
+      `[worker] crash recovery: requeued ${recoveredOutbound} outbound message(s), ${recoveredNotifications} notification(s), ${recoveredParticipantAdds} group-participant-add item(s)`,
     );
   }
 
@@ -121,6 +126,7 @@ async function main() {
 
   const intervals: NodeJS.Timeout[] = [
     startOutboundQueueProcessor(provider),
+    startGroupParticipantAddProcessor(provider),
     startCommandProcessor(account.id, provider),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

@@ -71,7 +71,7 @@ export async function updateSafetySettings(_prevState: SettingsFormState, formDa
       defaultReplyDelayMaxMs: num("defaultReplyDelayMaxMs"),
       retryMaxAttempts: num("retryMaxAttempts"),
       teamsWebhookUrl: String(formData.get("teamsWebhookUrl") ?? "").trim() || null,
-      whatsappNotificationGroupId: String(formData.get("whatsappNotificationGroupId") ?? "").trim() || null,
+      whatsappNotificationGroupIds: formData.getAll("whatsappNotificationGroupIds").map(String),
     },
   });
 

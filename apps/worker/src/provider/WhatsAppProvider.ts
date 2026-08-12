@@ -55,6 +55,15 @@ export interface WhatsAppProvider {
    */
   getGroupParticipantCount(chatId: string): Promise<number | null>;
   /**
+   * Adds a phone number as a participant of the given group (used by the
+   * "Add to Groups" module). The digits-only `phoneNumber` is the caller's
+   * responsibility to validate/normalize before this is called — this
+   * method only turns it into the provider's own contact id format.
+   * Never throws: provider-level failures (not an admin, contact doesn't
+   * exist, group doesn't exist, etc.) come back as `{ success: false, error }`.
+   */
+  addGroupParticipant(chatId: string, phoneNumber: string): Promise<SendResult>;
+  /**
    * Ends the current session and invalidates its persisted session data, so the NEXT connect()
    * requires a fresh QR scan — distinct from disconnect(), which is a transient step inside
    * RECONNECT that expects the same session to be reusable afterward. Never throws; failures are

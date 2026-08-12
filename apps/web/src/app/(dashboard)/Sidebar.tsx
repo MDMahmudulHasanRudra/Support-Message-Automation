@@ -16,6 +16,7 @@ import {
   Send,
   Settings as SettingsIcon,
   Smartphone,
+  UserPlus,
   UserCog,
   Users,
   type LucideIcon,
@@ -68,6 +69,7 @@ const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/group-message-sender", label: "Group Message Sender", icon: Send },
       { href: "/group-message-sender/history", label: "Broadcast History", icon: History },
+      { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
     ],
   },
   {

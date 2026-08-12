@@ -324,17 +324,24 @@ async function executeAction(params: {
     }
 
     case "NOTIFY_WHATSAPP": {
-      if (!settings.whatsappNotificationGroupId) {
+      if (settings.whatsappNotificationGroupIds.length === 0) {
         return { type: "NOTIFY_WHATSAPP", executed: false, reason: "No WhatsApp notification group configured." };
       }
-      await enqueueNotification({
-        type: "WHATSAPP",
-        destination: settings.whatsappNotificationGroupId,
-        relatedMessageId: message.id,
-        relatedRuleId: matchedRule?.id ?? null,
-        payload: buildNotificationPayload(raw, matchedRule, action),
-      });
-      return { type: "NOTIFY_WHATSAPP", executed: true, reason: "Queued for delivery to the WhatsApp support group." };
+      const payload = buildNotificationPayload(raw, matchedRule, action);
+      for (const destination of settings.whatsappNotificationGroupIds) {
+        await enqueueNotification({
+          type: "WHATSAPP",
+          destination,
+          relatedMessageId: message.id,
+          relatedRuleId: matchedRule?.id ?? null,
+          payload,
+        });
+      }
+      return {
+        type: "NOTIFY_WHATSAPP",
+        executed: true,
+        reason: `Queued for delivery to ${settings.whatsappNotificationGroupIds.length} WhatsApp support group(s).`,
+      };
     }
 
     default:
