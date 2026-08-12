@@ -107,8 +107,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
           <GroupsTable
             groups={rows}
             pageSize={PAGE_SIZE}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
-            buildPageSizeHref={(size) => buildHref(search, filter, 1, size)}
+            pageSizeHrefs={PAGE_SIZE_OPTIONS.map((size) => ({ size, href: buildHref(search, filter, 1, size) }))}
           />
           <Pagination
             page={page}

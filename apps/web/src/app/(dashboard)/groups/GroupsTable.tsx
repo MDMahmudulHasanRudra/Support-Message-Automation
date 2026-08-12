@@ -37,13 +37,11 @@ type PendingBulkAction = "enable" | "disable" | null;
 export function GroupsTable({
   groups,
   pageSize,
-  pageSizeOptions,
-  buildPageSizeHref,
+  pageSizeHrefs,
 }: {
   groups: GroupRow[];
   pageSize?: number;
-  pageSizeOptions?: readonly number[];
-  buildPageSizeHref?: (size: number) => string;
+  pageSizeHrefs?: Array<{ size: number; href: string }>;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -125,15 +123,18 @@ export function GroupsTable({
           <span className="text-xs text-[color:var(--color-muted-foreground)]">
             {selected.size} selected (of {groups.length} visible)
           </span>
-          {pageSizeOptions && buildPageSizeHref ? (
+          {pageSizeHrefs ? (
             <label className="flex items-center gap-1.5 text-xs text-[color:var(--color-muted-foreground)]">
               Show
               <Select
                 className="h-7 w-20 py-0 text-xs"
                 value={pageSize}
-                onChange={(e) => router.push(buildPageSizeHref(Number(e.target.value)))}
+                onChange={(e) => {
+                  const target = pageSizeHrefs.find((p) => p.size === Number(e.target.value));
+                  if (target) router.push(target.href);
+                }}
               >
-                {pageSizeOptions.map((size) => (
+                {pageSizeHrefs.map(({ size }) => (
                   <option key={size} value={size}>
                     {size}
                   </option>
