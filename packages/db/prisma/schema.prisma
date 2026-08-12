@@ -196,6 +196,8 @@ model User {
   createdBroadcastJobs      GroupBroadcastJob[]
   createdOutboundSends      OutboundMessage[]
   createdParticipantAddJobs GroupParticipantAddJob[]
+  createdKnowledgeItems     AiKnowledgeItem[]
+  createdKnowledgeVersions  AiKnowledgeVersion[]
 }
 
 model WhatsAppAccount {
@@ -236,9 +238,9 @@ model WhatsAppGroup {
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
-  messages             Message[]
-  broadcastMessages    OutboundMessage[]
-  participantAddItems  GroupParticipantAddItem[]
+  messages            Message[]
+  broadcastMessages   OutboundMessage[]
+  participantAddItems GroupParticipantAddItem[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([accountId, isActive])
@@ -444,26 +446,26 @@ model GroupBroadcastSettings {
 /// WhatsApp action with its own (notably stricter) ban-risk profile, so its
 /// throttling must be tunable independently (see GroupParticipantAddSettings).
 model GroupParticipantAddJob {
-  id          String                        @id @default(cuid())
-  accountId   String
-  account     WhatsAppAccount               @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  createdById String?
-  createdBy   User?                         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  id                  String                       @id @default(cuid())
+  accountId           String
+  account             WhatsAppAccount              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdById         String?
+  createdBy           User?                        @relation(fields: [createdById], references: [id], onDelete: SetNull)
   /// Normalized digits-only phone number (no "+", no leading zeros beyond the country code).
-  phoneNumber String
-  status      GroupParticipantAddJobStatus  @default(QUEUED)
+  phoneNumber         String
+  status              GroupParticipantAddJobStatus @default(QUEUED)
   /// Snapshot of how many groups were requested vs. skipped before queueing even started
   /// (e.g. "all groups" resolved to zero active groups) — distinct from a per-item FAILED result.
-  totalRequested      Int      @default(0)
-  queuedCount         Int      @default(0)
-  preQueueSkipped     Int      @default(0)
-  preQueueSkipReasons Json     @default("[]")
+  totalRequested      Int                          @default(0)
+  queuedCount         Int                          @default(0)
+  preQueueSkipped     Int                          @default(0)
+  preQueueSkipReasons Json                         @default("[]")
   delayMinMs          Int
   delayMaxMs          Int
   maxPerMinute        Int
   maxPerJob           Int
   retryMaxAttempts    Int
-  createdAt           DateTime  @default(now())
+  createdAt           DateTime                     @default(now())
   startedAt           DateTime?
   completedAt         DateTime?
   cancelledAt         DateTime?
@@ -475,19 +477,19 @@ model GroupParticipantAddJob {
 }
 
 model GroupParticipantAddItem {
-  id                String                         @id @default(cuid())
+  id                String                        @id @default(cuid())
   jobId             String
   job               GroupParticipantAddJob        @relation(fields: [jobId], references: [id], onDelete: Cascade)
   groupId           String
-  group             WhatsAppGroup                  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group             WhatsAppGroup                 @relation(fields: [groupId], references: [id], onDelete: Cascade)
   groupNameSnapshot String
-  status            GroupParticipantAddItemStatus  @default(PENDING)
-  attemptCount      Int                            @default(0)
+  status            GroupParticipantAddItemStatus @default(PENDING)
+  attemptCount      Int                           @default(0)
   failureReason     String?
-  scheduledAt       DateTime                       @default(now())
+  scheduledAt       DateTime                      @default(now())
   processedAt       DateTime?
-  createdAt         DateTime                       @default(now())
-  updatedAt         DateTime                       @updatedAt
+  createdAt         DateTime                      @default(now())
+  updatedAt         DateTime                      @updatedAt
 
   @@unique([jobId, groupId])
   @@index([status, scheduledAt])
@@ -552,22 +554,22 @@ model ProcessingCheckpoint {
 
 /// Singleton row (id is always the literal string "global").
 model AutomationSettings {
-  id                          String         @id @default("global")
-  mode                        AutomationMode @default(SAFE_AUTO_REPLY)
-  automationEnabled           Boolean        @default(true)
-  maxRepliesPerClientPerHour  Int            @default(3)
-  maxRepliesPerClientPerDay   Int            @default(10)
-  globalMaxPerMinute          Int            @default(5)
-  globalMaxPerHour            Int            @default(100)
-  globalMaxPerDay             Int            @default(500)
-  rateLimitingEnabled         Boolean        @default(true)
-  defaultReplyDelayMinMs      Int            @default(3000)
-  defaultReplyDelayMaxMs      Int            @default(15000)
-  retryMaxAttempts            Int            @default(3)
-  retryIntervalsMs            Json           @default("[30000,300000,900000]")
-  teamsWebhookUrl             String?
-  whatsappNotificationGroupIds String[]      @default([])
-  updatedAt                   DateTime       @updatedAt
+  id                           String         @id @default("global")
+  mode                         AutomationMode @default(SAFE_AUTO_REPLY)
+  automationEnabled            Boolean        @default(true)
+  maxRepliesPerClientPerHour   Int            @default(3)
+  maxRepliesPerClientPerDay    Int            @default(10)
+  globalMaxPerMinute           Int            @default(5)
+  globalMaxPerHour             Int            @default(100)
+  globalMaxPerDay              Int            @default(500)
+  rateLimitingEnabled          Boolean        @default(true)
+  defaultReplyDelayMinMs       Int            @default(3000)
+  defaultReplyDelayMaxMs       Int            @default(15000)
+  retryMaxAttempts             Int            @default(3)
+  retryIntervalsMs             Json           @default("[30000,300000,900000]")
+  teamsWebhookUrl              String?
+  whatsappNotificationGroupIds String[]       @default([])
+  updatedAt                    DateTime       @updatedAt
 }
 
 model SystemLog {
@@ -580,4 +582,171 @@ model SystemLog {
 
   @@index([createdAt])
   @@index([level])
+}
+
+// ---------------------------------------------------------------------------
+// AI Learning & Knowledge System — Phase 1 (foundation only: settings,
+// provider/model config, and a manually-curated, versioned Knowledge Base).
+// Ingestion (software/chat/document learning, embeddings, duplicate
+// detection, AI-generated responses) is deliberately NOT built yet — these
+// models exist so later phases have somewhere to write to without another
+// migration, per the project's own "do not build everything in one step"
+// rule. Activity is logged through the existing SystemLog table (scope
+// "ai-learning"), not a parallel audit log.
+// ---------------------------------------------------------------------------
+
+enum AiProviderKind {
+  ANTHROPIC
+  OPENAI
+  GOOGLE
+  CUSTOM
+}
+
+enum AiProviderStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// Which job a model is assigned to — mirrors the spec's "Learning Model /
+/// Response Model / Vision Model / Document Model / Embedding Model" split,
+/// so a future phase can pick a cheaper/faster model per job without a
+/// schema change.
+enum AiModelJob {
+  LEARNING
+  RESPONSE
+  VISION
+  DOCUMENT
+  EMBEDDING
+}
+
+enum AiKnowledgeCategory {
+  SOFTWARE
+  WORKFLOW
+  FAQ
+  TROUBLESHOOTING
+  CUSTOMER_RESPONSE
+  SOP
+  REQUIREMENT
+  FEATURE
+  POLICY
+  ANNOUNCEMENT
+  SCREENSHOT
+}
+
+enum AiKnowledgeStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+/// Singleton row (id is always the literal string "global"). Every switch
+/// defaults OFF/conservative, matching AutomationSettings/GroupBroadcastSettings —
+/// none of these actually gate anything yet since the learning/response
+/// pipelines they're meant to control don't exist until a later phase.
+model AiSettings {
+  id                           String   @id @default("global")
+  aiEngineEnabled              Boolean  @default(false)
+  learningEnabled              Boolean  @default(false)
+  autoResponseEnabled          Boolean  @default(false)
+  screenshotResponseEnabled    Boolean  @default(false)
+  chatLearningEnabled          Boolean  @default(false)
+  softwareLearningEnabled      Boolean  @default(false)
+  requirementLearningEnabled   Boolean  @default(false)
+  announcementAiEnabled        Boolean  @default(false)
+  /// Percentage (0-100). Two pieces of knowledge at/above this similarity are treated as duplicates.
+  duplicateSimilarityThreshold Int      @default(95)
+  learningConfidenceThreshold  Int      @default(90)
+  autoApprovalThreshold        Int      @default(95)
+  humanReviewThreshold         Int      @default(70)
+  updatedAt                    DateTime @updatedAt
+}
+
+/// A configured AI provider account (e.g. one Anthropic API key). apiKeyCiphertext
+/// is AES-256-GCM encrypted at rest (see server/aiCrypto.ts) — the plaintext key
+/// never touches the database or, past the initial form submit, the browser.
+model AiProvider {
+  id               String           @id @default(cuid())
+  name             String
+  kind             AiProviderKind
+  apiUrl           String?
+  apiKeyCiphertext String
+  status           AiProviderStatus @default(ACTIVE)
+  priority         Int              @default(0)
+  lastTestedAt     DateTime?
+  lastTestOk       Boolean?
+  lastTestError    String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  models AiModelConfig[]
+}
+
+/// Exactly one active model assignment per job (see @@unique) — the same
+/// "singleton per key" pattern as GroupParticipantAddSettings, just keyed by
+/// job instead of a fixed "global" id.
+model AiModelConfig {
+  id         String     @id @default(cuid())
+  job        AiModelJob @unique
+  providerId String
+  provider   AiProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  modelId    String
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+/// The application's permanent knowledge store (spec section 9). In Phase 1
+/// every row is human-authored (aiGenerated=false, source=MANUAL) — the
+/// aiGenerated/confidence/source fields exist now so later phases (software
+/// learning, chat learning, document learning) can populate the same table
+/// without a breaking migration. Always reflects the LATEST version; full
+/// history lives in AiKnowledgeVersion.
+model AiKnowledgeItem {
+  id              String              @id @default(cuid())
+  title           String
+  category        AiKnowledgeCategory
+  question        String?
+  answer          String
+  procedure       String?
+  software        String?
+  module          String?
+  softwareVersion String?
+  source          String              @default("MANUAL")
+  confidence      Int?
+  aiGenerated     Boolean             @default(false)
+  humanVerified   Boolean             @default(true)
+  status          AiKnowledgeStatus   @default(ACTIVE)
+  currentVersion  Int                 @default(1)
+  createdById     String?
+  createdBy       User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  versions AiKnowledgeVersion[]
+
+  @@index([category])
+  @@index([status])
+}
+
+/// One immutable snapshot per edit (spec section 10 — "never simply
+/// overwrite important knowledge"). Version 1 is written at creation time;
+/// every subsequent edit adds a new row rather than mutating history.
+model AiKnowledgeVersion {
+  id              String              @id @default(cuid())
+  itemId          String
+  item            AiKnowledgeItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  version         Int
+  title           String
+  category        AiKnowledgeCategory
+  question        String?
+  answer          String
+  procedure       String?
+  software        String?
+  module          String?
+  softwareVersion String?
+  changeSummary   String?
+  createdById     String?
+  createdBy       User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime            @default(now())
+
+  @@unique([itemId, version])
 }

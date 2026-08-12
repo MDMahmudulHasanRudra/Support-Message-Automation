@@ -4,10 +4,13 @@ import { Badge } from "@/components/ui";
 import {
   AlertCircle,
   Bell,
+  BookOpen,
   Terminal as ConsoleIcon,
+  Cpu,
   EyeOff,
   FlaskConical,
   History,
+  KeyRound,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -16,6 +19,7 @@ import {
   Send,
   Settings as SettingsIcon,
   Smartphone,
+  Sparkles,
   UserPlus,
   UserCog,
   Users,
@@ -70,6 +74,16 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/group-message-sender", label: "Group Message Sender", icon: Send },
       { href: "/group-message-sender/history", label: "Broadcast History", icon: History },
       { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
+    ],
+  },
+  {
+    label: "AI Learning",
+    links: [
+      { href: "/ai-learning", label: "AI Dashboard", icon: Sparkles },
+      { href: "/ai-learning/knowledge-base", label: "Knowledge Base", icon: BookOpen },
+      { href: "/ai-learning/providers", label: "AI Providers", icon: KeyRound },
+      { href: "/ai-learning/models", label: "AI Models", icon: Cpu },
+      { href: "/ai-learning/settings", label: "AI Settings", icon: SettingsIcon },
     ],
   },
   {

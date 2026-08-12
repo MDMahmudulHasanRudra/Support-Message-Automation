@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
     "@prisma/client": "^5.20.0",
     "@support-automation/db": "workspace:*",
     "@support-automation/engine": "workspace:*",
