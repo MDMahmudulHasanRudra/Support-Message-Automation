@@ -5,13 +5,15 @@ import { requireSession } from "@/server/auth";
 import { Button, EmptyState, FilterBar, Input, PageHeader, Pagination } from "@/components/ui";
 import { GroupsTable, type GroupRow } from "./GroupsTable";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [10, 50, 100, 500, 1000] as const;
+const DEFAULT_PAGE_SIZE = 50;
 type FilterKey = "all" | "monitored" | "unmonitored" | "active" | "inactive";
 
 interface GroupsSearchParams {
   search?: string;
   filter?: string;
   page?: string;
+  pageSize?: string;
 }
 
 export default async function GroupsPage({ searchParams }: { searchParams: Promise<GroupsSearchParams> }) {
@@ -20,6 +22,10 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
   const filter: FilterKey = isFilterKey(params.filter) ? params.filter : "all";
   const search = (params.search ?? "").trim();
   const page = Math.max(1, Number(params.page ?? "1") || 1);
+  const requestedPageSize = Number(params.pageSize ?? DEFAULT_PAGE_SIZE);
+  const PAGE_SIZE = PAGE_SIZE_OPTIONS.includes(requestedPageSize as (typeof PAGE_SIZE_OPTIONS)[number])
+    ? requestedPageSize
+    : DEFAULT_PAGE_SIZE;
 
   const searchOnlyWhere: Prisma.WhatsAppGroupWhereInput = search
     ? { name: { contains: search, mode: "insensitive" } }
@@ -98,12 +104,17 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
         <EmptyState>No groups match the current search/filter.</EmptyState>
       ) : (
         <>
-          <GroupsTable groups={rows} />
+          <GroupsTable
+            groups={rows}
+            pageSize={PAGE_SIZE}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            buildPageSizeHref={(size) => buildHref(search, filter, 1, size)}
+          />
           <Pagination
             page={page}
             pageSize={PAGE_SIZE}
             total={totalCount}
-            buildHref={(p) => buildHref(search, filter, p)}
+            buildHref={(p) => buildHref(search, filter, p, PAGE_SIZE)}
           />
         </>
       )}
@@ -121,11 +132,12 @@ function isFilterKey(value: string | undefined): value is FilterKey {
   );
 }
 
-function buildHref(search: string, filter: FilterKey, page = 1): string {
+function buildHref(search: string, filter: FilterKey, page = 1, pageSize = DEFAULT_PAGE_SIZE): string {
   const qs = new URLSearchParams();
   if (search) qs.set("search", search);
   qs.set("filter", filter);
   if (page > 1) qs.set("page", String(page));
+  if (pageSize !== DEFAULT_PAGE_SIZE) qs.set("pageSize", String(pageSize));
   return `/groups?${qs.toString()}`;
 }
 

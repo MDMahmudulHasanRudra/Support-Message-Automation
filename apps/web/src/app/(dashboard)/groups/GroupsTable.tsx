@@ -8,6 +8,7 @@ import {
   Button,
   Checkbox,
   ConfirmDialog,
+  Select,
   Table,
   Td,
   Th,
@@ -33,7 +34,17 @@ export interface GroupRow {
 
 type PendingBulkAction = "enable" | "disable" | null;
 
-export function GroupsTable({ groups }: { groups: GroupRow[] }) {
+export function GroupsTable({
+  groups,
+  pageSize,
+  pageSizeOptions,
+  buildPageSizeHref,
+}: {
+  groups: GroupRow[];
+  pageSize?: number;
+  pageSizeOptions?: readonly number[];
+  buildPageSizeHref?: (size: number) => string;
+}) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -110,9 +121,27 @@ export function GroupsTable({ groups }: { groups: GroupRow[] }) {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs text-[color:var(--color-muted-foreground)]">
-          {selected.size} selected (of {groups.length} visible)
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-[color:var(--color-muted-foreground)]">
+            {selected.size} selected (of {groups.length} visible)
+          </span>
+          {pageSizeOptions && buildPageSizeHref ? (
+            <label className="flex items-center gap-1.5 text-xs text-[color:var(--color-muted-foreground)]">
+              Show
+              <Select
+                className="h-7 w-20 py-0 text-xs"
+                value={pageSize}
+                onChange={(e) => router.push(buildPageSizeHref(Number(e.target.value)))}
+              >
+                {pageSizeOptions.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          ) : null}
+        </div>
         <div className="flex gap-2">
           <Button
             variant="secondary"
