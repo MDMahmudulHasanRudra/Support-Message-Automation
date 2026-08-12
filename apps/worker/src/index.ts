@@ -1,7 +1,8 @@
-import { checkDatabaseConnection, prisma } from "@support-automation/db";
+import { checkDatabaseConnection } from "@support-automation/db";
 import { startHealthServer, type WorkerHealthState } from "./health/server.js";
-import { OpenWAProvider } from "./provider/openwa/OpenWAProvider.js";
-import { processIncomingMessage } from "./pipeline/processIncomingMessage.js";
+import { ProviderRegistry } from "./provider/ProviderRegistry.js";
+import { ensureLegacyAccountExists, ensurePrimaryAccountExists, findConnectableAccounts } from "./provider/accountProvisioning.js";
+import { startAccountRegistrySync } from "./provider/accountRegistrySync.js";
 import { recoverStuckOutboundMessages, startOutboundQueueProcessor } from "./queue/outboundQueueProcessor.js";
 import {
   recoverStuckParticipantAddItems,
@@ -10,54 +11,12 @@ import {
 import { recoverStuckNotifications, startNotificationDispatcher } from "./notifications/dispatcher.js";
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
-import { startCommandProcessor, syncGroupsWithTimeoutAndRetry } from "./commands/commandProcessor.js";
+import { startCommandProcessor } from "./commands/commandProcessor.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const SESSION_ID = process.env.WHATSAPP_SESSION_NAME ?? "support-automation";
-const SESSION_DATA_PATH = process.env.WHATSAPP_SESSION_DIR ?? "/app/sessions";
-const ACCOUNT_LABEL = process.env.WHATSAPP_ACCOUNT_LABEL ?? "Primary Account";
-
-const CONNECT_RETRY_DELAYS_MS = [15_000, 45_000]; // bounded, matching the spec's "safe retry policy" spirit — not unlimited
-
-/**
- * A single transient failure (e.g. WhatsApp Web taking longer than usual to
- * bootstrap) shouldn't require a manual RECONNECT command. Bounded retries
- * only — after these are exhausted, the account is left in ERROR and a
- * manual RECONNECT (or a worker restart) is required, same as before.
- */
-async function connectWithRetry(provider: OpenWAProvider, accountId: string): Promise<boolean> {
-  const attempts = CONNECT_RETRY_DELAYS_MS.length + 1;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      await provider.connect();
-      return true;
-    } catch (err) {
-      const isLastAttempt = attempt === attempts;
-      console.error(
-        `[worker] connect attempt ${attempt}/${attempts} failed${isLastAttempt ? "" : " — will retry"}`,
-        err,
-      );
-      await logSystemEvent("ERROR", "provider", `Connect attempt ${attempt}/${attempts} failed`, {
-        error: (err as Error).message,
-      });
-      if (isLastAttempt) return false;
-      await new Promise((resolve) => setTimeout(resolve, CONNECT_RETRY_DELAYS_MS[attempt - 1]));
-    }
-  }
-  return false;
-}
-
-/** One worker owns exactly one account/session (see ARCHITECTURE.md's single-session-per-worker note). */
-async function findOrCreateAccount() {
-  const existing = await prisma.whatsAppAccount.findFirst({ where: { sessionDataPath: SESSION_DATA_PATH } });
-  if (existing) return existing;
-  return prisma.whatsAppAccount.create({
-    data: { label: ACCOUNT_LABEL, sessionDataPath: SESSION_DATA_PATH, status: "DISCONNECTED" },
-  });
-}
 
 async function main() {
   const state: WorkerHealthState = { startedAt: Date.now(), lastHeartbeatAt: Date.now() };
@@ -79,61 +38,40 @@ async function main() {
     );
   }
 
-  const account = await findOrCreateAccount();
-  console.log(`[worker] using account ${account.id} (session "${SESSION_ID}" at ${SESSION_DATA_PATH})`);
-  await logSystemEvent("INFO", "worker", "Worker starting up", { accountId: account.id, sessionId: SESSION_ID });
+  // Backward compatibility, load-bearing: this is the exact account (same sessionDataPath,
+  // same sessionId) every pre-multi-account install already has — see ensureLegacyAccountExists's
+  // own doc comment. It also becomes Primary automatically if this is a fresh install.
+  const legacyAccount = await ensureLegacyAccountExists();
+  await ensurePrimaryAccountExists();
 
-  const provider = new OpenWAProvider(account.id, SESSION_ID, SESSION_DATA_PATH);
+  const registry = new ProviderRegistry();
 
-  const connected = await connectWithRetry(provider, account.id);
-  if (connected) {
-    provider.subscribeToMessages((message) => {
-      // PHASE 6.1: the exact OpenWA -> worker event handoff point — logged
-      // here, not inside the provider, since this is the provider-agnostic
-      // boundary (per WhatsAppProvider.ts's own doc comment) that any future
-      // provider implementation would call through identically.
-      console.log(
-        `[pipeline] [${message.accountId}:${message.whatsappMessageId}] MESSAGE_RECEIVED`,
-        JSON.stringify({
-          chatId: message.chatId,
-          senderPhone: message.senderPhone,
-          direction: message.direction,
-          isGroup: Boolean(message.whatsappGroupId),
-        }),
-      );
-      processIncomingMessage(message).catch((err) => {
-        console.error("[worker] error processing incoming message", err);
-        logSystemEvent("ERROR", "pipeline", "Error processing incoming message", { error: (err as Error).message });
-      });
-    });
-    // PHASE 5.2: deliberately NOT awaited. A slow/failed group sync (see
-    // commandProcessor.ts's confirmed root-cause comment) must never delay
-    // message processing — already wired above — or the startup of the
-    // outbound queue/command/notification loops below, and it must never be
-    // able to crash the worker the way an unguarded `await` here once did.
-    syncGroupsWithTimeoutAndRetry(account.id, provider)
-      .then((groupCount) => {
-        console.log(`[worker] synced ${groupCount} group(s)`);
-      })
-      .catch((err) => {
-        console.error("[worker] group sync failed after retries — WhatsApp connection remains active", err);
-      });
-  } else {
-    console.error(
-      "[worker] failed to connect to WhatsApp after all retries — will remain running; use the dashboard's Reconnect action to try again",
-    );
-    await logSystemEvent("ERROR", "provider", "Failed to connect to WhatsApp after all retries", {});
+  // Every known, already-session-provisioned account is connected SEQUENTIALLY at startup —
+  // never concurrently (see ProviderRegistry's class doc comment on why connect() calls must
+  // never race each other). On a worker restart this reconnects every account that was live
+  // before the process died, not just the legacy one.
+  const accountsToConnect = await findConnectableAccounts();
+  console.log(`[worker] connecting ${accountsToConnect.length} account(s): ${accountsToConnect.map((a) => a.label).join(", ")}`);
+  await logSystemEvent("INFO", "worker", "Worker starting up", {
+    accountIds: accountsToConnect.map((a) => a.id),
+    legacyAccountId: legacyAccount.id,
+  });
+
+  for (const account of accountsToConnect) {
+    if (!account.sessionId || !account.sessionDataPath) continue; // defensive; findConnectableAccounts already filters this
+    await registry.connectAccount({ id: account.id, sessionId: account.sessionId, sessionDataPath: account.sessionDataPath });
   }
 
   const intervals: NodeJS.Timeout[] = [
-    startOutboundQueueProcessor(provider),
-    startGroupParticipantAddProcessor(provider),
+    startOutboundQueueProcessor(registry),
+    startGroupParticipantAddProcessor(registry),
     startEscalationProcessor(),
-    startCommandProcessor(account.id, provider),
+    startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),
-      WHATSAPP: new WhatsAppNotificationProvider(provider),
+      WHATSAPP: new WhatsAppNotificationProvider(registry),
     }),
+    startAccountRegistrySync(registry),
     setInterval(async () => {
       state.lastHeartbeatAt = Date.now();
       const connected = await checkDatabaseConnection();
@@ -144,8 +82,8 @@ async function main() {
   const shutdown = (signal: string) => {
     console.log(`[worker] received ${signal}, shutting down`);
     intervals.forEach(clearInterval);
-    provider
-      .disconnect()
+    registry
+      .disconnectAll()
       .catch(() => undefined)
       .finally(() => {
         healthServer.close(() => process.exit(0));

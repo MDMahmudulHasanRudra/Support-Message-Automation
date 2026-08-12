@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { evaluate, type EngineRule } from "@support-automation/engine";
 import type { RuleAction } from "@support-automation/shared";
@@ -351,11 +351,22 @@ async function executeAction(params: {
       if (settings.whatsappNotificationGroupIds.length === 0) {
         return { type: "NOTIFY_WHATSAPP", executed: false, reason: "No WhatsApp notification group configured." };
       }
+      // Centralized account resolution — never scattered. See resolveWhatsAppAccount()'s own doc
+      // comment for the decision tree; a resolution failure means a clear error, never a silent
+      // send through some other connected account.
+      const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP");
+      if (isResolutionError(resolution)) {
+        return { type: "NOTIFY_WHATSAPP", executed: false, reason: resolution.error };
+      }
+      console.log(
+        `[whatsapp-routing] service=NOTIFY_WHATSAPP account=${resolution.accountLabel} accountId=${resolution.accountId} source=${resolution.source} action=ENQUEUE`,
+      );
       const payload = buildNotificationPayload(raw, matchedRule, action);
       for (const destination of settings.whatsappNotificationGroupIds) {
         await enqueueNotification({
           type: "WHATSAPP",
           destination,
+          accountId: resolution.accountId,
           relatedMessageId: message.id,
           relatedRuleId: matchedRule?.id ?? null,
           payload,
@@ -364,7 +375,7 @@ async function executeAction(params: {
       return {
         type: "NOTIFY_WHATSAPP",
         executed: true,
-        reason: `Queued for delivery to ${settings.whatsappNotificationGroupIds.length} WhatsApp support group(s).`,
+        reason: `Queued for delivery to ${settings.whatsappNotificationGroupIds.length} WhatsApp support group(s) via "${resolution.accountLabel}".`,
       };
     }
 

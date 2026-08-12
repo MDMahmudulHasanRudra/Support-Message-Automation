@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@support-automation/db";
 import type { WhatsAppAccount } from "@prisma/client";
 import { processOneCommand, startCommandProcessor, syncGroupsWithTimeoutAndRetry } from "../commands/commandProcessor.js";
+import { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { MockProvider } from "./mockProvider.js";
 
 /**
@@ -110,10 +111,12 @@ describe("Command loop: never overlaps two commands", () => {
     let releaseConnect: () => void = () => {};
     provider.connect = () => new Promise<void>((resolve) => (releaseConnect = resolve));
 
-    const reconnectCommand = await prisma.workerCommand.create({ data: { type: "RECONNECT" } });
-    const resyncCommand = await prisma.workerCommand.create({ data: { type: "RESYNC_GROUPS" } });
+    const reconnectCommand = await prisma.workerCommand.create({ data: { type: "RECONNECT", accountId: account.id } });
+    const resyncCommand = await prisma.workerCommand.create({ data: { type: "RESYNC_GROUPS", accountId: account.id } });
 
-    const interval = startCommandProcessor(account.id, provider, 10);
+    const registry = new ProviderRegistry();
+    registry.registerForTesting(account.id, provider);
+    const interval = startCommandProcessor(registry, 10);
     try {
       await new Promise((resolve) => setTimeout(resolve, 60)); // several tick intervals while RECONNECT is stuck
 

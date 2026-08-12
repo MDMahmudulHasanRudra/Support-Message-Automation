@@ -1,5 +1,6 @@
 import { prisma } from "@support-automation/db";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
+import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 
 const GROUP_SYNC_PROGRESS_INTERVAL = 250;
@@ -164,12 +165,54 @@ async function claimNextCommand() {
  * Dashboard → worker actions that need the live browser session (QR fetch,
  * reconnect, group resync, an explicit live test send) travel through this
  * DB-mediated channel — never a direct HTTP call (see ARCHITECTURE.md).
+ *
+ * Kept exactly as it was pre-multi-account (accountId/provider passed in directly, not resolved
+ * from a registry) so every existing test keeps working unchanged against a single account +
+ * MockProvider. `processOneCommandViaRegistry` below is the new multi-account entry point that
+ * resolves accountId/provider from the claimed command and this same function otherwise.
  */
 /** Exported for direct testing — drains exactly one due command, or returns false if none are pending. */
 export async function processOneCommand(accountId: string, provider: WhatsAppProvider): Promise<boolean> {
   const command = await claimNextCommand();
   if (!command) return false;
+  await executeClaimedCommand(command, accountId, provider);
+  return true;
+}
 
+/**
+ * Multi-account entry point: claims exactly once (never delegates to `processOneCommand`, which
+ * would claim a second time and find nothing — the row is already PROCESSING by then), resolves
+ * which account/provider to run against from the claimed command's own `accountId`, then shares
+ * the exact same per-type handling via `executeClaimedCommand`.
+ */
+export async function processOneCommandViaRegistry(registry: ProviderRegistry): Promise<boolean> {
+  const command = await claimNextCommand();
+  if (!command) return false;
+
+  if (!command.accountId) {
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "FAILED", processedAt: new Date(), result: { error: "Command has no accountId (created before multi-account support?)." } },
+    });
+    return true;
+  }
+
+  const provider = registry.get(command.accountId);
+  if (!provider) {
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "FAILED", processedAt: new Date(), result: { error: `Account ${command.accountId} is not connected in this worker.` } },
+    });
+    return true;
+  }
+
+  await executeClaimedCommand(command, command.accountId, provider);
+  return true;
+}
+
+type ClaimedCommand = NonNullable<Awaited<ReturnType<typeof claimNextCommand>>>;
+
+async function executeClaimedCommand(command: ClaimedCommand, accountId: string, provider: WhatsAppProvider): Promise<void> {
   try {
     switch (command.type) {
       case "GET_QR": {
@@ -281,13 +324,10 @@ export async function processOneCommand(accountId: string, provider: WhatsAppPro
       },
     });
   }
-
-  return true;
 }
 
 export function startCommandProcessor(
-  accountId: string,
-  provider: WhatsAppProvider,
+  registry: ProviderRegistry,
   intervalMs = 1500,
 ): NodeJS.Timeout {
   // ENGINEERING_STANDARDS.md §9 (no concurrent/conflicting commands): plain setInterval does NOT
@@ -295,12 +335,12 @@ export function startCommandProcessor(
   // over intervalMs (real WhatsApp auth), so without this guard a later tick could claim and start
   // a second command (e.g. RESYNC_GROUPS) WHILE the first is still running against the same
   // provider/browser session. This flag makes the loop strictly serial -- never more than one
-  // processOneCommand in flight at a time.
+  // command in flight at a time.
   let processing = false;
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOneCommand(accountId, provider)
+    processOneCommandViaRegistry(registry)
       .catch((err) => {
         console.error("[commands] unexpected error processing worker command", err);
       })

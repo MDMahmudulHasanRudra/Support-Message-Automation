@@ -1,7 +1,14 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@support-automation/db";
-import type { AutomationSettings, Prisma, SupportEscalationSettings, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
+import type {
+  AutomationSettings,
+  Prisma,
+  SupportEscalationSettings,
+  WhatsAppAccount,
+  WhatsAppGroup,
+  WhatsAppServiceRoute,
+} from "@prisma/client";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
 import { processOneCase } from "../escalation/escalationQueue.js";
 
@@ -16,6 +23,7 @@ import { processOneCase } from "../escalation/escalationQueue.js";
 
 let originalSettings: AutomationSettings;
 let originalEscalationSettings: SupportEscalationSettings;
+let originalPrioritySupportRoute: WhatsAppServiceRoute | null;
 let account: WhatsAppAccount;
 let group: WhatsAppGroup;
 const createdTeamMemberIds: string[] = [];
@@ -68,6 +76,7 @@ async function makeTeamMember(phoneNumber: string) {
 beforeAll(async () => {
   originalSettings = await prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   originalEscalationSettings = await prisma.supportEscalationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+  originalPrioritySupportRoute = await prisma.whatsAppServiceRoute.findUnique({ where: { serviceKey: "PRIORITY_SUPPORT" } });
 
   preExistingActiveRuleIds = (await prisma.automationRule.findMany({ where: { status: "ACTIVE" }, select: { id: true } })).map((r) => r.id);
   if (preExistingActiveRuleIds.length) {
@@ -81,6 +90,14 @@ afterAll(async () => {
     where: { id: "global" },
     data: originalEscalationSettings as unknown as Prisma.SupportEscalationSettingsUncheckedUpdateInput,
   });
+  if (originalPrioritySupportRoute) {
+    await prisma.whatsAppServiceRoute.update({
+      where: { serviceKey: "PRIORITY_SUPPORT" },
+      data: originalPrioritySupportRoute as unknown as Prisma.WhatsAppServiceRouteUncheckedUpdateInput,
+    });
+  } else {
+    await prisma.whatsAppServiceRoute.deleteMany({ where: { serviceKey: "PRIORITY_SUPPORT" } });
+  }
   if (preExistingActiveRuleIds.length) {
     await prisma.automationRule.updateMany({ where: { id: { in: preExistingActiveRuleIds } }, data: { status: "ACTIVE" } });
   }
@@ -90,7 +107,21 @@ beforeEach(async () => {
   await resetAutomationSettings();
   await resetEscalationSettings();
   await makeInstantPolicy();
-  account = await prisma.whatsAppAccount.create({ data: { label: `Escalation Test Account ${randomUUID()}`, status: "CONNECTED" } });
+  account = await prisma.whatsAppAccount.create({
+    data: { label: `Escalation Test Account ${randomUUID()}`, status: "CONNECTED" },
+  });
+  // processOneCase() now resolves a WhatsApp account via resolveWhatsAppAccount() before firing
+  // any tier (multi-account routing) — point PRIORITY_SUPPORT explicitly at this test's own
+  // account rather than marking it globally Primary. This suite runs against the same shared dev
+  // Postgres instance the real worker/dashboard use (see this file's own doc comment), and only
+  // one row in the whole database may ever be Primary — mutating that global singleton per test
+  // would collide with whatever the real running system has already promoted. A dedicated,
+  // per-service route has no such global uniqueness constraint, so it's the safe knob to touch.
+  await prisma.whatsAppServiceRoute.upsert({
+    where: { serviceKey: "PRIORITY_SUPPORT" },
+    update: { accountId: account.id, fallbackPolicy: "STRICT_NO_FALLBACK", enabled: true },
+    create: { serviceKey: "PRIORITY_SUPPORT", accountId: account.id, fallbackPolicy: "STRICT_NO_FALLBACK", enabled: true },
+  });
   group = await prisma.whatsAppGroup.create({
     data: { accountId: account.id, whatsappGroupId: uniqueGroupJid(), name: "VIP Clients", priority: "P1", lastSyncedAt: new Date() },
   });

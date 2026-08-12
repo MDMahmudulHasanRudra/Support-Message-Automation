@@ -96,7 +96,38 @@ async function handleBroadcastPreSendChecks(message: OutboundMessage): Promise<"
 export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
   const message = await claimNextOutboundMessage();
   if (!message) return false;
+  await processClaimedMessage(message, provider);
+  return true;
+}
 
+/** How long to defer a message whose account isn't connected in this worker yet — not a failure, just a wait (e.g. sequential startup still connecting a later account). */
+const ACCOUNT_NOT_READY_DEFER_MS = 30_000;
+
+/**
+ * Multi-account entry point: claims exactly once, resolves which account's provider to send
+ * through from the claimed message's own `accountId` (never an injected single instance
+ * anymore), then shares the exact same send logic via `processClaimedMessage`.
+ */
+export async function processOneViaRegistry(registry: import("../provider/ProviderRegistry.js").ProviderRegistry): Promise<boolean> {
+  const message = await claimNextOutboundMessage();
+  if (!message) return false;
+
+  const provider = registry.get(message.accountId);
+  if (!provider) {
+    // Release back to PENDING rather than fail — no send was attempted, so this must not count
+    // against attemptCount/retry budget.
+    await prisma.outboundMessage.update({
+      where: { id: message.id },
+      data: { status: "PENDING", scheduledAt: new Date(Date.now() + ACCOUNT_NOT_READY_DEFER_MS) },
+    });
+    return true;
+  }
+
+  await processClaimedMessage(message, provider);
+  return true;
+}
+
+async function processClaimedMessage(message: OutboundMessage, provider: WhatsAppProvider): Promise<void> {
   const isBroadcast = message.actionType === "GROUP_BROADCAST" && Boolean(message.broadcastJobId);
   const settings = await getAutomationSettings();
 
@@ -112,12 +143,12 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
       await markJobStoppedByKillSwitch(message.broadcastJobId!);
       await maybeCompleteBroadcastJob(message.broadcastJobId!);
     }
-    return true;
+    return;
   }
 
   if (isBroadcast) {
     const stopped = await handleBroadcastPreSendChecks(message);
-    if (stopped === "STOP_TICK") return true;
+    if (stopped === "STOP_TICK") return;
   }
 
   if (settings.rateLimitingEnabled) {
@@ -137,7 +168,7 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
         where: { id: message.id },
         data: { status: "RATE_LIMITED", failureReason: "Rate or per-client limit reached at send time." },
       });
-      return true;
+      return;
     }
   }
 
@@ -159,7 +190,7 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
           where: { id: message.id },
           data: { status: "CANCELLED", failureReason: "Cooldown became active before this message could be sent." },
         });
-        return true;
+        return;
       }
     }
   }
@@ -175,7 +206,7 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
         data: { status: "SKIPPED", failureReason: "Membership could not be verified." },
       });
       await maybeCompleteBroadcastJob(message.broadcastJobId!);
-      return true;
+      return;
     }
   }
 
@@ -198,7 +229,7 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
   } catch (err) {
     await handleSendFailure(message, (err as Error).message);
   }
-  return true;
+  return;
 }
 
 async function handleSendFailure(message: OutboundMessage, failureReason: string): Promise<void> {
@@ -236,14 +267,14 @@ async function handleSendFailure(message: OutboundMessage, failureReason: string
  * another row concurrently with the first.
  */
 export function startOutboundQueueProcessor(
-  provider: WhatsAppProvider,
+  registry: import("../provider/ProviderRegistry.js").ProviderRegistry,
   intervalMs = 2000,
 ): NodeJS.Timeout {
   let processing = false;
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOne(provider)
+    processOneViaRegistry(registry)
       .catch((err) => {
         console.error("[queue] unexpected error processing outbound message", err);
       })

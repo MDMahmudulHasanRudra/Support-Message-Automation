@@ -80,7 +80,39 @@ async function handlePreAddChecks(item: GroupParticipantAddItem): Promise<"STOP_
 export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
   const item = await claimNextItem();
   if (!item) return false;
+  await processClaimedItem(item, provider);
+  return true;
+}
 
+/** How long to defer an item whose account isn't connected in this worker yet — not a failure, just a wait. */
+const ACCOUNT_NOT_READY_DEFER_MS = 30_000;
+
+/**
+ * Multi-account entry point: claims exactly once, resolves which account's provider to use from
+ * the item's parent job (GroupParticipantAddItem itself has no accountId column — only the job
+ * does), then shares the exact same add logic via `processClaimedItem`.
+ */
+export async function processOneViaRegistry(registry: import("../provider/ProviderRegistry.js").ProviderRegistry): Promise<boolean> {
+  const item = await claimNextItem();
+  if (!item) return false;
+
+  const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: item.jobId }, select: { accountId: true } });
+  const provider = job ? registry.get(job.accountId) : undefined;
+  if (!provider) {
+    // Release back to PENDING rather than fail — no add attempt was made, so this must not count
+    // against attemptCount/retry budget.
+    await prisma.groupParticipantAddItem.update({
+      where: { id: item.id },
+      data: { status: "PENDING", scheduledAt: new Date(Date.now() + ACCOUNT_NOT_READY_DEFER_MS) },
+    });
+    return true;
+  }
+
+  await processClaimedItem(item, provider);
+  return true;
+}
+
+async function processClaimedItem(item: GroupParticipantAddItem, provider: WhatsAppProvider): Promise<void> {
   const settings = await getAutomationSettings();
   if (!settings.automationEnabled) {
     await prisma.groupParticipantAddItem.update({
@@ -89,11 +121,11 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
     });
     await markJobStoppedByKillSwitch(item.jobId);
     await maybeCompleteParticipantAddJob(item.jobId);
-    return true;
+    return;
   }
 
   const gate = await handlePreAddChecks(item);
-  if (gate === "STOP_TICK") return true;
+  if (gate === "STOP_TICK") return;
 
   await markJobStartedIfNeeded(item.jobId);
 
@@ -104,7 +136,7 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
       data: { status: "FAILED", attemptCount: { increment: 1 }, failureReason: "Group no longer found.", processedAt: new Date() },
     });
     await maybeCompleteParticipantAddJob(item.jobId);
-    return true;
+    return;
   }
 
   // Never act blindly: a live, single-chat check right before adding, not just reliance on the
@@ -116,7 +148,7 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
       data: { status: "FAILED", attemptCount: { increment: 1 }, failureReason: "Membership could not be verified.", processedAt: new Date() },
     });
     await maybeCompleteParticipantAddJob(item.jobId);
-    return true;
+    return;
   }
 
   const job = await prisma.groupParticipantAddJob.findUniqueOrThrow({ where: { id: item.jobId } });
@@ -135,7 +167,7 @@ export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
   } catch (err) {
     await handleAddFailure(item, job.retryMaxAttempts, (err as Error).message);
   }
-  return true;
+  return;
 }
 
 async function handleAddFailure(
@@ -164,14 +196,14 @@ async function handleAddFailure(
  * (ENGINEERING_STANDARDS.md §9/§15 "no concurrent duplicate workers").
  */
 export function startGroupParticipantAddProcessor(
-  provider: WhatsAppProvider,
+  registry: import("../provider/ProviderRegistry.js").ProviderRegistry,
   intervalMs = 2000,
 ): NodeJS.Timeout {
   let processing = false;
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOne(provider)
+    processOneViaRegistry(registry)
       .catch((err) => {
         console.error("[queue] unexpected error processing group-participant-add item", err);
       })

@@ -49,7 +49,7 @@ async function processOneNotification(providers: Record<string, NotificationProv
 
   const attemptCount = notification.attemptCount + 1;
   try {
-    const result = await provider.send(notification.destination, notification.payload as Record<string, unknown>);
+    const result = await provider.send(notification.destination, notification.payload as Record<string, unknown>, notification.accountId);
     if (result.success) {
       await prisma.notification.update({
         where: { id: notification.id },

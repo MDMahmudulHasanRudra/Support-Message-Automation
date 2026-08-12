@@ -3,6 +3,7 @@ import { formatSupportAlert } from "./formatMessage.js";
 
 /** Posts a support-alert card to a Microsoft Teams incoming webhook URL (the `destination`). */
 export class TeamsProvider implements NotificationProvider {
+  /** Teams has no account concept — accountId is always null for this provider and simply ignored. */
   async send(destination: string, payload: Record<string, unknown>): Promise<NotificationSendResult> {
     const text = formatSupportAlert(payload);
     try {

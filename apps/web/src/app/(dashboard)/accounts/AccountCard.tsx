@@ -26,6 +26,9 @@ export interface AccountCardData {
   label: string;
   phoneNumber: string | null;
   status: string;
+  isPrimary: boolean;
+  usedByServices: string[];
+  canDelete: boolean;
   lastConnectedAt: string | null;
   lastHeartbeatAt: string | null;
   sessionDataPath: string | null;
@@ -34,24 +37,34 @@ export interface AccountCardData {
   qrStale: boolean;
 }
 
-type DialogKind = "reconnect" | "resync" | "logout" | null;
+type DialogKind = "reconnect" | "resync" | "logout" | "setPrimary" | "removePrimary" | "delete" | null;
 
 export function AccountCard({
   account,
   onReconnect,
   onResync,
   onLogout,
+  onSetPrimary,
+  onRemovePrimary,
+  onDelete,
 }: {
   account: AccountCardData;
   onReconnect: () => Promise<void>;
   onResync: () => Promise<void>;
   onLogout: () => Promise<void>;
+  onSetPrimary: () => Promise<void>;
+  onRemovePrimary: () => Promise<void>;
+  onDelete: () => Promise<{ error?: string }>;
 }) {
   const { showToast } = useToast();
   const [dialog, setDialog] = useState<DialogKind>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const closeDialog = () => setDialog(null);
+  const closeDialog = () => {
+    setDialog(null);
+    setDeleteError(null);
+  };
 
   function confirmReconnect() {
     startTransition(async () => {
@@ -89,13 +102,56 @@ export function AccountCard({
     });
   }
 
+  function confirmSetPrimary() {
+    startTransition(async () => {
+      await onSetPrimary();
+      closeDialog();
+      showToast({
+        tone: "success",
+        title: "Primary account changed",
+        description: `"${account.label}" is now the default account for all unconfigured services.`,
+      });
+    });
+  }
+
+  function confirmRemovePrimary() {
+    startTransition(async () => {
+      await onRemovePrimary();
+      closeDialog();
+      showToast({
+        tone: "info",
+        title: "Primary status removed",
+        description: "No account is Primary now — unconfigured services will error until one is set.",
+      });
+    });
+  }
+
+  function confirmDelete() {
+    startTransition(async () => {
+      const result = await onDelete();
+      if (result.error) {
+        setDeleteError(result.error);
+        return;
+      }
+      closeDialog();
+      showToast({
+        tone: "success",
+        title: "Account deleted",
+        description: `"${account.label}" and its synced data have been removed.`,
+      });
+    });
+  }
+
   return (
     <Card>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-[color:var(--color-foreground)]">
-            {account.label}
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-[color:var(--color-foreground)]">
+              {account.label}
+            </h2>
+            {account.isPrimary ? <Badge color="blue">Primary</Badge> : null}
+          </div>
           <p className="font-[family-name:var(--font-mono)] text-sm text-[color:var(--color-muted-foreground)]">
             {account.phoneNumber ?? "(number not yet known)"}
           </p>
@@ -125,6 +181,18 @@ export function AccountCard({
           </dd>
         </div>
       </dl>
+
+      {account.usedByServices.length > 0 ? (
+        <div className="mt-3">
+          <p className="text-xs text-[color:var(--color-muted-foreground)]">
+            Explicitly used by: <span className="text-[color:var(--color-foreground)]">{account.usedByServices.join(", ")}</span>
+          </p>
+        </div>
+      ) : account.isPrimary ? (
+        <p className="mt-3 text-xs text-[color:var(--color-muted-foreground)]">
+          Default account for every service not explicitly configured otherwise.
+        </p>
+      ) : null}
 
       {account.status === "AUTHENTICATION_REQUIRED" && account.qrCode ? (
         <div className="mt-4">
@@ -160,9 +228,23 @@ export function AccountCard({
         <Button variant="secondary" onClick={() => setDialog("resync")}>
           Resync Groups
         </Button>
+        {account.isPrimary ? (
+          <Button variant="secondary" onClick={() => setDialog("removePrimary")}>
+            Remove Primary
+          </Button>
+        ) : (
+          <Button variant="secondary" onClick={() => setDialog("setPrimary")}>
+            Set as Primary
+          </Button>
+        )}
         <Button variant="danger" onClick={() => setDialog("logout")}>
           Logout
         </Button>
+        {account.canDelete ? (
+          <Button variant="ghost" onClick={() => setDialog("delete")}>
+            Delete
+          </Button>
+        ) : null}
       </div>
 
       <ConfirmDialog
@@ -193,6 +275,41 @@ export function AccountCard({
         title="Logout this WhatsApp account?"
         description="You will need to scan a new QR code with a phone to reconnect — the current session cannot be restored automatically."
         confirmLabel="Logout"
+        tone="danger"
+      />
+
+      <ConfirmDialog
+        open={dialog === "setPrimary"}
+        onClose={closeDialog}
+        onConfirm={confirmSetPrimary}
+        loading={isPending}
+        title="Set as Primary account?"
+        description="Every WhatsApp-dependent service without its own account configured will start using this account by default, instead of the current Primary."
+        confirmLabel="Set as Primary"
+      />
+
+      <ConfirmDialog
+        open={dialog === "removePrimary"}
+        onClose={closeDialog}
+        onConfirm={confirmRemovePrimary}
+        loading={isPending}
+        title="Remove Primary status?"
+        description="No account will be Primary afterward. Any service that isn't explicitly configured with its own account will show a clear error instead of sending, until a new Primary is set."
+        confirmLabel="Remove Primary"
+        tone="danger"
+      />
+
+      <ConfirmDialog
+        open={dialog === "delete"}
+        onClose={closeDialog}
+        onConfirm={confirmDelete}
+        loading={isPending}
+        title="Delete this WhatsApp account?"
+        description={
+          deleteError ??
+          "This permanently removes the account along with its synced groups and message history. This cannot be undone."
+        }
+        confirmLabel="Delete"
         tone="danger"
       />
     </Card>

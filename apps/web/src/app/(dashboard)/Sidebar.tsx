@@ -16,6 +16,7 @@ import {
   LogOut,
   MessagesSquare,
   Power,
+  Route,
   Send,
   Settings as SettingsIcon,
   ShieldAlert,
@@ -50,6 +51,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "WhatsApp",
     links: [
       { href: "/accounts", label: "WhatsApp Accounts", icon: Smartphone },
+      { href: "/accounts/routing", label: "Account Routing", icon: Route },
       { href: "/groups", label: "Groups", icon: Users },
       { href: "/team-members", label: "Internal Team Members", icon: UserCog },
     ],

@@ -221,6 +221,24 @@ enum WhatsAppAccountStatus {
   ERROR
 }
 
+/// Real, currently-existing WhatsApp-sending services that can be routed to a specific account
+/// instead of Primary. Deliberately a closed enum, not a free string — a typo can't create a
+/// silently-dead route. Extend this (plus a migration) the day a new routable service ships;
+/// do not add speculative entries for features that don't exist yet.
+enum WhatsAppServiceKey {
+  /// The rule engine's NOTIFY_WHATSAPP action (alerts a support group when a rule matches).
+  NOTIFY_WHATSAPP
+  /// Priority-Based Support Monitoring & Escalation's group alerts + member/admin DMs.
+  PRIORITY_SUPPORT
+}
+
+enum WhatsAppFallbackPolicy {
+  /// Configured account unavailable -> use Primary instead.
+  PRIMARY_FALLBACK
+  /// Configured account unavailable -> return a clear error, never silently switch accounts.
+  STRICT_NO_FALLBACK
+}
+
 enum LogLevel {
   INFO
   WARN
@@ -260,6 +278,17 @@ model WhatsAppAccount {
   lastConnectedAt DateTime?
   lastHeartbeatAt DateTime?
   sessionDataPath String?
+  /// OpenWA's own session identifier — distinct from `id` because it doubles as part of the
+  /// on-disk Chromium profile path (`${sessionDataPath}/_IGNORE_${sessionId}`, see
+  /// OpenWAProvider.clearStaleChromiumLock()). The pre-existing account keeps its historical
+  /// value (from WHATSAPP_SESSION_NAME) so its already-authenticated session is never orphaned;
+  /// new accounts get a fresh one at creation time.
+  sessionId       String?
+  /// Exactly one account may be true at a time — enforced by a partial unique index added by
+  /// hand to this field's migration (`CREATE UNIQUE INDEX ... WHERE "isPrimary" = true`), not
+  /// expressible in the Prisma schema DSL directly. See also the transactional service-layer
+  /// guard in setPrimaryAccount() (apps/web/src/server/actions/accounts.ts).
+  isPrimary       Boolean               @default(false)
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt
 
@@ -270,6 +299,22 @@ model WhatsAppAccount {
   participantAddJobs   GroupParticipantAddJob[]
   processingCheckpoint ProcessingCheckpoint?
   escalationCases      SupportEscalationCase[]
+  workerCommands       WorkerCommand[]
+  notifications        Notification[]
+  serviceRoutes        WhatsAppServiceRoute[]
+}
+
+/// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
+/// see resolveWhatsAppAccount() in packages/db/src/whatsappRouting.ts). accountId null means
+/// "use Primary" — the default, and the only state that exists until an admin explicitly picks
+/// a specific account for a service.
+model WhatsAppServiceRoute {
+  serviceKey     WhatsAppServiceKey     @id
+  accountId      String?
+  account        WhatsAppAccount?       @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  fallbackPolicy WhatsAppFallbackPolicy @default(PRIMARY_FALLBACK)
+  enabled        Boolean                @default(true)
+  updatedAt      DateTime               @updatedAt
 }
 
 model WhatsAppGroup {
@@ -578,6 +623,11 @@ model GroupParticipantAddSettings {
 model Notification {
   id               String             @id @default(cuid())
   type             NotificationType
+  /// Which WhatsApp account this was (or will be) sent through — only meaningful for
+  /// type=WHATSAPP; null for TEAMS. Nullable so pre-existing history stays valid, and so a
+  /// deleted account's audit trail survives (onDelete: SetNull, not Cascade).
+  accountId        String?
+  account          WhatsAppAccount?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
   destination      String
   relatedMessageId String?
   relatedMessage   Message?           @relation(fields: [relatedMessageId], references: [id], onDelete: SetNull)
@@ -601,6 +651,11 @@ model Notification {
 model WorkerCommand {
   id          String              @id @default(cuid())
   type        WorkerCommandType
+  /// Nullable only so pre-multi-account historical rows (created before this column existed)
+  /// remain valid — every new command a web action creates always sets this. onDelete: Cascade
+  /// since a queued-but-unprocessed command for a deleted account is meaningless.
+  accountId   String?
+  account     WhatsAppAccount?    @relation(fields: [accountId], references: [id], onDelete: Cascade)
   payload     Json?
   status      WorkerCommandStatus @default(PENDING)
   result      Json?
@@ -608,6 +663,7 @@ model WorkerCommand {
   processedAt DateTime?
 
   @@index([status, createdAt])
+  @@index([accountId, status])
 }
 
 model ProcessingCheckpoint {

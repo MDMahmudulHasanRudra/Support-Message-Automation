@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
 import { Button, EmptyState, FilterBar, Input, PageHeader, Pagination } from "@/components/ui";
 import { GroupsTable, type GroupRow } from "./GroupsTable";
+import { SyncGroupsButton } from "./SyncGroupsButton";
 
 const PAGE_SIZE_OPTIONS = [10, 50, 100, 500, 1000] as const;
 const DEFAULT_PAGE_SIZE = 50;
@@ -103,6 +104,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
             label={`Inactive (${inactiveCount})`}
           />
         </div>
+        <SyncGroupsButton />
       </FilterBar>
 
       {groups.length === 0 ? (

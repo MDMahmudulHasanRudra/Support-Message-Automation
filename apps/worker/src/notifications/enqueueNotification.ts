@@ -10,6 +10,8 @@ import type { NotificationType, Prisma } from "@prisma/client";
 export async function enqueueNotification(params: {
   type: NotificationType;
   destination: string;
+  /** Which WhatsApp account this will send through — only meaningful for type=WHATSAPP; always resolved via resolveWhatsAppAccount(), never guessed. */
+  accountId?: string | null;
   relatedMessageId?: string | null;
   relatedRuleId?: string | null;
   payload: Record<string, unknown>;
@@ -18,6 +20,7 @@ export async function enqueueNotification(params: {
     data: {
       type: params.type,
       destination: params.destination,
+      accountId: params.accountId ?? null,
       relatedMessageId: params.relatedMessageId ?? null,
       relatedRuleId: params.relatedRuleId ?? null,
       payload: params.payload as Prisma.InputJsonValue,

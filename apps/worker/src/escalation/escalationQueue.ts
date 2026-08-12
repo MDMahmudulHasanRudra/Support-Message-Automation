@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import type { EscalationStatus, Prisma, SupportEscalationCase, SupportPriority } from "@prisma/client";
 import { buildWhatsAppContactId, normalizePhoneNumber } from "@support-automation/shared";
 import { getAutomationSettings } from "../pipeline/settings.js";
@@ -22,6 +22,8 @@ const TERMINAL_STATUSES: EscalationStatus[] = ["HUMAN_REPLIED", "RESOLVED", "CAN
 const CLAIM_LEASE_MS = 60_000;
 /** Once maxEscalations is reached, stop reclaiming this case for a long time rather than looping forever with nothing to do — manual controls (escalate/reset) can still act on it. */
 const EXHAUSTED_DEFER_MS = 24 * 60 * 60_000;
+/** Account resolution failed (e.g. Primary disconnected) — a transient condition, retry soon rather than waiting out the long EXHAUSTED_DEFER_MS. */
+const ACCOUNT_UNAVAILABLE_DEFER_MS = 60_000;
 
 const PRIORITY_POLICY_DEFAULTS: Record<SupportPriority, Omit<Prisma.SupportPriorityPolicyCreateInput, "priority">> = {
   P1: { firstAlertMinutes: 0, secondAlertMinutes: 5, memberEscalationMinutes: 10, adminEscalationMinutes: 15, followUpIntervalMinutes: 15, maxEscalations: 10 },
@@ -161,6 +163,7 @@ async function fireEscalationEvent(params: {
   recipientLabel: string;
   destination: string;
   body: string;
+  accountId: string;
 }): Promise<boolean> {
   try {
     await prisma.$transaction(async (tx) => {
@@ -178,6 +181,7 @@ async function fireEscalationEvent(params: {
         data: {
           type: "WHATSAPP",
           destination: params.destination,
+          accountId: params.accountId,
           relatedMessageId: params.caseRow.triggerMessageId,
           payload: { escalationCaseId: params.caseRow.id, body: params.body },
         },
@@ -195,6 +199,7 @@ async function fireGroupTier(
   caseRow: SupportEscalationCase,
   level: number,
   eventType: "FIRST_NOTIFICATION" | "SECOND_NOTIFICATION",
+  accountId: string,
 ): Promise<void> {
   const settings = await getAutomationSettings();
   if (settings.whatsappNotificationGroupIds.length === 0) {
@@ -206,6 +211,7 @@ async function fireGroupTier(
   }
   const body = await formatEscalationAlert({ caseRow, eventType });
   for (const groupId of settings.whatsappNotificationGroupIds) {
+    console.log(`[whatsapp-routing] service=PRIORITY_SUPPORT accountId=${accountId} recipient=${groupId} action=ENQUEUE`);
     await fireEscalationEvent({
       caseRow,
       level,
@@ -215,11 +221,12 @@ async function fireGroupTier(
       recipientLabel: groupId,
       destination: groupId,
       body,
+      accountId,
     });
   }
 }
 
-async function fireMemberTier(caseRow: SupportEscalationCase, level: number): Promise<void> {
+async function fireMemberTier(caseRow: SupportEscalationCase, level: number, accountId: string): Promise<void> {
   if (!caseRow.assignedTeamMemberId) {
     await logSystemEvent("INFO", "support-escalation", "No assigned team member — member tier skipped", {
       caseId: caseRow.id,
@@ -242,6 +249,7 @@ async function fireMemberTier(caseRow: SupportEscalationCase, level: number): Pr
     return;
   }
   const body = await formatEscalationAlert({ caseRow, eventType: "MEMBER_NOTIFICATION", recipientName: member.name });
+  console.log(`[whatsapp-routing] service=PRIORITY_SUPPORT accountId=${accountId} recipient=${member.name} action=ENQUEUE`);
   await fireEscalationEvent({
     caseRow,
     level,
@@ -251,6 +259,7 @@ async function fireMemberTier(caseRow: SupportEscalationCase, level: number): Pr
     recipientLabel: member.name,
     destination: buildWhatsAppContactId(memberDigits),
     body,
+    accountId,
   });
 }
 
@@ -258,6 +267,7 @@ async function fireAdminTier(
   caseRow: SupportEscalationCase,
   level: number,
   eventType: "ADMIN_NOTIFICATION" | "FOLLOW_UP",
+  accountId: string,
 ): Promise<void> {
   const escalationSettings = await getSupportEscalationSettings();
   if (!escalationSettings.escalationAdminId) {
@@ -282,6 +292,7 @@ async function fireAdminTier(
     return;
   }
   const body = await formatEscalationAlert({ caseRow, eventType, recipientName: admin.name });
+  console.log(`[whatsapp-routing] service=PRIORITY_SUPPORT accountId=${accountId} recipient=${admin.name} action=ENQUEUE`);
   await fireEscalationEvent({
     caseRow,
     level,
@@ -291,6 +302,7 @@ async function fireAdminTier(
     recipientLabel: admin.name,
     destination: buildWhatsAppContactId(adminDigits),
     body,
+    accountId,
   });
 }
 
@@ -317,10 +329,27 @@ export async function processOneCase(): Promise<boolean> {
     return true;
   }
 
+  // Centralized account resolution — never scattered, and re-resolved fresh every tick (never
+  // snapshotted like the SLA minutes) since a case can sit open for hours, long enough for the
+  // configured account to reconnect/disconnect/change underneath it.
+  const resolution = await resolveWhatsAppAccount("PRIORITY_SUPPORT");
+  if (isResolutionError(resolution)) {
+    await logSystemEvent("WARN", "support-escalation", "WhatsApp account unavailable — tick deferred", {
+      caseId: caseRow.id,
+      error: resolution.error,
+    });
+    await prisma.supportEscalationCase.update({
+      where: { id: caseRow.id },
+      data: { nextCheckAt: new Date(Date.now() + ACCOUNT_UNAVAILABLE_DEFER_MS) },
+    });
+    return true;
+  }
+  const accountId = resolution.accountId;
+
   switch (caseRow.status) {
     case "NEW":
     case "MONITORING":
-      await fireGroupTier(caseRow, 0, "FIRST_NOTIFICATION");
+      await fireGroupTier(caseRow, 0, "FIRST_NOTIFICATION", accountId);
       await prisma.supportEscalationCase.update({
         where: { id: caseRow.id },
         data: { status: "WAITING_FOR_HUMAN", escalationLevel: 1, nextCheckAt: addMinutes(new Date(), caseRow.secondAlertMinutes) },
@@ -328,7 +357,7 @@ export async function processOneCase(): Promise<boolean> {
       break;
 
     case "WAITING_FOR_HUMAN":
-      await fireGroupTier(caseRow, 1, "SECOND_NOTIFICATION");
+      await fireGroupTier(caseRow, 1, "SECOND_NOTIFICATION", accountId);
       await prisma.supportEscalationCase.update({
         where: { id: caseRow.id },
         data: { status: "SECOND_ALERT", escalationLevel: 2, nextCheckAt: addMinutes(new Date(), caseRow.memberEscalationMinutes) },
@@ -336,7 +365,7 @@ export async function processOneCase(): Promise<boolean> {
       break;
 
     case "SECOND_ALERT":
-      await fireMemberTier(caseRow, 2);
+      await fireMemberTier(caseRow, 2, accountId);
       await prisma.supportEscalationCase.update({
         where: { id: caseRow.id },
         data: { status: "MEMBER_ESCALATED", escalationLevel: 3, nextCheckAt: addMinutes(new Date(), caseRow.adminEscalationMinutes) },
@@ -344,7 +373,7 @@ export async function processOneCase(): Promise<boolean> {
       break;
 
     case "MEMBER_ESCALATED":
-      await fireAdminTier(caseRow, 3, "ADMIN_NOTIFICATION");
+      await fireAdminTier(caseRow, 3, "ADMIN_NOTIFICATION", accountId);
       await prisma.supportEscalationCase.update({
         where: { id: caseRow.id },
         data: { status: "ADMIN_ESCALATED", escalationLevel: 4, nextCheckAt: addMinutes(new Date(), caseRow.followUpIntervalMinutes) },
@@ -353,7 +382,7 @@ export async function processOneCase(): Promise<boolean> {
 
     case "ADMIN_ESCALATED":
     case "FOLLOW_UP":
-      await fireAdminTier(caseRow, caseRow.escalationLevel, "FOLLOW_UP");
+      await fireAdminTier(caseRow, caseRow.escalationLevel, "FOLLOW_UP", accountId);
       await prisma.supportEscalationCase.update({
         where: { id: caseRow.id },
         data: {
