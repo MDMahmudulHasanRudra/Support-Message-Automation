@@ -8,6 +8,7 @@ import {
   Terminal as ConsoleIcon,
   Cpu,
   EyeOff,
+  Fingerprint,
   FlaskConical,
   History,
   KeyRound,
@@ -23,6 +24,7 @@ import {
   SlidersHorizontal,
   Smartphone,
   Sparkles,
+  Waypoints,
   UserPlus,
   UserCog,
   Users,
@@ -95,6 +97,13 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/ai-learning/providers", label: "AI Providers", icon: KeyRound },
       { href: "/ai-learning/models", label: "AI Models", icon: Cpu },
       { href: "/ai-learning/settings", label: "AI Settings", icon: SettingsIcon },
+    ],
+  },
+  {
+    label: "Conversation Learning",
+    links: [
+      { href: "/conversation-learning", label: "Dashboard", icon: Waypoints },
+      { href: "/conversation-learning/pattern-candidates", label: "Pattern Candidates", icon: Fingerprint },
     ],
   },
   {

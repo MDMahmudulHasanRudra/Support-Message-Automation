@@ -5,3 +5,4 @@ export * from "./matchers.js";
 export * from "./conditions.js";
 export * from "./actions.js";
 export * from "./evaluate.js";
+export * from "./patternDetection.js";

@@ -267,6 +267,7 @@ model User {
   resolvedEscalationCases   SupportEscalationCase[]
   triggeredEscalationEvents SupportEscalationEvent[]
   triggeredLearningBatchJobs LearningBatchJob[]
+  reviewedPatternCandidates  PatternCandidate[]
 }
 
 model WhatsAppAccount {
@@ -400,6 +401,7 @@ model Message {
   outboundReplies          OutboundMessage[]
   notifications            Notification[]
   triggeredEscalationCases SupportEscalationCase[] @relation("EscalationTriggerMessage")
+  patternCandidateEvidence PatternCandidateEvidence[]
 
   @@unique([accountId, whatsappMessageId])
   @@index([chatId, timestampWa])
@@ -813,6 +815,7 @@ model AiProvider {
 
   models AiModelConfig[]
   learningBatchJobs LearningBatchJob[]
+  patternCandidates PatternCandidate[]
 }
 
 /// Exactly one active model assignment per job (see @@unique) — the same
@@ -1049,6 +1052,7 @@ model ConversationSession {
   updatedAt         DateTime                  @updatedAt
 
   messages Message[]
+  evidence PatternCandidateEvidence[]
 
   @@index([accountId, chatId, status])
   /// The segmentation job's own "claim only what's due" query: OPEN sessions idle past the gap window.
@@ -1106,4 +1110,108 @@ model LearningBatchJob {
 
   @@index([status, jobType])
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Conversation Learning / Pattern Discovery — Phase 2 (deterministic pattern
+// detection). Entirely AI-free: packages/engine/src/patternDetection.ts's
+// pure scorer never calls an AI provider. aiConfidenceScore/aiProviderId/
+// aiAnalysisSummary below are included now (nullable, unused) so the AI-
+// assisted analysis phase doesn't need a second migration on this table.
+// ---------------------------------------------------------------------------
+
+enum PatternCandidateStatus {
+  PENDING_ANALYSIS
+  /// Only reachable once the (later, optional) AI-assisted analysis phase has scored this candidate.
+  ANALYZED
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  /// Folded into another candidate covering the same intent (human/reviewer action, later phase).
+  MERGED
+  /// Aged out without enough evidence — see LearningSettings.candidateExpiryDays (later phase).
+  EXPIRED
+}
+
+/// One row per detected pattern signature — created as soon as the first occurrence is seen, so
+/// evidence has somewhere to accumulate against. The hard floor (LearningSettings.
+/// minOccurrenceForCandidate/minDistinctGroupsForCandidate/minDistinctClientsForCandidate) does
+/// NOT gate row creation — it gates whether a row is ever surfaced to a human or considered a real
+/// "candidate" anywhere downstream (the dashboard list only queries rows currently past the
+/// floor; see patternDetectionJob.ts's rescoreCandidate(), which also refuses to advance `status`
+/// past PENDING_ANALYSIS until the floor is met). A single isolated conversation can create a row
+/// here, but it can never become visible or actionable.
+model PatternCandidate {
+  id                      String    @id @default(cuid())
+  /// Deterministic signature (sorted distinctive-keyword set) — the same recurring intent always
+  /// hashes to the same key, order-independent. See packages/engine/src/patternDetection.ts.
+  patternKey              String    @unique
+  suggestedMatchType      MatchType
+  suggestedKeywords       String[]  @default([])
+  suggestedMatchValue     String?
+  /// Most common team-member reply text seen following a matching message — evidence, not binding.
+  suggestedReplyMessage   String?
+  suggestedActionCategory String?
+
+  occurrenceCount     Int      @default(0)
+  distinctGroupCount  Int      @default(0)
+  distinctClientCount Int      @default(0)
+  firstSeenAt         DateTime
+  lastSeenAt          DateTime
+
+  /// Individual signal scores (0-100), each computed independently — see computeConfidenceScore().
+  frequencyScore     Int  @default(0)
+  diversityScore     Int  @default(0)
+  consistencyScore   Int  @default(0)
+  resolutionScore    Int  @default(0)
+  recencyScore       Int  @default(0)
+  /// Null until an AI batch analyzes it (later phase) — the confidence formula falls back to
+  /// frequencyScore when this is null, so it never degrades in AI-off mode.
+  aiConfidenceScore  Int?
+  /// Only ever incremented via an explicit reviewer action (later phase), capped at 100.
+  humanVerifiedBoost Int  @default(0)
+  /// Final blended score — see computeConfidenceScore() in packages/engine.
+  confidenceScore    Int  @default(0)
+
+  status            PatternCandidateStatus @default(PENDING_ANALYSIS)
+  aiAnalysisSummary String?
+  aiProviderId      String?
+  aiProvider        AiProvider?            @relation(fields: [aiProviderId], references: [id], onDelete: SetNull)
+  reviewedById      String?
+  reviewedBy        User?                  @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt        DateTime?
+  reviewNote        String?
+  mergedIntoId      String?
+  mergedInto        PatternCandidate?      @relation("PatternMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom        PatternCandidate[]     @relation("PatternMerge")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  evidence PatternCandidateEvidence[]
+
+  @@index([status, confidenceScore])
+  @@index([lastSeenAt])
+}
+
+/// Audit trail proving a PatternCandidate isn't a fluke — one row per ConversationSession that
+/// contributed to it. The unique constraint also makes the detection job's upsert idempotent: a
+/// session already linked to this candidate is never counted or linked twice.
+model PatternCandidateEvidence {
+  id                    String              @id @default(cuid())
+  patternCandidateId    String
+  patternCandidate      PatternCandidate    @relation(fields: [patternCandidateId], references: [id], onDelete: Cascade)
+  conversationSessionId String
+  conversationSession   ConversationSession @relation(fields: [conversationSessionId], references: [id], onDelete: Cascade)
+  matchedMessageId      String?
+  matchedMessage        Message?            @relation(fields: [matchedMessageId], references: [id], onDelete: SetNull)
+  /// Heuristic: a team-member reply followed within the same session.
+  wasResolved           Boolean             @default(false)
+  /// Set if an AutomationExecution in this session already had a non-null ruleId — a historical-
+  /// outcome signal, not a foreign key (the rule may since have been deleted/disabled).
+  respondingRuleId      String?
+  createdAt             DateTime            @default(now())
+
+  @@unique([patternCandidateId, conversationSessionId])
+  @@index([patternCandidateId])
 }
