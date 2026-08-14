@@ -159,69 +159,93 @@ export class OpenWAProvider implements WhatsAppProvider {
 
     await this.setState("WAITING_FOR_QR");
 
+    // Confirmed live in production logs: OpenWA's internal session-detection can get wedged after
+    // an unscanned QR — it logs "Session most likely logged out" to its own console output (not
+    // ours) and then never resolves OR rejects create()'s promise. Neither `qrTimeout: 0` nor
+    // `authTimeout: 120` below protect against this specific failure mode — they bound the
+    // library's *internal* races, not the outer promise we're awaiting, so a wedge here hung
+    // forever with zero signal: no error, no retry (connectWithRetry never saw a rejection to act
+    // on), and the account sat on an increasingly stale QR indefinitely. This watchdog is a bound
+    // on OUR wait only, generous enough to never cut off a real (if slow) human scan — it exists
+    // purely to convert "hung forever, silently" into "fails after a long-but-finite wait", which
+    // connectWithRetry can then actually retry.
+    const watchdogMs = Number(process.env.WHATSAPP_CONNECT_WATCHDOG_MS) || 10 * 60_000;
+    let watchdogTimer: NodeJS.Timeout | undefined;
+    const watchdog = new Promise<never>((_, reject) => {
+      watchdogTimer = setTimeout(
+        () => reject(new Error(`OpenWA connection attempt did not settle within ${watchdogMs}ms — treating as stalled.`)),
+        watchdogMs,
+      );
+    });
+
     try {
-      this.client = await create({
-        sessionId: this.sessionId,
-        sessionDataPath: this.sessionDataPath,
-        multiDevice: true,
-        // PHASE 5.1.1 — confirmed via reading initializer.js: `customUserAgent`
-        // below is silently ignored without this flag. OpenWA only copies
-        // `config.customUserAgent` into the variable it actually passes to
-        // `page.setUserAgent()` inside an `if (config.inDocker)` block — every
-        // previous run (verified via a live PAGE_UA readout showing the
-        // hardcoded Chrome/104 default even after this override was added)
-        // silently fell through to that default because this flag was never
-        // set, regardless of what customUserAgent was configured to.
-        inDocker: true,
-        // PHASE 5.1 — root cause found via a live CDP screenshot of the
-        // actual stuck page (see final report): it was never a QR/canvas
-        // problem at all. WhatsApp Web was serving "WhatsApp works with
-        // Google Chrome 100+ — please update your browser", because
-        // OpenWA's hardcoded default customUserAgent claims
-        // `Chrome/104.0.0.0` (config/puppeteer.config.js), which current
-        // WhatsApp Web now rejects — even though the real installed
-        // Chromium is v151. With no QR ever rendered, every downstream
-        // wait (needsToScan's canvas selector, isInsideChat, the whole
-        // authRace) was doomed regardless of timeouts or selectors.
-        // Overriding it to match the ACTUAL installed Chromium's major
-        // version keeps the legacy UA string consistent with the User-
-        // Agent Client Hints Chromium derives from the real engine
-        // (spoofing only the legacy string while leaving Client Hints at
-        // the true version is itself a mismatch WhatsApp could flag).
-        customUserAgent:
-          process.env.WHATSAPP_CUSTOM_USER_AGENT ??
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
-        // Deliberately NOT setting `headless` here (see class doc comment):
-        // omitting it lets the library's own internal `headless: "new"`
-        // default survive. OpenWA's ConfigObject type only declares
-        // `headless?: boolean`, but the runtime accepts puppeteer's
-        // `"new"` — since the type doesn't allow that string, and setting
-        // `headless: true` was the actual bug (it overrides "new" via
-        // object-spread order in browser.js), omission is the correct fix.
-        useStealth,
-        useChrome: false,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-        qrTimeout: 0, // wait indefinitely for a human to scan — this one is intentional
-        // PHASE 5.1: authTimeout: 0 was a real bug, not a safe "wait forever"
-        // choice. It doesn't just skip a deadline for the human — it disables
-        // the ONLY timeout wrapped around OpenWA's internal
-        // Promise.race([needsToScan, isInsideChat, sessionDataInvalid]) used
-        // to detect page state (auth.js). Each of those three race members
-        // has its own hardcoded `timeout: 0` (infinite) in the library, so
-        // with authTimeout also at 0, a page whose QR canvas doesn't match
-        // the library's expected selector hangs forever with zero
-        // diagnostic signal. Any non-zero value here selects a 120s bound
-        // (multiDevice is true) instead of the true value passed — an
-        // upstream quirk, not something this value can fine-tune further.
-        authTimeout: 120,
-        popup: false,
-        cacheEnabled: false,
-      });
+      this.client = await Promise.race([
+        create({
+          sessionId: this.sessionId,
+          sessionDataPath: this.sessionDataPath,
+          multiDevice: true,
+          // PHASE 5.1.1 — confirmed via reading initializer.js: `customUserAgent`
+          // below is silently ignored without this flag. OpenWA only copies
+          // `config.customUserAgent` into the variable it actually passes to
+          // `page.setUserAgent()` inside an `if (config.inDocker)` block — every
+          // previous run (verified via a live PAGE_UA readout showing the
+          // hardcoded Chrome/104 default even after this override was added)
+          // silently fell through to that default because this flag was never
+          // set, regardless of what customUserAgent was configured to.
+          inDocker: true,
+          // PHASE 5.1 — root cause found via a live CDP screenshot of the
+          // actual stuck page (see final report): it was never a QR/canvas
+          // problem at all. WhatsApp Web was serving "WhatsApp works with
+          // Google Chrome 100+ — please update your browser", because
+          // OpenWA's hardcoded default customUserAgent claims
+          // `Chrome/104.0.0.0` (config/puppeteer.config.js), which current
+          // WhatsApp Web now rejects — even though the real installed
+          // Chromium is v151. With no QR ever rendered, every downstream
+          // wait (needsToScan's canvas selector, isInsideChat, the whole
+          // authRace) was doomed regardless of timeouts or selectors.
+          // Overriding it to match the ACTUAL installed Chromium's major
+          // version keeps the legacy UA string consistent with the User-
+          // Agent Client Hints Chromium derives from the real engine
+          // (spoofing only the legacy string while leaving Client Hints at
+          // the true version is itself a mismatch WhatsApp could flag).
+          customUserAgent:
+            process.env.WHATSAPP_CUSTOM_USER_AGENT ??
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+          // Deliberately NOT setting `headless` here (see class doc comment):
+          // omitting it lets the library's own internal `headless: "new"`
+          // default survive. OpenWA's ConfigObject type only declares
+          // `headless?: boolean`, but the runtime accepts puppeteer's
+          // `"new"` — since the type doesn't allow that string, and setting
+          // `headless: true` was the actual bug (it overrides "new" via
+          // object-spread order in browser.js), omission is the correct fix.
+          useStealth,
+          useChrome: false,
+          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+          qrTimeout: 0, // wait indefinitely for a human to scan — this one is intentional
+          // PHASE 5.1: authTimeout: 0 was a real bug, not a safe "wait forever"
+          // choice. It doesn't just skip a deadline for the human — it disables
+          // the ONLY timeout wrapped around OpenWA's internal
+          // Promise.race([needsToScan, isInsideChat, sessionDataInvalid]) used
+          // to detect page state (auth.js). Each of those three race members
+          // has its own hardcoded `timeout: 0` (infinite) in the library, so
+          // with authTimeout also at 0, a page whose QR canvas doesn't match
+          // the library's expected selector hangs forever with zero
+          // diagnostic signal. Any non-zero value here selects a 120s bound
+          // (multiDevice is true) instead of the true value passed — an
+          // upstream quirk, not something this value can fine-tune further.
+          authTimeout: 120,
+          popup: false,
+          cacheEnabled: false,
+        }),
+        watchdog,
+      ]);
     } catch (err) {
       // Do not silently swallow: full error, with stack, goes to both the
       // console (docker logs) and SystemLog (dashboard).
       await this.setState("ERROR", { error: (err as Error).message, stack: (err as Error).stack });
       throw err;
+    } finally {
+      clearTimeout(watchdogTimer);
     }
 
     // create() only resolves after a successful scan+auth — OpenWA's public
