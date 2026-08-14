@@ -14,6 +14,7 @@ import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificati
 import { startCommandProcessor } from "./commands/commandProcessor.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
+import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -66,6 +67,10 @@ async function main() {
     startOutboundQueueProcessor(registry),
     startGroupParticipantAddProcessor(registry),
     startEscalationProcessor(),
+    // Conversation Learning Phase 1 — always registered, but processOneSegmentationBatch()
+    // itself no-ops on every tick until LearningSettings.conversationLearningEnabled is turned
+    // on, so this has zero effect on a fresh/default install.
+    startSessionSegmentationProcessor(),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

@@ -266,6 +266,7 @@ model User {
   createdKnowledgeVersions  AiKnowledgeVersion[]
   resolvedEscalationCases   SupportEscalationCase[]
   triggeredEscalationEvents SupportEscalationEvent[]
+  triggeredLearningBatchJobs LearningBatchJob[]
 }
 
 model WhatsAppAccount {
@@ -302,6 +303,7 @@ model WhatsAppAccount {
   workerCommands       WorkerCommand[]
   notifications        Notification[]
   serviceRoutes        WhatsAppServiceRoute[]
+  conversationSessions ConversationSession[]
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -346,6 +348,7 @@ model WhatsAppGroup {
   broadcastMessages   OutboundMessage[]
   participantAddItems GroupParticipantAddItem[]
   escalationCases     SupportEscalationCase[]
+  conversationSessions ConversationSession[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([accountId, isActive])
@@ -387,6 +390,12 @@ model Message {
   processingStatus  ProcessingStatus @default(PENDING)
   createdAt         DateTime         @default(now())
 
+  /// Set by the (separate, off-by-default) Conversation Learning segmentation job — never written
+  /// by the message pipeline itself. Null for every message until that job processes it, and for
+  /// every message ever if LearningSettings.conversationLearningEnabled stays false.
+  conversationSessionId String?
+  conversationSession   ConversationSession? @relation(fields: [conversationSessionId], references: [id], onDelete: SetNull)
+
   executions               AutomationExecution[]
   outboundReplies          OutboundMessage[]
   notifications            Notification[]
@@ -396,6 +405,7 @@ model Message {
   @@index([chatId, timestampWa])
   @@index([groupId, timestampWa])
   @@index([processingStatus])
+  @@index([conversationSessionId])
   @@index([senderPhone])
 }
 
@@ -802,6 +812,7 @@ model AiProvider {
   updatedAt        DateTime         @updatedAt
 
   models AiModelConfig[]
+  learningBatchJobs LearningBatchJob[]
 }
 
 /// Exactly one active model assignment per job (see @@unique) — the same
@@ -978,4 +989,121 @@ model SupportEscalationEvent {
 
   @@unique([caseId, level, eventType, recipientKey])
   @@index([caseId])
+}
+
+// ---------------------------------------------------------------------------
+// Conversation Learning / Pattern Discovery — Phase 1 (data collection only).
+// A background layer that runs alongside the rule engine, never inside it:
+// it only reads already-persisted Message rows and tags them with a session,
+// entirely off by default (LearningSettings.conversationLearningEnabled).
+// Deterministic pattern detection (PatternCandidate), human review
+// (RuleProposal), and AI-assisted analysis are later, separate migrations —
+// this phase adds no path that can affect message delivery or rule
+// evaluation. See ARCHITECTURE.md-style note in apps/worker/src/learning/.
+// ---------------------------------------------------------------------------
+
+enum ConversationSessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum LearningBatchJobType {
+  CONVERSATION_SEGMENTATION
+  /// Not implemented until the deterministic pattern-detection migration/phase.
+  PATTERN_DETECTION
+  /// Not implemented until the AI-assisted analysis migration/phase.
+  AI_ANALYSIS
+}
+
+enum LearningBatchJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum LearningBatchJobTrigger {
+  MANUAL
+  SCHEDULED
+}
+
+/// Groups existing Message rows by chat + inactivity gap — copies no message content, just tags
+/// Message.conversationSessionId. Built by a separate batch job (apps/worker/src/learning/
+/// sessionSegmentation.ts), never by the message pipeline itself.
+model ConversationSession {
+  id                String                    @id @default(cuid())
+  accountId         String
+  account           WhatsAppAccount           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId            String
+  groupId           String?
+  group             WhatsAppGroup?            @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  status            ConversationSessionStatus @default(OPEN)
+  firstMessageAt    DateTime
+  lastMessageAt     DateTime
+  messageCount      Int                       @default(0)
+  /// Distinct Message.senderPhone values seen so far in this session.
+  participantPhones String[]                  @default([])
+  closedAt          DateTime?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  messages Message[]
+
+  @@index([accountId, chatId, status])
+  /// The segmentation job's own "claim only what's due" query: OPEN sessions idle past the gap window.
+  @@index([status, lastMessageAt])
+}
+
+/// Singleton row (id is always the literal string "global"), same pattern as AutomationSettings/
+/// AiSettings. Thresholds here are meaningful even with AI fully off, so they live here rather
+/// than on AiSettings — this is deliberately not an "AI settings" table.
+model LearningSettings {
+  id                           String  @id @default("global")
+  /// The one kill switch for this entire feature — false means the segmentation/pattern-detection
+  /// jobs no-op on every tick, and zero rows are written anywhere under this section.
+  conversationLearningEnabled  Boolean @default(false)
+  /// Minutes of inactivity on a chat before its current session is closed.
+  sessionGapMinutes            Int     @default(30)
+  /// Below this occurrence count, a would-be pattern is not yet promoted to a PatternCandidate row
+  /// (enforced starting in the pattern-detection phase) — kept here now so the settings shape is
+  /// stable across phases and editable from one place.
+  minOccurrenceForCandidate      Int     @default(3)
+  minDistinctGroupsForCandidate  Int     @default(2)
+  minDistinctClientsForCandidate Int     @default(2)
+  candidateExpiryDays            Int     @default(30)
+  /// Explicit opt-in, default OFF — an approved-but-not-yet-active auto-approval policy must never
+  /// be assumed; see the pattern-detection/rule-proposal phases.
+  autoApprovalEnabled            Boolean @default(false)
+  autoApprovalMinConfidence      Int     @default(97)
+  weightFrequency    Int @default(25)
+  weightDiversity    Int @default(20)
+  weightConsistency  Int @default(20)
+  weightResolution   Int @default(15)
+  weightRecency      Int @default(10)
+  weightAiConfidence Int @default(10)
+  updatedAt DateTime @updatedAt
+}
+
+/// One row per batch-job run (segmentation, pattern detection, or AI analysis) — audit trail and,
+/// for AI_ANALYSIS specifically, the cost-visibility record referenced from the dashboard hub.
+model LearningBatchJob {
+  id                   String                  @id @default(cuid())
+  jobType              LearningBatchJobType
+  trigger              LearningBatchJobTrigger
+  status               LearningBatchJobStatus  @default(QUEUED)
+  triggeredById        String?
+  triggeredBy          User?                   @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+  /// Only ever set for AI_ANALYSIS runs.
+  aiProviderId         String?
+  aiProvider           AiProvider?             @relation(fields: [aiProviderId], references: [id], onDelete: SetNull)
+  candidatesConsidered Int                     @default(0)
+  candidatesUpdated    Int                     @default(0)
+  errorMessage         String?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime                @default(now())
+
+  @@index([status, jobType])
+  @@index([createdAt])
 }
