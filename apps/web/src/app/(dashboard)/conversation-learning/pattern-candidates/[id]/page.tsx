@@ -3,24 +3,39 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { prisma } from "@support-automation/db";
+import { meetsCandidateFloor } from "@support-automation/engine";
 import { requireSession } from "@/server/auth";
-import { Badge, type BadgeColor, Card, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import { Badge, type BadgeColor, Button, Card, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
+import { PatternCandidateActions } from "./PatternCandidateActions";
 
 export default async function PatternCandidateDetailPage({ params }: { params: Promise<{ id: string }> }) {
   await requireSession();
   const { id } = await params;
 
-  const candidate = await prisma.patternCandidate.findUnique({
-    where: { id },
-    include: {
-      evidence: {
-        orderBy: { createdAt: "desc" },
-        include: { conversationSession: { include: { group: true } }, matchedMessage: true },
+  const [candidate, learningSettings] = await Promise.all([
+    prisma.patternCandidate.findUnique({
+      where: { id },
+      include: {
+        proposal: true,
+        evidence: {
+          orderBy: { createdAt: "desc" },
+          include: { conversationSession: { include: { group: true } }, matchedMessage: true },
+        },
       },
-    },
-  });
+    }),
+    prisma.learningSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+  ]);
   if (!candidate) notFound();
+
+  const floorMet = meetsCandidateFloor(
+    {
+      occurrenceCount: candidate.occurrenceCount,
+      distinctGroupCount: candidate.distinctGroupCount,
+      distinctClientCount: candidate.distinctClientCount,
+    },
+    learningSettings,
+  );
 
   return (
     <div>
@@ -30,11 +45,30 @@ export default async function PatternCandidateDetailPage({ params }: { params: P
           candidate.evidence.length === 1 ? "" : "s"
         }.`}
         actions={
-          <Badge color={statusColor(candidate.status)} dot>
-            {candidate.status.replace(/_/g, " ")}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge color={statusColor(candidate.status)} dot>
+              {candidate.status.replace(/_/g, " ")}
+            </Badge>
+            {candidate.proposal ? (
+              <Link href={`/conversation-learning/rule-proposals/${candidate.proposal.id}`}>
+                <Button variant="secondary" size="sm">
+                  View Proposal
+                </Button>
+              </Link>
+            ) : floorMet ? (
+              <PatternCandidateActions candidateId={candidate.id} />
+            ) : null}
+          </div>
         }
       />
+
+      {!floorMet ? (
+        <p className="mb-6 text-sm text-[color:var(--color-muted-foreground)]">
+          This pattern hasn&apos;t cleared the review floor yet (occurrence/group/client minimums
+          in Learning Settings), so it isn&apos;t eligible for a proposal yet — it&apos;ll become
+          actionable automatically once more evidence accumulates.
+        </p>
+      ) : null}
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile label="Confidence" value={candidate.confidenceScore} />

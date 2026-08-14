@@ -59,17 +59,15 @@ export default async function RuleProposalDetailPage({ params }: { params: Promi
       ) : null}
 
       <Card className="mb-6">
-        <SectionHeader
-          title="Proposed Rule"
-          description={
-            <Link
-              href={`/conversation-learning/pattern-candidates/${proposal.patternCandidateId}`}
-              className="underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[color:var(--color-primary)]"
-            >
-              View source pattern
-            </Link>
-          }
-        />
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-[color:var(--color-foreground)]">Proposed Rule</h2>
+          <Link
+            href={`/conversation-learning/pattern-candidates/${proposal.patternCandidateId}`}
+            className="shrink-0 text-xs text-[color:var(--color-muted-foreground)] underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[color:var(--color-primary)]"
+          >
+            View source pattern
+          </Link>
+        </div>
         <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
           <Field label="Type" value={proposal.type} />
           <Field label="Match Type" value={proposal.matchType} />

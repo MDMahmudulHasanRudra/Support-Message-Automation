@@ -1,4 +1,4 @@
-import { Layers, Sparkles, ArrowRight, type LucideIcon } from "lucide-react";
+import { ClipboardCheck, Fingerprint, Layers, ArrowRight, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { BadgeColor } from "@/components/ui";
@@ -15,19 +15,21 @@ export default async function ConversationLearningPage() {
     create: { id: "global" },
   });
 
-  const [sessionCount, openSessionCount, totalCandidateCount, surfacedCandidateCount, recentJobs] = await Promise.all([
-    prisma.conversationSession.count(),
-    prisma.conversationSession.count({ where: { status: "OPEN" } }),
-    prisma.patternCandidate.count(),
-    prisma.patternCandidate.count({
-      where: {
-        occurrenceCount: { gte: learningSettings.minOccurrenceForCandidate },
-        distinctGroupCount: { gte: learningSettings.minDistinctGroupsForCandidate },
-        distinctClientCount: { gte: learningSettings.minDistinctClientsForCandidate },
-      },
-    }),
-    prisma.learningBatchJob.findMany({ orderBy: { createdAt: "desc" }, take: 5 }),
-  ]);
+  const [sessionCount, openSessionCount, totalCandidateCount, surfacedCandidateCount, pendingProposalCount, recentJobs] =
+    await Promise.all([
+      prisma.conversationSession.count(),
+      prisma.conversationSession.count({ where: { status: "OPEN" } }),
+      prisma.patternCandidate.count(),
+      prisma.patternCandidate.count({
+        where: {
+          occurrenceCount: { gte: learningSettings.minOccurrenceForCandidate },
+          distinctGroupCount: { gte: learningSettings.minDistinctGroupsForCandidate },
+          distinctClientCount: { gte: learningSettings.minDistinctClientsForCandidate },
+        },
+      }),
+      prisma.ruleProposal.count({ where: { status: "PENDING_REVIEW" } }),
+      prisma.learningBatchJob.findMany({ orderBy: { createdAt: "desc" }, take: 5 }),
+    ]);
 
   return (
     <div>
@@ -87,12 +89,18 @@ export default async function ConversationLearningPage() {
         <StatTile label="Total Pattern Signatures" value={totalCandidateCount} />
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-3">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <HubLink
           href="/conversation-learning/pattern-candidates"
-          icon={Sparkles}
+          icon={Fingerprint}
           label="Pattern Candidates"
           description={`${surfacedCandidateCount} surfaced pattern${surfacedCandidateCount === 1 ? "" : "s"}`}
+        />
+        <HubLink
+          href="/conversation-learning/rule-proposals"
+          icon={ClipboardCheck}
+          label="Rule Proposals"
+          description={`${pendingProposalCount} pending review`}
         />
       </div>
 
