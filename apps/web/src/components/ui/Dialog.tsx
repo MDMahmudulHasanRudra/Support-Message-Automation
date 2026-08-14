@@ -82,7 +82,7 @@ export function Dialog({
           <X className="size-5" aria-hidden />
         </button>
       </div>
-      {children ? <div className="overflow-y-auto px-6 py-5">{children}</div> : null}
+      {children ? <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div> : null}
       {footer ? (
         <div className="flex justify-end gap-2 border-t border-[var(--color-border)] px-6 py-4">
           {footer}

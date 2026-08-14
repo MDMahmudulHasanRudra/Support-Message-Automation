@@ -65,7 +65,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
   const group = raw.whatsappGroupId
     ? await prisma.whatsAppGroup.findUnique({
         where: { accountId_whatsappGroupId: { accountId: raw.accountId, whatsappGroupId: raw.whatsappGroupId } },
-        select: { id: true, priority: true, assignedTeamMemberId: true, escalationMonitoringEnabled: true },
+        select: { id: true, name: true, priority: true, assignedTeamMemberId: true, escalationMonitoringEnabled: true },
       })
     : null;
   if (raw.whatsappGroupId) {
@@ -184,6 +184,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
         message,
         raw,
         groupId: group?.id ?? null,
+        groupName: group?.name ?? null,
         matchedRule: result.matchedRule,
         matchedRuleRow,
         settings,
@@ -255,11 +256,12 @@ async function executeAction(params: {
   message: { id: string };
   raw: RawIncomingMessage;
   groupId: string | null;
+  groupName: string | null;
   matchedRule: EngineRule | null;
   matchedRuleRow: { replyMessage: string | null; cooldownSeconds: number | null; replyDelayMinMs: number | null; replyDelayMaxMs: number | null } | null;
   settings: Awaited<ReturnType<typeof getAutomationSettings>>;
 }): Promise<ActionExecutionRecord> {
-  const { action, message, raw, groupId, matchedRule, matchedRuleRow, settings } = params;
+  const { action, message, raw, groupId, groupName, matchedRule, matchedRuleRow, settings } = params;
 
   switch (action.type) {
     case "IGNORE":
@@ -342,7 +344,7 @@ async function executeAction(params: {
         destination: settings.teamsWebhookUrl,
         relatedMessageId: message.id,
         relatedRuleId: matchedRule?.id ?? null,
-        payload: buildNotificationPayload(raw, matchedRule, action),
+        payload: buildNotificationPayload(raw, groupName, matchedRule, action),
       });
       return { type: "NOTIFY_TEAMS", executed: true, reason: "Queued for delivery to Microsoft Teams." };
     }
@@ -361,7 +363,7 @@ async function executeAction(params: {
       console.log(
         `[whatsapp-routing] service=NOTIFY_WHATSAPP account=${resolution.accountLabel} accountId=${resolution.accountId} source=${resolution.source} action=ENQUEUE`,
       );
-      const payload = buildNotificationPayload(raw, matchedRule, action);
+      const payload = buildNotificationPayload(raw, groupName, matchedRule, action);
       for (const destination of settings.whatsappNotificationGroupIds) {
         await enqueueNotification({
           type: "WHATSAPP",
@@ -386,12 +388,14 @@ async function executeAction(params: {
 
 function buildNotificationPayload(
   raw: RawIncomingMessage,
+  groupName: string | null,
   matchedRule: EngineRule | null,
   action: RuleAction,
 ): Record<string, unknown> {
   return {
     chatId: raw.chatId,
     groupId: raw.whatsappGroupId ?? null,
+    groupName,
     clientPhone: raw.senderPhone,
     clientName: raw.senderName ?? null,
     message: raw.body,
