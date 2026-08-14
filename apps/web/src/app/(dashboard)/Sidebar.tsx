@@ -105,6 +105,7 @@ const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/conversation-learning", label: "Dashboard", icon: Waypoints },
       { href: "/conversation-learning/pattern-candidates", label: "Pattern Candidates", icon: Fingerprint },
+      { href: "/conversation-learning/unknown-patterns", label: "Unknown Patterns", icon: EyeOff },
       { href: "/conversation-learning/rule-proposals", label: "Rule Proposals", icon: ClipboardCheck },
       { href: "/conversation-learning/settings", label: "Learning Settings", icon: SettingsIcon },
     ],

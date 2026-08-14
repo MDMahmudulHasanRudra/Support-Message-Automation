@@ -1,8 +1,20 @@
-import { approveRuleProposalById, createRuleProposalFromCandidate, prisma } from "@support-automation/db";
-import type { LearningSettings } from "@prisma/client";
+import {
+  approveRuleProposalById,
+  createRuleProposalFromCandidate,
+  isResolutionError,
+  prisma,
+  resolveWhatsAppAccount,
+} from "@support-automation/db";
+import type { LearningSettings, PatternCandidateStatus } from "@prisma/client";
 import { derivePatternSignature, meetsCandidateFloor, scorePatternCandidate } from "@support-automation/engine";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { enqueueNotification } from "../notifications/enqueueNotification.js";
+import { getAutomationSettings } from "../pipeline/settings.js";
 import { getLearningSettings } from "./sessionSegmentation.js";
+
+/** A candidate in any of these states has already been resolved one way or another (a real rule
+ * exists, or a human dismissed it) — further Unknown Pattern alerts about it would be noise. */
+const UNKNOWN_PATTERN_TERMINAL_STATUSES = new Set<PatternCandidateStatus>(["APPROVED", "REJECTED", "MERGED", "EXPIRED"]);
 
 /**
  * Conversation Learning — Phase 2 (deterministic pattern detection). Entirely AI-free: every score
@@ -23,6 +35,18 @@ import { getLearningSettings } from "./sessionSegmentation.js";
  * require a separate human "activate" click on the Rules page (see approveRuleProposalById()'s
  * own doc comment in packages/db). This batch also sweeps candidates that have sat idle past
  * LearningSettings.candidateExpiryDays into EXPIRED, so PENDING_REVIEW never grows unbounded.
+ *
+ * Unknown Pattern Detection (later addition): rescoreCandidate() also tracks unhandledCount — of
+ * a candidate's evidence, how many rows have no respondingRuleId (no existing AutomationRule fired
+ * for that historical message). Once unhandledCount alone clears the same deterministic floor used
+ * for candidate surfacing (meetsCandidateFloor), and LearningSettings.unknownPatternNotificationsEnabled
+ * is explicitly on (default OFF), a support-group WhatsApp alert is queued via the existing
+ * Notification/enqueueNotification mechanism — never a new send path, never bypassing the outbound
+ * queue's cooldown/rate-limit layer that real AUTO_REPLY actions go through (a Notification is a
+ * distinct, pre-existing delivery lane the app already uses for support alerts). A per-candidate
+ * cooldown (unknownPatternCooldownMinutes) stops one recurring unhandled question from re-alerting
+ * every 15-minute tick, and a candidate already APPROVED/REJECTED/MERGED/EXPIRED never re-alerts —
+ * it's already been resolved one way or another.
  */
 
 const SESSION_BATCH_SIZE = 200;
@@ -271,12 +295,42 @@ export async function rescoreCandidate(
     // failure, never retried more than the normal rescore cadence already would.
   }
 
+  // Unknown Pattern Detection: same deterministic floor (meetsCandidateFloor), applied to
+  // UNHANDLED evidence specifically rather than total occurrenceCount — a pattern an existing
+  // rule already handles well never counts as "unknown" here, no matter how often it recurs.
+  // Independent of the confidence-weighted PENDING_REVIEW transition above (this floor check
+  // doesn't consult scores.confidenceScore at all): it's meant as an earlier, lighter-weight
+  // signal that something is going unanswered, not a restatement of the review gate.
+  const unhandledCount = evidenceRows.filter((e) => e.respondingRuleId === null).length;
+  let unknownPatternNotifiedAt = candidate.unknownPatternNotifiedAt;
+
+  const alreadyResolved = UNKNOWN_PATTERN_TERMINAL_STATUSES.has(status as PatternCandidateStatus);
+  const unknownPatternFloorMet = meetsCandidateFloor(
+    { occurrenceCount: unhandledCount, distinctGroupCount, distinctClientCount },
+    settings,
+  );
+  const cooldownElapsed =
+    !unknownPatternNotifiedAt ||
+    Date.now() - unknownPatternNotifiedAt.getTime() >= settings.unknownPatternCooldownMinutes * 60_000;
+
+  if (settings.unknownPatternNotificationsEnabled && !alreadyResolved && unknownPatternFloorMet && cooldownElapsed) {
+    const sent = await sendUnknownPatternAlert(candidate, evidenceRows, {
+      unhandledCount,
+      distinctGroupCount,
+      distinctClientCount,
+      confidenceScore: scores.confidenceScore,
+    });
+    if (sent) unknownPatternNotifiedAt = new Date();
+  }
+
   await prisma.patternCandidate.update({
     where: { id: candidateId },
     data: {
       occurrenceCount,
       distinctGroupCount,
       distinctClientCount,
+      unhandledCount,
+      unknownPatternNotifiedAt,
       firstSeenAt,
       lastSeenAt,
       frequencyScore: scores.frequencyScore,
@@ -288,4 +342,68 @@ export async function rescoreCandidate(
       status,
     },
   });
+}
+
+interface UnknownPatternEvidenceRow {
+  conversationSession: { groupId: string | null };
+  matchedMessage: { id: string; body: string; timestampWa: Date } | null;
+}
+
+/**
+ * Queues one Unknown Pattern WhatsApp alert via the existing Notification mechanism — the same
+ * enqueueNotification()/dispatcher.ts delivery lane the rule engine's NOTIFY_WHATSAPP action and
+ * Priority Support Escalation already use, never a new send path. Returns false (never persists
+ * unknownPatternNotifiedAt) when nothing was actually queued, so an unresolvable account or an
+ * unconfigured destination list doesn't burn the cooldown — the next tick will simply try again.
+ */
+async function sendUnknownPatternAlert(
+  candidate: { id: string; suggestedKeywords: string[] },
+  evidenceRows: UnknownPatternEvidenceRow[],
+  evidence: { unhandledCount: number; distinctGroupCount: number; distinctClientCount: number; confidenceScore: number },
+): Promise<boolean> {
+  const automationSettings = await getAutomationSettings();
+  if (automationSettings.whatsappNotificationGroupIds.length === 0) return false;
+
+  const resolution = await resolveWhatsAppAccount("CONVERSATION_LEARNING");
+  if (isResolutionError(resolution)) {
+    await logSystemEvent("WARN", "conversation-learning", "Unknown Pattern alert skipped — no WhatsApp account available", {
+      patternCandidateId: candidate.id,
+      error: resolution.error,
+    });
+    return false;
+  }
+
+  const latestEvidence = evidenceRows
+    .filter((e): e is UnknownPatternEvidenceRow & { matchedMessage: NonNullable<UnknownPatternEvidenceRow["matchedMessage"]> } =>
+      Boolean(e.matchedMessage),
+    )
+    .sort((a, b) => b.matchedMessage.timestampWa.getTime() - a.matchedMessage.timestampWa.getTime())[0];
+
+  const latestGroupId = latestEvidence?.conversationSession.groupId ?? null;
+  const group = latestGroupId ? await prisma.whatsAppGroup.findUnique({ where: { id: latestGroupId } }) : null;
+
+  const payload = {
+    alertKind: "UNKNOWN_PATTERN",
+    patternCandidateId: candidate.id,
+    patternKeywords: candidate.suggestedKeywords,
+    occurrences: evidence.unhandledCount,
+    groups: evidence.distinctGroupCount,
+    clients: evidence.distinctClientCount,
+    confidence: evidence.confidenceScore,
+    latestMessage: latestEvidence?.matchedMessage.body ?? null,
+    groupName: group?.name ?? null,
+    groupId: latestGroupId,
+  };
+
+  for (const destination of automationSettings.whatsappNotificationGroupIds) {
+    await enqueueNotification({
+      type: "WHATSAPP",
+      destination,
+      accountId: resolution.accountId,
+      relatedMessageId: latestEvidence?.matchedMessage.id ?? null,
+      relatedPatternCandidateId: candidate.id,
+      payload,
+    });
+  }
+  return true;
 }

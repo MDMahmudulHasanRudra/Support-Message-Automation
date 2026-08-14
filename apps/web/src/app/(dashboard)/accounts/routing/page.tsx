@@ -11,6 +11,7 @@ import { ServiceRouteRow, type ServiceRouteAccountOption, type ServiceRouteRowDa
 const SERVICES: Array<{ key: WhatsAppServiceKey; label: string }> = [
   { key: "NOTIFY_WHATSAPP", label: "Support Notifications" },
   { key: "PRIORITY_SUPPORT", label: "Priority Support Escalation" },
+  { key: "CONVERSATION_LEARNING", label: "Unknown Pattern Alerts" },
 ];
 
 export default async function WhatsAppRoutingPage() {

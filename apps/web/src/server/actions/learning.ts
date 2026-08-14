@@ -67,6 +67,8 @@ export async function updateLearningSettings(
       weightResolution: int("weightResolution", 0, 1000, 15),
       weightRecency: int("weightRecency", 0, 1000, 10),
       weightAiConfidence: int("weightAiConfidence", 0, 1000, 10),
+      unknownPatternNotificationsEnabled: flag("unknownPatternNotificationsEnabled"),
+      unknownPatternCooldownMinutes: int("unknownPatternCooldownMinutes", 1, 10080, 60),
     },
     create: { id: "global" },
   });

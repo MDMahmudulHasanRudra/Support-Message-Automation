@@ -234,6 +234,9 @@ enum WhatsAppServiceKey {
   NOTIFY_WHATSAPP
   /// Priority-Based Support Monitoring & Escalation's group alerts + member/admin DMs.
   PRIORITY_SUPPORT
+  /// Conversation Learning's Unknown Pattern alerts (patternDetectionJob.ts) — a distinct routing
+  /// key so an admin can send these to a different account than ordinary rule-matched alerts.
+  CONVERSATION_LEARNING
 }
 
 enum WhatsAppFallbackPolicy {
@@ -262,14 +265,14 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  createdRules              AutomationRule[]
-  createdBroadcastJobs      GroupBroadcastJob[]
-  createdOutboundSends      OutboundMessage[]
-  createdParticipantAddJobs GroupParticipantAddJob[]
-  createdKnowledgeItems     AiKnowledgeItem[]
-  createdKnowledgeVersions  AiKnowledgeVersion[]
-  resolvedEscalationCases   SupportEscalationCase[]
-  triggeredEscalationEvents SupportEscalationEvent[]
+  createdRules               AutomationRule[]
+  createdBroadcastJobs       GroupBroadcastJob[]
+  createdOutboundSends       OutboundMessage[]
+  createdParticipantAddJobs  GroupParticipantAddJob[]
+  createdKnowledgeItems      AiKnowledgeItem[]
+  createdKnowledgeVersions   AiKnowledgeVersion[]
+  resolvedEscalationCases    SupportEscalationCase[]
+  triggeredEscalationEvents  SupportEscalationEvent[]
   triggeredLearningBatchJobs LearningBatchJob[]
   reviewedPatternCandidates  PatternCandidate[]
   reviewedRuleProposals      RuleProposal[]
@@ -350,10 +353,10 @@ model WhatsAppGroup {
   createdAt                   DateTime            @default(now())
   updatedAt                   DateTime            @updatedAt
 
-  messages            Message[]
-  broadcastMessages   OutboundMessage[]
-  participantAddItems GroupParticipantAddItem[]
-  escalationCases     SupportEscalationCase[]
+  messages             Message[]
+  broadcastMessages    OutboundMessage[]
+  participantAddItems  GroupParticipantAddItem[]
+  escalationCases      SupportEscalationCase[]
   conversationSessions ConversationSession[]
 
   @@unique([accountId, whatsappGroupId])
@@ -405,7 +408,7 @@ model Message {
   executions               AutomationExecution[]
   outboundReplies          OutboundMessage[]
   notifications            Notification[]
-  triggeredEscalationCases SupportEscalationCase[] @relation("EscalationTriggerMessage")
+  triggeredEscalationCases SupportEscalationCase[]    @relation("EscalationTriggerMessage")
   patternCandidateEvidence PatternCandidateEvidence[]
 
   @@unique([accountId, whatsappMessageId])
@@ -639,31 +642,36 @@ model GroupParticipantAddSettings {
 }
 
 model Notification {
-  id               String             @id @default(cuid())
-  type             NotificationType
+  id                        String             @id @default(cuid())
+  type                      NotificationType
   /// Which WhatsApp account this was (or will be) sent through — only meaningful for
   /// type=WHATSAPP; null for TEAMS. Nullable so pre-existing history stays valid, and so a
   /// deleted account's audit trail survives (onDelete: SetNull, not Cascade).
-  accountId        String?
-  account          WhatsAppAccount?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
-  destination      String
-  relatedMessageId String?
-  relatedMessage   Message?           @relation(fields: [relatedMessageId], references: [id], onDelete: SetNull)
-  relatedRuleId    String?
-  relatedRule      AutomationRule?    @relation(fields: [relatedRuleId], references: [id], onDelete: SetNull)
-  payload          Json
-  status           NotificationStatus @default(PENDING)
-  attemptCount     Int                @default(0)
-  lastAttemptAt    DateTime?
-  sentAt           DateTime?
-  failureReason    String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  accountId                 String?
+  account                   WhatsAppAccount?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  destination               String
+  relatedMessageId          String?
+  relatedMessage            Message?           @relation(fields: [relatedMessageId], references: [id], onDelete: SetNull)
+  relatedRuleId             String?
+  relatedRule               AutomationRule?    @relation(fields: [relatedRuleId], references: [id], onDelete: SetNull)
+  /// Set only for Conversation Learning's Unknown Pattern alerts — lets the dashboard list every
+  /// alert ever sent for a given PatternCandidate without duplicating pattern data onto this row.
+  relatedPatternCandidateId String?
+  relatedPatternCandidate   PatternCandidate?  @relation(fields: [relatedPatternCandidateId], references: [id], onDelete: SetNull)
+  payload                   Json
+  status                    NotificationStatus @default(PENDING)
+  attemptCount              Int                @default(0)
+  lastAttemptAt             DateTime?
+  sentAt                    DateTime?
+  failureReason             String?
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
 
   escalationEvents SupportEscalationEvent[]
 
   @@index([status])
   @@index([relatedMessageId])
+  @@index([relatedPatternCandidateId])
 }
 
 model WorkerCommand {
@@ -820,7 +828,7 @@ model AiProvider {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
-  models AiModelConfig[]
+  models            AiModelConfig[]
   learningBatchJobs LearningBatchJob[]
   patternCandidates PatternCandidate[]
 }
@@ -1070,30 +1078,38 @@ model ConversationSession {
 /// AiSettings. Thresholds here are meaningful even with AI fully off, so they live here rather
 /// than on AiSettings — this is deliberately not an "AI settings" table.
 model LearningSettings {
-  id                           String  @id @default("global")
+  id                                 String   @id @default("global")
   /// The one kill switch for this entire feature — false means the segmentation/pattern-detection
   /// jobs no-op on every tick, and zero rows are written anywhere under this section.
-  conversationLearningEnabled  Boolean @default(false)
+  conversationLearningEnabled        Boolean  @default(false)
   /// Minutes of inactivity on a chat before its current session is closed.
-  sessionGapMinutes            Int     @default(30)
+  sessionGapMinutes                  Int      @default(30)
   /// Below this occurrence count, a would-be pattern is not yet promoted to a PatternCandidate row
   /// (enforced starting in the pattern-detection phase) — kept here now so the settings shape is
   /// stable across phases and editable from one place.
-  minOccurrenceForCandidate      Int     @default(3)
-  minDistinctGroupsForCandidate  Int     @default(2)
-  minDistinctClientsForCandidate Int     @default(2)
-  candidateExpiryDays            Int     @default(30)
+  minOccurrenceForCandidate          Int      @default(3)
+  minDistinctGroupsForCandidate      Int      @default(2)
+  minDistinctClientsForCandidate     Int      @default(2)
+  candidateExpiryDays                Int      @default(30)
   /// Explicit opt-in, default OFF — an approved-but-not-yet-active auto-approval policy must never
   /// be assumed; see the pattern-detection/rule-proposal phases.
-  autoApprovalEnabled            Boolean @default(false)
-  autoApprovalMinConfidence      Int     @default(97)
-  weightFrequency    Int @default(25)
-  weightDiversity    Int @default(20)
-  weightConsistency  Int @default(20)
-  weightResolution   Int @default(15)
-  weightRecency      Int @default(10)
-  weightAiConfidence Int @default(10)
-  updatedAt DateTime @updatedAt
+  autoApprovalEnabled                Boolean  @default(false)
+  autoApprovalMinConfidence          Int      @default(97)
+  weightFrequency                    Int      @default(25)
+  weightDiversity                    Int      @default(20)
+  weightConsistency                  Int      @default(20)
+  weightResolution                   Int      @default(15)
+  weightRecency                      Int      @default(10)
+  weightAiConfidence                 Int      @default(10)
+  /// Explicit opt-in, default OFF — Unknown Pattern alerts (patternDetectionJob.ts) reuse
+  /// AutomationSettings.whatsappNotificationGroupIds as their destination; this flag alone gates
+  /// whether that reuse ever fires, independent of conversationLearningEnabled (accumulation can
+  /// run silently for a while before an admin decides to also turn alerting on).
+  unknownPatternNotificationsEnabled Boolean  @default(false)
+  /// Minimum minutes between two alerts for the same PatternCandidate — prevents one recurring
+  /// unhandled question from re-notifying on every 15-minute pattern-detection tick.
+  unknownPatternCooldownMinutes      Int      @default(60)
+  updatedAt                          DateTime @updatedAt
 }
 
 /// One row per batch-job run (segmentation, pattern detection, or AI analysis) — audit trail and,
@@ -1163,6 +1179,11 @@ model PatternCandidate {
   occurrenceCount     Int      @default(0)
   distinctGroupCount  Int      @default(0)
   distinctClientCount Int      @default(0)
+  /// Of occurrenceCount, how many evidence rows have no respondingRuleId — i.e. no existing
+  /// AutomationRule fired for that historical message. This is the Unknown Pattern signal: a
+  /// pattern an existing rule already handles well can still accumulate as a PatternCandidate
+  /// (unchanged, existing behavior) without ever being treated as "unknown".
+  unhandledCount      Int      @default(0)
   firstSeenAt         DateTime
   lastSeenAt          DateTime
 
@@ -1192,6 +1213,11 @@ model PatternCandidate {
   mergedInto        PatternCandidate?      @relation("PatternMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
   mergedFrom        PatternCandidate[]     @relation("PatternMerge")
 
+  /// Last time an Unknown Pattern alert was sent for this candidate — the cooldown clock
+  /// LearningSettings.unknownPatternCooldownMinutes counts against. Null means never alerted.
+  unknownPatternNotifiedAt DateTime?
+  unknownPatternAlerts     Notification[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1200,6 +1226,7 @@ model PatternCandidate {
 
   @@index([status, confidenceScore])
   @@index([lastSeenAt])
+  @@index([unhandledCount, lastSeenAt])
 }
 
 /// Audit trail proving a PatternCandidate isn't a fluke — one row per ConversationSession that
@@ -1258,10 +1285,10 @@ model RuleProposal {
   type            RuleType
   matchType       MatchType
   matchValue      String?
-  keywords        String[] @default([])
-  conditions      Json     @default("{}")
-  actions         Json     @default("[]")
-  priority        Int      @default(0)
+  keywords        String[]  @default([])
+  conditions      Json      @default("{}")
+  actions         Json      @default("[]")
+  priority        Int       @default(0)
   cooldownSeconds Int?
   replyMessage    String?
   replyDelayMinMs Int?
@@ -1278,10 +1305,10 @@ model RuleProposal {
   reviewedBy              User?              @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewedAt              DateTime?
   reviewNote              String?
-  createdRuleId           String?         @unique
-  createdRule             AutomationRule? @relation(fields: [createdRuleId], references: [id], onDelete: SetNull)
-  createdAt               DateTime        @default(now())
-  updatedAt               DateTime        @updatedAt
+  createdRuleId           String?            @unique
+  createdRule             AutomationRule?    @relation(fields: [createdRuleId], references: [id], onDelete: SetNull)
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
 
   @@index([status, confidenceScoreSnapshot])
 }

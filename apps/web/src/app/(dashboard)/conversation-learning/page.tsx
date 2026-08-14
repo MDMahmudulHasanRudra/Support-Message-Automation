@@ -1,6 +1,7 @@
-import { ClipboardCheck, Fingerprint, Layers, ArrowRight, Settings as SettingsIcon, type LucideIcon } from "lucide-react";
+import { ClipboardCheck, EyeOff, Fingerprint, Layers, ArrowRight, Settings as SettingsIcon, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
+import type { PatternCandidateStatus } from "@prisma/client";
 import type { BadgeColor } from "@/components/ui";
 import { requireSession } from "@/server/auth";
 import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
@@ -18,11 +19,14 @@ export default async function ConversationLearningPage() {
   const aiAnalysisAvailable =
     aiSettings.aiEngineEnabled && aiSettings.learningEnabled && learningModelConfig?.provider.status === "ACTIVE";
 
+  const resolvedStatuses: PatternCandidateStatus[] = ["APPROVED", "REJECTED", "MERGED", "EXPIRED"];
+
   const [
     sessionCount,
     openSessionCount,
     totalCandidateCount,
     surfacedCandidateCount,
+    unknownPatternCount,
     pendingProposalCount,
     aiAnalyzedCount,
     recentJobs,
@@ -35,6 +39,14 @@ export default async function ConversationLearningPage() {
         occurrenceCount: { gte: learningSettings.minOccurrenceForCandidate },
         distinctGroupCount: { gte: learningSettings.minDistinctGroupsForCandidate },
         distinctClientCount: { gte: learningSettings.minDistinctClientsForCandidate },
+      },
+    }),
+    prisma.patternCandidate.count({
+      where: {
+        unhandledCount: { gte: learningSettings.minOccurrenceForCandidate },
+        distinctGroupCount: { gte: learningSettings.minDistinctGroupsForCandidate },
+        distinctClientCount: { gte: learningSettings.minDistinctClientsForCandidate },
+        status: { notIn: resolvedStatuses },
       },
     }),
     prisma.ruleProposal.count({ where: { status: "PENDING_REVIEW" } }),
@@ -96,12 +108,18 @@ export default async function ConversationLearningPage() {
         <RunAiAnalysisButton enabled={Boolean(aiAnalysisAvailable)} />
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
         <StatTile label="Conversation Sessions" value={sessionCount} hint={`${openSessionCount} currently open`} />
         <StatTile
           label="Patterns Surfaced"
           value={surfacedCandidateCount}
           tone={surfacedCandidateCount > 0 ? "success" : "neutral"}
+        />
+        <StatTile
+          label="Unknown Patterns"
+          value={unknownPatternCount}
+          tone={unknownPatternCount > 0 ? "warning" : "neutral"}
+          hint="No existing rule handles these yet"
         />
         <StatTile
           label="Patterns Accumulating"
@@ -111,12 +129,18 @@ export default async function ConversationLearningPage() {
         <StatTile label="AI-Analyzed Patterns" value={aiAnalyzedCount} hint="Have received an AI confidence pass" />
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <HubLink
           href="/conversation-learning/pattern-candidates"
           icon={Fingerprint}
           label="Pattern Candidates"
           description={`${surfacedCandidateCount} surfaced pattern${surfacedCandidateCount === 1 ? "" : "s"}`}
+        />
+        <HubLink
+          href="/conversation-learning/unknown-patterns"
+          icon={EyeOff}
+          label="Unknown Patterns"
+          description={`${unknownPatternCount} unhandled pattern${unknownPatternCount === 1 ? "" : "s"}`}
         />
         <HubLink
           href="/conversation-learning/rule-proposals"

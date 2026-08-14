@@ -90,6 +90,37 @@ export function LearningSettingsForm({ settings }: { settings: LearningSettings 
       </Card>
 
       <Card>
+        <SectionHeader
+          title="Unknown Pattern Alerts"
+          description="Off by default. When on, a recurring question no existing rule handles triggers one WhatsApp alert to your configured support group(s) — reusing the same destinations as Automation Settings' notification groups and the WhatsApp Account Routing page's 'Unknown Pattern Alerts' row."
+        />
+        <Alert tone="info" title="One alert per pattern, not per message">
+          If 50 customers send the same unhandled question, this sends one alert (not 50) —
+          re-alerting for the same pattern is limited by the cooldown below.
+        </Alert>
+        <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-end">
+          <label className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
+            <Checkbox
+              name="unknownPatternNotificationsEnabled"
+              defaultChecked={settings.unknownPatternNotificationsEnabled}
+            />
+            Enable Unknown Pattern alerts
+          </label>
+          <div className="max-w-xs">
+            <Field label="Cooldown (minutes)" hint="Minimum time between two alerts for the same pattern.">
+              <Input
+                name="unknownPatternCooldownMinutes"
+                type="number"
+                min={1}
+                max={10080}
+                defaultValue={settings.unknownPatternCooldownMinutes}
+              />
+            </Field>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
         <SectionHeader title="Auto-Approval Policy" />
         <Alert tone="warning" title="Off by default — understand this before enabling">
           When on, a pattern that clears the confidence bar below is automatically turned into a
