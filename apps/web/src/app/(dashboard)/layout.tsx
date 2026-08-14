@@ -8,14 +8,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const settings = await prisma.automationSettings.findUnique({ where: { id: "global" } });
 
   return (
-    <div className="flex min-h-screen bg-[var(--color-background)]">
+    <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">
       <Sidebar
         username={session.username}
         automationEnabled={Boolean(settings?.automationEnabled)}
         automationMode={settings?.mode ?? "SAFE_AUTO_REPLY"}
         onLogout={logout}
       />
-      <main className="flex-1 overflow-y-auto">
+      <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1560px] px-6 py-7 sm:px-8">{children}</div>
       </main>
     </div>

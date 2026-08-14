@@ -131,7 +131,7 @@ export function Sidebar({
   return (
     <aside
       style={{ width: "var(--sidebar-width)" }}
-      className="flex shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs)]"
+      className="flex h-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs)]"
     >
       <div className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-4.5">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[image:var(--gradient-primary)] text-sm font-bold text-[var(--color-on-primary)] shadow-[var(--shadow-sm)]">
@@ -145,7 +145,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <nav className="flex-1 space-y-5 overflow-y-auto px-2.5 py-5">
+      <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto px-2.5 py-5">
         {NAV_GROUPS.map((group) => (
           <div key={group.label}>
             <p className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]/80">
