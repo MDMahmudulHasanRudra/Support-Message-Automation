@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { Badge, type BadgeColor, EmptyState, Table, Td, Th, Tooltip } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 
 export interface MessageRow {
   id: string;
@@ -46,7 +47,7 @@ export function MessagesTable({ messages, hasActiveFilters }: { messages: Messag
         {messages.map((m) => (
           <tr key={m.id}>
             <Td className="whitespace-nowrap font-[family-name:var(--font-mono)] text-xs">
-              {m.timestampWa.toLocaleString()}
+              {formatDateTime(m.timestampWa)}
             </Td>
             <Td>{m.accountLabel}</Td>
             <Td>{m.groupName ?? "—"}</Td>

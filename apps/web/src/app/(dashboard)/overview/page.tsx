@@ -1,6 +1,7 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
+import { formatDateTime } from "@/lib/date";
 import {
   Alert,
   Badge,
@@ -57,6 +58,7 @@ export default async function OverviewPage() {
       select: {
         id: true,
         senderPhone: true,
+        senderName: true,
         body: true,
         direction: true,
         processingStatus: true,
@@ -166,9 +168,9 @@ export default async function OverviewPage() {
               {recentMessages.map((m) => (
                 <tr key={m.id}>
                   <Td className="font-[family-name:var(--font-mono)] text-xs whitespace-nowrap">
-                    {m.timestampWa.toLocaleString()}
+                    {formatDateTime(m.timestampWa)}
                   </Td>
-                  <Td className="font-[family-name:var(--font-mono)] text-xs">{m.senderPhone}</Td>
+                  <Td className="font-[family-name:var(--font-mono)] text-xs">{m.senderName ?? m.senderPhone}</Td>
                   <Td>{m.direction}</Td>
                   <Td className="max-w-md truncate">{m.body}</Td>
                   <Td>

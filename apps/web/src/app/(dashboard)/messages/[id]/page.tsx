@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Badge, type BadgeColor, Card, PageHeader, SectionHeader } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 import type { ReactNode } from "react";
 
 interface DecisionTraceEntry {
@@ -68,8 +69,8 @@ export default async function MessageDetailPage({ params }: { params: Promise<{ 
                 }
               />
               <Field label="Direction" value={message.direction} />
-              <Field label="WhatsApp Timestamp" value={message.timestampWa.toLocaleString()} />
-              <Field label="Received At" value={message.receivedAt.toLocaleString()} />
+              <Field label="WhatsApp Timestamp" value={formatDateTime(message.timestampWa)} />
+              <Field label="Received At" value={formatDateTime(message.receivedAt)} />
               <Field
                 label="Processing Status"
                 value={
@@ -94,7 +95,7 @@ export default async function MessageDetailPage({ params }: { params: Promise<{ 
                 <dl className="mb-4 grid grid-cols-1 gap-x-4 gap-y-4 text-sm sm:grid-cols-3">
                   <Field label="Decision" value={<Badge color={decisionColor(execution.decision)}>{execution.decision}</Badge>} />
                   <Field label="Matched Rule" value={execution.rule?.name ?? "None (NO_MATCH)"} />
-                  <Field label="Evaluated At" value={execution.matchedAt.toLocaleString()} />
+                  <Field label="Evaluated At" value={formatDateTime(execution.matchedAt)} />
                 </dl>
                 <p className="mb-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)]">
                   Actions Executed
@@ -157,7 +158,7 @@ export default async function MessageDetailPage({ params }: { params: Promise<{ 
                     </div>
                     <p className="whitespace-pre-wrap text-[color:var(--color-foreground)]">{r.body}</p>
                     <p className="mt-1.5 text-xs text-[color:var(--color-muted-foreground)]">
-                      Attempts: {r.attemptCount} · Sent: {r.sentAt?.toLocaleString() ?? "—"}
+                      Attempts: {r.attemptCount} · Sent: {r.sentAt ? formatDateTime(r.sentAt) : "—"}
                       {r.failureReason ? ` · Failure: ${r.failureReason}` : ""}
                     </p>
                   </li>
@@ -188,7 +189,7 @@ export default async function MessageDetailPage({ params }: { params: Promise<{ 
                       </span>
                     </div>
                     <p className="text-xs text-[color:var(--color-muted-foreground)]">
-                      Attempts: {n.attemptCount} · Sent: {n.sentAt?.toLocaleString() ?? "—"}
+                      Attempts: {n.attemptCount} · Sent: {n.sentAt ? formatDateTime(n.sentAt) : "—"}
                       {n.failureReason ? ` · Failure: ${n.failureReason}` : ""}
                     </p>
                   </li>

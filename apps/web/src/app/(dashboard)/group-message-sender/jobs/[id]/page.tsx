@@ -5,6 +5,7 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, Table, Td, Th } from "@/components/ui";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { formatDateTime } from "@/lib/date";
 import { cancelBroadcastJob, retryFailedBroadcastMessages } from "@/server/actions/groupBroadcast";
 import { JobActions } from "./JobActions";
 
@@ -63,7 +64,7 @@ export default async function GroupBroadcastJobPage({ params }: { params: Promis
         <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
           <Field label="Account" value={job.account.label} />
           <Field label="Created by" value={job.createdBy?.name ?? job.createdBy?.email ?? "—"} />
-          <Field label="Created at" value={job.createdAt.toLocaleString()} />
+          <Field label="Created at" value={formatDateTime(job.createdAt)} />
           <Field
             label="Status"
             value={
@@ -140,7 +141,7 @@ export default async function GroupBroadcastJobPage({ params }: { params: Promis
                   {m.status}
                 </Badge>
               </Td>
-              <Td>{m.sentAt?.toLocaleString() ?? "—"}</Td>
+              <Td>{m.sentAt ? formatDateTime(m.sentAt) : "—"}</Td>
               <Td className="tabular-nums">{m.attemptCount}</Td>
               <Td className="max-w-xs">{m.failureReason ?? "—"}</Td>
               <Td className="font-[family-name:var(--font-mono)] text-xs">{m.providerMessageId ?? "—"}</Td>

@@ -5,6 +5,7 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Badge, type BadgeColor, Card, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { formatDateTime } from "@/lib/date";
 import { CaseActions } from "./CaseActions";
 
 const ACTIVE_STATUSES = new Set([
@@ -60,9 +61,9 @@ export default async function SupportEscalationCasePage({ params }: { params: Pr
             <Field label="Client" value={caseRow.triggerMessage.senderName ?? caseRow.clientPhone} />
             <Field label="Assigned" value={caseRow.assignedTeamMember?.name ?? "—"} />
             <Field label="Escalation Level" value={`${caseRow.escalationLevel} / ${caseRow.maxEscalations}`} />
-            <Field label="Waiting Since" value={caseRow.lastCustomerMessageAt.toLocaleString()} />
-            <Field label="Human Replied At" value={caseRow.humanRepliedAt?.toLocaleString() ?? "—"} />
-            <Field label="Resolved" value={caseRow.resolvedAt ? `${caseRow.resolvedAt.toLocaleString()} by ${caseRow.resolvedBy?.name ?? "—"}` : "—"} />
+            <Field label="Waiting Since" value={formatDateTime(caseRow.lastCustomerMessageAt)} />
+            <Field label="Human Replied At" value={caseRow.humanRepliedAt ? formatDateTime(caseRow.humanRepliedAt) : "—"} />
+            <Field label="Resolved" value={caseRow.resolvedAt ? `${formatDateTime(caseRow.resolvedAt)} by ${caseRow.resolvedBy?.name ?? "—"}` : "—"} />
           </dl>
           <div className="mt-4">
             <p className="mb-1 text-xs font-medium text-[color:var(--color-muted-foreground)]">Original Message</p>
@@ -96,7 +97,7 @@ export default async function SupportEscalationCasePage({ params }: { params: Pr
             <tbody>
               {caseRow.events.map((e) => (
                 <tr key={e.id}>
-                  <Td>{e.createdAt.toLocaleString()}</Td>
+                  <Td>{formatDateTime(e.createdAt)}</Td>
                   <Td>{e.eventType.replace(/_/g, " ")}</Td>
                   <Td>{e.recipientLabel}</Td>
                   <Td>

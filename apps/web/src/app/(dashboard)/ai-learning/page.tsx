@@ -11,6 +11,7 @@ import {
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 
 export default async function AiLearningDashboardPage() {
   await requireSession();
@@ -136,7 +137,7 @@ export default async function AiLearningDashboardPage() {
                   {item.title}
                 </Link>
                 <span className="shrink-0 text-xs text-[color:var(--color-muted-foreground)]">
-                  {item.updatedAt.toLocaleString()}
+                  {formatDateTime(item.updatedAt)}
                 </span>
               </li>
             ))}

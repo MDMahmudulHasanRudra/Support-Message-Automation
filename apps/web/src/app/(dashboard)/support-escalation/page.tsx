@@ -4,6 +4,7 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import type { EscalationStatus } from "@prisma/client";
 import { Badge, type BadgeColor, Button, EmptyState, HelpButton, HelpSection, PageHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 
 const ACTIVE_STATUSES: EscalationStatus[] = [
   "NEW",
@@ -113,7 +114,7 @@ export default async function SupportEscalationDashboardPage() {
                     {c.status}
                   </Badge>
                 </Td>
-                <Td>{c.lastCustomerMessageAt.toLocaleString()}</Td>
+                <Td>{formatDateTime(c.lastCustomerMessageAt)}</Td>
                 <Td className="tabular-nums">{c.escalationLevel}</Td>
                 <Td>{c.assignedTeamMember?.name ?? "—"}</Td>
                 <Td>

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Button, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 import { AiProvidersTable, type AiProviderRow } from "./AiProvidersTable";
 
 export default async function AiProvidersPage() {
@@ -18,7 +19,7 @@ export default async function AiProvidersPage() {
     kind: p.kind,
     status: p.status,
     modelCount: p._count.models,
-    lastTestedAtLabel: p.lastTestedAt ? p.lastTestedAt.toLocaleString() : null,
+    lastTestedAtLabel: p.lastTestedAt ? formatDateTime(p.lastTestedAt) : null,
     lastTestOk: p.lastTestOk,
     lastTestError: p.lastTestError,
   }));

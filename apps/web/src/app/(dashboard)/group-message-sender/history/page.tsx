@@ -4,6 +4,7 @@ import { prisma } from "@support-automation/db";
 import type { OutboundMessageStatus, Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
 import { Badge, type BadgeColor, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select, Table, Td, Th } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 
 const STATUS_OPTIONS = ["PENDING", "PROCESSING", "SENT", "FAILED", "CANCELLED", "RATE_LIMITED", "SKIPPED"] as const;
 
@@ -125,7 +126,7 @@ export default async function GroupBroadcastHistoryPage({
             {messages.map((m) => (
               <tr key={m.id}>
                 <Td className="whitespace-nowrap font-[family-name:var(--font-mono)] text-xs">
-                  {m.createdAt.toLocaleString()}
+                  {formatDateTime(m.createdAt)}
                 </Td>
                 <Td>{m.account.label}</Td>
                 <Td>{m.groupNameSnapshot ?? "—"}</Td>

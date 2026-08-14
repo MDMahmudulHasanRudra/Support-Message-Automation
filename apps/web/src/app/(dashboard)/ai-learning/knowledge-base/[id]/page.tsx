@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Badge, type BadgeColor, Button, Card, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 import { KnowledgeStatusActions, RestoreVersionButton } from "./KnowledgeActions";
 
 export default async function KnowledgeItemPage({ params }: { params: Promise<{ id: string }> }) {
@@ -84,7 +85,7 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
                 </Td>
                 <Td className="max-w-md">{v.changeSummary ?? "—"}</Td>
                 <Td>{v.createdBy?.name ?? v.createdBy?.email ?? "—"}</Td>
-                <Td>{v.createdAt.toLocaleString()}</Td>
+                <Td>{formatDateTime(v.createdAt)}</Td>
                 <Td>
                   {v.version !== item.currentVersion ? (
                     <RestoreVersionButton itemId={item.id} version={v.version} />

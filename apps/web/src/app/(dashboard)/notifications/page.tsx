@@ -2,6 +2,7 @@
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Badge, type BadgeColor, EmptyState, HelpButton, HelpSection, PageHeader, Table, Td, Th, Tooltip } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 import { TestNotificationForm } from "./TestNotificationForm";
 import { RetryNotificationButton } from "./RetryNotificationButton";
 
@@ -82,7 +83,7 @@ export default async function NotificationsPage() {
             {notifications.map((n) => (
               <tr key={n.id}>
                 <Td className="whitespace-nowrap font-[family-name:var(--font-mono)] text-xs">
-                  {n.createdAt.toLocaleString()}
+                  {formatDateTime(n.createdAt)}
                 </Td>
                 <Td>{n.type}</Td>
                 <Td className="max-w-xs">

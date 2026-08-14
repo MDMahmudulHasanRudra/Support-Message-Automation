@@ -5,6 +5,7 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, Table, Td, Th } from "@/components/ui";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { formatDateTime } from "@/lib/date";
 import { cancelParticipantAddJob, retryFailedParticipantAddItems } from "@/server/actions/groupParticipantAdd";
 import { JobActions } from "./JobActions";
 
@@ -137,7 +138,7 @@ export default async function GroupParticipantAddJobPage({ params }: { params: P
                   {i.status}
                 </Badge>
               </Td>
-              <Td>{i.processedAt?.toLocaleString() ?? "—"}</Td>
+              <Td>{i.processedAt ? formatDateTime(i.processedAt) : "—"}</Td>
               <Td className="tabular-nums">{i.attemptCount}</Td>
               <Td className="max-w-xs">{i.failureReason ?? "—"}</Td>
             </tr>

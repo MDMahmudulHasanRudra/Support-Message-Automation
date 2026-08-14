@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Button, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { formatDate } from "@/lib/date";
 import { isRuleActionArray, isRuleConditions } from "@support-automation/shared";
 import { RulesTable, type RuleRow } from "./RulesTable";
 
@@ -31,7 +32,7 @@ export default async function RulesPage() {
       priority: rule.priority,
       status: rule.status,
       executionCount: rule.executionCount,
-      updatedAtLabel: rule.updatedAt.toLocaleDateString(),
+      updatedAtLabel: formatDate(rule.updatedAt),
       hasPriorityConflict: (priorityCounts.get(rule.priority) ?? 0) > 1,
       hasSchedule: Boolean(conditions.timeWindow),
     };

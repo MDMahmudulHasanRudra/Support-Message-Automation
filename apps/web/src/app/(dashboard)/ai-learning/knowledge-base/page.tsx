@@ -4,6 +4,7 @@ import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
 import { Button, FilterBar, HelpButton, HelpSection, Input, PageHeader } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 import { KnowledgeTable, type KnowledgeRow } from "./KnowledgeTable";
 
 type FilterKey = "all" | "active" | "inactive" | "archived";
@@ -42,7 +43,7 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
     status: item.status,
     currentVersion: item.currentVersion,
     aiGenerated: item.aiGenerated,
-    updatedAtLabel: item.updatedAt.toLocaleString(),
+    updatedAtLabel: formatDateTime(item.updatedAt),
   }));
 
   return (

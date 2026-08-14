@@ -4,6 +4,7 @@ import { prisma } from "@support-automation/db";
 import type { LogLevel, Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
 import { Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select } from "@/components/ui";
+import { formatDateTime } from "@/lib/date";
 import { LogsTable, type LogRow } from "./LogsTable";
 
 const LEVELS = ["INFO", "WARN", "ERROR"] as const;
@@ -26,7 +27,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
 
   const rows: LogRow[] = logs.map((log) => ({
     id: log.id,
-    timeLabel: log.createdAt.toLocaleString(),
+    timeLabel: formatDateTime(log.createdAt),
     level: log.level,
     scope: log.scope,
     message: log.message,
