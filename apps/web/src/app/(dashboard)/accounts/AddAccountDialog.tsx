@@ -55,7 +55,7 @@ export function AddAccountDialog() {
           >
             <Input id="label" name="label" placeholder="Sales" required autoFocus />
           </Field>
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="mt-6 flex justify-end gap-2 border-t border-[var(--color-border)] pt-4">
             <Button type="button" variant="secondary" onClick={close} disabled={isPending}>
               Cancel
             </Button>

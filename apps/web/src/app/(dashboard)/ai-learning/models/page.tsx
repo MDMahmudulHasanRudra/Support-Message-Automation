@@ -1,7 +1,8 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
 import type { AiModelJob } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { PageHeader } from "@/components/ui";
+import { HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import { AiModelsForm, type ModelJobRowData } from "./AiModelsForm";
 
 const JOBS: Array<{ job: AiModelJob; label: string; description: string }> = [
@@ -37,6 +38,26 @@ export default async function AiModelsPage() {
       <PageHeader
         title="AI Models"
         description="Assign which configured provider/model handles each job. None of these are called yet — later phases will read this configuration."
+        actions={
+          <HelpButton moduleTitle="AI Models">
+            <HelpSection title="What this is">
+              <p>
+                Five fixed job slots (Learning, Response, Vision, Document, Embedding) that will each
+                eventually use a specific provider + model ID. Pick a configured Provider from the
+                dropdown, then type the exact model ID as text (e.g. "claude-sonnet-5") — this isn't
+                validated against a live model list, so a typo won't be caught here.
+              </p>
+            </HelpSection>
+            <HelpSection title="This page's own description is accurate">
+              <p>
+                None of these five jobs are actually called by anything yet — this page just
+                pre-configures which provider/model each will use once later phases wire them up. An
+                inactive provider still shows in the dropdown (labeled "(inactive)") and can still be
+                selected, but obviously won't work until reactivated.
+              </p>
+            </HelpSection>
+          </HelpButton>
+        }
       />
       <AiModelsForm
         rows={rows}

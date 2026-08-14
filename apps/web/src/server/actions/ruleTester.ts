@@ -31,6 +31,10 @@ export async function testRule(_prevState: RuleTesterState, formData: FormData):
   const previousSenderPhone = String(formData.get("previousSenderPhone") ?? "").trim();
   const previousSenderIsTeamMember = formData.get("previousSenderIsTeamMember") === "on";
 
+  const simulateAtRaw = String(formData.get("simulateAt") ?? "").trim();
+  const timestamp = simulateAtRaw ? new Date(simulateAtRaw) : new Date();
+  if (Number.isNaN(timestamp.getTime())) return { error: "Invalid simulated time." };
+
   const activeRuleRows = await prisma.automationRule.findMany({ where: { status: "ACTIVE" } });
   const rules: EngineRule[] = activeRuleRows.map((row) => ({
     id: row.id,
@@ -51,7 +55,7 @@ export async function testRule(_prevState: RuleTesterState, formData: FormData):
       isFromTeamMember,
       groupId,
       chatId: groupId ?? senderPhone,
-      timestamp: new Date(),
+      timestamp,
     },
     previousMessage: previousSenderPhone
       ? { senderPhone: previousSenderPhone, isFromTeamMember: previousSenderIsTeamMember }

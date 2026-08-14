@@ -22,6 +22,21 @@ export interface RuleFormState {
   error?: string;
 }
 
+/** `<input type="time">` submits "HH:MM" — only the hour is used (see RuleForm.tsx's "Active from/until" hint). */
+function parseHour(value: FormDataEntryValue | null): number {
+  const hour = Number(String(value ?? "0:00").split(":")[0]);
+  return Math.min(23, Math.max(0, Number.isFinite(hour) ? Math.trunc(hour) : 0));
+}
+
+/** Only reads the form's schedule fields when the toggle is on — undefined when off, never a default window. */
+function parseTimeWindow(formData: FormData): RuleConditions["timeWindow"] {
+  if (formData.get("timeWindowEnabled") !== "on") return undefined;
+  const startHour = parseHour(formData.get("timeWindowStartHour"));
+  const endHour = parseHour(formData.get("timeWindowEndHour"));
+  const days = [0, 1, 2, 3, 4, 5, 6].filter((d) => formData.get(`timeWindowDay_${d}`) === "on");
+  return { startHour, endHour, ...(days.length > 0 ? { days } : {}) };
+}
+
 function parseConditions(formData: FormData): RuleConditions {
   const conditions: RuleConditions = {};
 
@@ -40,7 +55,21 @@ function parseConditions(formData: FormData): RuleConditions {
     conditions.groupScope = { type: "SPECIFIC", groupIds: groupIds.split(",").map((g) => g.trim()).filter(Boolean) };
   }
 
+  const timeWindow = parseTimeWindow(formData);
+  if (timeWindow) conditions.timeWindow = timeWindow;
+
   return conditions;
+}
+
+/** A zero-width window (e.g. 22:00 to 22:00) would never match anything — use Disable for "intentionally inactive" instead. */
+function validateTimeWindow(formData: FormData): string | null {
+  if (formData.get("timeWindowEnabled") !== "on") return null;
+  const startHour = parseHour(formData.get("timeWindowStartHour"));
+  const endHour = parseHour(formData.get("timeWindowEndHour"));
+  if (startHour === endHour) {
+    return "Active-from and active-until cannot be the same hour — this would never match. Use Disable instead if you want the rule inactive.";
+  }
+  return null;
 }
 
 function parseActions(formData: FormData): RuleAction[] {
@@ -106,6 +135,8 @@ export async function createRule(_prevState: RuleFormState, formData: FormData):
   if (!fields.name) return { error: "Rule name is required." };
   const regexError = validateIfRegex(fields.matchType, fields.matchValue);
   if (regexError) return { error: regexError };
+  const timeWindowError = validateTimeWindow(formData);
+  if (timeWindowError) return { error: timeWindowError };
 
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);
@@ -126,6 +157,8 @@ export async function updateRule(id: string, _prevState: RuleFormState, formData
   if (!fields.name) return { error: "Rule name is required." };
   const regexError = validateIfRegex(fields.matchType, fields.matchValue);
   if (regexError) return { error: regexError };
+  const timeWindowError = validateTimeWindow(formData);
+  if (timeWindowError) return { error: timeWindowError };
 
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { Badge, Button, Card, Checkbox, Field, Input, SectionHeader, useToast } from "@/components/ui";
+import { Alert, Badge, Button, Card, Checkbox, Field, Input, SectionHeader, useToast } from "@/components/ui";
 import { updateSafetySettings, type SettingsFormState } from "@/server/actions/settings";
 import type { AutomationSettings } from "@prisma/client";
 
@@ -156,10 +156,12 @@ export function SettingsForm({
               )}
             </div>
             {selectedGroups.some((g) => g.isMonitored) ? (
-              <p className="mt-1.5 text-xs text-[color:var(--color-danger-fg)]">
-                One or more selected groups are also monitored as a client conversation — alerts sent there will be
-                re-ingested as incoming messages. Prefer a dedicated internal group.
-              </p>
+              <div className="mt-2">
+                <Alert tone="danger" title="Feedback-loop risk">
+                  One or more selected groups are also monitored as a client conversation — alerts sent there
+                  will be re-ingested as incoming messages. Prefer a dedicated internal group.
+                </Alert>
+              </div>
             ) : null}
           </Field>
         </div>

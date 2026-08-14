@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { FileSpreadsheet, Unplug } from "lucide-react";
 import {
   Alert,
   Badge,
@@ -9,7 +10,9 @@ import {
   Card,
   Checkbox,
   ConfirmDialog,
+  EmptyState,
   Input,
+  Label,
   SectionHeader,
   Select,
   StatTile,
@@ -198,9 +201,9 @@ export function GroupMessageSenderWizard({
   if (accounts.length === 0) {
     return (
       <Card>
-        <p className="text-sm text-[color:var(--color-muted-foreground)]">
+        <EmptyState icon={<Unplug className="size-5" aria-hidden />}>
           No connected WhatsApp account is available. Connect an account on the Accounts page first.
-        </p>
+        </EmptyState>
       </Card>
     );
   }
@@ -261,7 +264,7 @@ export function GroupMessageSenderWizard({
                 </Button>
                 <span className="text-xs text-[color:var(--color-muted-foreground)]">{selected.size} selected</span>
               </div>
-              <div className="max-h-80 overflow-y-auto rounded-md border border-[var(--color-border)]">
+              <div className="max-h-80 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--color-border)]">
                 {filteredGroups.length === 0 ? (
                   <p className="p-4 text-sm text-[color:var(--color-muted-foreground)]">No groups match your search.</p>
                 ) : (
@@ -282,21 +285,26 @@ export function GroupMessageSenderWizard({
             </div>
           ) : (
             <div>
-              <input
-                type="file"
-                accept=".xlsx"
-                disabled={uploading}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleExcelFile(file);
-                }}
-                className="mb-3 block text-sm text-[color:var(--color-foreground)]"
-              />
-              <p className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
-                Required column: <strong>Group Name</strong>. Optional column: <strong>Message</strong>.
-              </p>
+              <div className="mb-3 flex items-center gap-3 rounded-[var(--radius-md)] border border-dashed border-[var(--color-border-strong)] bg-[var(--color-neutral-bg)]/50 px-4 py-3.5">
+                <FileSpreadsheet className="size-5 shrink-0 text-[color:var(--color-muted-foreground)]" aria-hidden />
+                <div className="flex-1">
+                  <input
+                    type="file"
+                    accept=".xlsx"
+                    disabled={uploading}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleExcelFile(file);
+                    }}
+                    className="block w-full text-sm text-[color:var(--color-foreground)] file:mr-3 file:cursor-pointer file:rounded-[var(--radius-sm)] file:border-0 file:bg-[var(--color-surface)] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-[color:var(--color-foreground)] file:shadow-[var(--shadow-xs)] disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <p className="mt-1.5 text-xs text-[color:var(--color-muted-foreground)]">
+                    Required column: <strong>Group Name</strong>. Optional column: <strong>Message</strong>.
+                  </p>
+                </div>
+              </div>
               {uploading ? (
-                <p className="text-sm text-[color:var(--color-muted-foreground)]">Matching against synchronized groups…</p>
+                <p className="mb-3 text-sm text-[color:var(--color-muted-foreground)]">Matching against synchronized groups…</p>
               ) : null}
               {excelFileErrors.length > 0 ? (
                 <div className="mb-3">
@@ -377,9 +385,7 @@ export function GroupMessageSenderWizard({
       {step === 4 ? (
         <Card>
           <SectionHeader title="Compose Message" />
-          <label className="mb-1.5 block text-sm font-medium text-[color:var(--color-foreground)]">
-            Common message (used for any group without its own Excel message)
-          </label>
+          <Label>Common message (used for any group without its own Excel message)</Label>
           <Textarea
             value={commonMessage}
             onChange={(e) => setCommonMessage(e.target.value)}
@@ -500,7 +506,7 @@ function ExcelMatchTables({
           </p>
           <ul className="space-y-2">
             {ambiguous.map((r) => (
-              <li key={r.rowNumber} className="rounded-md border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] p-3">
+              <li key={r.rowNumber} className="rounded-[var(--radius-md)] border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] p-3">
                 <p className="mb-1.5 text-sm text-[color:var(--color-warning-fg)]">{r.groupName}</p>
                 <Select
                   value={ambiguousResolutions.get(r.rowNumber) ?? ""}
@@ -600,7 +606,7 @@ function PreviewStep({
       ) : null}
 
       <p className="mb-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)]">Common message</p>
-      <p className="mb-4 whitespace-pre-wrap rounded-md border border-[var(--color-border)] p-3 text-sm text-[color:var(--color-foreground)]">
+      <p className="mb-4 whitespace-pre-wrap rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-neutral-bg)]/40 p-3 text-sm text-[color:var(--color-foreground)]">
         {commonMessage}
       </p>
 

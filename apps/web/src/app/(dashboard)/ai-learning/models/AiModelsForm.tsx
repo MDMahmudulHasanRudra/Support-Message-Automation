@@ -2,8 +2,17 @@
 
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
+import { Eye, FileText, GraduationCap, Layers, MessageSquare, type LucideIcon } from "lucide-react";
 import { Button, Card, Input, Select } from "@/components/ui";
 import { clearAiModelConfig, setAiModelConfig, type AiModelFormState } from "@/server/actions/aiModels";
+
+const JOB_ICONS: Record<string, LucideIcon> = {
+  LEARNING: GraduationCap,
+  RESPONSE: MessageSquare,
+  VISION: Eye,
+  DOCUMENT: FileText,
+  EMBEDDING: Layers,
+};
 
 export interface ProviderOption {
   id: string;
@@ -32,13 +41,21 @@ export function AiModelsForm({ rows, providers }: { rows: ModelJobRowData[]; pro
 function ModelJobRow({ row, providers }: { row: ModelJobRowData; providers: ProviderOption[] }) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState<AiModelFormState, FormData>(setAiModelConfig, {});
+  const Icon = JOB_ICONS[row.job];
 
   return (
     <Card>
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-[color:var(--color-foreground)]">{row.label}</p>
-          <p className="text-xs text-[color:var(--color-muted-foreground)]">{row.description}</p>
+        <div className="flex items-start gap-3">
+          {Icon ? (
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-primary-soft)] text-[color:var(--color-primary)]">
+              <Icon className="size-4.5" aria-hidden />
+            </span>
+          ) : null}
+          <div>
+            <p className="text-sm font-medium text-[color:var(--color-foreground)]">{row.label}</p>
+            <p className="text-xs text-[color:var(--color-muted-foreground)]">{row.description}</p>
+          </div>
         </div>
         <form action={formAction} className="flex flex-wrap items-end gap-2">
           <input type="hidden" name="job" value={row.job} />

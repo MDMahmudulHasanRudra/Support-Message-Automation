@@ -1,7 +1,21 @@
 "use client";
 
 import { useActionState } from "react";
-import { Badge, type BadgeColor, Button, Card, Checkbox, Field, Input, SectionHeader, Select, Textarea } from "@/components/ui";
+import { FlaskConical } from "lucide-react";
+import {
+  Alert,
+  Badge,
+  type BadgeColor,
+  Button,
+  Card,
+  Checkbox,
+  EmptyState,
+  Field,
+  Input,
+  SectionHeader,
+  Select,
+  Textarea,
+} from "@/components/ui";
 import { testRule, type RuleTesterState } from "@/server/actions/ruleTester";
 
 const initialState: RuleTesterState = {};
@@ -16,6 +30,12 @@ export function RuleTesterForm({ groups }: { groups: Array<{ id: string; name: s
         <form action={formAction} className="space-y-4">
           <Field label="Message" required>
             <Textarea name="body" rows={3} required placeholder="e.g. ইন্টারনেট চলছে না" />
+          </Field>
+          <Field
+            label="Simulate at time"
+            hint="Leave blank to use the current time. Useful for testing scheduled rules, e.g. overnight windows."
+          >
+            <Input name="simulateAt" type="datetime-local" />
           </Field>
           <Field label="Sender phone">
             <Input name="senderPhone" defaultValue="+8801000000000" />
@@ -47,7 +67,11 @@ export function RuleTesterForm({ groups }: { groups: Array<{ id: string; name: s
 
       <Card>
         <SectionHeader title="Result" />
-        {state.error ? <p className="text-sm text-[color:var(--color-danger)]">{state.error}</p> : null}
+        {state.error ? (
+          <div className="mb-4">
+            <Alert tone="danger">{state.error}</Alert>
+          </div>
+        ) : null}
         {state.result ? (
           <div className="space-y-4">
             <div>
@@ -74,9 +98,12 @@ export function RuleTesterForm({ groups }: { groups: Array<{ id: string; name: s
             </div>
             <div>
               <span className="text-xs text-[color:var(--color-muted-foreground)]">Rules Evaluated</span>
-              <ul className="mt-1.5 max-h-80 space-y-2 overflow-y-auto text-sm">
+              <ul className="mt-1.5 max-h-80 space-y-2 overflow-y-auto pr-1 text-sm">
                 {state.result.trace.map((t, i) => (
-                  <li key={i} className="rounded-md border border-[var(--color-border)] p-2.5">
+                  <li
+                    key={i}
+                    className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-xs)]"
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium text-[color:var(--color-foreground)]">{t.ruleName}</span>
                       <Badge color={traceColor(t)}>
@@ -90,7 +117,9 @@ export function RuleTesterForm({ groups }: { groups: Array<{ id: string; name: s
             </div>
           </div>
         ) : (
-          <p className="text-sm text-[color:var(--color-muted-foreground)]">Run a test to see results here.</p>
+          <EmptyState icon={<FlaskConical className="size-5" aria-hidden />}>
+            Run a test to see results here.
+          </EmptyState>
         )}
       </Card>
     </div>

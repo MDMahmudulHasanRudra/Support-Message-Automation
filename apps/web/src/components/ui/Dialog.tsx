@@ -4,6 +4,11 @@ import { X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "./Button";
 
+const DIALOG_SIZE = {
+  md: "max-w-md",
+  lg: "max-w-2xl",
+};
+
 export function Dialog({
   open,
   onClose,
@@ -11,6 +16,7 @@ export function Dialog({
   description,
   children,
   footer,
+  size = "md",
 }: {
   open: boolean;
   onClose: () => void;
@@ -18,6 +24,8 @@ export function Dialog({
   description?: string;
   children?: ReactNode;
   footer?: ReactNode;
+  /** "lg" for long-form content (e.g. help text) that needs more room than a confirmation dialog. */
+  size?: "md" | "lg";
 }) {
   const ref = useRef<HTMLDialogElement>(null);
 
@@ -52,9 +60,13 @@ export function Dialog({
     <dialog
       ref={ref}
       onClose={onClose}
-      className="w-full max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0 text-[color:var(--color-foreground)] shadow-xl backdrop:bg-black/50"
+      // Explicit fixed + transform centering, not relying on the native <dialog>:modal
+      // UA stylesheet's `margin: auto` — Tailwind's preflight resets margin to 0 on every
+      // element, which silently defeats that default and left dialogs pinned to the
+      // viewport's top-left corner instead of centered.
+      className={`fixed left-1/2 top-1/2 m-0 flex max-h-[85vh] w-full ${DIALOG_SIZE[size]} -translate-x-1/2 -translate-y-1/2 flex-col rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-0 text-[color:var(--color-foreground)] shadow-[var(--shadow-xl)] backdrop:bg-black/55 backdrop:backdrop-blur-[2px]`}
     >
-      <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-5 py-4">
+      <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-6 py-4.5">
         <div>
           <h2 className="text-base font-semibold">{title}</h2>
           {description ? (
@@ -65,14 +77,14 @@ export function Dialog({
           type="button"
           onClick={onClose}
           aria-label="Close dialog"
-          className="cursor-pointer rounded-md p-1 text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
+          className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
         >
-          <X className="size-4" aria-hidden />
+          <X className="size-5" aria-hidden />
         </button>
       </div>
-      {children ? <div className="px-5 py-4">{children}</div> : null}
+      {children ? <div className="overflow-y-auto px-6 py-5">{children}</div> : null}
       {footer ? (
-        <div className="flex justify-end gap-2 border-t border-[var(--color-border)] px-5 py-4">
+        <div className="flex justify-end gap-2 border-t border-[var(--color-border)] px-6 py-4">
           {footer}
         </div>
       ) : null}

@@ -1,8 +1,9 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { LogLevel, Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { Button, EmptyState, FilterBar, Input, PageHeader, Select } from "@/components/ui";
+import { Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select } from "@/components/ui";
 import { LogsTable, type LogRow } from "./LogsTable";
 
 const LEVELS = ["INFO", "WARN", "ERROR"] as const;
@@ -34,7 +35,44 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
 
   return (
     <div>
-      <PageHeader title="System Logs" description="Most recent 200 entries." />
+      <PageHeader
+        title="System Logs"
+        description="Most recent 200 entries."
+        actions={
+          <HelpButton moduleTitle="System Logs">
+            <HelpSection title="What this page is for">
+              <p>
+                A read-only audit/diagnostic trail of internal system events — connection changes,
+                account/routing changes, escalation skips, errors — written automatically as they
+                happen by both the dashboard and the worker process into the same shared log. Use it for
+                "why didn't X happen," not for reading chat content (that's the Messages page).
+              </p>
+            </HelpSection>
+            <HelpSection title="Level and Scope">
+              <p>
+                Level is INFO/WARN/ERROR. Scope is a short tag naming which subsystem logged it —
+                common ones: "provider" (WhatsApp connection), "pipeline" (message processing),
+                "support-escalation", "accounts", "whatsapp-routing", "ai-learning". Scope is a free-text
+                contains-match, not a fixed dropdown, so partial text works.
+              </p>
+            </HelpSection>
+            <HelpSection title="Expandable rows">
+              <p>
+                A row with a chevron has extra metadata attached (account IDs, error details, counts) —
+                click to expand it as raw JSON.
+              </p>
+            </HelpSection>
+            <HelpSection title="Gotcha">
+              <p>
+                Logging is designed to never crash anything — if writing a log entry itself somehow
+                fails, that failure is swallowed silently rather than shown here. If you suspect an
+                issue but see nothing relevant in this list, also check that the affected
+                service (worker or dashboard) is actually running.
+              </p>
+            </HelpSection>
+          </HelpButton>
+        }
+      />
 
       <form method="GET">
         <FilterBar>

@@ -55,6 +55,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-Asia/Dhaka}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
@@ -82,6 +83,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-Asia/Dhaka}
       PUPPETEER_EXECUTABLE_PATH: ${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium}
       WHATSAPP_SESSION_DIR: ${WHATSAPP_SESSION_DIR:-/app/sessions}
       WHATSAPP_SESSION_NAME: ${WHATSAPP_SESSION_NAME:-support-automation}

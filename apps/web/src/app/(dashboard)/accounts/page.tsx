@@ -1,6 +1,7 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { Alert, Card, EmptyState, PageHeader } from "@/components/ui";
+import { Alert, Card, EmptyState, HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import {
   deleteWhatsAppAccount,
   removePrimaryAccount,
@@ -76,11 +77,66 @@ export default async function AccountsPage() {
       <PageHeader
         title="WhatsApp Accounts"
         description="Actions here are relayed to the worker through the database — there is no direct connection between the dashboard and the WhatsApp session."
-        actions={<AddAccountDialog />}
+        actions={
+          <>
+            <HelpButton moduleTitle="WhatsApp Accounts">
+              <HelpSection title="What this page is for">
+                <p>
+                  Connect and manage the WhatsApp account(s) this system automates. Every action here
+                  (reconnect, resync groups, logout) is queued as a command for the worker to pick up —
+                  the dashboard never talks to WhatsApp directly, so nothing here happens instantly; give
+                  it a few seconds.
+                </p>
+              </HelpSection>
+              <HelpSection title="Adding an account">
+                <p>
+                  Click "Add Account" and give it a label. The worker notices the new account within ~20
+                  seconds and generates a fresh QR code for you to scan — no need to refresh manually,
+                  it appears automatically once ready.
+                </p>
+              </HelpSection>
+              <HelpSection title="Primary account">
+                <p>
+                  Exactly one account can be Primary at a time — it's the default account used by every
+                  feature (Support Notifications, Priority Support, etc.) that hasn't been explicitly
+                  routed to a specific account on the Account Routing page. The very first account is
+                  made Primary automatically; you never have to set one manually unless you add more
+                  accounts and want to change which one is the default.
+                </p>
+              </HelpSection>
+              <HelpSection title="Status meanings">
+                <p>
+                  <strong>CONNECTED</strong> — working normally. <strong>AUTHENTICATION_REQUIRED</strong>
+                  {" "}— scan the QR code shown on the card. <strong>RECONNECTING</strong> — temporarily
+                  re-establishing the session, usually resolves on its own. <strong>DISCONNECTED</strong>
+                  {" "}— logged out; reconnect or scan a new QR. <strong>SESSION_ERROR</strong> /{" "}
+                  <strong>ERROR</strong> — something failed; try Reconnect, and check System Logs if it
+                  keeps happening.
+                </p>
+              </HelpSection>
+              <HelpSection title="Reconnect vs. Logout">
+                <p>
+                  <strong>Reconnect</strong> tries to restore the existing session without losing it —
+                  safe to use any time a card looks stuck. <strong>Logout</strong> permanently ends the
+                  session and requires a brand-new QR scan afterward — only use it if you actually want to
+                  switch which WhatsApp number is connected.
+                </p>
+              </HelpSection>
+              <HelpSection title="Deleting an account">
+                <p>
+                  You can't delete the only account, and you can't delete the current Primary account —
+                  set a different account as Primary first. Deleting removes that account's synced
+                  groups and message history permanently.
+                </p>
+              </HelpSection>
+            </HelpButton>
+            <AddAccountDialog />
+          </>
+        }
       />
 
       {pendingCommands > 0 ? (
-        <div className="mb-4">
+        <div className="mb-6">
           <Alert tone="info" title={`${pendingCommands} command(s) waiting for the worker`}>
             The worker polls for new commands roughly every 1.5 seconds.
           </Alert>

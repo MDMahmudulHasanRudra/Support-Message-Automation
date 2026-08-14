@@ -6,6 +6,7 @@ export * from "./Dialog";
 export * from "./EmptyState";
 export * from "./Field";
 export * from "./FilterBar";
+export * from "./Help";
 export * from "./PageHeader";
 export * from "./Pagination";
 export * from "./ProgressBar";

@@ -1,8 +1,10 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
+import { Search } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { Button, EmptyState, FilterBar, Input, PageHeader, Pagination } from "@/components/ui";
+import { Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Pagination } from "@/components/ui";
 import { GroupsTable, type GroupRow } from "./GroupsTable";
 import { SyncGroupsButton } from "./SyncGroupsButton";
 
@@ -75,6 +77,49 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
       <PageHeader
         title="WhatsApp Groups"
         description="Only monitored groups are eligible for auto-reply. Use Accounts → Resync Groups to discover new ones."
+        actions={
+          <HelpButton moduleTitle="WhatsApp Groups">
+            <HelpSection title="What this page is for">
+              <p>
+                Every WhatsApp group your connected account(s) have synced, with per-group controls for
+                automation, priority support, and participant counts. New groups appear here after a
+                resync — this page never discovers groups on its own.
+              </p>
+            </HelpSection>
+            <HelpSection title="Monitored — the single most important setting here">
+              <p>
+                A group must be marked <strong>Monitored</strong> before any automation rule (auto-reply,
+                tagging, notifications) will ever fire for messages in it — this is separate from and
+                checked in addition to whether a rule's keywords match. Every newly-synced group starts
+                <strong> unmonitored</strong> by default, so if automation "isn't working" in a specific
+                group, check here first. Use "Start Monitoring" per row, or select several rows and use
+                Bulk Enable Monitoring.
+              </p>
+            </HelpSection>
+            <HelpSection title="Active vs. Inactive">
+              <p>
+                A group becomes Inactive automatically when a resync no longer finds your account as a
+                member of it (left the group, removed, etc.) — it isn't deleted, just soft-marked, so its
+                message history stays intact. If a group you're still in shows Inactive, run Sync Groups.
+              </p>
+            </HelpSection>
+            <HelpSection title="Sync Groups button">
+              <p>
+                Queues a group-list refresh for every connected WhatsApp account (not just one) — new
+                groups you've joined appear, groups you've left get marked Inactive, and names/participant
+                counts update. Takes a few seconds per account; you don't need to wait on this page.
+              </p>
+            </HelpSection>
+            <HelpSection title="Priority Support column">
+              <p>
+                Click "Configure" to tag a group P1/P2/P3 for Priority Support Escalation, and optionally
+                assign a team member who gets DM'd if nobody replies in time. Leaving priority unset
+                (the default) means this group is never monitored for escalation — it's entirely opt-in.
+                See the Priority Support Dashboard's own Help for what the tiers actually do.
+              </p>
+            </HelpSection>
+          </HelpButton>
+        }
       />
 
       <FilterBar>
@@ -82,6 +127,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
           <Input name="search" placeholder="Search group name…" defaultValue={search} className="w-64" />
           <input type="hidden" name="filter" value={filter} />
           <Button type="submit" size="sm">
+            <Search className="size-3.5" aria-hidden />
             Search
           </Button>
         </form>

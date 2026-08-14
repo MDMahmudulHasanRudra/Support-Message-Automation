@@ -2,7 +2,7 @@
 
 :root {
   /* Base surfaces */
-  --color-background: #f8fafc;
+  --color-background: #f6f8fb;
   --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
   --color-foreground: #0f172a;
@@ -13,7 +13,10 @@
   /* Brand / primary action */
   --color-primary: #1d4ed8;
   --color-primary-hover: #1e40af;
+  --color-primary-active: #1e3a8a;
+  --color-primary-soft: #eff4ff;
   --color-on-primary: #ffffff;
+  --gradient-primary: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
 
   /* Semantic status scale — used identically everywhere */
   --color-success: #16a34a;
@@ -43,10 +46,28 @@
 
   --color-focus-ring: #1d4ed8;
 
+  /* Radius scale */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  /* Elevation scale — soft, low-contrast shadows layered for depth without heaviness */
+  --shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.06);
+  --shadow-md: 0 4px 12px -2px rgb(15 23 42 / 0.08), 0 2px 4px -2px rgb(15 23 42 / 0.05);
+  --shadow-lg: 0 12px 24px -6px rgb(15 23 42 / 0.12), 0 4px 8px -4px rgb(15 23 42 / 0.06);
+  --shadow-xl: 0 24px 48px -12px rgb(15 23 42 / 0.18);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+
   /* Density baseline */
   --space-page-padding: 24px;
   --space-content-max: 1560px;
-  --sidebar-width: 248px;
+  --sidebar-width: 260px;
 }
 
 @theme inline {
@@ -58,9 +79,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-background: #020617;
+    --color-background: #05070d;
     --color-surface: #0f172a;
-    --color-surface-raised: #131c31;
+    --color-surface-raised: #141d33;
     --color-foreground: #f1f5f9;
     --color-muted-foreground: #94a3b8;
     --color-border: #1e293b;
@@ -68,7 +89,16 @@
 
     --color-primary: #3b82f6;
     --color-primary-hover: #60a5fa;
+    --color-primary-active: #2563eb;
+    --color-primary-soft: #132340;
     --color-on-primary: #0b1220;
+    --gradient-primary: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+
+    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.45), 0 2px 4px -2px rgb(0 0 0 / 0.3);
+    --shadow-lg: 0 12px 24px -6px rgb(0 0 0 / 0.55), 0 4px 8px -4px rgb(0 0 0 / 0.35);
+    --shadow-xl: 0 24px 48px -12px rgb(0 0 0 / 0.65);
 
     --color-success: #22c55e;
     --color-success-bg: #052e16;
@@ -103,15 +133,54 @@
   border-color: var(--color-border);
 }
 
+dialog:not([open]) {
+  display: none;
+}
+
 body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 :focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Slim, low-profile scrollbars that stay out of the way of dense dashboard content */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-muted-foreground);
+  background-clip: padding-box;
 }
 
 @media (prefers-reduced-motion: reduce) {

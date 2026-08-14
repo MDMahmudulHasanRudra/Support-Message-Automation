@@ -51,6 +51,10 @@ export function CaseActions({
     });
   }
 
+  if (isTerminal) {
+    return <p className="text-sm text-[color:var(--color-muted-foreground)]">No actions available — this case is closed.</p>;
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       {!isTerminal && !isPaused ? (

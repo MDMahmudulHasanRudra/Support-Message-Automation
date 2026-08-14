@@ -176,13 +176,9 @@ export function GroupsTable({
           <Alert
             tone={lastResult.error ? "danger" : "success"}
             actions={
-              <button
-                type="button"
-                className="cursor-pointer text-xs underline"
-                onClick={() => setLastResult(null)}
-              >
+              <Button variant="ghost" size="sm" onClick={() => setLastResult(null)}>
                 Dismiss
-              </button>
+              </Button>
             }
           >
             {lastResult.error ? (

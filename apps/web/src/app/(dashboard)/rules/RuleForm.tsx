@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { Button, Card, Checkbox, Field, Input, Select, SectionHeader, Textarea } from "@/components/ui";
+import { Alert, Button, Card, Checkbox, Field, Input, Label, Select, SectionHeader, Textarea } from "@/components/ui";
 import type { RuleFormState } from "@/server/actions/rules";
 
 const RULE_TYPES = [
@@ -46,6 +46,16 @@ export interface RuleFormDefaults {
   actionTag?: string;
   actionCategory?: string;
   actionForwardChatId?: string;
+  timeWindowEnabled?: boolean;
+  timeWindowStartHour?: number;
+  timeWindowEndHour?: number;
+  timeWindowDays?: number[];
+}
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function hourToTimeValue(hour: number | undefined): string {
+  return `${String(hour ?? 0).padStart(2, "0")}:00`;
 }
 
 export function RuleForm({
@@ -60,6 +70,10 @@ export function RuleForm({
   const [state, formAction, pending] = useActionState(action, {});
   const [matchType, setMatchType] = useState(defaults.matchType ?? "ALWAYS");
   const [selectedActions, setSelectedActions] = useState<Set<string>>(new Set(defaults.actionTypes ?? []));
+  const [scheduleEnabled, setScheduleEnabled] = useState(Boolean(defaults.timeWindowEnabled));
+  const [startTime, setStartTime] = useState(hourToTimeValue(defaults.timeWindowStartHour));
+  const [endTime, setEndTime] = useState(hourToTimeValue(defaults.timeWindowEndHour));
+  const isOvernightWindow = Number(startTime.split(":")[0]) >= Number(endTime.split(":")[0]);
 
   function toggleAction(type: string, checked: boolean) {
     setSelectedActions((prev) => {
@@ -154,13 +168,78 @@ export function RuleForm({
             <Input name="groupIds" defaultValue={defaults.groupIds} />
           </Field>
         </div>
+
+        <label className="mt-4 flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
+          <Checkbox
+            name="timeWindowEnabled"
+            defaultChecked={scheduleEnabled}
+            onChange={(e) => setScheduleEnabled(e.target.checked)}
+          />
+          Only active during specific hours
+        </label>
+
+        <div
+          className={
+            scheduleEnabled
+              ? "mt-3 space-y-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-neutral-bg)]/40 p-4"
+              : "hidden"
+          }
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field
+              label="Active from"
+              hint="Minutes are ignored — only the hour is used. Supports overnight windows, e.g. 22:00 to 06:00."
+            >
+              <Input
+                type="time"
+                step={3600}
+                name="timeWindowStartHour"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value || "00:00")}
+              />
+            </Field>
+            <Field label="Active until">
+              <Input
+                type="time"
+                step={3600}
+                name="timeWindowEndHour"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value || "00:00")}
+              />
+            </Field>
+          </div>
+          <div>
+            <Label>Days</Label>
+            <div className="flex flex-wrap gap-3">
+              {DAY_LABELS.map((label, day) => (
+                <label key={day} className="flex items-center gap-1.5 text-sm text-[color:var(--color-foreground)]">
+                  <Checkbox name={`timeWindowDay_${day}`} defaultChecked={defaults.timeWindowDays?.includes(day)} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-[color:var(--color-muted-foreground)]">
+              Leave all unchecked to apply every day.
+              {isOvernightWindow
+                ? " Overnight window: the day filter matches the day a message arrives on — a message after midnight counts as the next day, so select both days for full overnight coverage."
+                : ""}
+            </p>
+          </div>
+        </div>
       </Card>
 
       <Card>
         <SectionHeader title="Actions" />
         <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
           {ACTION_TYPES.map((a) => (
-            <label key={a} className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
+            <label
+              key={a}
+              className={`flex items-center gap-2 rounded-[var(--radius-sm)] border px-3 py-2 text-sm transition-colors duration-150 ${
+                selectedActions.has(a)
+                  ? "border-[var(--color-primary)]/40 bg-[var(--color-primary-soft)] text-[color:var(--color-foreground)]"
+                  : "border-[var(--color-border)] text-[color:var(--color-foreground)] hover:border-[var(--color-border-strong)]"
+              }`}
+            >
               <Checkbox
                 name={`action_${a}`}
                 defaultChecked={selectedActions.has(a)}
@@ -204,7 +283,7 @@ export function RuleForm({
         </div>
       </Card>
 
-      {state.error ? <p className="text-sm text-[color:var(--color-danger)]">{state.error}</p> : null}
+      {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
 
       <Button type="submit" loading={pending}>
         {submitLabel}

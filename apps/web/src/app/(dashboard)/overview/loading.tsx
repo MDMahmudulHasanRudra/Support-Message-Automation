@@ -3,13 +3,13 @@ import { Card, TableSkeleton } from "@/components/ui";
 export default function OverviewLoading() {
   return (
     <div>
-      <div className="mb-6 h-16 w-64 animate-pulse rounded-lg bg-[var(--color-neutral-bg)]" />
+      <div className="mb-6 h-16 w-64 animate-pulse rounded-[var(--radius-lg)] bg-[var(--color-neutral-bg)]" />
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         {Array.from({ length: 5 }).map((_, index) => (
           <div
             key={index}
-            className="h-[86px] animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-neutral-bg)]"
+            className="h-[86px] animate-pulse rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-neutral-bg)]"
           />
         ))}
       </div>

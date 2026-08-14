@@ -137,7 +137,7 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="flex flex-col gap-1 text-xs text-[color:var(--color-muted-foreground)]">
+    <label className="flex flex-col gap-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)]">
       {label}
       {children}
     </label>

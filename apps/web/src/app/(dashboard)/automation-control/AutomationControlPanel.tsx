@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Check, Pause, Play } from "lucide-react";
 import { Badge, Button, Card, ConfirmDialog, SectionHeader } from "@/components/ui";
 import { setAutomationEnabled, setAutomationMode } from "@/server/actions/settings";
 
@@ -49,15 +50,13 @@ export function AutomationControlPanel({
   const targetMode = dialog?.kind === "mode" ? MODES.find((m) => m.value === dialog.mode) : null;
 
   return (
-    <div>
-      <Card className="mb-6">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <SectionHeader
-              title="Kill Switch"
-              description="When paused: no new automatic replies are sent. Incoming messages are still stored and the support team is still notified."
-            />
-          </div>
+    <div className="space-y-6">
+      <Card className={automationEnabled ? "" : "border-[var(--color-danger-border)]"}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SectionHeader
+            title="Kill Switch"
+            description="When paused: no new automatic replies are sent. Incoming messages are still stored and the support team is still notified."
+          />
           <Badge color={automationEnabled ? "green" : "red"} dot>
             {automationEnabled ? "ENABLED" : "PAUSED"}
           </Badge>
@@ -65,10 +64,14 @@ export function AutomationControlPanel({
         <div className="mt-4">
           {automationEnabled ? (
             <Button variant="danger" onClick={() => setDialog({ kind: "toggle" })}>
+              <Pause className="size-3.5" aria-hidden />
               Pause Automation
             </Button>
           ) : (
-            <Button onClick={() => setDialog({ kind: "toggle" })}>Resume Automation</Button>
+            <Button onClick={() => setDialog({ kind: "toggle" })}>
+              <Play className="size-3.5" aria-hidden />
+              Resume Automation
+            </Button>
           )}
         </div>
       </Card>
@@ -79,16 +82,21 @@ export function AutomationControlPanel({
           {MODES.map((m) => (
             <div
               key={m.value}
-              className={`flex items-center justify-between rounded-md border p-3 ${
-                mode === m.value ? "border-[var(--color-primary)]" : "border-[var(--color-border)]"
+              className={`flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-md)] border p-4 transition-colors duration-150 ${
+                mode === m.value
+                  ? "border-[var(--color-primary)]/50 bg-[var(--color-primary-soft)]"
+                  : "border-[var(--color-border)]"
               }`}
             >
               <div>
                 <p className="text-sm font-medium text-[color:var(--color-foreground)]">{m.label}</p>
-                <p className="text-xs text-[color:var(--color-muted-foreground)]">{m.description}</p>
+                <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">{m.description}</p>
               </div>
               {mode === m.value ? (
-                <Badge color="blue">Current</Badge>
+                <Badge color="blue">
+                  <Check className="size-3 shrink-0" aria-hidden />
+                  Current
+                </Badge>
               ) : (
                 <Button variant="secondary" size="sm" onClick={() => setDialog({ kind: "mode", mode: m.value })}>
                   Select

@@ -20,12 +20,12 @@ export function TestNotificationForm() {
   return (
     <Card className="mb-6">
       <SectionHeader title="Send Test Notification" />
-      <form action={formAction} className="flex gap-2">
+      <form action={formAction} className="flex flex-wrap gap-2">
         <Input
           name="message"
           placeholder="Test message"
           defaultValue="This is a test notification from the dashboard."
-          className="flex-1"
+          className="min-w-48 flex-1"
         />
         <Button type="submit" loading={pending}>
           Send Test

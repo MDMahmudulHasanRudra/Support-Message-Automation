@@ -8,17 +8,18 @@ type ButtonSize = "sm" | "md";
 
 const VARIANT_STYLES: Record<ButtonVariant, string> = {
   primary:
-    "bg-[var(--color-primary)] text-[var(--color-on-primary)] hover:bg-[var(--color-primary-hover)]",
+    "bg-[image:var(--gradient-primary)] text-[var(--color-on-primary)] shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] hover:brightness-[1.06] active:brightness-95",
   secondary:
-    "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[color:var(--color-foreground)] hover:bg-[var(--color-neutral-bg)]",
-  danger: "bg-[var(--color-danger)] text-white hover:bg-[var(--color-danger-hover)]",
+    "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-neutral-bg)]",
+  danger:
+    "bg-[var(--color-danger)] text-white shadow-[var(--shadow-sm)] hover:bg-[var(--color-danger-hover)] hover:shadow-[var(--shadow-md)]",
   ghost:
     "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]",
 };
 
 const SIZE_STYLES: Record<ButtonSize, string> = {
-  sm: "h-8 px-2.5 text-xs gap-1.5",
-  md: "h-9 px-3.5 text-sm gap-2",
+  sm: "h-8 px-3 text-xs gap-1.5",
+  md: "h-9.5 px-4 text-sm gap-2",
 };
 
 export function Button({

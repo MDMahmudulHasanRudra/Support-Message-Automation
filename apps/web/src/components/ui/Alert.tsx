@@ -37,7 +37,7 @@ export function Alert({
   const Icon = TONE_ICONS[tone];
   return (
     <div
-      className={`flex gap-3 rounded-lg border px-4 py-3 text-sm ${TONE_STYLES[tone]}`}
+      className={`flex gap-3 rounded-[var(--radius-md)] border px-4 py-3.5 text-sm shadow-[var(--shadow-xs)] ${TONE_STYLES[tone]}`}
       role={tone === "danger" ? "alert" : undefined}
     >
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />

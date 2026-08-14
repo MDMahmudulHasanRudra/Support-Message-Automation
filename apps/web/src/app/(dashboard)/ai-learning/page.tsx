@@ -1,7 +1,16 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
+import {
+  ArrowRight,
+  BookOpen,
+  Cpu,
+  KeyRound,
+  Settings as SettingsIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { Badge, Card, EmptyState, PageHeader, SectionHeader, StatTile } from "@/components/ui";
+import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile } from "@/components/ui";
 
 export default async function AiLearningDashboardPage() {
   await requireSession();
@@ -29,16 +38,66 @@ export default async function AiLearningDashboardPage() {
       <PageHeader
         title="AI Dashboard"
         description="Phase 1 foundation: AI provider/model configuration and a manually-curated Knowledge Base. Software/chat/document learning and AI-generated responses come in later phases."
+        actions={
+          <HelpButton moduleTitle="AI Dashboard">
+            <HelpSection title="Please read this before configuring anything in AI Learning">
+              <p>
+                Everything in this entire module — Knowledge Base, Providers, Models, and the Settings
+                toggles below — is <strong>configuration only</strong>. Nothing here currently affects
+                how the WhatsApp bot behaves or what it sends to customers. It's safe to fill in now
+                and will presumably be used once later phases ship, but as of today, turning a switch
+                ON or adding Knowledge Base entries has zero live effect. The one exception is the
+                Providers page's "Test Connection" button, which does make a real API call, purely to
+                verify a stored key works.
+              </p>
+            </HelpSection>
+            <HelpSection title="What each stat/status shows">
+              <p>
+                The Knowledge counts are simple totals by status. "AI Status" just displays whatever
+                you've toggled on the AI Settings page — it's a read-only mirror, not a separate
+                control. "Active provider(s) configured" counts AI Providers currently marked ACTIVE.
+              </p>
+            </HelpSection>
+          </HelpButton>
+        }
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <SectionHeader title="Sections" description="Jump into a specific area of the AI Learning module." />
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <HubLink
+          href="/ai-learning/knowledge-base"
+          icon={BookOpen}
+          label="Knowledge Base"
+          description={`${totalKnowledge} entr${totalKnowledge === 1 ? "y" : "ies"}`}
+        />
+        <HubLink
+          href="/ai-learning/providers"
+          icon={KeyRound}
+          label="AI Providers"
+          description={`${providerCount} active`}
+        />
+        <HubLink
+          href="/ai-learning/models"
+          icon={Cpu}
+          label="AI Models"
+          description="Assign provider/model per job"
+        />
+        <HubLink
+          href="/ai-learning/settings"
+          icon={SettingsIcon}
+          label="AI Settings"
+          description="Master switches & thresholds"
+        />
+      </div>
+
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         <StatTile label="Total Knowledge" value={totalKnowledge} />
         <StatTile label="Active Knowledge" value={activeKnowledge} tone="success" />
         <StatTile label="Inactive Knowledge" value={inactiveKnowledge} tone="warning" />
         <StatTile label="Archived Knowledge" value={archivedKnowledge} />
       </div>
 
-      <Card className="mb-4">
+      <Card className="mb-6">
         <SectionHeader title="AI Status" />
         <div className="flex flex-wrap gap-2">
           {engineFlags.map((f) => (
@@ -85,5 +144,35 @@ export default async function AiLearningDashboardPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+function HubLink({
+  href,
+  icon: Icon,
+  label,
+  description,
+}: {
+  href: string;
+  icon: LucideIcon;
+  label: string;
+  description: string;
+}) {
+  return (
+    <Link href={href} className="group block h-full">
+      <Card className="flex h-full items-start gap-3 transition-shadow duration-200 hover:border-[var(--color-primary)]/40 hover:shadow-[var(--shadow-md)]">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-primary-soft)] text-[color:var(--color-primary)]">
+          <Icon className="size-4.5" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-[color:var(--color-foreground)]">{label}</p>
+          <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">{description}</p>
+        </div>
+        <ArrowRight
+          className="mt-1 size-4 shrink-0 text-[color:var(--color-muted-foreground)] transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-[color:var(--color-primary)]"
+          aria-hidden
+        />
+      </Card>
+    </Link>
   );
 }

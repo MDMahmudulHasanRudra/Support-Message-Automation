@@ -1,7 +1,8 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { PageHeader, Pagination } from "@/components/ui";
+import { HelpButton, HelpSection, PageHeader, Pagination } from "@/components/ui";
 import { MessagesFilterBar, type MessageFilters } from "./MessagesFilterBar";
 import { MessagesTable, type MessageRow } from "./MessagesTable";
 
@@ -85,7 +86,45 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
 
   return (
     <div>
-      <PageHeader title="All Messages" description="Every message across every account, with rule decisions, auto-reply, and notification status." />
+      <PageHeader
+        title="All Messages"
+        description="Every message across every account, with rule decisions, auto-reply, and notification status."
+        actions={
+          <HelpButton moduleTitle="Messages">
+            <HelpSection title="What this page is for">
+              <p>
+                A read-only, filterable log of every WhatsApp message the system has seen. "Needs
+                Attention" and "Ignored Messages" in the sidebar are this same page, just pre-filtered
+                by Decision — there's no separate storage for them.
+              </p>
+            </HelpSection>
+            <HelpSection title="Status vs. Decision — two different things">
+              <p>
+                <strong>Status</strong> is the message's own processing lifecycle: PENDING, PROCESSED,
+                IGNORED, or FAILED. <strong>Decision</strong> is what the automation rule engine decided
+                to do: IGNORE (a rule explicitly said to do nothing), AUTO_REPLY (a reply was sent),
+                SUPPORT_REQUIRED (flagged for human attention — this is the Needs Attention filter),
+                STOPPED, ACTIONED (some other action ran), or NO_MATCH (no rule matched at all).
+              </p>
+            </HelpSection>
+            <HelpSection title="View-only">
+              <p>
+                There are no bulk actions or edits here — click "View" on any row to see full details:
+                every rule that was considered and why it did or didn't match, the exact auto-reply
+                that was queued (if any) and its delivery status, and any notifications triggered.
+              </p>
+            </HelpSection>
+            <HelpSection title="Gotcha: a message ignored by the team-member default">
+              <p>
+                If nobody wrote a rule for it, a message from an active Internal Team Member is
+                automatically ignored by the system. It shows up here as Decision = IGNORE with Rule
+                Matched = "—" (no real rule fired) — the message detail page's trace shows this as a
+                system default, not a configured rule.
+              </p>
+            </HelpSection>
+          </HelpButton>
+        }
+      />
 
       <MessagesFilterBar
         defaults={params}

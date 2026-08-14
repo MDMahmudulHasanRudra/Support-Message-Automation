@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { KeyRound } from "lucide-react";
 import { Button, Card, Field, Input, SectionHeader, Select } from "@/components/ui";
 import type { AiProviderFormState } from "@/server/actions/aiProviders";
 
@@ -45,11 +46,22 @@ export function AiProviderForm({
             <Input name="apiUrl" defaultValue={defaults.apiUrl} placeholder="https://api.anthropic.com" />
           </Field>
           <Field
-            label="API Key"
+            label={
+              <span className="inline-flex items-center gap-1.5">
+                <KeyRound className="size-3.5 text-[color:var(--color-muted-foreground)]" aria-hidden />
+                API Key
+              </span>
+            }
             required={!defaults.hasExistingKey}
             hint={defaults.hasExistingKey ? "Leave blank to keep the current key." : "Stored encrypted — never shown again in full."}
           >
-            <Input name="apiKey" type="password" autoComplete="off" placeholder={defaults.hasExistingKey ? "••••••••" : ""} />
+            <Input
+              name="apiKey"
+              type="password"
+              autoComplete="off"
+              placeholder={defaults.hasExistingKey ? "••••••••" : ""}
+              className="font-[family-name:var(--font-mono)] tracking-wide"
+            />
           </Field>
         </div>
       </Card>

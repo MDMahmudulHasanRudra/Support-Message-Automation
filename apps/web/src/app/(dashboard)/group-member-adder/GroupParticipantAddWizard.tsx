@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Unplug } from "lucide-react";
 import { normalizePhoneNumber } from "@support-automation/shared";
 import {
   Alert,
@@ -10,7 +11,9 @@ import {
   Card,
   Checkbox,
   ConfirmDialog,
+  EmptyState,
   Field,
+  FieldError,
   Input,
   SectionHeader,
   Select,
@@ -125,9 +128,9 @@ export function GroupParticipantAddWizard({
   if (accounts.length === 0) {
     return (
       <Card>
-        <p className="text-sm text-[color:var(--color-muted-foreground)]">
+        <EmptyState icon={<Unplug className="size-5" aria-hidden />}>
           No connected WhatsApp account is available. Connect an account on the Accounts page first.
-        </p>
+        </EmptyState>
       </Card>
     );
   }
@@ -172,12 +175,10 @@ export function GroupParticipantAddWizard({
             />
           </Field>
           {phoneNumber.trim() && !normalizedPhone ? (
-            <p className="mt-1.5 text-xs text-[color:var(--color-danger-fg)]">
-              That doesn&apos;t look like a valid phone number.
-            </p>
+            <FieldError>That doesn&apos;t look like a valid phone number.</FieldError>
           ) : null}
 
-          <div className="mt-6">
+          <div className="mt-6 border-t border-[var(--color-border)] pt-6">
             <SectionHeader title="Target Groups" />
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <Input
@@ -199,7 +200,7 @@ export function GroupParticipantAddWizard({
               ) : null}
               <span className="text-xs text-[color:var(--color-muted-foreground)]">{selected.size} selected</span>
             </div>
-            <div className="max-h-80 overflow-y-auto rounded-md border border-[var(--color-border)]">
+            <div className="max-h-80 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--color-border)]">
               {filteredGroups.length === 0 ? (
                 <p className="p-4 text-sm text-[color:var(--color-muted-foreground)]">No groups match your search.</p>
               ) : (

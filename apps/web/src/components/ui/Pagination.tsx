@@ -21,13 +21,24 @@ export function Pagination({
 
   return (
     <div className="flex items-center justify-between gap-4 px-1 py-3 text-sm text-[color:var(--color-muted-foreground)]">
-      <p>{total === 0 ? "0 results" : `${rangeStart}–${rangeEnd} of ${total}`}</p>
+      <p>
+        {total === 0 ? (
+          "0 results"
+        ) : (
+          <>
+            <span className="font-medium text-[color:var(--color-foreground)]">
+              {rangeStart}–{rangeEnd}
+            </span>{" "}
+            of {total}
+          </>
+        )}
+      </p>
       <div className="flex items-center gap-2">
         <PaginationLink href={buildHref(page - 1)} disabled={!hasPrev} label="Previous page">
           <ChevronLeft className="size-4" aria-hidden />
           Previous
         </PaginationLink>
-        <span className="text-xs">
+        <span className="text-xs font-medium text-[color:var(--color-foreground)]">
           Page {page} of {totalPages}
         </span>
         <PaginationLink href={buildHref(page + 1)} disabled={!hasNext} label="Next page">
@@ -55,7 +66,7 @@ function PaginationLink({
       <span
         aria-disabled="true"
         aria-label={label}
-        className="flex cursor-not-allowed items-center gap-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-sm text-[color:var(--color-muted-foreground)] opacity-50"
+        className="flex cursor-not-allowed items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] px-2.5 py-1.5 text-sm text-[color:var(--color-muted-foreground)] opacity-50"
       >
         {children}
       </span>
@@ -65,7 +76,7 @@ function PaginationLink({
     <Link
       href={href}
       aria-label={label}
-      className="flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] px-2.5 py-1.5 text-sm text-[color:var(--color-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)]"
+      className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border-strong)] px-2.5 py-1.5 text-sm text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] transition-colors hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-neutral-bg)]"
     >
       {children}
     </Link>

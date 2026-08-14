@@ -1,8 +1,9 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { Button, FilterBar, Input, PageHeader } from "@/components/ui";
+import { Button, FilterBar, HelpButton, HelpSection, Input, PageHeader } from "@/components/ui";
 import { KnowledgeTable, type KnowledgeRow } from "./KnowledgeTable";
 
 type FilterKey = "all" | "active" | "inactive" | "archived";
@@ -50,9 +51,34 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
         title="Knowledge Base"
         description="The application's permanent AI knowledge store. Manually curated for now — later phases add automated ingestion."
         actions={
-          <Link href="/ai-learning/knowledge-base/new">
-            <Button>Add Knowledge</Button>
-          </Link>
+          <>
+            <HelpButton moduleTitle="Knowledge Base">
+              <HelpSection title="What this is">
+                <p>
+                  A manually written, versioned library of FAQs, SOPs, and known answers — not
+                  currently used to generate any live customer reply (see the AI Dashboard help for
+                  why). Safe to build up now for whenever that changes.
+                </p>
+              </HelpSection>
+              <HelpSection title="Versioning">
+                <p>
+                  Editing an item never overwrites its history — it creates a new version and keeps
+                  every prior one, viewable and individually restorable from the item's detail page.
+                  Restoring an old version doesn't delete anything either; it copies that version's
+                  content into a brand-new "current" version.
+                </p>
+              </HelpSection>
+              <HelpSection title="Active / Inactive / Archived">
+                <p>
+                  These only affect how items are organized and filtered here — since nothing consumes
+                  this knowledge base yet, changing an item's status has no other effect right now.
+                </p>
+              </HelpSection>
+            </HelpButton>
+            <Link href="/ai-learning/knowledge-base/new">
+              <Button>Add Knowledge</Button>
+            </Link>
+          </>
         }
       />
 

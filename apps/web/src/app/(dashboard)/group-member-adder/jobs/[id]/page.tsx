@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { Loader2 } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, Table, Td, Th } from "@/components/ui";
@@ -74,12 +75,13 @@ export default async function GroupParticipantAddJobPage({ params }: { params: P
       </Card>
 
       <Card className="mb-4">
-        <div className="mb-2 flex items-center justify-between text-sm">
-          <span className="tabular-nums">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span className="text-base font-semibold tabular-nums text-[color:var(--color-foreground)]">
             {settled} / {counts.total}
           </span>
           {currentlyProcessing ? (
-            <span className="text-[color:var(--color-muted-foreground)]">
+            <span className="flex items-center gap-1.5 text-[color:var(--color-muted-foreground)]">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
               Adding to: {currentlyProcessing.groupNameSnapshot}
             </span>
           ) : null}

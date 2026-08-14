@@ -197,7 +197,7 @@ export function AccountCard({
       {account.status === "AUTHENTICATION_REQUIRED" && account.qrCode ? (
         <div className="mt-4">
           {account.qrStale ? (
-            <div className="flex h-56 w-56 flex-col items-center justify-center rounded-md border border-dashed border-[var(--color-border-strong)] text-center text-sm text-[color:var(--color-muted-foreground)]">
+            <div className="flex h-56 w-56 flex-col items-center justify-center rounded-[var(--radius-md)] border border-dashed border-[var(--color-border-strong)] text-center text-sm text-[color:var(--color-muted-foreground)]">
               Waiting for a fresh QR code…
               <span className="mt-1 text-xs">(previous code expired)</span>
             </div>
@@ -210,7 +210,7 @@ export function AccountCard({
               <img
                 src={account.qrCode}
                 alt="WhatsApp QR code"
-                className="h-56 w-56 rounded-md border border-[var(--color-border)]"
+                className="h-56 w-56 rounded-[var(--radius-md)] border border-[var(--color-border)]"
               />
             </>
           )}

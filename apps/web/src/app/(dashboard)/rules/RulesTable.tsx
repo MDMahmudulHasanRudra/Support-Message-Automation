@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronUp, Clock, TriangleAlert } from "lucide-react";
 import { Badge, Button, ConfirmDialog, EmptyState, Table, Td, Th, Tooltip } from "@/components/ui";
 import { deleteRule, duplicateRule, setRuleStatus, updatePriority } from "@/server/actions/rules";
 
@@ -18,6 +18,7 @@ export interface RuleRow {
   executionCount: number;
   updatedAtLabel: string;
   hasPriorityConflict: boolean;
+  hasSchedule: boolean;
 }
 
 type DialogState = { kind: "delete" | "disable" | "duplicate"; rule: RuleRow } | null;
@@ -84,32 +85,41 @@ export function RulesTable({ rules }: { rules: RuleRow[] }) {
             <tr key={rule.id}>
               <Td>{rule.name}</Td>
               <Td>{rule.type}</Td>
-              <Td>{rule.trigger}</Td>
-              <Td>{rule.actionsSummary}</Td>
               <Td>
                 <div className="flex items-center gap-1.5">
+                  {rule.trigger}
+                  {rule.hasSchedule ? (
+                    <Tooltip content="Only active during a scheduled time window">
+                      <Clock className="size-3.5 shrink-0 text-[color:var(--color-muted-foreground)]" aria-hidden />
+                    </Tooltip>
+                  ) : null}
+                </div>
+              </Td>
+              <Td>{rule.actionsSummary}</Td>
+              <Td>
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
                     disabled={isStepping && steppingId === rule.id}
                     onClick={() => step(rule.id, rule.priority + 10)}
                     aria-label="Increase priority by 10"
-                    className="cursor-pointer text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] disabled:opacity-50"
+                    className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <ChevronUp className="size-3.5" aria-hidden />
                   </button>
-                  <span className="tabular-nums">{rule.priority}</span>
+                  <span className="min-w-[2ch] text-center tabular-nums">{rule.priority}</span>
                   <button
                     type="button"
                     disabled={isStepping && steppingId === rule.id}
                     onClick={() => step(rule.id, rule.priority - 10)}
                     aria-label="Decrease priority by 10"
-                    className="cursor-pointer text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] disabled:opacity-50"
+                    className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <ChevronDown className="size-3.5" aria-hidden />
                   </button>
                   {rule.hasPriorityConflict ? (
                     <Tooltip content="Another rule shares this priority — ties are broken by database order.">
-                      <TriangleAlert className="size-3.5 text-[color:var(--color-warning)]" aria-hidden />
+                      <TriangleAlert className="size-3.5 shrink-0 text-[color:var(--color-warning)]" aria-hidden />
                     </Tooltip>
                   ) : null}
                 </div>

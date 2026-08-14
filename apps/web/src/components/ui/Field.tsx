@@ -6,7 +6,7 @@ import type {
 } from "react";
 
 const fieldBase =
-  "w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-sm text-[color:var(--color-foreground)] shadow-sm transition-colors placeholder:text-[color:var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:cursor-not-allowed disabled:opacity-50";
+  "w-full rounded-[var(--radius-sm)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3.5 text-sm text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] transition-[border-color,box-shadow] duration-150 placeholder:text-[color:var(--color-muted-foreground)] hover:border-[var(--color-muted-foreground)]/60 focus-visible:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--color-border-strong)]";
 
 export function Input({
   className = "",
@@ -41,7 +41,7 @@ export function Checkbox({
   return (
     <input
       type="checkbox"
-      className={`size-4 rounded border-[var(--color-border-strong)] text-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${className}`}
+      className={`size-4 rounded border-[var(--color-border-strong)] text-[var(--color-primary)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${className}`}
       {...props}
     />
   );

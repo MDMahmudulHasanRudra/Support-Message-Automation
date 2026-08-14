@@ -10,9 +10,9 @@ export function StepIndicator({ steps, currentStep }: { steps: string[]; current
         return (
           <li key={step} className="flex items-center gap-2">
             <span
-              className={`flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+              className={`flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors duration-200 ${
                 isCurrent
-                  ? "bg-[var(--color-primary)] text-[var(--color-on-primary)]"
+                  ? "bg-[image:var(--gradient-primary)] text-[var(--color-on-primary)] shadow-[var(--shadow-sm)] ring-4 ring-[var(--color-primary-soft)]"
                   : isComplete
                     ? "bg-[var(--color-success)] text-white"
                     : "bg-[var(--color-neutral-bg)] text-[color:var(--color-muted-foreground)]"

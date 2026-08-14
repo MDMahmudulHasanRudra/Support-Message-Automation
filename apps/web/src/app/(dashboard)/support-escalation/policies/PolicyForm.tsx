@@ -46,7 +46,7 @@ export function PolicyForm({ priority, defaults, label }: { priority: SupportPri
         <Field label="Max escalations" hint="Caps total notifications, including follow-ups.">
           <Input name="maxEscalations" type="number" min={1} defaultValue={defaults.maxEscalations} />
         </Field>
-        <div className="col-span-full">
+        <div className="col-span-full mt-1 border-t border-[var(--color-border)] pt-4">
           <Button type="submit" size="sm" loading={pending}>
             Save {priority}
           </Button>

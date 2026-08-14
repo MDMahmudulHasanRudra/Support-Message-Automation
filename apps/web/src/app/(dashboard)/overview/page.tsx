@@ -1,6 +1,20 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { Alert, Badge, Card, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Card,
+  EmptyState,
+  HelpButton,
+  HelpSection,
+  PageHeader,
+  SectionHeader,
+  StatTile,
+  Table,
+  Td,
+  Th,
+} from "@/components/ui";
 import type { BadgeColor } from "@/components/ui";
 
 const ACCOUNT_STATUS_COLOR: Record<string, BadgeColor> = {
@@ -56,7 +70,36 @@ export default async function OverviewPage() {
 
   return (
     <div>
-      <PageHeader title="Overview" description="Live snapshot of the automation system." />
+      <PageHeader
+        title="Overview"
+        description="Live snapshot of the automation system."
+        actions={
+          <HelpButton moduleTitle="Overview">
+            <HelpSection title="What this page is for">
+              <p>
+                The landing page after login — a glanceable, entirely read-only summary. There are no
+                controls here; every number links conceptually to a page elsewhere where you can act on
+                it.
+              </p>
+            </HelpSection>
+            <HelpSection title="Reading the stat tiles">
+              <p>
+                "Support required (24h)" is a rolling 24-hour count, not the same as the Needs
+                Attention queue — a 0 here doesn't mean that queue is empty, just that nothing new
+                arrived in the last day. "Outbound queue (pending)" is currently-queued auto-replies/
+                broadcasts waiting to send, not a history.
+              </p>
+            </HelpSection>
+            <HelpSection title="Recent Messages">
+              <p>
+                Just the last 10 messages across every account, for a quick pulse-check — it doesn't
+                have the filters, rule/decision columns, or pagination that the full Messages page has.
+                For anything beyond the last 10, go to All Messages.
+              </p>
+            </HelpSection>
+          </HelpButton>
+        }
+      />
 
       {disconnectedAccounts.length > 0 ? (
         <div className="mb-6">
@@ -66,7 +109,7 @@ export default async function OverviewPage() {
         </div>
       ) : null}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <StatTile
           label="Connected accounts"
           value={`${connectedCount}/${accounts.length}`}
@@ -89,13 +132,11 @@ export default async function OverviewPage() {
       <Card className="mb-6">
         <SectionHeader title="WhatsApp Accounts" />
         {accounts.length === 0 ? (
-          <p className="text-sm text-[color:var(--color-muted-foreground)]">
-            No accounts yet — the worker creates one automatically on first connect.
-          </p>
+          <EmptyState>No accounts yet — the worker creates one automatically on first connect.</EmptyState>
         ) : (
-          <ul className="space-y-2">
+          <ul className="divide-y divide-[var(--color-border)]">
             {accounts.map((a) => (
-              <li key={a.id} className="flex items-center justify-between text-sm">
+              <li key={a.id} className="flex items-center justify-between py-2.5 text-sm first:pt-0 last:pb-0">
                 <span className="text-[color:var(--color-foreground)]">{a.label}</span>
                 <Badge color={ACCOUNT_STATUS_COLOR[a.status] ?? "gray"} dot>
                   {a.status}
@@ -109,7 +150,7 @@ export default async function OverviewPage() {
       <Card>
         <SectionHeader title="Recent Messages" />
         {recentMessages.length === 0 ? (
-          <p className="text-sm text-[color:var(--color-muted-foreground)]">No messages yet.</p>
+          <EmptyState>No messages yet.</EmptyState>
         ) : (
           <Table>
             <thead>

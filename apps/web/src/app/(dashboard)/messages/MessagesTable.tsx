@@ -71,7 +71,15 @@ export function MessagesTable({ messages, hasActiveFilters }: { messages: Messag
             </Td>
             <Td>{m.ruleName ?? "—"}</Td>
             <Td>{m.decision ? <Badge color={decisionColor(m.decision)}>{m.decision}</Badge> : "—"}</Td>
-            <Td>{m.autoReplyStatus ?? "—"}</Td>
+            <Td>
+              {m.autoReplyStatus ? (
+                <Badge color={autoReplyStatusColor(m.autoReplyStatus)} dot>
+                  {m.autoReplyStatus}
+                </Badge>
+              ) : (
+                "—"
+              )}
+            </Td>
             <Td>
               {m.notifications.length === 0 ? (
                 "—"
@@ -117,5 +125,13 @@ function processingStatusColor(status: string): BadgeColor {
 function notificationStatusColor(status: string): BadgeColor {
   if (status === "SENT") return "green";
   if (status === "FAILED") return "red";
+  return "yellow";
+}
+
+function autoReplyStatusColor(status: string): BadgeColor {
+  if (status === "SENT") return "green";
+  if (status === "FAILED") return "red";
+  if (status === "SKIPPED" || status === "CANCELLED") return "gray";
+  if (status === "PROCESSING") return "blue";
   return "yellow";
 }

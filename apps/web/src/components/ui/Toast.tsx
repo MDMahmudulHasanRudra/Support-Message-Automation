@@ -72,7 +72,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               key={toast.id}
               role="status"
               aria-live="polite"
-              className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm shadow-lg ${TONE_STYLES[toast.tone]}`}
+              className={`pointer-events-auto flex items-start gap-2.5 rounded-[var(--radius-md)] border px-4 py-3.5 text-sm shadow-[var(--shadow-lg)] backdrop-blur-sm transition-all duration-200 ${TONE_STYLES[toast.tone]}`}
             >
               <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
               <div className="flex-1">

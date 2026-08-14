@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Badge, type BadgeColor, Button, Card, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
@@ -30,7 +31,7 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
         }
       />
 
-      <Card className="mb-4">
+      <Card className="mb-6">
         <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
           <Field label="Status" value={<Badge color={statusColor(item.status)} dot>{item.status}</Badge>} />
           <Field label="Source" value={item.aiGenerated ? "AI Generated" : "Manual"} />
@@ -42,7 +43,7 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
         </div>
       </Card>
 
-      <Card className="mb-4">
+      <Card className="mb-6">
         <SectionHeader title="Content" />
         {item.question ? (
           <div className="mb-3">
@@ -95,11 +96,12 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
         </Table>
       </Card>
 
-      <p className="mt-4 text-xs">
+      <p className="mt-4">
         <Link
           href="/ai-learning/knowledge-base"
-          className="text-[color:var(--color-muted-foreground)] underline hover:text-[color:var(--color-foreground)]"
+          className="inline-flex items-center gap-1 text-sm text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
         >
+          <ArrowLeft className="size-3.5" aria-hidden />
           Back to Knowledge Base
         </Link>
       </p>

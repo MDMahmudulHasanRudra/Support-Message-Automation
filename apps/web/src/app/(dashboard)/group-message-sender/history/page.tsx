@@ -1,8 +1,9 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { OutboundMessageStatus, Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { Badge, type BadgeColor, Button, EmptyState, FilterBar, Input, PageHeader, Select, Table, Td, Th } from "@/components/ui";
+import { Badge, type BadgeColor, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select, Table, Td, Th } from "@/components/ui";
 
 const STATUS_OPTIONS = ["PENDING", "PROCESSING", "SENT", "FAILED", "CANCELLED", "RATE_LIMITED", "SKIPPED"] as const;
 
@@ -47,6 +48,26 @@ export default async function GroupBroadcastHistoryPage({
       <PageHeader
         title="Group Message Sending History"
         description="Every individual group send from the Group Message Sender, across all jobs."
+        actions={
+          <HelpButton moduleTitle="Group Message Sending History">
+            <HelpSection title="What this page is for">
+              <p>
+                A flat audit log of every individual group send the Group Message Sender has ever
+                produced, across all jobs — not grouped by job. Click "View" on any row's Job link to
+                jump to that send's full job progress page.
+              </p>
+            </HelpSection>
+            <HelpSection title="Status meanings">
+              <p>
+                SENT and FAILED are self-explanatory. SKIPPED means a live membership re-check failed
+                right before sending (the account wasn't actually still in that group). CANCELLED means
+                the job was stopped (manually, or by the kill switch) before this row's turn came up.
+                RATE_LIMITED means an account-wide limit was hit at send time, independent of the job's
+                own pacing.
+              </p>
+            </HelpSection>
+          </HelpButton>
+        }
       />
 
       <form method="GET">

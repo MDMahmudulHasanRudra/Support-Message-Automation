@@ -1,7 +1,8 @@
+/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import type { WhatsAppServiceKey } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { Alert, Card, PageHeader, SectionHeader } from "@/components/ui";
+import { Alert, Card, HelpButton, HelpSection, PageHeader, SectionHeader } from "@/components/ui";
 import { ServiceRouteRow, type ServiceRouteAccountOption, type ServiceRouteRowData } from "./ServiceRouteRow";
 
 // The only two real WhatsApp-sending call sites in the app today (see WhatsAppServiceKey in
@@ -47,6 +48,45 @@ export default async function WhatsAppRoutingPage() {
       <PageHeader
         title="WhatsApp Account Routing"
         description="Choose which WhatsApp account each service uses. Anything left on Primary follows whichever account is marked Primary on the Accounts page."
+        actions={
+          <HelpButton moduleTitle="WhatsApp Account Routing">
+            <HelpSection title="What this page is for">
+              <p>
+                Only matters once you have more than one connected WhatsApp account. Each row is a
+                service that sends WhatsApp messages on its own (currently Support Notifications and
+                Priority Support Escalation) — you can leave it on the default Primary account, or pin
+                it to a specific account so that service always sends from the same number regardless
+                of which account is Primary.
+              </p>
+            </HelpSection>
+            <HelpSection title="Account dropdown">
+              <p>
+                "Primary (default)" means this service always follows whichever account is currently
+                marked Primary on the Accounts page — if you change Primary later, this service follows
+                automatically with no extra step. Picking a specific account locks that service to it
+                permanently, even if Primary changes.
+              </p>
+            </HelpSection>
+            <HelpSection title="“If unavailable” fallback policy">
+              <p>
+                Only relevant when you've pinned a specific account. <strong>Fall back to Primary</strong>
+                {" "}means if the pinned account ever disconnects, this service temporarily uses Primary
+                instead so nothing silently stops working. <strong>Show error, don't send</strong> means
+                it refuses to send through any other account and instead logs a clear error — choose this
+                if it would be worse to send from the wrong number than to not send at all.
+              </p>
+            </HelpSection>
+            <HelpSection title="“Currently sends via” line">
+              <p>
+                This shows the real, live result of that logic right now — which account would actually
+                be used if this service tried to send a message this second, and why (CONFIGURED = your
+                pin, PRIMARY_DEFAULT = following Primary because nothing's pinned, PRIMARY_FALLBACK =
+                your pinned account is down and it fell back). If it shows an error instead, that service
+                cannot send anything until you fix the underlying account or routing.
+              </p>
+            </HelpSection>
+          </HelpButton>
+        }
       />
 
       {accounts.length === 0 ? (
