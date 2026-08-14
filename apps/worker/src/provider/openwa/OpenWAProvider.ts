@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   create,
   ev,
+  MessageTypes,
   STATE,
   type ChatId,
   type Client,
@@ -74,6 +75,41 @@ function toInterfaceStatus(state: OpenWAConnectionState): ConnectionStatus {
  * that's a WhatsApp-side privacy behavior, not something this fix attempts
  * to resolve; it only corrects using the wrong field.
  */
+/**
+ * For a `chat` message, open-wa's `body` is the actual text. For any media
+ * type (image, video, document, ...), `body` instead holds a base64-encoded
+ * thumbnail/media blob — never text — so it must never be stored/matched as
+ * the message body. `caption`/`filename`/`loc` hold the actual human text.
+ */
+function resolveMessageBody(message: WaMessage): string {
+  if (!message.isMedia) {
+    return message.body ?? message.text ?? "";
+  }
+
+  const caption = message.caption?.trim();
+  switch (message.type) {
+    case MessageTypes.IMAGE:
+      return caption ? `[Image] ${caption}` : "[Image]";
+    case MessageTypes.VIDEO:
+      return caption ? `[Video] ${caption}` : "[Video]";
+    case MessageTypes.AUDIO:
+      return "[Audio]";
+    case MessageTypes.VOICE:
+      return "[Voice message]";
+    case MessageTypes.DOCUMENT:
+      return message.filename ? `[Document] ${message.filename}` : "[Document]";
+    case MessageTypes.STICKER:
+      return "[Sticker]";
+    case MessageTypes.LOCATION:
+      return message.loc ? `[Location] ${message.loc}` : "[Location]";
+    case MessageTypes.CONTACT_CARD:
+    case MessageTypes.CONTACT_CARD_MULTI:
+      return "[Contact card]";
+    default:
+      return caption ? `[Media] ${caption}` : "[Media]";
+  }
+}
+
 function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomingMessage {
   return {
     accountId,
@@ -83,7 +119,7 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
     senderPhone: message.isGroupMsg ? message.author || message.from : message.from,
     senderName: message.sender?.pushname || message.sender?.formattedName || null,
     direction: message.fromMe ? "OUTGOING" : "INCOMING",
-    body: message.body ?? message.text ?? "",
+    body: resolveMessageBody(message),
     timestampWa: new Date(message.timestamp * 1000),
   };
 }

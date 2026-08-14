@@ -268,6 +268,7 @@ model User {
   triggeredEscalationEvents SupportEscalationEvent[]
   triggeredLearningBatchJobs LearningBatchJob[]
   reviewedPatternCandidates  PatternCandidate[]
+  reviewedRuleProposals      RuleProposal[]
 }
 
 model WhatsAppAccount {
@@ -437,6 +438,7 @@ model AutomationRule {
   executions       AutomationExecution[]
   outboundMessages OutboundMessage[]
   notifications    Notification[]
+  ruleProposal     RuleProposal?
 
   @@index([status, priority])
 }
@@ -1189,6 +1191,7 @@ model PatternCandidate {
   updatedAt DateTime @updatedAt
 
   evidence PatternCandidateEvidence[]
+  proposal RuleProposal?
 
   @@index([status, confidenceScore])
   @@index([lastSeenAt])
@@ -1214,4 +1217,66 @@ model PatternCandidateEvidence {
 
   @@unique([patternCandidateId, conversationSessionId])
   @@index([patternCandidateId])
+}
+
+// ---------------------------------------------------------------------------
+// Conversation Learning / Pattern Discovery — Phase 3/4 (human review + real
+// rule execution). A RuleProposal is a fully-formed AutomationRule draft, so
+// approving it is a pure copy into a real AutomationRule row (status DRAFT,
+// never ACTIVE) — see approveRuleProposal() in
+// apps/web/src/server/actions/ruleProposals.ts. The rule engine that then
+// executes it (once a human separately flips it ACTIVE on the existing Rules
+// page) is completely unmodified by any of this.
+// ---------------------------------------------------------------------------
+
+enum RuleProposalStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  WITHDRAWN
+  /// Reserved for a later phase (e.g. an approved-but-not-yet-converted state); every proposal
+  /// created today reaches APPROVED and a real AutomationRule in the same transaction.
+  CONVERTED
+}
+
+/// One row per human-facing proposal, at most one per PatternCandidate (see @@unique below) — a
+/// candidate that's rejected or withdrawn does not get a second proposal; if the same pattern
+/// keeps recurring, that continues to accumulate as fresh evidence on the same candidate.
+model RuleProposal {
+  id                 String           @id @default(cuid())
+  patternCandidateId String           @unique
+  patternCandidate   PatternCandidate @relation(fields: [patternCandidateId], references: [id], onDelete: Cascade)
+
+  // Fully-formed AutomationRule draft — same shape as the real row, so approval is a pure copy.
+  name            String
+  description     String?
+  type            RuleType
+  matchType       MatchType
+  matchValue      String?
+  keywords        String[] @default([])
+  conditions      Json     @default("{}")
+  actions         Json     @default("[]")
+  priority        Int      @default(0)
+  cooldownSeconds Int?
+  replyMessage    String?
+  replyDelayMinMs Int?
+  replyDelayMaxMs Int?
+
+  /// Copied from PatternCandidate.confidenceScore at proposal-creation time — a snapshot, not a
+  /// live link, so it stays meaningful even if the source candidate's score later changes.
+  confidenceScoreSnapshot Int
+  status                  RuleProposalStatus @default(PENDING_REVIEW)
+  /// Reserved for a later auto-approval phase — every proposal created today is created with this
+  /// false and moved to APPROVED only via an explicit human action.
+  autoApproved            Boolean            @default(false)
+  reviewedById            String?
+  reviewedBy              User?              @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt              DateTime?
+  reviewNote              String?
+  createdRuleId           String?         @unique
+  createdRule             AutomationRule? @relation(fields: [createdRuleId], references: [id], onDelete: SetNull)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  @@index([status, confidenceScoreSnapshot])
 }
