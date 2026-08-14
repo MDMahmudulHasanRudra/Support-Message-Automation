@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:isolated": "cross-env DATABASE_URL=postgresql://support_automation_test:support_automation_test@localhost:5433/support_automation_test?schema=public vitest run"
   },
   "dependencies": {
     "@open-wa/wa-automate": "^4.76.0",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.7.5",
+    "cross-env": "^7.0.3",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",
     "vitest": "^2.1.2"

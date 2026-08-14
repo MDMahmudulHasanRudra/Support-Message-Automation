@@ -1,0 +1,56 @@
+# A fully isolated, throwaway Postgres instance for running integration tests against — NEVER
+# the same database docker-compose.yml's `postgres` service backs (that one is the real
+# app/worker's live database; see ARCHITECTURE.md and the test files' own doc comments for why
+# that distinction matters).
+#
+# Some job functions (apps/worker/src/learning/sessionSegmentation.ts, patternDetectionJob.ts) run
+# globally-scoped production queries by design (no per-account filter — correct in production,
+# which must scan every account). Calling them directly from a test — as their own integration
+# tests do — processes every real row already sitting in whatever database DATABASE_URL points
+# at. Running those tests against the shared dev/live Postgres has twice copied real customer
+# messages into new tables as a side effect, even with the `worker` container stopped. This
+# isolated instance exists so that risk stops applying to ANY test in this repo, not just those.
+#
+# `name:` pins this to its own Compose project, fully separate from docker-compose.yml's
+# containers/network/volumes even though both files live in the same directory.
+name: support_automation_test
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: support_automation_test
+      POSTGRES_PASSWORD: support_automation_test
+      POSTGRES_DB: support_automation_test
+    ports:
+      # Deliberately a different host port (5433) than the real postgres service's 5432, so both
+      # can run side by side without a conflict.
+      - "5433:5432"
+    volumes:
+      - pg_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U support_automation_test -d support_automation_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: applies every packages/db/prisma/migrations/* migration against postgres-test, then
+  # exits. Reuses apps/worker's Dockerfile the same way docker-compose.yml's own `migrate` service
+  # does. Deliberately does NOT run prisma/seed.ts — a throwaway test database has no dashboard
+  # login and doesn't need a seeded admin user.
+  migrate-test:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://support_automation_test:support_automation_test@postgres-test:5432/support_automation_test?schema=public
+    working_dir: /app/packages/db
+    entrypoint: ["sh", "-c", "npx prisma migrate deploy"]
+
+volumes:
+  pg_test_data:
+    name: support_automation_pg_test_data

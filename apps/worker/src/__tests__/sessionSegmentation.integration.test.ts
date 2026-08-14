@@ -5,13 +5,19 @@ import type { LearningSettings, WhatsAppAccount } from "@prisma/client";
 import { getLearningSettings, processOneSegmentationBatch } from "../learning/sessionSegmentation.js";
 
 /**
- * Integration test for Conversation Learning Phase 1 (session segmentation), run against the same
- * shared Postgres instance as every other suite in this directory (see pipeline.integration.test.ts's
- * own doc comment). Deliberately reuses whatever WhatsAppAccount already exists in this dev
- * database rather than creating a new one: a freshly-created account with no sessionId/
- * sessionDataPath would be picked up by the live worker's accountRegistrySync poll within ~20s
- * and provisioned/connected for real — this suite has no need to touch that machinery at all,
- * since segmentation only ever reads/writes Message and ConversationSession rows.
+ * Integration test for Conversation Learning Phase 1 (session segmentation). Run this against the
+ * isolated test database (`pnpm test:isolated` — see README.md's Testing section), never the
+ * shared dev/live one: this suite's queries (via processOneSegmentationBatch()) are NOT scoped to
+ * its own fixtures — they process every real unsegmented Message already in whatever database
+ * DATABASE_URL points at, which has twice copied real customer messages into new tables when run
+ * against the live database (see feedback_shared_db_live_worker_risk in project memory).
+ *
+ * Reuses whatever WhatsAppAccount already exists rather than always creating a new one, falling
+ * back to creating one only if none exists at all (always true on a freshly-migrated isolated
+ * test database, essentially never true on the live one): a freshly-created account with no
+ * sessionId/sessionDataPath would be picked up by the live worker's accountRegistrySync poll
+ * within ~20s and provisioned/connected for real — irrelevant on the isolated database, which has
+ * no worker attached to it at all.
  */
 
 let account: WhatsAppAccount;
@@ -43,7 +49,9 @@ async function setLearningSettings(overrides: Partial<LearningSettings>) {
 }
 
 beforeAll(async () => {
-  account = await prisma.whatsAppAccount.findFirstOrThrow();
+  account =
+    (await prisma.whatsAppAccount.findFirst()) ??
+    (await prisma.whatsAppAccount.create({ data: { label: "Test Account (isolated DB fallback)", status: "CONNECTED" } }));
   originalLearningSettings = await getLearningSettings();
 });
 

@@ -6,11 +6,11 @@ import { processOnePatternDetectionBatch } from "../learning/patternDetectionJob
 import { getLearningSettings } from "../learning/sessionSegmentation.js";
 
 /**
- * Integration test for Conversation Learning Phase 2 (deterministic pattern detection), run
- * against the same shared Postgres instance as every other suite in this directory — see
- * sessionSegmentation.integration.test.ts's own doc comment for why an existing WhatsAppAccount is
- * reused rather than a freshly-created one. Sessions are built directly (not via the segmentation
- * job, which already has its own dedicated test suite) so this suite can isolate detection logic.
+ * Integration test for Conversation Learning Phase 2 (deterministic pattern detection). Run this
+ * against the isolated test database (`pnpm test:isolated` — see README.md's Testing section),
+ * never the shared dev/live one — see sessionSegmentation.integration.test.ts's own doc comment
+ * for why. Sessions are built directly (not via the segmentation job, which already has its own
+ * dedicated test suite) so this suite can isolate detection logic.
  */
 
 let account: WhatsAppAccount;
@@ -81,7 +81,9 @@ async function setLearningSettings(overrides: Partial<LearningSettings>) {
 }
 
 beforeAll(async () => {
-  account = await prisma.whatsAppAccount.findFirstOrThrow();
+  account =
+    (await prisma.whatsAppAccount.findFirst()) ??
+    (await prisma.whatsAppAccount.create({ data: { label: "Test Account (isolated DB fallback)", status: "CONNECTED" } }));
   originalLearningSettings = await getLearningSettings();
   const aiSettings: AiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   originalHumanReviewThreshold = aiSettings.humanReviewThreshold;
