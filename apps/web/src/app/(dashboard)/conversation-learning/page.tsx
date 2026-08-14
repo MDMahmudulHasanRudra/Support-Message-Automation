@@ -1,4 +1,4 @@
-import { ClipboardCheck, Fingerprint, Layers, ArrowRight, type LucideIcon } from "lucide-react";
+import { ClipboardCheck, Fingerprint, Layers, ArrowRight, Settings as SettingsIcon, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { BadgeColor } from "@/components/ui";
@@ -90,6 +90,9 @@ export default async function ConversationLearningPage() {
         <Badge color={aiAnalysisAvailable ? "blue" : "gray"} dot>
           AI Analysis: {aiAnalysisAvailable ? "AVAILABLE" : "NOT CONFIGURED"}
         </Badge>
+        <Badge color={learningSettings.autoApprovalEnabled ? "yellow" : "gray"} dot>
+          Auto-Approval: {learningSettings.autoApprovalEnabled ? "ENABLED" : "OFF"}
+        </Badge>
         <RunAiAnalysisButton enabled={Boolean(aiAnalysisAvailable)} />
       </div>
 
@@ -108,7 +111,7 @@ export default async function ConversationLearningPage() {
         <StatTile label="AI-Analyzed Patterns" value={aiAnalyzedCount} hint="Have received an AI confidence pass" />
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <HubLink
           href="/conversation-learning/pattern-candidates"
           icon={Fingerprint}
@@ -120,6 +123,12 @@ export default async function ConversationLearningPage() {
           icon={ClipboardCheck}
           label="Rule Proposals"
           description={`${pendingProposalCount} pending review`}
+        />
+        <HubLink
+          href="/conversation-learning/settings"
+          icon={SettingsIcon}
+          label="Learning Settings"
+          description={learningSettings.autoApprovalEnabled ? "Auto-approval enabled" : "Thresholds & weights"}
         />
       </div>
 

@@ -1,6 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
-import type { WhatsAppServiceKey } from "@prisma/client";
+import type { Prisma, WhatsAppServiceKey } from "@prisma/client";
+import { validateRegexSafety } from "@support-automation/engine";
+import type { RuleAction } from "@support-automation/shared";
 
 // Standard Next.js/Node singleton pattern: avoids exhausting Postgres
 // connections from hot-reload creating a new PrismaClient per request in dev.
@@ -148,4 +150,122 @@ export function decryptSecret(stored: string): string {
 export function maskSecret(plaintext: string): string {
   if (plaintext.length <= 8) return "••••••••";
   return `${plaintext.slice(0, 4)}••••••••${plaintext.slice(-4)}`;
+}
+
+/** One AUTO_REPLY action if the pattern has an observed reply to suggest, otherwise a safe SUPPORT_REQUIRED fallback. */
+function deriveSuggestedActions(suggestedReplyMessage: string | null): RuleAction[] {
+  return suggestedReplyMessage ? [{ type: "AUTO_REPLY" }] : [{ type: "SUPPORT_REQUIRED" }];
+}
+
+function deriveProposalName(keywords: string[]): string {
+  const label = keywords.join(", ") || "unlabeled pattern";
+  return `Pattern: ${label}`.slice(0, 120);
+}
+
+export type CreateRuleProposalResult = { id: string } | { error: string };
+
+/**
+ * Conversation Learning: creates a RuleProposal from a PatternCandidate's suggested fields.
+ * Shared between apps/web's human-initiated "Create Proposal" button
+ * (apps/web/src/server/actions/ruleProposals.ts) and apps/worker's auto-approval path
+ * (apps/worker/src/learning/patternDetectionJob.ts's rescoreCandidate()) — lives here, not
+ * duplicated in each, so both stay byte-for-byte identical in how a candidate becomes a proposal.
+ * Same no-relative-imports reasoning as resolveWhatsAppAccount()/encryptSecret() above applies to
+ * why this is in this file directly rather than a sibling module.
+ */
+export async function createRuleProposalFromCandidate(candidateId: string): Promise<CreateRuleProposalResult> {
+  const candidate = await prisma.patternCandidate.findUnique({
+    where: { id: candidateId },
+    include: { proposal: true },
+  });
+  if (!candidate) return { error: "Pattern candidate not found." };
+  if (candidate.proposal) return { error: "A proposal already exists for this pattern." };
+
+  const proposal = await prisma.ruleProposal.create({
+    data: {
+      patternCandidateId: candidate.id,
+      name: deriveProposalName(candidate.suggestedKeywords),
+      description: `Auto-drafted from a recurring conversation pattern (${candidate.occurrenceCount} occurrences across ${candidate.distinctGroupCount} group(s), ${candidate.distinctClientCount} client(s)).`,
+      type: candidate.suggestedReplyMessage ? "AUTO_REPLY" : "GENERIC",
+      matchType: candidate.suggestedMatchType,
+      matchValue: candidate.suggestedMatchValue,
+      keywords: candidate.suggestedKeywords,
+      actions: deriveSuggestedActions(candidate.suggestedReplyMessage) as unknown as Prisma.InputJsonValue,
+      replyMessage: candidate.suggestedReplyMessage,
+      confidenceScoreSnapshot: candidate.confidenceScore,
+    },
+  });
+
+  return { id: proposal.id };
+}
+
+export type ApproveRuleProposalResult = { ruleId: string } | { error: string };
+
+/**
+ * Converts an existing, PENDING_REVIEW RuleProposal into a real AutomationRule — always created as
+ * DRAFT, never ACTIVE, regardless of who/what approved it: a human still makes the separate "go
+ * live" decision on the existing Rules page. `reviewedById` is null for an automatic
+ * (LearningSettings.autoApprovalEnabled) approval — there is no human reviewer on that path.
+ * Shared for the same reason createRuleProposalFromCandidate() above is.
+ */
+export async function approveRuleProposalById(params: {
+  proposalId: string;
+  reviewedById: string | null;
+  autoApproved: boolean;
+}): Promise<ApproveRuleProposalResult> {
+  const proposal = await prisma.ruleProposal.findUnique({ where: { id: params.proposalId } });
+  if (!proposal) return { error: "Rule proposal not found." };
+  if (proposal.status !== "PENDING_REVIEW") {
+    return { error: "This proposal has already been reviewed." };
+  }
+
+  // Same gate apps/web/src/server/actions/rules.ts applies at rule-save time — reused, never
+  // duplicated. Pattern-derived proposals are always matchType KEYWORDS today, so this is
+  // defense-in-depth for a future manually-edited proposal, not a path exercised by the current
+  // generator.
+  if (proposal.matchType === "REGEX" && proposal.matchValue) {
+    const check = validateRegexSafety(proposal.matchValue);
+    if (!check.safe) return { error: `Regex rejected: ${check.reason}` };
+  }
+
+  const createdRule = await prisma.$transaction(async (tx) => {
+    const rule = await tx.automationRule.create({
+      data: {
+        name: proposal.name,
+        description: proposal.description,
+        type: proposal.type,
+        matchType: proposal.matchType,
+        matchValue: proposal.matchValue,
+        keywords: proposal.keywords,
+        conditions: proposal.conditions as Prisma.InputJsonValue,
+        actions: proposal.actions as Prisma.InputJsonValue,
+        priority: proposal.priority,
+        // Always DRAFT, even here — a human must still make the separate "activate" decision on
+        // the Rules page before this can execute against real messages.
+        status: "DRAFT",
+        cooldownSeconds: proposal.cooldownSeconds,
+        replyMessage: proposal.replyMessage,
+        replyDelayMinMs: proposal.replyDelayMinMs,
+        replyDelayMaxMs: proposal.replyDelayMaxMs,
+        createdById: params.reviewedById,
+      },
+    });
+    await tx.ruleProposal.update({
+      where: { id: params.proposalId },
+      data: {
+        status: "APPROVED",
+        createdRuleId: rule.id,
+        reviewedById: params.reviewedById,
+        reviewedAt: new Date(),
+        autoApproved: params.autoApproved,
+      },
+    });
+    await tx.patternCandidate.update({
+      where: { id: proposal.patternCandidateId },
+      data: { status: "APPROVED" },
+    });
+    return rule;
+  });
+
+  return { ruleId: createdRule.id };
 }

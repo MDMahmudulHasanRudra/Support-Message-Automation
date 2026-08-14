@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { approveRuleProposalById, createRuleProposalFromCandidate, prisma } from "@support-automation/db";
 import type { LearningSettings } from "@prisma/client";
 import { derivePatternSignature, meetsCandidateFloor, scorePatternCandidate } from "@support-automation/engine";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -16,6 +16,13 @@ import { getLearningSettings } from "./sessionSegmentation.js";
  * past PENDING_ANALYSIS until it's met, and by the dashboard only listing rows currently past it —
  * so a single isolated conversation can never become visible or actionable, even though its row
  * technically exists as an accumulator.
+ *
+ * Phase 6 additions: rescoreCandidate() also auto-approves a candidate into a real (still DRAFT)
+ * AutomationRule when LearningSettings.autoApprovalEnabled is explicitly on AND the confidence
+ * score clears autoApprovalMinConfidence — default is OFF, and even auto-approved rules still
+ * require a separate human "activate" click on the Rules page (see approveRuleProposalById()'s
+ * own doc comment in packages/db). This batch also sweeps candidates that have sat idle past
+ * LearningSettings.candidateExpiryDays into EXPIRED, so PENDING_REVIEW never grows unbounded.
  */
 
 const SESSION_BATCH_SIZE = 200;
@@ -38,16 +45,20 @@ export async function processOnePatternDetectionBatch(): Promise<boolean> {
       await rescoreCandidate(candidateId, settings, humanReviewThreshold);
     }
 
+    const expiredCount = await sweepExpiredCandidates(settings.candidateExpiryDays);
+
     await prisma.learningBatchJob.update({
       where: { id: job.id },
       data: {
         status: "COMPLETED",
         completedAt: new Date(),
         candidatesConsidered: sessionsLinked,
-        candidatesUpdated: dirtyCandidateIds.size,
+        // Generic counter shared across jobType meanings (see LearningBatchJob's schema comment) —
+        // here it's rescored candidates plus any newly expired this tick.
+        candidatesUpdated: dirtyCandidateIds.size + expiredCount,
       },
     });
-    return sessionsLinked > 0 || dirtyCandidateIds.size > 0;
+    return sessionsLinked > 0 || dirtyCandidateIds.size > 0 || expiredCount > 0;
   } catch (err) {
     await prisma.learningBatchJob.update({
       where: { id: job.id },
@@ -140,6 +151,24 @@ async function linkClosedSessionsToCandidates(): Promise<{ sessionsLinked: numbe
 }
 
 /**
+ * Moves any candidate still waiting on something (not yet reviewed one way or another) into
+ * EXPIRED once it's gone `candidateExpiryDays` without an update — prevents PENDING_REVIEW (and
+ * the PENDING_ANALYSIS/ANALYZED accumulator states) from growing forever if nobody ever looks at
+ * them. Terminal states (APPROVED/REJECTED/WITHDRAWN/MERGED/EXPIRED itself) are untouched.
+ */
+async function sweepExpiredCandidates(candidateExpiryDays: number): Promise<number> {
+  const cutoff = new Date(Date.now() - candidateExpiryDays * 24 * 60 * 60_000);
+  const result = await prisma.patternCandidate.updateMany({
+    where: {
+      status: { in: ["PENDING_ANALYSIS", "ANALYZED", "PENDING_REVIEW"] },
+      updatedAt: { lt: cutoff },
+    },
+    data: { status: "EXPIRED" },
+  });
+  return result.count;
+}
+
+/**
  * Recomputes one candidate's aggregate evidence stats and scores from scratch off its linked
  * PatternCandidateEvidence rows — cheap enough per-candidate given the bounded batch size, and
  * avoids any risk of incremental counters drifting from the actual evidence over time. Exported:
@@ -217,6 +246,29 @@ export async function rescoreCandidate(
     scores.confidenceScore >= humanReviewThreshold
   ) {
     status = "PENDING_REVIEW";
+  }
+
+  // Auto-approval: explicit opt-in only (default OFF), and only from the transition just computed
+  // above — never overrides a status a human (or a prior auto-approval) already set. Creating the
+  // real AutomationRule still goes through the exact same validated path a human's Approve click
+  // uses (packages/db's approveRuleProposalById), including the "always DRAFT, never ACTIVE"
+  // safety gate — auto-approval only ever skips the human's click, never the validation, and never
+  // the separate manual activation step on the Rules page.
+  if (status === "PENDING_REVIEW" && settings.autoApprovalEnabled && scores.confidenceScore >= settings.autoApprovalMinConfidence) {
+    const proposalResult = await createRuleProposalFromCandidate(candidateId);
+    if ("id" in proposalResult) {
+      const approveResult = await approveRuleProposalById({
+        proposalId: proposalResult.id,
+        reviewedById: null,
+        autoApproved: true,
+      });
+      if (!("error" in approveResult)) {
+        status = "APPROVED";
+      }
+    }
+    // If either step returned an error (e.g. a human already created a proposal for this
+    // candidate first), fall through with status left at PENDING_REVIEW — never treated as a
+    // failure, never retried more than the normal rescore cadence already would.
   }
 
   await prisma.patternCandidate.update({
