@@ -1,74 +1,66 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
-import { prisma } from "@support-automation/db";
+import { Bell, ListChecks, Send, ShieldAlert, Smartphone, Sparkles, Terminal as ConsoleIcon, Waypoints } from "lucide-react";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
 import {
   Alert,
   Badge,
   Card,
+  DashboardModuleCard,
   EmptyState,
   HelpButton,
   HelpSection,
+  ModuleCardRow,
   PageHeader,
   SectionHeader,
+  Sparkline,
   StatTile,
   Table,
   Td,
   Th,
 } from "@/components/ui";
-import type { BadgeColor } from "@/components/ui";
+import {
+  getAccountsRoutingSummary,
+  getAiLearningSummary,
+  getAutomationOutboundSummary,
+  getBulkMessagingSummary,
+  getConversationLearningSummary,
+  getEscalationSummary,
+  getNotificationsSummary,
+  getRecentMessageActivity,
+  getSystemLogsSummary,
+} from "@/server/actions/dashboardSummary";
 
-const ACCOUNT_STATUS_COLOR: Record<string, BadgeColor> = {
-  CONNECTED: "green",
-  ERROR: "red",
-  SESSION_ERROR: "red",
-  RATE_LIMITED: "red",
-  RECONNECTING: "yellow",
-  DISCONNECTED: "yellow",
-  AUTHENTICATION_REQUIRED: "yellow",
-  OUTBOUND_PAUSED: "yellow",
-};
-
-function since(hoursAgo: number, nowMs: number): Date {
-  return new Date(nowMs - hoursAgo * 60 * 60 * 1000);
+function formatAgeShort(ms: number): string {
+  const totalMinutes = Math.max(0, Math.floor(ms / 60_000));
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 export default async function OverviewPage() {
   await requireSession();
 
   // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
-  const since24h = since(24, Date.now());
+  const nowMs = Date.now();
 
-  const [
-    accounts,
-    activeRuleCount,
-    messagesLast24h,
-    supportRequiredLast24h,
-    pendingOutbound,
-    recentMessages,
-  ] = await Promise.all([
-    prisma.whatsAppAccount.findMany({ select: { id: true, label: true, status: true } }),
-    prisma.automationRule.count({ where: { status: "ACTIVE" } }),
-    prisma.message.count({ where: { direction: "INCOMING", createdAt: { gte: since24h } } }),
-    prisma.automationExecution.count({ where: { decision: "SUPPORT_REQUIRED", createdAt: { gte: since24h } } }),
-    prisma.outboundMessage.count({ where: { status: { in: ["PENDING", "PROCESSING"] } } }),
-    prisma.message.findMany({
-      orderBy: { timestampWa: "desc" },
-      take: 10,
-      select: {
-        id: true,
-        senderPhone: true,
-        senderName: true,
-        body: true,
-        direction: true,
-        processingStatus: true,
-        timestampWa: true,
-      },
-    }),
-  ]);
+  const [accountsRouting, automationOutbound, escalation, conversationLearning, aiLearning, bulkMessaging, notifications, systemLogs, recentActivity] =
+    await Promise.all([
+      getAccountsRoutingSummary(),
+      getAutomationOutboundSummary(nowMs),
+      getEscalationSummary(),
+      getConversationLearningSummary(),
+      getAiLearningSummary(),
+      getBulkMessagingSummary(),
+      getNotificationsSummary(nowMs),
+      getSystemLogsSummary(nowMs),
+      getRecentMessageActivity(nowMs),
+    ]);
 
-  const connectedCount = accounts.filter((a) => a.status === "CONNECTED").length;
-  const disconnectedAccounts = accounts.filter((a) => a.status !== "CONNECTED");
+  const disconnectedAccounts = accountsRouting.accounts.filter((a) => a.status !== "CONNECTED");
 
   return (
     <div>
@@ -79,24 +71,30 @@ export default async function OverviewPage() {
           <HelpButton moduleTitle="Overview">
             <HelpSection title="What this page is for">
               <p>
-                The landing page after login — a glanceable, entirely read-only summary. There are no
-                controls here; every number links conceptually to a page elsewhere where you can act on
-                it.
+                The landing page after login — a glanceable, entirely read-only summary of every
+                module. There are no controls here; every number and card links to a page elsewhere
+                where you can act on it.
               </p>
             </HelpSection>
             <HelpSection title="Reading the stat tiles">
               <p>
-                "Support required (24h)" is a rolling 24-hour count, not the same as the Needs
-                Attention queue — a 0 here doesn't mean that queue is empty, just that nothing new
-                arrived in the last day. "Outbound queue (pending)" is currently-queued auto-replies/
-                broadcasts waiting to send, not a history.
+                "Support required (24h)" and "Failed notifications (24h)" are rolling 24-hour counts,
+                not live queue depths — a 0 doesn't mean the underlying queue is empty, just that
+                nothing new arrived in the last day. "Outbound queue (pending)" and "Open escalation
+                cases" are current snapshots, not history.
               </p>
             </HelpSection>
-            <HelpSection title="Recent Messages">
+            <HelpSection title="Module cards">
               <p>
-                Just the last 10 messages across every account, for a quick pulse-check — it doesn't
-                have the filters, rule/decision columns, or pagination that the full Messages page has.
-                For anything beyond the last 10, go to All Messages.
+                Each card shows the 2-4 numbers that matter most for that module right now. "View
+                module" jumps to the full page for details, filters, and actions.
+              </p>
+            </HelpSection>
+            <HelpSection title="Message Activity">
+              <p>
+                The trend line is incoming message volume for the last 7 days; the table below it is
+                just the last 10 messages across every account for a quick pulse-check — for anything
+                beyond that, go to All Messages.
               </p>
             </HelpSection>
           </HelpButton>
@@ -111,47 +109,177 @@ export default async function OverviewPage() {
         </div>
       ) : null}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-4">
         <StatTile
           label="Connected accounts"
-          value={`${connectedCount}/${accounts.length}`}
-          tone={connectedCount === accounts.length && accounts.length > 0 ? "success" : "warning"}
+          value={`${accountsRouting.connectedCount}/${accountsRouting.accounts.length}`}
+          tone={
+            accountsRouting.connectedCount === accountsRouting.accounts.length && accountsRouting.accounts.length > 0
+              ? "success"
+              : "warning"
+          }
         />
-        <StatTile label="Incoming messages (24h)" value={messagesLast24h} />
+        <StatTile label="Incoming messages (24h)" value={recentActivity.messagesLast24h} />
         <StatTile
           label="Support required (24h)"
-          value={supportRequiredLast24h}
-          tone={supportRequiredLast24h > 0 ? "warning" : "neutral"}
+          value={automationOutbound.supportRequiredLast24h}
+          tone={automationOutbound.supportRequiredLast24h > 0 ? "warning" : "neutral"}
         />
-        <StatTile label="Active rules" value={activeRuleCount} />
+        <StatTile label="Active rules" value={automationOutbound.activeRuleCount} />
         <StatTile
           label="Outbound queue (pending)"
-          value={pendingOutbound}
-          tone={pendingOutbound > 0 ? "warning" : "neutral"}
+          value={automationOutbound.outboundPendingCount}
+          tone={automationOutbound.outboundPendingCount > 0 ? "warning" : "neutral"}
+        />
+        <StatTile
+          label="Failed notifications (24h)"
+          value={notifications.failed24h}
+          tone={notifications.failed24h > 0 ? "danger" : "neutral"}
+        />
+        <StatTile
+          label="Open escalation cases"
+          value={escalation.openCaseCount}
+          tone={escalation.openCaseCount > 0 ? "warning" : "neutral"}
+        />
+        <StatTile
+          label="Unresolved unknown patterns"
+          value={conversationLearning.unknownPatternCount}
+          tone={conversationLearning.unknownPatternCount > 0 ? "warning" : "neutral"}
         />
       </div>
 
-      <Card className="mb-6">
-        <SectionHeader title="WhatsApp Accounts" />
-        {accounts.length === 0 ? (
-          <EmptyState>No accounts yet — the worker creates one automatically on first connect.</EmptyState>
-        ) : (
-          <ul className="divide-y divide-[var(--color-border)]">
-            {accounts.map((a) => (
-              <li key={a.id} className="flex items-center justify-between py-2.5 text-sm first:pt-0 last:pb-0">
-                <span className="text-[color:var(--color-foreground)]">{a.label}</span>
-                <Badge color={ACCOUNT_STATUS_COLOR[a.status] ?? "gray"} dot>
-                  {a.status}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <DashboardModuleCard
+          title="Accounts & Routing"
+          icon={Smartphone}
+          href="/accounts"
+          secondaryLink={accountsRouting.hasRoutingError ? { href: "/accounts/routing", label: "Fix routing" } : undefined}
+        >
+          <ModuleCardRow label="Connected">
+            <Badge
+              color={
+                accountsRouting.connectedCount === accountsRouting.accounts.length && accountsRouting.accounts.length > 0
+                  ? "green"
+                  : "yellow"
+              }
+              dot
+            >
+              {accountsRouting.connectedCount}/{accountsRouting.accounts.length}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Services routed">
+            <Badge color={accountsRouting.hasRoutingError ? "red" : "green"} dot>
+              {accountsRouting.healthyRouteCount}/{accountsRouting.totalRoutes}
+            </Badge>
+          </ModuleCardRow>
+          {accountsRouting.pendingWorkerCommands > 0 ? (
+            <ModuleCardRow label="Waiting on worker">{accountsRouting.pendingWorkerCommands} command(s)</ModuleCardRow>
+          ) : null}
+        </DashboardModuleCard>
+
+        <DashboardModuleCard title="Automation Rules & Outbound" icon={ListChecks} href="/rules">
+          <ModuleCardRow label="Automation">
+            <Badge color={automationOutbound.automationEnabled ? "green" : "red"} dot>
+              {automationOutbound.automationEnabled ? "ENABLED" : "PAUSED"}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Active rules">{automationOutbound.activeRuleCount}</ModuleCardRow>
+          <ModuleCardRow label="Outbound (24h)">
+            {automationOutbound.sent24h} sent
+            {automationOutbound.failed24h > 0 ? `, ${automationOutbound.failed24h} failed` : ""}
+            {automationOutbound.rateLimited24h > 0 ? `, ${automationOutbound.rateLimited24h} rate-limited` : ""}
+          </ModuleCardRow>
+        </DashboardModuleCard>
+
+        <DashboardModuleCard title="Priority Support Escalation" icon={ShieldAlert} href="/support-escalation">
+          <ModuleCardRow label="Open cases">
+            <Badge color={escalation.openCaseCount > 0 ? "yellow" : "green"} dot>
+              {escalation.openCaseCount}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Escalated">
+            <Badge color={escalation.escalatedCount > 0 ? "red" : "gray"} dot>
+              {escalation.escalatedCount}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Oldest waiting">
+            {escalation.oldestWaitingSince
+              ? `${formatAgeShort(nowMs - escalation.oldestWaitingSince.getTime())} (${escalation.oldestWaitingGroupName})`
+              : "—"}
+          </ModuleCardRow>
+        </DashboardModuleCard>
+
+        <DashboardModuleCard title="Conversation Learning" icon={Waypoints} href="/conversation-learning">
+          <ModuleCardRow label="Status">
+            <Badge color={conversationLearning.conversationLearningEnabled ? "green" : "gray"} dot>
+              {conversationLearning.conversationLearningEnabled ? "ENABLED" : "DISABLED"}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Patterns surfaced">{conversationLearning.surfacedCandidateCount}</ModuleCardRow>
+          <ModuleCardRow label="Unknown patterns">
+            <Badge color={conversationLearning.unknownPatternCount > 0 ? "yellow" : "gray"} dot>
+              {conversationLearning.unknownPatternCount}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Proposals pending">{conversationLearning.pendingProposalCount}</ModuleCardRow>
+        </DashboardModuleCard>
+
+        <DashboardModuleCard title="AI Learning" icon={Sparkles} href="/ai-learning">
+          <ModuleCardRow label="Status">
+            <Badge color={aiLearning.aiEngineEnabled ? "green" : "gray"} dot>
+              {aiLearning.aiEngineEnabled ? "ENABLED" : "DISABLED"}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Knowledge items">{aiLearning.totalKnowledge}</ModuleCardRow>
+          <ModuleCardRow label="Active providers">
+            <Badge color={aiLearning.activeProviderCount > 0 ? "green" : "yellow"} dot>
+              {aiLearning.activeProviderCount}
+            </Badge>
+          </ModuleCardRow>
+        </DashboardModuleCard>
+
+        <DashboardModuleCard
+          title="Bulk Messaging"
+          icon={Send}
+          href="/group-message-sender"
+          secondaryLink={{ href: "/group-member-adder", label: "Add to groups" }}
+        >
+          <ModuleCardRow label="Broadcast jobs">{bulkMessaging.broadcastRunning} running/queued</ModuleCardRow>
+          <ModuleCardRow label="Add-to-group jobs">{bulkMessaging.addRunning} running/queued</ModuleCardRow>
+        </DashboardModuleCard>
+
+        <DashboardModuleCard title="Notifications" icon={Bell} href="/notifications">
+          <ModuleCardRow label="Sent (24h)">{notifications.sent24h}</ModuleCardRow>
+          <ModuleCardRow label="Failed (24h)">
+            <Badge color={notifications.failed24h > 0 ? "red" : "gray"} dot>
+              {notifications.failed24h}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Pending/retrying (24h)">{notifications.pendingRetrying24h}</ModuleCardRow>
+        </DashboardModuleCard>
+
+        <DashboardModuleCard title="System Logs" icon={ConsoleIcon} href="/logs">
+          <ModuleCardRow label="Errors (24h)">
+            <Badge color={systemLogs.errors24h > 0 ? "red" : "gray"} dot>
+              {systemLogs.errors24h}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Warnings (24h)">
+            <Badge color={systemLogs.warnings24h > 0 ? "yellow" : "gray"} dot>
+              {systemLogs.warnings24h}
+            </Badge>
+          </ModuleCardRow>
+        </DashboardModuleCard>
+      </div>
 
       <Card>
-        <SectionHeader title="Recent Messages" />
-        {recentMessages.length === 0 ? (
+        <div className="flex items-center justify-between gap-4">
+          <SectionHeader title="Message Activity" />
+          <div className="w-32 shrink-0">
+            <Sparkline data={recentActivity.sparkline} ariaLabel="Incoming messages, last 7 days" />
+          </div>
+        </div>
+        {recentActivity.recentMessages.length === 0 ? (
           <EmptyState>No messages yet.</EmptyState>
         ) : (
           <Table>
@@ -165,7 +293,7 @@ export default async function OverviewPage() {
               </tr>
             </thead>
             <tbody>
-              {recentMessages.map((m) => (
+              {recentActivity.recentMessages.map((m) => (
                 <tr key={m.id}>
                   <Td className="font-[family-name:var(--font-mono)] text-xs whitespace-nowrap">
                     {formatDateTime(m.timestampWa)}
@@ -174,9 +302,7 @@ export default async function OverviewPage() {
                   <Td>{m.direction}</Td>
                   <Td className="max-w-md truncate">{m.body}</Td>
                   <Td>
-                    <Badge color={m.processingStatus === "IGNORED" ? "gray" : "blue"}>
-                      {m.processingStatus}
-                    </Badge>
+                    <Badge color={m.processingStatus === "IGNORED" ? "gray" : "blue"}>{m.processingStatus}</Badge>
                   </Td>
                 </tr>
               ))}
