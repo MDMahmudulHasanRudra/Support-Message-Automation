@@ -92,6 +92,9 @@ services:
       WHATSAPP_GROUP_SYNC_TIMEOUT_MS: ${WHATSAPP_GROUP_SYNC_TIMEOUT_MS:-150000}
       TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL}
       WHATSAPP_NOTIFICATION_GROUP_ID: ${WHATSAPP_NOTIFICATION_GROUP_ID}
+      # Needed by packages/ai-client's resolveAiClient() to decrypt a stored AiProvider API key
+      # before calling it — same key apps/web already uses, so the two must always match.
+      AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
     # No `ports:` here on purpose: the worker's health endpoint binds to
     # 127.0.0.1 inside the container only, for its own HEALTHCHECK to use.
     # The dashboard never talks to the worker over HTTP (see ARCHITECTURE.md).

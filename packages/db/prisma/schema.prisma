@@ -190,6 +190,10 @@ enum WorkerCommandType {
   /// Ends the current WhatsApp session and invalidates its persisted session data so a different
   /// account can scan a fresh QR — distinct from RECONNECT, which reuses the existing session.
   LOGOUT
+  /// Dashboard "Run AI analysis now" button (Conversation Learning) — runs
+  /// processOneAiAnalysisBatch() immediately instead of waiting for its own long scheduled
+  /// interval. No accountId/payload needed; the job scans PatternCandidate rows globally.
+  AI_ANALYSIS_BATCH
 }
 
 enum WorkerCommandStatus {
@@ -665,9 +669,10 @@ model Notification {
 model WorkerCommand {
   id          String              @id @default(cuid())
   type        WorkerCommandType
-  /// Nullable only so pre-multi-account historical rows (created before this column existed)
-  /// remain valid — every new command a web action creates always sets this. onDelete: Cascade
-  /// since a queued-but-unprocessed command for a deleted account is meaningless.
+  /// Nullable so pre-multi-account historical rows (created before this column existed) remain
+  /// valid, and so account-agnostic command types (AI_ANALYSIS_BATCH) can omit it entirely — every
+  /// other, account-scoped command type still always sets this. onDelete: Cascade since a
+  /// queued-but-unprocessed command for a deleted account is meaningless.
   accountId   String?
   account     WhatsAppAccount?    @relation(fields: [accountId], references: [id], onDelete: Cascade)
   payload     Json?

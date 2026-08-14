@@ -142,9 +142,11 @@ async function linkClosedSessionsToCandidates(): Promise<{ sessionsLinked: numbe
 /**
  * Recomputes one candidate's aggregate evidence stats and scores from scratch off its linked
  * PatternCandidateEvidence rows — cheap enough per-candidate given the bounded batch size, and
- * avoids any risk of incremental counters drifting from the actual evidence over time.
+ * avoids any risk of incremental counters drifting from the actual evidence over time. Exported:
+ * aiAnalysisJob.ts calls this too, right after writing a fresh aiConfidenceScore, so both jobs
+ * share one status-transition rule instead of two copies drifting apart.
  */
-async function rescoreCandidate(
+export async function rescoreCandidate(
   candidateId: string,
   settings: LearningSettings,
   humanReviewThreshold: number,
@@ -203,13 +205,17 @@ async function rescoreCandidate(
 
   // The floor gates status advancement, not just visibility — a candidate never reaches
   // PENDING_REVIEW purely because the confidence formula produced a high number on thin evidence.
-  // Once already past PENDING_ANALYSIS (a human or a later AI-analysis phase moved it forward),
-  // this never regresses it — occurrence/diversity counts only grow over time in this job, so a
-  // real backslide can't happen; this guard is about the very first transition only.
+  // PENDING_ANALYSIS and ANALYZED (the latter only reachable once aiAnalysisJob.ts has scored a
+  // candidate) are both valid pre-review states this job can promote from — occurrence/diversity
+  // counts only grow over time, so a real backslide out of PENDING_REVIEW/APPROVED/etc. can't
+  // happen; this guard is about the first transition into PENDING_REVIEW only.
   let status = candidate.status;
   if (!floorMet) {
     status = "PENDING_ANALYSIS";
-  } else if (candidate.status === "PENDING_ANALYSIS" && scores.confidenceScore >= humanReviewThreshold) {
+  } else if (
+    (candidate.status === "PENDING_ANALYSIS" || candidate.status === "ANALYZED") &&
+    scores.confidenceScore >= humanReviewThreshold
+  ) {
     status = "PENDING_REVIEW";
   }
 

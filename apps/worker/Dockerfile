@@ -57,6 +57,7 @@ COPY patches patches
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/engine/package.json packages/engine/package.json
+COPY packages/ai-client/package.json packages/ai-client/package.json
 COPY apps/worker/package.json apps/worker/package.json
 RUN npm install -g pnpm@11.9.0
 RUN pnpm install --frozen-lockfile --filter @support-automation/worker...
@@ -66,15 +67,18 @@ FROM deps AS build
 COPY packages/shared packages/shared
 COPY packages/db packages/db
 COPY packages/engine packages/engine
+COPY packages/ai-client packages/ai-client
 COPY apps/worker apps/worker
 RUN pnpm --filter @support-automation/db generate
-# packages/shared and packages/engine are consumed as compiled dist/*.js by
-# every runtime (plain Node here, Turbopack in apps/web) — building them
-# here, not just type-checking, is required or the worker's `node
-# dist/index.js` fails at runtime with ERR_MODULE_NOT_FOUND trying to load
-# their .ts source directly (no transpiler is present outside of dev/tsx).
+# packages/shared, packages/engine, and packages/ai-client are consumed as
+# compiled dist/*.js by every runtime (plain Node here, Turbopack in
+# apps/web) — building them here, not just type-checking, is required or
+# the worker's `node dist/index.js` fails at runtime with
+# ERR_MODULE_NOT_FOUND trying to load their .ts source directly (no
+# transpiler is present outside of dev/tsx).
 RUN pnpm --filter @support-automation/shared build
 RUN pnpm --filter @support-automation/engine build
+RUN pnpm --filter @support-automation/ai-client build
 RUN pnpm --filter @support-automation/worker build
 
 # ---------------------------------------------------------------------------

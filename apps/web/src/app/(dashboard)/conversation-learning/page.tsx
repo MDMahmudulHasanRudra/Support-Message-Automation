@@ -5,73 +5,92 @@ import type { BadgeColor } from "@/components/ui";
 import { requireSession } from "@/server/auth";
 import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
+import { RunAiAnalysisButton } from "./RunAiAnalysisButton";
 
 export default async function ConversationLearningPage() {
   await requireSession();
 
-  const learningSettings = await prisma.learningSettings.upsert({
-    where: { id: "global" },
-    update: {},
-    create: { id: "global" },
-  });
+  const [learningSettings, aiSettings, learningModelConfig] = await Promise.all([
+    prisma.learningSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+    prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+    prisma.aiModelConfig.findUnique({ where: { job: "LEARNING" }, include: { provider: true } }),
+  ]);
+  const aiAnalysisAvailable =
+    aiSettings.aiEngineEnabled && aiSettings.learningEnabled && learningModelConfig?.provider.status === "ACTIVE";
 
-  const [sessionCount, openSessionCount, totalCandidateCount, surfacedCandidateCount, pendingProposalCount, recentJobs] =
-    await Promise.all([
-      prisma.conversationSession.count(),
-      prisma.conversationSession.count({ where: { status: "OPEN" } }),
-      prisma.patternCandidate.count(),
-      prisma.patternCandidate.count({
-        where: {
-          occurrenceCount: { gte: learningSettings.minOccurrenceForCandidate },
-          distinctGroupCount: { gte: learningSettings.minDistinctGroupsForCandidate },
-          distinctClientCount: { gte: learningSettings.minDistinctClientsForCandidate },
-        },
-      }),
-      prisma.ruleProposal.count({ where: { status: "PENDING_REVIEW" } }),
-      prisma.learningBatchJob.findMany({ orderBy: { createdAt: "desc" }, take: 5 }),
-    ]);
+  const [
+    sessionCount,
+    openSessionCount,
+    totalCandidateCount,
+    surfacedCandidateCount,
+    pendingProposalCount,
+    aiAnalyzedCount,
+    recentJobs,
+  ] = await Promise.all([
+    prisma.conversationSession.count(),
+    prisma.conversationSession.count({ where: { status: "OPEN" } }),
+    prisma.patternCandidate.count(),
+    prisma.patternCandidate.count({
+      where: {
+        occurrenceCount: { gte: learningSettings.minOccurrenceForCandidate },
+        distinctGroupCount: { gte: learningSettings.minDistinctGroupsForCandidate },
+        distinctClientCount: { gte: learningSettings.minDistinctClientsForCandidate },
+      },
+    }),
+    prisma.ruleProposal.count({ where: { status: "PENDING_REVIEW" } }),
+    prisma.patternCandidate.count({ where: { aiConfidenceScore: { not: null } } }),
+    prisma.learningBatchJob.findMany({ orderBy: { createdAt: "desc" }, take: 5 }),
+  ]);
 
   return (
     <div>
       <PageHeader
         title="Conversation Learning"
-        description="Background pattern discovery over real conversations — entirely deterministic and AI-free today. Nothing on this page sends or changes a customer message."
+        description="Background pattern discovery over real conversations. Deterministic pattern detection is always AI-free; AI-assisted analysis is a fully optional, separately-gated add-on. Nothing on this page sends or changes a customer message."
         actions={
           <HelpButton moduleTitle="Conversation Learning">
             <HelpSection title="What this does">
               <p>
-                Two background jobs run on the worker (both off by default): one groups incoming
-                messages into conversation sessions by chat and inactivity gap, the other looks for
-                recurring intents across closed sessions. Nothing here sends a message, changes an
-                automation rule, or calls an AI provider — it only reads Message rows that already
-                exist and writes to its own tables.
+                Three background jobs run on the worker: one groups incoming messages into
+                conversation sessions by chat and inactivity gap, one looks for recurring intents
+                across closed sessions (both off by default, entirely deterministic, zero AI
+                calls), and an optional third one that sends surfaced-eligible patterns to a
+                configured AI provider for a second opinion — gated on both the AI Engine and
+                Learning switches in AI Settings being on, and only ever a bounded, per-pattern
+                batch call, never per-message.
               </p>
             </HelpSection>
             <HelpSection title="Pattern Candidates">
               <p>
-                A pattern only appears in the Pattern Candidates list once it's been seen enough
-                times, across enough different groups and clients (configurable in Learning
-                Settings) — a single conversation can never produce a visible candidate. Nothing
-                here is actionable yet; human review and turning a candidate into a real automation
-                rule are a later phase.
+                A pattern only appears in the Pattern Candidates list once it&apos;s been seen
+                enough times, across enough different groups and clients (configurable in Learning
+                Settings) — a single conversation can never produce a visible candidate, with or
+                without AI. Nothing here is auto-approved; turning a candidate into a real
+                automation rule always requires an explicit human action.
               </p>
             </HelpSection>
             <HelpSection title="Turning it on">
               <p>
                 Conversation learning is currently{" "}
-                <strong>{learningSettings.conversationLearningEnabled ? "ENABLED" : "DISABLED"}</strong>.
-                Existing WhatsApp automation — rules, replies, notifications — is completely
-                unaffected either way.
+                <strong>{learningSettings.conversationLearningEnabled ? "ENABLED" : "DISABLED"}</strong>,
+                and AI-assisted analysis is currently{" "}
+                <strong>{aiAnalysisAvailable ? "AVAILABLE" : "NOT CONFIGURED"}</strong>. Existing
+                WhatsApp automation — rules, replies, notifications — is completely unaffected
+                either way.
               </p>
             </HelpSection>
           </HelpButton>
         }
       />
 
-      <div className="mb-6 flex items-center gap-2">
+      <div className="mb-6 flex flex-wrap items-center gap-2">
         <Badge color={learningSettings.conversationLearningEnabled ? "green" : "gray"} dot>
           Conversation Learning: {learningSettings.conversationLearningEnabled ? "ENABLED" : "DISABLED"}
         </Badge>
+        <Badge color={aiAnalysisAvailable ? "blue" : "gray"} dot>
+          AI Analysis: {aiAnalysisAvailable ? "AVAILABLE" : "NOT CONFIGURED"}
+        </Badge>
+        <RunAiAnalysisButton enabled={Boolean(aiAnalysisAvailable)} />
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -86,7 +105,7 @@ export default async function ConversationLearningPage() {
           value={Math.max(0, totalCandidateCount - surfacedCandidateCount)}
           hint="Below the review floor"
         />
-        <StatTile label="Total Pattern Signatures" value={totalCandidateCount} />
+        <StatTile label="AI-Analyzed Patterns" value={aiAnalyzedCount} hint="Have received an AI confidence pass" />
       </div>
 
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">

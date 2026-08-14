@@ -2,6 +2,7 @@ import { prisma } from "@support-automation/db";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { processOneAiAnalysisBatch } from "../learning/aiAnalysisJob.js";
 
 const GROUP_SYNC_PROGRESS_INTERVAL = 250;
 
@@ -175,6 +176,10 @@ async function claimNextCommand() {
 export async function processOneCommand(accountId: string, provider: WhatsAppProvider): Promise<boolean> {
   const command = await claimNextCommand();
   if (!command) return false;
+  if (command.type === "AI_ANALYSIS_BATCH") {
+    await executeAiAnalysisBatchCommand(command);
+    return true;
+  }
   await executeClaimedCommand(command, accountId, provider);
   return true;
 }
@@ -188,6 +193,13 @@ export async function processOneCommand(accountId: string, provider: WhatsAppPro
 export async function processOneCommandViaRegistry(registry: ProviderRegistry): Promise<boolean> {
   const command = await claimNextCommand();
   if (!command) return false;
+
+  // Account-agnostic: scans PatternCandidate rows globally, needs no WhatsApp session at all —
+  // must be handled before the accountId-required check just below.
+  if (command.type === "AI_ANALYSIS_BATCH") {
+    await executeAiAnalysisBatchCommand(command);
+    return true;
+  }
 
   if (!command.accountId) {
     await prisma.workerCommand.update({
@@ -211,6 +223,22 @@ export async function processOneCommandViaRegistry(registry: ProviderRegistry): 
 }
 
 type ClaimedCommand = NonNullable<Awaited<ReturnType<typeof claimNextCommand>>>;
+
+/** The dashboard's "Run AI analysis now" button — runs immediately instead of waiting for aiAnalysisProcessor.ts's own long scheduled interval. Never touches a WhatsApp provider/account. */
+async function executeAiAnalysisBatchCommand(command: ClaimedCommand): Promise<void> {
+  try {
+    const didWork = await processOneAiAnalysisBatch("MANUAL");
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "DONE", processedAt: new Date(), result: { didWork } },
+    });
+  } catch (err) {
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "FAILED", processedAt: new Date(), result: { error: (err as Error).message } },
+    });
+  }
+}
 
 async function executeClaimedCommand(command: ClaimedCommand, accountId: string, provider: WhatsAppProvider): Promise<void> {
   try {

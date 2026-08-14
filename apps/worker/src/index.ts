@@ -16,6 +16,7 @@ import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
 import { startPatternDetectionProcessor } from "./learning/patternDetectionProcessor.js";
+import { startAiAnalysisProcessor } from "./learning/aiAnalysisProcessor.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -73,6 +74,7 @@ async function main() {
     // on, so this has zero effect on a fresh/default install.
     startSessionSegmentationProcessor(),
     startPatternDetectionProcessor(),
+    startAiAnalysisProcessor(),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

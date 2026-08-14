@@ -1,3 +1,4 @@
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import type { WhatsAppServiceKey } from "@prisma/client";
 
@@ -100,4 +101,51 @@ export async function resolveWhatsAppAccount(serviceKey: WhatsAppServiceKey): Pr
   }
 
   return usePrimary("PRIMARY_FALLBACK");
+}
+
+const AI_SECRET_ALGORITHM = "aes-256-gcm";
+const AI_SECRET_IV_LENGTH = 12;
+
+function getAiSecretKey(): Buffer {
+  const secret = process.env.AI_CREDENTIALS_ENCRYPTION_KEY;
+  if (!secret) throw new Error("AI_CREDENTIALS_ENCRYPTION_KEY is not configured.");
+  const key = Buffer.from(secret, "base64");
+  if (key.length !== 32) {
+    throw new Error("AI_CREDENTIALS_ENCRYPTION_KEY must decode to 32 bytes (generate with: openssl rand -base64 32).");
+  }
+  return key;
+}
+
+/**
+ * Encrypts an AI provider API key for storage — never store the plaintext. Lives directly in this
+ * file (not a sibling module under packages/db/src) for the same reason resolveWhatsAppAccount()
+ * above does: packages/db ships as raw, uncompiled TypeScript with no build step, consumed
+ * directly by both Turbopack (apps/web) and plain Node/tsx (apps/worker) — a relative import
+ * between two files here has already caused a real outage from those two resolving it
+ * differently. `packages/ai-client` (the only other consumer of these functions besides
+ * apps/web) imports them via `@support-automation/db`, a normal cross-package import, which is
+ * unaffected by that constraint.
+ */
+export function encryptSecret(plaintext: string): string {
+  const iv = randomBytes(AI_SECRET_IV_LENGTH);
+  const cipher = createCipheriv(AI_SECRET_ALGORITHM, getAiSecretKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return [iv, authTag, ciphertext].map((buf) => buf.toString("base64")).join(".");
+}
+
+/** Reverses encryptSecret — only ever called server-side, right before an outbound API call. */
+export function decryptSecret(stored: string): string {
+  const [ivB64, tagB64, ciphertextB64] = stored.split(".");
+  if (!ivB64 || !tagB64 || !ciphertextB64) throw new Error("Malformed encrypted secret.");
+  const decipher = createDecipheriv(AI_SECRET_ALGORITHM, getAiSecretKey(), Buffer.from(ivB64, "base64"));
+  decipher.setAuthTag(Buffer.from(tagB64, "base64"));
+  const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertextB64, "base64")), decipher.final()]);
+  return plaintext.toString("utf8");
+}
+
+/** Never send the real key to the browser — show only enough to recognize which one it is. */
+export function maskSecret(plaintext: string): string {
+  if (plaintext.length <= 8) return "••••••••";
+  return `${plaintext.slice(0, 4)}••••••••${plaintext.slice(-4)}`;
 }
