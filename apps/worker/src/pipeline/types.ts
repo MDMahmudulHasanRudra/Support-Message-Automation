@@ -10,4 +10,8 @@ export interface RawIncomingMessage {
   direction: "INCOMING" | "OUTGOING" | "SYSTEM";
   body: string;
   timestampWa: Date;
+  /** WhatsApp message id of the message this one quotes (swipe-to-reply), if any. */
+  quotedWhatsappMessageId?: string | null;
+  /** Digits-only phone numbers @-mentioned in this message. */
+  mentionedPhones?: string[];
 }

@@ -51,14 +51,18 @@ async function makeKeyword(value: string) {
   return keyword;
 }
 
-async function makeRule(keywordIds: string[]) {
+async function makeRule(
+  keywordIdsOrOpts: string[] | { keywordIds?: string[]; triggerType?: "KEYWORD_MATCH" | "REPLY_TO_CUSTOMER" | "MENTION" },
+) {
+  const opts = Array.isArray(keywordIdsOrOpts) ? { keywordIds: keywordIdsOrOpts } : keywordIdsOrOpts;
   const rule = await prisma.supportRule.create({
     data: {
       name: `Test Rule ${randomUUID()}`,
       isActive: true,
       appliesToAllGroups: true,
       appliesToAllTeamMembers: true,
-      keywords: { create: keywordIds.map((keywordId) => ({ keywordId })) },
+      triggerType: opts.triggerType ?? "KEYWORD_MATCH",
+      keywords: { create: (opts.keywordIds ?? []).map((keywordId) => ({ keywordId })) },
     },
   });
   createdRuleIds.push(rule.id);
@@ -120,7 +124,11 @@ afterEach(async () => {
   }
 });
 
-async function sendGroupMessage(senderPhone: string, body: string) {
+async function sendGroupMessage(
+  senderPhone: string,
+  body: string,
+  extra: { quotedWhatsappMessageId?: string; mentionedPhones?: string[] } = {},
+) {
   const whatsappMessageId = randomUUID();
   await processIncomingMessage({
     accountId: account.id,
@@ -131,6 +139,7 @@ async function sendGroupMessage(senderPhone: string, body: string) {
     direction: "INCOMING",
     body,
     timestampWa: new Date(),
+    ...extra,
   });
   return whatsappMessageId;
 }
@@ -208,6 +217,77 @@ describe("Support Activity Tracking — detection", () => {
     const message = await prisma.message.findFirstOrThrow({ where: { accountId: account.id } });
     // The pipeline must still run to completion for a message the detector also inspects.
     expect(await prisma.automationExecution.count({ where: { messageId: message.id } })).toBe(1);
+  });
+});
+
+describe("Support Activity Tracking — REPLY_TO_CUSTOMER trigger", () => {
+  it("creates an activity when a support member's message quotes a real customer message", async () => {
+    const member = await makeTeamMember(uniquePhone());
+    await makeRule({ triggerType: "REPLY_TO_CUSTOMER" });
+
+    const customerMessageId = await sendGroupMessage(uniquePhone(), "my internet is not working");
+    await sendGroupMessage(member.phoneNumber, "fixed now, please check", {
+      quotedWhatsappMessageId: customerMessageId,
+    });
+
+    const activity = await prisma.supportActivity.findFirstOrThrow({ where: { accountId: account.id } });
+    expect(activity.teamMemberId).toBe(member.id);
+    expect(activity.keywordId).toBeNull();
+  });
+
+  it("does not fire when the quoted message is from another team member, not a customer", async () => {
+    const memberA = await makeTeamMember(uniquePhone());
+    const memberB = await makeTeamMember(uniquePhone());
+    await makeRule({ triggerType: "REPLY_TO_CUSTOMER" });
+
+    const internalMessageId = await sendGroupMessage(memberA.phoneNumber, "handling this one");
+    await sendGroupMessage(memberB.phoneNumber, "ok, on it", { quotedWhatsappMessageId: internalMessageId });
+
+    expect(await prisma.supportActivity.count({ where: { accountId: account.id } })).toBe(0);
+  });
+
+  it("does not fire on an ordinary message with no quoted reference", async () => {
+    const member = await makeTeamMember(uniquePhone());
+    await makeRule({ triggerType: "REPLY_TO_CUSTOMER" });
+
+    await sendGroupMessage(member.phoneNumber, "just a regular message");
+
+    expect(await prisma.supportActivity.count({ where: { accountId: account.id } })).toBe(0);
+  });
+});
+
+describe("Support Activity Tracking — MENTION trigger", () => {
+  it("creates an activity when a support member @-mentions a customer", async () => {
+    const member = await makeTeamMember(uniquePhone());
+    const customerPhone = uniquePhone();
+    await makeRule({ triggerType: "MENTION" });
+
+    await sendGroupMessage(member.phoneNumber, "@customer please confirm", { mentionedPhones: [customerPhone] });
+
+    const activity = await prisma.supportActivity.findFirstOrThrow({ where: { accountId: account.id } });
+    expect(activity.teamMemberId).toBe(member.id);
+    expect(activity.keywordId).toBeNull();
+  });
+
+  it("does not fire when only another team member is mentioned", async () => {
+    const member = await makeTeamMember(uniquePhone());
+    const otherMember = await makeTeamMember(uniquePhone());
+    await makeRule({ triggerType: "MENTION" });
+
+    await sendGroupMessage(member.phoneNumber, "@teammate can you take this?", {
+      mentionedPhones: [otherMember.phoneNumber],
+    });
+
+    expect(await prisma.supportActivity.count({ where: { accountId: account.id } })).toBe(0);
+  });
+
+  it("does not fire when nobody is mentioned", async () => {
+    const member = await makeTeamMember(uniquePhone());
+    await makeRule({ triggerType: "MENTION" });
+
+    await sendGroupMessage(member.phoneNumber, "no mentions here");
+
+    expect(await prisma.supportActivity.count({ where: { accountId: account.id } })).toBe(0);
   });
 });
 

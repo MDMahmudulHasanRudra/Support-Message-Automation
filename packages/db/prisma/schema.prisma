@@ -410,6 +410,18 @@ model Message {
   conversationSessionId String?
   conversationSession   ConversationSession? @relation(fields: [conversationSessionId], references: [id], onDelete: SetNull)
 
+  /// Resolved from the WhatsApp "quoted message" (swipe-to-reply) reference, only when the quoted
+  /// message is itself already tracked in this table — null if the reply quotes a message from
+  /// before this account was tracked, or if the message isn't a reply at all. Powers Support
+  /// Activity Tracking's REPLY_TO_CUSTOMER trigger type. SetNull (not Cascade) so deleting the
+  /// quoted message never deletes the message that quoted it.
+  quotedMessageId  String?
+  quotedMessage    Message?  @relation("MessageQuote", fields: [quotedMessageId], references: [id], onDelete: SetNull)
+  quotedByMessages Message[] @relation("MessageQuote")
+  /// Digits-only phone numbers @-mentioned in this message (from WhatsApp's mentionedJidList).
+  /// Powers Support Activity Tracking's MENTION trigger type.
+  mentionedPhones  String[]  @default([])
+
   executions               AutomationExecution[]
   outboundReplies          OutboundMessage[]
   notifications            Notification[]
@@ -422,6 +434,7 @@ model Message {
   @@index([groupId, timestampWa])
   @@index([processingStatus])
   @@index([conversationSessionId])
+  @@index([quotedMessageId])
   @@index([senderPhone])
 }
 
@@ -1340,18 +1353,28 @@ enum SupportActivityCountingMode {
   PER_TEAM_MEMBER
 }
 
-/// Only DAILY exists today — deliberately a closed enum (not a free string) so a future WEEKLY/
-/// MONTHLY period is a pure enum-value + query addition later, never a shape rewrite.
+/// Closed enum (not a free string) so periods stay a pure enum-value + query addition, never a
+/// shape rewrite. WEEKLY starts Sunday (regional Fri/Sat weekend convention).
 enum SupportActivityCountingPeriod {
   DAILY
+  WEEKLY
+  MONTHLY
 }
 
-/// Closed on purpose (same reasoning as WhatsAppServiceKey's own doc comment) — only KEYWORD_MATCH
-/// exists today. The detector's dispatch (apps/worker/src/supportActivity/detector.ts) is a plain
-/// switch on this value, not a plugin system. Add a new value + a new switch case + a migration the
-/// day a second trigger type is actually needed.
+/// Closed on purpose (same reasoning as WhatsAppServiceKey's own doc comment). The detector's
+/// dispatch (apps/worker/src/supportActivity/detector.ts) is a plain switch on this value, not a
+/// plugin system. REACTION is intentionally NOT included yet — WhatsApp reactions arrive via a
+/// separate event stream (client.onReaction(), not the onAnyMessage payload these three trigger
+/// types read from) and need a dedicated ingestion path + table; add it as its own migration when
+/// actually built, not speculatively now.
 enum SupportActivityTriggerType {
   KEYWORD_MATCH
+  /// Fires when a support team member's message is a WhatsApp "quoted reply" to a message from a
+  /// non-team-member (a real customer) — no keyword needed.
+  REPLY_TO_CUSTOMER
+  /// Fires when a support team member's message @-mentions at least one non-team-member phone
+  /// number — no keyword needed.
+  MENTION
 }
 
 enum SupportKeywordMatchMode {

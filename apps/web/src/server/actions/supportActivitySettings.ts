@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import type { SupportActivityCountingMode } from "@prisma/client";
+import type { SupportActivityCountingMode, SupportActivityCountingPeriod } from "@prisma/client";
 import { requireSession } from "@/server/auth";
+
+const VALID_PERIODS: SupportActivityCountingPeriod[] = ["DAILY", "WEEKLY", "MONTHLY"];
 
 async function getOrCreateSupportActivitySettings() {
   return prisma.supportActivitySettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
@@ -41,13 +43,22 @@ export async function updateSupportActivitySettings(formData: FormData): Promise
   if (!VALID_MODES.includes(countingMode as SupportActivityCountingMode)) {
     throw new Error("Invalid counting mode.");
   }
+  const countingPeriod = String(formData.get("countingPeriod") ?? "DAILY");
+  if (!VALID_PERIODS.includes(countingPeriod as SupportActivityCountingPeriod)) {
+    throw new Error("Invalid counting period.");
+  }
 
   await getOrCreateSupportActivitySettings();
   await prisma.supportActivitySettings.update({
     where: { id: "global" },
-    data: { enabled, countingMode: countingMode as SupportActivityCountingMode },
+    data: {
+      enabled,
+      countingMode: countingMode as SupportActivityCountingMode,
+      countingPeriod: countingPeriod as SupportActivityCountingPeriod,
+    },
   });
   revalidatePath("/support-activity");
+  revalidatePath("/support-activity/team");
   revalidatePath("/support-activity/settings");
   revalidatePath("/overview");
 }

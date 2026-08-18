@@ -1,4 +1,3 @@
-/* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { prisma } from "@support-automation/db";
@@ -17,7 +16,9 @@ export default async function SupportRulesPage() {
     id: rule.id,
     name: rule.name,
     isActive: rule.isActive,
-    keywordsSummary: rule.keywords.map((k) => k.keyword.value).join(", ") || "—",
+    triggerType: rule.triggerType,
+    keywordsSummary:
+      rule.triggerType === "KEYWORD_MATCH" ? rule.keywords.map((k) => k.keyword.value).join(", ") || "—" : "—",
     groupsSummary: rule.appliesToAllGroups ? "All groups" : `${rule.groups.length} selected`,
     teamMembersSummary: rule.appliesToAllTeamMembers ? "All members" : `${rule.teamMembers.length} selected`,
   }));
@@ -33,9 +34,9 @@ export default async function SupportRulesPage() {
               <HelpSection title="What this page is for">
                 <p>
                   A Support Rule fires when a message from an in-scope support team member, inside
-                  an in-scope WhatsApp group, matches one of the rule's keywords. The first active
-                  rule (and its first matching keyword) that applies wins — at most one Support
-                  Activity is recorded per message.
+                  an in-scope WhatsApp group, satisfies its trigger — a matching keyword, a reply
+                  to a real customer message, or a mention of a customer. The first active rule
+                  that applies wins — at most one Support Activity is recorded per message.
                 </p>
               </HelpSection>
             </HelpButton>

@@ -11,6 +11,7 @@ export interface SupportRuleFormOption {
 export interface SupportRuleFormDefaults {
   name?: string;
   description?: string;
+  triggerType?: string;
   appliesToAllGroups?: boolean;
   groupIds?: string[];
   appliesToAllTeamMembers?: boolean;
@@ -35,6 +36,7 @@ export function SupportRuleForm({
 }) {
   const [allGroups, setAllGroups] = useState(defaults.appliesToAllGroups ?? true);
   const [allMembers, setAllMembers] = useState(defaults.appliesToAllTeamMembers ?? true);
+  const [triggerType, setTriggerType] = useState(defaults.triggerType ?? "KEYWORD_MATCH");
 
   return (
     <form action={action} className="space-y-4">
@@ -48,24 +50,44 @@ export function SupportRuleForm({
             <Textarea name="description" defaultValue={defaults.description} rows={1} />
           </Field>
         </div>
+        <div className="mt-4 max-w-xs">
+          <Field
+            label="Trigger Type"
+            hint={
+              triggerType === "REPLY_TO_CUSTOMER"
+                ? "Fires when a support member's message is a WhatsApp reply to a real customer message — no keyword needed."
+                : triggerType === "MENTION"
+                  ? "Fires when a support member @-mentions a customer in their message — no keyword needed."
+                  : "Fires when a support member's message matches one of the selected keywords."
+            }
+          >
+            <Select name="triggerType" value={triggerType} onChange={(e) => setTriggerType(e.target.value)}>
+              <option value="KEYWORD_MATCH">Keyword Match</option>
+              <option value="REPLY_TO_CUSTOMER">Reply to Customer</option>
+              <option value="MENTION">Mention</option>
+            </Select>
+          </Field>
+        </div>
       </Card>
 
-      <Card>
-        <SectionHeader title="Keywords" description="Any one matching keyword makes this rule fire." />
-        {keywordOptions.length === 0 ? (
-          <p className="text-sm text-[color:var(--color-muted-foreground)]">
-            No keywords yet — add one on the Keywords page first.
-          </p>
-        ) : (
-          <Select name="keywordIds" multiple defaultValue={defaults.keywordIds} className="h-32 py-2" size={6}>
-            {keywordOptions.map((k) => (
-              <option key={k.id} value={k.id}>
-                {k.label}
-              </option>
-            ))}
-          </Select>
-        )}
-      </Card>
+      {triggerType === "KEYWORD_MATCH" ? (
+        <Card>
+          <SectionHeader title="Keywords" description="Any one matching keyword makes this rule fire." />
+          {keywordOptions.length === 0 ? (
+            <p className="text-sm text-[color:var(--color-muted-foreground)]">
+              No keywords yet — add one on the Keywords page first.
+            </p>
+          ) : (
+            <Select name="keywordIds" multiple defaultValue={defaults.keywordIds} className="h-32 py-2" size={6}>
+              {keywordOptions.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.label}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Card>
+      ) : null}
 
       <Card>
         <SectionHeader title="Team Member Scope" />

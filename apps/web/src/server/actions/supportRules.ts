@@ -3,11 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
+import type { SupportActivityTriggerType } from "@prisma/client";
 import { requireSession } from "@/server/auth";
+
+const VALID_TRIGGER_TYPES: SupportActivityTriggerType[] = ["KEYWORD_MATCH", "REPLY_TO_CUSTOMER", "MENTION"];
 
 interface ParsedRuleForm {
   name: string;
   description: string | null;
+  triggerType: SupportActivityTriggerType;
   appliesToAllGroups: boolean;
   groupIds: string[];
   appliesToAllTeamMembers: boolean;
@@ -19,14 +23,23 @@ function parseRuleForm(formData: FormData): ParsedRuleForm {
   const name = String(formData.get("name") ?? "").trim();
   if (!name) throw new Error("Rule name is required.");
 
+  const triggerTypeRaw = String(formData.get("triggerType") ?? "KEYWORD_MATCH");
+  if (!VALID_TRIGGER_TYPES.includes(triggerTypeRaw as SupportActivityTriggerType)) {
+    throw new Error("Invalid trigger type.");
+  }
+  const triggerType = triggerTypeRaw as SupportActivityTriggerType;
+
   return {
     name,
     description: String(formData.get("description") ?? "").trim() || null,
+    triggerType,
     appliesToAllGroups: formData.get("appliesToAllGroups") === "on",
     groupIds: formData.getAll("groupIds").map(String),
     appliesToAllTeamMembers: formData.get("appliesToAllTeamMembers") === "on",
     teamMemberIds: formData.getAll("teamMemberIds").map(String),
-    keywordIds: formData.getAll("keywordIds").map(String),
+    // Keywords only matter for KEYWORD_MATCH — never stored for the other trigger types, even if
+    // the form somehow submitted some (e.g. a stale client state).
+    keywordIds: triggerType === "KEYWORD_MATCH" ? formData.getAll("keywordIds").map(String) : [],
   };
 }
 
@@ -39,6 +52,7 @@ export async function createSupportRule(formData: FormData): Promise<void> {
       data: {
         name: parsed.name,
         description: parsed.description,
+        triggerType: parsed.triggerType,
         appliesToAllGroups: parsed.appliesToAllGroups,
         appliesToAllTeamMembers: parsed.appliesToAllTeamMembers,
         isActive: true,
@@ -71,6 +85,7 @@ export async function updateSupportRule(id: string, formData: FormData): Promise
       data: {
         name: parsed.name,
         description: parsed.description,
+        triggerType: parsed.triggerType,
         appliesToAllGroups: parsed.appliesToAllGroups,
         appliesToAllTeamMembers: parsed.appliesToAllTeamMembers,
       },

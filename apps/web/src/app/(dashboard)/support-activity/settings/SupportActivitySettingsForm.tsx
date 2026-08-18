@@ -26,7 +26,7 @@ export function SupportActivitySettingsForm({ settings }: { settings: SupportAct
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field
             label="Counting Mode"
-            hint="UNIQUE_GROUP: each group counts once per day. EVERY_ACTIVITY: every match counts. PER_TEAM_MEMBER: totals broken down per member."
+            hint="UNIQUE_GROUP: each group counts once per period. EVERY_ACTIVITY: every match counts. PER_TEAM_MEMBER: totals broken down per member."
           >
             <Select name="countingMode" defaultValue={settings.countingMode}>
               <option value="UNIQUE_GROUP">Unique Group</option>
@@ -34,9 +34,11 @@ export function SupportActivitySettingsForm({ settings }: { settings: SupportAct
               <option value="PER_TEAM_MEMBER">Per Team Member</option>
             </Select>
           </Field>
-          <Field label="Counting Period" hint="Only Daily exists today.">
-            <Select disabled defaultValue="DAILY">
+          <Field label="Counting Period" hint="Which window the Activity and Team pages report against.">
+            <Select name="countingPeriod" defaultValue={settings.countingPeriod}>
               <option value="DAILY">Daily</option>
+              <option value="WEEKLY">Weekly (Sun-Sat)</option>
+              <option value="MONTHLY">Monthly</option>
             </Select>
           </Field>
         </div>

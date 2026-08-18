@@ -121,6 +121,10 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
     direction: message.fromMe ? "OUTGOING" : "INCOMING",
     body: resolveMessageBody(message),
     timestampWa: new Date(message.timestamp * 1000),
+    // Support Activity Tracking's REPLY_TO_CUSTOMER/MENTION triggers — both ride on this same
+    // onAnyMessage payload, no separate subscription needed.
+    quotedWhatsappMessageId: message.isQuotedMsgAvailable ? (message.quotedMsg?.id ?? null) : null,
+    mentionedPhones: (message.mentionedJidList ?? []).map((jid) => String(jid).split("@")[0] ?? "").filter(Boolean),
   };
 }
 

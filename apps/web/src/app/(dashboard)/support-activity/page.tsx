@@ -2,9 +2,28 @@
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
-import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
-import { getEveryActivityCount, getRecentActivities, getUniqueGroupCount } from "@/server/supportActivityReports";
-import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import { getSupportActivityPeriodRange } from "@/lib/supportActivityPeriod";
+import { getActivityTrend, getEveryActivityCount, getRecentActivities, getUniqueGroupCount } from "@/server/supportActivityReports";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  HelpButton,
+  HelpSection,
+  PageHeader,
+  SectionHeader,
+  Sparkline,
+  StatTile,
+  Table,
+  Td,
+  Th,
+} from "@/components/ui";
+
+const PERIOD_LABEL: Record<string, string> = {
+  DAILY: "Today's",
+  WEEKLY: "This Week's",
+  MONTHLY: "This Month's",
+};
 
 export default async function SupportActivityPage() {
   await requireSession();
@@ -15,39 +34,49 @@ export default async function SupportActivityPage() {
     create: { id: "global" },
   });
 
-  const today = getDhakaDayRange(new Date());
+  const period = getSupportActivityPeriodRange(settings.countingPeriod, new Date());
+  const periodLabel = PERIOD_LABEL[settings.countingPeriod] ?? "Today's";
 
-  const [todaySupportedGroups, todayActivities, activeSupportMembers, totalSupportedGroupsEver, recentActivities] =
+  const [periodSupportedGroups, periodActivities, activeSupportMembers, totalSupportedGroupsEver, recentActivities, trend] =
     await Promise.all([
-      getUniqueGroupCount(today),
-      getEveryActivityCount(today),
+      getUniqueGroupCount(period),
+      getEveryActivityCount(period),
       prisma.internalTeamMember.count({ where: { status: "ACTIVE" } }),
       prisma.supportActivity.groupBy({ by: ["groupId"] }).then((rows) => rows.length),
       getRecentActivities(10),
+      getActivityTrend(30),
     ]);
 
-  const repeatedToday = Math.max(0, todayActivities - todaySupportedGroups);
+  const repeatedThisPeriod = Math.max(0, periodActivities - periodSupportedGroups);
+  const exportParams = `from=${period.start.toISOString()}&to=${period.end.toISOString()}`;
 
   return (
     <div>
       <PageHeader
         title="Support Activity"
-        description="Automatically detected support keyword activity from configured support team members inside WhatsApp groups."
+        description="Automatically detected support keyword/reply/mention activity from configured support team members inside WhatsApp groups."
         actions={
           <HelpButton moduleTitle="Support Activity">
             <HelpSection title="What this page is for">
               <p>
                 A summary of support activity detected automatically from real conversations — a
-                support team member's message matching a configured keyword/rule inside a WhatsApp
-                group. Nothing here sends or changes a customer message; this is read-only tracking.
+                support team member's message matching a configured rule (keyword, reply to a
+                customer, or mention) inside a WhatsApp group. Nothing here sends or changes a
+                customer message; this is read-only tracking.
               </p>
             </HelpSection>
             <HelpSection title="Repeated Support Activities">
               <p>
-                The difference between total activities and unique supported groups today — a
-                positive number means at least one group received more than one support action
-                today. This distinction matters because the "Counted Support" total on the Reports
-                page depends on which Counting Mode is configured in Settings.
+                The difference between total activities and unique supported groups in the current
+                period — a positive number means at least one group received more than one support
+                action. This distinction matters because the "Counted Support" total depends on
+                which Counting Mode is configured in Settings.
+              </p>
+            </HelpSection>
+            <HelpSection title="Period">
+              <p>
+                The stat tiles below follow the Counting Period configured in Settings (Daily,
+                Weekly, or Monthly) — change it there if you want a different window.
               </p>
             </HelpSection>
           </HelpButton>
@@ -64,15 +93,44 @@ export default async function SupportActivityPage() {
       ) : null}
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
-        <StatTile label="Today's Support Groups" value={todaySupportedGroups} />
-        <StatTile label="Today's Support Activities" value={todayActivities} />
+        <StatTile label={`${periodLabel} Support Groups`} value={periodSupportedGroups} />
+        <StatTile label={`${periodLabel} Support Activities`} value={periodActivities} />
         <StatTile label="Active Support Members" value={activeSupportMembers} />
         <StatTile label="Total Supported Groups" value={totalSupportedGroupsEver} />
-        <StatTile label="Repeated Support Activities" value={repeatedToday} tone={repeatedToday > 0 ? "warning" : "neutral"} />
+        <StatTile
+          label="Repeated Support Activities"
+          value={repeatedThisPeriod}
+          tone={repeatedThisPeriod > 0 ? "warning" : "neutral"}
+        />
       </div>
 
+      <Card className="mb-6">
+        <div className="flex items-center justify-between gap-4">
+          <SectionHeader title="30-Day Trend" description="Daily support activity count." />
+          <div className="w-40 shrink-0">
+            <Sparkline data={trend} ariaLabel="Support activity, last 30 days" />
+          </div>
+        </div>
+      </Card>
+
       <Card>
-        <SectionHeader title="Recent Activity" description="Last 10 detected support activities across every group." />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SectionHeader title="Recent Activity" description="Last 10 detected support activities across every group." />
+          <div className="flex gap-3 pb-4 text-xs">
+            <a
+              className="text-[color:var(--color-primary)] underline"
+              href={`/api/support-activity/export?type=activities&format=csv&${exportParams}`}
+            >
+              Export CSV
+            </a>
+            <a
+              className="text-[color:var(--color-primary)] underline"
+              href={`/api/support-activity/export?type=activities&format=xlsx&${exportParams}`}
+            >
+              Export Excel
+            </a>
+          </div>
+        </div>
         {recentActivities.length === 0 ? (
           <EmptyState>No support activity detected yet.</EmptyState>
         ) : (

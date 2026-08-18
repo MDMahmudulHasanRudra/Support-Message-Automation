@@ -28,6 +28,7 @@ export default async function EditSupportRulePage({ params }: { params: Promise<
         defaults={{
           name: rule.name,
           description: rule.description ?? undefined,
+          triggerType: rule.triggerType,
           appliesToAllGroups: rule.appliesToAllGroups,
           groupIds: rule.groups.map((g) => g.groupId),
           appliesToAllTeamMembers: rule.appliesToAllTeamMembers,

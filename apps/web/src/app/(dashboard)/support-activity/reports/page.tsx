@@ -4,15 +4,25 @@ import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 import { getGroupSupportHistory } from "@/server/supportActivityReports";
-import { Badge, Button, Card, EmptyState, FilterBar, HelpButton, HelpSection, PageHeader, Select, StatTile } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select, StatTile } from "@/components/ui";
 
 interface SearchParams {
   groupId?: string;
+  from?: string;
+  to?: string;
+}
+
+function parseCustomRange(from?: string, to?: string): { start: Date; end: Date } | null {
+  if (!from || !to) return null;
+  const start = new Date(`${from}T00:00:00.000Z`);
+  const end = new Date(`${to}T23:59:59.999Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return { start, end };
 }
 
 export default async function SupportActivityReportsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   await requireSession();
-  const { groupId } = await searchParams;
+  const { groupId, from, to } = await searchParams;
 
   const groups = await prisma.whatsAppGroup.findMany({
     where: { isActive: true },
@@ -20,22 +30,34 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
     select: { id: true, name: true },
   });
 
-  const today = getDhakaDayRange(new Date());
-  const history = groupId ? await getGroupSupportHistory(groupId, today) : null;
+  const customRange = parseCustomRange(from, to);
+  const range = customRange ?? getDhakaDayRange(new Date());
+  const history = groupId ? await getGroupSupportHistory(groupId, range) : null;
   const selectedGroup = groupId ? groups.find((g) => g.id === groupId) : null;
+  const rangeLabel = customRange ? `${from} to ${to}` : "today";
+  const exportParams = groupId
+    ? `type=activities&groupId=${groupId}&from=${range.start.toISOString()}&to=${range.end.toISOString()}`
+    : null;
 
   return (
     <div>
       <PageHeader
         title="Group Support History"
-        description="Pick a group to see today's detected support activity for it."
+        description="Pick a group (and optionally a custom date range) to see its detected support activity."
         actions={
           <HelpButton moduleTitle="Group Support History">
             <HelpSection title="Counted vs. Activities">
               <p>
-                "Activities" is the raw number of detected support actions for this group today.
-                "Counted Support" reflects the UNIQUE_GROUP counting mode specifically — within a
-                single group, that mode collapses to 1 if any activity occurred today, 0 otherwise.
+                "Activities" is the raw number of detected support actions for this group in the
+                selected range. "Counted Support" reflects the UNIQUE_GROUP counting mode
+                specifically — within a single group, that mode collapses to 1 if any activity
+                occurred, 0 otherwise.
+              </p>
+            </HelpSection>
+            <HelpSection title="Custom date range">
+              <p>
+                Leave From/To blank to default to today. Setting both overrides the default and is
+                independent of the global Counting Period setting.
               </p>
             </HelpSection>
           </HelpButton>
@@ -52,6 +74,8 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
               </option>
             ))}
           </Select>
+          <Input name="from" type="date" defaultValue={from ?? ""} className="w-36" />
+          <Input name="to" type="date" defaultValue={to ?? ""} className="w-36" />
           <Button type="submit" size="sm">
             View
           </Button>
@@ -62,9 +86,21 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
         <EmptyState>Select a group above to view its support history.</EmptyState>
       ) : (
         <>
-          <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-2">
-            <StatTile label="Counted Support (today)" value={history?.countedSupport ?? 0} />
-            <StatTile label="Activities (today)" value={history?.rawActivityCount ?? 0} />
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-2">
+              <StatTile label={`Counted Support (${rangeLabel})`} value={history?.countedSupport ?? 0} />
+              <StatTile label={`Activities (${rangeLabel})`} value={history?.rawActivityCount ?? 0} />
+            </div>
+            {exportParams ? (
+              <div className="flex gap-3 text-xs">
+                <a className="text-[color:var(--color-primary)] underline" href={`/api/support-activity/export?${exportParams}&format=csv`}>
+                  Export CSV
+                </a>
+                <a className="text-[color:var(--color-primary)] underline" href={`/api/support-activity/export?${exportParams}&format=xlsx`}>
+                  Export Excel
+                </a>
+              </div>
+            ) : null}
           </div>
 
           <Card>
@@ -84,7 +120,7 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
                 ))}
               </ul>
             ) : (
-              <EmptyState>No support activity for this group today.</EmptyState>
+              <EmptyState>No support activity for this group in the selected range.</EmptyState>
             )}
           </Card>
         </>

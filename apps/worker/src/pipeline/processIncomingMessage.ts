@@ -81,6 +81,16 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
     select: { senderPhone: true, isFromTeamMember: true },
   });
 
+  // Resolve the WhatsApp "quoted reply" reference to our own Message row, if we have it tracked —
+  // null if the quoted message predates tracking or this message isn't a reply at all. Feeds
+  // Support Activity Tracking's REPLY_TO_CUSTOMER trigger below.
+  const quotedMessage = raw.quotedWhatsappMessageId
+    ? await prisma.message.findUnique({
+        where: { accountId_whatsappMessageId: { accountId: raw.accountId, whatsappMessageId: raw.quotedWhatsappMessageId } },
+        select: { id: true, senderPhone: true, isFromTeamMember: true },
+      })
+    : null;
+
   const normalizedBody = raw.body.trim();
 
   let message;
@@ -99,6 +109,8 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
         normalizedBody,
         timestampWa: raw.timestampWa,
         processingStatus: "PENDING",
+        quotedMessageId: quotedMessage?.id ?? null,
+        mentionedPhones: raw.mentionedPhones ?? [],
       },
     });
   } catch (err: any) {
@@ -147,6 +159,10 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
       messageId: message.id,
       body: raw.body,
       timestampWa: raw.timestampWa,
+      quotedMessage: quotedMessage
+        ? { senderPhone: quotedMessage.senderPhone, isFromTeamMember: quotedMessage.isFromTeamMember }
+        : null,
+      mentionedPhones: raw.mentionedPhones ?? [],
     });
   } catch (err) {
     console.error("[support-activity] failed to record support activity", err);

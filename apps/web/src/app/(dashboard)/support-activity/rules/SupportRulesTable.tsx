@@ -10,10 +10,17 @@ export interface SupportRuleRow {
   id: string;
   name: string;
   isActive: boolean;
+  triggerType: string;
   keywordsSummary: string;
   groupsSummary: string;
   teamMembersSummary: string;
 }
+
+const TRIGGER_TYPE_LABEL: Record<string, string> = {
+  KEYWORD_MATCH: "Keyword Match",
+  REPLY_TO_CUSTOMER: "Reply to Customer",
+  MENTION: "Mention",
+};
 
 type DialogState = { kind: "delete" | "toggle"; rule: SupportRuleRow } | null;
 
@@ -43,6 +50,7 @@ export function SupportRulesTable({ rules }: { rules: SupportRuleRow[] }) {
         <thead>
           <tr>
             <Th>Name</Th>
+            <Th>Trigger</Th>
             <Th>Keywords</Th>
             <Th>Groups</Th>
             <Th>Team Members</Th>
@@ -54,6 +62,9 @@ export function SupportRulesTable({ rules }: { rules: SupportRuleRow[] }) {
           {rules.map((r) => (
             <tr key={r.id}>
               <Td className="font-medium">{r.name}</Td>
+              <Td>
+                <Badge color="blue">{TRIGGER_TYPE_LABEL[r.triggerType] ?? r.triggerType}</Badge>
+              </Td>
               <Td className="max-w-xs truncate">{r.keywordsSummary}</Td>
               <Td>{r.groupsSummary}</Td>
               <Td>{r.teamMembersSummary}</Td>

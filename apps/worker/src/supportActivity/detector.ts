@@ -12,6 +12,11 @@ export interface SupportActivityDetectionInput {
   messageId: string;
   body: string;
   timestampWa: Date;
+  /** The message this one quotes (swipe-to-reply), already resolved to our own Message row by the
+   *  pipeline — null if not a reply, or if the quoted message predates tracking. */
+  quotedMessage?: { senderPhone: string; isFromTeamMember: boolean } | null;
+  /** Digits-only phone numbers @-mentioned in this message. */
+  mentionedPhones?: string[];
 }
 
 /**
@@ -40,7 +45,7 @@ export async function detectSupportActivity(input: SupportActivityDetectionInput
   const candidateRules = await prisma.supportRule.findMany({
     where: {
       isActive: true,
-      triggerType: "KEYWORD_MATCH",
+      triggerType: { in: ["KEYWORD_MATCH", "REPLY_TO_CUSTOMER", "MENTION"] },
       AND: [
         { OR: [{ appliesToAllGroups: true }, { groups: { some: { groupId: input.groupId } } }] },
         { OR: [{ appliesToAllTeamMembers: true }, { teamMembers: { some: { teamMemberId: teamMember.id } } }] },
@@ -57,20 +62,53 @@ export async function detectSupportActivity(input: SupportActivityDetectionInput
   });
   if (candidateRules.length === 0) return;
 
-  let winner: { ruleId: string; keywordId: string } | null = null;
-  for (const rule of candidateRules) {
-    if (rule.triggerType !== "KEYWORD_MATCH") continue; // only trigger type today; extend here later
-    const hit = rule.keywords.find((rk) =>
-      matchSupportKeyword(input.body, {
-        value: rk.keyword.value,
-        mode: rk.keyword.matchMode,
-        caseSensitive: rk.keyword.caseSensitive,
-      }),
-    );
-    if (hit) {
-      winner = { ruleId: rule.id, keywordId: hit.keywordId };
-      break;
+  const mentionedPhones = input.mentionedPhones ?? [];
+  // Only queried when a MENTION-type candidate rule actually exists and there's something to check
+  // — keeps the common case (no MENTION rules configured) free of this extra lookup.
+  let mentionsACustomer: boolean | null = null;
+  async function mentionsSomeoneOutsideTeam(): Promise<boolean> {
+    if (mentionsACustomer !== null) return mentionsACustomer;
+    if (mentionedPhones.length === 0) {
+      mentionsACustomer = false;
+      return mentionsACustomer;
     }
+    const mentionedTeamMembers = await prisma.internalTeamMember.findMany({
+      where: { phoneNumber: { in: mentionedPhones } },
+      select: { phoneNumber: true },
+    });
+    const teamPhones = new Set(mentionedTeamMembers.map((m) => m.phoneNumber));
+    mentionsACustomer = mentionedPhones.some((phone) => !teamPhones.has(phone));
+    return mentionsACustomer;
+  }
+
+  let winner: { ruleId: string; keywordId: string | null } | null = null;
+  for (const rule of candidateRules) {
+    switch (rule.triggerType) {
+      case "KEYWORD_MATCH": {
+        const hit = rule.keywords.find((rk) =>
+          matchSupportKeyword(input.body, {
+            value: rk.keyword.value,
+            mode: rk.keyword.matchMode,
+            caseSensitive: rk.keyword.caseSensitive,
+          }),
+        );
+        if (hit) winner = { ruleId: rule.id, keywordId: hit.keywordId };
+        break;
+      }
+      case "REPLY_TO_CUSTOMER": {
+        if (input.quotedMessage && !input.quotedMessage.isFromTeamMember) {
+          winner = { ruleId: rule.id, keywordId: null };
+        }
+        break;
+      }
+      case "MENTION": {
+        if (await mentionsSomeoneOutsideTeam()) {
+          winner = { ruleId: rule.id, keywordId: null };
+        }
+        break;
+      }
+    }
+    if (winner) break;
   }
   if (!winner) return;
 

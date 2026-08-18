@@ -1,5 +1,6 @@
 import { prisma } from "@support-automation/db";
 import type { SupportActivityCountingMode } from "@prisma/client";
+import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 
 // Server-component-only read helpers for Support Activity Tracking's dashboard pages — no
 // "use server" directive, these are never invoked from a client event handler. Aggregates across
@@ -102,6 +103,52 @@ export async function getRecentActivities(take = 10): Promise<RecentActivityRow[
     groupName: r.group.name,
     teamMemberName: r.teamMember?.name ?? null,
     keywordValue: r.keyword?.value ?? null,
+    messageBody: r.message.body,
+  }));
+}
+
+/** Daily incoming-activity counts for the last N Dhaka calendar days, oldest first — feeds the
+ *  Activity page's trend Sparkline. Follows dashboardSummary.ts's getRecentMessageActivity() day-
+ *  bucketing pattern, but Dhaka-correct (via getDhakaDayRange) since this is a dedicated feature
+ *  page, not the general dashboard. */
+export async function getActivityTrend(days = 30): Promise<number[]> {
+  const now = new Date();
+  const dayRanges: DateRange[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    dayRanges.push(getDhakaDayRange(new Date(now.getTime() - i * 24 * 60 * 60 * 1000)));
+  }
+  return Promise.all(dayRanges.map((range) => getEveryActivityCount(range)));
+}
+
+export interface ExportActivityRow {
+  occurredAt: Date;
+  groupName: string;
+  teamMemberName: string | null;
+  keywordValue: string | null;
+  triggerType: string | null;
+  messageBody: string;
+}
+
+/** Full raw activity rows for a date range (and optionally one group), bounded only by the date
+ *  range itself — feeds the CSV/Excel export endpoint. */
+export async function getActivitiesForExport(range: DateRange, groupId?: string): Promise<ExportActivityRow[]> {
+  const rows = await prisma.supportActivity.findMany({
+    where: { occurredAt: { gte: range.start, lt: range.end }, ...(groupId ? { groupId } : {}) },
+    orderBy: { occurredAt: "desc" },
+    include: {
+      group: { select: { name: true } },
+      teamMember: { select: { name: true } },
+      keyword: { select: { value: true } },
+      rule: { select: { triggerType: true } },
+      message: { select: { body: true } },
+    },
+  });
+  return rows.map((r) => ({
+    occurredAt: r.occurredAt,
+    groupName: r.group.name,
+    teamMemberName: r.teamMember?.name ?? null,
+    keywordValue: r.keyword?.value ?? null,
+    triggerType: r.rule?.triggerType ?? null,
     messageBody: r.message.body,
   }));
 }
