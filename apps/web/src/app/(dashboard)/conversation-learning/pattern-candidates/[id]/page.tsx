@@ -65,7 +65,7 @@ export default async function PatternCandidateDetailPage({ params }: { params: P
       {!floorMet ? (
         <p className="mb-6 text-sm text-[color:var(--color-muted-foreground)]">
           This pattern hasn&apos;t cleared the review floor yet (occurrence/group/client minimums
-          in Learning Settings), so it isn&apos;t eligible for a proposal yet — it&apos;ll become
+          in Conversation Settings), so it isn&apos;t eligible for a proposal yet — it&apos;ll become
           actionable automatically once more evidence accumulates.
         </p>
       ) : null}

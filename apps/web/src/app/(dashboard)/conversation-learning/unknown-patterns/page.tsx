@@ -96,7 +96,7 @@ export default async function UnknownPatternsPage({ searchParams }: { searchPara
             <HelpSection title="Why a pattern shows up here">
               <p>
                 Same three floors as Pattern Candidates (minimum occurrences, distinct groups,
-                distinct clients — all configurable in Learning Settings), applied to the subset of
+                distinct clients — all configurable in Conversation Settings), applied to the subset of
                 occurrences where no existing AutomationRule fired. A pattern an existing rule
                 already handles well never appears here, no matter how often it recurs — and once a
                 pattern is Approved, Rejected, Merged, or Expired it drops off this list too.
@@ -104,7 +104,7 @@ export default async function UnknownPatternsPage({ searchParams }: { searchPara
             </HelpSection>
             <HelpSection title="Notification column">
               <p>
-                If Unknown Pattern Alerts are enabled in Learning Settings, one WhatsApp alert is
+                If Unknown Pattern Alerts are enabled in Conversation Settings, one WhatsApp alert is
                 sent per pattern (never per message) once it clears the floor above, then cooled
                 down for a configurable period — this reflects that alert&apos;s real delivery
                 status. Blank means alerts are off, or none has been sent for this pattern yet.

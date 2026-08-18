@@ -151,7 +151,7 @@ export default async function ConversationLearningPage() {
         <HubLink
           href="/conversation-learning/settings"
           icon={SettingsIcon}
-          label="Learning Settings"
+          label="Conversation Settings"
           description={learningSettings.autoApprovalEnabled ? "Auto-approval enabled" : "Thresholds & weights"}
         />
       </div>

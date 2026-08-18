@@ -1,9 +1,10 @@
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { getSupportActivityPeriodRange } from "@/lib/supportActivityPeriod";
 import { getPerTeamMemberBreakdown } from "@/server/supportActivityReports";
-import { Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
+import { ButtonLink, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
 
 const PERIOD_LABEL: Record<string, string> = {
   DAILY: "Today",
@@ -50,19 +51,15 @@ export default async function SupportActivityTeamPage() {
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SectionHeader title={periodLabel} />
-          <div className="flex gap-3 pb-4 text-xs">
-            <a
-              className="text-[color:var(--color-primary)] underline"
-              href={`/api/support-activity/export?type=team&format=csv&${exportParams}`}
-            >
+          <div className="flex gap-2">
+            <ButtonLink href={`/api/support-activity/export?type=team&format=csv&${exportParams}`}>
+              <Download className="size-3.5" aria-hidden />
               Export CSV
-            </a>
-            <a
-              className="text-[color:var(--color-primary)] underline"
-              href={`/api/support-activity/export?type=team&format=xlsx&${exportParams}`}
-            >
+            </ButtonLink>
+            <ButtonLink href={`/api/support-activity/export?type=team&format=xlsx&${exportParams}`}>
+              <Download className="size-3.5" aria-hidden />
               Export Excel
-            </a>
+            </ButtonLink>
           </div>
         </div>
         {breakdown.length === 0 ? (

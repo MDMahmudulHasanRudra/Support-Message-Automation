@@ -14,6 +14,7 @@ export * from "./ProgressBar";
 export * from "./Sparkline";
 export * from "./StatTile";
 export * from "./StepIndicator";
+export * from "./Switch";
 export * from "./Table";
 export * from "./Toast";
 export * from "./Tooltip";

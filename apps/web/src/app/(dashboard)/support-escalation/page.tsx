@@ -34,10 +34,10 @@ export default async function SupportEscalationDashboardPage() {
   return (
     <div>
       <PageHeader
-        title="Priority Support Monitoring"
+        title="Active Cases"
         description="High-priority groups with unanswered customer messages, and where escalation currently stands. Configure per-group priority on the Groups page."
         actions={
-          <HelpButton moduleTitle="Priority Support Monitoring">
+          <HelpButton moduleTitle="Active Cases">
             <HelpSection title="What this page is for">
               <p>
                 Lists every currently active case — a priority-tagged group with a customer message

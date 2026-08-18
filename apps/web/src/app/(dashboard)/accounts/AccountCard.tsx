@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   ConfirmDialog,
+  StatusDot,
   useToast,
 } from "@/components/ui";
 
@@ -214,9 +215,12 @@ export function AccountCard({
               />
             </>
           )}
-          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-            Updated {account.qrUpdatedAt ? new Date(account.qrUpdatedAt).toLocaleTimeString() : "—"} · this
-            page refreshes automatically
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-[color:var(--color-muted-foreground)]">
+            <span>
+              Updated {account.qrUpdatedAt ? new Date(account.qrUpdatedAt).toLocaleTimeString() : "—"} · this
+              page refreshes automatically
+            </span>
+            <StatusDot color="blue" pulse />
           </p>
         </div>
       ) : null}

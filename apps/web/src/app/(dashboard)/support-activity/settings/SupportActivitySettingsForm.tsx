@@ -1,7 +1,7 @@
 "use client";
 
 import type { SupportActivitySettings } from "@prisma/client";
-import { Button, Card, Checkbox, Field, SectionHeader, Select } from "@/components/ui";
+import { Button, Card, Field, SectionHeader, Select, SwitchField } from "@/components/ui";
 import { updateSupportActivitySettings } from "@/server/actions/supportActivitySettings";
 
 export function SupportActivitySettingsForm({ settings }: { settings: SupportActivitySettings }) {
@@ -12,10 +12,7 @@ export function SupportActivitySettingsForm({ settings }: { settings: SupportAct
           title="Support Activity Tracking"
           description="The master switch — off by default. No existing WhatsApp automation is affected either way."
         />
-        <label className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-          <Checkbox name="enabled" defaultChecked={settings.enabled} />
-          Enable Support Activity Tracking
-        </label>
+        <SwitchField name="enabled" label="Enable Support Activity Tracking" defaultChecked={settings.enabled} />
       </Card>
 
       <Card>

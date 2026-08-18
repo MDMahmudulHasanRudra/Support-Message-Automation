@@ -49,7 +49,7 @@ export default async function SupportEscalationCasePage({ params }: { params: Pr
           className="inline-flex items-center gap-1 text-sm text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
         >
           <ArrowLeft className="size-3.5" aria-hidden />
-          Back to Priority Support Monitoring
+          Back to Active Cases
         </Link>
       </p>
 

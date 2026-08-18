@@ -32,10 +32,13 @@ export function DashboardModuleCard({
       <div className="mt-4 flex items-center justify-between border-t border-[var(--color-border)] pt-3">
         <Link
           href={href}
-          className="inline-flex items-center gap-1 text-xs font-medium text-[color:var(--color-primary)] hover:underline"
+          className="group inline-flex items-center gap-1 text-xs font-medium text-[color:var(--color-primary)] hover:underline"
         >
           {linkLabel}
-          <ArrowRight className="size-3.5" aria-hidden />
+          <ArrowRight
+            className="size-3.5 transition-transform duration-150 group-hover:translate-x-0.5"
+            aria-hidden
+          />
         </Link>
         {secondaryLink ? (
           <Link

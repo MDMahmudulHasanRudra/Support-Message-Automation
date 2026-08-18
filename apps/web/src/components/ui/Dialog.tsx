@@ -1,13 +1,15 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "./Button";
 
 const DIALOG_SIZE = {
   md: "max-w-md",
   lg: "max-w-2xl",
 };
+
+const EXIT_MS = 200; // matches --duration-base
 
 export function Dialog({
   open,
@@ -28,12 +30,45 @@ export function Dialog({
   size?: "md" | "lg";
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const [visible, setVisible] = useState(false);
 
+  // Two-phase open/close so the fade+scale transition below has a real "before" value to
+  // interpolate from — showModal()/close() are still the source of truth for native
+  // focus-trap/top-layer behavior, `visible` only drives the CSS transition around them.
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    if (open && !node.open) node.showModal();
-    if (!open && node.open) node.close();
+    let raf1 = 0;
+    let raf2 = 0;
+    let timer: number | undefined;
+
+    if (open) {
+      if (!node.open) node.showModal();
+      // `visible` is already false here — the only place it's ever set true is the rAF below,
+      // and every path into this branch is preceded by either initial state or the `else`
+      // branch, which always resets it first. Re-setting it would just be a same-value
+      // setState call directly in the effect body, which the lint rule (rightly) flags.
+      // Double rAF: Safari needs the extra frame for the "hidden" state to actually paint
+      // before flipping, or the transition has nothing to interpolate from.
+      raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => setVisible(true));
+      });
+    } else {
+      // Deferred via a microtask (fires before the next paint, so no visible delay) rather than
+      // called directly in the effect body — satisfies react-hooks/set-state-in-effect, which
+      // flags synchronous setState-in-effect as a cascading-render smell.
+      queueMicrotask(() => setVisible(false));
+      if (node.open) {
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        timer = window.setTimeout(() => node.close(), reduced ? 0 : EXIT_MS);
+      }
+    }
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      window.clearTimeout(timer);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -64,7 +99,9 @@ export function Dialog({
       // UA stylesheet's `margin: auto` — Tailwind's preflight resets margin to 0 on every
       // element, which silently defeats that default and left dialogs pinned to the
       // viewport's top-left corner instead of centered.
-      className={`fixed left-1/2 top-1/2 m-0 flex max-h-[85vh] w-full ${DIALOG_SIZE[size]} -translate-x-1/2 -translate-y-1/2 flex-col rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-0 text-[color:var(--color-foreground)] shadow-[var(--shadow-xl)] backdrop:bg-black/55 backdrop:backdrop-blur-[2px]`}
+      className={`fixed left-1/2 top-1/2 m-0 flex max-h-[85vh] w-full ${DIALOG_SIZE[size]} -translate-x-1/2 -translate-y-1/2 flex-col rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-0 text-[color:var(--color-foreground)] shadow-[var(--shadow-xl)] transition duration-[var(--duration-base)] ease-[var(--ease-out)] backdrop:backdrop-blur-[2px] backdrop:transition-colors backdrop:duration-[var(--duration-base)] backdrop:ease-[var(--ease-out)] ${
+        visible ? "opacity-100 scale-100 backdrop:bg-black/55" : "opacity-0 scale-95 backdrop:bg-black/0"
+      }`}
     >
       <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-6 py-4.5">
         <div>

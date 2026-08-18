@@ -37,10 +37,10 @@ export default async function AiLearningDashboardPage() {
   return (
     <div>
       <PageHeader
-        title="AI Dashboard"
+        title="AI Learning"
         description="Phase 1 foundation: AI provider/model configuration and a manually-curated Knowledge Base. Software/chat/document learning and AI-generated responses come in later phases."
         actions={
-          <HelpButton moduleTitle="AI Dashboard">
+          <HelpButton moduleTitle="AI Learning">
             <HelpSection title="Please read this before configuring anything in AI Learning">
               <p>
                 Everything in this entire module — Knowledge Base, Providers, Models, and the Settings

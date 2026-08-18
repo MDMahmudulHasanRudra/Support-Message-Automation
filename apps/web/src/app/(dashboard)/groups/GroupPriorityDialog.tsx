@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Checkbox, Dialog, Field, Select } from "@/components/ui";
+import { Button, Dialog, Field, Select, Switch } from "@/components/ui";
 import { setGroupPriority } from "@/server/actions/groups";
 import type { GroupRow } from "./GroupsTable";
 
@@ -75,7 +75,7 @@ export function GroupPriorityDialog({
           </Select>
         </Field>
         <label className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-          <Checkbox
+          <Switch
             checked={escalationMonitoringEnabled}
             onChange={(e) => setEscalationMonitoringEnabled(e.target.checked)}
           />

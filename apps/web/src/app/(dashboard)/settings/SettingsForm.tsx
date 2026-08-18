@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { Alert, Badge, Button, Card, Checkbox, Field, Input, SectionHeader, useToast } from "@/components/ui";
+import { Alert, Badge, Button, Card, Checkbox, Field, Input, SectionHeader, SwitchField, useToast } from "@/components/ui";
 import { updateSafetySettings, type SettingsFormState } from "@/server/actions/settings";
 import type { AutomationSettings } from "@prisma/client";
 
@@ -70,9 +70,12 @@ export function SettingsForm({
 
       <Card>
         <SectionHeader title="Global Rate Limiting" />
-        <label className="mb-4 flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-          <Checkbox name="rateLimitingEnabled" defaultChecked={settings.rateLimitingEnabled} /> Rate limiting enabled
-        </label>
+        <SwitchField
+          className="mb-4"
+          name="rateLimitingEnabled"
+          label="Rate limiting enabled"
+          defaultChecked={settings.rateLimitingEnabled}
+        />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Field label="Max per minute">
             <Input name="globalMaxPerMinute" type="number" defaultValue={settings.globalMaxPerMinute} />

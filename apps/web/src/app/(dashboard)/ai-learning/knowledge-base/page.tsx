@@ -57,7 +57,7 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
               <HelpSection title="What this is">
                 <p>
                   A manually written, versioned library of FAQs, SOPs, and known answers — not
-                  currently used to generate any live customer reply (see the AI Dashboard help for
+                  currently used to generate any live customer reply (see the AI Learning help for
                   why). Safe to build up now for whenever that changes.
                 </p>
               </HelpSection>

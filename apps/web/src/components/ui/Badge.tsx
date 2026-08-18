@@ -23,22 +23,42 @@ const DOT_STYLES: Record<BadgeColor, string> = {
 export function Badge({
   color = "gray",
   dot = false,
+  pulse = false,
   children,
 }: {
   color?: BadgeColor;
   dot?: boolean;
+  /** Only for a dot standing in for a genuinely live/real-time state — not every positive status needs this. */
+  pulse?: boolean;
   children: ReactNode;
 }) {
   return (
     <span
       className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${BADGE_STYLES[color]}`}
     >
-      {dot ? <span className={`size-1.5 shrink-0 rounded-full ${DOT_STYLES[color]}`} aria-hidden /> : null}
+      {dot ? (
+        pulse ? (
+          <span className="relative inline-flex size-1.5 shrink-0" aria-hidden>
+            <span className={`absolute inline-flex size-full animate-ping rounded-full opacity-60 ${DOT_STYLES[color]}`} />
+            <span className={`relative inline-flex size-1.5 rounded-full ${DOT_STYLES[color]}`} />
+          </span>
+        ) : (
+          <span className={`size-1.5 shrink-0 rounded-full ${DOT_STYLES[color]}`} aria-hidden />
+        )
+      ) : null}
       {children}
     </span>
   );
 }
 
-export function StatusDot({ color = "gray" }: { color?: BadgeColor }) {
-  return <span className={`inline-block size-2 rounded-full ${DOT_STYLES[color]}`} aria-hidden />;
+export function StatusDot({ color = "gray", pulse = false }: { color?: BadgeColor; pulse?: boolean }) {
+  if (!pulse) {
+    return <span className={`inline-block size-2 rounded-full ${DOT_STYLES[color]}`} aria-hidden />;
+  }
+  return (
+    <span className="relative inline-flex size-2" aria-hidden>
+      <span className={`absolute inline-flex size-full animate-ping rounded-full opacity-60 ${DOT_STYLES[color]}`} />
+      <span className={`relative inline-flex size-2 rounded-full ${DOT_STYLES[color]}`} />
+    </span>
+  );
 }

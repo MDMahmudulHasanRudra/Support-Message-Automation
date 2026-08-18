@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Checkbox, ConfirmDialog, Dialog, EmptyState, Field, Input, Select, Table, Td, Th } from "@/components/ui";
+import { Badge, Button, ConfirmDialog, Dialog, EmptyState, Field, Input, Select, Switch, Table, Td, Th } from "@/components/ui";
 import { deleteSupportKeyword, toggleSupportKeywordActive, updateSupportKeyword } from "@/server/actions/supportKeywords";
 
 export interface SupportKeywordRow {
@@ -119,7 +119,7 @@ export function SupportKeywordsTable({ keywords }: { keywords: SupportKeywordRow
               </Select>
             </Field>
             <label className="flex items-center gap-2 text-sm">
-              <Checkbox name="caseSensitive" defaultChecked={editing.caseSensitive} />
+              <Switch name="caseSensitive" defaultChecked={editing.caseSensitive} />
               Case sensitive
             </label>
             <div className="flex justify-end gap-2 pt-2">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { Alert, Button, Card, Checkbox, Field, Input, Label, Select, SectionHeader, Textarea } from "@/components/ui";
+import { Alert, Button, Card, Checkbox, Field, Input, Label, Select, SectionHeader, Switch, Textarea } from "@/components/ui";
 import type { RuleFormState } from "@/server/actions/rules";
 
 const RULE_TYPES = [
@@ -170,7 +170,7 @@ export function RuleForm({
         </div>
 
         <label className="mt-4 flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-          <Checkbox
+          <Switch
             name="timeWindowEnabled"
             defaultChecked={scheduleEnabled}
             onChange={(e) => setScheduleEnabled(e.target.checked)}

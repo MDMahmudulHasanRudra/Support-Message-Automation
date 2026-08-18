@@ -58,7 +58,7 @@ export default async function PatternCandidatesPage({ searchParams }: { searchPa
             <HelpSection title="Why a pattern shows up here">
               <p>
                 A pattern only appears once it clears three independent floors, all configurable in
-                Learning Settings: minimum occurrence count, minimum distinct groups, and minimum
+                Conversation Settings: minimum occurrence count, minimum distinct groups, and minimum
                 distinct clients. A single conversation — no matter how it scores — can never appear
                 in this list.
               </p>

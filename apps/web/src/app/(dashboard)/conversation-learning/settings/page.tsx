@@ -10,10 +10,10 @@ export default async function LearningSettingsPage() {
   return (
     <div>
       <PageHeader
-        title="Learning Settings"
+        title="Conversation Settings"
         description="Thresholds, weights, and the auto-approval policy for Conversation Learning."
         actions={
-          <HelpButton moduleTitle="Learning Settings">
+          <HelpButton moduleTitle="Conversation Settings">
             <HelpSection title="Off by default, safe to leave off">
               <p>
                 Conversation Learning only ever reads messages that already went through the real

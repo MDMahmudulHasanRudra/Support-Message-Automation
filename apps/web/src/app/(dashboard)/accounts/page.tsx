@@ -23,7 +23,7 @@ const QR_STALE_AFTER_MS = 60_000;
 // render a human-readable "explicitly used by" label per account.
 const SERVICE_LABELS: Record<string, string> = {
   NOTIFY_WHATSAPP: "Support Notifications",
-  PRIORITY_SUPPORT: "Priority Support Escalation",
+  PRIORITY_SUPPORT: "Escalations",
 };
 
 function isQrStale(qrUpdatedAtIso: string | null, nowMs: number): boolean {

@@ -1,7 +1,7 @@
 import { Plus } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { Button, Card, Checkbox, Field, HelpButton, HelpSection, Input, Label, PageHeader, Select, SectionHeader } from "@/components/ui";
+import { Button, Card, Field, HelpButton, HelpSection, Input, Label, PageHeader, Select, SectionHeader, Switch } from "@/components/ui";
 import { createSupportKeyword } from "@/server/actions/supportKeywords";
 import { SupportKeywordsTable, type SupportKeywordRow } from "./SupportKeywordsTable";
 
@@ -49,7 +49,7 @@ export default async function SupportKeywordsPage() {
           <div className="flex items-end pb-2">
             <Label>
               <span className="mr-2 inline-flex items-center gap-2">
-                <Checkbox name="caseSensitive" />
+                <Switch name="caseSensitive" />
                 Case sensitive
               </span>
             </Label>

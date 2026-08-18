@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import type { ButtonHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from "react";
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 type ButtonSize = "sm" | "md";
@@ -37,7 +37,7 @@ export function Button({
 }) {
   return (
     <button
-      className={`inline-flex cursor-pointer items-center justify-center rounded-md font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50 ${VARIANT_STYLES[variant]} ${SIZE_STYLES[size]} ${className}`}
+      className={`inline-flex cursor-pointer items-center justify-center rounded-md font-medium transition duration-[var(--duration-fast)] ease-[var(--ease-out)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${VARIANT_STYLES[variant]} ${SIZE_STYLES[size]} ${className}`}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       {...props}
@@ -45,5 +45,26 @@ export function Button({
       {loading ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
       {children}
     </button>
+  );
+}
+
+/** Same visual language as `Button`, for links that must stay real `<a href>` navigation — e.g. a file download. */
+export function ButtonLink({
+  children,
+  variant = "secondary",
+  size = "sm",
+  className = "",
+  ...props
+}: AnchorHTMLAttributes<HTMLAnchorElement> & {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+}) {
+  return (
+    <a
+      className={`inline-flex cursor-pointer items-center justify-center rounded-md font-medium transition duration-[var(--duration-fast)] ease-[var(--ease-out)] active:scale-[0.98] ${VARIANT_STYLES[variant]} ${SIZE_STYLES[size]} ${className}`}
+      {...props}
+    >
+      {children}
+    </a>
   );
 }

@@ -183,6 +183,44 @@ body {
   background-clip: padding-box;
 }
 
+/* Shimmer-sweep skeleton loading, and a fade+rise used for page/step entrances
+   (applied via a remount-keyed wrapper, since there's no prior state to
+   transition from on first mount — needs a real @keyframes, not a transition). */
+@keyframes shimmer-sweep {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@keyframes fade-in-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-neutral-bg) 35%,
+    var(--color-border-strong) 50%,
+    var(--color-neutral-bg) 65%
+  );
+  background-size: 250% 100%;
+  animation: shimmer-sweep 1.6s ease-in-out infinite;
+}
+
+.animate-fade-in-rise {
+  animation: fade-in-rise var(--duration-base) var(--ease-out) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

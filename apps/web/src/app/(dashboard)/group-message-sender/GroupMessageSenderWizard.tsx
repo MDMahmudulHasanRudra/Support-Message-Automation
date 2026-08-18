@@ -218,6 +218,7 @@ export function GroupMessageSenderWizard({
 
       <StepIndicator steps={STEP_LABELS} currentStep={step} />
 
+      <div key={step} className="animate-fade-in-rise space-y-6">
       {step === 1 ? (
         <Card>
           <SectionHeader title="WhatsApp Account" />
@@ -413,6 +414,7 @@ export function GroupMessageSenderWizard({
           maxPerJob={maxPerJob}
         />
       ) : null}
+      </div>
 
       {error ? (
         <Alert tone="danger" title="Could not queue this job">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect } from "react";
-import { Button, Card, Checkbox, Field, Input, SectionHeader, useToast } from "@/components/ui";
+import { Button, Card, Field, Input, SectionHeader, SwitchField, useToast } from "@/components/ui";
 import { updateAiSettings, type AiSettingsFormState } from "@/server/actions/aiSettings";
 import type { AiSettings } from "@prisma/client";
 
@@ -35,10 +35,7 @@ export function AiSettingsForm({ settings }: { settings: AiSettings }) {
         />
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {ENGINE_TOGGLES.map((t) => (
-            <label key={t.key} className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-              <Checkbox name={t.key} defaultChecked={Boolean(settings[t.key])} />
-              {t.label}
-            </label>
+            <SwitchField key={t.key} name={t.key} label={t.label} defaultChecked={Boolean(settings[t.key])} />
           ))}
         </div>
       </Card>

@@ -115,7 +115,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
                 Click "Configure" to tag a group P1/P2/P3 for Priority Support Escalation, and optionally
                 assign a team member who gets DM'd if nobody replies in time. Leaving priority unset
                 (the default) means this group is never monitored for escalation — it's entirely opt-in.
-                See the Priority Support Dashboard's own Help for what the tiers actually do.
+                See the Escalations → Active Cases page's own Help for what the tiers actually do.
               </p>
             </HelpSection>
           </HelpButton>

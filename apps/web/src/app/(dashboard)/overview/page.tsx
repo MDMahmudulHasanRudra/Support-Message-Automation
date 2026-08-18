@@ -203,7 +203,7 @@ export default async function OverviewPage() {
           </ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Priority Support Escalation" icon={ShieldAlert} href="/support-escalation">
+        <DashboardModuleCard title="Escalations" icon={ShieldAlert} href="/support-escalation">
           <ModuleCardRow label="Open cases">
             <Badge color={escalation.openCaseCount > 0 ? "yellow" : "green"} dot>
               {escalation.openCaseCount}

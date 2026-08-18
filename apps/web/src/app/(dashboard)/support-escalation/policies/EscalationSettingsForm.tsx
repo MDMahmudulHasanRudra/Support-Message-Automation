@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect } from "react";
-import { Button, Card, Checkbox, Field, SectionHeader, Select, useToast } from "@/components/ui";
+import { Button, Card, Field, SectionHeader, Select, SwitchField, useToast } from "@/components/ui";
 import { updateEscalationSettings, type PolicyFormState } from "@/server/actions/supportEscalation";
 
 export function EscalationSettingsForm({
@@ -25,9 +25,7 @@ export function EscalationSettingsForm({
     <Card>
       <SectionHeader title="Escalation Settings" description="Master switch and who the final tier escalates to." />
       <form action={formAction} className="space-y-4">
-        <label className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-          <Checkbox name="enabled" defaultChecked={enabled} /> Priority escalation enabled
-        </label>
+        <SwitchField name="enabled" label="Priority escalation enabled" defaultChecked={enabled} />
         <Field label="Escalation admin" hint="Receives the final tier and every repeated follow-up.">
           <Select name="escalationAdminId" defaultValue={escalationAdminId ?? ""}>
             <option value="">Not configured</option>

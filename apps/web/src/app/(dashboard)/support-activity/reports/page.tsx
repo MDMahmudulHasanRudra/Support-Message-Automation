@@ -1,10 +1,24 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
+import { Download } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 import { getGroupSupportHistory } from "@/server/supportActivityReports";
-import { Badge, Button, Card, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select, StatTile } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  ButtonLink,
+  Card,
+  EmptyState,
+  FilterBar,
+  HelpButton,
+  HelpSection,
+  Input,
+  PageHeader,
+  Select,
+  StatTile,
+} from "@/components/ui";
 
 interface SearchParams {
   groupId?: string;
@@ -92,13 +106,15 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
               <StatTile label={`Activities (${rangeLabel})`} value={history?.rawActivityCount ?? 0} />
             </div>
             {exportParams ? (
-              <div className="flex gap-3 text-xs">
-                <a className="text-[color:var(--color-primary)] underline" href={`/api/support-activity/export?${exportParams}&format=csv`}>
+              <div className="flex gap-2">
+                <ButtonLink href={`/api/support-activity/export?${exportParams}&format=csv`}>
+                  <Download className="size-3.5" aria-hidden />
                   Export CSV
-                </a>
-                <a className="text-[color:var(--color-primary)] underline" href={`/api/support-activity/export?${exportParams}&format=xlsx`}>
+                </ButtonLink>
+                <ButtonLink href={`/api/support-activity/export?${exportParams}&format=xlsx`}>
+                  <Download className="size-3.5" aria-hidden />
                   Export Excel
-                </a>
+                </ButtonLink>
               </div>
             ) : null}
           </div>

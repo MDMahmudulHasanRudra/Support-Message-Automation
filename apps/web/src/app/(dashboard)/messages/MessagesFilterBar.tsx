@@ -52,7 +52,7 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
   return (
     <form onSubmit={handleSubmit}>
       <FilterBar>
-        <Field label="Account">
+        <FilterField label="Account">
           <Select name="accountId" defaultValue={defaults.accountId ?? ""} className="w-40">
             <option value="">All accounts</option>
             {options.accounts.map((a) => (
@@ -61,25 +61,25 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
               </option>
             ))}
           </Select>
-        </Field>
-        <Field label="Group">
+        </FilterField>
+        <FilterField label="Group">
           <Input
             name="group"
             placeholder="Group name contains…"
             defaultValue={defaults.group ?? ""}
             className="w-44"
           />
-        </Field>
-        <Field label="Sender">
+        </FilterField>
+        <FilterField label="Sender">
           <Input name="sender" placeholder="Phone or name…" defaultValue={defaults.sender ?? ""} className="w-40" />
-        </Field>
-        <Field label="From">
+        </FilterField>
+        <FilterField label="From">
           <Input name="dateFrom" type="date" defaultValue={defaults.dateFrom ?? ""} className="w-36" />
-        </Field>
-        <Field label="To">
+        </FilterField>
+        <FilterField label="To">
           <Input name="dateTo" type="date" defaultValue={defaults.dateTo ?? ""} className="w-36" />
-        </Field>
-        <Field label="Decision">
+        </FilterField>
+        <FilterField label="Decision">
           <Select name="decision" defaultValue={defaults.decision ?? ""} className="w-40">
             <option value="">All</option>
             {DECISIONS.map((d) => (
@@ -88,8 +88,8 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
               </option>
             ))}
           </Select>
-        </Field>
-        <Field label="Rule">
+        </FilterField>
+        <FilterField label="Rule">
           <Select name="ruleId" defaultValue={defaults.ruleId ?? ""} className="w-40">
             <option value="">All</option>
             {options.rules.map((r) => (
@@ -98,8 +98,8 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
               </option>
             ))}
           </Select>
-        </Field>
-        <Field label="Auto-Reply Status">
+        </FilterField>
+        <FilterField label="Auto-Reply Status">
           <Select name="autoReplyStatus" defaultValue={defaults.autoReplyStatus ?? ""} className="w-36">
             <option value="">All</option>
             {AUTO_REPLY_STATUSES.map((s) => (
@@ -108,8 +108,8 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
               </option>
             ))}
           </Select>
-        </Field>
-        <Field label="Notification Status">
+        </FilterField>
+        <FilterField label="Notification Status">
           <Select name="notificationStatus" defaultValue={defaults.notificationStatus ?? ""} className="w-36">
             <option value="">All</option>
             {NOTIFICATION_STATUSES.map((s) => (
@@ -118,7 +118,7 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
               </option>
             ))}
           </Select>
-        </Field>
+        </FilterField>
         <Button type="submit" loading={isPending} size="sm">
           Filter
         </Button>
@@ -135,7 +135,7 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function FilterField({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="flex flex-col gap-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)]">
       {label}

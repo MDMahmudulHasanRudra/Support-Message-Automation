@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Card, Checkbox, Field, Input, SectionHeader, Select, Textarea } from "@/components/ui";
+import { Button, Card, Field, Input, SectionHeader, Select, Switch, Textarea } from "@/components/ui";
 
 export interface SupportRuleFormOption {
   id: string;
@@ -92,7 +92,7 @@ export function SupportRuleForm({
       <Card>
         <SectionHeader title="Team Member Scope" />
         <label className="mb-3 flex items-center gap-2 text-sm">
-          <Checkbox name="appliesToAllTeamMembers" checked={allMembers} onChange={(e) => setAllMembers(e.target.checked)} />
+          <Switch name="appliesToAllTeamMembers" checked={allMembers} onChange={(e) => setAllMembers(e.target.checked)} />
           All support team members
         </label>
         {!allMembers ? (
@@ -109,7 +109,7 @@ export function SupportRuleForm({
       <Card>
         <SectionHeader title="Group Scope" />
         <label className="mb-3 flex items-center gap-2 text-sm">
-          <Checkbox name="appliesToAllGroups" checked={allGroups} onChange={(e) => setAllGroups(e.target.checked)} />
+          <Switch name="appliesToAllGroups" checked={allGroups} onChange={(e) => setAllGroups(e.target.checked)} />
           All groups
         </label>
         {!allGroups ? (

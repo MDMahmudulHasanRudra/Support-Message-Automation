@@ -33,9 +33,9 @@ export function TableSkeleton({ rows = 6, columns = 5 }: { rows?: number; column
     <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)]">
       <div className="divide-y divide-[var(--color-border)]">
         {Array.from({ length: rows }).map((_, rowIndex) => (
-          <div key={rowIndex} className="flex animate-pulse gap-4 px-4 py-3.5">
+          <div key={rowIndex} className="flex gap-4 px-4 py-3.5">
             {Array.from({ length: columns }).map((__, colIndex) => (
-              <div key={colIndex} className="h-4 flex-1 rounded bg-[var(--color-neutral-bg)]" />
+              <div key={colIndex} className="h-4 flex-1 animate-shimmer rounded" />
             ))}
           </div>
         ))}

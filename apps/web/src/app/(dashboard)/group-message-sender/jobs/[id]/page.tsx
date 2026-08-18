@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, Table, Td, Th } from "@/components/ui";
+import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, StatusDot, Table, Td, Th } from "@/components/ui";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { formatDateTime } from "@/lib/date";
 import { cancelBroadcastJob, retryFailedBroadcastMessages } from "@/server/actions/groupBroadcast";
@@ -78,8 +78,9 @@ export default async function GroupBroadcastJobPage({ params }: { params: Promis
 
       <Card className="mb-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-          <span className="text-base font-semibold tabular-nums text-[color:var(--color-foreground)]">
+          <span className="flex items-center gap-2 text-base font-semibold tabular-nums text-[color:var(--color-foreground)]">
             {settled} / {counts.total}
+            {!isTerminal ? <StatusDot color="blue" pulse /> : null}
           </span>
           {currentlyProcessing ? (
             <span className="flex items-center gap-1.5 text-[color:var(--color-muted-foreground)]">

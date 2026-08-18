@@ -8,12 +8,12 @@ import {
   type BadgeColor,
   Button,
   Card,
-  Checkbox,
   EmptyState,
   Field,
   Input,
   SectionHeader,
   Select,
+  Switch,
   Textarea,
 } from "@/components/ui";
 import { testRule, type RuleTesterState } from "@/server/actions/ruleTester";
@@ -41,7 +41,7 @@ export function RuleTesterForm({ groups }: { groups: Array<{ id: string; name: s
             <Input name="senderPhone" defaultValue="+8801000000000" />
           </Field>
           <label className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-            <Checkbox name="isFromTeamMember" /> Sender is an internal team member
+            <Switch name="isFromTeamMember" /> Sender is an internal team member
           </label>
           <Field label="Group">
             <Select name="groupId">
@@ -57,7 +57,7 @@ export function RuleTesterForm({ groups }: { groups: Array<{ id: string; name: s
             <Input name="previousSenderPhone" />
           </Field>
           <label className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-            <Checkbox name="previousSenderIsTeamMember" /> Previous sender was a team member
+            <Switch name="previousSenderIsTeamMember" /> Previous sender was a team member
           </label>
           <Button type="submit" loading={pending}>
             Run Test (dry — sends nothing)

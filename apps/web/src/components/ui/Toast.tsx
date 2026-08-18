@@ -12,16 +12,18 @@ import {
 } from "react";
 
 type ToastTone = "success" | "danger" | "info";
+type ToastPhase = "entering" | "visible" | "leaving";
 
 interface ToastItem {
   id: number;
   tone: ToastTone;
   title: string;
   description?: string;
+  phase: ToastPhase;
 }
 
 interface ToastContextValue {
-  showToast: (toast: Omit<ToastItem, "id">) => void;
+  showToast: (toast: Omit<ToastItem, "id" | "phase">) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -40,23 +42,59 @@ const TONE_STYLES: Record<ToastTone, string> = {
   info: "border-[var(--color-info-border)] bg-[var(--color-info-bg)] text-[color:var(--color-info-fg)]",
 };
 
+// Mutually exclusive per phase — never combine a static pointer-events/opacity class with a
+// conditional one on the same element, Tailwind resolves same-property conflicts by internal
+// stylesheet order, not by className order.
+const PHASE_STYLES: Record<ToastPhase, string> = {
+  entering: "pointer-events-none translate-y-2 opacity-0",
+  visible: "pointer-events-auto translate-y-0 opacity-100",
+  leaving: "pointer-events-none translate-y-2 opacity-0",
+};
+
 const AUTO_DISMISS_MS = 5000;
+const EXIT_MS = 200; // matches --duration-base
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const nextId = useRef(0);
+  const timers = useRef(new Map<number, number>());
+  const leaving = useRef(new Set<number>());
 
-  const dismiss = useCallback((id: number) => {
-    setToasts((current) => current.filter((item) => item.id !== id));
+  const beginLeaving = useCallback((id: number) => {
+    if (leaving.current.has(id)) return; // auto-timer and a manual click raced — no-op
+    leaving.current.add(id);
+
+    const pending = timers.current.get(id);
+    if (pending !== undefined) window.clearTimeout(pending);
+
+    setToasts((current) => current.map((t) => (t.id === id ? { ...t, phase: "leaving" } : t)));
+
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const removeTimer = window.setTimeout(() => {
+      setToasts((current) => current.filter((t) => t.id !== id));
+      leaving.current.delete(id);
+      timers.current.delete(id);
+    }, reduced ? 0 : EXIT_MS);
+    timers.current.set(id, removeTimer);
   }, []);
 
   const showToast = useCallback(
-    (toast: Omit<ToastItem, "id">) => {
+    (toast: Omit<ToastItem, "id" | "phase">) => {
       const id = nextId.current++;
-      setToasts((current) => [...current, { ...toast, id }]);
-      window.setTimeout(() => dismiss(id), AUTO_DISMISS_MS);
+      setToasts((current) => [...current, { ...toast, id, phase: "entering" }]);
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setToasts((current) =>
+            current.map((t) => (t.id === id && t.phase === "entering" ? { ...t, phase: "visible" } : t)),
+          );
+        });
+      });
+
+      const dismissTimer = window.setTimeout(() => beginLeaving(id), AUTO_DISMISS_MS);
+      timers.current.set(id, dismissTimer);
     },
-    [dismiss],
+    [beginLeaving],
   );
 
   const value = useMemo(() => ({ showToast }), [showToast]);
@@ -72,7 +110,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               key={toast.id}
               role="status"
               aria-live="polite"
-              className={`pointer-events-auto flex items-start gap-2.5 rounded-[var(--radius-md)] border px-4 py-3.5 text-sm shadow-[var(--shadow-lg)] backdrop-blur-sm transition-all duration-200 ${TONE_STYLES[toast.tone]}`}
+              className={`flex items-start gap-2.5 rounded-[var(--radius-md)] border px-4 py-3.5 text-sm shadow-[var(--shadow-lg)] backdrop-blur-sm transition duration-[var(--duration-base)] ease-[var(--ease-out)] ${TONE_STYLES[toast.tone]} ${PHASE_STYLES[toast.phase]}`}
             >
               <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
               <div className="flex-1">
@@ -83,7 +121,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               </div>
               <button
                 type="button"
-                onClick={() => dismiss(toast.id)}
+                onClick={() => beginLeaving(toast.id)}
                 aria-label="Dismiss notification"
                 className="cursor-pointer text-current opacity-70 hover:opacity-100"
               >

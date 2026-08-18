@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 import type { LearningSettings } from "@prisma/client";
-import { Alert, Button, Card, Checkbox, Field, Input, SectionHeader, useToast } from "@/components/ui";
+import { Alert, Button, Card, Field, Input, SectionHeader, Switch, SwitchField, useToast } from "@/components/ui";
 import { updateLearningSettings, type LearningSettingsFormState } from "@/server/actions/learning";
 
 const WEIGHT_FIELDS: Array<{ key: keyof LearningSettings; label: string }> = [
@@ -19,7 +19,7 @@ export function LearningSettingsForm({ settings }: { settings: LearningSettings 
   const { showToast } = useToast();
 
   useEffect(() => {
-    if (state.success) showToast({ tone: "success", title: "Learning Settings saved" });
+    if (state.success) showToast({ tone: "success", title: "Conversation Settings saved" });
     else if (state.error) showToast({ tone: "danger", title: "Could not save", description: state.error });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fire only when a new action result arrives
   }, [state]);
@@ -31,10 +31,12 @@ export function LearningSettingsForm({ settings }: { settings: LearningSettings 
           title="Conversation Learning"
           description="The master switch — off by default. Existing WhatsApp automation is unaffected either way."
         />
-        <label className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-          <Checkbox name="conversationLearningEnabled" defaultChecked={settings.conversationLearningEnabled} />
-          Enable conversation learning (session segmentation + pattern detection)
-        </label>
+        <SwitchField
+          name="conversationLearningEnabled"
+          label="Enable conversation learning"
+          description="Session segmentation + pattern detection"
+          defaultChecked={settings.conversationLearningEnabled}
+        />
         <div className="mt-4 max-w-xs">
           <Field label="Session Gap (minutes)" hint="Inactivity gap that closes a conversation session.">
             <Input name="sessionGapMinutes" type="number" min={1} max={1440} defaultValue={settings.sessionGapMinutes} />
@@ -100,7 +102,7 @@ export function LearningSettingsForm({ settings }: { settings: LearningSettings 
         </Alert>
         <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-end">
           <label className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-            <Checkbox
+            <Switch
               name="unknownPatternNotificationsEnabled"
               defaultChecked={settings.unknownPatternNotificationsEnabled}
             />
@@ -131,7 +133,7 @@ export function LearningSettingsForm({ settings }: { settings: LearningSettings 
         </Alert>
         <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-end">
           <label className="flex items-center gap-2 text-sm text-[color:var(--color-foreground)]">
-            <Checkbox name="autoApprovalEnabled" defaultChecked={settings.autoApprovalEnabled} />
+            <Switch name="autoApprovalEnabled" defaultChecked={settings.autoApprovalEnabled} />
             Enable auto-approval
           </label>
           <div className="max-w-xs">
@@ -151,7 +153,7 @@ export function LearningSettingsForm({ settings }: { settings: LearningSettings 
       {state.error ? <p className="text-sm text-[color:var(--color-danger)]">{state.error}</p> : null}
 
       <Button type="submit" loading={pending}>
-        Save Learning Settings
+        Save Conversation Settings
       </Button>
     </form>
   );
