@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "AiModelJob" ADD VALUE 'ADMIN_ASSISTANT';

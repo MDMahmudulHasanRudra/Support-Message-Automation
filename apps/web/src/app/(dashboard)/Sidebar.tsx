@@ -2,10 +2,13 @@
 
 import { Badge } from "@/components/ui";
 import {
+  Activity,
   AlertCircle,
+  BarChart3,
   Bell,
   BookOpen,
   ClipboardCheck,
+  ClipboardList,
   Terminal as ConsoleIcon,
   Cpu,
   EyeOff,
@@ -25,6 +28,7 @@ import {
   SlidersHorizontal,
   Smartphone,
   Sparkles,
+  Tag,
   Waypoints,
   UserPlus,
   UserCog,
@@ -88,6 +92,17 @@ const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/support-escalation", label: "Dashboard", icon: ShieldAlert },
       { href: "/support-escalation/policies", label: "Policies", icon: SlidersHorizontal },
+    ],
+  },
+  {
+    label: "Support Activity",
+    links: [
+      { href: "/support-activity", label: "Activity", icon: Activity },
+      { href: "/support-activity/team", label: "Team", icon: Users },
+      { href: "/support-activity/rules", label: "Rules", icon: ClipboardList },
+      { href: "/support-activity/keywords", label: "Keywords", icon: Tag },
+      { href: "/support-activity/reports", label: "Reports", icon: BarChart3 },
+      { href: "/support-activity/settings", label: "Settings", icon: SettingsIcon },
     ],
   },
   {

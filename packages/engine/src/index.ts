@@ -6,3 +6,4 @@ export * from "./conditions.js";
 export * from "./actions.js";
 export * from "./evaluate.js";
 export * from "./patternDetection.js";
+export * from "./supportKeywordMatch.js";

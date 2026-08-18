@@ -1,5 +1,7 @@
 import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import type { EscalationStatus, PatternCandidateStatus, WhatsAppServiceKey } from "@prisma/client";
+import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
+import { getEveryActivityCount, getUniqueGroupCount } from "@/server/supportActivityReports";
 
 // Server-component-only read helpers for the /overview dashboard — no "use server" directive,
 // these are never invoked from a client event handler.
@@ -209,6 +211,21 @@ export async function getSystemLogsSummary(nowMs: number) {
     errors24h: countByLevel("ERROR"),
     warnings24h: countByLevel("WARN"),
   };
+}
+
+export async function getSupportActivityDashboardSummary(nowMs: number) {
+  const settings = await prisma.supportActivitySettings.upsert({
+    where: { id: "global" },
+    update: {},
+    create: { id: "global" },
+  });
+  const today = getDhakaDayRange(new Date(nowMs));
+  const [todayActivities, todaySupportedGroups] = await Promise.all([
+    getEveryActivityCount(today),
+    getUniqueGroupCount(today),
+  ]);
+
+  return { enabled: settings.enabled, todayActivities, todaySupportedGroups };
 }
 
 export async function getRecentMessageActivity(nowMs: number) {

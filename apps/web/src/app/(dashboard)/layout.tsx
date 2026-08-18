@@ -2,6 +2,7 @@ import { requireSession } from "@/server/auth";
 import { logout } from "@/server/actions/session";
 import { prisma } from "@support-automation/db";
 import { Sidebar } from "./Sidebar";
+import { FloatingAiChat } from "./FloatingAiChat";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await requireSession();
@@ -18,6 +19,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1560px] px-6 py-7 sm:px-8">{children}</div>
       </main>
+      <FloatingAiChat />
     </div>
   );
 }

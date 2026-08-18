@@ -1,5 +1,5 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
-import { Bell, ListChecks, Send, ShieldAlert, Smartphone, Sparkles, Terminal as ConsoleIcon, Waypoints } from "lucide-react";
+import { Activity, Bell, ListChecks, Send, ShieldAlert, Smartphone, Sparkles, Terminal as ConsoleIcon, Waypoints } from "lucide-react";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
 import {
@@ -28,6 +28,7 @@ import {
   getEscalationSummary,
   getNotificationsSummary,
   getRecentMessageActivity,
+  getSupportActivityDashboardSummary,
   getSystemLogsSummary,
 } from "@/server/actions/dashboardSummary";
 
@@ -47,18 +48,29 @@ export default async function OverviewPage() {
   // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
   const nowMs = Date.now();
 
-  const [accountsRouting, automationOutbound, escalation, conversationLearning, aiLearning, bulkMessaging, notifications, systemLogs, recentActivity] =
-    await Promise.all([
-      getAccountsRoutingSummary(),
-      getAutomationOutboundSummary(nowMs),
-      getEscalationSummary(),
-      getConversationLearningSummary(),
-      getAiLearningSummary(),
-      getBulkMessagingSummary(),
-      getNotificationsSummary(nowMs),
-      getSystemLogsSummary(nowMs),
-      getRecentMessageActivity(nowMs),
-    ]);
+  const [
+    accountsRouting,
+    automationOutbound,
+    escalation,
+    conversationLearning,
+    aiLearning,
+    bulkMessaging,
+    notifications,
+    systemLogs,
+    supportActivity,
+    recentActivity,
+  ] = await Promise.all([
+    getAccountsRoutingSummary(),
+    getAutomationOutboundSummary(nowMs),
+    getEscalationSummary(),
+    getConversationLearningSummary(),
+    getAiLearningSummary(),
+    getBulkMessagingSummary(),
+    getNotificationsSummary(nowMs),
+    getSystemLogsSummary(nowMs),
+    getSupportActivityDashboardSummary(nowMs),
+    getRecentMessageActivity(nowMs),
+  ]);
 
   const disconnectedAccounts = accountsRouting.accounts.filter((a) => a.status !== "CONNECTED");
 
@@ -256,6 +268,16 @@ export default async function OverviewPage() {
             </Badge>
           </ModuleCardRow>
           <ModuleCardRow label="Pending/retrying (24h)">{notifications.pendingRetrying24h}</ModuleCardRow>
+        </DashboardModuleCard>
+
+        <DashboardModuleCard title="Support Activity" icon={Activity} href="/support-activity">
+          <ModuleCardRow label="Status">
+            <Badge color={supportActivity.enabled ? "green" : "gray"} dot>
+              {supportActivity.enabled ? "ENABLED" : "DISABLED"}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Today's activities">{supportActivity.todayActivities}</ModuleCardRow>
+          <ModuleCardRow label="Today's supported groups">{supportActivity.todaySupportedGroups}</ModuleCardRow>
         </DashboardModuleCard>
 
         <DashboardModuleCard title="System Logs" icon={ConsoleIcon} href="/logs">

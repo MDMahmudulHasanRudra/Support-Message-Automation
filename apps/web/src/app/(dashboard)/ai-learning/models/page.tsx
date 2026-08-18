@@ -11,6 +11,7 @@ const JOBS: Array<{ job: AiModelJob; label: string; description: string }> = [
   { job: "VISION", label: "Vision Model", description: "Used when a future phase reads screenshots/images." },
   { job: "DOCUMENT", label: "Document Model", description: "Used when a future phase processes uploaded documents." },
   { job: "EMBEDDING", label: "Embedding Model", description: "Used for similarity/duplicate detection once ingestion exists." },
+  { job: "ADMIN_ASSISTANT", label: "Admin Assistant Model", description: "Used by the floating AI Admin Assistant chat widget." },
 ];
 
 export default async function AiModelsPage() {
@@ -37,23 +38,23 @@ export default async function AiModelsPage() {
     <div>
       <PageHeader
         title="AI Models"
-        description="Assign which configured provider/model handles each job. None of these are called yet — later phases will read this configuration."
+        description="Assign which configured provider/model handles each job."
         actions={
           <HelpButton moduleTitle="AI Models">
             <HelpSection title="What this is">
               <p>
-                Five fixed job slots (Learning, Response, Vision, Document, Embedding) that will each
-                eventually use a specific provider + model ID. Pick a configured Provider from the
-                dropdown, then type the exact model ID as text (e.g. "claude-sonnet-5") — this isn't
-                validated against a live model list, so a typo won't be caught here.
+                Six fixed job slots (Learning, Response, Vision, Document, Embedding, Admin
+                Assistant) that each use a specific provider + model ID. Pick a configured Provider
+                from the dropdown, then type the exact model ID as text (e.g. "claude-sonnet-5") —
+                this isn't validated against a live model list, so a typo won't be caught here.
               </p>
             </HelpSection>
-            <HelpSection title="This page's own description is accurate">
+            <HelpSection title="Which jobs are actually live">
               <p>
-                None of these five jobs are actually called by anything yet — this page just
-                pre-configures which provider/model each will use once later phases wire them up. An
-                inactive provider still shows in the dropdown (labeled "(inactive)") and can still be
-                selected, but obviously won't work until reactivated.
+                Only <strong>Admin Assistant</strong> is called by anything today (the floating chat
+                widget) — the other five jobs pre-configure a provider/model for later phases that
+                don't exist yet. An inactive provider still shows in the dropdown (labeled
+                "(inactive)") and can still be selected, but obviously won't work until reactivated.
               </p>
             </HelpSection>
           </HelpButton>

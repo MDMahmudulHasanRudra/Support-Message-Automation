@@ -11,7 +11,7 @@ export interface AiModelFormState {
   success?: boolean;
 }
 
-const MODEL_JOBS: AiModelJob[] = ["LEARNING", "RESPONSE", "VISION", "DOCUMENT", "EMBEDDING"];
+const MODEL_JOBS: AiModelJob[] = ["LEARNING", "RESPONSE", "VISION", "DOCUMENT", "EMBEDDING", "ADMIN_ASSISTANT"];
 
 function isModelJob(value: string): value is AiModelJob {
   return (MODEL_JOBS as string[]).includes(value);

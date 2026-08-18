@@ -313,6 +313,7 @@ model WhatsAppAccount {
   notifications        Notification[]
   serviceRoutes        WhatsAppServiceRoute[]
   conversationSessions ConversationSession[]
+  supportActivities    SupportActivity[]
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -358,6 +359,8 @@ model WhatsAppGroup {
   participantAddItems  GroupParticipantAddItem[]
   escalationCases      SupportEscalationCase[]
   conversationSessions ConversationSession[]
+  supportActivities    SupportActivity[]
+  supportRuleScopes    SupportRuleGroup[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([accountId, isActive])
@@ -377,6 +380,8 @@ model InternalTeamMember {
   assignedGroups            WhatsAppGroup[]
   assignedEscalationCases   SupportEscalationCase[]
   SupportEscalationSettings SupportEscalationSettings[]
+  supportActivities         SupportActivity[]
+  supportRuleScopes         SupportRuleTeamMember[]
 }
 
 model Message {
@@ -410,6 +415,7 @@ model Message {
   notifications            Notification[]
   triggeredEscalationCases SupportEscalationCase[]    @relation("EscalationTriggerMessage")
   patternCandidateEvidence PatternCandidateEvidence[]
+  supportActivity          SupportActivity?
 
   @@unique([accountId, whatsappMessageId])
   @@index([chatId, timestampWa])
@@ -767,6 +773,10 @@ enum AiModelJob {
   VISION
   DOCUMENT
   EMBEDDING
+  /// The floating AI Admin Assistant chat widget (read-only tool-calling) — apps/web/src/server/
+  /// aiAdmin/. Distinct from RESPONSE (reserved for a future customer-facing auto-response phase)
+  /// since these are semantically different consumers that shouldn't share one config slot.
+  ADMIN_ASSISTANT
 }
 
 enum AiKnowledgeCategory {
@@ -1311,4 +1321,165 @@ model RuleProposal {
   updatedAt               DateTime           @updatedAt
 
   @@index([status, confidenceScoreSnapshot])
+}
+
+// ---------------------------------------------------------------------------
+// Support Activity Tracking — detects configured keyword/rule matches sent by
+// configured InternalTeamMembers inside WhatsApp groups, records each as a
+// raw SupportActivity event, and lets admins view counts computed from that
+// raw history under 3 configurable counting modes + a DAILY counting period.
+// Off by default (SupportActivitySettings.enabled = false); when off, the
+// detector (apps/worker/src/supportActivity/detector.ts) no-ops and zero
+// rows are ever written. Entirely independent of AutomationRule/the rule
+// engine's own evaluation — runs alongside it, never gated by its decision.
+// ---------------------------------------------------------------------------
+
+enum SupportActivityCountingMode {
+  UNIQUE_GROUP
+  EVERY_ACTIVITY
+  PER_TEAM_MEMBER
+}
+
+/// Only DAILY exists today — deliberately a closed enum (not a free string) so a future WEEKLY/
+/// MONTHLY period is a pure enum-value + query addition later, never a shape rewrite.
+enum SupportActivityCountingPeriod {
+  DAILY
+}
+
+/// Closed on purpose (same reasoning as WhatsAppServiceKey's own doc comment) — only KEYWORD_MATCH
+/// exists today. The detector's dispatch (apps/worker/src/supportActivity/detector.ts) is a plain
+/// switch on this value, not a plugin system. Add a new value + a new switch case + a migration the
+/// day a second trigger type is actually needed.
+enum SupportActivityTriggerType {
+  KEYWORD_MATCH
+}
+
+enum SupportKeywordMatchMode {
+  CONTAINS
+  EXACT
+}
+
+/// Singleton row (id is always the literal string "global"), same pattern as AutomationSettings/
+/// AiSettings/LearningSettings/SupportEscalationSettings. enabled defaults to false — the whole
+/// feature is off until an admin opts in; while off, apps/worker/src/supportActivity/detector.ts
+/// no-ops on every message and zero SupportActivity rows are ever written. countingMode/
+/// countingPeriod are global, not per-rule, by explicit requirement.
+model SupportActivitySettings {
+  id             String                        @id @default("global")
+  enabled        Boolean                       @default(false)
+  countingMode   SupportActivityCountingMode   @default(EVERY_ACTIVITY)
+  countingPeriod SupportActivityCountingPeriod @default(DAILY)
+  updatedAt      DateTime                      @updatedAt
+}
+
+/// Admin-managed keyword/phrase. Referenced by zero or more SupportRules via SupportRuleKeyword —
+/// not a free-text array on the rule itself, unlike AutomationRule.keywords, because keywords here
+/// are independently CRUD-able (add/edit/delete/enable-disable) and reused across rules.
+model SupportKeyword {
+  id            String                  @id @default(cuid())
+  value         String
+  matchMode     SupportKeywordMatchMode @default(CONTAINS)
+  /// Default false (case-insensitive) — matches every existing text-matching convention in this
+  /// app (see packages/engine/src/normalize.ts's normalizeText()).
+  caseSensitive Boolean                 @default(false)
+  isActive      Boolean                 @default(true)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  rules      SupportRuleKeyword[]
+  activities SupportActivity[]
+}
+
+/// One admin-configured detection rule. Global (no accountId), same precedent as AutomationRule.
+/// Scope to "all X" vs "selected X" is a boolean flag + a join table used only when the flag is
+/// false — the minimal shape for this, not a JSON id array (which is harder to index/join safely).
+model SupportRule {
+  id                      String                     @id @default(cuid())
+  name                    String
+  description             String?
+  triggerType             SupportActivityTriggerType @default(KEYWORD_MATCH)
+  /// true = every WhatsAppGroup is in scope; false = only groups explicitly listed in `groups`.
+  appliesToAllGroups      Boolean                    @default(true)
+  /// true = every InternalTeamMember is in scope; false = only members explicitly listed in
+  /// `teamMembers`.
+  appliesToAllTeamMembers Boolean                    @default(true)
+  isActive                Boolean                    @default(true)
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+
+  keywords    SupportRuleKeyword[]
+  groups      SupportRuleGroup[]
+  teamMembers SupportRuleTeamMember[]
+  activities  SupportActivity[]
+
+  /// The detector's primary WHERE-clause shape: "active rules of this trigger type."
+  @@index([isActive, triggerType])
+}
+
+model SupportRuleKeyword {
+  ruleId    String
+  rule      SupportRule    @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  keywordId String
+  keyword   SupportKeyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@id([ruleId, keywordId])
+}
+
+model SupportRuleGroup {
+  ruleId    String
+  rule      SupportRule   @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  groupId   String
+  group     WhatsAppGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+
+  @@id([ruleId, groupId])
+}
+
+model SupportRuleTeamMember {
+  ruleId       String
+  rule         SupportRule        @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  teamMemberId String
+  teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  createdAt    DateTime           @default(now())
+
+  @@id([ruleId, teamMemberId])
+}
+
+/// One row per detected support-activity event — the raw, permanent history. Aggregated counts
+/// (UNIQUE_GROUP / EVERY_ACTIVITY / PER_TEAM_MEMBER, over SupportActivitySettings.countingPeriod)
+/// are always computed from this table at query time (see apps/web/src/server/
+/// supportActivityReports.ts) — this table never stores a final count, so changing countingMode/
+/// countingPeriod retroactively reinterprets all existing history correctly.
+model SupportActivity {
+  id           String              @id @default(cuid())
+  accountId    String
+  account      WhatsAppAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId      String
+  group        WhatsAppGroup       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// Nullable + SetNull (not Cascade) so a later-deleted InternalTeamMember never destroys already-
+  /// recorded history — only its per-member attribution on that one row degrades to "unassigned."
+  teamMemberId String?
+  teamMember   InternalTeamMember? @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  /// Nullable + SetNull, same reasoning: a deleted SupportRule/SupportKeyword must never delete
+  /// history (mirrors AutomationExecution.ruleId's exact pattern).
+  ruleId       String?
+  rule         SupportRule?        @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  keywordId    String?
+  keyword      SupportKeyword?     @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  /// The idempotency guard: at most one SupportActivity row can ever exist per Message. Enforced
+  /// here as a real DB constraint (insert-and-catch-P2002), not an application-level check-then-
+  /// insert race — mirrors how Message's own @@unique([accountId, whatsappMessageId]) is the real
+  /// dedup guard, and AutomationExecution.idempotencyKey's @unique column.
+  messageId    String              @unique
+  message      Message             @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  /// = Message.timestampWa (WhatsApp's own send time), not receivedAt/createdAt — this is what
+  /// every DAILY (and future WEEKLY/MONTHLY) period boundary buckets against.
+  occurredAt   DateTime
+  createdAt    DateTime            @default(now())
+
+  @@index([accountId, occurredAt])
+  @@index([accountId, groupId, occurredAt])
+  @@index([accountId, teamMemberId, occurredAt])
+  @@index([ruleId])
 }

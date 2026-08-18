@@ -11,6 +11,7 @@ import { isActiveTeamMember } from "./teamFilter.js";
 import { toEngineRule } from "./ruleMapping.js";
 import type { RawIncomingMessage } from "./types.js";
 import { markHumanReplied, openOrContinueCase } from "../escalation/escalationQueue.js";
+import { detectSupportActivity } from "../supportActivity/detector.js";
 
 interface ActionExecutionRecord {
   type: RuleAction["type"];
@@ -132,6 +133,23 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
     }
   } catch (err) {
     console.error("[escalation] failed to update support escalation state", err);
+  }
+
+  // Support Activity Tracking — same fire-and-forget philosophy as the escalation block above: a
+  // detection failure must never break message processing, and it is a true no-op end-to-end when
+  // SupportActivitySettings.enabled is false (checked first thing inside the detector).
+  try {
+    await detectSupportActivity({
+      accountId: raw.accountId,
+      groupId: group?.id ?? null,
+      isFromTeamMember,
+      senderPhone: raw.senderPhone,
+      messageId: message.id,
+      body: raw.body,
+      timestampWa: raw.timestampWa,
+    });
+  } catch (err) {
+    console.error("[support-activity] failed to record support activity", err);
   }
 
   const activeRuleRows = await prisma.automationRule.findMany({ where: { status: "ACTIVE" } });
