@@ -1,16 +1,34 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { prisma } from "@support-automation/db";
+import type { Prisma, RuleStatus, RuleType } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { Button, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { Button, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select } from "@/components/ui";
 import { formatDate } from "@/lib/date";
-import { isRuleActionArray, isRuleConditions } from "@support-automation/shared";
+import { RULE_STATUS, RULE_TYPE, isRuleActionArray, isRuleConditions } from "@support-automation/shared";
 import { RulesTable, type RuleRow } from "./RulesTable";
 
-export default async function RulesPage() {
+interface RulesSearchParams {
+  search?: string;
+  status?: string;
+  type?: string;
+}
+
+export default async function RulesPage({ searchParams }: { searchParams: Promise<RulesSearchParams> }) {
   await requireSession();
-  const rules = await prisma.automationRule.findMany({ orderBy: [{ priority: "desc" }, { createdAt: "desc" }] });
+  const params = await searchParams;
+  const search = (params.search ?? "").trim();
+  const status = (RULE_STATUS as readonly string[]).includes(params.status ?? "") ? (params.status as RuleStatus) : undefined;
+  const type = (RULE_TYPE as readonly string[]).includes(params.type ?? "") ? (params.type as RuleType) : undefined;
+
+  const where: Prisma.AutomationRuleWhereInput = {
+    ...(search ? { name: { contains: search, mode: "insensitive" } } : {}),
+    ...(status ? { status } : {}),
+    ...(type ? { type } : {}),
+  };
+
+  const rules = await prisma.automationRule.findMany({ where, orderBy: [{ priority: "desc" }, { createdAt: "desc" }] });
 
   const priorityCounts = new Map<number, number>();
   for (const rule of rules) {
@@ -100,6 +118,19 @@ export default async function RulesPage() {
                   is permanent.
                 </p>
               </HelpSection>
+              <HelpSection title="Bulk management, Import, and Export">
+                <p>
+                  Select rules with the checkboxes to Activate, Disable, or Delete many at once —
+                  each still requires confirmation, and the result always reports exactly how many
+                  succeeded, were already in that state, or weren't found. <strong>Import Excel</strong>{" "}
+                  parses and previews every row before anything is created — rows are always created
+                  as DRAFT regardless of anything in the file, so you review and activate them
+                  afterward, the same way an approved Rule Proposal works. Duplicate names (in the
+                  file or already in the database) are skipped, never silently overwritten.{" "}
+                  <strong>Export Selected</strong> exports only the checked rules; <strong>Export
+                  Filtered</strong> exports whatever the current search/status/type filters show.
+                </p>
+              </HelpSection>
             </HelpButton>
             <Link href="/rules/new">
               <Button>
@@ -111,7 +142,33 @@ export default async function RulesPage() {
         }
       />
 
-      <RulesTable rules={rows} />
+      <FilterBar>
+        <form className="flex flex-wrap items-end gap-2" method="GET">
+          <Input name="search" placeholder="Search rule name…" defaultValue={search} className="w-56" />
+          <Select name="status" defaultValue={status ?? ""} className="w-40">
+            <option value="">All statuses</option>
+            {RULE_STATUS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </Select>
+          <Select name="type" defaultValue={type ?? ""} className="w-48">
+            <option value="">All types</option>
+            {RULE_TYPE.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </Select>
+          <Button type="submit" size="sm">
+            <Search className="size-3.5" aria-hidden />
+            Filter
+          </Button>
+        </form>
+      </FilterBar>
+
+      <RulesTable rules={rows} filters={{ search, status, type }} />
     </div>
   );
 }

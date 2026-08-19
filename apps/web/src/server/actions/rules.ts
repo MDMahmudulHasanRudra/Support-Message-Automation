@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { validateRegexSafety } from "@support-automation/engine";
 import type { RuleAction, RuleConditions } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
+import { validateRuleBusinessRules } from "@/server/ruleValidation";
 
 const ACTION_TYPES = [
   "IGNORE",
@@ -120,27 +120,22 @@ function parseRuleFields(formData: FormData) {
   };
 }
 
-/** Mandatory regex-safety gate: a REGEX rule cannot be saved unless its pattern passes packages/engine's validator. */
-function validateIfRegex(matchType: string, matchValue: string | null): string | null {
-  if (matchType !== "REGEX") return null;
-  if (!matchValue) return "A REGEX rule requires a pattern.";
-  const result = validateRegexSafety(matchValue);
-  return result.safe ? null : `Regex rejected: ${result.reason}`;
-}
-
 export async function createRule(_prevState: RuleFormState, formData: FormData): Promise<RuleFormState> {
   await requireSession();
   const fields = parseRuleFields(formData);
-
-  if (!fields.name) return { error: "Rule name is required." };
-  const regexError = validateIfRegex(fields.matchType, fields.matchValue);
-  if (regexError) return { error: regexError };
-  const timeWindowError = validateTimeWindow(formData);
-  if (timeWindowError) return { error: timeWindowError };
-
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);
-  if (actions.length === 0) return { error: "At least one action is required." };
+
+  const businessError = validateRuleBusinessRules({
+    name: fields.name,
+    matchType: fields.matchType,
+    matchValue: fields.matchValue,
+    actions,
+    timeWindowEnabled: formData.get("timeWindowEnabled") === "on",
+    timeWindowStartHour: conditions.timeWindow?.startHour,
+    timeWindowEndHour: conditions.timeWindow?.endHour,
+  });
+  if (businessError) return { error: businessError };
 
   await prisma.automationRule.create({
     data: { ...fields, conditions: conditions as any, actions: actions as any },
@@ -153,16 +148,19 @@ export async function createRule(_prevState: RuleFormState, formData: FormData):
 export async function updateRule(id: string, _prevState: RuleFormState, formData: FormData): Promise<RuleFormState> {
   await requireSession();
   const fields = parseRuleFields(formData);
-
-  if (!fields.name) return { error: "Rule name is required." };
-  const regexError = validateIfRegex(fields.matchType, fields.matchValue);
-  if (regexError) return { error: regexError };
-  const timeWindowError = validateTimeWindow(formData);
-  if (timeWindowError) return { error: timeWindowError };
-
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);
-  if (actions.length === 0) return { error: "At least one action is required." };
+
+  const businessError = validateRuleBusinessRules({
+    name: fields.name,
+    matchType: fields.matchType,
+    matchValue: fields.matchValue,
+    actions,
+    timeWindowEnabled: formData.get("timeWindowEnabled") === "on",
+    timeWindowStartHour: conditions.timeWindow?.startHour,
+    timeWindowEndHour: conditions.timeWindow?.endHour,
+  });
+  if (businessError) return { error: businessError };
 
   await prisma.automationRule.update({
     where: { id },
