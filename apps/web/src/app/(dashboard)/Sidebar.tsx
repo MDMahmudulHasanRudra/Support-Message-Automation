@@ -26,6 +26,7 @@ import {
   Send,
   Settings as SettingsIcon,
   ShieldAlert,
+  ShieldCheck,
   SlidersHorizontal,
   Smartphone,
   Sparkles,
@@ -147,6 +148,14 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/notifications", label: "Notifications", icon: Bell },
       { href: "/settings", label: "Settings", icon: SettingsIcon },
       { href: "/logs", label: "System Logs", icon: ConsoleIcon },
+    ],
+  },
+  {
+    label: "Users & Permissions",
+    links: [
+      { href: "/users", label: "App Users", icon: UserCog },
+      { href: "/permissions", label: "Permission Modules", icon: ShieldCheck },
+      { href: "/settings/security", label: "Security Settings", icon: SlidersHorizontal },
     ],
   },
 ];

@@ -1,16 +1,12 @@
 import { cookies } from "next/headers";
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
+import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
 
 const SESSION_COOKIE = "support_automation_session";
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
-function getSecret(): string {
-  const secret = process.env.NEXTAUTH_SECRET;
-  if (!secret) throw new Error("NEXTAUTH_SECRET is not configured.");
-  return secret;
-}
+// A DB row's lastUsedAt is only refreshed at most this often per session — every page load
+// hitting requireSession() would otherwise be a write on every single request.
+const LAST_USED_THROTTLE_MS = 5 * 60 * 1000;
 
 /** Matches the "salt:hash" scrypt format used by packages/db/prisma/seed.ts. */
 export function hashPassword(password: string): string {
@@ -28,27 +24,8 @@ export function verifyPassword(password: string, stored: string): boolean {
   return timingSafeEqual(candidate, expected);
 }
 
-function sign(payload: string): string {
-  return createHmac("sha256", getSecret()).update(payload).digest("base64url");
-}
-
-function createSessionToken(userId: string): string {
-  const payload = `${userId}.${Date.now() + SESSION_TTL_MS}`;
-  return `${payload}.${sign(payload)}`;
-}
-
-function verifySessionToken(token: string): { userId: string } | null {
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [userId, expiryStr, signature] = parts;
-  const payload = `${userId}.${expiryStr}`;
-  const expected = sign(payload);
-  if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-    return null;
-  }
-  const expiry = Number(expiryStr);
-  if (!Number.isFinite(expiry) || Date.now() > expiry) return null;
-  return { userId };
+function hashSessionSecret(secret: string): string {
+  return createHash("sha256").update(secret).digest("hex");
 }
 
 export interface Session {
@@ -58,32 +35,79 @@ export interface Session {
   name: string;
 }
 
-export async function createSession(userId: string): Promise<void> {
+/**
+ * Real, server-side-revocable session (packages/db/prisma/schema.prisma's UserSession) —
+ * replaces the old stateless signed-cookie token, which had no way for an admin to force a
+ * logout. The cookie carries only a random high-entropy secret; only its sha256 is ever
+ * persisted, so a lookup is an indexed equality match against secretHash, never a scan, and the
+ * raw secret is never recoverable from the database alone.
+ */
+export async function createSession(
+  userId: string,
+  meta?: { ipAddress?: string | null; userAgent?: string | null },
+): Promise<void> {
+  const secret = randomBytes(32).toString("base64url");
+  const secretHash = hashSessionSecret(secret);
+
+  const settings = await prisma.securitySettings.upsert({
+    where: { id: "global" },
+    update: {},
+    create: { id: "global" },
+  });
+  const expiresAt = new Date(Date.now() + settings.sessionLifetimeHours * 60 * 60 * 1000);
+
+  await prisma.userSession.create({
+    data: {
+      userId,
+      secretHash,
+      expiresAt,
+      ipAddress: meta?.ipAddress ?? null,
+      userAgent: meta?.userAgent ?? null,
+    },
+  });
+
   const store = await cookies();
-  store.set(SESSION_COOKIE, createSessionToken(userId), {
+  store.set(SESSION_COOKIE, secret, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: SESSION_TTL_MS / 1000,
+    expires: expiresAt,
   });
 }
 
+/** Revokes the session tied to the current cookie (real revocation, not just clearing the cookie) and clears it. */
 export async function destroySession(): Promise<void> {
   const store = await cookies();
+  const secret = store.get(SESSION_COOKIE)?.value;
+  if (secret) {
+    await prisma.userSession.updateMany({
+      where: { secretHash: hashSessionSecret(secret) },
+      data: { revokedAt: new Date(), revokedReason: "USER_LOGOUT" },
+    });
+  }
   store.delete(SESSION_COOKIE);
 }
 
 export async function getSession(): Promise<Session | null> {
   const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
-  const verified = verifySessionToken(token);
-  if (!verified) return null;
+  const secret = store.get(SESSION_COOKIE)?.value;
+  if (!secret) return null;
 
-  const user = await prisma.user.findUnique({ where: { id: verified.userId } });
-  if (!user) return null;
-  return { userId: user.id, username: user.username, email: user.email, name: user.name };
+  const record = await prisma.userSession.findUnique({
+    where: { secretHash: hashSessionSecret(secret) },
+    include: { user: true },
+  });
+  if (!record) return null;
+  if (record.revokedAt) return null;
+  if (record.expiresAt <= new Date()) return null;
+  if (!record.user.isActive) return null;
+
+  if (Date.now() - record.lastUsedAt.getTime() > LAST_USED_THROTTLE_MS) {
+    void prisma.userSession.update({ where: { id: record.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
+  }
+
+  return { userId: record.user.id, username: record.user.username, email: record.user.email ?? "", name: record.user.name };
 }
 
 /** Call at the top of any protected server component/page. */

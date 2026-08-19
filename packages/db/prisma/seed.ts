@@ -1,5 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 import { randomBytes, scryptSync } from "node:crypto";
+import {
+  PERMISSIONS,
+  READ_ONLY_PERMISSION_KEYS,
+  SUPPORT_MANAGER_PERMISSION_KEYS,
+  SUPPORT_AGENT_PERMISSION_KEYS,
+} from "@support-automation/shared";
 
 const prisma = new PrismaClient();
 
@@ -123,6 +129,68 @@ async function main() {
     create: { id: "global" },
   });
   console.log("Seeded conservative default Group Message Sender settings");
+
+  await prisma.securitySettings.upsert({
+    where: { id: "global" },
+    update: {},
+    create: { id: "global" },
+  });
+  console.log("Seeded default Security Settings (24h session lifetime)");
+
+  // Permission catalogue is code-defined at packages/shared/src/permissions.ts — synced here
+  // (never created ad hoc from the UI), so a key's label/category can be corrected in code and
+  // will update on the next seed run without touching PermissionModule assignments.
+  for (const p of PERMISSIONS) {
+    await prisma.permission.upsert({
+      where: { key: p.key },
+      update: { label: p.label, category: p.category },
+      create: { key: p.key, label: p.label, category: p.category },
+    });
+  }
+  console.log(`Synced ${PERMISSIONS.length} permissions`);
+
+  const allPermissionKeys = PERMISSIONS.map((p) => p.key);
+  const defaultModules: Array<{ name: string; description: string; keys: readonly string[] }> = [
+    { name: "Administrator", description: "Full access to every module.", keys: allPermissionKeys },
+    {
+      name: "Support Manager",
+      description: "Manages automation rules and views App Users.",
+      keys: SUPPORT_MANAGER_PERMISSION_KEYS,
+    },
+    {
+      name: "Support Agent",
+      description: "Creates and edits automation rules.",
+      keys: SUPPORT_AGENT_PERMISSION_KEYS,
+    },
+    { name: "Read Only", description: "View-only access across every module.", keys: READ_ONLY_PERMISSION_KEYS },
+  ];
+
+  const administratorModuleId: { current?: string } = {};
+  for (const mod of defaultModules) {
+    // Only sets isSystem on first creation; permissions are re-synced every run so the defaults
+    // stay current as new permission keys are added, matching the "code is the source of truth"
+    // rule stated above — but the module's own name/isSystem never gets silently overwritten.
+    const permissionRows = await prisma.permission.findMany({ where: { key: { in: [...mod.keys] } }, select: { id: true } });
+    const permissionModule = await prisma.permissionModule.upsert({
+      where: { name: mod.name },
+      update: {},
+      create: { name: mod.name, description: mod.description, isSystem: true },
+    });
+    await prisma.permissionModulePermission.deleteMany({ where: { permissionModuleId: permissionModule.id } });
+    await prisma.permissionModulePermission.createMany({
+      data: permissionRows.map((p) => ({ permissionModuleId: permissionModule.id, permissionId: p.id })),
+    });
+    if (mod.name === "Administrator") administratorModuleId.current = permissionModule.id;
+  }
+  console.log(`Seeded ${defaultModules.length} default Permission Modules`);
+
+  // The pre-existing seeded admin predates the permission system — give it Administrator so
+  // nothing about that login changes, without ever overwriting a module an operator already
+  // assigned by hand (only fills in when null).
+  if (administratorModuleId.current && !admin.permissionModuleId) {
+    await prisma.user.update({ where: { id: admin.id }, data: { permissionModuleId: administratorModuleId.current } });
+    console.log(`Assigned "${admin.username}" to the Administrator Permission Module`);
+  }
 }
 
 main()

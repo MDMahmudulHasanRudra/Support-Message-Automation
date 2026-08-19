@@ -4,3 +4,4 @@ export * from "./groupBroadcast.js";
 export * from "./groupParticipantAdd.js";
 export * from "./automationRuleImport.js";
 export * from "./excelSafety.js";
+export * from "./permissions.js";

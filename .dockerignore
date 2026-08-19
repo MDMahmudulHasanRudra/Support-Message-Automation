@@ -4,7 +4,7 @@
 **/.git
 **/.env
 **/.env.local
-**/sessions
+apps/worker/sessions
 **/*.log
 **/.turbo
 **/coverage

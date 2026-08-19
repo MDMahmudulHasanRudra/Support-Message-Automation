@@ -269,11 +269,30 @@ enum LogLevel {
 model User {
   id           String   @id @default(cuid())
   username     String   @unique
-  email        String   @unique
+  email        String?  @unique // optional: login is by username, not email; every existing
+  // display site already does `createdBy?.email ?? "—"`, so a missing email was already a
+  // normal, handled case before this field was ever made nullable.
   passwordHash String
   name         String
+
+  isActive            Boolean   @default(true) // inactive users are rejected at login and every
+  // already-issued session is rejected too (see UserSession/getSession) — never deleted, so
+  // audit history (createdRules etc. below) stays intact. Matches this app's existing
+  // soft-delete-over-hard-delete standard.
+  permissionModuleId  String?
+  permissionModule    PermissionModule? @relation(fields: [permissionModuleId], references: [id], onDelete: Restrict)
+  lastLoginAt         DateTime?
+  failedLoginAttempts Int       @default(0) // reset to 0 on every successful login
+  lastFailedLoginAt   DateTime? // dedicated timestamp for the lockout window check — deliberately
+  // separate from updatedAt, which changes for unrelated reasons (e.g. an admin editing the user)
+  // and would otherwise make the rolling-window check unreliable
+  lockedUntil         DateTime? // set once failedLoginAttempts crosses SecuritySettings'
+  // loginLockoutThreshold within loginLockoutWindowMinutes; checked before the password itself
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  sessions UserSession[]
 
   createdRules               AutomationRule[]
   createdBroadcastJobs       GroupBroadcastJob[]
@@ -287,6 +306,88 @@ model User {
   reviewedPatternCandidates  PatternCandidate[]
   reviewedRuleProposals      RuleProposal[]
   createdSupportIssues       SupportIssue[]
+}
+
+// ---------------------------------------------------------------------------
+// App User Management + Permission Modules + Session Management.
+//
+// UserSession replaces the old stateless signed-cookie token with a real, server-side-revocable
+// session record: the cookie carries only a random high-entropy secret, never stored raw — only
+// its sha256 (secretHash, unique+indexed) is persisted, so a lookup is an O(1) equality match,
+// never a scan. expiresAt is baked in at creation time from SecuritySettings.sessionLifetimeHours
+// and is never recalculated — changing the setting later only affects sessions created afterward.
+//
+// PermissionModule is a reusable, admin-manageable permission profile (Administrator/Support
+// Manager/Support Agent/Read Only by default, plus custom ones); Permission is a real table (not
+// a Prisma enum, and not a String[] on PermissionModule) seeded from the single source of truth at
+// packages/shared/src/permissions.ts, so a permission key typo fails closed against a real FK
+// rather than trusting an unchecked string. One PermissionModule per User (source of truth for
+// this phase — no per-user permission overrides, see CLAUDE.md/plan for why).
+// ---------------------------------------------------------------------------
+
+model PermissionModule {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isSystem    Boolean  @default(false) // true only for the 4 seeded defaults — the delete/rename
+  // action blocks on this; permissions assigned to it remain editable
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions PermissionModulePermission[]
+  users       User[]
+}
+
+/// Canonical permission catalogue — one row per key in packages/shared/src/permissions.ts,
+/// seeded/synced by packages/db/prisma/seed.ts. Never created ad hoc from the UI: the key set is
+/// code-defined: the UI only lets an admin toggle which keys belong to which PermissionModule.
+model Permission {
+  id       String @id @default(cuid())
+  key      String @unique // e.g. "automation_rules.delete" — matches packages/shared/src/permissions.ts
+  label    String
+  category String // e.g. "Automation Rules" — for grouped UI display only, not a FK
+
+  modules PermissionModulePermission[]
+}
+
+model PermissionModulePermission {
+  permissionModuleId String
+  permissionModule    PermissionModule @relation(fields: [permissionModuleId], references: [id], onDelete: Cascade)
+  permissionId        String
+  permission          Permission       @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([permissionModuleId, permissionId])
+}
+
+model UserSession {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  secretHash    String    @unique // sha256(raw secret); the raw secret only ever lives in the cookie
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime // absolute: createdAt + SecuritySettings.sessionLifetimeHours at creation
+  // time — see banner comment above for why this is never recalculated
+  lastUsedAt    DateTime  @default(now())
+  ipAddress     String?
+  userAgent     String?
+  revokedAt     DateTime?
+  revokedReason String? // "USER_LOGOUT" | "ADMIN_REVOKED" | "ADMIN_REVOKED_ALL" |
+  // "PASSWORD_CHANGED" — plain string, internal bookkeeping only, never a user-facing status enum
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Singleton settings row, same pattern as AutomationSettings (id: "global", upsert-only).
+model SecuritySettings {
+  id                          String   @id @default("global")
+  sessionLifetimeHours        Int      @default(24) // app-layer clamps to [1, 720] (30 days) in
+  // the server action — this schema has no numeric CHECK constraints anywhere else, so validation
+  // stays entirely in code, consistent with every other settings model
+  loginLockoutThreshold       Int      @default(5)
+  loginLockoutWindowMinutes   Int      @default(15)
+  loginLockoutDurationMinutes Int      @default(15)
+  updatedAt                   DateTime @updatedAt
 }
 
 model WhatsAppAccount {

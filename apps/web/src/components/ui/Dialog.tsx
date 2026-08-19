@@ -139,6 +139,9 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   tone = "primary",
   loading = false,
+  /** For a "type X to confirm" gate on an especially dangerous action — the confirm button stays
+   * disabled until the caller's own local state (e.g. a typed phrase matching) says otherwise. */
+  confirmDisabled = false,
   children,
 }: {
   open: boolean;
@@ -150,6 +153,7 @@ export function ConfirmDialog({
   cancelLabel?: string;
   tone?: "primary" | "danger";
   loading?: boolean;
+  confirmDisabled?: boolean;
   children?: ReactNode;
 }) {
   return (
@@ -167,6 +171,7 @@ export function ConfirmDialog({
             variant={tone === "danger" ? "danger" : "primary"}
             onClick={onConfirm}
             loading={loading}
+            disabled={confirmDisabled}
           >
             {confirmLabel}
           </Button>
