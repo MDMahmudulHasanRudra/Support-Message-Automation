@@ -16,16 +16,39 @@ import { formatDateTime } from "@/lib/date";
 export default async function AiLearningDashboardPage() {
   await requireSession();
 
-  const [settings, totalKnowledge, activeKnowledge, inactiveKnowledge, archivedKnowledge, providerCount, recentItems] =
-    await Promise.all([
-      prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
-      prisma.aiKnowledgeItem.count(),
-      prisma.aiKnowledgeItem.count({ where: { status: "ACTIVE" } }),
-      prisma.aiKnowledgeItem.count({ where: { status: "INACTIVE" } }),
-      prisma.aiKnowledgeItem.count({ where: { status: "ARCHIVED" } }),
-      prisma.aiProvider.count({ where: { status: "ACTIVE" } }),
-      prisma.aiKnowledgeItem.findMany({ orderBy: { updatedAt: "desc" }, take: 8 }),
-    ]);
+  const [
+    settings,
+    totalKnowledge,
+    activeKnowledge,
+    inactiveKnowledge,
+    archivedKnowledge,
+    providerCount,
+    recentItems,
+    aiRequestCount,
+    aiRepliedCount,
+    humanFallbackCount,
+    confidenceAgg,
+    tokensAgg,
+    ruleMatchCount,
+  ] = await Promise.all([
+    prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+    prisma.aiKnowledgeItem.count(),
+    prisma.aiKnowledgeItem.count({ where: { status: "ACTIVE" } }),
+    prisma.aiKnowledgeItem.count({ where: { status: "INACTIVE" } }),
+    prisma.aiKnowledgeItem.count({ where: { status: "ARCHIVED" } }),
+    prisma.aiProvider.count({ where: { status: "ACTIVE" } }),
+    prisma.aiKnowledgeItem.findMany({ orderBy: { updatedAt: "desc" }, take: 8 }),
+    // "AI Requests" excludes AI_UNAVAILABLE specifically — the one outcome where no API call was
+    // actually attempted (resolveAiClient() returned null before any completion request went out).
+    prisma.aiFallbackDecision.count({ where: { NOT: { reason: "AI_UNAVAILABLE" } } }),
+    prisma.aiFallbackDecision.count({ where: { outcome: "AI_REPLIED" } }),
+    prisma.aiFallbackDecision.count({ where: { outcome: "HUMAN_FALLBACK" } }),
+    prisma.aiFallbackDecision.aggregate({ _avg: { confidenceScore: true } }),
+    prisma.aiFallbackDecision.aggregate({ _sum: { tokensUsed: true } }),
+    // The cost-reduction counter: every one of these is a message a rule already handled,
+    // deterministically, with zero AI cost — the mechanism this whole feature exists to grow.
+    prisma.automationExecution.count({ where: { ruleId: { not: null } } }),
+  ]);
 
   const engineFlags: Array<{ label: string; enabled: boolean }> = [
     { label: "AI Engine", enabled: settings.aiEngineEnabled },
@@ -43,13 +66,12 @@ export default async function AiLearningDashboardPage() {
           <HelpButton moduleTitle="AI Learning">
             <HelpSection title="Please read this before configuring anything in AI Learning">
               <p>
-                Everything in this entire module — Knowledge Base, Providers, Models, and the Settings
-                toggles below — is <strong>configuration only</strong>. Nothing here currently affects
-                how the WhatsApp bot behaves or what it sends to customers. It's safe to fill in now
-                and will presumably be used once later phases ship, but as of today, turning a switch
-                ON or adding Knowledge Base entries has zero live effect. The one exception is the
-                Providers page's "Test Connection" button, which does make a real API call, purely to
-                verify a stored key works.
+                Knowledge Base and Models are still configuration only, with no live effect yet.
+                Providers and Settings are different: assigning an ACTIVE provider to the{" "}
+                <strong>Response</strong> model slot, with AI Engine and Auto Response both ON on the
+                Settings page, activates the live Hybrid AI Automation fallback layer — see the
+                Settings page's own help for exactly what that does. The Providers page's "Test
+                Connection" button always makes a real API call, purely to verify a stored key works.
               </p>
             </HelpSection>
             <HelpSection title="What each stat/status shows">
@@ -57,6 +79,9 @@ export default async function AiLearningDashboardPage() {
                 The Knowledge counts are simple totals by status. "AI Status" just displays whatever
                 you've toggled on the AI Settings page — it's a read-only mirror, not a separate
                 control. "Active provider(s) configured" counts AI Providers currently marked ACTIVE.
+                "AI Fallback Activity" below is a live, all-time count straight from
+                AiFallbackDecision/AutomationExecution — never a separately-tracked, potentially
+                stale counter.
               </p>
             </HelpSection>
           </HelpButton>
@@ -114,6 +139,24 @@ export default async function AiLearningDashboardPage() {
           </Link>
           .
         </p>
+      </Card>
+
+      <Card className="mb-6">
+        <SectionHeader
+          title="AI Fallback Activity"
+          description="All-time, live from AiFallbackDecision/AutomationExecution — never a separately-tracked counter."
+        />
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+          <StatTile label="AI Requests" value={aiRequestCount} />
+          <StatTile label="AI Replies" value={aiRepliedCount} tone="success" />
+          <StatTile label="Human Fallbacks" value={humanFallbackCount} tone="warning" />
+          <StatTile
+            label="Avg. Confidence"
+            value={confidenceAgg._avg.confidenceScore != null ? `${Math.round(confidenceAgg._avg.confidenceScore)}%` : "—"}
+          />
+          <StatTile label="Tokens Used" value={tokensAgg._sum.tokensUsed ?? 0} />
+          <StatTile label="Rule Matches (AI avoided)" value={ruleMatchCount} tone="success" />
+        </div>
       </Card>
 
       <Card>

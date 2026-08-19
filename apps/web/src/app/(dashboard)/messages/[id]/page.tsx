@@ -31,6 +31,12 @@ export default async function MessageDetailPage({ params }: { params: Promise<{ 
       },
       outboundReplies: { orderBy: { createdAt: "desc" } },
       notifications: { orderBy: { createdAt: "desc" } },
+      aiFallbackDecision: {
+        include: {
+          aiProvider: { select: { name: true } },
+          outboundMessage: { select: { status: true } },
+        },
+      },
     },
   });
   if (!message) notFound();
@@ -39,6 +45,14 @@ export default async function MessageDetailPage({ params }: { params: Promise<{ 
   const trace = (execution?.reasonTrace as unknown as DecisionTraceEntry[] | null) ?? [];
   const actionsExecuted =
     (execution?.actionsExecuted as unknown as Array<{ type: string; executed: boolean; reason: string }> | null) ?? [];
+
+  // Real (not fabricated) Conversation Learning linkage — evidence-linking runs on a batch cadence,
+  // so a just-arrived message legitimately may not have an evidence row yet; that's shown honestly
+  // below rather than implying it never will.
+  const evidence = await prisma.patternCandidateEvidence.findFirst({
+    where: { matchedMessageId: message.id },
+    include: { patternCandidate: { include: { proposal: { include: { createdRule: { select: { status: true } } } } } } },
+  });
 
   return (
     <div>
@@ -134,6 +148,81 @@ export default async function MessageDetailPage({ params }: { params: Promise<{ 
               </p>
             )}
           </Card>
+
+          {message.aiFallbackDecision ? (
+            <Card>
+              <SectionHeader
+                title="AI Fallback"
+                description="Only reachable after a genuine rule-engine miss — see apps/worker/src/aiFallback/."
+              />
+              <dl className="grid grid-cols-1 gap-x-4 gap-y-4 text-sm sm:grid-cols-2">
+                <Field
+                  label="Outcome"
+                  value={
+                    <Badge color={message.aiFallbackDecision.outcome === "AI_REPLIED" ? "green" : "yellow"} dot>
+                      {message.aiFallbackDecision.outcome}
+                    </Badge>
+                  }
+                />
+                <Field label="Provider" value={message.aiFallbackDecision.aiProvider?.name ?? "—"} />
+                <Field label="Model" value={<Mono>{message.aiFallbackDecision.modelId ?? "—"}</Mono>} />
+                <Field label="Intent" value={message.aiFallbackDecision.intent ?? "—"} />
+                <Field
+                  label="Confidence"
+                  value={message.aiFallbackDecision.confidenceScore != null ? `${message.aiFallbackDecision.confidenceScore}%` : "—"}
+                />
+                <Field label="Reason" value={message.aiFallbackDecision.reason ?? "—"} />
+                <Field
+                  label="Outbound"
+                  value={
+                    message.aiFallbackDecision.outboundMessage ? (
+                      <Badge color={outboundStatusColor(message.aiFallbackDecision.outboundMessage.status)} dot>
+                        {message.aiFallbackDecision.outboundMessage.status}
+                      </Badge>
+                    ) : (
+                      "Not sent (human fallback)"
+                    )
+                  }
+                />
+              </dl>
+              {message.aiFallbackDecision.responseText ? (
+                <div className="mt-4">
+                  <p className="mb-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)]">Response</p>
+                  <p className="whitespace-pre-wrap rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 text-sm text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)]">
+                    {message.aiFallbackDecision.responseText}
+                  </p>
+                </div>
+              ) : null}
+              <div className="mt-4">
+                <p className="mb-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)]">Learning</p>
+                {evidence ? (
+                  <p className="text-sm text-[color:var(--color-foreground)]">
+                    Recorded as{" "}
+                    <Badge color="blue">{evidence.responseSource}</Badge>-sourced evidence on{" "}
+                    <Link href={`/conversation-learning/pattern-candidates/${evidence.patternCandidate.id}`} className="underline">
+                      this pattern candidate
+                    </Link>
+                    .{" "}
+                    {evidence.patternCandidate.proposal
+                      ? `Rule proposal: ${evidence.patternCandidate.proposal.status}.`
+                      : "No rule proposal yet."}
+                    {evidence.patternCandidate.proposal?.createdRule
+                      ? ` Resulting rule status: ${evidence.patternCandidate.proposal.createdRule.status}${
+                          evidence.patternCandidate.proposal.createdRule.status === "ACTIVE"
+                            ? " — future matching messages are now handled without AI."
+                            : " (not yet activated)."
+                        }`
+                      : ""}
+                  </p>
+                ) : (
+                  <p className="text-sm text-[color:var(--color-muted-foreground)]">
+                    Not yet processed by Conversation Learning (evidence-linking runs on a background
+                    batch cadence).
+                  </p>
+                )}
+              </div>
+            </Card>
+          ) : null}
         </div>
 
         <div className="space-y-4">

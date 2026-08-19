@@ -14,6 +14,8 @@ import type { RawIncomingMessage } from "./types.js";
 import { markHumanReplied, openOrContinueCase } from "../escalation/escalationQueue.js";
 import { detectSupportActivity } from "../supportActivity/detector.js";
 import { runAiFallback } from "../aiFallback/runAiFallback.js";
+import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
+import { logSystemEvent } from "../logging/logSystemEvent.js";
 
 interface ActionExecutionRecord {
   type: RuleAction["type"];
@@ -77,6 +79,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
           escalationMonitoringEnabled: true,
           isMonitored: true,
           aiAutomationEnabled: true,
+          aiSuppressedUntil: true,
         },
       })
     : null;
@@ -142,6 +145,13 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
   try {
     if (isFromTeamMember) {
       await markHumanReplied(raw.chatId);
+      // Human takeover (Slice 3): a separate, independent concern from escalation's SLA timers —
+      // pause the AI fallback layer for this group briefly so it doesn't immediately answer a
+      // different customer's next message while a human is actively engaged. Skipped for groups
+      // that don't use AI at all, to avoid a pointless write.
+      if (group?.aiAutomationEnabled) {
+        await recordHumanTakeover(group.id);
+      }
     } else if (group?.priority && group.escalationMonitoringEnabled) {
       await openOrContinueCase({
         accountId: raw.accountId,
@@ -234,13 +244,29 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
         toPhone: raw.senderPhone,
         senderName: raw.senderName,
         group: group
-          ? { id: group.id, name: group.name, isMonitored: group.isMonitored, aiAutomationEnabled: group.aiAutomationEnabled }
+          ? {
+              id: group.id,
+              name: group.name,
+              isMonitored: group.isMonitored,
+              aiAutomationEnabled: group.aiAutomationEnabled,
+              aiSuppressedUntil: group.aiSuppressedUntil,
+            }
           : null,
         automationSettings: settings,
         clientOverride: aiClientOverride,
       });
     } catch (err) {
       console.error("[ai-fallback] failed to run AI fallback stage", err);
+      // A true unexpected exception here (unlike a graceful HUMAN_FALLBACK, which is already fully
+      // captured in its own AiFallbackDecision row) would otherwise leave no structured trace
+      // beyond a console line — worth one SystemLog entry, same convention patternDetectionJob.ts/
+      // aiAnalysisJob.ts already use for their own failure paths. Deliberately not logging every
+      // ordinary outcome here (see this file's own MESSAGE_NORMALIZED trace-volume comment).
+      await logSystemEvent("ERROR", "ai-fallback", "AI fallback stage threw an unexpected error", {
+        messageId: message.id,
+        accountId: raw.accountId,
+        error: (err as Error).message,
+      });
     }
   }
 

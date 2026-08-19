@@ -10,7 +10,9 @@ import { prisma } from "@support-automation/db";
 export async function isCooldownActive(params: {
   accountId: string;
   toPhone: string;
-  ruleId: string;
+  /** Null scopes this to the Hybrid AI Automation fallback layer's own cooldown bucket (an
+   * AI-authored reply has no AutomationRule row at all) — see safety.ts's doc comment. */
+  ruleId: string | null;
   cooldownSeconds: number;
   /**
    * PHASE 6.1 — real bug, reproduced live: the send-time re-check in
@@ -32,6 +34,10 @@ export async function isCooldownActive(params: {
       accountId: params.accountId,
       toPhone: params.toPhone,
       ruleId: params.ruleId,
+      // Every cooldown-eligible send (rule-based or AI) is an AUTO_REPLY — explicit filter so a
+      // null-ruleId FORWARD/GROUP_BROADCAST row (a different action entirely) can never be
+      // mistaken for AI-cooldown activity against the same (accountId, toPhone) pair.
+      actionType: "AUTO_REPLY",
       status: { in: ["PENDING", "PROCESSING", "SENT"] },
       createdAt: { gte: since },
       ...(params.excludeOutboundMessageId ? { id: { not: params.excludeOutboundMessageId } } : {}),

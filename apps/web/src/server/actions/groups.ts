@@ -39,6 +39,20 @@ export async function toggleGroupMonitoring(id: string): Promise<void> {
   revalidatePath("/groups");
 }
 
+/**
+ * Hybrid AI Automation's per-group opt-in (see WhatsAppGroup.aiAutomationEnabled and
+ * apps/worker/src/aiFallback/eligibility.ts, which also requires isMonitored + the global AI
+ * Settings gates before the fallback layer ever runs for this group). Lower-stakes than
+ * toggleGroupMonitoring — disabling it only stops the AI fallback stage for this group and fails
+ * safe to nothing happening, so unlike monitoring this doesn't need a confirmation step.
+ */
+export async function toggleGroupAiAutomation(id: string): Promise<void> {
+  await requireSession();
+  const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
+  await prisma.whatsAppGroup.update({ where: { id }, data: { aiAutomationEnabled: !group.aiAutomationEnabled } });
+  revalidatePath("/groups");
+}
+
 export interface BulkMonitoringResult {
   requested: number;
   updated: number;

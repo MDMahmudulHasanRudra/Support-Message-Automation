@@ -25,6 +25,10 @@ export async function updateAiSettings(
     const raw = Number(formData.get(key));
     return Number.isFinite(raw) ? clampPercent(raw) : fallback;
   };
+  const nonNegativeInt = (key: string, fallback: number) => {
+    const raw = Number(formData.get(key));
+    return Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : fallback;
+  };
 
   await prisma.aiSettings.upsert({
     where: { id: "global" },
@@ -41,6 +45,9 @@ export async function updateAiSettings(
       learningConfidenceThreshold: percent("learningConfidenceThreshold", 90),
       autoApprovalThreshold: percent("autoApprovalThreshold", 95),
       humanReviewThreshold: percent("humanReviewThreshold", 70),
+      autoResponseConfidenceThreshold: percent("autoResponseConfidenceThreshold", 90),
+      aiReplyCooldownSeconds: nonNegativeInt("aiReplyCooldownSeconds", 300),
+      humanTakeoverCooldownMinutes: nonNegativeInt("humanTakeoverCooldownMinutes", 30),
     },
     create: { id: "global" },
   });

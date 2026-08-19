@@ -70,11 +70,11 @@ export async function checkAutoReplySafety(params: {
     }
   }
 
-  if (rule && cooldownSeconds && cooldownSeconds > 0) {
+  if (cooldownSeconds && cooldownSeconds > 0) {
     const cooling = await isCooldownActive({
       accountId,
       toPhone,
-      ruleId: rule.id,
+      ruleId: rule?.id ?? null,
       cooldownSeconds,
     });
     if (cooling) {

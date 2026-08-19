@@ -5,7 +5,9 @@ import { KeyRound } from "lucide-react";
 import { Button, Card, Field, Input, SectionHeader, Select } from "@/components/ui";
 import type { AiProviderFormState } from "@/server/actions/aiProviders";
 
-const PROVIDER_KINDS = ["ANTHROPIC", "OPENAI", "GOOGLE", "CUSTOM"];
+// GOOGLE/CUSTOM are reserved for later — no client implementation exists yet, so they're
+// deliberately not offered here (only actually-working connection methods are exposed).
+const PROVIDER_KINDS = ["ANTHROPIC", "OPENAI"];
 
 export interface AiProviderFormDefaults {
   name?: string;

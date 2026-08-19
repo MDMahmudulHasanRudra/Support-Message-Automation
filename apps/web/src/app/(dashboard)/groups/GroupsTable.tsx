@@ -17,6 +17,7 @@ import {
 import {
   bulkSetMonitoring,
   requestGroupParticipantCount,
+  toggleGroupAiAutomation,
   toggleGroupMonitoring,
   type BulkMonitoringResult,
 } from "@/server/actions/groups";
@@ -35,6 +36,10 @@ export interface GroupRow {
   assignedTeamMemberId: string | null;
   assignedTeamMemberName: string | null;
   escalationMonitoringEnabled: boolean;
+  aiAutomationEnabled: boolean;
+  /** ISO timestamp — while in the future, the AI fallback layer is paused for this group (a team
+   * member sent a message recently; see WhatsAppGroup.aiSuppressedUntil). Null = not suppressed. */
+  aiSuppressedUntil: string | null;
 }
 
 type PendingBulkAction = "enable" | "disable" | null;
@@ -61,6 +66,8 @@ export function GroupsTable({
   const [fetchingId, setFetchingId] = useState<string | null>(null);
   const [isFetchingCount, startFetchCount] = useTransition();
   const [priorityTarget, setPriorityTarget] = useState<GroupRow | null>(null);
+  const [togglingAiId, setTogglingAiId] = useState<string | null>(null);
+  const [isTogglingAi, startToggleAi] = useTransition();
 
   const allVisibleSelected = useMemo(
     () => groups.length > 0 && groups.every((g) => selected.has(g.id)),
@@ -120,6 +127,14 @@ export function GroupsTable({
     setFetchingId(id);
     startFetchCount(async () => {
       await requestGroupParticipantCount(id);
+      router.refresh();
+    });
+  }
+
+  function toggleAiAutomation(id: string) {
+    setTogglingAiId(id);
+    startToggleAi(async () => {
+      await toggleGroupAiAutomation(id);
       router.refresh();
     });
   }
@@ -214,6 +229,7 @@ export function GroupsTable({
             <Th>Participants</Th>
             <Th>Last Synced</Th>
             <Th>Priority Support</Th>
+            <Th>AI Automation</Th>
             <Th>Manage</Th>
           </tr>
         </thead>
@@ -278,6 +294,26 @@ export function GroupsTable({
                     ) : null}
                     <Button variant="ghost" size="sm" onClick={() => setPriorityTarget(g)}>
                       Configure
+                    </Button>
+                  </div>
+                </Td>
+                <Td>
+                  <div className="flex flex-col items-start gap-1">
+                    <Badge color={g.aiAutomationEnabled ? "green" : "gray"} dot>
+                      {g.aiAutomationEnabled ? "Enabled" : "Disabled"}
+                    </Badge>
+                    {g.aiAutomationEnabled && g.aiSuppressedUntil && new Date(g.aiSuppressedUntil) > new Date() ? (
+                      <Tooltip content="A team member sent a message recently — the AI fallback layer is paused for this group until then.">
+                        <Badge color="yellow">Human active until {new Date(g.aiSuppressedUntil).toLocaleTimeString()}</Badge>
+                      </Tooltip>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      loading={isTogglingAi && togglingAiId === g.id}
+                      onClick={() => toggleAiAutomation(g.id)}
+                    >
+                      {g.aiAutomationEnabled ? "Disable AI" : "Enable AI"}
                     </Button>
                   </div>
                 </Td>

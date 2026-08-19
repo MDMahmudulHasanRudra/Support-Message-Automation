@@ -13,7 +13,7 @@ export interface RunAiFallbackParams {
   chatId: string;
   toPhone: string;
   senderName?: string | null;
-  group: { id: string; name: string; isMonitored: boolean; aiAutomationEnabled: boolean } | null;
+  group: { id: string; name: string; isMonitored: boolean; aiAutomationEnabled: boolean; aiSuppressedUntil: Date | null } | null;
   automationSettings: AutomationSettings;
   /** Test-only seam (mirrors aiAnalysisJob.ts's clientOverride) — production call sites never pass it. */
   clientOverride?: AiClient;
@@ -38,9 +38,12 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   const eligibility = checkAiFallbackEligibility({
     automationEnabled: params.automationSettings.automationEnabled,
     mode: params.automationSettings.mode,
-    group: params.group ? { isMonitored: params.group.isMonitored, aiAutomationEnabled: params.group.aiAutomationEnabled } : null,
+    group: params.group
+      ? { isMonitored: params.group.isMonitored, aiAutomationEnabled: params.group.aiAutomationEnabled, aiSuppressedUntil: params.group.aiSuppressedUntil }
+      : null,
     aiEngineEnabled: aiSettings.aiEngineEnabled,
     autoResponseEnabled: aiSettings.autoResponseEnabled,
+    now: new Date(),
   });
   if (!eligibility.eligible) return;
 
@@ -85,6 +88,24 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     });
   };
 
+  // A cheap pre-check, before spending a real AI API call: if this exact (account, client) pair is
+  // already cooling down from a recent AI reply, there's no point asking AI again — it would just
+  // get blocked at send time anyway. The full re-check below still runs right before enqueueing,
+  // as defense-in-depth against rate limits shifting during the AI call's own latency (mirrors the
+  // outbound queue processor's own send-time re-check of the same conditions).
+  const preCheck = await checkAutoReplySafety({
+    accountId: params.accountId,
+    toPhone: params.toPhone,
+    groupId: params.group?.id ?? null,
+    rule: null,
+    cooldownSeconds: aiSettings.aiReplyCooldownSeconds,
+    settings: params.automationSettings,
+  });
+  if (!preCheck.allowed) {
+    await recordHumanFallback(`SAFETY_BLOCKED: ${preCheck.reason}`);
+    return;
+  }
+
   if (!client) {
     await recordHumanFallback("AI_UNAVAILABLE");
     return;
@@ -128,12 +149,13 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
 
   // Re-run every existing safety gate (kill switch, mode, monitored-group check, cooldown, rate
   // limits) with a null rule — see safety.ts's doc comment for why null is AUTO_REPLY-equivalent.
+  // Defense-in-depth against the preCheck above going stale during the AI call's own latency.
   const safety = await checkAutoReplySafety({
     accountId: params.accountId,
     toPhone: params.toPhone,
     groupId: params.group?.id ?? null,
     rule: null,
-    cooldownSeconds: null,
+    cooldownSeconds: aiSettings.aiReplyCooldownSeconds,
     settings: params.automationSettings,
   });
   if (!safety.allowed) {

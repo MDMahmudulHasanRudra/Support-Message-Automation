@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
-import type { AiSettings, LearningSettings, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
+import { prisma, createAiFallbackDecision } from "@support-automation/db";
+import type { AiSettings, LearningSettings, Message, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processOnePatternDetectionBatch } from "../learning/patternDetectionJob.js";
 import { getLearningSettings } from "../learning/sessionSegmentation.js";
 
@@ -54,26 +54,29 @@ async function createClosedSession(params: {
     },
   });
 
+  const messages: Message[] = [];
   for (const m of params.messages) {
-    await prisma.message.create({
-      data: {
-        accountId: account.id,
-        groupId: params.groupId,
-        conversationSessionId: session.id,
-        whatsappMessageId: randomUUID(),
-        chatId,
-        senderPhone: m.senderPhone,
-        isFromTeamMember: m.isFromTeamMember,
-        direction: "INCOMING",
-        body: m.body,
-        normalizedBody: m.body.toLowerCase(),
-        timestampWa: m.timestampWa,
-        processingStatus: "PROCESSED",
-      },
-    });
+    messages.push(
+      await prisma.message.create({
+        data: {
+          accountId: account.id,
+          groupId: params.groupId,
+          conversationSessionId: session.id,
+          whatsappMessageId: randomUUID(),
+          chatId,
+          senderPhone: m.senderPhone,
+          isFromTeamMember: m.isFromTeamMember,
+          direction: "INCOMING",
+          body: m.body,
+          normalizedBody: m.body.toLowerCase(),
+          timestampWa: m.timestampWa,
+          processingStatus: "PROCESSED",
+        },
+      }),
+    );
   }
 
-  return session;
+  return { session, messages };
 }
 
 async function setLearningSettings(overrides: Partial<LearningSettings>) {
@@ -220,5 +223,105 @@ describe("pattern detection — feature enabled", () => {
     expect(job.trigger).toBe("SCHEDULED");
     expect(job.status).toBe("COMPLETED");
     expect(job.candidatesConsidered).toBeGreaterThan(0);
+  });
+});
+
+describe("Hybrid AI Automation (Slice 2) — responseSource wiring", () => {
+  it("tags evidence HUMAN when a team member replied and no AiFallbackDecision exists", async () => {
+    await setLearningSettings({ conversationLearningEnabled: true, minOccurrenceForCandidate: 1, minDistinctGroupsForCandidate: 1, minDistinctClientsForCandidate: 1 });
+    const group = await makeGroup();
+    await createClosedSession({
+      groupId: group.id,
+      messages: [
+        { senderPhone: "+8801111111111", isFromTeamMember: false, body: "payment korlam but balance update hoy nai", timestampWa: new Date() },
+        { senderPhone: "+8809999999999", isFromTeamMember: true, body: "please share your transaction ID, we'll check it now.", timestampWa: new Date(Date.now() + 60_000) },
+      ],
+    });
+
+    await processOnePatternDetectionBatch();
+
+    const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { hasSome: ["payment", "balance"] } } });
+    const evidence = await prisma.patternCandidateEvidence.findFirstOrThrow({ where: { patternCandidateId: candidate.id } });
+    expect(evidence.responseSource).toBe("HUMAN");
+    expect(evidence.wasResolved).toBe(true);
+    expect(candidate.suggestedReplyMessage).toBe("please share your transaction ID, we'll check it now.");
+  });
+
+  it("tags evidence AI when the Hybrid AI Automation fallback layer answered the message, and no responding rule/team reply exists", async () => {
+    await setLearningSettings({ conversationLearningEnabled: true, minOccurrenceForCandidate: 1, minDistinctGroupsForCandidate: 1, minDistinctClientsForCandidate: 1 });
+    const group = await makeGroup();
+    const { messages } = await createClosedSession({
+      groupId: group.id,
+      messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: "net khub slow hoye geche ajke", timestampWa: new Date() }],
+    });
+    const customerMessage = messages[0]!;
+
+    const decisionResult = await createAiFallbackDecision({
+      messageId: customerMessage.id,
+      accountId: account.id,
+      outcome: "AI_REPLIED",
+      responseText: "Your connection is being checked by our support team now.",
+    });
+    expect("id" in decisionResult).toBe(true);
+
+    await processOnePatternDetectionBatch();
+
+    const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { hasSome: ["slow", "khub"] } } });
+    const evidence = await prisma.patternCandidateEvidence.findFirstOrThrow({ where: { patternCandidateId: candidate.id } });
+    expect(evidence.responseSource).toBe("AI");
+    expect(evidence.wasResolved).toBe(true); // an AI-resolved message counts as resolved too
+    expect(candidate.suggestedReplyMessage).toBe("Your connection is being checked by our support team now.");
+  });
+
+  it("tags evidence UNRESOLVED when nothing answered the message yet", async () => {
+    await setLearningSettings({ conversationLearningEnabled: true, minOccurrenceForCandidate: 1, minDistinctGroupsForCandidate: 1, minDistinctClientsForCandidate: 1 });
+    const group = await makeGroup();
+    await createClosedSession({
+      groupId: group.id,
+      messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: "still waiting for a reply here", timestampWa: new Date() }],
+    });
+
+    await processOnePatternDetectionBatch();
+
+    const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { hasSome: ["waiting", "reply"] } } });
+    const evidence = await prisma.patternCandidateEvidence.findFirstOrThrow({ where: { patternCandidateId: candidate.id } });
+    expect(evidence.responseSource).toBe("UNRESOLVED");
+    expect(evidence.wasResolved).toBe(false);
+  });
+
+  it("tags evidence EXISTING_RULE when a deterministic rule already responded, even if a team member also happened to speak afterward", async () => {
+    await setLearningSettings({ conversationLearningEnabled: true, minOccurrenceForCandidate: 1, minDistinctGroupsForCandidate: 1, minDistinctClientsForCandidate: 1 });
+    const group = await makeGroup();
+    const { messages } = await createClosedSession({
+      groupId: group.id,
+      messages: [
+        { senderPhone: "+8801111111111", isFromTeamMember: false, body: "existing rule already handles this one", timestampWa: new Date() },
+        { senderPhone: "+8809999999999", isFromTeamMember: true, body: "just adding a note here too", timestampWa: new Date(Date.now() + 60_000) },
+      ],
+    });
+    const customerMessage = messages[0]!;
+
+    const rule = await prisma.automationRule.create({
+      data: { name: "Test Rule", type: "AUTO_REPLY", matchType: "ALWAYS", actions: [{ type: "AUTO_REPLY" }], priority: 10, status: "ACTIVE" },
+    });
+    await prisma.automationExecution.create({
+      data: {
+        messageId: customerMessage.id,
+        ruleId: rule.id,
+        actionsExecuted: [],
+        decision: "AUTO_REPLY",
+        reasonTrace: [],
+        idempotencyKey: `${customerMessage.id}:${rule.id}`,
+      },
+    });
+
+    await processOnePatternDetectionBatch();
+
+    const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { hasSome: ["existing", "handles"] } } });
+    const evidence = await prisma.patternCandidateEvidence.findFirstOrThrow({ where: { patternCandidateId: candidate.id } });
+    expect(evidence.responseSource).toBe("EXISTING_RULE");
+
+    await prisma.automationExecution.deleteMany({ where: { ruleId: rule.id } });
+    await prisma.automationRule.delete({ where: { id: rule.id } });
   });
 });

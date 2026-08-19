@@ -4,9 +4,12 @@ export interface AiFallbackEligibilityContext {
   automationEnabled: boolean;
   mode: AutomationMode;
   /** Null for a direct message — AI fallback is per-group opt-in only, so a DM is always ineligible. */
-  group: { isMonitored: boolean; aiAutomationEnabled: boolean } | null;
+  group: { isMonitored: boolean; aiAutomationEnabled: boolean; aiSuppressedUntil: Date | null } | null;
   aiEngineEnabled: boolean;
   autoResponseEnabled: boolean;
+  /** Real wall-clock time, passed explicitly to keep this function pure/testable — never a
+   * message-derived timestamp, which could be backdated on a replayed/retried event. */
+  now: Date;
 }
 
 export type AiFallbackEligibility = { eligible: true } | { eligible: false; reason: string };
@@ -37,6 +40,12 @@ export function checkAiFallbackEligibility(ctx: AiFallbackEligibilityContext): A
   }
   if (!ctx.group.aiAutomationEnabled) {
     return { eligible: false, reason: "AI Automation is not enabled for this group." };
+  }
+  if (ctx.group.aiSuppressedUntil && ctx.group.aiSuppressedUntil > ctx.now) {
+    // Human takeover: a team member is actively handling this group right now — silent, same
+    // zero-side-effect philosophy as every other gate. Deterministic rules/escalation are
+    // completely unaffected; only the AI fallback stage is paused, and only for this one group.
+    return { eligible: false, reason: `A team member is actively handling this group until ${ctx.group.aiSuppressedUntil.toISOString()}.` };
   }
   if (!ctx.aiEngineEnabled) {
     return { eligible: false, reason: "AI Engine is disabled in AI Settings." };

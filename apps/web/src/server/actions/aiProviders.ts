@@ -13,7 +13,10 @@ export interface AiProviderFormState {
   error?: string;
 }
 
-const PROVIDER_KINDS: AiProviderKind[] = ["ANTHROPIC", "OPENAI", "GOOGLE", "CUSTOM"];
+// GOOGLE/CUSTOM are reserved AiProviderKind values with no client implementation yet
+// (see packages/ai-client's resolveAiClient()) — deliberately excluded here so the UI/validator
+// only ever expose connection methods that actually work, per the "don't invent it" instruction.
+const PROVIDER_KINDS: AiProviderKind[] = ["ANTHROPIC", "OPENAI"];
 
 function isProviderKind(value: string): value is AiProviderKind {
   return (PROVIDER_KINDS as string[]).includes(value);
@@ -102,43 +105,49 @@ export interface TestConnectionResult {
   error?: string;
 }
 
+async function recordProviderTestResult(id: string, name: string, ok: boolean, error?: string): Promise<void> {
+  await prisma.aiProvider.update({
+    where: { id },
+    data: { lastTestedAt: new Date(), lastTestOk: ok, lastTestError: error ?? null },
+  });
+  if (ok) {
+    await logSystemEvent("INFO", "ai-learning", `Connection test succeeded for "${name}"`, { providerId: id });
+  } else {
+    await logSystemEvent("WARN", "ai-learning", `Connection test failed for "${name}"`, { providerId: id, error });
+  }
+  revalidatePath("/ai-learning/providers");
+}
+
 /**
- * Cheapest real connectivity check available per provider — for Anthropic,
- * models.list() (no tokens consumed, unlike a messages.create test would).
- * Only ANTHROPIC is implemented for now; other kinds are stored but not yet
- * testable (spec's provider list is aspirational beyond what's wired up).
+ * Cheapest real connectivity check available per provider — for Anthropic, models.list(); for an
+ * OpenAI-compatible endpoint, GET /models. Neither consumes any completion tokens. Only these two
+ * kinds have a client implementation (see packages/ai-client's resolveAiClient()) — GOOGLE/CUSTOM
+ * are stored but not yet testable.
  */
 export async function testAiProviderConnection(id: string): Promise<TestConnectionResult> {
   await requireSession();
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
   if (!provider) return { ok: false, error: "Provider not found." };
 
-  if (provider.kind !== "ANTHROPIC") {
+  if (provider.kind !== "ANTHROPIC" && provider.kind !== "OPENAI") {
     return { ok: false, error: `Connection testing isn't implemented yet for ${provider.kind}.` };
   }
 
   try {
     const apiKey = decryptSecret(provider.apiKeyCiphertext);
-    const client = new Anthropic({ apiKey, baseURL: provider.apiUrl || undefined });
-    await client.models.list({ limit: 1 });
-    await prisma.aiProvider.update({
-      where: { id },
-      data: { lastTestedAt: new Date(), lastTestOk: true, lastTestError: null },
-    });
-    await logSystemEvent("INFO", "ai-learning", `Connection test succeeded for "${provider.name}"`, { providerId: id });
-    revalidatePath("/ai-learning/providers");
+    if (provider.kind === "ANTHROPIC") {
+      const client = new Anthropic({ apiKey, baseURL: provider.apiUrl || undefined });
+      await client.models.list({ limit: 1 });
+    } else {
+      const baseURL = (provider.apiUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
+      const response = await fetch(`${baseURL}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
+      if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    }
+    await recordProviderTestResult(id, provider.name, true);
     return { ok: true };
   } catch (err) {
     const message = (err as Error).message;
-    await prisma.aiProvider.update({
-      where: { id },
-      data: { lastTestedAt: new Date(), lastTestOk: false, lastTestError: message },
-    });
-    await logSystemEvent("WARN", "ai-learning", `Connection test failed for "${provider.name}"`, {
-      providerId: id,
-      error: message,
-    });
-    revalidatePath("/ai-learning/providers");
+    await recordProviderTestResult(id, provider.name, false, message);
     return { ok: false, error: message };
   }
 }

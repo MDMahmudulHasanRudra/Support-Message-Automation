@@ -5,7 +5,7 @@ import {
   prisma,
   resolveWhatsAppAccount,
 } from "@support-automation/db";
-import type { LearningSettings, PatternCandidateStatus } from "@prisma/client";
+import type { EvidenceResponseSource, LearningSettings, PatternCandidateStatus } from "@prisma/client";
 import { derivePatternSignature, meetsCandidateFloor, scorePatternCandidate } from "@support-automation/engine";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
@@ -137,6 +137,23 @@ async function linkClosedSessionsToCandidates(): Promise<{ sessionsLinked: numbe
       orderBy: { matchedAt: "asc" },
     });
 
+    // Hybrid AI Automation (Slice 2): was this customer message itself the one the AI fallback
+    // layer (apps/worker/src/aiFallback/) answered? Mutually exclusive with respondingExecution by
+    // construction — runAiFallback() only ever runs on a genuine NO_MATCH, so a message with a
+    // responding rule execution can never also have an AiFallbackDecision row.
+    const aiDecision = await prisma.aiFallbackDecision.findUnique({
+      where: { messageId: firstCustomerMessage.id },
+      select: { outcome: true, responseText: true },
+    });
+    const aiReplied = aiDecision?.outcome === "AI_REPLIED";
+    const responseSource: EvidenceResponseSource = respondingExecution?.ruleId
+      ? "EXISTING_RULE"
+      : aiReplied
+        ? "AI"
+        : teamReply
+          ? "HUMAN"
+          : "UNRESOLVED";
+
     const candidate = await prisma.patternCandidate.upsert({
       where: { patternKey },
       update: {},
@@ -154,17 +171,25 @@ async function linkClosedSessionsToCandidates(): Promise<{ sessionsLinked: numbe
         patternCandidateId: candidate.id,
         conversationSessionId: session.id,
         matchedMessageId: firstCustomerMessage.id,
-        wasResolved: Boolean(teamReply),
+        // A message the AI fallback layer successfully answered is resolved just as much as one a
+        // human answered — without this, an AI-only-resolved pattern would score permanently
+        // "unresolved" on resolutionScore and never graduate into a Rule Proposal, working against
+        // the entire point of this slice (AI-handled patterns becoming learned rules).
+        wasResolved: Boolean(teamReply) || aiReplied,
         respondingRuleId: respondingExecution?.ruleId ?? null,
+        responseSource,
       },
     });
 
     // Capture the first-ever observed resolution as the suggested reply template — evidence, not
-    // binding, and never overwritten once set (a human reviewer can always edit it later).
-    if (teamReply && !candidate.suggestedReplyMessage) {
+    // binding, and never overwritten once set (a human reviewer can always edit it later). A
+    // human-authored reply wins over an AI-drafted one when both exist, as the more concrete,
+    // human-vetted text.
+    const suggestedReply = teamReply?.body ?? (aiReplied ? aiDecision?.responseText ?? null : null);
+    if (suggestedReply && !candidate.suggestedReplyMessage) {
       await prisma.patternCandidate.update({
         where: { id: candidate.id },
-        data: { suggestedReplyMessage: teamReply.body },
+        data: { suggestedReplyMessage: suggestedReply },
       });
     }
 

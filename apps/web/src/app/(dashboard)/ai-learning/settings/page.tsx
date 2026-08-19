@@ -15,21 +15,28 @@ export default async function AiSettingsPage() {
         description="Master controls and learning thresholds for the AI Learning module."
         actions={
           <HelpButton moduleTitle="AI Settings">
-            <HelpSection title="Every switch here defaults OFF, and none of them do anything yet">
+            <HelpSection title="AI Engine + Auto Response are live — the rest of Master Controls are not">
               <p>
-                Master Controls (AI Engine, Learning, Auto Response, Screenshot Response, Chat Learning,
-                Software Learning, Requirement Learning, Announcement AI) and the four Learning
-                Thresholds (Duplicate Similarity, Learning Confidence, Auto Approval, Human Review) are
-                all inert right now — flipping any of these on has no effect on real message handling.
-                They're here so later phases have somewhere to read configuration from once they ship.
+                <strong>AI Engine</strong> and <strong>Auto Response</strong> together gate the Hybrid
+                AI Automation fallback layer: when the deterministic rule engine finds no match for a
+                customer message in an eligible, monitored group with AI Automation enabled, the
+                system asks a configured AI provider to classify it and, only above the Auto-Response
+                Confidence Threshold below, draft a reply — sent through the same outbound queue every
+                other reply uses. Below the threshold, or on any failure, a human is asked for help
+                instead, and nothing is ever sent without passing the existing kill switch, automation
+                mode, cooldown, and rate-limit checks. Once a recurring pattern becomes an approved,
+                activated rule, the deterministic engine handles it and AI is never called again for
+                that pattern. Every other toggle here (Learning, Screenshot Response, Chat Learning,
+                Software Learning, Requirement Learning, Announcement AI) is still reserved for later
+                phases and has no effect on real message handling yet.
               </p>
             </HelpSection>
-            <HelpSection title="Thresholds, for when they do matter">
+            <HelpSection title="Thresholds">
               <p>
-                All four are percentages (0–100), meant for future duplicate/confidence checks:
-                Duplicate Similarity (at/above this, treat as a duplicate), Learning Confidence (below
-                this, needs human review), Auto Approval (at/above this, can skip human approval if
-                enabled), Human Review (below this, reject or require manual review).
+                Duplicate Similarity, Learning Confidence, Auto Approval, and Human Review are
+                percentages (0–100) reserved for future AI Learning/Knowledge phases. Auto-Response
+                Confidence Threshold (below, in its own section) is live today — it's the AI fallback
+                layer's own reply-vs-human-fallback decision point, default 90%.
               </p>
             </HelpSection>
           </HelpButton>

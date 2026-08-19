@@ -70,6 +70,8 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
     assignedTeamMemberId: g.assignedTeamMemberId,
     assignedTeamMemberName: g.assignedTeamMember?.name ?? null,
     escalationMonitoringEnabled: g.escalationMonitoringEnabled,
+    aiAutomationEnabled: g.aiAutomationEnabled,
+    aiSuppressedUntil: g.aiSuppressedUntil?.toISOString() ?? null,
   }));
 
   return (
@@ -116,6 +118,19 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
                 assign a team member who gets DM'd if nobody replies in time. Leaving priority unset
                 (the default) means this group is never monitored for escalation — it's entirely opt-in.
                 See the Escalations → Active Cases page's own Help for what the tiers actually do.
+              </p>
+            </HelpSection>
+            <HelpSection title="AI Automation column">
+              <p>
+                Opt-in for the Hybrid AI Automation fallback layer, per group. Even when enabled here,
+                AI only ever runs for a message in this group when it's also Monitored, and the
+                account-wide AI Engine + Auto Response switches (AI Learning → Settings) are both on
+                — this is one gate among several, never the only one. Disabling it just stops that one
+                group from ever reaching the AI/human-fallback stage; every other automation on the
+                group is unaffected. A yellow "Human active until…" badge means a team member sent
+                a message here recently — AI is briefly paused for this group (configurable on the
+                AI Learning → Settings page) so it doesn't step on a human who's already engaged;
+                deterministic rules and escalation are unaffected and keep working normally.
               </p>
             </HelpSection>
           </HelpButton>

@@ -22,6 +22,8 @@ let originalAiSettings: AiSettings;
 let account: WhatsAppAccount;
 let group: WhatsAppGroup;
 let preExistingActiveRuleIds: string[] = [];
+const createdTeamMemberIds: string[] = [];
+const createdGroupIds: string[] = [];
 
 function uniquePhone(): string {
   return `+8809${randomUUID().replace(/-/g, "").slice(0, 8)}`;
@@ -111,6 +113,14 @@ afterEach(async () => {
   await prisma.automationExecution.deleteMany({ where: { message: { accountId: account.id } } });
   await prisma.message.deleteMany({ where: { accountId: account.id } }); // cascades AiFallbackDecision
   await prisma.whatsAppGroup.delete({ where: { id: group.id } });
+  if (createdGroupIds.length) {
+    await prisma.whatsAppGroup.deleteMany({ where: { id: { in: createdGroupIds } } });
+    createdGroupIds.length = 0;
+  }
+  if (createdTeamMemberIds.length) {
+    await prisma.internalTeamMember.deleteMany({ where: { id: { in: createdTeamMemberIds } } });
+    createdTeamMemberIds.length = 0;
+  }
 });
 
 describe("parseFallbackResponse", () => {
@@ -140,12 +150,14 @@ describe("parseFallbackResponse", () => {
 });
 
 describe("checkAiFallbackEligibility", () => {
+  const now = new Date("2026-01-01T12:00:00Z");
   const baseCtx = {
     automationEnabled: true,
     mode: "SAFE_AUTO_REPLY" as const,
-    group: { isMonitored: true, aiAutomationEnabled: true },
+    group: { isMonitored: true, aiAutomationEnabled: true, aiSuppressedUntil: null as Date | null },
     aiEngineEnabled: true,
     autoResponseEnabled: true,
+    now,
   };
 
   it("is eligible when every gate passes", () => {
@@ -169,11 +181,25 @@ describe("checkAiFallbackEligibility", () => {
   });
 
   it("blocks an unmonitored group", () => {
-    expect(checkAiFallbackEligibility({ ...baseCtx, group: { isMonitored: false, aiAutomationEnabled: true } }).eligible).toBe(false);
+    expect(checkAiFallbackEligibility({ ...baseCtx, group: { isMonitored: false, aiAutomationEnabled: true, aiSuppressedUntil: null } }).eligible).toBe(false);
   });
 
   it("blocks a group that hasn't opted in to AI automation", () => {
-    expect(checkAiFallbackEligibility({ ...baseCtx, group: { isMonitored: true, aiAutomationEnabled: false } }).eligible).toBe(false);
+    expect(checkAiFallbackEligibility({ ...baseCtx, group: { isMonitored: true, aiAutomationEnabled: false, aiSuppressedUntil: null } }).eligible).toBe(false);
+  });
+
+  it("blocks when a team member is actively handling the group (human takeover)", () => {
+    const suppressedUntil = new Date(now.getTime() + 60_000); // still in the future relative to `now`
+    expect(
+      checkAiFallbackEligibility({ ...baseCtx, group: { ...baseCtx.group, aiSuppressedUntil: suppressedUntil } }).eligible,
+    ).toBe(false);
+  });
+
+  it("is eligible once the human-takeover window has elapsed", () => {
+    const suppressedUntil = new Date(now.getTime() - 60_000); // already in the past relative to `now`
+    expect(
+      checkAiFallbackEligibility({ ...baseCtx, group: { ...baseCtx.group, aiSuppressedUntil: suppressedUntil } }),
+    ).toEqual({ eligible: true });
   });
 
   it("blocks when AI Engine is disabled", () => {
@@ -328,6 +354,32 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
     expect(await prisma.notification.count({ where: { relatedMessage: { accountId: account.id } } })).toBe(0);
   });
 
+  it("is a silent no-op when AI Engine is disabled in AI Settings", async () => {
+    await resetAiSettings({ aiEngineEnabled: false });
+    const client = new MockAiClient();
+
+    await processIncomingMessage(
+      { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "unmatched with AI engine off", timestampWa: new Date() },
+      client,
+    );
+
+    expect(client.requests).toHaveLength(0);
+    expect(await prisma.aiFallbackDecision.count({ where: { accountId: account.id } })).toBe(0);
+  });
+
+  it("is a silent no-op when Auto Response is disabled in AI Settings", async () => {
+    await resetAiSettings({ autoResponseEnabled: false });
+    const client = new MockAiClient();
+
+    await processIncomingMessage(
+      { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "unmatched with auto response off", timestampWa: new Date() },
+      client,
+    );
+
+    expect(client.requests).toHaveLength(0);
+    expect(await prisma.aiFallbackDecision.count({ where: { accountId: account.id } })).toBe(0);
+  });
+
   it("is a silent no-op under MANUAL_ONLY mode", async () => {
     await resetAutomationSettings({ mode: "MANUAL_ONLY" });
     const client = new MockAiClient();
@@ -356,5 +408,191 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
     expect(decision.outcome).toBe("HUMAN_FALLBACK");
     expect(decision.reason).toMatch(/^SAFETY_BLOCKED:/);
     expect(await prisma.outboundMessage.count({ where: { accountId: account.id } })).toBe(0);
+  });
+
+  describe("confidence boundaries (Slice 3)", () => {
+    async function sendWithConfidence(confidenceLine: string, senderPhone: string) {
+      const client = new MockAiClient();
+      client.nextText = `INTENT: test\n${confidenceLine}\nSHOULD_REPLY: YES\nRESPONSE: A drafted reply.`;
+      await processIncomingMessage(
+        { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone, direction: "INCOMING", body: "boundary test message", timestampWa: new Date() },
+        client,
+      );
+      const message = await prisma.message.findFirstOrThrow({ where: { accountId: account.id, senderPhone } });
+      return prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: message.id } });
+    }
+
+    it("confidence 100 replies", async () => {
+      const decision = await sendWithConfidence("CONFIDENCE: 100", uniquePhone());
+      expect(decision.outcome).toBe("AI_REPLIED");
+    });
+
+    it("confidence exactly at the threshold (90) replies", async () => {
+      const decision = await sendWithConfidence("CONFIDENCE: 90", uniquePhone());
+      expect(decision.outcome).toBe("AI_REPLIED");
+    });
+
+    it("confidence one below the threshold (89) falls back to human", async () => {
+      const decision = await sendWithConfidence("CONFIDENCE: 89", uniquePhone());
+      expect(decision.outcome).toBe("HUMAN_FALLBACK");
+      expect(decision.reason).toBe("LOW_CONFIDENCE");
+    });
+
+    it("confidence 0 falls back to human", async () => {
+      const decision = await sendWithConfidence("CONFIDENCE: 0", uniquePhone());
+      expect(decision.outcome).toBe("HUMAN_FALLBACK");
+      expect(decision.reason).toBe("LOW_CONFIDENCE");
+    });
+
+    it("missing confidence entirely fails closed (never treated as 100%)", async () => {
+      const client = new MockAiClient();
+      client.nextText = "SHOULD_REPLY: YES\nRESPONSE: A drafted reply.";
+      const senderPhone = uniquePhone();
+      await processIncomingMessage(
+        { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone, direction: "INCOMING", body: "boundary test message", timestampWa: new Date() },
+        client,
+      );
+      const message = await prisma.message.findFirstOrThrow({ where: { accountId: account.id, senderPhone } });
+      const decision = await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: message.id } });
+      expect(decision.outcome).toBe("HUMAN_FALLBACK");
+      expect(decision.reason).toBe("MALFORMED_RESPONSE");
+    });
+  });
+
+  describe("AI reply cooldown (Slice 3)", () => {
+    it("blocks an immediate second eligible reply to the same client, without spending a new AI call", async () => {
+      await resetAiSettings({ aiReplyCooldownSeconds: 3600 });
+      const senderPhone = uniquePhone();
+      const firstClient = new MockAiClient();
+      firstClient.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+      await processIncomingMessage(
+        { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone, direction: "INCOMING", body: "first message", timestampWa: new Date() },
+        firstClient,
+      );
+      const firstMessage = await prisma.message.findFirstOrThrow({ where: { accountId: account.id, senderPhone } });
+      const firstDecision = await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: firstMessage.id } });
+      expect(firstDecision.outcome).toBe("AI_REPLIED");
+
+      const secondClient = new MockAiClient();
+      await processIncomingMessage(
+        { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone, direction: "INCOMING", body: "second message right after", timestampWa: new Date() },
+        secondClient,
+      );
+      const secondMessage = await prisma.message.findFirstOrThrow({ where: { accountId: account.id, senderPhone, id: { not: firstMessage.id } } });
+      const secondDecision = await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: secondMessage.id } });
+
+      expect(secondDecision.outcome).toBe("HUMAN_FALLBACK");
+      expect(secondDecision.reason).toMatch(/^SAFETY_BLOCKED:.*cooldown/i);
+      // The pre-AI-call check caught this before spending a real API call.
+      expect(secondClient.requests).toHaveLength(0);
+    });
+
+    it("does not block a different client in the same cooldown window", async () => {
+      await resetAiSettings({ aiReplyCooldownSeconds: 3600 });
+      const firstClient = new MockAiClient();
+      firstClient.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+      await processIncomingMessage(
+        { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "first client message", timestampWa: new Date() },
+        firstClient,
+      );
+
+      const otherPhone = uniquePhone();
+      const secondClient = new MockAiClient();
+      secondClient.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+      await processIncomingMessage(
+        { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: otherPhone, direction: "INCOMING", body: "different client message", timestampWa: new Date() },
+        secondClient,
+      );
+
+      const otherMessage = await prisma.message.findFirstOrThrow({ where: { accountId: account.id, senderPhone: otherPhone } });
+      const otherDecision = await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: otherMessage.id } });
+      expect(otherDecision.outcome).toBe("AI_REPLIED");
+      expect(secondClient.requests).toHaveLength(1);
+    });
+
+    it("is disabled entirely when aiReplyCooldownSeconds is 0", async () => {
+      await resetAiSettings({ aiReplyCooldownSeconds: 0 });
+      const senderPhone = uniquePhone();
+      for (let i = 0; i < 2; i++) {
+        const client = new MockAiClient();
+        client.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+        await processIncomingMessage(
+          { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone, direction: "INCOMING", body: `message ${i}`, timestampWa: new Date() },
+          client,
+        );
+      }
+      const decisions = await prisma.aiFallbackDecision.findMany({ where: { accountId: account.id } });
+      expect(decisions.every((d) => d.outcome === "AI_REPLIED")).toBe(true);
+      expect(decisions).toHaveLength(2);
+    });
+  });
+
+  describe("human takeover (Slice 3)", () => {
+    it("suppresses AI in the same group for the configured window after a team member speaks, and resumes automatically afterward", async () => {
+      await resetAiSettings({ humanTakeoverCooldownMinutes: 30 });
+      const teamPhone = uniquePhone();
+      const teamMember = await prisma.internalTeamMember.create({ data: { name: "Test Agent", phoneNumber: teamPhone, role: "Support", status: "ACTIVE" } });
+      createdTeamMemberIds.push(teamMember.id);
+
+      await processIncomingMessage({
+        accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId,
+        chatId: group.whatsappGroupId, senderPhone: teamPhone, direction: "INCOMING", body: "I'm handling this now", timestampWa: new Date(),
+      });
+      const suppressedGroup = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id: group.id } });
+      expect(suppressedGroup.aiSuppressedUntil).not.toBeNull();
+      expect(suppressedGroup.aiSuppressedUntil!.getTime()).toBeGreaterThan(Date.now());
+
+      const client = new MockAiClient();
+      await processIncomingMessage(
+        { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "unmatched during takeover", timestampWa: new Date() },
+        client,
+      );
+      expect(client.requests).toHaveLength(0);
+      const customerMessage = await prisma.message.findFirstOrThrow({ where: { accountId: account.id, body: "unmatched during takeover" } });
+      expect(await prisma.aiFallbackDecision.count({ where: { messageId: customerMessage.id } })).toBe(0);
+    });
+
+    it("does not suppress a different group", async () => {
+      const teamPhone = uniquePhone();
+      const teamMember = await prisma.internalTeamMember.create({ data: { name: "Test Agent", phoneNumber: teamPhone, role: "Support", status: "ACTIVE" } });
+      createdTeamMemberIds.push(teamMember.id);
+      const otherGroup = await prisma.whatsAppGroup.create({
+        data: { accountId: account.id, whatsappGroupId: uniqueChatId(), name: "Other Group", isMonitored: true, aiAutomationEnabled: true, lastSyncedAt: new Date() },
+      });
+      createdGroupIds.push(otherGroup.id);
+
+      await processIncomingMessage({
+        accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId,
+        chatId: group.whatsappGroupId, senderPhone: teamPhone, direction: "INCOMING", body: "handling this group", timestampWa: new Date(),
+      });
+
+      const client = new MockAiClient();
+      client.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+      await processIncomingMessage(
+        { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: otherGroup.whatsappGroupId, chatId: otherGroup.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "unmatched in other group", timestampWa: new Date() },
+        client,
+      );
+      expect(client.requests).toHaveLength(1);
+    });
+  });
+});
+
+describe("Hybrid AI Automation — duplicate-delivery idempotency (Slice 3)", () => {
+  it("never invokes AI, or creates a second decision, when the same WhatsApp event is redelivered", async () => {
+    const client = new MockAiClient();
+    client.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+    const raw = {
+      accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId,
+      chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING" as const,
+      body: "redelivered message", timestampWa: new Date(),
+    };
+
+    await processIncomingMessage(raw, client);
+    await processIncomingMessage(raw, client); // simulates a redelivered/duplicate provider event
+
+    expect(client.requests).toHaveLength(1); // AI was never asked twice for the same message
+    expect(await prisma.message.count({ where: { accountId: account.id } })).toBe(1);
+    expect(await prisma.aiFallbackDecision.count({ where: { accountId: account.id } })).toBe(1);
+    expect(await prisma.outboundMessage.count({ where: { accountId: account.id } })).toBe(1);
   });
 });

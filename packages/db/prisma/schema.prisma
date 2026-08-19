@@ -356,6 +356,12 @@ model WhatsAppGroup {
   /// per-group-toggle shape. Default false: a group must be explicitly enabled in addition to
   /// being isMonitored and the global AiSettings gates being on, before AI ever fires for it.
   aiAutomationEnabled         Boolean             @default(false)
+  /// Hybrid AI Automation (Slice 3) human-takeover: set to now + AiSettings.
+  /// humanTakeoverCooldownMinutes whenever a team member sends a message in this group (see
+  /// processIncomingMessage.ts); the AI fallback layer treats a future value here as a silent
+  /// ineligibility gate (apps/worker/src/aiFallback/eligibility.ts) — "AI must not immediately
+  /// interfere" once a human is actively handling the conversation. Null means not suppressed.
+  aiSuppressedUntil           DateTime?
   createdAt                   DateTime            @default(now())
   updatedAt                   DateTime            @updatedAt
 
@@ -835,6 +841,14 @@ model AiSettings {
   /// separate from learningConfidenceThreshold/autoApprovalThreshold above, which are reserved for
   /// the not-yet-built AI Learning/Knowledge phases and would be an ambiguous field to overload here.
   autoResponseConfidenceThreshold Int      @default(90)
+  /// Hybrid AI Automation (Slice 3): reuses the same cooldown mechanism as per-rule AUTO_REPLY
+  /// cooldowns (apps/worker/src/queue/cooldown.ts's isCooldownActive(), generalized to accept a
+  /// null ruleId) — prevents AI from replying to the same client again too soon. 0 disables it.
+  aiReplyCooldownSeconds          Int      @default(300)
+  /// Hybrid AI Automation (Slice 3): how long a team-member message suppresses the AI fallback
+  /// layer for that group (see WhatsAppGroup.aiSuppressedUntil) — "AI must not immediately
+  /// interfere" once a human is actively handling a conversation.
+  humanTakeoverCooldownMinutes    Int      @default(30)
   screenshotResponseEnabled       Boolean  @default(false)
   chatLearningEnabled             Boolean  @default(false)
   softwareLearningEnabled         Boolean  @default(false)
