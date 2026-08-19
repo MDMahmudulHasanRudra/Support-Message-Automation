@@ -97,6 +97,7 @@ apps/worker    dedicated Node/TS process — the ONLY process that owns the Open
 packages/db    Prisma schema, migrations, seed, PrismaClient singleton — raw TS source, no build step
 packages/engine   pure rule-evaluation engine (matchers, priority, regex safety) — one implementation, imported by both apps
 packages/ai-client   thin Claude (Anthropic) completion client — used only by apps/worker's AI-assisted Conversation Learning analysis job
+packages/teams-client   thin Microsoft OAuth + Graph API wrapper (plain fetch, no SDK) — used by apps/web's Teams connect/callback routes and apps/worker's sync job
 packages/shared   canonical enum/type definitions (engine can't depend on @prisma/client, so these are the source of truth; Prisma schema enums are kept in sync by convention, not tooling)
 ```
 
@@ -135,6 +136,7 @@ since `setInterval` doesn't await its callback)
 | `startSessionSegmentationProcessor` | 5min | Conversation Learning: buckets messages into `ConversationSession` (no-ops unless `LearningSettings.conversationLearningEnabled`) |
 | `startPatternDetectionProcessor` | 15min | deterministic, AI-free recurring-pattern scoring → `PatternCandidate` (same enable-flag gate) |
 | `startAiAnalysisProcessor` | 6h | optional AI-assisted rescoring via `packages/ai-client` (gated on `AiSettings.aiEngineEnabled` + `.learningEnabled`; also triggerable on-demand via an `AI_ANALYSIS_BATCH` WorkerCommand) |
+| `startTeamsSyncProcessor` | 3min (admin-configurable) | polls Microsoft Graph for joined teams/channels/messages, scoped to channels linked to an open `SupportIssue`; runs resolution-keyword matching on each new message (no-ops until Microsoft OAuth env vars are set **and** an admin completes the connect flow; also triggerable on-demand via a `TEAMS_SYNC_NOW` WorkerCommand) |
 | heartbeat | 15s | health state + DB connectivity log |
 
 On boot: health server → DB connectivity check (fatal if unreachable) → crash recovery (resets
@@ -155,14 +157,16 @@ the pipeline, engine, and queue depend only on the interface. `ProviderRegistry`
 ### Incoming message pipeline (`apps/worker/src/pipeline/processIncomingMessage.ts`)
 
 Empty-body drop → non-`INCOMING` messages are stored but never automated (loop-prevention) →
-active-team-member check → resolve `WhatsAppGroup` → fetch the previous message in the chat
-**before** inserting the current one (so it can't match itself) → insert the `Message` row (a
-Prisma `P2002` unique-constraint violation here *is* the dedup/idempotency check) → fire-and-forget
-escalation side-effect (own try/catch, never gates the rule outcome) → `evaluate()` from
-`packages/engine` against active `AutomationRule`s (single priority-sorted pass) → execute the
-resulting action(s) — actions only **enqueue** (`enqueueOutboundMessage`/`enqueueNotification`),
-never send directly → persist `AutomationExecution` + update message status → upsert
-`ProcessingCheckpoint`.
+active-team-member check (a team-member message also calls `recordHumanTakeover(groupId)` when the
+group has AI fallback enabled — see below) → resolve `WhatsAppGroup` → fetch the previous message
+in the chat **before** inserting the current one (so it can't match itself) → insert the `Message`
+row (a Prisma `P2002` unique-constraint violation here *is* the dedup/idempotency check) →
+fire-and-forget escalation side-effect (own try/catch, never gates the rule outcome) → `evaluate()`
+from `packages/engine` against active `AutomationRule`s (single priority-sorted pass) → on a genuine
+`NO_MATCH`, the Hybrid AI Automation fallback layer gets a chance (own try/catch, see below) →
+execute the resulting action(s) — actions only **enqueue** (`enqueueOutboundMessage`/
+`enqueueNotification`), never send directly → persist `AutomationExecution` + update message status
+→ upsert `ProcessingCheckpoint`.
 
 ### Rule engine (`packages/engine`)
 
@@ -209,6 +213,61 @@ write). `REACTION` as a fourth trigger type is a documented, deliberately deferr
 WhatsApp reactions need a separate `client.onReaction()` subscription and a new table, not just a
 new enum value.
 
+### Hybrid AI Automation / AI Fallback (`apps/worker/src/aiFallback/`)
+
+Fires only when `packages/engine`'s `evaluate()` genuinely misses on a real customer message
+(`finalDecision === "NO_MATCH"`) **and** the message's group has opted in
+(`WhatsAppGroup.aiAutomationEnabled`, default false). `checkAiFallbackEligibility()` gates on the
+kill switch, automation mode, group opt-in, and `AiSettings.aiEngineEnabled` before
+`runAiFallback()` ever calls `resolveAiClient("RESPONSE")` — reuses `checkAutoReplySafety()`,
+`enqueueOutboundMessage`, and `enqueueNotification` exactly as the deterministic pipeline does,
+never a second send path. Records a single `AiFallbackDecision` row per `Message` (outcome
+`AI_REPLIED` or `HUMAN_FALLBACK`) as its audit trail. `recordHumanTakeover(groupId)` — called from
+`processIncomingMessage.ts` whenever a team member sends a message in an `aiAutomationEnabled`
+group — sets `WhatsAppGroup.aiSuppressedUntil` to now + `AiSettings.humanTakeoverCooldownMinutes`,
+so the AI fallback layer stays silently ineligible for that group while a human is actively
+handling it. This is a distinct system from the AI Admin Assistant below and from
+`packages/ai-client`'s Conversation Learning caller — do not conflate the three.
+
+### Microsoft Teams Integration (`apps/worker/src/teams/`, `apps/web/src/server/teamsAuth/`,
+`apps/web/src/app/(dashboard)/integrations/teams/`, `apps/web/src/app/(dashboard)/issues/`)
+
+Links a developer's Microsoft Teams conversation to an open customer WhatsApp conversation via a
+manually-created `SupportIssue` (admin picks the WhatsApp group + customer phone + a Teams
+channel/optional exact thread — **not** auto-detected from message content, unlike Support Activity
+Tracking's rule-based detection, to avoid a second heuristic-detection system in this slice).
+`packages/teams-client` wraps the Microsoft identity platform's OAuth 2.0 endpoints and the Graph
+REST API directly via `fetch` (no `@azure/msal-node`/`@microsoft/microsoft-graph-client`
+dependency — see that package's own doc comments for why). OAuth tokens are encrypted at rest via
+the **existing** `encryptSecret`/`decryptSecret` (`AI_CREDENTIALS_ENCRYPTION_KEY`) on the singleton
+`TeamsAccount` row — no second encryption mechanism, and the customer's Microsoft password never
+touches this application at all (real OAuth redirect only — see `TEAMS_SETUP.md`'s "Customer
+setup"). `TeamsAccountStatus` is `DISCONNECTED`/`CONNECTED`/`SYNCING`/`ERROR`/`REAUTH_REQUIRED` —
+`packages/teams-client`'s pure, unit-tested `classifyTokenError()` decides which of the latter two a
+refresh failure gets (`invalid_grant`/`interaction_required`/`consent_required` →
+`REAUTH_REQUIRED`, only fixable by the customer reconnecting; anything else → `ERROR`, retried
+automatically). A successful OAuth callback immediately enqueues a `TEAMS_SYNC_NOW`
+`WorkerCommand` (never blocking the callback itself) so Teams/channels appear within moments.
+`graphSync.ts` polls (default every 3 minutes, `TeamsIntegrationSettings.pollingIntervalMinutes`),
+always discovering every joined team/channel (cheap, powers the "Manage Teams & Channels" page) but
+only pulling message bodies when `isChannelInAutomationScope()` says so — both
+`TeamsTeam`/`TeamsChannel.isEnabledForAutomation` (default true) enabled, OR an open `SupportIssue`
+explicitly linked to that exact channel (an Issue link always wins over the coarser toggle) — and
+stores `TeamsTeam`/`TeamsChannel`/`TeamsMessage` idempotently (insert-and-catch-`P2002`, same
+pattern as `Message`). `resolutionEngine.ts` matches each newly
+stored message against active `TeamsResolutionRule`s using `packages/engine`'s
+`matchSupportKeyword()` **as-is** (reused, not reimplemented) — a match inserts an
+`IssueResolutionEvent` (idempotency + audit trail via `@@unique([issueId, teamsMessageId])`,
+exact same pattern as `SupportEscalationEvent`), and — only if
+`TeamsIntegrationSettings.enableCustomerNotification` is explicitly on (default **off**) — queues a
+WhatsApp message to the customer via a direct `OutboundMessage` insert (not
+`pipeline/enqueueOutbound.ts`'s `enqueueOutboundMessage()`, which is shaped for the incoming-message
+pipeline's non-null-`incomingMessageId` + rule-cooldown contract that doesn't apply here), routed
+through `resolveWhatsAppAccount("TEAMS_RESOLUTION_NOTIFY")`. `TEAMS_SETUP.md` has the exact Azure
+App Registration steps — real OAuth credentials cannot be fabricated and must come from the user.
+Full session/duration analytics, real-time webhooks, and Teams-data CSV export are documented,
+deliberately deferred future phases.
+
 ### AI Admin Assistant (`apps/web/src/server/aiAdmin/`)
 
 A read-only, tool-calling admin chatbot, floating on every dashboard page
@@ -247,9 +306,9 @@ every sending feature must call, never re-derive the Primary/pinned/fallback dec
 site.
 
 Sidebar nav groups, top to bottom (a pinned "Overview" link sits above all of them): Messages,
-Escalations, Support Activity, WhatsApp, Automation, Bulk Messaging, AI Learning, Conversation
-Learning, System — ordered by day-to-day check frequency, not by when each feature shipped. See
-`PROJECT_REFERENCE.md` for every link in every group.
+Escalations, Support Activity, Teams Integration, WhatsApp, Automation, Bulk Messaging, AI Learning,
+Conversation Learning, System — ordered by day-to-day check frequency, not by when each feature
+shipped. See `PROJECT_REFERENCE.md` for every link in every group.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

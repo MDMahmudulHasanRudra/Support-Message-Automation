@@ -59,6 +59,10 @@ services:
       NEXTAUTH_URL: ${NEXTAUTH_URL}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
     ports:
       - "${WEB_PORT:-3000}:3000"
     healthcheck:
@@ -95,6 +99,10 @@ services:
       # Needed by packages/ai-client's resolveAiClient() to decrypt a stored AiProvider API key
       # before calling it — same key apps/web already uses, so the two must always match.
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
     # No `ports:` here on purpose: the worker's health endpoint binds to
     # 127.0.0.1 inside the container only, for its own HEALTHCHECK to use.
     # The dashboard never talks to the worker over HTTP (see ARCHITECTURE.md).

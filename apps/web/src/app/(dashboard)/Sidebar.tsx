@@ -17,6 +17,7 @@ import {
   History,
   KeyRound,
   LayoutDashboard,
+  Link2,
   ListChecks,
   LogOut,
   MessagesSquare,
@@ -82,6 +83,17 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/support-activity/rules", label: "Rules", icon: ClipboardList },
       { href: "/support-activity/keywords", label: "Keywords", icon: Tag },
       { href: "/support-activity/settings", label: "Settings", icon: SettingsIcon },
+    ],
+  },
+  {
+    label: "Teams Integration",
+    links: [
+      { href: "/issues", label: "Issues", icon: Link2 },
+      { href: "/integrations/teams", label: "Connection", icon: Link2 },
+      { href: "/integrations/teams/manage", label: "Manage Teams & Channels", icon: Users },
+      { href: "/integrations/teams/rules", label: "Resolution Rules", icon: ClipboardList },
+      { href: "/integrations/teams/keywords", label: "Resolution Keywords", icon: Tag },
+      { href: "/integrations/teams/settings", label: "Settings", icon: SettingsIcon },
     ],
   },
   {

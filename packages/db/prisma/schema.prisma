@@ -194,6 +194,11 @@ enum WorkerCommandType {
   /// processOneAiAnalysisBatch() immediately instead of waiting for its own long scheduled
   /// interval. No accountId/payload needed; the job scans PatternCandidate rows globally.
   AI_ANALYSIS_BATCH
+  /// Microsoft Teams Integration's "Sync Now" button — runs one Teams graph sync + resolution
+  /// pass immediately instead of waiting for startTeamsSyncProcessor's own interval. Same
+  /// account-agnostic shape as AI_ANALYSIS_BATCH: there is at most one connected TeamsAccount, and
+  /// it needs no WhatsApp session at all.
+  TEAMS_SYNC_NOW
 }
 
 enum WorkerCommandStatus {
@@ -237,6 +242,11 @@ enum WhatsAppServiceKey {
   /// Conversation Learning's Unknown Pattern alerts (patternDetectionJob.ts) — a distinct routing
   /// key so an admin can send these to a different account than ordinary rule-matched alerts.
   CONVERSATION_LEARNING
+  /// Microsoft Teams Integration's customer resolution notifications (apps/worker/src/teams/
+  /// resolutionEngine.ts) — a distinct routing key so a developer-resolved Teams thread notifies
+  /// the customer through whichever account owns their original WhatsApp conversation's account,
+  /// or an explicitly configured fallback if an admin prefers a dedicated notification account.
+  TEAMS_RESOLUTION_NOTIFY
 }
 
 enum WhatsAppFallbackPolicy {
@@ -276,6 +286,7 @@ model User {
   triggeredLearningBatchJobs LearningBatchJob[]
   reviewedPatternCandidates  PatternCandidate[]
   reviewedRuleProposals      RuleProposal[]
+  createdSupportIssues       SupportIssue[]
 }
 
 model WhatsAppAccount {
@@ -315,6 +326,7 @@ model WhatsAppAccount {
   conversationSessions ConversationSession[]
   supportActivities    SupportActivity[]
   aiFallbackDecisions  AiFallbackDecision[]
+  supportIssues        SupportIssue[]
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -373,6 +385,7 @@ model WhatsAppGroup {
   supportActivities    SupportActivity[]
   supportRuleScopes    SupportRuleGroup[]
   aiFallbackDecisions  AiFallbackDecision[]
+  supportIssues        SupportIssue[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([accountId, isActive])
@@ -386,14 +399,20 @@ model InternalTeamMember {
   role        String
   department  String?
   status      TeamMemberStatus @default(ACTIVE)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  /// Maps this team member to their Microsoft Teams sender identity (Graph API messages carry an
+  /// email/UPN, not a phone number) — nullable/additive since most team members won't have a
+  /// Teams account, or won't be mapped yet. Used only for Issue "handled by" attribution
+  /// (apps/worker/src/teams/resolutionEngine.ts); never required for the integration to function.
+  microsoftEmail String?          @unique
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   assignedGroups            WhatsAppGroup[]
   assignedEscalationCases   SupportEscalationCase[]
   SupportEscalationSettings SupportEscalationSettings[]
   supportActivities         SupportActivity[]
   supportRuleScopes         SupportRuleTeamMember[]
+  supportIssues             SupportIssue[]
 }
 
 model Message {
@@ -441,6 +460,7 @@ model Message {
   patternCandidateEvidence PatternCandidateEvidence[]
   supportActivity          SupportActivity?
   aiFallbackDecision       AiFallbackDecision?
+  triggeredSupportIssues   SupportIssue[]             @relation("IssueTriggerMessage")
 
   @@unique([accountId, whatsappMessageId])
   @@index([chatId, timestampWa])
@@ -534,7 +554,8 @@ model OutboundMessage {
   createdById       String?
   createdBy         User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
-  aiFallbackDecision AiFallbackDecision?
+  aiFallbackDecision   AiFallbackDecision?
+  issueResolutionEvent IssueResolutionEvent?
 
   @@index([status, scheduledAt])
   @@index([toPhone, sentAt])
@@ -1601,4 +1622,292 @@ model SupportActivity {
   @@index([accountId, groupId, occurredAt])
   @@index([accountId, teamMemberId, occurredAt])
   @@index([ruleId])
+}
+
+// ---------------------------------------------------------------------------
+// Microsoft Teams Integration + Unified Support Analytics — P0 slice, refined for one-click
+// customer self-service (see "Microsoft Teams — One-Click Customer Connection & Self-Service UX
+// Refinement Master Prompt.md"). Bidirectional Graph API integration (via packages/teams-client, a
+// dependency-free OAuth2/Graph REST wrapper over plain fetch) linking developer conversations in
+// Microsoft Teams to open customer WhatsApp conversations: a developer's resolution-keyword reply
+// in a linked Teams thread automatically notifies the customer over the EXISTING WhatsApp outbound
+// queue/notification system (never a second send path). Entirely additive and independent of the
+// rule engine, the AI Fallback layer, and Priority-Based Support Escalation — no existing model
+// here is modified beyond the two narrow, nullable additions above (InternalTeamMember.
+// microsoftEmail, Message.triggeredSupportIssues, WhatsAppAccount/WhatsAppGroup.supportIssues,
+// Notification.issueResolutionEvents). Polling-based sync (startTeamsSyncProcessor,
+// apps/worker/src/teams/), not real-time webhooks — deferred to a later phase, same as full
+// session/duration analytics (call-time tracking, verified-vs-estimated duration) — see
+// TEAMS_SETUP.md and PROJECT_REFERENCE.md.
+// ---------------------------------------------------------------------------
+
+enum TeamsAccountStatus {
+  DISCONNECTED
+  CONNECTED
+  /// Set only while graphSync.ts is actively running a sync pass against this account — lets the
+  /// UI show "Synchronizing your Teams data…" distinctly from the steady-state CONNECTED, without
+  /// fabricating a percentage (see graphSync.ts's own doc comment on why no fake progress numbers).
+  SYNCING
+  /// A sync/refresh attempt failed for a reason NOT specific to token validity (network error,
+  /// Graph API unavailable, etc) — see TeamsAccount.lastSyncError for why. The account stays in
+  /// this state (not silently reverted to DISCONNECTED) until the next successful sync or an
+  /// explicit reconnect.
+  ERROR
+  /// The refresh token itself was rejected by Microsoft (revoked consent, expired, tenant policy
+  /// change) — distinct from ERROR because the ONLY fix is the customer clicking through OAuth
+  /// again; retrying the same refresh token will never succeed on its own. See
+  /// packages/teams-client's classifyTokenError().
+  REAUTH_REQUIRED
+}
+
+/// Singleton row (id is always the literal string "global"), same pattern as every other settings/
+/// connection-state model in this app (AutomationSettings, AiSettings, etc). Exactly one Microsoft
+/// tenant connection is supported in this P0 slice — the dashboard's Teams Integration page shows
+/// one connect/disconnect card, not a list, matching the master prompt's own single-account mockup.
+/// Tokens are encrypted at rest via the EXISTING encryptSecret/decryptSecret (packages/db/src/
+/// index.ts, AI_CREDENTIALS_ENCRYPTION_KEY) — no second encryption mechanism introduced for this.
+model TeamsAccount {
+  id                     String             @id @default("global")
+  tenantId               String?
+  externalUserId         String?
+  email                  String?
+  displayName            String?
+  status                 TeamsAccountStatus @default(DISCONNECTED)
+  accessTokenCiphertext  String?
+  refreshTokenCiphertext String?
+  tokenExpiresAt         DateTime?
+  scopes                 String[]           @default([])
+  lastSyncAt             DateTime?
+  lastSyncError          String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+}
+
+/// One row per Microsoft Team the connected account is a member of — discovered by
+/// graphSync.ts's listJoinedTeams() call, upserted on every sync tick (insert-and-catch-P2002 /
+/// upsert-by-unique-key, same idempotency shape as WhatsAppGroup's own sync).
+model TeamsTeam {
+  id             String   @id @default(cuid())
+  externalTeamId String   @unique
+  name           String
+  /// Default true ("discover everything, let the admin narrow it down later" — see the Manage
+  /// Teams/Channels page) — an admin can exclude a team (e.g. "Management", "General") from ever
+  /// being message-synced without disconnecting the whole integration. graphSync.ts always still
+  /// discovers every joined team (cheap, no message bodies) so the management UI has something to
+  /// toggle regardless of this flag's current value.
+  isEnabledForAutomation Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  channels TeamsChannel[]
+}
+
+model TeamsChannel {
+  id                String    @id @default(cuid())
+  teamId            String
+  team              TeamsTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  externalChannelId String
+  name              String
+  channelType       String?
+  /// Same purpose as TeamsTeam.isEnabledForAutomation, at channel granularity — a team can be
+  /// enabled overall while an admin still excludes one noisy channel (e.g. "General") from sync.
+  /// Message-body sync in graphSync.ts requires both the parent team AND this channel enabled,
+  /// OR an open SupportIssue explicitly linked to this exact channel (an Issue link always wins,
+  /// so linking a channel to an Issue never silently no-ops because of this coarser toggle).
+  isEnabledForAutomation Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  messages      TeamsMessage[]
+  supportIssues SupportIssue[]
+
+  @@unique([teamId, externalChannelId])
+}
+
+/// One row per synced Teams channel message (top-level or a threaded reply) — mirrors Message's
+/// own insert-and-catch-P2002 idempotency pattern via the unique constraint below, so a sync tick
+/// that re-fetches an already-known message (e.g. after a resumed delta query) never duplicates it.
+model TeamsMessage {
+  id                String         @id @default(cuid())
+  channelId         String
+  channel           TeamsChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  externalMessageId String
+  senderExternalId  String
+  senderDisplayName String?
+  body              String
+  /// Root message of the thread this reply belongs to — null for a top-level channel message.
+  /// SetNull (not Cascade): a deleted parent must never cascade-delete its already-recorded replies.
+  parentMessageId String?
+  parentMessage   TeamsMessage?  @relation("TeamsMessageThread", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies         TeamsMessage[] @relation("TeamsMessageThread")
+  sentAt          DateTime
+  createdAt       DateTime       @default(now())
+
+  resolutionEvents IssueResolutionEvent[]
+
+  @@unique([channelId, externalMessageId])
+  @@index([channelId, sentAt])
+}
+
+/// Admin-managed resolution keyword/phrase (e.g. "fixed", "resolved", "deployed") — schema shape
+/// copied directly from SupportKeyword for consistency; matching reuses packages/engine's existing
+/// matchSupportKeyword() as-is (it is a generic text matcher, not Support-Activity-specific).
+model TeamsResolutionKeyword {
+  id            String                  @id @default(cuid())
+  value         String
+  matchMode     SupportKeywordMatchMode @default(CONTAINS)
+  caseSensitive Boolean                 @default(false)
+  isActive      Boolean                 @default(true)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  rules TeamsResolutionRuleKeyword[]
+}
+
+/// One admin-configured resolution rule — same "global, no accountId" precedent as SupportRule.
+/// Unlike SupportRule, there is no group/team-member scoping: a resolution rule applies to every
+/// Teams message evaluated against an open, linked SupportIssue (scoping already happens via the
+/// Issue's own teamsChannelId/teamsThreadExternalId link).
+model TeamsResolutionRule {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  keywords         TeamsResolutionRuleKeyword[]
+  resolutionEvents IssueResolutionEvent[]
+
+  @@index([isActive])
+}
+
+model TeamsResolutionRuleKeyword {
+  ruleId    String
+  rule      TeamsResolutionRule    @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  keywordId String
+  keyword   TeamsResolutionKeyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  createdAt DateTime               @default(now())
+
+  @@id([ruleId, keywordId])
+}
+
+/// A support case's lifecycle, per the master prompt's own state model. Deliberately a NEW, minimal
+/// model rather than a reuse of SupportEscalationCase — that model is tightly coupled to SLA-timer/
+/// tier escalation mechanics (firstAlertMinutes, nextCheckAt, escalationLevel, etc) that have no
+/// meaning here; an Issue's lifecycle is driven entirely by Teams-side developer activity, not a
+/// timer. RESOLUTION_DETECTED is a transient state between a keyword match firing and the customer
+/// notification actually being confirmed queued — most issues pass through it in the same tick.
+enum SupportIssueStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_DEVELOPER
+  RESOLUTION_DETECTED
+  WAITING_CUSTOMER_CHECK
+  RESOLVED
+  CLOSED
+}
+
+/// Created manually by an admin (linking an existing WhatsApp chat/group to a Teams channel +
+/// optional thread) — see apps/web/src/server/actions/issues.ts. Deliberately NOT auto-created
+/// from every incoming WhatsApp message: that would require its own detection/keyword system
+/// (duplicating Support Activity Tracking's own complexity) for a P0 slice whose actual
+/// requirement is linking a conversation an admin has already identified as needing developer
+/// help, not guessing which conversations qualify.
+model SupportIssue {
+  id          String              @id @default(cuid())
+  accountId   String
+  account     WhatsAppAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId     String
+  group       WhatsAppGroup       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  chatId      String
+  clientPhone String
+  title       String?
+
+  supportExecutiveId String?
+  supportExecutive   InternalTeamMember? @relation(fields: [supportExecutiveId], references: [id], onDelete: SetNull)
+
+  status SupportIssueStatus @default(OPEN)
+
+  /// The WhatsApp message that prompted creating this issue — nullable + SetNull so a deleted
+  /// message never destroys the issue's own history, same reasoning as every other trigger-message
+  /// FK in this schema (SupportEscalationCase.triggerMessageId's stricter Cascade is intentional
+  /// there; here the issue is the admin's own record and should outlive the specific message).
+  triggerMessageId String?
+  triggerMessage   Message? @relation("IssueTriggerMessage", fields: [triggerMessageId], references: [id], onDelete: SetNull)
+
+  /// The Teams side of the link — both nullable because an issue can be created before the Teams
+  /// thread exists yet (an admin creates the issue first, then pastes in the thread once a
+  /// developer starts one). SetNull so removing a channel from tracking never deletes issue history.
+  teamsChannelId        String?
+  teamsChannel          TeamsChannel? @relation(fields: [teamsChannelId], references: [id], onDelete: SetNull)
+  teamsThreadExternalId String?
+
+  resolvedAt  DateTime?
+  closedAt    DateTime?
+  createdById String?
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  resolutionEvents IssueResolutionEvent[]
+
+  @@index([status])
+  @@index([accountId, chatId])
+  @@index([teamsChannelId, teamsThreadExternalId])
+  @@index([supportExecutiveId])
+}
+
+/// Distinguishes how resolutionEngine.ts handled a candidate Teams message match — an audit trail
+/// covering both the success path and every safety-check skip (section 18's explicit requirement:
+/// never silently fail to notify without a recorded reason).
+enum IssueResolutionOutcome {
+  NOTIFIED
+  SKIPPED_ALREADY_RESOLVED
+  SKIPPED_NO_PHONE_MAPPING
+  SKIPPED_NOTIFICATIONS_DISABLED
+  SKIPPED_MANUALLY_IGNORED
+  /// resolveWhatsAppAccount() returned an error (no Primary/configured account connected) — the
+  /// same account-unavailable condition every other WhatsApp-sending feature can hit, surfaced
+  /// here instead of silently dropping the resolution.
+  SKIPPED_ACCOUNT_UNAVAILABLE
+}
+
+/// The resolution-detection audit trail AND the duplicate-notification guard in one table — exact
+/// same pattern as SupportEscalationEvent's own doc comment: the unique constraint below makes it
+/// structurally impossible for a re-synced or re-evaluated Teams message to notify the same issue's
+/// customer twice. resolutionEngine.ts always tries to INSERT this row before ever enqueueing a
+/// send, and treats a unique-constraint failure as "already handled, skip." Links to OutboundMessage
+/// (not Notification) because the actual action taken is a customer-facing WhatsApp send through
+/// the EXISTING outbound queue — the same "one outbound mechanism" every other feature uses — not
+/// an internal admin alert (which is what the Notification model is for).
+model IssueResolutionEvent {
+  id                String                  @id @default(cuid())
+  issueId           String
+  issue             SupportIssue            @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  teamsMessageId     String
+  teamsMessage       TeamsMessage            @relation(fields: [teamsMessageId], references: [id], onDelete: Cascade)
+  matchedRuleId      String?
+  matchedRule        TeamsResolutionRule?    @relation(fields: [matchedRuleId], references: [id], onDelete: SetNull)
+  matchedKeyword     String?
+  outcome            IssueResolutionOutcome
+  outboundMessageId  String?                 @unique
+  outboundMessage    OutboundMessage?        @relation(fields: [outboundMessageId], references: [id], onDelete: SetNull)
+  detectedAt         DateTime                @default(now())
+
+  @@unique([issueId, teamsMessageId])
+  @@index([issueId])
+}
+
+/// Singleton row (id is always the literal string "global"). enableCustomerNotification defaults
+/// false — same conservative-default convention as every automation toggle in this app
+/// (ENGINEERING_STANDARDS.md's anti-spam philosophy: an admin must explicitly opt in before the
+/// system ever sends a WhatsApp message to a real customer on Teams-side developer activity alone).
+model TeamsIntegrationSettings {
+  id                         String   @id @default("global")
+  enableResolutionDetection  Boolean  @default(true)
+  enableCustomerNotification Boolean  @default(false)
+  notificationTemplate       String   @default("Hi {{customerName}}, your issue has been resolved by our support team. Thank you for your patience!")
+  pollingIntervalMinutes     Int      @default(3)
+  updatedAt                  DateTime @updatedAt
 }

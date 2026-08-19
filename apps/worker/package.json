@@ -17,7 +17,8 @@
     "@support-automation/ai-client": "workspace:*",
     "@support-automation/db": "workspace:*",
     "@support-automation/engine": "workspace:*",
-    "@support-automation/shared": "workspace:*"
+    "@support-automation/shared": "workspace:*",
+    "@support-automation/teams-client": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.7.5",

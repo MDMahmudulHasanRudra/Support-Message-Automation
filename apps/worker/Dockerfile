@@ -58,6 +58,7 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/engine/package.json packages/engine/package.json
 COPY packages/ai-client/package.json packages/ai-client/package.json
+COPY packages/teams-client/package.json packages/teams-client/package.json
 COPY apps/worker/package.json apps/worker/package.json
 RUN npm install -g pnpm@11.9.0
 RUN pnpm install --frozen-lockfile --filter @support-automation/worker...
@@ -68,9 +69,10 @@ COPY packages/shared packages/shared
 COPY packages/db packages/db
 COPY packages/engine packages/engine
 COPY packages/ai-client packages/ai-client
+COPY packages/teams-client packages/teams-client
 COPY apps/worker apps/worker
 RUN pnpm --filter @support-automation/db generate
-# packages/shared, packages/engine, and packages/ai-client are consumed as
+# packages/shared, packages/engine, packages/ai-client, and packages/teams-client are consumed as
 # compiled dist/*.js by every runtime (plain Node here, Turbopack in
 # apps/web) — building them here, not just type-checking, is required or
 # the worker's `node dist/index.js` fails at runtime with
@@ -79,6 +81,7 @@ RUN pnpm --filter @support-automation/db generate
 RUN pnpm --filter @support-automation/shared build
 RUN pnpm --filter @support-automation/engine build
 RUN pnpm --filter @support-automation/ai-client build
+RUN pnpm --filter @support-automation/teams-client build
 RUN pnpm --filter @support-automation/worker build
 
 # ---------------------------------------------------------------------------

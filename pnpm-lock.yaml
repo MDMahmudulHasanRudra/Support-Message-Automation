@@ -28,6 +28,9 @@ importers:
       '@support-automation/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@support-automation/teams-client':
+        specifier: workspace:*
+        version: link:../../packages/teams-client
       lucide-react:
         specifier: ^1.31.0
         version: 1.31.0(react@19.2.8)
@@ -89,6 +92,9 @@ importers:
       '@support-automation/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@support-automation/teams-client':
+        specifier: workspace:*
+        version: link:../../packages/teams-client
     devDependencies:
       '@types/node':
         specifier: ^22.7.5
@@ -175,6 +181,18 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
     devDependencies:
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.2
+        version: 2.1.9(@types/node@22.20.1)(lightningcss@1.32.0)(terser@5.49.2)
+
+  packages/teams-client:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.7.5
+        version: 22.20.1
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

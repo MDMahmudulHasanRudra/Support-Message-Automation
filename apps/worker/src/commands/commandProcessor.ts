@@ -3,6 +3,7 @@ import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { processOneAiAnalysisBatch } from "../learning/aiAnalysisJob.js";
+import { runTeamsSync } from "../teams/graphSync.js";
 
 const GROUP_SYNC_PROGRESS_INTERVAL = 250;
 
@@ -180,6 +181,10 @@ export async function processOneCommand(accountId: string, provider: WhatsAppPro
     await executeAiAnalysisBatchCommand(command);
     return true;
   }
+  if (command.type === "TEAMS_SYNC_NOW") {
+    await executeTeamsSyncNowCommand(command);
+    return true;
+  }
   await executeClaimedCommand(command, accountId, provider);
   return true;
 }
@@ -198,6 +203,13 @@ export async function processOneCommandViaRegistry(registry: ProviderRegistry): 
   // must be handled before the accountId-required check just below.
   if (command.type === "AI_ANALYSIS_BATCH") {
     await executeAiAnalysisBatchCommand(command);
+    return true;
+  }
+
+  // Also account-agnostic: there is at most one connected TeamsAccount, and Graph API calls need
+  // no WhatsApp session either.
+  if (command.type === "TEAMS_SYNC_NOW") {
+    await executeTeamsSyncNowCommand(command);
     return true;
   }
 
@@ -231,6 +243,23 @@ async function executeAiAnalysisBatchCommand(command: ClaimedCommand): Promise<v
     await prisma.workerCommand.update({
       where: { id: command.id },
       data: { status: "DONE", processedAt: new Date(), result: { didWork } },
+    });
+  } catch (err) {
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "FAILED", processedAt: new Date(), result: { error: (err as Error).message } },
+    });
+  }
+}
+
+/** The dashboard's Teams Integration "Sync Now" button — runs one sync pass immediately instead
+ * of waiting for startTeamsSyncProcessor's own interval. Never touches a WhatsApp provider/account. */
+async function executeTeamsSyncNowCommand(command: ClaimedCommand): Promise<void> {
+  try {
+    const result = await runTeamsSync();
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "DONE", processedAt: new Date(), result: { ...result } },
     });
   } catch (err) {
     await prisma.workerCommand.update({

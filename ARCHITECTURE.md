@@ -3,7 +3,8 @@
 This is the condensed, durable design reference. It was locked in Phase 0 with a small,
 deliberately narrow scope; the system has since grown substantially (multi-account routing, the
 rule engine, Priority-Based Support Escalation, Conversation Learning, AI Learning foundations,
-Support Activity Tracking, and a floating AI Admin Assistant). The component boundaries and
+Support Activity Tracking, a floating AI Admin Assistant, a Hybrid AI Automation fallback layer,
+and a Microsoft Teams Integration + Issue tracking layer). The component boundaries and
 web⇄worker coordination model described here are still exactly how the system works — only the
 model list and provider interface have grown. For an exhaustive, page-by-page functional
 reference, see **`PROJECT_REFERENCE.md`**. Treat any phase numbering below as historical, not
@@ -41,6 +42,12 @@ current status — see `README.md` for current status.
 - **packages/shared** — enums/types shared by all of the above (message direction, rule status,
   automation mode, etc.) — the source of truth since `packages/engine` can't depend on
   `@prisma/client`; Prisma schema enums are kept in sync by convention, not tooling.
+- **packages/teams-client** — a thin wrapper around the Microsoft identity platform's OAuth 2.0
+  endpoints and the Microsoft Graph REST API, built with plain `fetch` (no `@azure/msal-node` or
+  `@microsoft/microsoft-graph-client` dependency — see its own doc comments for why hand-rolling
+  the well-documented ~3-endpoint flow keeps token storage consistent with this app's existing
+  `encryptSecret`/`decryptSecret` convention). Imported by both apps: `apps/web` for the OAuth
+  connect/callback routes, `apps/worker` for background sync/token-refresh.
 
 ## Web ⇄ Worker: no direct HTTP
 
@@ -67,7 +74,7 @@ a process-global `process.chdir()`, so concurrent connects race). Exactly one `W
 be `isPrimary` at a time (enforced by a hand-written partial unique index, not expressible in the
 Prisma DSL). Three real WhatsApp-sending call sites are individually routable to a specific account
 via `WhatsAppServiceRoute` (keyed on a closed `WhatsAppServiceKey` enum: `NOTIFY_WHATSAPP`,
-`PRIORITY_SUPPORT`, `CONVERSATION_LEARNING`), each with its own fallback policy
+`PRIORITY_SUPPORT`, `CONVERSATION_LEARNING`, `TEAMS_RESOLUTION_NOTIFY`), each with its own fallback policy
 (`PRIMARY_FALLBACK` or `STRICT_NO_FALLBACK`). `resolveWhatsAppAccount(serviceKey)`
 (`packages/db`) is the single centralized resolver every sending feature must call — never
 re-derive the Primary/pinned/fallback decision at the call site.
@@ -140,6 +147,20 @@ See `packages/db/prisma/schema.prisma` for the authoritative model list. Grouped
   pre-aggregated).
 - **AI Admin Assistant**: no persistence layer yet in v1 (conversation history lives in client-side
   React state only, since every tool is currently read-only — see below).
+- **Hybrid AI Automation (AI Fallback)**: `AiFallbackDecision` (audit trail, at most one row per
+  `Message`), plus `WhatsAppGroup.aiAutomationEnabled`/`aiSuppressedUntil` and
+  `AiSettings.autoResponseConfidenceThreshold`/`aiReplyCooldownSeconds`/
+  `humanTakeoverCooldownMinutes`.
+- **Microsoft Teams Integration**: `TeamsAccount` (singleton connection/token state — `status` is
+  `DISCONNECTED`/`CONNECTED`/`SYNCING`/`ERROR`/`REAUTH_REQUIRED`),
+  `TeamsTeam`/`TeamsChannel`/`TeamsMessage` (synced Graph data, message threading via a
+  self-relation; `TeamsTeam`/`TeamsChannel.isEnabledForAutomation` — default true — is the "Manage
+  Teams & Channels" self-service selection toggle), `TeamsResolutionKeyword`/`TeamsResolutionRule`/
+  `TeamsResolutionRuleKeyword` (schema shape copied from Support Activity Tracking's own
+  keyword/rule split), `TeamsIntegrationSettings` (singleton), `SupportIssue` (links a WhatsApp chat
+  to a Teams channel/thread), `IssueResolutionEvent` (audit trail **and** the idempotent
+  duplicate-notification guard, via a unique constraint — same pattern as
+  `SupportEscalationEvent`).
 
 Automation mode is locked to exactly three values (`AutomationSettings.mode`): `MANUAL_ONLY`,
 `SAFE_AUTO_REPLY` (default), `FULL_RULE_AUTOMATION`.
@@ -177,6 +198,66 @@ any setting yet (no write-tool/confirmation-flow/audit-log layer exists in v1 �
 scoped-down first version, designed so a future write-capable version is additive, not a rewrite).
 Conversation history lives in client-side React state only, not persisted server-side.
 
+## Hybrid AI Automation (AI Fallback / Human Takeover)
+
+`apps/worker/src/aiFallback/` fires only when the deterministic rule engine (`packages/engine`'s
+`evaluate()`) genuinely misses on a real customer message (`finalDecision === "NO_MATCH"`) **and**
+the message's group has opted in (`WhatsAppGroup.aiAutomationEnabled`). It reuses the existing
+`AiModelJob.RESPONSE` model slot, the existing `OutboundMessage` queue, and the existing
+`Notification` system unchanged — `AiFallbackDecision` is purely the audit trail of what the AI
+decided, never a second send path. A human-takeover cooldown
+(`WhatsAppGroup.aiSuppressedUntil`, set whenever a team member sends a message in that group) makes
+the AI fallback layer silently ineligible for a configurable window after a human is already
+handling the conversation — "AI must not immediately interfere." This is a distinct system from the
+AI Admin Assistant above (an internal, read-only admin chatbot) and from `packages/ai-client`'s own
+Conversation Learning caller — three separate AI consumers, each with its own safety boundary.
+
+## Microsoft Teams Integration + Unified Support Analytics (P0, one-click connection UX)
+
+Bidirectional, polling-based (not real-time webhook) link between developer conversations in
+Microsoft Teams and open customer WhatsApp conversations, built entirely on top of existing
+infrastructure: `packages/teams-client` for OAuth/Graph API access, the existing `OutboundMessage`
+queue for customer notification (never a second send path), the existing
+`encryptSecret`/`decryptSecret` for token storage, and `packages/engine`'s `matchSupportKeyword()`
+reused as-is for resolution-keyword matching. An admin manually creates a `SupportIssue` linking a
+WhatsApp group/customer to a Teams channel (and optionally an exact thread) — auto-detecting which
+conversations "need developer help" from message content was deliberately out of scope for this
+slice, the same reasoning that keeps Support Activity Tracking's own detection rule-based rather
+than heuristic.
+
+**Connection UX is deliberately zero-technical-detail for the customer**: clicking "Connect
+Microsoft Teams" redirects straight to Microsoft's own login page — this application never
+collects, sees, or proxies a Microsoft password, only the OAuth authorization code Microsoft
+redirects back with. `TeamsAccountStatus` models the full lifecycle a customer can observe
+(`DISCONNECTED` → `CONNECTED` → `SYNCING` while a sync pass is actively running → `ERROR` for a
+transient failure worth auto-retrying → `REAUTH_REQUIRED` when Microsoft itself rejected the
+refresh token, the one state only a customer clicking through OAuth again can fix). A successful
+callback immediately queues a `TEAMS_SYNC_NOW` `WorkerCommand` (never blocking the HTTP callback
+itself) so Teams/channels appear within moments, not after waiting for the next scheduled poll.
+`packages/teams-client`'s `classifyTokenError()` distinguishes a rejected refresh token
+(`invalid_grant`/`interaction_required`/`consent_required` → `REAUTH_REQUIRED`) from every other
+failure (network blip, Graph outage → `ERROR`, retried automatically) — this is the one place
+Microsoft's OAuth error codes are interpreted, and it's pure/unit-tested independent of any network
+call.
+
+`apps/worker/src/teams/graphSync.ts` always discovers every joined team/channel (cheap, no message
+bodies — this is what powers the "Manage Teams & Channels" self-service selection screen) but only
+pulls message bodies for a channel that's either enabled for automation
+(`TeamsTeam`/`TeamsChannel.isEnabledForAutomation`, both default **true** — "discover everything,
+let the customer narrow it down later," never a forced setup wizard) or has an open `SupportIssue`
+explicitly linked to it (an Issue link always wins over the coarser toggle — see
+`isChannelInAutomationScope()`, unit-tested independent of the network-calling sync loop). Sets
+`TeamsAccount.status` to `SYNCING` for the pass's duration; the UI never fabricates a percentage
+(Graph's list endpoints don't expose a reliable total up front), just an indeterminate
+"Synchronizing…" state. `resolutionEngine.ts` evaluates each newly-synced message against active
+`TeamsResolutionRule`s; a match updates the issue to `RESOLUTION_DETECTED`/`RESOLVED` and — only if
+`TeamsIntegrationSettings.enableCustomerNotification` is explicitly turned on (default **off**,
+matching this app's anti-spam-by-default philosophy) — queues a WhatsApp message to the customer
+routed via `resolveWhatsAppAccount("TEAMS_RESOLUTION_NOTIFY")`. Full session/duration analytics
+(call-time tracking, verified-vs-estimated duration), real-time webhooks, and CSV export for Teams
+data are documented, deliberately deferred future phases — see `TEAMS_SETUP.md` and
+`PROJECT_REFERENCE.md`.
+
 ## High-risk areas
 
 1. OpenWA/Chromium stability inside Docker; one Chromium per connected account.
@@ -191,7 +272,14 @@ Conversation history lives in client-side React state only, not persisted server
 10. Conversation Learning's segmentation/pattern-detection jobs scan **globally** by design (no
     per-account filter) — safe in production, but means their integration tests must never run
     against the live/shared database (see `README.md`).
-11. Schema migrations shipped in a session but not deployed to the live DB — a real incident has
+11. Microsoft Teams Integration depends on a real Azure App Registration the user must create
+    themselves (see `TEAMS_SETUP.md`) — the OAuth handshake and live Graph API calls cannot be
+    exercised in an automated test environment; only the resolution engine, idempotency,
+    notification safety logic, and OAuth error-classification are covered by real tests. A
+    revoked/expired refresh token surfaces as `TeamsAccount.status = REAUTH_REQUIRED` (only the
+    customer reconnecting fixes it); any other sync/refresh failure surfaces as `ERROR` (retried
+    automatically) — neither is a worker crash.
+12. Schema migrations shipped in a session but not deployed to the live DB — a real incident has
     happened where a session added a column, deliberately deferred deploying it (per the live-DB
     safety convention), and a later session's routine work hit a live `P2022` "column does not
     exist" error before the migration was caught up. Before touching any `Message`-related (or

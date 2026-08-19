@@ -25,6 +25,26 @@ export default async function SupportActivityTeamPage() {
   const breakdown = await getPerTeamMemberBreakdown(period);
   const exportParams = `from=${period.start.toISOString()}&to=${period.end.toISOString()}`;
 
+  // Issues-handled/resolved — all-time (SupportIssue has no period concept yet in this P0 slice),
+  // computed here rather than folded into getPerTeamMemberBreakdown() since it's a different data
+  // source (SupportIssue, not SupportActivity) with a different time scope; keeping it a plain
+  // page-level query avoids implying a period-scoped guarantee this doesn't actually provide.
+  const issueCounts = await prisma.supportIssue.groupBy({
+    by: ["supportExecutiveId", "status"],
+    where: { supportExecutiveId: { in: breakdown.map((b) => b.teamMemberId) } },
+    _count: { _all: true },
+  });
+  const issuesHandledByMember = new Map<string, number>();
+  const issuesResolvedByMember = new Map<string, number>();
+  for (const row of issueCounts) {
+    const memberId = row.supportExecutiveId;
+    if (!memberId) continue;
+    issuesHandledByMember.set(memberId, (issuesHandledByMember.get(memberId) ?? 0) + row._count._all);
+    if (row.status === "RESOLVED") {
+      issuesResolvedByMember.set(memberId, (issuesResolvedByMember.get(memberId) ?? 0) + row._count._all);
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -70,6 +90,8 @@ export default async function SupportActivityTeamPage() {
               <tr>
                 <Th>Member</Th>
                 <Th>Activities</Th>
+                <Th>Issues Handled</Th>
+                <Th>Issues Resolved</Th>
               </tr>
             </thead>
             <tbody>
@@ -77,6 +99,8 @@ export default async function SupportActivityTeamPage() {
                 <tr key={row.teamMemberId}>
                   <Td>{row.name}</Td>
                   <Td className="tabular-nums">{row.activityCount}</Td>
+                  <Td className="tabular-nums">{issuesHandledByMember.get(row.teamMemberId) ?? 0}</Td>
+                  <Td className="tabular-nums">{issuesResolvedByMember.get(row.teamMemberId) ?? 0}</Td>
                 </tr>
               ))}
             </tbody>

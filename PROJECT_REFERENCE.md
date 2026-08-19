@@ -19,15 +19,16 @@ matching section here in the same change.
 3. [Messages](#messages)
 4. [Escalations](#escalations)
 5. [Support Activity](#support-activity)
-6. [WhatsApp](#whatsapp)
-7. [Automation](#automation)
-8. [Bulk Messaging](#bulk-messaging)
-9. [AI Learning](#ai-learning)
-10. [Conversation Learning](#conversation-learning)
-11. [System](#system)
-12. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
-13. [Background jobs (apps/worker)](#background-jobs-appsworker)
-14. [Safety & anti-spam features, end to end](#safety--anti-spam-features-end-to-end)
+6. [Teams Integration](#teams-integration)
+7. [WhatsApp](#whatsapp)
+8. [Automation](#automation)
+9. [Bulk Messaging](#bulk-messaging)
+10. [AI Learning](#ai-learning)
+11. [Conversation Learning](#conversation-learning)
+12. [System](#system)
+13. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
+14. [Background jobs (apps/worker)](#background-jobs-appsworker)
+15. [Safety & anti-spam features, end to end](#safety--anti-spam-features-end-to-end)
 
 ---
 
@@ -58,9 +59,10 @@ or changes anything; every number links to the real page where you'd act on it.
 - **8 KPI stat tiles**: Connected accounts, Incoming messages (24h), Support required (24h), Active
   rules, Outbound queue (pending), Failed notifications (24h), Open escalation cases, Unresolved
   unknown patterns.
-- **9 module cards** (one per feature area, each with 2–4 live numbers and a "View module →" link):
+- **10 module cards** (one per feature area, each with 2–4 live numbers and a "View module →" link):
   Accounts & Routing, Automation Rules & Outbound, Priority Support Escalation, Conversation
-  Learning, AI Learning, Bulk Messaging, Notifications, System Logs, **Support Activity**.
+  Learning, AI Learning, Bulk Messaging, Notifications, Support Activity, **Teams Integration**,
+  System Logs.
 - **Message Activity card**: a 7-day inline-SVG trend line (`Sparkline`) of incoming message
   volume, plus the last 10 messages across every account.
 - A warning banner appears if any WhatsApp account isn't connected.
@@ -190,6 +192,84 @@ detection logic.
 
 ---
 
+## Teams Integration
+
+Sidebar group: **Teams Integration** — links a developer's Microsoft Teams conversation to an open
+customer WhatsApp conversation, so a resolution keyword in a linked Teams thread can notify the
+customer automatically. Requires a one-time Microsoft OAuth connection (real Azure App
+Registration credentials — see `TEAMS_SETUP.md`); every page here works but shows a clear
+"not configured"/"not connected" state until that's done.
+
+### Issues — `/issues` (+ `/new`, `/[id]`)
+
+An Issue links a WhatsApp group + customer phone number to a Teams channel (and optionally an
+exact thread). Created manually (**not** auto-detected from message content) via **Create Issue**:
+pick a WhatsApp group, enter the customer's phone number, an optional title, and optionally a
+Teams channel + thread ID (linkable later instead, on the detail page). List page: Issue, Customer,
+WhatsApp Group, Teams Channel, Status (`OPEN`/`IN_PROGRESS`/`WAITING_DEVELOPER`/
+`RESOLUTION_DETECTED`/`WAITING_CUSTOMER_CHECK`/`RESOLVED`/`CLOSED`), Created. Detail page: full
+details, a Teams Link form (save/change the channel+thread at any time), manual status actions
+(**Mark Resolved**, **Reopen**, **Close**), and a Resolution Events table (every Teams message
+evaluated against this issue, its matched keyword, and outcome) with an **Ignore** action on a
+`NOTIFIED` row (record-keeping only — cannot un-send an already-sent notification).
+
+### Connection — `/integrations/teams`
+
+**One-click connection**: clicking **Connect Microsoft Teams** redirects straight to Microsoft's
+own login page — the dashboard never asks for a Microsoft email/password, Client ID, Tenant ID, or
+any other technical detail. After signing in and approving the requested permissions on Microsoft's
+own consent screen, you're returned here already connected; discovery and the first sync start
+automatically (queued the moment the connection succeeds, not on the next scheduled poll).
+
+The connection card shows one of five states: **Not connected** (Connect button), **Connected**
+(steady state), **Synchronizing…** (a sync pass is actively running — shown as an indeterminate
+state, never a fabricated percentage), **Needs attention** (a sync/refresh failure worth a look —
+retried automatically), or **Reconnect needed** (Microsoft itself revoked or expired the
+authorization — the only state where a customer must click through OAuth again). When connected:
+account email/name, live Teams/Channels/Messages-synced counts, last sync time, **Sync Now**
+(runs a pass immediately), a link to **Manage Teams & Channels**, and **Disconnect** (with a
+confirmation dialog — clears stored tokens but keeps all synced history and Issues intact). A
+summary card shows Open Issues / Resolved Today with quick links to Issues, Resolution Rules, and
+Resolution Keywords.
+
+### Manage Teams & Channels — `/integrations/teams/manage`
+
+Every Team and channel the connected account can see is discovered automatically and enabled for
+automation by default — no setup wizard, no Team/Channel IDs to enter. This page lets an admin
+optionally narrow that down: one card per Team with an "Used for automation" toggle, and a toggle
+per channel underneath it. Turning a Team or channel off stops its messages from being synced for
+general automation purposes — an Issue explicitly linked to a specific channel is always synced
+regardless of this setting, so linking a channel to an Issue can never be silently defeated by this
+coarser toggle.
+
+### Resolution Rules — `/integrations/teams/rules` (+ `/new`, `/[id]/edit`)
+
+Each rule: Name, Description (optional), Keywords (multi-select). Any one matching keyword in a
+developer's Teams message fires the rule. Row actions: Edit, Disable/Enable, Delete.
+
+### Resolution Keywords — `/integrations/teams/keywords`
+
+Simple CRUD, identical shape to Support Activity's own Keywords page: Value, Match Mode
+(Contains/Exact), Case Sensitive toggle, Active/Disabled — reuses the exact same matcher.
+
+### Settings — `/integrations/teams/settings`
+
+**Enable resolution detection** (master switch for evaluating Teams messages at all). **Notify the
+customer automatically** — **off by default**; an admin must explicitly opt in before this system
+ever sends a WhatsApp message to a real customer based on Teams-side activity alone — plus a
+Notification Message Template (`{{customerName}}`/`{{issueId}}`/`{{executiveName}}` placeholders).
+**Polling Interval (minutes)** — how often the worker checks Microsoft Graph for new messages in
+linked channels.
+
+### Team Performance addition
+
+The existing **Team Performance** page (`/support-activity/team`) now also shows **Issues Handled**
+and **Issues Resolved** columns per team member (all-time counts, computed from `SupportIssue.
+supportExecutiveId` — a separate data source from Support Activity's own detection, shown
+alongside it rather than merged into the same counting-period logic).
+
+---
+
 ## WhatsApp
 
 Sidebar group: **WhatsApp**
@@ -218,9 +298,12 @@ Primary Fallback) or an error if nothing can resolve.
 Search by name; filter chips All/Monitored/Not Monitored/Active/Inactive with live counts. Table:
 Group, Account, Monitored badge (+ "Inactive · still monitored" warning if applicable), Active
 badge, Participants (fetch-on-demand if unknown), Last Synced, Priority Support tier + assigned
-member ("Configure" dialog), Manage (Start/Stop Monitoring). Bulk-select + Bulk Enable/Disable
-Monitoring. **Active** (the account is still a member, auto-managed by resync) and **Monitored**
-(an admin opted this group into automation) are deliberately distinct concepts, never conflated.
+member ("Configure" dialog), **AI Automation** (Enabled/Disabled badge + Enable/Disable AI button —
+the Hybrid AI Automation fallback layer's per-group opt-in; a yellow "Human active until …" badge
+appears when a team member's recent message has temporarily suppressed AI for that group), Manage
+(Start/Stop Monitoring). Bulk-select + Bulk Enable/Disable Monitoring. **Active** (the account is
+still a member, auto-managed by resync) and **Monitored** (an admin opted this group into
+automation) are deliberately distinct concepts, never conflated.
 
 ### Internal Team Members — `/team-members` (+ `/[id]/edit`)
 
@@ -337,9 +420,15 @@ the **Admin Assistant** model slot, which powers the floating AI chat widget (se
   Admin Assistant is the only slot anything actually calls today.
 - **AI Settings** (`/ai-learning/settings`): 8 boolean toggles (AI Engine, Learning, Auto Response,
   Screenshot Response, Chat Learning, Software Learning, Requirement Learning, Announcement AI —
-  all default off, all currently inert except AI Engine gating the Admin Assistant) and 4 threshold
-  numbers (Duplicate Similarity, Learning Confidence, Auto Approval, Human Review — all 0–100,
-  reserved for later phases).
+  all default off). **AI Engine + Auto Response together gate the live Hybrid AI Automation
+  fallback layer** (the rest are reserved for later phases) — it fires only when the deterministic
+  rule engine finds no match at all, and only for groups individually opted in on the Groups page.
+  Three more fields tune it: **Auto-Response Confidence Threshold** (0–100, AI may reply at/above
+  this, otherwise a human is asked for help instead), **AI Reply Cooldown (seconds)** (reuses the
+  same per-client cooldown mechanism as rule auto-replies), **Human Takeover Cooldown (minutes)**
+  (how long a team member's message pauses AI for that group). Plus 4 unrelated threshold numbers
+  (Duplicate Similarity, Learning Confidence, Auto Approval, Human Review — all 0–100, reserved for
+  later phases).
 
 ---
 
@@ -425,10 +514,12 @@ once.
 | Session segmentation | 5min | Conversation Learning: buckets messages into sessions (gated) |
 | Pattern detection | 15min | Deterministic, AI-free recurring-pattern scoring (gated) |
 | AI-assisted analysis | 6h | Optional AI rescoring, or on-demand via the dashboard (gated) |
+| Teams sync | 3min (admin-configurable) | Polls Microsoft Graph for linked channels' messages, runs resolution matching (no-ops until connected; also on-demand via **Sync Now**) |
 | Heartbeat | 15s | Health state + DB connectivity log |
 
-Support Activity Tracking's detector is **not** a scheduled loop — it's an inline, fire-and-forget
-step inside the incoming-message pipeline itself, right alongside the escalation side effect.
+Support Activity Tracking's detector and the Hybrid AI Automation fallback layer are **not**
+scheduled loops — they're inline, fire-and-forget steps inside the incoming-message pipeline
+itself, right alongside the escalation side effect.
 
 ---
 
@@ -437,8 +528,8 @@ step inside the incoming-message pipeline itself, right alongside the escalation
 - **One outbound mechanism** — every WhatsApp send (rule auto-replies, broadcasts, forwards) goes
   through the same DB-backed `OutboundMessage` queue. No feature has its own parallel send path.
 - **Idempotency everywhere it matters** — message ingestion, rule execution, broadcast sends,
-  escalation notifications, and Support Activity detection all have a real unique-constraint-based
-  dedup guard, not just an application-level check.
+  escalation notifications, Support Activity detection, and Teams resolution events all have a real
+  unique-constraint-based dedup guard, not just an application-level check.
 - **Rate limits are layered**, not singular: per-rule cooldowns → per-client hourly/daily caps →
   global per-minute/hour/day caps → job-level caps (broadcast/add-to-groups) → the account-wide
   kill switch, each independently configurable.

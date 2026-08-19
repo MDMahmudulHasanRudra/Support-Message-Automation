@@ -1,5 +1,5 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
-import { Activity, Bell, ListChecks, Send, ShieldAlert, Smartphone, Sparkles, Terminal as ConsoleIcon, Waypoints } from "lucide-react";
+import { Activity, Bell, Link2, ListChecks, Send, ShieldAlert, Smartphone, Sparkles, Terminal as ConsoleIcon, Waypoints } from "lucide-react";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
 import {
@@ -30,6 +30,7 @@ import {
   getRecentMessageActivity,
   getSupportActivityDashboardSummary,
   getSystemLogsSummary,
+  getTeamsIntegrationSummary,
 } from "@/server/actions/dashboardSummary";
 
 function formatAgeShort(ms: number): string {
@@ -59,6 +60,7 @@ export default async function OverviewPage() {
     systemLogs,
     supportActivity,
     recentActivity,
+    teamsIntegration,
   ] = await Promise.all([
     getAccountsRoutingSummary(),
     getAutomationOutboundSummary(nowMs),
@@ -70,6 +72,7 @@ export default async function OverviewPage() {
     getSystemLogsSummary(nowMs),
     getSupportActivityDashboardSummary(nowMs),
     getRecentMessageActivity(nowMs),
+    getTeamsIntegrationSummary(nowMs),
   ]);
 
   const disconnectedAccounts = accountsRouting.accounts.filter((a) => a.status !== "CONNECTED");
@@ -278,6 +281,31 @@ export default async function OverviewPage() {
           </ModuleCardRow>
           <ModuleCardRow label="Today's activities">{supportActivity.todayActivities}</ModuleCardRow>
           <ModuleCardRow label="Today's supported groups">{supportActivity.todaySupportedGroups}</ModuleCardRow>
+        </DashboardModuleCard>
+
+        <DashboardModuleCard title="Teams Integration" icon={Link2} href="/integrations/teams" secondaryLink={{ href: "/issues", label: "View issues" }}>
+          <ModuleCardRow label="Connection">
+            <Badge
+              color={
+                teamsIntegration.status === "CONNECTED" || teamsIntegration.status === "SYNCING"
+                  ? "green"
+                  : teamsIntegration.status === "REAUTH_REQUIRED"
+                    ? "yellow"
+                    : teamsIntegration.status === "ERROR"
+                      ? "red"
+                      : "gray"
+              }
+              dot
+            >
+              {teamsIntegration.status}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Open issues">
+            <Badge color={teamsIntegration.openIssueCount > 0 ? "yellow" : "gray"} dot>
+              {teamsIntegration.openIssueCount}
+            </Badge>
+          </ModuleCardRow>
+          <ModuleCardRow label="Resolved today">{teamsIntegration.resolvedTodayCount}</ModuleCardRow>
         </DashboardModuleCard>
 
         <DashboardModuleCard title="System Logs" icon={ConsoleIcon} href="/logs">

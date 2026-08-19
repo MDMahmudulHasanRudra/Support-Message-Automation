@@ -228,6 +228,21 @@ export async function getSupportActivityDashboardSummary(nowMs: number) {
   return { enabled: settings.enabled, todayActivities, todaySupportedGroups };
 }
 
+export async function getTeamsIntegrationSummary(nowMs: number) {
+  const todayStart = new Date(new Date(nowMs).setHours(0, 0, 0, 0));
+  const [account, openIssueCount, resolvedTodayCount] = await Promise.all([
+    prisma.teamsAccount.findUnique({ where: { id: "global" } }),
+    prisma.supportIssue.count({ where: { status: { notIn: ["RESOLVED", "CLOSED"] } } }),
+    prisma.supportIssue.count({ where: { status: "RESOLVED", resolvedAt: { gte: todayStart } } }),
+  ]);
+
+  return {
+    status: account?.status ?? "DISCONNECTED",
+    openIssueCount,
+    resolvedTodayCount,
+  };
+}
+
 export async function getRecentMessageActivity(nowMs: number) {
   const since24h = hoursAgo(24, nowMs);
   const dayStarts: Date[] = [];

@@ -17,6 +17,7 @@ import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
 import { startPatternDetectionProcessor } from "./learning/patternDetectionProcessor.js";
 import { startAiAnalysisProcessor } from "./learning/aiAnalysisProcessor.js";
+import { startTeamsSyncProcessor, resolveTeamsSyncIntervalMs } from "./teams/teamsSyncProcessor.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -75,6 +76,11 @@ async function main() {
     startSessionSegmentationProcessor(),
     startPatternDetectionProcessor(),
     startAiAnalysisProcessor(),
+    // Microsoft Teams Integration — polling sync, always registered but a no-op every tick until
+    // MICROSOFT_CLIENT_ID/SECRET/TENANT_ID/REDIRECT_URI are configured AND an admin completes the
+    // OAuth connect flow (see getValidTeamsAccessToken()'s doc comment), same zero-effect-until-
+    // configured convention as Conversation Learning above.
+    startTeamsSyncProcessor(await resolveTeamsSyncIntervalMs()),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

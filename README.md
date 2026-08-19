@@ -15,8 +15,14 @@ resolution, a dry Rule Tester), the DB-backed outbound send queue, Group Message
 Excel bulk broadcast) and Add Number to Groups, Priority-Based Support Escalation, Conversation
 Learning (deterministic pattern detection + optional AI-assisted analysis + human-reviewed rule
 proposals), Support Activity Tracking (keyword/reply/mention detection with configurable counting),
-a consolidated command-center dashboard, and a floating AI Admin Assistant chat widget. AI Learning
-(a knowledge-base + provider/model configuration module) is intentionally a foundation-only phase —
+a Hybrid AI Automation fallback layer (AI-assisted auto-reply only when the rule engine genuinely
+misses, with human-takeover cooldown), a consolidated command-center dashboard, a floating AI Admin
+Assistant chat widget, and a Microsoft Teams Integration (P0 slice: one-click, password-free OAuth
+connection — Connect → Microsoft login → Allow → Connected, with automatic Teams/channel discovery
+and an optional Manage Teams & Channels selection screen — Teams/channel/message sync,
+resolution-keyword detection, and automatic WhatsApp customer notification, linked to WhatsApp
+conversations via a new Issue-tracking model — see `TEAMS_SETUP.md` to configure). AI Learning (a
+knowledge-base + provider/model configuration module) is intentionally a foundation-only phase —
 see `PROJECT_REFERENCE.md` for exactly what is and isn't live yet.
 
 ## Requirements
@@ -75,10 +81,11 @@ a migration committed to the repo but not deployed will eventually surface as a 
 
 ```
 apps/web       Next.js dashboard — pages, server actions, the AI Admin Assistant chat widget
-apps/worker    dedicated OpenWA worker — message pipeline, outbound queue, escalation/learning/support-activity jobs
+apps/worker    dedicated OpenWA worker — message pipeline, outbound queue, escalation/learning/support-activity/teams jobs
 packages/db    Prisma schema, migrations, client
 packages/engine   rule evaluation engine (matchers, priority, regex safety, pattern-detection scoring)
 packages/ai-client   text-only AI-provider completion client (Anthropic today), used only by the worker's opt-in Conversation Learning AI analysis job
+packages/teams-client   Microsoft OAuth + Graph API wrapper, used by apps/web (connect flow) and apps/worker (sync)
 packages/shared   shared enums/types
 ```
 
@@ -88,6 +95,8 @@ packages/shared   shared enums/types
 - `PROJECT_REFERENCE.md` — every module, page, field, and behavior in the app, in one place.
 - `ENGINEERING_STANDARDS.md` — the living rulebook for ongoing work (idempotency, anti-spam
   philosophy, production safety checklist, etc.).
+- `TEAMS_SETUP.md` — how to register the Azure App Registration the Microsoft Teams Integration
+  needs (client ID/secret/tenant ID/redirect URI) — required before that feature can connect.
 - The four root-level `*.md` build-spec documents (`RULE-BASED SUPPORT MESSAGE AUTOMATION.md`,
   `WHATSAPP ACCOUNT SAFETY AND ANTI-SPAM REQUIREMENTS.md`,
   `Priority-Based Support Monitoring & Escalation — Implementation Command.md`,
