@@ -19,7 +19,14 @@ export async function checkAutoReplySafety(params: {
   accountId: string;
   toPhone: string;
   groupId: string | null;
-  rule: EngineRule;
+  /**
+   * The matched rule, or null for a rule-less send — currently only the Hybrid AI Automation
+   * fallback layer (apps/worker/src/aiFallback/), which has no AutomationRule row at all. A null
+   * rule is treated as AUTO_REPLY-equivalent for SAFE_AUTO_REPLY eligibility below: an AI-drafted
+   * reply is gated by its own confidence threshold instead of a curated rule type, per the
+   * confirmed design in AI_HYBRID_AUTOMATION_ARCHITECTURE_IMPACT_REPORT.md.
+   */
+  rule: EngineRule | null;
   /** Cooldown lives on the DB row, not the pure EngineRule shape — passed explicitly. */
   cooldownSeconds: number | null;
   settings: AutomationSettings;
@@ -38,12 +45,14 @@ export async function checkAutoReplySafety(params: {
   // plain AUTO_REPLY rules and a SUPPORT_ESCALATION rule's own acknowledgement
   // (per the spec's SUPPORT ACKNOWLEDGEMENT SAFETY example — one acknowledgement
   // is sent, the support team is still notified separately). Everything else
-  // (EXCEPTION, GENERIC, LAST_SENDER, etc.) requires FULL_RULE_AUTOMATION.
+  // (EXCEPTION, GENERIC, LAST_SENDER, etc.) requires FULL_RULE_AUTOMATION. A null
+  // rule (AI fallback) is treated as AUTO_REPLY for this check.
   const SAFE_MODE_ELIGIBLE_TYPES = new Set(["AUTO_REPLY", "SUPPORT_ESCALATION"]);
-  if (settings.mode === "SAFE_AUTO_REPLY" && !SAFE_MODE_ELIGIBLE_TYPES.has(rule.type)) {
+  const effectiveRuleType = rule?.type ?? "AUTO_REPLY";
+  if (settings.mode === "SAFE_AUTO_REPLY" && !SAFE_MODE_ELIGIBLE_TYPES.has(effectiveRuleType)) {
     return {
       allowed: false,
-      reason: `Automation mode is SAFE_AUTO_REPLY; rule type ${rule.type} is not eligible for automatic replies in this mode.`,
+      reason: `Automation mode is SAFE_AUTO_REPLY; rule type ${effectiveRuleType} is not eligible for automatic replies in this mode.`,
     };
   }
 
@@ -61,7 +70,7 @@ export async function checkAutoReplySafety(params: {
     }
   }
 
-  if (cooldownSeconds && cooldownSeconds > 0) {
+  if (rule && cooldownSeconds && cooldownSeconds > 0) {
     const cooling = await isCooldownActive({
       accountId,
       toPhone,

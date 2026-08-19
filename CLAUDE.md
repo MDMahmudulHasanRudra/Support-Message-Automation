@@ -6,19 +6,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rule-based WhatsApp support automation: a Next.js dashboard (`apps/web`), a dedicated OpenWA
 worker (`apps/worker`), and a PostgreSQL/Prisma backend (`packages/db`), run via Docker Compose.
-`README.md` says "Status: Phase 1 — Project Foundation" — that line is stale; the codebase has
-since shipped multi-account routing, the rule engine, the outbound queue, Priority-Based Support
-Escalation, Conversation Learning (pattern detection + AI-assisted analysis), and a consolidated
-dashboard. `ARCHITECTURE.md` is the durable, still-accurate design reference (component
-boundaries, DB-mediated web⇄worker coordination, provider abstraction); treat its phase numbering
-as historical, not current status.
+`README.md`'s status line is kept current — check it first for what's actually shipped.
+`ARCHITECTURE.md` is the durable, still-accurate design reference (component boundaries,
+DB-mediated web⇄worker coordination, provider abstraction, full data model by feature area); treat
+its phase numbering as historical, not current status. **`PROJECT_REFERENCE.md` is the exhaustive,
+page-by-page functional reference** (every sidebar module, every field, every button, every
+behavior) — read it before touching a page you haven't worked on before, instead of re-deriving
+its behavior from scratch.
 
-Four root-level `*.md` files (`RULE-BASED SUPPORT MESSAGE AUTOMATION.md`,
+Five root-level `*.md` files (`RULE-BASED SUPPORT MESSAGE AUTOMATION.md`,
 `WHATSAPP ACCOUNT SAFETY AND ANTI-SPAM REQUIREMENTS.md`,
 `Priority-Based Support Monitoring & Escalation — Implementation Command.md`,
-`AI Learning & Knowledge System — Full Development Prompt.md`) are the original build specs for
-each major feature area — useful for rationale/intent, but `ENGINEERING_STANDARDS.md` (below) is
-the living rulebook for ongoing work, not these.
+`AI Learning & Knowledge System — Full Development Prompt.md`,
+`Support Activity Tracking + AI Admin Assistant — Safe Integration Master Prompt.md`) are the
+original build specs for each major feature area — useful for rationale/intent, but
+`ENGINEERING_STANDARDS.md` (below) is the living rulebook for ongoing work, not these.
+
+**Before assuming a live error is a new bug, check whether it's actually an undeployed migration.**
+A schema migration can be committed (and even verified against the isolated test DB) in one session
+without being deployed to the live database — by design, per the live-DB safety convention below.
+This has already caused one real incident: a later session's routine work hit a live `P2022`
+"column does not exist" error that was actually just a pending `pnpm db:migrate:deploy`. If a
+query that touches a recently-changed model starts failing, check `_prisma_migrations` (or
+`pnpm db:migrate:deploy`'s own status output) before treating it as a new problem — and don't run
+that deploy against the live DB without the user's explicit go-ahead.
 
 ## Commands
 
@@ -172,7 +183,47 @@ ACTIVE; `safeRegexTest()` is a runtime net using `vm.runInNewContext` with a 50m
   to a terminal `HUMAN_REPLIED`/`RESOLVED`/`CANCELLED`.
 - **Conversation Learning** (`apps/worker/src/learning/`): three independently-gated phases —
   segmentation (deterministic) → pattern detection (deterministic, AI-free) → AI-assisted analysis
-  (optional, separately gated). All three are entirely off by default.
+  (optional, separately gated). All three are entirely off by default. A `RuleProposal` is a
+  fully-formed `AutomationRule` draft copied from a `PatternCandidate`'s suggested fields
+  (`createRuleProposalFromCandidate()` in `packages/db/src/index.ts` — shared by the dashboard's
+  manual "Create Proposal" button and the worker's optional auto-approval path, so both stay
+  byte-for-byte identical); approving one always creates a **DRAFT** `AutomationRule`, never an
+  active one — a human still separately activates it on the Rules page.
+
+### Support Activity Tracking (`apps/worker/src/supportActivity/`, `apps/web/src/app/(dashboard)/support-activity/`)
+
+Detects a configured `InternalTeamMember`'s message inside a WhatsApp group satisfying a
+`SupportRule`'s trigger — `KEYWORD_MATCH`, `REPLY_TO_CUSTOMER` (quotes a non-team-member message),
+or `MENTION` (`@`-mentions a non-team-member) — and records one `SupportActivity` row per message.
+The detector hooks into `processIncomingMessage.ts` as a fire-and-forget side effect (own
+try/catch, same philosophy as the escalation hook right above it in that file) and is a true no-op
+when `SupportActivitySettings.enabled` is false (default). Idempotency is `SupportActivity.messageId
+@unique`, insert-and-catch-`P2002`. Reporting supports 3 counting modes (`UNIQUE_GROUP`,
+`EVERY_ACTIVITY`, `PER_TEAM_MEMBER`) and 3 periods (`DAILY`, `WEEKLY`, `MONTHLY`), always computed
+live via `groupBy` against the raw activity table (`apps/web/src/server/supportActivityReports.ts`)
+— never pre-aggregated, so changing the setting retroactively reinterprets history. CSV/Excel
+export lives at `apps/web/src/app/api/support-activity/export/route.ts` — this app's second-ever
+Route Handler (after `/api/health`), justified because a file download can't be triggered from a
+Server Action; reuses the already-installed `xlsx` package (previously read-only, now also used to
+write). `REACTION` as a fourth trigger type is a documented, deliberately deferred future phase —
+WhatsApp reactions need a separate `client.onReaction()` subscription and a new table, not just a
+new enum value.
+
+### AI Admin Assistant (`apps/web/src/server/aiAdmin/`)
+
+A read-only, tool-calling admin chatbot, floating on every dashboard page
+(`(dashboard)/FloatingAiChat.tsx`, wired into `DashboardShell.tsx`). Deliberately **not** built on
+`packages/ai-client` — that package's text-only-no-tools contract is a safety invariant for the
+Conversation Learning job and must not be loosened for this. Talks to the Anthropic SDK directly
+via its own `AiModelJob.ADMIN_ASSISTANT` config slot (`resolveAiAdminClient.ts`, gated only on
+`AiSettings.aiEngineEnabled` — deliberately not `learningEnabled`, which is specific to the
+Conversation Learning job). A fixed registry of read-only tools (`tools.ts`) lets it answer real
+questions (support stats, accounts, groups, priority cases, AI settings, broadcast jobs); it cannot
+change anything yet — no write-tool/confirmation-flow/audit-log layer exists in this version,
+by deliberate scope decision, so adding write capability later is additive, not a rewrite.
+Conversation history is held in client-side React state only (every tool is read-only, so a
+client-trusted history carries no real risk); each turn still re-runs live tool queries, so answers
+are always fresh regardless of what the client claims happened earlier.
 
 ### apps/web
 
@@ -181,12 +232,24 @@ server components (`(dashboard)/*/page.tsx`), mutations go through `src/server/a
 (`"use server"`). Read-only, multi-query dashboard summaries (e.g. `dashboardSummary.ts`) are plain
 async helpers in the same `server/actions/` directory *without* `"use server"`, since they're never
 invoked from a client event handler. UI is a small custom component kit under
-`src/components/ui/` (`Card`, `StatTile`, `Badge`, `Table`, `DashboardModuleCard`, etc.) on Tailwind
-CSS v4 with CSS-custom-property design tokens (`globals.css`) — **no shadcn/Radix, no charting
-library**; trend visuals are hand-rolled inline SVG (see `Sparkline.tsx`) by deliberate choice.
-Multi-account routing for WhatsApp-sending features goes through
-`resolveWhatsAppAccount(serviceKey)` (`packages/db`) — the single centralized resolver every
-sending feature must call, never re-derive the Primary/pinned/fallback decision at the call site.
+`src/components/ui/` (`Card`, `StatTile`, `Badge`, `Table`, `DashboardModuleCard`, `Switch`/
+`SwitchField`, `ButtonLink`, etc.) on Tailwind CSS v4 with CSS-custom-property design tokens
+(`globals.css`) — **no shadcn/Radix, no charting library**; trend visuals are hand-rolled inline SVG
+(see `Sparkline.tsx`) by deliberate choice. `Switch`/`SwitchField` (a standalone boolean/master
+toggle) is distinct from `Checkbox` (an item inside a multi-select list) — don't use them
+interchangeably. `ButtonLink` renders a real `<a href>` styled like `Button`, for cases (like a file
+download) that must stay real navigation, not a client `onClick`. `(dashboard)/DashboardShell.tsx`
+is a Client Component wrapping `Sidebar` + page content + the floating AI chat — it owns the mobile
+nav drawer and a pathname-keyed page-entrance animation; `layout.tsx` itself stays an async Server
+Component doing only data-fetching. Multi-account routing for WhatsApp-sending features goes
+through `resolveWhatsAppAccount(serviceKey)` (`packages/db`) — the single centralized resolver
+every sending feature must call, never re-derive the Primary/pinned/fallback decision at the call
+site.
+
+Sidebar nav groups, top to bottom (a pinned "Overview" link sits above all of them): Messages,
+Escalations, Support Activity, WhatsApp, Automation, Bulk Messaging, AI Learning, Conversation
+Learning, System — ordered by day-to-day check frequency, not by when each feature shipped. See
+`PROJECT_REFERENCE.md` for every link in every group.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

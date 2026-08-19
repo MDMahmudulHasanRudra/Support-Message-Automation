@@ -2,6 +2,7 @@ import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-auto
 import type { Prisma } from "@prisma/client";
 import { evaluate, type EngineRule } from "@support-automation/engine";
 import type { RuleAction } from "@support-automation/shared";
+import type { AiClient } from "@support-automation/ai-client";
 import { enqueueOutboundMessage } from "./enqueueOutbound.js";
 import { buildExecutionIdempotencyKey } from "./idempotency.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
@@ -12,6 +13,7 @@ import { toEngineRule } from "./ruleMapping.js";
 import type { RawIncomingMessage } from "./types.js";
 import { markHumanReplied, openOrContinueCase } from "../escalation/escalationQueue.js";
 import { detectSupportActivity } from "../supportActivity/detector.js";
+import { runAiFallback } from "../aiFallback/runAiFallback.js";
 
 interface ActionExecutionRecord {
   type: RuleAction["type"];
@@ -39,7 +41,8 @@ function traceStage(traceId: string, stage: string, details?: Record<string, unk
   console.log(`[pipeline] [${traceId}] ${stage}${details ? " " + JSON.stringify(details) : ""}`);
 }
 
-export async function processIncomingMessage(raw: RawIncomingMessage): Promise<void> {
+/** `aiClientOverride` is a test-only seam (mirrors processOneAiAnalysisBatch's clientOverride) — production's sole caller never passes it. */
+export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOverride?: AiClient): Promise<void> {
   const traceId = `${raw.accountId}:${raw.whatsappMessageId}`;
 
   if (!raw.body || raw.body.trim().length === 0) {
@@ -66,7 +69,15 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
   const group = raw.whatsappGroupId
     ? await prisma.whatsAppGroup.findUnique({
         where: { accountId_whatsappGroupId: { accountId: raw.accountId, whatsappGroupId: raw.whatsappGroupId } },
-        select: { id: true, name: true, priority: true, assignedTeamMemberId: true, escalationMonitoringEnabled: true },
+        select: {
+          id: true,
+          name: true,
+          priority: true,
+          assignedTeamMemberId: true,
+          escalationMonitoringEnabled: true,
+          isMonitored: true,
+          aiAutomationEnabled: true,
+        },
       })
     : null;
   if (raw.whatsappGroupId) {
@@ -209,6 +220,30 @@ export async function processIncomingMessage(raw: RawIncomingMessage): Promise<v
   });
 
   const settings = await getAutomationSettings();
+
+  // Hybrid AI Automation fallback layer — only on a genuine rule-miss (never on the team-member-
+  // filter IGNORE, which is a different synthetic decision). Own try/catch, same fire-and-forget-
+  // but-logged philosophy as the escalation/support-activity hooks above: a failure here must
+  // never break message processing. See apps/worker/src/aiFallback/runAiFallback.ts.
+  if (result.finalDecision === "NO_MATCH") {
+    try {
+      await runAiFallback({
+        message: { id: message.id, body: raw.body },
+        accountId: raw.accountId,
+        chatId: raw.chatId,
+        toPhone: raw.senderPhone,
+        senderName: raw.senderName,
+        group: group
+          ? { id: group.id, name: group.name, isMonitored: group.isMonitored, aiAutomationEnabled: group.aiAutomationEnabled }
+          : null,
+        automationSettings: settings,
+        clientOverride: aiClientOverride,
+      });
+    } catch (err) {
+      console.error("[ai-fallback] failed to run AI fallback stage", err);
+    }
+  }
+
   const executedActions: ActionExecutionRecord[] = [];
 
   for (const action of result.actions) {

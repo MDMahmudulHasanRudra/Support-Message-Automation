@@ -16,8 +16,8 @@ export async function enqueueNotification(params: {
   relatedRuleId?: string | null;
   relatedPatternCandidateId?: string | null;
   payload: Record<string, unknown>;
-}): Promise<void> {
-  await prisma.notification.create({
+}): Promise<{ id: string }> {
+  const created = await prisma.notification.create({
     data: {
       type: params.type,
       destination: params.destination,
@@ -28,4 +28,5 @@ export async function enqueueNotification(params: {
       payload: params.payload as Prisma.InputJsonValue,
     },
   });
+  return { id: created.id };
 }

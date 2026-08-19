@@ -314,6 +314,7 @@ model WhatsAppAccount {
   serviceRoutes        WhatsAppServiceRoute[]
   conversationSessions ConversationSession[]
   supportActivities    SupportActivity[]
+  aiFallbackDecisions  AiFallbackDecision[]
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -351,6 +352,10 @@ model WhatsAppGroup {
   /// Independent kill switch from `priority` itself — lets an admin keep the priority tier
   /// assigned but temporarily pause escalation for this one group without clearing it.
   escalationMonitoringEnabled Boolean             @default(true)
+  /// Opt-in for the Hybrid AI Automation fallback layer — mirrors escalationMonitoringEnabled's
+  /// per-group-toggle shape. Default false: a group must be explicitly enabled in addition to
+  /// being isMonitored and the global AiSettings gates being on, before AI ever fires for it.
+  aiAutomationEnabled         Boolean             @default(false)
   createdAt                   DateTime            @default(now())
   updatedAt                   DateTime            @updatedAt
 
@@ -361,6 +366,7 @@ model WhatsAppGroup {
   conversationSessions ConversationSession[]
   supportActivities    SupportActivity[]
   supportRuleScopes    SupportRuleGroup[]
+  aiFallbackDecisions  AiFallbackDecision[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([accountId, isActive])
@@ -428,6 +434,7 @@ model Message {
   triggeredEscalationCases SupportEscalationCase[]    @relation("EscalationTriggerMessage")
   patternCandidateEvidence PatternCandidateEvidence[]
   supportActivity          SupportActivity?
+  aiFallbackDecision       AiFallbackDecision?
 
   @@unique([accountId, whatsappMessageId])
   @@index([chatId, timestampWa])
@@ -520,6 +527,8 @@ model OutboundMessage {
   providerMessageId String?
   createdById       String?
   createdBy         User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  aiFallbackDecision AiFallbackDecision?
 
   @@index([status, scheduledAt])
   @@index([toPhone, sentAt])
@@ -686,7 +695,8 @@ model Notification {
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 
-  escalationEvents SupportEscalationEvent[]
+  escalationEvents   SupportEscalationEvent[]
+  aiFallbackDecision AiFallbackDecision?
 
   @@index([status])
   @@index([relatedMessageId])
@@ -817,21 +827,25 @@ enum AiKnowledgeStatus {
 /// none of these actually gate anything yet since the learning/response
 /// pipelines they're meant to control don't exist until a later phase.
 model AiSettings {
-  id                           String   @id @default("global")
-  aiEngineEnabled              Boolean  @default(false)
-  learningEnabled              Boolean  @default(false)
-  autoResponseEnabled          Boolean  @default(false)
-  screenshotResponseEnabled    Boolean  @default(false)
-  chatLearningEnabled          Boolean  @default(false)
-  softwareLearningEnabled      Boolean  @default(false)
-  requirementLearningEnabled   Boolean  @default(false)
-  announcementAiEnabled        Boolean  @default(false)
+  id                              String   @id @default("global")
+  aiEngineEnabled                 Boolean  @default(false)
+  learningEnabled                 Boolean  @default(false)
+  autoResponseEnabled             Boolean  @default(false)
+  /// The Hybrid AI Automation fallback layer's own confidence gate (spec default 90%) — deliberately
+  /// separate from learningConfidenceThreshold/autoApprovalThreshold above, which are reserved for
+  /// the not-yet-built AI Learning/Knowledge phases and would be an ambiguous field to overload here.
+  autoResponseConfidenceThreshold Int      @default(90)
+  screenshotResponseEnabled       Boolean  @default(false)
+  chatLearningEnabled             Boolean  @default(false)
+  softwareLearningEnabled         Boolean  @default(false)
+  requirementLearningEnabled      Boolean  @default(false)
+  announcementAiEnabled           Boolean  @default(false)
   /// Percentage (0-100). Two pieces of knowledge at/above this similarity are treated as duplicates.
-  duplicateSimilarityThreshold Int      @default(95)
-  learningConfidenceThreshold  Int      @default(90)
-  autoApprovalThreshold        Int      @default(95)
-  humanReviewThreshold         Int      @default(70)
-  updatedAt                    DateTime @updatedAt
+  duplicateSimilarityThreshold    Int      @default(95)
+  learningConfidenceThreshold     Int      @default(90)
+  autoApprovalThreshold           Int      @default(95)
+  humanReviewThreshold            Int      @default(70)
+  updatedAt                       DateTime @updatedAt
 }
 
 /// A configured AI provider account (e.g. one Anthropic API key). apiKeyCiphertext
@@ -851,9 +865,10 @@ model AiProvider {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
-  models            AiModelConfig[]
-  learningBatchJobs LearningBatchJob[]
-  patternCandidates PatternCandidate[]
+  models              AiModelConfig[]
+  learningBatchJobs   LearningBatchJob[]
+  patternCandidates   PatternCandidate[]
+  aiFallbackDecisions AiFallbackDecision[]
 }
 
 /// Exactly one active model assignment per job (see @@unique) — the same
@@ -924,6 +939,69 @@ model AiKnowledgeVersion {
   createdAt       DateTime            @default(now())
 
   @@unique([itemId, version])
+}
+
+// ---------------------------------------------------------------------------
+// Hybrid AI Automation — fallback layer (apps/worker/src/aiFallback/). Fires only when the
+// deterministic rule engine (packages/engine's evaluate()) genuinely misses on a real customer
+// message (finalDecision === "NO_MATCH") and the message's group has opted in. Reuses the existing
+// AiModelJob.RESPONSE model slot, the existing OutboundMessage queue, and the existing Notification
+// system unchanged — this table is purely the audit trail of what the AI decided, never a second
+// send path. At most one row per Message.
+// ---------------------------------------------------------------------------
+
+enum AiFallbackOutcome {
+  AI_REPLIED
+  HUMAN_FALLBACK
+}
+
+/// Distinguishes how a PatternCandidateEvidence row was resolved, for Conversation Learning's
+/// benefit — populated by patternDetectionJob.ts's evidence-linking query (a later, additive
+/// change; the column exists now so that migration doesn't need a second one).
+enum EvidenceResponseSource {
+  EXISTING_RULE
+  HUMAN
+  AI
+  UNRESOLVED
+}
+
+/// Audit trail for the Hybrid AI Automation fallback layer — at most one row per genuine NO_MATCH
+/// message that reached the eligibility gate (kill switch, mode, group opt-in, AI Settings all
+/// passed). A message that never reached the gate (ineligible) gets no row at all, by design — see
+/// apps/worker/src/aiFallback/eligibility.ts's doc comment.
+model AiFallbackDecision {
+  id        String          @id @default(cuid())
+  messageId String          @unique
+  message   Message         @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  accountId String
+  account   WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId   String?
+  group     WhatsAppGroup?  @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  /// Snapshot of which provider/model actually answered — not a live link, since AiModelConfig can
+  /// be reassigned later without invalidating past audit rows.
+  aiProviderId String?
+  aiProvider   AiProvider? @relation(fields: [aiProviderId], references: [id], onDelete: SetNull)
+  modelId      String?
+
+  intent          String?
+  confidenceScore Int?
+  responseText    String?
+  outcome         AiFallbackOutcome
+  /// Short diagnostic code (e.g. "LOW_CONFIDENCE", "AI_UNAVAILABLE", "SAFETY_BLOCKED: ...") — free
+  /// text, same convention as SystemLog's own message field, not branched on anywhere in code.
+  reason          String?
+
+  outboundMessageId String?          @unique
+  outboundMessage   OutboundMessage? @relation(fields: [outboundMessageId], references: [id], onDelete: SetNull)
+  notificationId    String?          @unique
+  notification      Notification?    @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+
+  tokensUsed Int?
+  createdAt  DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([outcome, createdAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -1256,19 +1334,23 @@ model PatternCandidate {
 /// contributed to it. The unique constraint also makes the detection job's upsert idempotent: a
 /// session already linked to this candidate is never counted or linked twice.
 model PatternCandidateEvidence {
-  id                    String              @id @default(cuid())
+  id                    String                 @id @default(cuid())
   patternCandidateId    String
-  patternCandidate      PatternCandidate    @relation(fields: [patternCandidateId], references: [id], onDelete: Cascade)
+  patternCandidate      PatternCandidate       @relation(fields: [patternCandidateId], references: [id], onDelete: Cascade)
   conversationSessionId String
-  conversationSession   ConversationSession @relation(fields: [conversationSessionId], references: [id], onDelete: Cascade)
+  conversationSession   ConversationSession    @relation(fields: [conversationSessionId], references: [id], onDelete: Cascade)
   matchedMessageId      String?
-  matchedMessage        Message?            @relation(fields: [matchedMessageId], references: [id], onDelete: SetNull)
+  matchedMessage        Message?               @relation(fields: [matchedMessageId], references: [id], onDelete: SetNull)
   /// Heuristic: a team-member reply followed within the same session.
-  wasResolved           Boolean             @default(false)
+  wasResolved           Boolean                @default(false)
   /// Set if an AutomationExecution in this session already had a non-null ruleId — a historical-
   /// outcome signal, not a foreign key (the rule may since have been deleted/disabled).
   respondingRuleId      String?
-  createdAt             DateTime            @default(now())
+  /// Populated by patternDetectionJob.ts's evidence-linking query (a later, additive change) by
+  /// checking for an AiFallbackDecision on the matched message — column added now so that future
+  /// change is a single migration-free code change, not a second schema migration.
+  responseSource        EvidenceResponseSource @default(UNRESOLVED)
+  createdAt             DateTime               @default(now())
 
   @@unique([patternCandidateId, conversationSessionId])
   @@index([patternCandidateId])

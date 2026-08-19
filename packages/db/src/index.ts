@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
-import type { Prisma, WhatsAppServiceKey } from "@prisma/client";
+import type { AiFallbackOutcome, Prisma, WhatsAppServiceKey } from "@prisma/client";
 import { validateRegexSafety } from "@support-automation/engine";
 import type { RuleAction } from "@support-automation/shared";
 
@@ -268,4 +268,59 @@ export async function approveRuleProposalById(params: {
   });
 
   return { ruleId: createdRule.id };
+}
+
+export interface CreateAiFallbackDecisionInput {
+  messageId: string;
+  accountId: string;
+  groupId?: string | null;
+  aiProviderId?: string | null;
+  modelId?: string | null;
+  intent?: string | null;
+  confidenceScore?: number | null;
+  responseText?: string | null;
+  outcome: AiFallbackOutcome;
+  reason?: string | null;
+  outboundMessageId?: string | null;
+  notificationId?: string | null;
+  tokensUsed?: number | null;
+}
+
+export type CreateAiFallbackDecisionResult = { id: string } | { error: string };
+
+/**
+ * Hybrid AI Automation's audit-trail write — one row per genuine NO_MATCH message that reached
+ * the eligibility gate (apps/worker/src/aiFallback/). Idempotent on messageId, same pattern as
+ * enqueueOutboundMessage()'s idempotencyKey: a P2002 (e.g. a redelivered WhatsApp event racing
+ * this same code path twice) is a no-op, not an error. Lives here, not a sibling module, for the
+ * same no-relative-imports reason as resolveWhatsAppAccount()/encryptSecret() above.
+ */
+export async function createAiFallbackDecision(
+  input: CreateAiFallbackDecisionInput,
+): Promise<CreateAiFallbackDecisionResult> {
+  try {
+    const created = await prisma.aiFallbackDecision.create({
+      data: {
+        messageId: input.messageId,
+        accountId: input.accountId,
+        groupId: input.groupId ?? null,
+        aiProviderId: input.aiProviderId ?? null,
+        modelId: input.modelId ?? null,
+        intent: input.intent ?? null,
+        confidenceScore: input.confidenceScore ?? null,
+        responseText: input.responseText ?? null,
+        outcome: input.outcome,
+        reason: input.reason ?? null,
+        outboundMessageId: input.outboundMessageId ?? null,
+        notificationId: input.notificationId ?? null,
+        tokensUsed: input.tokensUsed ?? null,
+      },
+    });
+    return { id: created.id };
+  } catch (err: any) {
+    if (err?.code === "P2002") {
+      return { error: "An AI fallback decision already exists for this message." };
+    }
+    throw err;
+  }
 }

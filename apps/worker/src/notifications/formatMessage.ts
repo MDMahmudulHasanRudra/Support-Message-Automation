@@ -3,6 +3,9 @@ export function formatSupportAlert(payload: Record<string, unknown>): string {
   if (payload.alertKind === "UNKNOWN_PATTERN") {
     return formatUnknownPatternAlert(payload);
   }
+  if (payload.alertKind === "AI_ASSISTANCE_REQUIRED") {
+    return formatAiAssistanceRequiredAlert(payload);
+  }
 
   const group =
     (payload.groupName as string) ?? (payload.groupId as string) ?? "(direct message)";
@@ -45,5 +48,30 @@ function formatUnknownPatternAlert(payload: Record<string, unknown>): string {
     `Latest message: ${latestMessage}`,
     "",
     "No existing rule handles this yet — review it in Conversation Learning → Unknown Patterns.",
+  ].join("\n");
+}
+
+/** Hybrid AI Automation's human-fallback alert — sent when the AI layer couldn't (or wasn't
+ * confident enough to) auto-reply; see apps/worker/src/aiFallback/runAiFallback.ts. */
+function formatAiAssistanceRequiredAlert(payload: Record<string, unknown>): string {
+  const group = (payload.groupName as string) ?? "(direct message)";
+  const client = (payload.clientName as string) ?? (payload.clientPhone as string) ?? "unknown";
+  const message = (payload.message as string) ?? "";
+  const confidence = payload.confidence != null ? `${payload.confidence}%` : "n/a";
+  const intent = (payload.intent as string) ?? "(not classified)";
+  const reason = (payload.reason as string) ?? "(no reason given)";
+
+  return [
+    "🤖 AI ASSISTANCE REQUIRED",
+    "",
+    `Group: ${group}`,
+    `Sender: ${client}`,
+    `Message: ${message}`,
+    "",
+    `AI confidence: ${confidence}`,
+    `Detected intent: ${intent}`,
+    `Reason: ${reason}`,
+    "",
+    "The AI layer could not confidently reply — please review and respond.",
   ].join("\n");
 }
