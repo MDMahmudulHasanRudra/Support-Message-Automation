@@ -8,8 +8,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pg_data:/var/lib/postgresql/data
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    # No `ports:` on purpose: Postgres must never be reachable from outside the
+    # Docker host (VPS public IP) in production — `app`/`worker`/`migrate` all
+    # reach it over automation_net using the `postgres` service name, which
+    # works with no published port. Use `docker compose exec postgres psql ...`
+    # for local inspection instead of connecting from the host.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -64,7 +67,7 @@ services:
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
       MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${WEB_PORT:-6668}:3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
