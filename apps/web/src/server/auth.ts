@@ -69,7 +69,10 @@ export async function createSession(
   const store = await cookies();
   store.set(SESSION_COOKIE, secret, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    // COOKIE_SECURE=false is an explicit opt-out for deployments running plain HTTP with no
+    // TLS-terminating reverse proxy in front — a Secure cookie is silently dropped by the browser
+    // in that case, which otherwise looks like the app logging the user out on every click.
+    secure: process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE !== "false",
     sameSite: "lax",
     path: "/",
     expires: expiresAt,

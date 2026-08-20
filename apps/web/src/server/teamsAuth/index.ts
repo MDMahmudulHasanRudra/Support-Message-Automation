@@ -18,7 +18,8 @@ export async function buildConnectRedirectUrl(): Promise<string> {
   const store = await cookies();
   store.set(STATE_COOKIE, state, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    // See apps/web/src/server/auth.ts's session cookie for why COOKIE_SECURE=false exists.
+    secure: process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE !== "false",
     sameSite: "lax",
     path: "/",
     maxAge: STATE_TTL_MS / 1000,
