@@ -67,7 +67,7 @@ services:
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
       MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
     ports:
-      - "${WEB_PORT:-6668}:3000"
+      - "${WEB_PORT:-8668}:3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
