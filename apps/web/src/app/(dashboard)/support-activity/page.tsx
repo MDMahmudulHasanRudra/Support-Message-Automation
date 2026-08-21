@@ -2,6 +2,7 @@
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { formatDateTime } from "@/lib/date";
 import { formatDurationShort } from "@/lib/duration";
 import { getSupportActivityPeriodRange } from "@/lib/supportActivityPeriod";
@@ -16,6 +17,7 @@ import {
 import {
   Alert,
   Badge,
+  ButtonLink,
   Card,
   EmptyState,
   HelpButton,
@@ -74,7 +76,7 @@ export default async function SupportActivityPage() {
     <div>
       <PageHeader
         title="Support Activity"
-        description="Automatically detected support keyword/reply/mention activity from configured support team members inside WhatsApp groups."
+        description="Monitor support activity, resolution performance, and team availability."
         actions={
           <HelpButton moduleTitle="Support Activity">
             <HelpSection title="What this page is for">
@@ -114,17 +116,20 @@ export default async function SupportActivityPage() {
 
       {staleSessionCount > 0 ? (
         <div className="mb-6">
-          <Alert tone="warning" title={`${staleSessionCount} support session${staleSessionCount === 1 ? "" : "s"} need attention`}>
-            Open for more than 4 hours with no completion keyword sent. Check the{" "}
+          <Alert
+            tone="warning"
+            title={`${staleSessionCount} support session${staleSessionCount === 1 ? "" : "s"} need${staleSessionCount === 1 ? "s" : ""} attention`}
+          >
+            These sessions have been open for more than 4 hours. Review them from{" "}
             <Link href="/support-activity/reports" className="underline">
-              Reports
-            </Link>{" "}
-            page to review or manually close them.
+              Support Activity → Reports
+            </Link>
+            .
           </Alert>
         </div>
       ) : null}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-6">
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile label={`${periodLabel} Support Groups`} value={periodSupportedGroups} />
         <StatTile label={`${periodLabel} Support Activities`} value={periodActivities} />
         <StatTile label="Active Support Members" value={activeSupportMembers} />
@@ -153,19 +158,15 @@ export default async function SupportActivityPage() {
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SectionHeader title="Recent Activity" description="Last 10 detected support activities across every group." />
-          <div className="flex gap-3 pb-4 text-xs">
-            <a
-              className="text-[color:var(--color-primary)] underline"
-              href={`/api/support-activity/export?type=activities&format=csv&${exportParams}`}
-            >
+          <div className="flex gap-2">
+            <ButtonLink href={`/api/support-activity/export?type=activities&format=csv&${exportParams}`}>
+              <Download className="size-3.5" aria-hidden />
               Export CSV
-            </a>
-            <a
-              className="text-[color:var(--color-primary)] underline"
-              href={`/api/support-activity/export?type=activities&format=xlsx&${exportParams}`}
-            >
+            </ButtonLink>
+            <ButtonLink href={`/api/support-activity/export?type=activities&format=xlsx&${exportParams}`}>
+              <Download className="size-3.5" aria-hidden />
               Export Excel
-            </a>
+            </ButtonLink>
           </div>
         </div>
         {recentActivities.length === 0 ? (

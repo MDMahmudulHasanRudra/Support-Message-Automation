@@ -117,10 +117,7 @@ export default async function SupportActivityTeamPage() {
       </Card>
 
       <Card className="mt-6">
-        <SectionHeader
-          title="Today / Right Now"
-          description="Always today's date and the current moment — not affected by the counting period above."
-        />
+        <SectionHeader title="Today / Right Now" description="Team availability and resolved support time for today." />
         {availability.length === 0 ? (
           <EmptyState>No active support team members yet.</EmptyState>
         ) : (
@@ -130,27 +127,30 @@ export default async function SupportActivityTeamPage() {
                 <Th>Member</Th>
                 <Th>Working Today</Th>
                 <Th>Available Now</Th>
-                <Th>Hours Worked Today</Th>
+                <Th>Hours Worked</Th>
               </tr>
             </thead>
             <tbody>
-              {availability.map((row) => (
-                <tr key={row.teamMemberId}>
-                  <Td>{row.name}</Td>
-                  <Td>
-                    <Badge color={row.workingToday ? "green" : "gray"}>
-                      {row.workingToday ? "Working today" : "Off today"}
-                    </Badge>
-                  </Td>
-                  <Td>
-                    <span className="inline-flex items-center gap-2">
-                      <StatusDot color={row.availableNow ? "green" : "gray"} pulse={row.availableNow} />
-                      {row.availableNow ? "Available now" : "Not available right now"}
-                    </span>
-                  </Td>
-                  <Td className="tabular-nums">{formatDurationShort(hoursByMember.get(row.teamMemberId) ?? 0)}</Td>
-                </tr>
-              ))}
+              {availability.map((row) => {
+                const seconds = hoursByMember.get(row.teamMemberId) ?? 0;
+                return (
+                  <tr key={row.teamMemberId}>
+                    <Td className="font-medium">{row.name}</Td>
+                    <Td>
+                      <Badge color={row.workingToday ? "green" : "gray"} dot>
+                        {row.workingToday ? "Active" : "Off"}
+                      </Badge>
+                    </Td>
+                    <Td>
+                      <span className="inline-flex items-center gap-2">
+                        <StatusDot color={row.availableNow ? "green" : "gray"} pulse={row.availableNow} />
+                        {row.availableNow ? "Available" : "Not available"}
+                      </span>
+                    </Td>
+                    <Td className="tabular-nums">{seconds > 0 ? formatDurationShort(seconds) : "0h"}</Td>
+                  </tr>
+                );
+              })}
             </tbody>
           </Table>
         )}

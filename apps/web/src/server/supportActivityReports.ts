@@ -249,6 +249,8 @@ export async function getTeamAvailability(now: Date = new Date()): Promise<TeamA
 
 export interface GroupSessionRow {
   id: string;
+  groupId: string;
+  groupName: string;
   status: string;
   startedAt: Date;
   startedByName: string | null;
@@ -261,20 +263,27 @@ export interface GroupSessionRow {
   isStale: boolean;
 }
 
-/** Session-level (open/closed + duration) view for one group — filters on startedAt within range,
- *  same single-timestamp-range convention as getGroupSupportHistory's own occurredAt filter. */
-export async function getGroupSessionHistory(groupId: string, range: DateRange, now: Date = new Date()): Promise<GroupSessionRow[]> {
+/** Session-level (open/closed + duration) view, filtered on startedAt within range and optionally
+ *  scoped to one group — same single-timestamp-range convention as getGroupSupportHistory's own
+ *  occurredAt filter. Omitting groupId returns sessions across every group, sorted so the most
+ *  actionable ones (stale, then other OPEN, then most recently started) surface first — this is
+ *  what lets the Reports page answer "what's happening right now" at a glance instead of requiring
+ *  a group to be picked first. */
+export async function getGroupSessionHistory(range: DateRange, groupId?: string, now: Date = new Date()): Promise<GroupSessionRow[]> {
   const sessions = await prisma.supportSession.findMany({
-    where: { groupId, startedAt: { gte: range.start, lt: range.end } },
+    where: { startedAt: { gte: range.start, lt: range.end }, ...(groupId ? { groupId } : {}) },
     orderBy: { startedAt: "desc" },
     include: {
+      group: { select: { name: true } },
       startedByTeamMember: { select: { name: true } },
       completedByTeamMember: { select: { name: true } },
       completedByUser: { select: { name: true } },
     },
   });
-  return sessions.map((s) => ({
+  const rows = sessions.map((s) => ({
     id: s.id,
+    groupId: s.groupId,
+    groupName: s.group.name,
     status: s.status,
     startedAt: s.startedAt,
     startedByName: s.startedByTeamMember?.name ?? null,
@@ -283,6 +292,10 @@ export async function getGroupSessionHistory(groupId: string, range: DateRange, 
     durationSeconds: s.durationSeconds,
     isStale: s.status === "OPEN" && now.getTime() - s.startedAt.getTime() > STALE_SESSION_THRESHOLD_MS,
   }));
+  // Most-actionable-first: stale sessions, then other OPEN sessions, then completed — all secondary
+  // to that, most recently started first (the array is already startedAt-desc from the query).
+  const rank = (r: (typeof rows)[number]) => (r.isStale ? 0 : r.status === "OPEN" ? 1 : 2);
+  return rows.sort((a, b) => rank(a) - rank(b));
 }
 
 export interface SessionExportRow {
