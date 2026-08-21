@@ -306,6 +306,10 @@ model User {
   reviewedPatternCandidates  PatternCandidate[]
   reviewedRuleProposals      RuleProposal[]
   createdSupportIssues       SupportIssue[]
+  /// Set only when an admin manually closes a SupportSession that never received a completion
+  /// keyword (apps/web/src/server/actions/supportSessions.ts) — mirrors resolvedEscalationCases'
+  /// existing "which logged-in admin resolved this" pattern above.
+  closedSupportSessions      SupportSession[]
 }
 
 // ---------------------------------------------------------------------------
@@ -426,6 +430,7 @@ model WhatsAppAccount {
   serviceRoutes        WhatsAppServiceRoute[]
   conversationSessions ConversationSession[]
   supportActivities    SupportActivity[]
+  supportSessions      SupportSession[]
   aiFallbackDecisions  AiFallbackDecision[]
   supportIssues        SupportIssue[]
 }
@@ -484,6 +489,7 @@ model WhatsAppGroup {
   escalationCases      SupportEscalationCase[]
   conversationSessions ConversationSession[]
   supportActivities    SupportActivity[]
+  supportSessions      SupportSession[]
   supportRuleScopes    SupportRuleGroup[]
   aiFallbackDecisions  AiFallbackDecision[]
   supportIssues        SupportIssue[]
@@ -512,6 +518,8 @@ model InternalTeamMember {
   assignedEscalationCases   SupportEscalationCase[]
   SupportEscalationSettings SupportEscalationSettings[]
   supportActivities         SupportActivity[]
+  startedSupportSessions    SupportSession[]        @relation("SupportSessionStarted")
+  completedSupportSessions  SupportSession[]        @relation("SupportSessionCompleted")
   supportRuleScopes         SupportRuleTeamMember[]
   supportIssues             SupportIssue[]
 }
@@ -1600,6 +1608,15 @@ enum SupportKeywordMatchMode {
   EXACT
 }
 
+/// Lifecycle of a SupportSession. Deliberately just these two values — a "stale" (OPEN for a long
+/// time) session is still, technically, OPEN; staleness is a derived/display-only concept computed
+/// at query time (apps/web/src/server/supportActivityReports.ts) from `startedAt`, never a stored
+/// status, so it never needs a migration to retune the threshold.
+enum SupportSessionStatus {
+  OPEN
+  COMPLETED
+}
+
 /// Singleton row (id is always the literal string "global"), same pattern as AutomationSettings/
 /// AiSettings/LearningSettings/SupportEscalationSettings. enabled defaults to false — the whole
 /// feature is off until an admin opts in; while off, apps/worker/src/supportActivity/detector.ts
@@ -1624,6 +1641,12 @@ model SupportKeyword {
   /// app (see packages/engine/src/normalize.ts's normalizeText()).
   caseSensitive Boolean                 @default(false)
   isActive      Boolean                 @default(true)
+  /// Flags this keyword as a support-session completion signal (apps/worker/src/supportActivity/
+  /// sessionTracker.ts). Still completely inert on its own — it must be attached to an active
+  /// KEYWORD_MATCH SupportRule scoped to the relevant group/members to ever actually fire, exactly
+  /// like every other SupportKeyword. Read off the already-matched keyword returned by detector.ts;
+  /// never a second, parallel matching pass.
+  marksCompletion Boolean               @default(false)
   createdAt     DateTime                @default(now())
   updatedAt     DateTime                @updatedAt
 
@@ -1719,10 +1742,90 @@ model SupportActivity {
   occurredAt   DateTime
   createdAt    DateTime            @default(now())
 
+  /// Back-relations for SupportSession's two possible references to this exact activity row (the
+  /// session it opened, and/or — on a different row — the session it closed via a completion
+  /// keyword). A single activity can be at most one of these, never both.
+  startedSession   SupportSession? @relation("SupportSessionFirstActivity")
+  completedSession SupportSession? @relation("SupportSessionCompletionActivity")
+
   @@index([accountId, occurredAt])
   @@index([accountId, groupId, occurredAt])
   @@index([accountId, teamMemberId, occurredAt])
   @@index([ruleId])
+}
+
+/// One open-or-completed support session per WhatsAppGroup lifecycle — group-level scope by
+/// explicit requirement, NOT per team member: many groups can each have their own OPEN session at
+/// the same time, but a single group can never have more than one. Opens on the first tracked
+/// team-member SupportActivity in a group with no currently-open session; any other team member's
+/// activity in that same group while it's OPEN just accumulates against it (no new session, no
+/// attribution change). Closes either (a) automatically, when any team member's message matches a
+/// SupportKeyword.marksCompletion keyword via the exact same SupportRule/detector.ts pipeline that
+/// already runs for every other trigger type, or (b) manually, via an admin's explicit "Close
+/// Session" action (apps/web/src/server/actions/supportSessions.ts) when no completion keyword was
+/// ever sent. There is deliberately NO automatic timeout/inactivity-based closure of any kind — an
+/// OPEN session stays OPEN forever until one of those two explicit events happens; a long-open
+/// session is surfaced to admins as "stale" purely as a derived, query-time UI state (see
+/// getGroupSessionHistory in apps/web/src/server/supportActivityReports.ts), never a stored status.
+model SupportSession {
+  id        String               @id @default(cuid())
+  accountId String
+  account   WhatsAppAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId   String
+  group     WhatsAppGroup        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  status    SupportSessionStatus @default(OPEN)
+
+  /// Mirrors `groupId` while status=OPEN; set to null the instant the session completes (either
+  /// path). Exists solely so an ordinary (non-partial) `@@unique` can enforce "at most one OPEN
+  /// session per group" as a real DB constraint — Prisma's schema DSL has no partial/filtered-index
+  /// syntax, and Postgres unique constraints already treat multiple NULLs as non-conflicting, so
+  /// this sparse-column trick gets a real constraint without hand-edited migration SQL that a later
+  /// `prisma migrate dev` diff could propose dropping (since schema.prisma can't represent it).
+  openGroupId String? @unique
+
+  startedAt             DateTime
+  /// Whoever's activity opened the session. Never overwritten by later contributors to the same
+  /// still-open session — only the first activity sets this.
+  startedByTeamMemberId String?
+  startedByTeamMember   InternalTeamMember? @relation("SupportSessionStarted", fields: [startedByTeamMemberId], references: [id], onDelete: SetNull)
+  /// Nullable + SetNull, same "already-recorded history must outlive a later-deleted row" reasoning
+  /// as SupportActivity.ruleId/keywordId — a purged SupportActivity row must never destroy this
+  /// session's own startedAt/duration facts.
+  firstActivityId String?          @unique
+  firstActivity   SupportActivity? @relation("SupportSessionFirstActivity", fields: [firstActivityId], references: [id], onDelete: SetNull)
+
+  completedAt DateTime?
+  /// Whoever's completion-keyword activity closed the session (automatic path only). Left null for
+  /// a manual admin close, since InternalTeamMember and the admin's own User login are two
+  /// unrelated identities in this schema with no reliable mapping between them — see
+  /// completedByUserId below for that case instead of guessing/inventing a fake team member.
+  completedByTeamMemberId String?
+  completedByTeamMember   InternalTeamMember? @relation("SupportSessionCompleted", fields: [completedByTeamMemberId], references: [id], onDelete: SetNull)
+  /// Set only for the automatic (completion-keyword) close path; null for a manual admin close,
+  /// which has no backing SupportActivity row at all.
+  completionActivityId String?          @unique
+  completionActivity   SupportActivity? @relation("SupportSessionCompletionActivity", fields: [completionActivityId], references: [id], onDelete: SetNull)
+  /// Set only for the manual admin-close path (apps/web/src/server/actions/supportSessions.ts),
+  /// mirroring SupportEscalationCase.resolvedById's existing "which logged-in admin resolved this"
+  /// pattern — reusing that convention rather than inventing a new audit mechanism. Mutually
+  /// exclusive with completedByTeamMemberId in practice (automatic close never sets this; manual
+  /// close never sets completedByTeamMemberId).
+  completedByUserId String?
+  completedByUser   User?     @relation(fields: [completedByUserId], references: [id], onDelete: SetNull)
+
+  /// Computed once at completion time (completedAt - startedAt, in whole seconds) and persisted —
+  /// an immutable historical fact once closed, same "snapshot at terminal state" convention
+  /// SupportEscalationCase uses for its own SLA-minute fields. Always null while OPEN; an
+  /// in-progress session's "duration so far" is computed at render time from startedAt only, never
+  /// stored/ticked.
+  durationSeconds Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId, groupId, status])
+  @@index([status, startedAt])
+  @@index([completedByTeamMemberId, completedAt])
 }
 
 // ---------------------------------------------------------------------------

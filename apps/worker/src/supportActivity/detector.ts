@@ -19,6 +19,19 @@ export interface SupportActivityDetectionInput {
   mentionedPhones?: string[];
 }
 
+export interface SupportActivityDetectionResult {
+  activityId: string;
+  accountId: string;
+  groupId: string;
+  teamMemberId: string;
+  occurredAt: Date;
+  /** True only for a KEYWORD_MATCH winner whose matched SupportKeyword.marksCompletion is true —
+   *  read off the already-loaded keyword, never a second matching pass. Always false for
+   *  REPLY_TO_CUSTOMER/MENTION winners (no keyword is involved in those triggers). Consumed by
+   *  apps/worker/src/supportActivity/sessionTracker.ts to decide open-vs-close. */
+  marksCompletion: boolean;
+}
+
 /**
  * Cheap-filter-first detector for Support Activity Tracking: is-group-message? ->
  * is-sender-a-support-member? -> is-feature-enabled? -> does-a-rule-apply? -> keyword-match? ->
@@ -27,20 +40,24 @@ export interface SupportActivityDetectionInput {
  * when the feature is disabled — matching the master prompt's "cheap filtering before any real
  * work" performance requirement. Never throws for "no match" cases; the caller
  * (processIncomingMessage.ts) wraps the call in its own try/catch so an unexpected error here can
- * never break message processing.
+ * never break message processing. Returns null whenever no SupportActivity was recorded —
+ * including on a redelivered messageId (P2002) — so the caller never runs session tracking twice
+ * for the same message.
  */
-export async function detectSupportActivity(input: SupportActivityDetectionInput): Promise<void> {
-  if (!input.groupId) return;
-  if (!input.isFromTeamMember) return;
+export async function detectSupportActivity(
+  input: SupportActivityDetectionInput,
+): Promise<SupportActivityDetectionResult | null> {
+  if (!input.groupId) return null;
+  if (!input.isFromTeamMember) return null;
 
   const settings = await getSupportActivitySettings();
-  if (!settings.enabled) return;
+  if (!settings.enabled) return null;
 
   const teamMember = await prisma.internalTeamMember.findUnique({
     where: { phoneNumber: input.senderPhone },
     select: { id: true },
   });
-  if (!teamMember) return; // defensive; isActiveTeamMember() already implies this row exists
+  if (!teamMember) return null; // defensive; isActiveTeamMember() already implies this row exists
 
   const candidateRules = await prisma.supportRule.findMany({
     where: {
@@ -60,7 +77,7 @@ export async function detectSupportActivity(input: SupportActivityDetectionInput
       },
     },
   });
-  if (candidateRules.length === 0) return;
+  if (candidateRules.length === 0) return null;
 
   const mentionedPhones = input.mentionedPhones ?? [];
   // Only queried when a MENTION-type candidate rule actually exists and there's something to check
@@ -81,7 +98,7 @@ export async function detectSupportActivity(input: SupportActivityDetectionInput
     return mentionsACustomer;
   }
 
-  let winner: { ruleId: string; keywordId: string | null } | null = null;
+  let winner: { ruleId: string; keywordId: string | null; marksCompletion: boolean } | null = null;
   for (const rule of candidateRules) {
     switch (rule.triggerType) {
       case "KEYWORD_MATCH": {
@@ -92,28 +109,28 @@ export async function detectSupportActivity(input: SupportActivityDetectionInput
             caseSensitive: rk.keyword.caseSensitive,
           }),
         );
-        if (hit) winner = { ruleId: rule.id, keywordId: hit.keywordId };
+        if (hit) winner = { ruleId: rule.id, keywordId: hit.keywordId, marksCompletion: hit.keyword.marksCompletion };
         break;
       }
       case "REPLY_TO_CUSTOMER": {
         if (input.quotedMessage && !input.quotedMessage.isFromTeamMember) {
-          winner = { ruleId: rule.id, keywordId: null };
+          winner = { ruleId: rule.id, keywordId: null, marksCompletion: false };
         }
         break;
       }
       case "MENTION": {
         if (await mentionsSomeoneOutsideTeam()) {
-          winner = { ruleId: rule.id, keywordId: null };
+          winner = { ruleId: rule.id, keywordId: null, marksCompletion: false };
         }
         break;
       }
     }
     if (winner) break;
   }
-  if (!winner) return;
+  if (!winner) return null;
 
   try {
-    await prisma.supportActivity.create({
+    const created = await prisma.supportActivity.create({
       data: {
         accountId: input.accountId,
         groupId: input.groupId,
@@ -124,8 +141,18 @@ export async function detectSupportActivity(input: SupportActivityDetectionInput
         occurredAt: input.timestampWa,
       },
     });
+    return {
+      activityId: created.id,
+      accountId: input.accountId,
+      groupId: input.groupId,
+      teamMemberId: teamMember.id,
+      occurredAt: input.timestampWa,
+      marksCompletion: winner.marksCompletion,
+    };
   } catch (err: any) {
     if (err?.code !== "P2002") throw err;
-    // Already recorded for this message (reprocess/redelivery) — safe idempotent no-op.
+    // Already recorded for this message (reprocess/redelivery) — safe idempotent no-op. Return
+    // null so the caller never runs session-open/close logic a second time for this message.
+    return null;
   }
 }

@@ -30,6 +30,15 @@ export default async function SupportKeywordsPage() {
                 keyword exactly.
               </p>
             </HelpSection>
+            <HelpSection title="Marks completion">
+              <p>
+                Flags this keyword as a support-session completion signal (e.g. &quot;done&quot;,
+                &quot;download&quot;) — when a team member&apos;s message matches it, the group&apos;s
+                open support session closes and its resolution time is recorded. This checkbox alone
+                does nothing: the keyword still needs to be attached to an active Support Rule (of
+                type Keyword Match) scoped to the relevant group/members before it can actually fire.
+              </p>
+            </HelpSection>
           </HelpButton>
         }
       />
@@ -46,11 +55,17 @@ export default async function SupportKeywordsPage() {
               <option value="EXACT">Exact</option>
             </Select>
           </Field>
-          <div className="flex items-end pb-2">
+          <div className="flex items-end gap-4 pb-2">
             <Label>
               <span className="mr-2 inline-flex items-center gap-2">
                 <Switch name="caseSensitive" />
                 Case sensitive
+              </span>
+            </Label>
+            <Label>
+              <span className="mr-2 inline-flex items-center gap-2">
+                <Switch name="marksCompletion" />
+                Marks completion
               </span>
             </Label>
           </div>

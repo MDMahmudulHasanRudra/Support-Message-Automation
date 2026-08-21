@@ -2,9 +2,10 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { getSupportActivityPeriodRange } from "@/lib/supportActivityPeriod";
-import { getPerTeamMemberBreakdown } from "@/server/supportActivityReports";
-import { ButtonLink, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
+import { getDhakaDayRange, getSupportActivityPeriodRange } from "@/lib/supportActivityPeriod";
+import { formatDurationShort } from "@/lib/duration";
+import { getDailyHoursWorked, getPerTeamMemberBreakdown, getTeamAvailability } from "@/server/supportActivityReports";
+import { Badge, ButtonLink, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatusDot, Table, Td, Th } from "@/components/ui";
 
 const PERIOD_LABEL: Record<string, string> = {
   DAILY: "Today",
@@ -44,6 +45,13 @@ export default async function SupportActivityTeamPage() {
       issuesResolvedByMember.set(memberId, (issuesResolvedByMember.get(memberId) ?? 0) + row._count._all);
     }
   }
+
+  // "Today / Right Now" is always a daily/live snapshot, independent of the admin's configured
+  // countingPeriod above — mixing it into the period-scoped table would misrepresent a
+  // WEEKLY/MONTHLY-configured admin's daily figures as period-scoped.
+  const todayRange = getDhakaDayRange(new Date());
+  const [availability, hoursWorked] = await Promise.all([getTeamAvailability(), getDailyHoursWorked(todayRange)]);
+  const hoursByMember = new Map(hoursWorked.map((h) => [h.teamMemberId, h.totalSeconds]));
 
   return (
     <div>
@@ -101,6 +109,46 @@ export default async function SupportActivityTeamPage() {
                   <Td className="tabular-nums">{row.activityCount}</Td>
                   <Td className="tabular-nums">{issuesHandledByMember.get(row.teamMemberId) ?? 0}</Td>
                   <Td className="tabular-nums">{issuesResolvedByMember.get(row.teamMemberId) ?? 0}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
+
+      <Card className="mt-6">
+        <SectionHeader
+          title="Today / Right Now"
+          description="Always today's date and the current moment — not affected by the counting period above."
+        />
+        {availability.length === 0 ? (
+          <EmptyState>No active support team members yet.</EmptyState>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Member</Th>
+                <Th>Working Today</Th>
+                <Th>Available Now</Th>
+                <Th>Hours Worked Today</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {availability.map((row) => (
+                <tr key={row.teamMemberId}>
+                  <Td>{row.name}</Td>
+                  <Td>
+                    <Badge color={row.workingToday ? "green" : "gray"}>
+                      {row.workingToday ? "Working today" : "Off today"}
+                    </Badge>
+                  </Td>
+                  <Td>
+                    <span className="inline-flex items-center gap-2">
+                      <StatusDot color={row.availableNow ? "green" : "gray"} pulse={row.availableNow} />
+                      {row.availableNow ? "Available now" : "Not available right now"}
+                    </span>
+                  </Td>
+                  <Td className="tabular-nums">{formatDurationShort(hoursByMember.get(row.teamMemberId) ?? 0)}</Td>
                 </tr>
               ))}
             </tbody>

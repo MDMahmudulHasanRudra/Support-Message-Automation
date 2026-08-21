@@ -13,6 +13,7 @@ import { toEngineRule } from "./ruleMapping.js";
 import type { RawIncomingMessage } from "./types.js";
 import { markHumanReplied, openOrContinueCase } from "../escalation/escalationQueue.js";
 import { detectSupportActivity } from "../supportActivity/detector.js";
+import { updateSupportSessionForActivity } from "../supportActivity/sessionTracker.js";
 import { runAiFallback } from "../aiFallback/runAiFallback.js";
 import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -172,7 +173,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
   // detection failure must never break message processing, and it is a true no-op end-to-end when
   // SupportActivitySettings.enabled is false (checked first thing inside the detector).
   try {
-    await detectSupportActivity({
+    const activityResult = await detectSupportActivity({
       accountId: raw.accountId,
       groupId: group?.id ?? null,
       isFromTeamMember,
@@ -185,6 +186,16 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
         : null,
       mentionedPhones: raw.mentionedPhones ?? [],
     });
+    // Support session open/close tracking piggybacks on a successfully-recorded activity — never a
+    // separate detection pass. Its own nested try/catch so a session-tracking bug can never hide
+    // the fact that the SupportActivity row itself was already recorded correctly.
+    if (activityResult) {
+      try {
+        await updateSupportSessionForActivity(activityResult);
+      } catch (err) {
+        console.error("[support-activity] failed to update support session", err);
+      }
+    }
   } catch (err) {
     console.error("[support-activity] failed to record support activity", err);
   }

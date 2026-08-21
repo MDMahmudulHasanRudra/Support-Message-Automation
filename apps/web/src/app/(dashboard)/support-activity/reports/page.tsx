@@ -3,8 +3,9 @@ import { Download } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
+import { formatDurationShort, formatElapsedShort } from "@/lib/duration";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
-import { getGroupSupportHistory } from "@/server/supportActivityReports";
+import { getGroupSessionHistory, getGroupSupportHistory } from "@/server/supportActivityReports";
 import {
   Badge,
   Button,
@@ -18,7 +19,12 @@ import {
   PageHeader,
   Select,
   StatTile,
+  SectionHeader,
+  Table,
+  Td,
+  Th,
 } from "@/components/ui";
+import { CloseSessionButton } from "./CloseSessionButton";
 
 interface SearchParams {
   groupId?: string;
@@ -47,11 +53,12 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
   const customRange = parseCustomRange(from, to);
   const range = customRange ?? getDhakaDayRange(new Date());
   const history = groupId ? await getGroupSupportHistory(groupId, range) : null;
+  const sessions = groupId ? await getGroupSessionHistory(groupId, range) : null;
   const selectedGroup = groupId ? groups.find((g) => g.id === groupId) : null;
   const rangeLabel = customRange ? `${from} to ${to}` : "today";
-  const exportParams = groupId
-    ? `type=activities&groupId=${groupId}&from=${range.start.toISOString()}&to=${range.end.toISOString()}`
-    : null;
+  const exportParams = groupId ? `groupId=${groupId}&from=${range.start.toISOString()}&to=${range.end.toISOString()}` : null;
+  const activitiesExportParams = exportParams ? `type=activities&${exportParams}` : null;
+  const sessionsExportParams = exportParams ? `type=sessions&${exportParams}` : null;
 
   return (
     <div>
@@ -105,13 +112,13 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
               <StatTile label={`Counted Support (${rangeLabel})`} value={history?.countedSupport ?? 0} />
               <StatTile label={`Activities (${rangeLabel})`} value={history?.rawActivityCount ?? 0} />
             </div>
-            {exportParams ? (
+            {activitiesExportParams ? (
               <div className="flex gap-2">
-                <ButtonLink href={`/api/support-activity/export?${exportParams}&format=csv`}>
+                <ButtonLink href={`/api/support-activity/export?${activitiesExportParams}&format=csv`}>
                   <Download className="size-3.5" aria-hidden />
                   Export CSV
                 </ButtonLink>
-                <ButtonLink href={`/api/support-activity/export?${exportParams}&format=xlsx`}>
+                <ButtonLink href={`/api/support-activity/export?${activitiesExportParams}&format=xlsx`}>
                   <Download className="size-3.5" aria-hidden />
                   Export Excel
                 </ButtonLink>
@@ -137,6 +144,86 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
               </ul>
             ) : (
               <EmptyState>No support activity for this group in the selected range.</EmptyState>
+            )}
+          </Card>
+
+          <div className="mb-3 mt-6 flex flex-wrap items-center justify-between gap-3">
+            <SectionHeader
+              title="Support Sessions"
+              description="First support message to completion keyword (or manual close) for this group."
+            />
+            {sessionsExportParams ? (
+              <div className="flex gap-2">
+                <ButtonLink href={`/api/support-activity/export?${sessionsExportParams}&format=csv`}>
+                  <Download className="size-3.5" aria-hidden />
+                  Export CSV
+                </ButtonLink>
+                <ButtonLink href={`/api/support-activity/export?${sessionsExportParams}&format=xlsx`}>
+                  <Download className="size-3.5" aria-hidden />
+                  Export Excel
+                </ButtonLink>
+              </div>
+            ) : null}
+          </div>
+
+          <Card>
+            {sessions && sessions.length > 0 ? (
+              <Table>
+                <thead>
+                  <tr>
+                    <Th>Status</Th>
+                    <Th>Started</Th>
+                    <Th>Completed</Th>
+                    <Th>Duration</Th>
+                    <Th>Actions</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sessions.map((s) => (
+                    <tr key={s.id}>
+                      <Td>
+                        {s.status === "OPEN" ? (
+                          <Badge color={s.isStale ? "yellow" : "blue"} dot pulse={!s.isStale}>
+                            {s.isStale ? "Needs attention" : "OPEN"}
+                          </Badge>
+                        ) : (
+                          <Badge color="green">COMPLETED</Badge>
+                        )}
+                      </Td>
+                      <Td>
+                        {formatDateTime(s.startedAt)}
+                        {s.startedByName ? (
+                          <span className="block text-xs text-[color:var(--color-muted-foreground)]">
+                            by {s.startedByName}
+                          </span>
+                        ) : null}
+                      </Td>
+                      <Td>
+                        {s.completedAt ? (
+                          <>
+                            {formatDateTime(s.completedAt)}
+                            {s.completedByLabel ? (
+                              <span className="block text-xs text-[color:var(--color-muted-foreground)]">
+                                by {s.completedByLabel}
+                              </span>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span className="text-[color:var(--color-muted-foreground)]">—</span>
+                        )}
+                      </Td>
+                      <Td className="tabular-nums">
+                        {s.status === "OPEN"
+                          ? `${s.isStale ? "Needs attention" : "In progress"} — ${formatElapsedShort(s.startedAt)} so far`
+                          : formatDurationShort(s.durationSeconds ?? 0)}
+                      </Td>
+                      <Td>{s.status === "OPEN" ? <CloseSessionButton sessionId={s.id} /> : null}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            ) : (
+              <EmptyState>No support sessions for this group in the selected range.</EmptyState>
             )}
           </Card>
         </>

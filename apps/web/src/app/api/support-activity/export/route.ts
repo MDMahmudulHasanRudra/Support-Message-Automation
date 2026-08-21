@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { requireSession } from "@/server/auth";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
-import { getActivitiesForExport, getPerTeamMemberBreakdown } from "@/server/supportActivityReports";
+import { getActivitiesForExport, getPerTeamMemberBreakdown, getSessionsForExport } from "@/server/supportActivityReports";
 
 /**
  * Export endpoint for Support Activity Tracking's Activity/Team/Reports pages. This is the app's
@@ -37,7 +37,8 @@ export async function GET(request: NextRequest) {
   await requireSession();
 
   const params = request.nextUrl.searchParams;
-  const type = params.get("type") === "team" ? "team" : "activities";
+  const rawType = params.get("type");
+  const type = rawType === "team" ? "team" : rawType === "sessions" ? "sessions" : "activities";
   const format = params.get("format") === "xlsx" ? "xlsx" : "csv";
   const groupId = params.get("groupId") ?? undefined;
   const fromParam = params.get("from");
@@ -53,14 +54,24 @@ export async function GET(request: NextRequest) {
   const rows: Array<Record<string, unknown>> =
     type === "team"
       ? (await getPerTeamMemberBreakdown(range)).map((r) => ({ Member: r.name, Activities: r.activityCount }))
-      : (await getActivitiesForExport(range, groupId)).map((r) => ({
-          Time: r.occurredAt.toISOString(),
-          Group: r.groupName,
-          "Team Member": r.teamMemberName ?? "",
-          Trigger: r.triggerType ?? "",
-          Keyword: r.keywordValue ?? "",
-          Message: r.messageBody,
-        }));
+      : type === "sessions"
+        ? (await getSessionsForExport(range, groupId)).map((r) => ({
+            Group: r.groupName,
+            Status: r.status,
+            "Started At": r.startedAt.toISOString(),
+            "Started By": r.startedByName ?? "",
+            "Completed At": r.completedAt?.toISOString() ?? "",
+            "Completed By": r.completedByLabel ?? "",
+            "Duration (seconds)": r.durationSeconds ?? "",
+          }))
+        : (await getActivitiesForExport(range, groupId)).map((r) => ({
+            Time: r.occurredAt.toISOString(),
+            Group: r.groupName,
+            "Team Member": r.teamMemberName ?? "",
+            Trigger: r.triggerType ?? "",
+            Keyword: r.keywordValue ?? "",
+            Message: r.messageBody,
+          }));
 
   const baseName = `support-activity-${type}-${new Date().toISOString().slice(0, 10)}`;
 
@@ -68,9 +79,10 @@ export async function GET(request: NextRequest) {
     return fileResponse(toCsv(rows), `${baseName}.csv`, "text/csv; charset=utf-8");
   }
 
+  const sheetName = type === "team" ? "Team Performance" : type === "sessions" ? "Sessions" : "Activities";
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, type === "team" ? "Team Performance" : "Activities");
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
   return fileResponse(buffer, `${baseName}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }

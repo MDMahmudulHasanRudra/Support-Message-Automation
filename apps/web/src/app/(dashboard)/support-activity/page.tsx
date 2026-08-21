@@ -1,10 +1,20 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
+import Link from "next/link";
 import { formatDateTime } from "@/lib/date";
+import { formatDurationShort } from "@/lib/duration";
 import { getSupportActivityPeriodRange } from "@/lib/supportActivityPeriod";
-import { getActivityTrend, getEveryActivityCount, getRecentActivities, getUniqueGroupCount } from "@/server/supportActivityReports";
 import {
+  getActivityTrend,
+  getAverageResolutionTime,
+  getEveryActivityCount,
+  getRecentActivities,
+  getStaleSessionCount,
+  getUniqueGroupCount,
+} from "@/server/supportActivityReports";
+import {
+  Alert,
   Badge,
   Card,
   EmptyState,
@@ -37,15 +47,25 @@ export default async function SupportActivityPage() {
   const period = getSupportActivityPeriodRange(settings.countingPeriod, new Date());
   const periodLabel = PERIOD_LABEL[settings.countingPeriod] ?? "Today's";
 
-  const [periodSupportedGroups, periodActivities, activeSupportMembers, totalSupportedGroupsEver, recentActivities, trend] =
-    await Promise.all([
-      getUniqueGroupCount(period),
-      getEveryActivityCount(period),
-      prisma.internalTeamMember.count({ where: { status: "ACTIVE" } }),
-      prisma.supportActivity.groupBy({ by: ["groupId"] }).then((rows) => rows.length),
-      getRecentActivities(10),
-      getActivityTrend(30),
-    ]);
+  const [
+    periodSupportedGroups,
+    periodActivities,
+    activeSupportMembers,
+    totalSupportedGroupsEver,
+    recentActivities,
+    trend,
+    avgResolutionSeconds,
+    staleSessionCount,
+  ] = await Promise.all([
+    getUniqueGroupCount(period),
+    getEveryActivityCount(period),
+    prisma.internalTeamMember.count({ where: { status: "ACTIVE" } }),
+    prisma.supportActivity.groupBy({ by: ["groupId"] }).then((rows) => rows.length),
+    getRecentActivities(10),
+    getActivityTrend(30),
+    getAverageResolutionTime(period),
+    getStaleSessionCount(),
+  ]);
 
   const repeatedThisPeriod = Math.max(0, periodActivities - periodSupportedGroups);
   const exportParams = `from=${period.start.toISOString()}&to=${period.end.toISOString()}`;
@@ -92,7 +112,19 @@ export default async function SupportActivityPage() {
         </div>
       ) : null}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
+      {staleSessionCount > 0 ? (
+        <div className="mb-6">
+          <Alert tone="warning" title={`${staleSessionCount} support session${staleSessionCount === 1 ? "" : "s"} need attention`}>
+            Open for more than 4 hours with no completion keyword sent. Check the{" "}
+            <Link href="/support-activity/reports" className="underline">
+              Reports
+            </Link>{" "}
+            page to review or manually close them.
+          </Alert>
+        </div>
+      ) : null}
+
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-6">
         <StatTile label={`${periodLabel} Support Groups`} value={periodSupportedGroups} />
         <StatTile label={`${periodLabel} Support Activities`} value={periodActivities} />
         <StatTile label="Active Support Members" value={activeSupportMembers} />
@@ -101,6 +133,11 @@ export default async function SupportActivityPage() {
           label="Repeated Support Activities"
           value={repeatedThisPeriod}
           tone={repeatedThisPeriod > 0 ? "warning" : "neutral"}
+        />
+        <StatTile
+          label="Avg Resolution Time"
+          value={avgResolutionSeconds !== null ? formatDurationShort(avgResolutionSeconds) : "—"}
+          hint={`${periodLabel} completed sessions`}
         />
       </div>
 

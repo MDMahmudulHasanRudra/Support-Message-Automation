@@ -10,10 +10,11 @@ export async function createSupportKeyword(formData: FormData): Promise<void> {
   const value = String(formData.get("value") ?? "").trim();
   const matchMode = String(formData.get("matchMode") ?? "CONTAINS") as SupportKeywordMatchMode;
   const caseSensitive = formData.get("caseSensitive") === "on";
+  const marksCompletion = formData.get("marksCompletion") === "on";
 
   if (!value) throw new Error("Keyword value is required.");
 
-  await prisma.supportKeyword.create({ data: { value, matchMode, caseSensitive, isActive: true } });
+  await prisma.supportKeyword.create({ data: { value, matchMode, caseSensitive, marksCompletion, isActive: true } });
   revalidatePath("/support-activity/keywords");
 }
 
@@ -22,10 +23,11 @@ export async function updateSupportKeyword(id: string, formData: FormData): Prom
   const value = String(formData.get("value") ?? "").trim();
   const matchMode = String(formData.get("matchMode") ?? "CONTAINS") as SupportKeywordMatchMode;
   const caseSensitive = formData.get("caseSensitive") === "on";
+  const marksCompletion = formData.get("marksCompletion") === "on";
 
   if (!value) throw new Error("Keyword value is required.");
 
-  await prisma.supportKeyword.update({ where: { id }, data: { value, matchMode, caseSensitive } });
+  await prisma.supportKeyword.update({ where: { id }, data: { value, matchMode, caseSensitive, marksCompletion } });
   revalidatePath("/support-activity/keywords");
 }
 

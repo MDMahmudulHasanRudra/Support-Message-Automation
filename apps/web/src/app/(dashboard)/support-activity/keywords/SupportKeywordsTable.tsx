@@ -10,6 +10,7 @@ export interface SupportKeywordRow {
   value: string;
   matchMode: string;
   caseSensitive: boolean;
+  marksCompletion: boolean;
   isActive: boolean;
 }
 
@@ -51,6 +52,7 @@ export function SupportKeywordsTable({ keywords }: { keywords: SupportKeywordRow
             <Th>Value</Th>
             <Th>Match Mode</Th>
             <Th>Case Sensitive</Th>
+            <Th>Completion</Th>
             <Th>Status</Th>
             <Th>Actions</Th>
           </tr>
@@ -61,6 +63,13 @@ export function SupportKeywordsTable({ keywords }: { keywords: SupportKeywordRow
               <Td className="font-medium">{k.value}</Td>
               <Td>{k.matchMode}</Td>
               <Td>{k.caseSensitive ? "Yes" : "No"}</Td>
+              <Td>
+                {k.marksCompletion ? (
+                  <Badge color="green">Marks completion</Badge>
+                ) : (
+                  <span className="text-[color:var(--color-muted-foreground)]">—</span>
+                )}
+              </Td>
               <Td>
                 <Badge color={k.isActive ? "green" : "gray"} dot>
                   {k.isActive ? "ACTIVE" : "DISABLED"}
@@ -121,6 +130,10 @@ export function SupportKeywordsTable({ keywords }: { keywords: SupportKeywordRow
             <label className="flex items-center gap-2 text-sm">
               <Switch name="caseSensitive" defaultChecked={editing.caseSensitive} />
               Case sensitive
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Switch name="marksCompletion" defaultChecked={editing.marksCompletion} />
+              Marks completion
             </label>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="secondary" onClick={() => setEditing(null)}>
