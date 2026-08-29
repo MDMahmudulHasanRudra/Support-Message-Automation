@@ -62,7 +62,7 @@ export async function detectSupportActivity(
   const candidateRules = await prisma.supportRule.findMany({
     where: {
       isActive: true,
-      triggerType: { in: ["KEYWORD_MATCH", "REPLY_TO_CUSTOMER", "MENTION"] },
+      triggerType: { in: ["KEYWORD_MATCH", "REPLY_TO_CUSTOMER", "MENTION", "ANY_MESSAGE"] },
       AND: [
         { OR: [{ appliesToAllGroups: true }, { groups: { some: { groupId: input.groupId } } }] },
         { OR: [{ appliesToAllTeamMembers: true }, { teamMembers: { some: { teamMemberId: teamMember.id } } }] },
@@ -78,6 +78,21 @@ export async function detectSupportActivity(
     },
   });
   if (candidateRules.length === 0) return null;
+
+  // ANY_MESSAGE matches everything a team member sends, so evaluating it in creation order would
+  // let it shadow a keyword rule that also matched — and only a keyword rule can carry
+  // marksCompletion, which is what closes a SupportSession. Adding an "any message" rule would
+  // otherwise quietly stop sessions from ever completing. Specific triggers are tried first;
+  // ANY_MESSAGE is the fallback, and creation order still decides between equals.
+  const TRIGGER_PRECEDENCE: Record<string, number> = {
+    KEYWORD_MATCH: 0,
+    REPLY_TO_CUSTOMER: 1,
+    MENTION: 2,
+    ANY_MESSAGE: 3,
+  };
+  const orderedRules = [...candidateRules].sort(
+    (a, b) => (TRIGGER_PRECEDENCE[a.triggerType] ?? 99) - (TRIGGER_PRECEDENCE[b.triggerType] ?? 99),
+  );
 
   const mentionedPhones = input.mentionedPhones ?? [];
   // Only queried when a MENTION-type candidate rule actually exists and there's something to check
@@ -99,7 +114,7 @@ export async function detectSupportActivity(
   }
 
   let winner: { ruleId: string; keywordId: string | null; marksCompletion: boolean } | null = null;
-  for (const rule of candidateRules) {
+  for (const rule of orderedRules) {
     switch (rule.triggerType) {
       case "KEYWORD_MATCH": {
         const hit = rule.keywords.find((rk) =>
@@ -122,6 +137,12 @@ export async function detectSupportActivity(
         if (await mentionsSomeoneOutsideTeam()) {
           winner = { ruleId: rule.id, keywordId: null, marksCompletion: false };
         }
+        break;
+      }
+      case "ANY_MESSAGE": {
+        // The team-member, in-scope-group and feature-enabled checks above are the whole
+        // condition — reaching this case already means all of them passed.
+        winner = { ruleId: rule.id, keywordId: null, marksCompletion: false };
         break;
       }
     }

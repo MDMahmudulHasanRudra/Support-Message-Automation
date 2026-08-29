@@ -209,7 +209,28 @@ live via `groupBy` against the raw activity table (`apps/web/src/server/supportA
 export lives at `apps/web/src/app/api/support-activity/export/route.ts` — this app's second-ever
 Route Handler (after `/api/health`), justified because a file download can't be triggered from a
 Server Action; reuses the already-installed `xlsx` package (previously read-only, now also used to
-write). `REACTION` as a fourth trigger type is a documented, deliberately deferred future phase —
+write). `ANY_MESSAGE` is a fourth trigger: any message a team member sends in an in-scope group counts,
+with no keyword, reply or mention needed — the simplest definition of "this person worked in this
+group today". It is evaluated **after** every other trigger (`TRIGGER_PRECEDENCE` in
+`detector.ts`), because it matches everything and would otherwise shadow a KEYWORD_MATCH rule —
+and only a keyword rule carries `marksCompletion`, so an "any message" rule would quietly stop
+SupportSessions ever completing.
+
+`SupportActivity.actor` (`TEAM_MEMBER` | `AI`) records who delivered the support.
+`recordAiSupportActivity()` writes an AI row when the fallback answers a customer unaided, keyed
+on the **customer's** message (the reply is an OutboundMessage that only becomes a `Message` on
+echo, and keying on the incoming message reuses `messageId @unique` as the idempotency guard). AI
+rows carry no rule and **never open or close a SupportSession** — a session models a person
+handling a conversation over time and feeds "hours worked", which an AI answer has no span for.
+Every person-measuring report (`getPerTeamMemberBreakdown`, `getTeamAvailability`) filters
+`actor: TEAM_MEMBER` explicitly so AI work can never inflate someone's numbers;
+`getActorBreakdown()` reports the split, including `aiOnlyGroups` — groups no human touched.
+
+Team members can be added by picking real senders out of a group
+(`getGroupParticipantCandidates`) rather than typing numbers: the phone number is the exact match
+key, and a typo silently classifies a colleague as a customer.
+
+`REACTION` as a fifth trigger type is a documented, deliberately deferred future phase —
 WhatsApp reactions need a separate `client.onReaction()` subscription and a new table, not just a
 new enum value.
 

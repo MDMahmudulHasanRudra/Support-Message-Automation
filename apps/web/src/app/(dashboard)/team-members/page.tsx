@@ -5,10 +5,18 @@ import { requireSession } from "@/server/auth";
 import { Button, Card, Field, HelpButton, HelpSection, Input, PageHeader, SectionHeader } from "@/components/ui";
 import { createTeamMember } from "@/server/actions/teamMembers";
 import { TeamMembersTable, type TeamMemberRow } from "./TeamMembersTable";
+import { AddFromGroupDialog } from "./AddFromGroupDialog";
 
 export default async function TeamMembersPage() {
   await requireSession();
-  const members: TeamMemberRow[] = await prisma.internalTeamMember.findMany({ orderBy: { createdAt: "desc" } });
+  const [members, groups] = await Promise.all([
+    prisma.internalTeamMember.findMany({ orderBy: { createdAt: "desc" } }) as Promise<TeamMemberRow[]>,
+    prisma.whatsAppGroup.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   return (
     <div>
@@ -16,7 +24,9 @@ export default async function TeamMembersPage() {
         title="Internal Team Members"
         description="Messages from active team members are ignored by client automation by default."
         actions={
-          <HelpButton moduleTitle="Internal Team Members">
+          <>
+            <AddFromGroupDialog groups={groups} />
+            <HelpButton moduleTitle="Internal Team Members">
             <HelpSection title="What this page is for">
               <p>
                 The roster of your own staff's WhatsApp numbers — the people who work inside your
@@ -61,7 +71,8 @@ export default async function TeamMembersPage() {
                 schedule.
               </p>
             </HelpSection>
-          </HelpButton>
+            </HelpButton>
+          </>
         }
       />
 

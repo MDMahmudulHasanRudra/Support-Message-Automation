@@ -1,5 +1,5 @@
 import { prisma } from "@support-automation/db";
-import type { SupportActivityCountingMode } from "@prisma/client";
+import type { SupportActivityActor, SupportActivityCountingMode } from "@prisma/client";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 
 // Server-component-only read helpers for Support Activity Tracking's dashboard pages — no
@@ -13,18 +13,68 @@ export interface DateRange {
   end: Date;
 }
 
+/**
+ * Restricts a report to one actor. Omitted means "all support delivered, however it was
+ * delivered" — the honest headline number now that AI can resolve a conversation on its own.
+ * Anything measuring a *person* (per-member breakdowns, availability) passes TEAM_MEMBER
+ * explicitly, so AI work can never be attributed to someone who did not do it.
+ */
+export type ActorFilter = SupportActivityActor | undefined;
+
+function actorWhere(actor: ActorFilter) {
+  return actor ? { actor } : {};
+}
+
 /** EVERY_ACTIVITY: count every valid activity in the period. */
-export async function getEveryActivityCount(range: DateRange): Promise<number> {
-  return prisma.supportActivity.count({ where: { occurredAt: { gte: range.start, lt: range.end } } });
+export async function getEveryActivityCount(range: DateRange, actor?: ActorFilter): Promise<number> {
+  return prisma.supportActivity.count({
+    where: { occurredAt: { gte: range.start, lt: range.end }, ...actorWhere(actor) },
+  });
 }
 
 /** UNIQUE_GROUP: each group counted once per period regardless of how many activities it had. */
-export async function getUniqueGroupCount(range: DateRange): Promise<number> {
+export async function getUniqueGroupCount(range: DateRange, actor?: ActorFilter): Promise<number> {
   const groups = await prisma.supportActivity.groupBy({
     by: ["groupId"],
-    where: { occurredAt: { gte: range.start, lt: range.end } },
+    where: { occurredAt: { gte: range.start, lt: range.end }, ...actorWhere(actor) },
   });
   return groups.length;
+}
+
+export interface ActorBreakdown {
+  teamMemberCount: number;
+  aiCount: number;
+  /** Groups that were supported at all in the period, by anyone. */
+  uniqueGroups: number;
+  /** Groups where the ONLY support delivered came from AI — nobody on the team touched them. */
+  aiOnlyGroups: number;
+}
+
+/**
+ * Human-vs-AI split for the period.
+ *
+ * `aiOnlyGroups` is the number worth watching: a group AI handled entirely is a group nobody
+ * checked, which is either the automation working exactly as intended or a group quietly going
+ * unattended. The report states the fact; which of the two it is depends on the group.
+ */
+export async function getActorBreakdown(range: DateRange): Promise<ActorBreakdown> {
+  const window = { occurredAt: { gte: range.start, lt: range.end } };
+  const [teamMemberCount, aiCount, humanGroups, aiGroups] = await Promise.all([
+    prisma.supportActivity.count({ where: { ...window, actor: "TEAM_MEMBER" } }),
+    prisma.supportActivity.count({ where: { ...window, actor: "AI" } }),
+    prisma.supportActivity.groupBy({ by: ["groupId"], where: { ...window, actor: "TEAM_MEMBER" } }),
+    prisma.supportActivity.groupBy({ by: ["groupId"], where: { ...window, actor: "AI" } }),
+  ]);
+
+  const humanGroupIds = new Set(humanGroups.map((g) => g.groupId));
+  const aiGroupIds = aiGroups.map((g) => g.groupId);
+
+  return {
+    teamMemberCount,
+    aiCount,
+    uniqueGroups: new Set([...humanGroupIds, ...aiGroupIds]).size,
+    aiOnlyGroups: aiGroupIds.filter((id) => !humanGroupIds.has(id)).length,
+  };
 }
 
 export interface TeamMemberBreakdownRow {
@@ -42,7 +92,10 @@ export interface TeamMemberBreakdownRow {
 export async function getPerTeamMemberBreakdown(range: DateRange): Promise<TeamMemberBreakdownRow[]> {
   const grouped = await prisma.supportActivity.groupBy({
     by: ["teamMemberId"],
-    where: { occurredAt: { gte: range.start, lt: range.end }, teamMemberId: { not: null } },
+    // Explicitly TEAM_MEMBER, not merely "has a teamMemberId". AI rows carry a null member so
+    // they are already excluded, but stating the intent means this cannot start counting AI
+    // work against a person if AI attribution ever changes.
+    where: { occurredAt: { gte: range.start, lt: range.end }, teamMemberId: { not: null }, actor: "TEAM_MEMBER" },
     _count: { teamMemberId: true },
   });
   if (grouped.length === 0) return [];
@@ -80,6 +133,7 @@ export interface RecentActivityRow {
   id: string;
   occurredAt: Date;
   groupName: string;
+  actor: SupportActivityActor;
   teamMemberName: string | null;
   keywordValue: string | null;
   messageBody: string;
@@ -101,6 +155,7 @@ export async function getRecentActivities(take = 10): Promise<RecentActivityRow[
     id: r.id,
     occurredAt: r.occurredAt,
     groupName: r.group.name,
+    actor: r.actor,
     teamMemberName: r.teamMember?.name ?? null,
     keywordValue: r.keyword?.value ?? null,
     messageBody: r.message.body,
@@ -123,6 +178,7 @@ export async function getActivityTrend(days = 30): Promise<number[]> {
 export interface ExportActivityRow {
   occurredAt: Date;
   groupName: string;
+  actor: SupportActivityActor;
   teamMemberName: string | null;
   keywordValue: string | null;
   triggerType: string | null;
@@ -146,6 +202,7 @@ export async function getActivitiesForExport(range: DateRange, groupId?: string)
   return rows.map((r) => ({
     occurredAt: r.occurredAt,
     groupName: r.group.name,
+    actor: r.actor,
     teamMemberName: r.teamMember?.name ?? null,
     keywordValue: r.keyword?.value ?? null,
     triggerType: r.rule?.triggerType ?? null,
@@ -227,13 +284,19 @@ export async function getTeamAvailability(now: Date = new Date()): Promise<TeamA
   const availableCutoff = new Date(now.getTime() - AVAILABLE_WINDOW_MS);
 
   const [workingTodayRows, availableNowRows] = await Promise.all([
+    // Availability is about people; an AI row must never make someone look like they were
+    // working or reachable.
     prisma.supportActivity.groupBy({
       by: ["teamMemberId"],
-      where: { teamMemberId: { not: null }, occurredAt: { gte: todayRange.start, lt: todayRange.end } },
+      where: {
+        teamMemberId: { not: null },
+        actor: "TEAM_MEMBER",
+        occurredAt: { gte: todayRange.start, lt: todayRange.end },
+      },
     }),
     prisma.supportActivity.groupBy({
       by: ["teamMemberId"],
-      where: { teamMemberId: { not: null }, occurredAt: { gte: availableCutoff } },
+      where: { teamMemberId: { not: null }, actor: "TEAM_MEMBER", occurredAt: { gte: availableCutoff } },
     }),
   ]);
   const workingToday = new Set(workingTodayRows.map((r) => r.teamMemberId));
@@ -364,6 +427,7 @@ export async function getGroupSupportHistory(groupId: string, range: DateRange) 
     activities: activities.map((a) => ({
       id: a.id,
       occurredAt: a.occurredAt,
+      actor: a.actor,
       teamMemberName: a.teamMember?.name ?? null,
       keywordValue: a.keyword?.value ?? null,
       messageBody: a.message.body,

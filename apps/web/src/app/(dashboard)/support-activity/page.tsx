@@ -8,6 +8,7 @@ import { formatDurationShort } from "@/lib/duration";
 import { getSupportActivityPeriodRange } from "@/lib/supportActivityPeriod";
 import {
   getActivityTrend,
+  getActorBreakdown,
   getAverageResolutionTime,
   getEveryActivityCount,
   getRecentActivities,
@@ -58,6 +59,7 @@ export default async function SupportActivityPage() {
     trend,
     avgResolutionSeconds,
     staleSessionCount,
+    actorBreakdown,
   ] = await Promise.all([
     getUniqueGroupCount(period),
     getEveryActivityCount(period),
@@ -67,6 +69,7 @@ export default async function SupportActivityPage() {
     getActivityTrend(30),
     getAverageResolutionTime(period),
     getStaleSessionCount(),
+    getActorBreakdown(period),
   ]);
 
   const repeatedThisPeriod = Math.max(0, periodActivities - periodSupportedGroups);
@@ -133,6 +136,16 @@ export default async function SupportActivityPage() {
         <StatTile label={`${periodLabel} Support Groups`} value={periodSupportedGroups} />
         <StatTile label={`${periodLabel} Support Activities`} value={periodActivities} />
         <StatTile label="Active Support Members" value={activeSupportMembers} />
+        <StatTile
+          label={`${periodLabel} AI-Handled`}
+          value={actorBreakdown.aiCount}
+          hint={
+            actorBreakdown.aiOnlyGroups > 0
+              ? `${actorBreakdown.aiOnlyGroups} group(s) had no human involvement`
+              : "Counted separately from team totals"
+          }
+          tone={actorBreakdown.aiCount > 0 ? "success" : "neutral"}
+        />
         <StatTile label="Total Supported Groups" value={totalSupportedGroupsEver} />
         <StatTile
           label="Repeated Support Activities"
@@ -187,7 +200,15 @@ export default async function SupportActivityPage() {
                 <tr key={a.id}>
                   <Td className="font-[family-name:var(--font-mono)] text-xs whitespace-nowrap">{formatDateTime(a.occurredAt)}</Td>
                   <Td>{a.groupName}</Td>
-                  <Td>{a.teamMemberName ?? "—"}</Td>
+                  <Td>
+                    {a.actor === "AI" ? (
+                      <Badge color="blue" dot>
+                        AI
+                      </Badge>
+                    ) : (
+                      (a.teamMemberName ?? "—")
+                    )}
+                  </Td>
                   <Td>{a.keywordValue ? <Badge color="blue">{a.keywordValue}</Badge> : "—"}</Td>
                   <Td className="max-w-md truncate">{a.messageBody}</Td>
                 </tr>

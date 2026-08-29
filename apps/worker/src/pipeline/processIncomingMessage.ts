@@ -256,7 +256,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
   if (result.finalDecision === "NO_MATCH") {
     try {
       await runAiFallback({
-        message: { id: message.id, body: raw.body },
+        message: { id: message.id, body: raw.body, timestampWa: raw.timestampWa },
         accountId: raw.accountId,
         chatId: raw.chatId,
         toPhone: raw.senderPhone,

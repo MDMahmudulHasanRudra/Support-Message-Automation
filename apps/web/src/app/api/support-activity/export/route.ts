@@ -67,7 +67,8 @@ export async function GET(request: NextRequest) {
         : (await getActivitiesForExport(range, groupId)).map((r) => ({
             Time: r.occurredAt.toISOString(),
             Group: r.groupName,
-            "Team Member": r.teamMemberName ?? "",
+            "Handled By": r.actor === "AI" ? "AI" : (r.teamMemberName ?? ""),
+            "Actor": r.actor,
             Trigger: r.triggerType ?? "",
             Keyword: r.keywordValue ?? "",
             Message: r.messageBody,

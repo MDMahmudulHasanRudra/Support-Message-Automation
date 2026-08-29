@@ -150,7 +150,9 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
                   {history.activities.map((a) => (
                     <li key={a.id} className="flex items-start justify-between gap-4 py-3 text-sm first:pt-0 last:pb-0">
                       <div>
-                        <p className="font-medium text-[color:var(--color-foreground)]">{a.teamMemberName ?? "—"}</p>
+                        <p className="font-medium text-[color:var(--color-foreground)]">
+                          {a.actor === "AI" ? "AI" : (a.teamMemberName ?? "—")}
+                        </p>
                         <p className="mt-0.5 text-[color:var(--color-muted-foreground)]">{a.messageBody}</p>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">

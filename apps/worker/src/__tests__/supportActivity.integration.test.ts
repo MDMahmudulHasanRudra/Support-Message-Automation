@@ -52,7 +52,9 @@ async function makeKeyword(value: string) {
 }
 
 async function makeRule(
-  keywordIdsOrOpts: string[] | { keywordIds?: string[]; triggerType?: "KEYWORD_MATCH" | "REPLY_TO_CUSTOMER" | "MENTION" },
+  keywordIdsOrOpts:
+    | string[]
+    | { keywordIds?: string[]; triggerType?: "KEYWORD_MATCH" | "REPLY_TO_CUSTOMER" | "MENTION" | "ANY_MESSAGE" },
 ) {
   const opts = Array.isArray(keywordIdsOrOpts) ? { keywordIds: keywordIdsOrOpts } : keywordIdsOrOpts;
   const rule = await prisma.supportRule.create({
@@ -288,6 +290,57 @@ describe("Support Activity Tracking — MENTION trigger", () => {
     await sendGroupMessage(member.phoneNumber, "no mentions here");
 
     expect(await prisma.supportActivity.count({ where: { accountId: account.id } })).toBe(0);
+  });
+});
+
+describe("Support Activity Tracking — ANY_MESSAGE trigger", () => {
+  it("counts any message a support member sends, with no keyword, reply or mention", async () => {
+    const member = await makeTeamMember(uniquePhone());
+    const rule = await makeRule({ triggerType: "ANY_MESSAGE" });
+
+    await sendGroupMessage(member.phoneNumber, "morning all");
+
+    const activity = await prisma.supportActivity.findFirstOrThrow({ where: { accountId: account.id } });
+    expect(activity.teamMemberId).toBe(member.id);
+    expect(activity.ruleId).toBe(rule.id);
+    expect(activity.keywordId).toBeNull();
+    expect(activity.actor).toBe("TEAM_MEMBER");
+  });
+
+  it("still does not fire for a non-team-member, however chatty", async () => {
+    await makeRule({ triggerType: "ANY_MESSAGE" });
+
+    await sendGroupMessage(uniquePhone(), "hello I need help");
+
+    expect(await prisma.supportActivity.count({ where: { accountId: account.id } })).toBe(0);
+  });
+
+  it("lets a completion keyword still win when an ANY_MESSAGE rule also matches", async () => {
+    // The precedence guard. ANY_MESSAGE matches everything, so evaluating rules in creation
+    // order would let it shadow the keyword rule — and only a keyword rule carries
+    // marksCompletion, which is what closes a SupportSession. Without ordering, adding an
+    // "any message" rule would quietly stop sessions ever completing.
+    const member = await makeTeamMember(uniquePhone());
+    const anyRule = await makeRule({ triggerType: "ANY_MESSAGE" });
+    const keyword = await makeKeyword("done");
+    const keywordRule = await makeRule([keyword.id]);
+
+    await sendGroupMessage(member.phoneNumber, "all done");
+
+    const activity = await prisma.supportActivity.findFirstOrThrow({ where: { accountId: account.id } });
+    expect(activity.ruleId).toBe(keywordRule.id);
+    expect(activity.ruleId).not.toBe(anyRule.id);
+    expect(activity.keywordId).toBe(keyword.id);
+  });
+
+  it("records at most one activity per message even with several matching rules", async () => {
+    const member = await makeTeamMember(uniquePhone());
+    await makeRule({ triggerType: "ANY_MESSAGE" });
+    await makeRule({ triggerType: "ANY_MESSAGE" });
+
+    await sendGroupMessage(member.phoneNumber, "checking in");
+
+    expect(await prisma.supportActivity.count({ where: { accountId: account.id } })).toBe(1);
   });
 });
 

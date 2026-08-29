@@ -1684,6 +1684,17 @@ enum SupportActivityCountingPeriod {
 /// separate event stream (client.onReaction(), not the onAnyMessage payload these three trigger
 /// types read from) and need a dedicated ingestion path + table; add it as its own migration when
 /// actually built, not speculatively now.
+/// Who delivered a recorded piece of support. Split out so AI-handled conversations can be
+/// counted as real support without being silently folded into a person's own numbers — a
+/// team member's tally must never include work they did not do.
+enum SupportActivityActor {
+  TEAM_MEMBER
+  /// The Hybrid AI Automation fallback answered a customer and no human was needed. Carries a
+  /// null teamMemberId, and deliberately never opens or closes a SupportSession: a session
+  /// represents a person handling a conversation over time, which is not what happened here.
+  AI
+}
+
 enum SupportActivityTriggerType {
   KEYWORD_MATCH
   /// Fires when a support team member's message is a WhatsApp "quoted reply" to a message from a
@@ -1692,6 +1703,12 @@ enum SupportActivityTriggerType {
   /// Fires when a support team member's message @-mentions at least one non-team-member phone
   /// number — no keyword needed.
   MENTION
+  /// Fires on ANY message a support team member sends in an in-scope group — no keyword, no
+  /// reply, no mention needed. The simplest possible definition of "this person worked in this
+  /// group today", for teams whose support conversations do not follow a keyword convention.
+  /// Evaluated after every other trigger so a keyword rule (which can mark a session complete)
+  /// still wins when both would match.
+  ANY_MESSAGE
 }
 
 enum SupportKeywordMatchMode {
@@ -1816,6 +1833,9 @@ model SupportActivity {
   /// recorded history — only its per-member attribution on that one row degrades to "unassigned."
   teamMemberId String?
   teamMember   InternalTeamMember? @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  /// Who delivered this support. TEAM_MEMBER rows always carry a teamMemberId; AI rows never do.
+  /// Defaulted so every row written before this column existed keeps its original meaning.
+  actor        SupportActivityActor @default(TEAM_MEMBER)
   /// Nullable + SetNull, same reasoning: a deleted SupportRule/SupportKeyword must never delete
   /// history (mirrors AutomationExecution.ruleId's exact pattern).
   ruleId       String?
@@ -1842,6 +1862,7 @@ model SupportActivity {
   @@index([accountId, occurredAt])
   @@index([accountId, groupId, occurredAt])
   @@index([accountId, teamMemberId, occurredAt])
+  @@index([accountId, actor, occurredAt])
   @@index([ruleId])
 }
 

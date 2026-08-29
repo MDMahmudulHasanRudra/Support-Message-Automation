@@ -10,12 +10,13 @@ import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
+import { recordAiSupportActivity } from "../supportActivity/recordAiSupport.js";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
 import { checkAutoReplySafety } from "../pipeline/safety.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
 
 export interface RunAiFallbackParams {
-  message: { id: string; body: string };
+  message: { id: string; body: string; timestampWa?: Date };
   accountId: string;
   chatId: string;
   toPhone: string;
@@ -218,6 +219,20 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     outboundMessageId: outboundMessageId ?? null,
     tokensUsed: completion.tokensUsed,
   });
+
+  // The AI resolved this one without a person, and that is still support delivered to the
+  // group — counted as an AI actor so it never inflates anyone's personal numbers. Its own
+  // try/catch: a tracking write must never turn a successfully-answered customer into an error.
+  try {
+    await recordAiSupportActivity({
+      accountId: params.accountId,
+      groupId: params.group?.id ?? null,
+      messageId: params.message.id,
+      occurredAt: params.message.timestampWa ?? new Date(),
+    });
+  } catch (err) {
+    console.error("[aiFallback] failed to record AI support activity", err);
+  }
 
   await maybeDraftRuleFromReply({
     aiSettings,
