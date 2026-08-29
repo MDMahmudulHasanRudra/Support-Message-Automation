@@ -39,7 +39,7 @@ export function UnknownPatternsTable({ patterns }: { patterns: UnknownPatternRow
             <Td>
               <Link
                 href={`/conversation-learning/pattern-candidates/${pattern.id}`}
-                className="underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[color:var(--color-primary)]"
+                className="underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:decoration-[var(--color-foreground)]"
               >
                 {pattern.keywords.join(", ") || "(no distinctive keywords)"}
               </Link>

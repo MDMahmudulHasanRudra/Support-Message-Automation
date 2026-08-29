@@ -13,12 +13,21 @@ import {
   ModuleCardRow,
   PageHeader,
   SectionHeader,
-  Sparkline,
   StatTile,
   Table,
   Td,
   Th,
 } from "@/components/ui";
+import {
+  AreaChart,
+  BarList,
+  ChartCard,
+  ChartHeadline,
+  ColumnChart,
+  DonutChart,
+  StackedBar,
+  formatCount,
+} from "@/components/charts";
 import {
   getAccountsRoutingSummary,
   getAiLearningSummary,
@@ -32,6 +41,12 @@ import {
   getSystemLogsSummary,
   getTeamsIntegrationSummary,
 } from "@/server/actions/dashboardSummary";
+import {
+  getBusiestGroups,
+  getDecisionMix,
+  getDeliveryOutcomes,
+  getMessageLoadSeries,
+} from "@/server/actions/dashboardMetrics";
 
 function formatAgeShort(ms: number): string {
   const totalMinutes = Math.max(0, Math.floor(ms / 60_000));
@@ -61,6 +76,10 @@ export default async function OverviewPage() {
     supportActivity,
     recentActivity,
     teamsIntegration,
+    messageLoad,
+    decisionMix,
+    deliveryOutcomes,
+    busiestGroups,
   ] = await Promise.all([
     getAccountsRoutingSummary(),
     getAutomationOutboundSummary(nowMs),
@@ -73,6 +92,10 @@ export default async function OverviewPage() {
     getSupportActivityDashboardSummary(nowMs),
     getRecentMessageActivity(nowMs),
     getTeamsIntegrationSummary(nowMs),
+    getMessageLoadSeries(nowMs),
+    getDecisionMix(nowMs),
+    getDeliveryOutcomes(nowMs),
+    getBusiestGroups(nowMs),
   ]);
 
   const disconnectedAccounts = accountsRouting.accounts.filter((a) => a.status !== "CONNECTED");
@@ -105,11 +128,26 @@ export default async function OverviewPage() {
                 module" jumps to the full page for details, filters, and actions.
               </p>
             </HelpSection>
-            <HelpSection title="Message Activity">
+            <HelpSection title="Metrics">
               <p>
-                The trend line is incoming message volume for the last 7 days; the table below it is
-                just the last 10 messages across every account for a quick pulse-check — for anything
-                beyond that, go to All Messages.
+                Four views of what the system is actually doing. "Incoming message volume" is daily
+                totals for 14 days, with the last 7 compared against the 7 before them. "Automation
+                decisions" is what the rule engine concluded per message in the last 24 hours — a
+                growing "No rule matched" share is the sign your ruleset has fallen behind what
+                customers are asking. "Message load by hour" is a rolling 24 hours, useful for
+                deciding when to staff and when to schedule a broadcast. "Outbound delivery" and
+                "Busiest groups" cover send health and where the week's load landed.
+              </p>
+              <p>
+                Every figure is computed live per request from the raw tables — nothing here is
+                pre-aggregated or cached, so a number that looks wrong is a real number.
+                Days are Asia/Dhaka days, the same boundary the Support Activity reports use.
+              </p>
+            </HelpSection>
+            <HelpSection title="Latest messages">
+              <p>
+                Just the last 10 messages across every account for a quick pulse-check — for
+                anything beyond that, go to All Messages.
               </p>
             </HelpSection>
           </HelpButton>
@@ -117,14 +155,14 @@ export default async function OverviewPage() {
       />
 
       {disconnectedAccounts.length > 0 ? (
-        <div className="mb-6">
+        <div className="mb-7">
           <Alert tone="warning" title={`${disconnectedAccounts.length} account(s) not connected`}>
             {disconnectedAccounts.map((a) => a.label).join(", ")} — check WhatsApp Accounts for details.
           </Alert>
         </div>
       ) : null}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-4">
+      <div className="stagger-children mb-7 grid grid-cols-2 gap-3.5 sm:grid-cols-4">
         <StatTile
           label="Connected accounts"
           value={`${accountsRouting.connectedCount}/${accountsRouting.accounts.length}`}
@@ -163,7 +201,101 @@ export default async function OverviewPage() {
         />
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="mb-7" aria-label="Metrics">
+        <SectionHeader
+          title="Metrics"
+          description="Live aggregates computed per request — every figure links back to a page where you can act on it."
+        />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <ChartCard
+            className="lg:col-span-2"
+            title="Incoming message volume"
+            description="Daily totals for the last 14 days, on Asia/Dhaka day boundaries."
+            headline={
+              <ChartHeadline
+                value={formatCount(messageLoad.lastSeven)}
+                delta={
+                  messageLoad.weekOverWeekPercent === null
+                    ? undefined
+                    : `${messageLoad.weekOverWeekPercent >= 0 ? "+" : ""}${messageLoad.weekOverWeekPercent}% vs prior 7 days`
+                }
+                deltaTone={
+                  messageLoad.weekOverWeekPercent === null || messageLoad.weekOverWeekPercent === 0
+                    ? "neutral"
+                    : messageLoad.weekOverWeekPercent > 0
+                      ? "up"
+                      : "down"
+                }
+                caption="last 7 days"
+              />
+            }
+          >
+            <AreaChart data={messageLoad.daily} ariaLabel="Incoming messages per day, last 14 days" />
+          </ChartCard>
+
+          <ChartCard
+            title="Automation decisions"
+            description="What the rule engine decided in the last 24 hours."
+          >
+            <DonutChart
+              slices={decisionMix.slices}
+              total={decisionMix.total}
+              centerLabel="decisions"
+              ariaLabel="Automation decisions by outcome, last 24 hours"
+            />
+          </ChartCard>
+
+          <ChartCard
+            className="lg:col-span-2"
+            title="Message load by hour"
+            description="Rolling 24 hours — the darker column is the busiest hour."
+            headline={
+              messageLoad.peakHourLabel ? (
+                <ChartHeadline
+                  value={formatCount(messageLoad.peakHourValue)}
+                  caption={`peak at ${messageLoad.peakHourLabel}`}
+                />
+              ) : undefined
+            }
+          >
+            <ColumnChart data={messageLoad.hourly} ariaLabel="Incoming messages per hour, last 24 hours" />
+          </ChartCard>
+
+          <div className="flex flex-col gap-4">
+            <ChartCard
+              title="Outbound delivery"
+              description="Every message the send queue handled in the last 24 hours."
+              headline={
+                deliveryOutcomes.successRate === null ? undefined : (
+                  <ChartHeadline value={`${deliveryOutcomes.successRate}%`} caption="sent" />
+                )
+              }
+            >
+              <StackedBar
+                segments={deliveryOutcomes.slices}
+                total={deliveryOutcomes.total}
+                ariaLabel="Outbound message outcomes, last 24 hours"
+              />
+            </ChartCard>
+
+            <ChartCard
+              title="Busiest groups"
+              description="Incoming messages per group over the last 7 days."
+            >
+              <BarList
+                items={busiestGroups.groups.map((group) => ({
+                  id: group.id,
+                  label: group.name,
+                  value: group.value,
+                }))}
+                emptyMessage="No group messages in the last 7 days."
+              />
+            </ChartCard>
+          </div>
+        </div>
+      </section>
+
+      <div className="stagger-children mb-7 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         <DashboardModuleCard
           title="Accounts & Routing"
           icon={Smartphone}
@@ -323,12 +455,10 @@ export default async function OverviewPage() {
       </div>
 
       <Card>
-        <div className="flex items-center justify-between gap-4">
-          <SectionHeader title="Message Activity" />
-          <div className="w-32 shrink-0">
-            <Sparkline data={recentActivity.sparkline} ariaLabel="Incoming messages, last 7 days" />
-          </div>
-        </div>
+        <SectionHeader
+          title="Latest messages"
+          description="The last 10 messages across every account — volume over time is charted in Metrics above."
+        />
         {recentActivity.recentMessages.length === 0 ? (
           <EmptyState>No messages yet.</EmptyState>
         ) : (

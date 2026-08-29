@@ -6,11 +6,14 @@ import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from "react";
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 type ButtonSize = "sm" | "md";
 
+// Primary is a solid ink fill, not a colored gradient: on a console where green,
+// amber and red already carry meaning, the main action earns attention through
+// contrast instead of competing with the status palette for hue.
 const VARIANT_STYLES: Record<ButtonVariant, string> = {
   primary:
-    "bg-[image:var(--gradient-primary)] text-[var(--color-on-primary)] shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] hover:brightness-[1.06] active:brightness-95",
+    "bg-[var(--color-primary)] text-[var(--color-on-primary)] shadow-[var(--shadow-sm)] hover:bg-[var(--color-primary-hover)] hover:shadow-[var(--shadow-md)] active:bg-[var(--color-primary-active)]",
   secondary:
-    "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-neutral-bg)]",
+    "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[color:var(--color-foreground)] shadow-[var(--shadow-xs),var(--highlight-top)] hover:border-[var(--color-muted-foreground)]/50 hover:bg-[var(--color-neutral-bg)]",
   danger:
     "bg-[var(--color-danger)] text-white shadow-[var(--shadow-sm)] hover:bg-[var(--color-danger-hover)] hover:shadow-[var(--shadow-md)]",
   ghost:
@@ -18,9 +21,12 @@ const VARIANT_STYLES: Record<ButtonVariant, string> = {
 };
 
 const SIZE_STYLES: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-xs gap-1.5",
-  md: "h-9.5 px-4 text-sm gap-2",
+  sm: "h-8 px-3 text-xs gap-1.5 rounded-[var(--radius-sm)]",
+  md: "h-9.5 px-4 text-sm gap-2 rounded-[var(--radius-md)]",
 };
+
+const BASE =
+  "inline-flex cursor-pointer items-center justify-center whitespace-nowrap font-medium transition-[background-color,border-color,box-shadow,transform,color] duration-[var(--duration-fast)] ease-[var(--ease-out)] active:scale-[0.97]";
 
 export function Button({
   children,
@@ -37,7 +43,7 @@ export function Button({
 }) {
   return (
     <button
-      className={`inline-flex cursor-pointer items-center justify-center rounded-md font-medium transition duration-[var(--duration-fast)] ease-[var(--ease-out)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${VARIANT_STYLES[variant]} ${SIZE_STYLES[size]} ${className}`}
+      className={`${BASE} disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 ${VARIANT_STYLES[variant]} ${SIZE_STYLES[size]} ${className}`}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       {...props}
@@ -60,10 +66,7 @@ export function ButtonLink({
   size?: ButtonSize;
 }) {
   return (
-    <a
-      className={`inline-flex cursor-pointer items-center justify-center rounded-md font-medium transition duration-[var(--duration-fast)] ease-[var(--ease-out)] active:scale-[0.98] ${VARIANT_STYLES[variant]} ${SIZE_STYLES[size]} ${className}`}
-      {...props}
-    >
+    <a className={`${BASE} ${VARIANT_STYLES[variant]} ${SIZE_STYLES[size]} ${className}`} {...props}>
       {children}
     </a>
   );

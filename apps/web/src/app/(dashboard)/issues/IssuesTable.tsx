@@ -55,7 +55,7 @@ export function IssuesTable({ issues }: { issues: IssueRow[] }) {
             </Td>
             <Td>{issue.createdAtLabel}</Td>
             <Td>
-              <Link href={`/issues/${issue.id}`} className="text-xs font-medium text-[color:var(--color-primary)] hover:underline">
+              <Link href={`/issues/${issue.id}`} className="link text-xs font-medium">
                 View
               </Link>
             </Td>

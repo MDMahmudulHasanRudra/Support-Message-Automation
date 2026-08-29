@@ -27,18 +27,18 @@ export function FloatingAiChat() {
         type="button"
         onClick={() => setOpen(true)}
         aria-label="Open AI Admin Assistant"
-        className="fixed bottom-6 right-6 z-50 flex size-14 cursor-pointer items-center justify-center rounded-full bg-[image:var(--gradient-primary)] text-[var(--color-on-primary)] shadow-[var(--shadow-lg)] transition-transform duration-150 hover:scale-105"
+        className="fixed bottom-6 right-6 z-[var(--z-floating)] flex size-12 cursor-pointer items-center justify-center rounded-full bg-[var(--color-primary)] text-[var(--color-on-primary)] shadow-[var(--shadow-lg)] transition-[transform,box-shadow] duration-[var(--duration-base)] ease-[var(--ease-spring)] hover:scale-105 hover:shadow-[var(--shadow-xl)] active:scale-95"
       >
-        <Bot className="size-6" aria-hidden />
+        <Bot className="size-5" aria-hidden />
       </button>
     );
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex h-[520px] w-[380px] max-w-[calc(100vw-3rem)] flex-col rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)]">
+    <div className="animate-scale-in fixed bottom-6 right-6 z-[var(--z-floating)] flex h-[520px] w-[380px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)]">
       <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3.5">
         <div className="flex items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-full bg-[var(--color-primary-soft)] text-[color:var(--color-primary)]">
+          <span className="flex size-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] text-[color:var(--color-muted-foreground)]">
             <Bot className="size-4" aria-hidden />
           </span>
           <div>
@@ -58,7 +58,7 @@ export function FloatingAiChat() {
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {state.turns.length === 0 ? (
-          <p className="text-sm text-[color:var(--color-muted-foreground)]">
+          <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
             Ask about support activity, connected accounts, groups, priority cases, AI settings, or broadcast
             jobs — e.g. &ldquo;how many groups were supported today?&rdquo; or &ldquo;আজকে কে সবচেয়ে বেশি support
             দিয়েছে?&rdquo;
@@ -67,10 +67,10 @@ export function FloatingAiChat() {
           state.turns.map((turn, i) => (
             <div key={i} className={`flex ${turn.role === "user" ? "justify-end" : "justify-start"}`}>
               <div
-                className={`max-w-[85%] rounded-[var(--radius-md)] px-3 py-2 text-sm whitespace-pre-wrap ${
+                className={`max-w-[85%] rounded-[var(--radius-lg)] px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap ${
                   turn.role === "user"
-                    ? "bg-[image:var(--gradient-primary)] text-[var(--color-on-primary)]"
-                    : "bg-[var(--color-neutral-bg)] text-[color:var(--color-foreground)]"
+                    ? "bg-[var(--color-primary)] text-[var(--color-on-primary)]"
+                    : "border border-[var(--color-border)] bg-[var(--color-surface-sunken)] text-[color:var(--color-foreground)]"
                 }`}
               >
                 {turn.text}
@@ -95,7 +95,7 @@ export function FloatingAiChat() {
         </div>
       ) : null}
 
-      <form ref={formRef} action={formAction} className="flex items-end gap-2 border-t border-[var(--color-border)] p-3">
+      <form ref={formRef} action={formAction} className="flex items-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-sunken)] p-3">
         <Textarea
           name="message"
           placeholder="Ask a question…"

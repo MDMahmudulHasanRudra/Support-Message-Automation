@@ -86,6 +86,37 @@ describe("resolveAiClient — provider kind resolution", () => {
     expect(client).toBeNull();
   });
 
+  it("resolves the RESPONSE job while Conversation Learning is switched off", async () => {
+    // Regression guard. resolveAiClient() used to also require AiSettings.learningEnabled — a
+    // flag that belongs to Conversation Learning alone. Because it defaults to false, the Hybrid
+    // AI Automation fallback (job "RESPONSE") could never obtain a client: every AI-eligible
+    // message recorded an AI_UNAVAILABLE human fallback and raised an alert instead of replying,
+    // and nothing in the dashboard explained why. Per-job gating belongs to the job.
+    const provider = await makeProvider("ANTHROPIC");
+    await assignResponseModel(provider.id);
+    await prisma.aiSettings.update({ where: { id: "global" }, data: { learningEnabled: false } });
+
+    try {
+      const client = await resolveAiClient("RESPONSE");
+      expect(client).toBeInstanceOf(AnthropicClient);
+    } finally {
+      await prisma.aiSettings.update({ where: { id: "global" }, data: { learningEnabled: true } });
+    }
+  });
+
+  it("still resolves to null for every job when the AI engine master switch is off", async () => {
+    const provider = await makeProvider("ANTHROPIC");
+    await assignResponseModel(provider.id);
+    await prisma.aiSettings.update({ where: { id: "global" }, data: { aiEngineEnabled: false } });
+
+    try {
+      expect(await resolveAiClient("RESPONSE")).toBeNull();
+      expect(await resolveAiClient("LEARNING")).toBeNull();
+    } finally {
+      await prisma.aiSettings.update({ where: { id: "global" }, data: { aiEngineEnabled: true } });
+    }
+  });
+
   it("never exposes the decrypted API key as an enumerable own property on the resolved client", async () => {
     const provider = await makeProvider("ANTHROPIC");
     await assignResponseModel(provider.id);

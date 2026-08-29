@@ -27,7 +27,7 @@ export function RuleProposalsTable({ proposals }: { proposals: RuleProposalRow[]
             <Td>
               <Link
                 href={`/conversation-learning/rule-proposals/${proposal.id}`}
-                className="underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[color:var(--color-primary)]"
+                className="underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:decoration-[var(--color-foreground)]"
               >
                 {proposal.name}
               </Link>

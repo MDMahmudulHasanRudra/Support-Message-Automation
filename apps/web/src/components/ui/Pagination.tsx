@@ -20,8 +20,8 @@ export function Pagination({
   const rangeEnd = Math.min(page * pageSize, total);
 
   return (
-    <div className="flex items-center justify-between gap-4 px-1 py-3 text-sm text-[color:var(--color-muted-foreground)]">
-      <p>
+    <div className="flex items-center justify-between gap-4 px-1 py-3.5 text-[13px] text-[color:var(--color-muted-foreground)]">
+      <p className="tabular">
         {total === 0 ? (
           "0 results"
         ) : (
@@ -35,20 +35,23 @@ export function Pagination({
       </p>
       <div className="flex items-center gap-2">
         <PaginationLink href={buildHref(page - 1)} disabled={!hasPrev} label="Previous page">
-          <ChevronLeft className="size-4" aria-hidden />
+          <ChevronLeft className="size-3.5" aria-hidden />
           Previous
         </PaginationLink>
-        <span className="text-xs font-medium text-[color:var(--color-foreground)]">
+        <span className="tabular px-1 text-xs font-medium text-[color:var(--color-foreground)]">
           Page {page} of {totalPages}
         </span>
         <PaginationLink href={buildHref(page + 1)} disabled={!hasNext} label="Next page">
           Next
-          <ChevronRight className="size-4" aria-hidden />
+          <ChevronRight className="size-3.5" aria-hidden />
         </PaginationLink>
       </div>
     </div>
   );
 }
+
+const PAGINATION_BASE =
+  "flex h-8 items-center gap-1 rounded-[var(--radius-sm)] border px-2.5 text-xs font-medium transition-[border-color,background-color,color] duration-[var(--duration-fast)]";
 
 function PaginationLink({
   href,
@@ -66,7 +69,7 @@ function PaginationLink({
       <span
         aria-disabled="true"
         aria-label={label}
-        className="flex cursor-not-allowed items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] px-2.5 py-1.5 text-sm text-[color:var(--color-muted-foreground)] opacity-50"
+        className={`${PAGINATION_BASE} cursor-not-allowed border-[var(--color-border)] text-[color:var(--color-muted-foreground)] opacity-60`}
       >
         {children}
       </span>
@@ -76,7 +79,7 @@ function PaginationLink({
     <Link
       href={href}
       aria-label={label}
-      className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border-strong)] px-2.5 py-1.5 text-sm text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] transition-colors hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-neutral-bg)]"
+      className={`${PAGINATION_BASE} border-[var(--color-border-strong)] text-[color:var(--color-foreground)] shadow-[var(--shadow-xs),var(--highlight-top)] hover:border-[var(--color-muted-foreground)]/50 hover:bg-[var(--color-neutral-bg)]`}
     >
       {children}
     </Link>

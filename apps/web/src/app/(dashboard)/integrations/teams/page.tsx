@@ -99,7 +99,7 @@ export default async function TeamsIntegrationPage({
               <ButtonLink href="/integrations/teams/keywords" variant="secondary" size="sm">
                 Resolution Keywords
               </ButtonLink>
-              <Link href="/integrations/teams/settings" className="text-xs text-[color:var(--color-primary)] hover:underline">
+              <Link href="/integrations/teams/settings" className="link text-xs">
                 Settings
               </Link>
             </div>

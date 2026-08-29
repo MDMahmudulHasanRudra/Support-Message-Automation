@@ -144,7 +144,7 @@ export default async function GroupBroadcastHistoryPage({
                   {m.broadcastJobId ? (
                     <Link
                       href={`/group-message-sender/jobs/${m.broadcastJobId}`}
-                      className="text-[color:var(--color-primary)] underline"
+                      className="link"
                     >
                       View
                     </Link>

@@ -175,7 +175,7 @@ export default async function AiLearningDashboardPage() {
               <li key={item.id} className="flex items-center justify-between gap-3 py-2 text-sm">
                 <Link
                   href={`/ai-learning/knowledge-base/${item.id}`}
-                  className="text-[color:var(--color-foreground)] underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[color:var(--color-primary)]"
+                  className="text-[color:var(--color-foreground)] underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:decoration-[var(--color-foreground)]"
                 >
                   {item.title}
                 </Link>
@@ -213,7 +213,7 @@ function HubLink({
           <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">{description}</p>
         </div>
         <ArrowRight
-          className="mt-1 size-4 shrink-0 text-[color:var(--color-muted-foreground)] transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-[color:var(--color-primary)]"
+          className="mt-1 size-4 shrink-0 text-[color:var(--color-muted-foreground)] transition-transform duration-150 group-hover:translate-x-0.5 group-hover:decoration-[var(--color-foreground)]"
           aria-hidden
         />
       </Card>

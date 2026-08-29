@@ -1,5 +1,6 @@
 export * from "./Alert";
 export * from "./Badge";
+export * from "./BrandMark";
 export * from "./Button";
 export * from "./Card";
 export * from "./DashboardModuleCard";

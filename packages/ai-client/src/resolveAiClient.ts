@@ -12,6 +12,14 @@ import type { AiClient } from "./AiClient.js";
  * exception, since that indicates a real deployment misconfiguration rather than "AI just isn't
  * turned on right now."
  *
+ * Gates on `aiEngineEnabled` only — the global "is AI allowed to run at all" master switch.
+ * Per-job gating belongs to the job: `AiSettings.learningEnabled` is specific to Conversation
+ * Learning, and aiAnalysisJob.ts checks it explicitly before it ever calls here. Gating on it in
+ * this shared helper made the Hybrid AI Automation fallback (job "RESPONSE") unreachable whenever
+ * Conversation Learning was off — which is the default — so every AI-eligible message recorded an
+ * AI_UNAVAILABLE human fallback and fired an alert instead of replying, with nothing in the
+ * dashboard explaining why. Do not re-add a job-specific flag to this function.
+ *
  * Two AiProviderKind values have a real client implementation today: ANTHROPIC and OPENAI (the
  * latter covers any endpoint speaking the standard OpenAI-compatible chat-completions protocol —
  * OpenAI's own API, a self-hosted/local runtime, or a custom internal proxy — see
@@ -20,7 +28,7 @@ import type { AiClient } from "./AiClient.js";
  */
 export async function resolveAiClient(job: AiModelJob): Promise<AiClient | null> {
   const settings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
-  if (!settings.aiEngineEnabled || !settings.learningEnabled) return null;
+  if (!settings.aiEngineEnabled) return null;
 
   const modelConfig = await prisma.aiModelConfig.findUnique({ where: { job }, include: { provider: true } });
   if (!modelConfig) return null;

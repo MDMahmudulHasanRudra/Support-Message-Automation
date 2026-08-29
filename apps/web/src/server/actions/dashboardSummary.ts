@@ -243,15 +243,17 @@ export async function getTeamsIntegrationSummary(nowMs: number) {
   };
 }
 
+/**
+ * The seven per-day counts that used to back the overview sparkline were dropped
+ * when the 14-day volume chart replaced it: `Message` has no index on
+ * `createdAt`/`direction`, so each was its own sequential scan, and
+ * `getMessageLoadSeries` in dashboardMetrics.ts now derives both the daily and the
+ * hourly series from a single one.
+ */
 export async function getRecentMessageActivity(nowMs: number) {
   const since24h = hoursAgo(24, nowMs);
-  const dayStarts: Date[] = [];
-  for (let i = 6; i >= 0; i--) {
-    dayStarts.push(new Date(new Date(nowMs - i * 24 * 60 * 60 * 1000).setHours(0, 0, 0, 0)));
-  }
-  const dayBoundaries = [...dayStarts, new Date(new Date(nowMs).setHours(0, 0, 0, 0) + 24 * 60 * 60 * 1000)];
 
-  const [recentMessages, messagesLast24h, ...dailyIncomingCounts] = await Promise.all([
+  const [recentMessages, messagesLast24h] = await Promise.all([
     prisma.message.findMany({
       orderBy: { timestampWa: "desc" },
       take: 10,
@@ -266,12 +268,7 @@ export async function getRecentMessageActivity(nowMs: number) {
       },
     }),
     prisma.message.count({ where: { direction: "INCOMING", createdAt: { gte: since24h } } }),
-    ...dayStarts.map((start, i) =>
-      prisma.message.count({
-        where: { direction: "INCOMING", createdAt: { gte: start, lt: dayBoundaries[i + 1] } },
-      }),
-    ),
   ]);
 
-  return { recentMessages, messagesLast24h, sparkline: dailyIncomingCounts };
+  return { recentMessages, messagesLast24h };
 }

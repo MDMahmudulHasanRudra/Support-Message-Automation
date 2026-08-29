@@ -6,20 +6,20 @@ import type {
 } from "react";
 
 const fieldBase =
-  "w-full rounded-[var(--radius-sm)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3.5 text-sm text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] transition-[border-color,box-shadow] duration-150 placeholder:text-[color:var(--color-muted-foreground)] hover:border-[var(--color-muted-foreground)]/60 focus-visible:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--color-border-strong)]";
+  "w-full rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-sm text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,background-color] duration-[var(--duration-fast)] ease-[var(--ease-out)] placeholder:text-[color:var(--color-muted-foreground)] hover:border-[var(--color-muted-foreground)]/60 focus-visible:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12 disabled:cursor-not-allowed disabled:bg-[var(--color-neutral-bg)] disabled:opacity-60 disabled:hover:border-[var(--color-border-strong)]";
 
 export function Input({
   className = "",
   ...props
 }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={`h-9 ${fieldBase} ${className}`} {...props} />;
+  return <input className={`h-9.5 ${fieldBase} ${className}`} {...props} />;
 }
 
 export function Textarea({
   className = "",
   ...props
 }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={`min-h-24 py-2 ${fieldBase} ${className}`} {...props} />;
+  return <textarea className={`min-h-24 py-2.5 leading-relaxed ${fieldBase} ${className}`} {...props} />;
 }
 
 export function Select({
@@ -28,7 +28,7 @@ export function Select({
   ...props
 }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select className={`h-9 ${fieldBase} ${className}`} {...props}>
+    <select className={`h-9.5 cursor-pointer ${fieldBase} ${className}`} {...props}>
       {children}
     </select>
   );
@@ -41,7 +41,7 @@ export function Checkbox({
   return (
     <input
       type="checkbox"
-      className={`size-4 rounded border-[var(--color-border-strong)] text-[var(--color-primary)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${className}`}
+      className={`size-4 cursor-pointer rounded-[var(--radius-xs)] border-[var(--color-border-strong)] accent-[var(--color-primary)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${className}`}
       {...props}
     />
   );
@@ -59,7 +59,7 @@ export function Label({
   return (
     <label
       htmlFor={htmlFor}
-      className="mb-1.5 block text-sm font-medium text-[color:var(--color-foreground)]"
+      className="mb-1.5 block text-[13px] font-medium text-[color:var(--color-foreground)]"
     >
       {children}
       {required ? <span className="ml-0.5 text-[color:var(--color-danger)]">*</span> : null}
@@ -68,11 +68,13 @@ export function Label({
 }
 
 export function FieldHint({ children }: { children: ReactNode }) {
-  return <p className="mt-1.5 text-xs text-[color:var(--color-muted-foreground)]">{children}</p>;
+  return (
+    <p className="mt-1.5 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">{children}</p>
+  );
 }
 
 export function FieldError({ children }: { children: ReactNode }) {
-  return <p className="mt-1.5 text-xs text-[color:var(--color-danger)]">{children}</p>;
+  return <p className="mt-1.5 text-xs font-medium text-[color:var(--color-danger)]">{children}</p>;
 }
 
 export function Field({

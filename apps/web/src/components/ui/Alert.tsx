@@ -37,13 +37,17 @@ export function Alert({
   const Icon = TONE_ICONS[tone];
   return (
     <div
-      className={`flex gap-3 rounded-[var(--radius-md)] border px-4 py-3.5 text-sm shadow-[var(--shadow-xs)] ${TONE_STYLES[tone]}`}
+      className={`flex items-start gap-3 rounded-[var(--radius-lg)] border px-4 py-3.5 text-sm ${TONE_STYLES[tone]}`}
       role={tone === "danger" ? "alert" : undefined}
     >
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <div className="flex-1">
-        {title ? <p className="font-medium">{title}</p> : null}
-        {children ? <div className={title ? "mt-1 text-[13px] opacity-90" : ""}>{children}</div> : null}
+      <div className="min-w-0 flex-1">
+        {title ? <p className="font-medium tracking-[-0.005em]">{title}</p> : null}
+        {children ? (
+          <div className={title ? "mt-1 text-[13px] leading-relaxed opacity-90" : "leading-relaxed"}>
+            {children}
+          </div>
+        ) : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </div>

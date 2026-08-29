@@ -97,7 +97,7 @@ export function MessagesTable({ messages, hasActiveFilters }: { messages: Messag
             <Td>
               <Link
                 href={`/messages/${m.id}`}
-                className="inline-flex items-center gap-1 text-xs text-[color:var(--color-primary)] hover:underline"
+                className="link inline-flex items-center gap-1 text-xs"
               >
                 View
                 <ArrowUpRight className="size-3" aria-hidden />

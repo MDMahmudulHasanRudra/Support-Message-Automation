@@ -1,73 +1,124 @@
 @import "tailwindcss";
 
+/* ============================================================================
+   Design tokens
+   ----------------------------------------------------------------------------
+   One neutral family (zinc — a single, consistently-tinted gray), an ink
+   primary, and a vivid semantic status scale. The status colors are the only
+   saturated color in the whole console: on an operations dashboard color has to
+   mean "this needs attention", so brand color is deliberately kept out of
+   buttons, links and chrome. Every surface below is a token, so a theme swap
+   never needs a component edit.
+   ========================================================================== */
+
 :root {
+  color-scheme: light;
+
   /* Base surfaces */
-  --color-background: #f6f8fb;
+  --color-background: #f5f5f6;
   --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
-  --color-foreground: #0f172a;
-  --color-muted-foreground: #64748b;
-  --color-border: #e2e8f0;
-  --color-border-strong: #cbd5e1;
+  --color-surface-sunken: #fafafa;
+  --color-foreground: #18181b;
+  --color-muted-foreground: #71717a;
+  --color-subtle-foreground: #8b8b95;
+  --color-border: #e7e7ea;
+  --color-border-strong: #d6d6da;
 
-  /* Brand / primary action */
-  --color-primary: #1d4ed8;
-  --color-primary-hover: #1e40af;
-  --color-primary-active: #1e3a8a;
-  --color-primary-soft: #eff4ff;
-  --color-on-primary: #ffffff;
-  --gradient-primary: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  /* Primary action — ink, not a brand hue. Solid, high contrast, no gradient. */
+  --color-primary: #18181b;
+  --color-primary-hover: #2f2f35;
+  --color-primary-active: #09090b;
+  --color-primary-soft: #ececee;
+  --color-primary-softer: #f4f4f5;
+  --color-on-primary: #fafafa;
+  /* Kept under the old token name so existing call sites keep resolving, but it
+     is now a whisper of depth on an ink fill rather than the blue fade it was. */
+  --gradient-primary: linear-gradient(180deg, #2f2f35 0%, #18181b 100%);
 
   /* Semantic status scale — used identically everywhere */
   --color-success: #16a34a;
   --color-success-bg: #f0fdf4;
   --color-success-border: #bbf7d0;
-  --color-success-fg: #166534;
+  --color-success-fg: #15803d;
 
   --color-warning: #d97706;
   --color-warning-bg: #fffbeb;
   --color-warning-border: #fde68a;
-  --color-warning-fg: #92400e;
+  --color-warning-fg: #b45309;
 
   --color-danger: #dc2626;
   --color-danger-hover: #b91c1c;
   --color-danger-bg: #fef2f2;
   --color-danger-border: #fecaca;
-  --color-danger-fg: #991b1b;
+  --color-danger-fg: #b91c1c;
 
   --color-info: #2563eb;
   --color-info-bg: #eff6ff;
   --color-info-border: #bfdbfe;
-  --color-info-fg: #1e40af;
+  --color-info-fg: #1d4ed8;
 
-  --color-neutral-bg: #f1f5f9;
-  --color-neutral-border: #e2e8f0;
-  --color-neutral-fg: #475569;
+  --color-neutral-bg: #f4f4f5;
+  --color-neutral-border: #e4e4e7;
+  --color-neutral-fg: #52525b;
 
-  --color-focus-ring: #1d4ed8;
+  --color-focus-ring: #18181b;
 
-  /* Radius scale */
-  --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  /* Chart palette. Charts are the one place color encodes data rather than
+     decorating chrome, so they get their own scale — kept apart from the status
+     tokens above so a series can never impersonate a state. Slots and steps come
+     from the data-viz reference palette, validated against this app's own
+     surfaces (#ffffff light / #131316 dark): lightness band, chroma floor, CVD
+     separation and normal-vision floor all pass on the adjacent pairlist in both
+     modes. Slots 3, 4 and 5 sit below 3:1 on white, so every chart using them
+     ships visible values in its legend rather than relying on the fill alone. */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+  --chart-6: #008300;
+  --chart-grid: #ececef;
+  --chart-track: #f1f1f3;
 
-  /* Elevation scale — soft, low-contrast shadows layered for depth without heaviness */
-  --shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
-  --shadow-sm: 0 1px 3px 0 rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.06);
-  --shadow-md: 0 4px 12px -2px rgb(15 23 42 / 0.08), 0 2px 4px -2px rgb(15 23 42 / 0.05);
-  --shadow-lg: 0 12px 24px -6px rgb(15 23 42 / 0.12), 0 4px 8px -4px rgb(15 23 42 / 0.06);
-  --shadow-xl: 0 24px 48px -12px rgb(15 23 42 / 0.18);
+  /* Radius scale — tighter on inner elements, softer on containers */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
 
-  /* Motion */
+  /* Elevation — tinted with the neutral hue, never pure black, plus a hairline
+     top highlight so every raised surface reads as one light source. */
+  --shadow-xs: 0 1px 2px 0 rgb(24 24 27 / 0.05);
+  --shadow-sm: 0 1px 2px 0 rgb(24 24 27 / 0.05), 0 1px 6px -2px rgb(24 24 27 / 0.06);
+  --shadow-md: 0 2px 4px -2px rgb(24 24 27 / 0.06), 0 8px 20px -6px rgb(24 24 27 / 0.10);
+  --shadow-lg: 0 4px 8px -4px rgb(24 24 27 / 0.07), 0 16px 36px -10px rgb(24 24 27 / 0.14);
+  --shadow-xl: 0 8px 16px -8px rgb(24 24 27 / 0.10), 0 32px 64px -16px rgb(24 24 27 / 0.22);
+  --highlight-top: inset 0 1px 0 0 rgb(255 255 255 / 0.7);
+
+  /* Motion — a gentle overshoot for entrances, a fast decel for state changes */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --duration-fast: 150ms;
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+  --duration-fast: 130ms;
   --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  /* Layering — a real scale, so no component has to invent a z-index */
+  --z-sticky: 10;
+  --z-nav-scrim: 30;
+  --z-nav: 40;
+  --z-floating: 50;
+  --z-palette: 80;
+  --z-toast: 100;
 
   /* Density baseline */
   --space-page-padding: 24px;
   --space-content-max: 1560px;
-  --sidebar-width: 260px;
+  --sidebar-width: 264px;
+
+  /* Canvas grain — breaks the digital flatness of a large empty background */
+  --texture-opacity: 0.5;
 }
 
 @theme inline {
@@ -77,56 +128,141 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Dark values, shared by the system preference and the explicit toggle. Spelled
+   out twice rather than once: a media query and an attribute selector cannot be
+   folded into a single rule, and neither may be the only definition of a token. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --color-background: #05070d;
-    --color-surface: #0f172a;
-    --color-surface-raised: #141d33;
-    --color-foreground: #f1f5f9;
-    --color-muted-foreground: #94a3b8;
-    --color-border: #1e293b;
-    --color-border-strong: #334155;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
 
-    --color-primary: #3b82f6;
-    --color-primary-hover: #60a5fa;
-    --color-primary-active: #2563eb;
-    --color-primary-soft: #132340;
-    --color-on-primary: #0b1220;
-    --gradient-primary: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    --color-background: #09090b;
+    --color-surface: #131316;
+    --color-surface-raised: #1a1a1f;
+    --color-surface-sunken: #0d0d0f;
+    --color-foreground: #f4f4f5;
+    --color-muted-foreground: #8f8f99;
+    --color-subtle-foreground: #6c6c75;
+    --color-border: #26262b;
+    --color-border-strong: #3a3a41;
 
-    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
-    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
-    --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.45), 0 2px 4px -2px rgb(0 0 0 / 0.3);
-    --shadow-lg: 0 12px 24px -6px rgb(0 0 0 / 0.55), 0 4px 8px -4px rgb(0 0 0 / 0.35);
-    --shadow-xl: 0 24px 48px -12px rgb(0 0 0 / 0.65);
+    --color-primary: #f4f4f5;
+    --color-primary-hover: #ffffff;
+    --color-primary-active: #d4d4d8;
+    --color-primary-soft: #26262b;
+    --color-primary-softer: #1c1c20;
+    --color-on-primary: #131316;
+    --gradient-primary: linear-gradient(180deg, #fafafa 0%, #e4e4e7 100%);
+
+    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.45), 0 1px 6px -2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 2px 4px -2px rgb(0 0 0 / 0.5), 0 8px 20px -6px rgb(0 0 0 / 0.55);
+    --shadow-lg: 0 4px 8px -4px rgb(0 0 0 / 0.55), 0 16px 36px -10px rgb(0 0 0 / 0.65);
+    --shadow-xl: 0 8px 16px -8px rgb(0 0 0 / 0.6), 0 32px 64px -16px rgb(0 0 0 / 0.75);
+    --highlight-top: inset 0 1px 0 0 rgb(255 255 255 / 0.05);
 
     --color-success: #22c55e;
-    --color-success-bg: #052e16;
+    --color-success-bg: #0b2416;
     --color-success-border: #14532d;
-    --color-success-fg: #86efac;
+    --color-success-fg: #6ee7a3;
 
     --color-warning: #f59e0b;
-    --color-warning-bg: #451a03;
-    --color-warning-border: #78350f;
-    --color-warning-fg: #fcd34d;
+    --color-warning-bg: #2a1a05;
+    --color-warning-border: #6b3d09;
+    --color-warning-fg: #fbbf24;
 
     --color-danger: #f87171;
     --color-danger-hover: #fca5a5;
-    --color-danger-bg: #450a0a;
+    --color-danger-bg: #2b1113;
     --color-danger-border: #7f1d1d;
     --color-danger-fg: #fca5a5;
 
     --color-info: #60a5fa;
-    --color-info-bg: #0c1e3e;
+    --color-info-bg: #0d1a30;
     --color-info-border: #1e3a8a;
     --color-info-fg: #93c5fd;
 
-    --color-neutral-bg: #1e293b;
-    --color-neutral-border: #334155;
-    --color-neutral-fg: #94a3b8;
+    --color-neutral-bg: #1c1c20;
+    --color-neutral-border: #2c2c32;
+    --color-neutral-fg: #a1a1aa;
 
-    --color-focus-ring: #60a5fa;
+    --color-focus-ring: #e4e4e7;
+
+    --chart-1: #3987e5;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-4: #c98500;
+    --chart-5: #d55181;
+    --chart-6: #008300;
+    --chart-grid: #232328;
+    --chart-track: #1c1c20;
+    --texture-opacity: 0.35;
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-background: #09090b;
+  --color-surface: #131316;
+  --color-surface-raised: #1a1a1f;
+  --color-surface-sunken: #0d0d0f;
+  --color-foreground: #f4f4f5;
+  --color-muted-foreground: #8f8f99;
+  --color-subtle-foreground: #6c6c75;
+  --color-border: #26262b;
+  --color-border-strong: #3a3a41;
+
+  --color-primary: #f4f4f5;
+  --color-primary-hover: #ffffff;
+  --color-primary-active: #d4d4d8;
+  --color-primary-soft: #26262b;
+  --color-primary-softer: #1c1c20;
+  --color-on-primary: #131316;
+  --gradient-primary: linear-gradient(180deg, #fafafa 0%, #e4e4e7 100%);
+
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.45), 0 1px 6px -2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 2px 4px -2px rgb(0 0 0 / 0.5), 0 8px 20px -6px rgb(0 0 0 / 0.55);
+  --shadow-lg: 0 4px 8px -4px rgb(0 0 0 / 0.55), 0 16px 36px -10px rgb(0 0 0 / 0.65);
+  --shadow-xl: 0 8px 16px -8px rgb(0 0 0 / 0.6), 0 32px 64px -16px rgb(0 0 0 / 0.75);
+  --highlight-top: inset 0 1px 0 0 rgb(255 255 255 / 0.05);
+
+  --color-success: #22c55e;
+  --color-success-bg: #0b2416;
+  --color-success-border: #14532d;
+  --color-success-fg: #6ee7a3;
+
+  --color-warning: #f59e0b;
+  --color-warning-bg: #2a1a05;
+  --color-warning-border: #6b3d09;
+  --color-warning-fg: #fbbf24;
+
+  --color-danger: #f87171;
+  --color-danger-hover: #fca5a5;
+  --color-danger-bg: #2b1113;
+  --color-danger-border: #7f1d1d;
+  --color-danger-fg: #fca5a5;
+
+  --color-info: #60a5fa;
+  --color-info-bg: #0d1a30;
+  --color-info-border: #1e3a8a;
+  --color-info-fg: #93c5fd;
+
+  --color-neutral-bg: #1c1c20;
+  --color-neutral-border: #2c2c32;
+  --color-neutral-fg: #a1a1aa;
+
+  --color-focus-ring: #e4e4e7;
+
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #008300;
+  --chart-grid: #232328;
+  --chart-track: #1c1c20;
+  --texture-opacity: 0.35;
 }
 
 * {
@@ -137,12 +273,38 @@ dialog:not([open]) {
   display: none;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Fixed grain layer. z-index -1 keeps it above the propagated canvas background
+   and below every in-flow element, so it textures the empty canvas without ever
+   sitting over content or intercepting a click. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: var(--texture-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+}
+
+/* Never orphan a word in a heading or a paragraph of prose. */
+h1, h2, h3 {
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
 }
 
 ::selection {
@@ -153,7 +315,28 @@ body {
 :focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: 3px;
+}
+
+/* Keyboard users get a way past the 40-plus-link sidebar on every page. */
+.skip-link {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: var(--z-toast);
+  transform: translateY(-250%);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
 }
 
 /* Slim, low-profile scrollbars that stay out of the way of dense dashboard content */
@@ -198,11 +381,22 @@ body {
 @keyframes fade-in-rise {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -218,12 +412,54 @@ body {
 }
 
 .animate-fade-in-rise {
-  animation: fade-in-rise var(--duration-base) var(--ease-out) both;
+  animation: fade-in-rise var(--duration-slow) var(--ease-out) both;
+}
+
+.animate-scale-in {
+  animation: scale-in var(--duration-base) var(--ease-spring) both;
+}
+
+/* Direct children cascade in rather than all landing at once. Capped at 8 —
+   past that the last delay is longer than anyone is willing to wait. */
+.stagger-children > * {
+  animation: fade-in-rise var(--duration-slow) var(--ease-out) both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 30ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 60ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 90ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 150ms; }
+.stagger-children > *:nth-child(7) { animation-delay: 180ms; }
+.stagger-children > *:nth-child(n + 8) { animation-delay: 210ms; }
+
+/* Inline links. The console has no accent hue, so a link is distinguished by a
+   quiet rule under it that firms up on hover — not by being the one blue word in
+   a paragraph. */
+.link {
+  color: var(--color-foreground);
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-border-strong);
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--duration-fast) var(--ease-out);
+}
+
+.link:hover {
+  text-decoration-color: var(--color-foreground);
+}
+
+/* Every figure in this console sits in a column next to other figures. */
+.tabular {
+  font-variant-numeric: tabular-nums;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;

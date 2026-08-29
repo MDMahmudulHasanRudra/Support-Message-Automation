@@ -33,8 +33,11 @@ export function Badge({
   children: ReactNode;
 }) {
   return (
+    // A squared-off chip rather than a full pill: these sit in dense table cells
+    // next to monospace ids, and the flatter shape reads as a state label instead
+    // of a marketing tag.
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${BADGE_STYLES[color]}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-[var(--radius-sm)] px-2 py-[3px] text-[11px] font-medium leading-4 tracking-[0.01em] ${BADGE_STYLES[color]}`}
     >
       {dot ? (
         pulse ? (

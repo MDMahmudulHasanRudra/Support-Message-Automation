@@ -102,7 +102,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-full max-w-sm flex-col gap-2">
+      <div className="pointer-events-none fixed bottom-4 right-4 z-[var(--z-toast)] flex w-full max-w-sm flex-col gap-2">
         {toasts.map((toast) => {
           const Icon = TONE_ICON[toast.tone];
           return (
@@ -110,7 +110,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               key={toast.id}
               role="status"
               aria-live="polite"
-              className={`flex items-start gap-2.5 rounded-[var(--radius-md)] border px-4 py-3.5 text-sm shadow-[var(--shadow-lg)] backdrop-blur-sm transition duration-[var(--duration-base)] ease-[var(--ease-out)] ${TONE_STYLES[toast.tone]} ${PHASE_STYLES[toast.phase]}`}
+              className={`flex items-start gap-2.5 rounded-[var(--radius-lg)] border px-4 py-3.5 text-[13px] shadow-[var(--shadow-lg)] backdrop-blur-sm transition duration-[var(--duration-base)] ease-[var(--ease-out)] ${TONE_STYLES[toast.tone]} ${PHASE_STYLES[toast.phase]}`}
             >
               <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
               <div className="flex-1">

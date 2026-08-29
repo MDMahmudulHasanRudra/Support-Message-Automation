@@ -99,29 +99,29 @@ export function Dialog({
       // UA stylesheet's `margin: auto` — Tailwind's preflight resets margin to 0 on every
       // element, which silently defeats that default and left dialogs pinned to the
       // viewport's top-left corner instead of centered.
-      className={`fixed left-1/2 top-1/2 m-0 flex max-h-[85vh] w-full ${DIALOG_SIZE[size]} -translate-x-1/2 -translate-y-1/2 flex-col rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-0 text-[color:var(--color-foreground)] shadow-[var(--shadow-xl)] transition duration-[var(--duration-base)] ease-[var(--ease-out)] backdrop:backdrop-blur-[2px] backdrop:transition-colors backdrop:duration-[var(--duration-base)] backdrop:ease-[var(--ease-out)] ${
-        visible ? "opacity-100 scale-100 backdrop:bg-black/55" : "opacity-0 scale-95 backdrop:bg-black/0"
+      className={`fixed left-1/2 top-1/2 m-0 flex max-h-[85vh] w-full ${DIALOG_SIZE[size]} -translate-x-1/2 -translate-y-1/2 flex-col rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-0 text-[color:var(--color-foreground)] shadow-[var(--shadow-xl)] transition duration-[var(--duration-base)] ease-[var(--ease-out)] backdrop:backdrop-blur-[3px] backdrop:transition-colors backdrop:duration-[var(--duration-base)] backdrop:ease-[var(--ease-out)] ${
+        visible ? "opacity-100 scale-100 backdrop:bg-black/50" : "opacity-0 scale-[0.97] backdrop:bg-black/0"
       }`}
     >
       <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-6 py-4.5">
         <div>
-          <h2 className="text-base font-semibold">{title}</h2>
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em]">{title}</h2>
           {description ? (
-            <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">{description}</p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">{description}</p>
           ) : null}
         </div>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close dialog"
-          className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
+          className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
         >
-          <X className="size-5" aria-hidden />
+          <X className="size-4.5" aria-hidden />
         </button>
       </div>
       {children ? <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div> : null}
       {footer ? (
-        <div className="flex justify-end gap-2 border-t border-[var(--color-border)] px-6 py-4">
+        <div className="flex justify-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-6 py-4">
           {footer}
         </div>
       ) : null}

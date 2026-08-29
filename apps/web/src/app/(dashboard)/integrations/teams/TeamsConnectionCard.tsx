@@ -111,7 +111,7 @@ export function TeamsConnectionCard({ info }: { info: TeamsConnectionInfo }) {
               <p className="text-[11px] text-[color:var(--color-muted-foreground)]">Messages Synced</p>
             </div>
           </div>
-          <Link href="/integrations/teams/manage" className="text-xs font-medium text-[color:var(--color-primary)] hover:underline">
+          <Link href="/integrations/teams/manage" className="link text-xs font-medium">
             Manage Teams &amp; Channels →
           </Link>
         </div>

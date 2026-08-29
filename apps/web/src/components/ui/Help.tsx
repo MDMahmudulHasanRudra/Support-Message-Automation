@@ -9,11 +9,11 @@ import { Dialog } from "./Dialog";
 export function HelpSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="mb-6 last:mb-0">
-      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-[color:var(--color-foreground)]">
-        <span className="h-4 w-1 rounded-full bg-[var(--color-primary)]" aria-hidden />
+      <h3 className="mb-2 flex items-center gap-2 text-[13px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
+        <span className="h-3.5 w-[3px] rounded-full bg-[var(--color-primary)]" aria-hidden />
         {title}
       </h3>
-      <div className="space-y-2 pl-3 text-sm leading-relaxed text-[color:var(--color-muted-foreground)]">
+      <div className="max-w-[68ch] space-y-2 pl-[11px] text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
         {children}
       </div>
     </div>

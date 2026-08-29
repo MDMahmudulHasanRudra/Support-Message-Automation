@@ -33,7 +33,7 @@ export function PatternCandidatesTable({ candidates }: { candidates: PatternCand
             <Td>
               <Link
                 href={`/conversation-learning/pattern-candidates/${candidate.id}`}
-                className="underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:text-[color:var(--color-primary)]"
+                className="underline decoration-dotted decoration-[var(--color-border-strong)] underline-offset-2 hover:decoration-[var(--color-foreground)]"
               >
                 {candidate.keywords.join(", ") || "(no distinctive keywords)"}
               </Link>
