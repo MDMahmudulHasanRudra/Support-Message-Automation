@@ -110,13 +110,23 @@ function resolveMessageBody(message: WaMessage): string {
   }
 }
 
+/** "8801XXXXXXXXX@c.us" -> "8801XXXXXXXXX". Leaves an already-bare number untouched. */
+function stripJidDomain(jid: string | null | undefined): string {
+  return String(jid ?? "").split("@")[0] ?? "";
+}
+
 function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomingMessage {
   return {
     accountId,
     whatsappMessageId: message.id,
     chatId: message.chatId,
     whatsappGroupId: message.isGroupMsg ? message.chatId : null,
-    senderPhone: message.isGroupMsg ? message.author || message.from : message.from,
+    // OpenWA hands these over as JIDs ("8801XXXXXXXXX@c.us"), not phone numbers. Everything
+    // downstream compares this against InternalTeamMember.phoneNumber, which people type as
+    // "+8801XXXXXXXXX" — so storing the JID verbatim meant no team member ever matched, and
+    // their own messages were processed as if a customer had sent them. The mention list two
+    // lines below has always split the domain off; this one was simply missed.
+    senderPhone: stripJidDomain(message.isGroupMsg ? message.author || message.from : message.from),
     senderName: message.sender?.pushname || message.sender?.formattedName || null,
     direction: message.fromMe ? "OUTGOING" : "INCOMING",
     body: resolveMessageBody(message),

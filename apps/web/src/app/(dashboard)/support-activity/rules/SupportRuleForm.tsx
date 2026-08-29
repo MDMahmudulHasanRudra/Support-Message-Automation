@@ -58,13 +58,16 @@ export function SupportRuleForm({
                 ? "Fires when a support member's message is a WhatsApp reply to a real customer message — no keyword needed."
                 : triggerType === "MENTION"
                   ? "Fires when a support member @-mentions a customer in their message — no keyword needed."
-                  : "Fires when a support member's message matches one of the selected keywords."
+                  : triggerType === "ANY_MESSAGE"
+                    ? "Fires on any message a support member sends in an in-scope group. Evaluated last, so a keyword rule that also matches still wins and can still close a session."
+                    : "Fires when a support member's message matches one of the selected keywords."
             }
           >
             <Select name="triggerType" value={triggerType} onChange={(e) => setTriggerType(e.target.value)}>
               <option value="KEYWORD_MATCH">Keyword Match</option>
               <option value="REPLY_TO_CUSTOMER">Reply to Customer</option>
               <option value="MENTION">Mention</option>
+              <option value="ANY_MESSAGE">Any Message</option>
             </Select>
           </Field>
         </div>

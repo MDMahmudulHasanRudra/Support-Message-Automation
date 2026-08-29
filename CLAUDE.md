@@ -219,6 +219,14 @@ ACTIVE; `safeRegexTest()` is a runtime net using `vm.runInNewContext` with a 50m
 
 ### Support Activity Tracking (`apps/worker/src/supportActivity/`, `apps/web/src/app/(dashboard)/support-activity/`)
 
+**Team-member recognition is digits-only on both sides** (`resolveActiveTeamMember` in
+`pipeline/teamFilter.ts`, via `normalizePhoneNumber`). It was raw string equality, which could
+never match: OpenWA delivers a sender as a JID (`8801XXXXXXXXX@c.us`) while people enter
+colleagues as `+8801XXXXXXXXX`. Every team member was therefore processed as a customer — no
+support activity recorded, human takeover never pausing the AI, and the loop-prevention filter
+that stops the system answering its own staff never engaging. `toRawIncomingMessage` now also
+strips the JID domain, so `Message.senderPhone` holds a phone number rather than a JID.
+
 Detects a configured `InternalTeamMember`'s message inside a WhatsApp group satisfying a
 `SupportRule`'s trigger — `KEYWORD_MATCH`, `REPLY_TO_CUSTOMER` (quotes a non-team-member message),
 or `MENTION` (`@`-mentions a non-team-member) — and records one `SupportActivity` row per message.

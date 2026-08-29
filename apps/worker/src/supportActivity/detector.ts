@@ -1,5 +1,7 @@
 import { prisma } from "@support-automation/db";
 import { matchSupportKeyword } from "@support-automation/engine";
+import { normalizePhoneNumber } from "@support-automation/shared";
+import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
 import { getSupportActivitySettings } from "./settings.js";
 
 export interface SupportActivityDetectionInput {
@@ -53,10 +55,9 @@ export async function detectSupportActivity(
   const settings = await getSupportActivitySettings();
   if (!settings.enabled) return null;
 
-  const teamMember = await prisma.internalTeamMember.findUnique({
-    where: { phoneNumber: input.senderPhone },
-    select: { id: true },
-  });
+  // Same digits-only match the pipeline's own team-member check uses. This was an exact string
+  // lookup on phoneNumber, which never matched a real WhatsApp sender — see teamFilter.ts.
+  const teamMember = await resolveActiveTeamMember(input.senderPhone);
   if (!teamMember) return null; // defensive; isActiveTeamMember() already implies this row exists
 
   const candidateRules = await prisma.supportRule.findMany({
@@ -104,12 +105,17 @@ export async function detectSupportActivity(
       mentionsACustomer = false;
       return mentionsACustomer;
     }
-    const mentionedTeamMembers = await prisma.internalTeamMember.findMany({
-      where: { phoneNumber: { in: mentionedPhones } },
-      select: { phoneNumber: true },
+    // Mentions arrive as bare JIDs already split by the provider, but roster numbers are still
+    // human-entered — so this comparison needs normalizing on both sides too, or every mention
+    // would look like a customer mention.
+    const allMembers = await prisma.internalTeamMember.findMany({ select: { phoneNumber: true } });
+    const teamDigits = new Set(
+      allMembers.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((d): d is string => d !== null),
+    );
+    mentionsACustomer = mentionedPhones.some((phone) => {
+      const digits = normalizePhoneNumber(phone);
+      return digits !== null && !teamDigits.has(digits);
     });
-    const teamPhones = new Set(mentionedTeamMembers.map((m) => m.phoneNumber));
-    mentionsACustomer = mentionedPhones.some((phone) => !teamPhones.has(phone));
     return mentionsACustomer;
   }
 

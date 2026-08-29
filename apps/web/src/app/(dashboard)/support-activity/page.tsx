@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { formatDateTime } from "@/lib/date";
 import { formatDurationShort } from "@/lib/duration";
+import { SetupBanner } from "./SetupBanner";
 import { getSupportActivityPeriodRange } from "@/lib/supportActivityPeriod";
 import {
   getActivityTrend,
@@ -60,6 +61,7 @@ export default async function SupportActivityPage() {
     avgResolutionSeconds,
     staleSessionCount,
     actorBreakdown,
+    activeRuleCount,
   ] = await Promise.all([
     getUniqueGroupCount(period),
     getEveryActivityCount(period),
@@ -70,6 +72,7 @@ export default async function SupportActivityPage() {
     getAverageResolutionTime(period),
     getStaleSessionCount(),
     getActorBreakdown(period),
+    prisma.supportRule.count({ where: { isActive: true } }),
   ]);
 
   const repeatedThisPeriod = Math.max(0, periodActivities - periodSupportedGroups);
@@ -106,6 +109,12 @@ export default async function SupportActivityPage() {
             </HelpSection>
           </HelpButton>
         }
+      />
+
+      <SetupBanner
+        trackingEnabled={settings.enabled}
+        activeRuleCount={activeRuleCount}
+        activeMemberCount={activeSupportMembers}
       />
 
       {!settings.enabled ? (
