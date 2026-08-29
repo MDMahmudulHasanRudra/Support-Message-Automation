@@ -1,6 +1,6 @@
 "use client";
 
-import { UserPlus } from "lucide-react";
+import { UserPlus, Users } from "lucide-react";
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -16,6 +16,8 @@ import {
 import {
   addTeamMembersFromGroup,
   getGroupParticipantCandidates,
+  readGroupParticipants,
+  requestGroupParticipants,
   type AddFromGroupState,
   type GroupParticipantCandidate,
 } from "@/server/actions/teamMembers";
@@ -43,6 +45,8 @@ export function AddFromGroupDialog({ groups }: { groups: GroupOption[] }) {
   const [candidates, setCandidates] = useState<GroupParticipantCandidate[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, startLoading] = useTransition();
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [state, formAction, pending] = useActionState(addTeamMembersFromGroup, INITIAL);
 
   useEffect(() => {
@@ -70,10 +74,45 @@ export function AddFromGroupDialog({ groups }: { groups: GroupOption[] }) {
     setGroupId(nextGroupId);
     setSelected(new Set());
     setCandidates(null);
+    setFetchError(null);
     if (!nextGroupId) return;
     startLoading(async () => {
       setCandidates(await getGroupParticipantCandidates(nextGroupId));
     });
+  }
+
+  /**
+   * Asks WhatsApp itself who is in the group, for the case message history cannot answer: a
+   * quiet group, or one being set up before any traffic exists. The worker does the fetching,
+   * so this polls for the answer rather than blocking on it.
+   */
+  function fetchFromWhatsApp() {
+    if (!groupId) return;
+    setFetching(true);
+    setFetchError(null);
+    void (async () => {
+      try {
+        await requestGroupParticipants(groupId);
+        // Roughly 30s of polling. Reading a roster is one WhatsApp round trip, so anything
+        // slower than this means the session is unhealthy rather than merely busy.
+        for (let attempt = 0; attempt < 20; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          const state = await readGroupParticipants(groupId);
+          if (state.status === "READY") {
+            setCandidates(state.participants);
+            setSelected(new Set());
+            return;
+          }
+          if (state.status === "FAILED") {
+            setFetchError(state.error ?? "Could not read this group's members.");
+            return;
+          }
+        }
+        setFetchError("The worker did not answer in time. Check that the WhatsApp account is connected.");
+      } finally {
+        setFetching(false);
+      }
+    })();
   }
 
   function toggle(value: string) {
@@ -111,17 +150,55 @@ export function AddFromGroupDialog({ groups }: { groups: GroupOption[] }) {
             </Select>
           </Field>
 
-          {loading ? (
-            <p className="text-[13px] text-[color:var(--color-muted-foreground)]">Loading people…</p>
+          {groupId ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="secondary" onClick={fetchFromWhatsApp} loading={fetching}>
+                <Users className="size-3.5" aria-hidden />
+                Load members from WhatsApp
+              </Button>
+              <span className="text-[11px] text-[color:var(--color-muted-foreground)]">
+                Reads the group&apos;s actual member list, including people who have never messaged.
+              </span>
+            </div>
           ) : null}
 
-          {candidates !== null && !loading ? (
+          {fetchError ? <Alert tone="danger">{fetchError}</Alert> : null}
+
+          {loading || fetching ? (
+            <p className="text-[13px] text-[color:var(--color-muted-foreground)]">
+              {fetching ? "Asking WhatsApp for the member list…" : "Loading people…"}
+            </p>
+          ) : null}
+
+          {candidates !== null && !loading && !fetching ? (
             candidates.length === 0 ? (
               <Alert tone="info">
-                Nobody new to add here — everyone who has messaged in this group is already on the
-                roster, or the group has no stored messages yet.
+                Nobody new to add from message history — either everyone who has spoken here is
+                already on the roster, or nobody has messaged since this app started watching. Use{" "}
+                <strong>Load members from WhatsApp</strong> to read the group&apos;s actual member
+                list instead.
               </Alert>
             ) : (
+              <>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-[11px] text-[color:var(--color-muted-foreground)]">
+                    {candidates.length} {candidates.length === 1 ? "person" : "people"} not yet on the roster
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setSelected((current) =>
+                        current.size === candidates.length
+                          ? new Set()
+                          : new Set(candidates.map((c) => `${c.phoneNumber}|${c.suggestedName ?? ""}`)),
+                      )
+                    }
+                  >
+                    {selected.size === candidates.length ? "Clear all" : "Select all"}
+                  </Button>
+                </div>
               <div className="max-h-72 overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)]">
                 {candidates.map((candidate) => {
                   const value = `${candidate.phoneNumber}|${candidate.suggestedName ?? ""}`;
@@ -144,13 +221,16 @@ export function AddFromGroupDialog({ groups }: { groups: GroupOption[] }) {
                           {candidate.phoneNumber}
                         </span>
                       </span>
-                      <span className="tabular shrink-0 text-[11px] text-[color:var(--color-muted-foreground)]">
-                        {candidate.messageCount} msg
-                      </span>
+                      {candidate.messageCount > 0 ? (
+                        <span className="tabular shrink-0 text-[11px] text-[color:var(--color-muted-foreground)]">
+                          {candidate.messageCount} msg
+                        </span>
+                      ) : null}
                     </label>
                   );
                 })}
               </div>
+              </>
             )
           ) : null}
 

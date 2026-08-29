@@ -17,6 +17,7 @@ import type {
   AccountInfo,
   ConnectionStatus,
   GroupInfo,
+  GroupParticipant,
   SendResult,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
@@ -424,6 +425,26 @@ export class OpenWAProvider implements WhatsAppProvider {
   }
 
   /** Single-group lookup only — see WhatsAppProvider.ts's doc comment for why this stays out of getGroups(). */
+  async getGroupParticipants(chatId: string): Promise<GroupParticipant[]> {
+    if (!this.client) return [];
+    try {
+      const members = await this.client.getGroupMembers(chatId as GroupChatId);
+      if (!Array.isArray(members)) return [];
+      return members
+        .map((member) => ({
+          phoneNumber: stripJidDomain(String(member.id)),
+          // formattedName is often just the number back again; a real pushname is preferred
+          // when the contact exposes one.
+          name: member.pushname || member.formattedName || null,
+          isSelf: Boolean(member.isMe),
+        }))
+        .filter((participant) => participant.phoneNumber.length > 0);
+    } catch (err) {
+      console.error(`[provider] could not read participants for ${chatId}`, err);
+      return [];
+    }
+  }
+
   async getGroupParticipantCount(chatId: string): Promise<number | null> {
     if (!this.client) return null;
     try {

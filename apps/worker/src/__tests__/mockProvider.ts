@@ -1,4 +1,4 @@
-import type { ConnectionStatus, GroupInfo, SendResult, WhatsAppProvider } from "../provider/WhatsAppProvider.js";
+import type { ConnectionStatus, GroupInfo, GroupParticipant, SendResult, WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 
 /**
  * A mocked WhatsAppProvider for integration tests — the outbound queue
@@ -40,6 +40,13 @@ export class MockProvider implements WhatsAppProvider {
 
   async verifyGroupMembership(chatId: string): Promise<boolean> {
     return this.membershipByChatId.get(chatId) ?? this.defaultMembership;
+  }
+
+  /** Per-chat roster, set by a test that needs one; empty otherwise. */
+  public participantsByChatId = new Map<string, GroupParticipant[]>();
+
+  async getGroupParticipants(chatId: string): Promise<GroupParticipant[]> {
+    return this.participantsByChatId.get(chatId) ?? [];
   }
 
   async getGroupParticipantCount(chatId: string): Promise<number | null> {

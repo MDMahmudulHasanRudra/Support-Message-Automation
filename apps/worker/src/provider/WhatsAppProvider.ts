@@ -8,6 +8,15 @@ export type ConnectionStatus =
   | "SESSION_ERROR"
   | "ERROR";
 
+export interface GroupParticipant {
+  /** Digits only, already stripped of the WhatsApp JID domain. */
+  phoneNumber: string;
+  /** WhatsApp display name, when the contact exposes one. */
+  name: string | null;
+  /** True for the account this worker is signed in as — never a colleague to add to a roster. */
+  isSelf: boolean;
+}
+
 export interface GroupInfo {
   whatsappGroupId: string;
   name: string;
@@ -54,6 +63,17 @@ export interface WhatsAppProvider {
    * can't be determined.
    */
   getGroupParticipantCount(chatId: string): Promise<number | null>;
+  /**
+   * On-demand roster for a single group: who is actually in it, according to WhatsApp.
+   *
+   * Distinct from reading `Message.senderPhone` history, which only ever knows the people who
+   * have spoken since this app started watching — no use at all for a group that is quiet, or
+   * one being set up before any traffic exists. Same on-demand, never-in-bulk-sync reasoning as
+   * getGroupParticipantCount above: full participant metadata for every group at once is far
+   * more expensive than fetching names alone. Returns an empty array (never throws) if the
+   * roster cannot be read.
+   */
+  getGroupParticipants(chatId: string): Promise<GroupParticipant[]>;
   /**
    * Adds a phone number as a participant of the given group (used by the
    * "Add to Groups" module). The digits-only `phoneNumber` is the caller's

@@ -388,6 +388,34 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         break;
       }
 
+      case "GET_GROUP_PARTICIPANTS": {
+        const payload = command.payload as { groupId?: string } | null;
+        if (!payload?.groupId) {
+          throw new Error("GET_GROUP_PARTICIPANTS requires { groupId } in the command payload.");
+        }
+        const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id: payload.groupId } });
+        const participants = await provider.getGroupParticipants(group.whatsappGroupId);
+        // The roster is returned in the command result rather than stored on the group: it is a
+        // point-in-time answer to "who is in here right now", consumed immediately by the person
+        // who asked, and persisting it would create a second copy of WhatsApp's own membership
+        // that nothing keeps in step.
+        await prisma.whatsAppGroup.update({
+          where: { id: group.id },
+          data: { participantCount: participants.length },
+        });
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: {
+            status: "DONE",
+            processedAt: new Date(),
+            // Prisma's Json input needs a plain serialisable shape, not an interface with
+            // no index signature.
+            result: { groupId: group.id, participants: participants.map((p) => ({ ...p })) },
+          },
+        });
+        break;
+      }
+
       case "SEND_LIVE_TEST": {
         const payload = command.payload as { chatId?: string; body?: string } | null;
         if (!payload?.chatId || !payload?.body) {

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { prisma, createAiFallbackDecision } from "@support-automation/db";
 import type { AiSettings, AutomationSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
@@ -25,8 +25,15 @@ let preExistingActiveRuleIds: string[] = [];
 const createdTeamMemberIds: string[] = [];
 const createdGroupIds: string[] = [];
 
+const PHONE_RUN_PREFIX = String(randomInt(100_000, 999_999));
+let phoneSequence = 0;
+
 function uniquePhone(): string {
-  return `+8809${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+  // Digits only, and unique within this file's run. This used to slice a UUID, which is
+  // hex: team-member matching normalizes a number to its digits, so "+8809a3f2b1c4" became
+  // "88093214" — sometimes under the 8-digit minimum, making the seeded member unresolvable
+  // and failing whichever test happened to draw it. Roughly one call in seven.
+  return `+8809${PHONE_RUN_PREFIX}${String(++phoneSequence).padStart(4, "0")}`;
 }
 
 function uniqueChatId(): string {

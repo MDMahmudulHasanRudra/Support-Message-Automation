@@ -206,6 +206,11 @@ enum WorkerCommandType {
   /// account-agnostic shape as AI_ANALYSIS_BATCH: there is at most one connected TeamsAccount, and
   /// it needs no WhatsApp session at all.
   TEAMS_SYNC_NOW
+  /// "Add from a group" on Internal Team Members (payload: { groupId }) — asks WhatsApp who is
+  /// actually in a group, so colleagues can be added by ticking real names instead of typing
+  /// numbers. Distinct from reading Message history, which only knows people who have already
+  /// spoken; a quiet group, or one being set up before any traffic, has nobody there.
+  GET_GROUP_PARTICIPANTS
   /// The dashboard's "Build knowledge now" button (payload: { groupId }) — reads one group's
   /// stored conversation and distils it into knowledge entries immediately, instead of waiting
   /// for that group's turn in startGroupKnowledgeProcessor's hourly rotation. Reads the Message

@@ -81,6 +81,21 @@ pnpm --filter @support-automation/worker test:isolated       # points DATABASE_U
 docker compose -f docker-compose.test.yml down -v            # tear down + drop all test data
 ```
 
+`test:isolated` also sets a throwaway `AI_CREDENTIALS_ENCRYPTION_KEY`. Without it the four suites
+that encrypt a credential fixture (`resolveAiClient`, `teamsTokenRefresh`, and the two that seed an
+AI provider) fail or self-skip, which silently hid ~80 tests — so the isolated path looked green
+while covering far less than the shared-DB path. The key is test-only and encrypts nothing but
+fixtures in a database that gets dropped.
+
+Two harness details worth knowing before you chase an intermittent red:
+- **Fixtures that will be claimed by a queue processor must set `scheduledAt` explicitly.** The DB
+  container's clock runs a few milliseconds ahead of the host's, so a row relying on the schema's
+  `@default(now())` can read as not-yet-due to the very next line's host-clock `new Date()`.
+  Production is unaffected — every production write sets `scheduledAt` from the app's own clock.
+- **A "unique" test phone number must be digits only.** Team-member matching normalizes a number to
+  its digits, so a UUID slice like `+8809a3f2b1c4` collapsed to `88093214` — and roughly one in
+  seven fell under the 8-digit minimum, making the seeded member unresolvable.
+
 The files most sensitive to this (`sessionSegmentation.integration.test.ts`,
 `patternDetectionJob.integration.test.ts`, `unknownPatternDetection.integration.test.ts`,
 `aiAnalysisJob.integration.test.ts`) must never be run against the live/shared DB. `vitest.config.ts`
@@ -226,6 +241,17 @@ colleagues as `+8801XXXXXXXXX`. Every team member was therefore processed as a c
 support activity recorded, human takeover never pausing the AI, and the loop-prevention filter
 that stops the system answering its own staff never engaging. `toRawIncomingMessage` now also
 strips the JID domain, so `Message.senderPhone` holds a phone number rather than a JID.
+
+**The roster can be populated from WhatsApp's own membership list, not just message history.**
+`getGroupParticipantCandidates()` reads who has spoken in a group, which is nobody at all for a
+quiet group or one being set up before any traffic exists — exactly when you most want to fill the
+roster. `requestGroupParticipants()`/`readGroupParticipants()` (`server/actions/teamMembers.ts`)
+instead queue a `GET_GROUP_PARTICIPANTS` `WorkerCommand`, which the worker answers via
+`WhatsAppProvider.getGroupParticipants()` (OpenWA's `getGroupMembers`), and the dialog polls for
+the result. Both paths compare numbers **normalized to digits** before offering or inserting
+anyone: `phoneNumber @unique` only catches a byte-identical duplicate, so without that check the
+same colleague could be added twice as `+8801…` and `8801…`, splitting their activity across two
+identities and making per-member counts quietly wrong.
 
 Detects a configured `InternalTeamMember`'s message inside a WhatsApp group satisfying a
 `SupportRule`'s trigger — `KEYWORD_MATCH`, `REPLY_TO_CUSTOMER` (quotes a non-team-member message),

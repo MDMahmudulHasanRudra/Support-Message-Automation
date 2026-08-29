@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { prisma } from "@support-automation/db";
 import type { AutomationSettings, Prisma, WhatsAppAccount } from "@prisma/client";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
@@ -28,8 +28,15 @@ const createdRuleIds: string[] = [];
 const createdTeamMemberIds: string[] = [];
 let preExistingActiveRuleIds: string[] = [];
 
+const PHONE_RUN_PREFIX = String(randomInt(100_000, 999_999));
+let phoneSequence = 0;
+
 function uniquePhone(): string {
-  return `+8809${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+  // Digits only, and unique within this file's run. This used to slice a UUID, which is
+  // hex: team-member matching normalizes a number to its digits, so "+8809a3f2b1c4" became
+  // "88093214" — sometimes under the 8-digit minimum, making the seeded member unresolvable
+  // and failing whichever test happened to draw it. Roughly one call in seven.
+  return `+8809${PHONE_RUN_PREFIX}${String(++phoneSequence).padStart(4, "0")}`;
 }
 
 async function resetSettings(overrides: Partial<Prisma.AutomationSettingsUpdateInput> = {}) {
@@ -291,6 +298,13 @@ describe("Scenario 9: automation paused -> no outbound reply", () => {
       data: {
         accountId: account.id, chatId: uniquePhone(), toPhone: uniquePhone(), body: "should not send",
         actionType: "AUTO_REPLY", idempotencyKey: randomUUID(), status: "PENDING",
+        // Explicit, safely-in-the-past scheduledAt — see the same note in
+        // multiAccountRouting.integration.test.ts. The DB container's clock runs a few ms ahead of
+        // the host's, so leaning on the schema's @default(now()) lets a just-inserted row read as
+        // not-yet-due to the very next line's `new Date()` (host clock), and processOne() finds
+        // nothing to claim. Intermittent by nature: it only bites when the round trip is quicker
+        // than the skew.
+        scheduledAt: new Date(Date.now() - 60_000),
       },
     });
     await resetSettings({ automationEnabled: false });
@@ -326,6 +340,13 @@ describe("Scenario 10: rate limit reached -> safely blocked", () => {
       data: {
         accountId: account.id, chatId: uniquePhone(), toPhone: uniquePhone(), body: "should be blocked",
         actionType: "AUTO_REPLY", idempotencyKey: randomUUID(), status: "PENDING",
+        // Explicit, safely-in-the-past scheduledAt — see the same note in
+        // multiAccountRouting.integration.test.ts. The DB container's clock runs a few ms ahead of
+        // the host's, so leaning on the schema's @default(now()) lets a just-inserted row read as
+        // not-yet-due to the very next line's `new Date()` (host clock), and processOne() finds
+        // nothing to claim. Intermittent by nature: it only bites when the round trip is quicker
+        // than the skew.
+        scheduledAt: new Date(Date.now() - 60_000),
       },
     });
     await resetSettings({ globalMaxPerMinute: 0 });
@@ -345,6 +366,13 @@ describe("Queue processor happy path (sanity check for the mocked provider itsel
       data: {
         accountId: account.id, chatId: "1234@c.us", toPhone: "+8801000000099", body: "hello from the queue",
         actionType: "AUTO_REPLY", idempotencyKey: randomUUID(), status: "PENDING",
+        // Explicit, safely-in-the-past scheduledAt — see the same note in
+        // multiAccountRouting.integration.test.ts. The DB container's clock runs a few ms ahead of
+        // the host's, so leaning on the schema's @default(now()) lets a just-inserted row read as
+        // not-yet-due to the very next line's `new Date()` (host clock), and processOne() finds
+        // nothing to claim. Intermittent by nature: it only bites when the round trip is quicker
+        // than the skew.
+        scheduledAt: new Date(Date.now() - 60_000),
       },
     });
 

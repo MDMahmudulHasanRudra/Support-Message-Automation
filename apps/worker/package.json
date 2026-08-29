@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:isolated": "cross-env DATABASE_URL=postgresql://support_automation_test:support_automation_test@localhost:5433/support_automation_test?schema=public vitest run"
+    "test:isolated": "cross-env DATABASE_URL=postgresql://support_automation_test:support_automation_test@localhost:5433/support_automation_test?schema=public AI_CREDENTIALS_ENCRYPTION_KEY=dGVzdC1vbmx5LWtleS1uZXZlci11c2VkLWluLXByb2Q= vitest run"
   },
   "dependencies": {
     "@open-wa/wa-automate": "^4.76.0",
