@@ -247,9 +247,16 @@ export function AccountCard({
         {/* When an account is not linked, connecting is the only thing anyone came here to do —
             so it is the one filled button, rather than a fifth equal-weight option. */}
         {!isConnected ? (
-          <Button onClick={() => (needsScan ? setQrOpen(true) : setDialog("reconnect"))}>
+          <Button
+            onClick={() => {
+              // Already trying? Show the dialog so the operator can watch for the code, rather
+              // than asking them to confirm a second reconnect on top of the one in flight.
+              if (needsScan || account.status === "RECONNECTING") setQrOpen(true);
+              else setDialog("reconnect");
+            }}
+          >
             <QrCode className="size-3.5" aria-hidden />
-            {needsScan ? "Show QR code" : "Connect"}
+            {needsScan ? "Show QR code" : account.status === "RECONNECTING" ? "Watch for QR" : "Connect"}
           </Button>
         ) : null}
         <Button variant="secondary" onClick={() => setDialog("reconnect")}>

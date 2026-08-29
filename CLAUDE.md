@@ -160,7 +160,11 @@ or a pending `WorkerCommand`) — not on `status !== CONNECTED`, which kept the 
 every 4s forever for a permanently disconnected spare number whose status cannot change on its
 own.
 
-The page reports **worker liveness** from the newest `lastHeartbeatAt`. Every control here writes
+The page reports **worker liveness** from the newest `WhatsAppAccount.lastHeartbeatAt`, which
+the worker's 15s heartbeat now stamps on every account. It previously moved only when
+`recordConnectionState()` fired, so it meant "when this session last changed state" — a healthy
+worker with a stable account looked silent for hours, and the dashboard could not tell "the
+worker is down" from "the worker is up but this account will not connect". Every control here writes
 a `WorkerCommand` and waits; with the worker down they all still "succeed" and then do nothing,
 and the heartbeat is the only thing that distinguishes that from a slow reconnect.
 

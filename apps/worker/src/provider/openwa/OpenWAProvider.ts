@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   create,
@@ -186,6 +186,13 @@ export class OpenWAProvider implements WhatsAppProvider {
   ) {}
 
   async connect(): Promise<void> {
+    // The directory has to exist before chdir, and nothing else guarantees it does.
+    // accountProvisioning assigns every non-legacy account a path of `${SESSION_ROOT}/${id}`
+    // but only records it — the folder itself was never created, so `process.chdir()` threw
+    // ENOENT on all three connect attempts and the account could never produce a QR at all.
+    // Only the legacy Primary account escaped it, because its path is the volume mount point,
+    // which Docker creates. Recursive and idempotent, so an existing session is untouched.
+    await mkdir(this.sessionDataPath, { recursive: true });
     process.chdir(this.sessionDataPath);
     await this.clearStaleChromiumLock();
     await this.setState("STARTING");

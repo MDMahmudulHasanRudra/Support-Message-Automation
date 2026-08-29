@@ -1,4 +1,4 @@
-import { checkDatabaseConnection } from "@support-automation/db";
+import { checkDatabaseConnection, prisma } from "@support-automation/db";
 import { startHealthServer, type WorkerHealthState } from "./health/server.js";
 import { ProviderRegistry } from "./provider/ProviderRegistry.js";
 import { ensureLegacyAccountExists, ensurePrimaryAccountExists, findConnectableAccounts } from "./provider/accountProvisioning.js";
@@ -95,6 +95,20 @@ async function main() {
       state.lastHeartbeatAt = Date.now();
       const connected = await checkDatabaseConnection();
       console.log(`[worker] heartbeat db=${connected ? "connected" : "unreachable"}`);
+
+      // Stamp every account so the dashboard can tell "the worker is down" apart from "the
+      // worker is up but this account will not connect" — two situations that need completely
+      // different responses and looked identical before.
+      //
+      // This column used to be written only by recordConnectionState(), i.e. only when a
+      // session's state actually changed, which made a healthy worker with a stable account
+      // look silent for hours. Whether a given session is alive is what `status` is for; this
+      // is liveness of the process that manages them.
+      if (connected) {
+        await prisma.whatsAppAccount
+          .updateMany({ data: { lastHeartbeatAt: new Date() } })
+          .catch((err) => console.error("[worker] heartbeat stamp failed", err));
+      }
     }, HEARTBEAT_INTERVAL_MS),
   ];
 
