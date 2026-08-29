@@ -5,9 +5,16 @@
  * for a strict, regex-parseable text format rather than inventing a new response shape.
  */
 
+import type { KnowledgeSnippet } from "./knowledgeContext.js";
+
 export interface FallbackPromptInput {
   customerMessage: string;
   groupName: string | null;
+  /**
+   * Verified knowledge-base entries related to this question, if any. Always
+   * human-verified — see knowledgeContext.ts for why unverified entries never reach here.
+   */
+  knowledge?: KnowledgeSnippet[];
 }
 
 export interface FallbackPrompt {
@@ -18,17 +25,46 @@ export interface FallbackPrompt {
 }
 
 export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt {
+  const knowledge = input.knowledge ?? [];
+
   const systemPrompt = [
     "You are assisting a WhatsApp-based customer support automation system. A customer sent a",
     "message that did not match any configured automation rule. Classify the message and, only if",
     "you are confident a short reply in the customer's own language is safe and complete, draft one.",
     "You only ever classify and draft text — you cannot and must not attempt to send messages,",
     "execute commands, or take any action beyond returning the requested assessment.",
+    ...(knowledge.length > 0
+      ? [
+          "You are given reference material from this team's own verified knowledge base.",
+          "Prefer it over your general knowledge wherever the two differ — it describes how THIS",
+          "product actually behaves. If it does not cover the question, say so by answering NO to",
+          "SHOULD_REPLY rather than filling the gap with a plausible guess; a wrong answer sent",
+          "confidently is worse for this team than no answer at all.",
+        ]
+      : []),
   ].join(" ");
+
+  const referenceBlock =
+    knowledge.length > 0
+      ? [
+          "",
+          "Reference material (verified by this team):",
+          ...knowledge.map((entry, index) =>
+            [
+              `${index + 1}. ${entry.title}`,
+              entry.question ? `   Question: ${entry.question}` : null,
+              `   Answer: ${entry.answer}`,
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          ),
+        ]
+      : [];
 
   const userPrompt = [
     `Group: ${input.groupName ?? "(direct message)"}`,
     `Customer message: "${input.customerMessage}"`,
+    ...referenceBlock,
     "",
     "Respond in EXACTLY this format, four lines, nothing else:",
     "INTENT: <a short 2-4 word label>",
@@ -37,7 +73,7 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
     "RESPONSE: <the drafted reply, or NONE if SHOULD_REPLY is NO>",
   ].join("\n");
 
-  return { systemPrompt, userPrompt, maxTokens: 300, temperature: 0 };
+  return { systemPrompt, userPrompt, maxTokens: 400, temperature: 0 };
 }
 
 export interface ParsedFallbackResponse {

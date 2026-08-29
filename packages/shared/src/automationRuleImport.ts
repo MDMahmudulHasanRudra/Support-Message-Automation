@@ -24,9 +24,12 @@ type SenderScopeValue = (typeof SENDER_SCOPE_VALUES)[number];
 const PREVIOUS_SENDER_SCOPE_VALUES = ["NONE", "ANY", "TEAM_MEMBER", "CLIENT"] as const;
 type PreviousSenderScopeValue = (typeof PREVIOUS_SENDER_SCOPE_VALUES)[number];
 
-/** GROUP_BROADCAST is never produced by the rule engine and isn't offered in the manual
- * RuleForm's action checkboxes either — excluded here for the same reason, not a new rule. */
-const IMPORTABLE_ACTION_TYPES: ActionType[] = ACTION_TYPE.filter((a) => a !== "GROUP_BROADCAST");
+/** GROUP_BROADCAST and MANUAL_REPLY are never produced by the rule engine, and neither is
+ * offered in the manual RuleForm's action checkboxes — excluded here for the same reason,
+ * not a new rule. One comes from a confirmed broadcast job, the other from a person typing
+ * in the chat inbox; a spreadsheet must not be able to mint a rule that emits either. */
+const NON_RULE_ACTION_TYPES: ActionType[] = ["GROUP_BROADCAST", "MANUAL_REPLY"];
+const IMPORTABLE_ACTION_TYPES: ActionType[] = ACTION_TYPE.filter((a) => !NON_RULE_ACTION_TYPES.includes(a));
 
 export interface RuleImportRow {
   name: string;

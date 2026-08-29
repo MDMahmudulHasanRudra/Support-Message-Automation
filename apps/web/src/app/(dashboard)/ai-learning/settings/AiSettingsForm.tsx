@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect } from "react";
-import { Button, Card, Field, Input, SectionHeader, SwitchField, useToast } from "@/components/ui";
+import { Alert, Button, Card, Field, Input, SectionHeader, Select, SwitchField, Textarea, useToast } from "@/components/ui";
 import { updateAiSettings, type AiSettingsFormState } from "@/server/actions/aiSettings";
 import type { AiSettings } from "@prisma/client";
 
@@ -88,6 +88,102 @@ export function AiSettingsForm({ settings }: { settings: AiSettings }) {
           >
             <Input name="humanTakeoverCooldownMinutes" type="number" min={0} defaultValue={settings.humanTakeoverCooldownMinutes} />
           </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionHeader
+          title="Automation by AI"
+          description="Which conversations the AI may answer, and whether it turns what it learns into reusable rules. AI only ever runs after the rule engine finds no match — a rule that matched always wins."
+        />
+
+        <div className="space-y-4">
+          <Field
+            label="Answer in"
+            hint="Widening this does not make AI answer more often in a given conversation — it only changes which groups it is allowed to answer in at all."
+          >
+            <Select name="aiAutomationScope" defaultValue={settings.aiAutomationScope}>
+              <option value="PER_GROUP">Only groups I switch on individually</option>
+              <option value="ALL_MONITORED_GROUPS">Every monitored group</option>
+            </Select>
+          </Field>
+
+          {settings.aiAutomationScope === "ALL_MONITORED_GROUPS" ? (
+            <Alert tone="warning" title="AI can answer in every monitored group">
+              Any group you need a human to always handle should be marked{" "}
+              <strong>Exclude from AI</strong> on the Groups page. That exclusion overrides this
+              setting.
+            </Alert>
+          ) : null}
+
+          <SwitchField
+            name="aiRuleGenerationEnabled"
+            label="Write rules from good answers"
+            description="When AI answers confidently, draft a matching automation rule so the next customer asking the same thing is handled by the rule engine instead — instantly, and at no API cost. Drafts wait in Rule Proposals; nothing goes live until you approve it and then activate the rule."
+            defaultChecked={settings.aiRuleGenerationEnabled}
+          />
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field
+              label="Minimum confidence to draft a rule"
+              hint="Deliberately higher than the reply threshold: answering once at 90% is fine, but turning that answer into a standing rule deserves a higher bar."
+            >
+              <Input
+                name="aiRuleGenerationMinConfidence"
+                type="number"
+                min={0}
+                max={100}
+                defaultValue={settings.aiRuleGenerationMinConfidence}
+              />
+            </Field>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionHeader
+          title="When AI cannot handle it"
+          description="Every time AI declines, is unsure, or fails, one alert is sent so a person can take over. Replying in that group then pauses AI there for the takeover cooldown above."
+        />
+        <Field
+          label="Send takeover alerts to these WhatsApp groups"
+          hint="One group id per line. Leave blank to use the general notification group from Settings — existing setups keep alerting exactly where they already do."
+        >
+          <Textarea
+            name="takeoverNotifyGroupIds"
+            rows={3}
+            defaultValue={settings.takeoverNotifyGroupIds.join("\n")}
+            placeholder="1234567890-1234567890@g.us"
+            className="font-[family-name:var(--font-mono)] text-xs"
+          />
+        </Field>
+      </Card>
+
+      <Card>
+        <SectionHeader
+          title="Knowledge from conversations"
+          description="Reads the group conversations already stored here and distils them into knowledge base entries — what each group asks about, and what answers resolved it."
+        />
+        <div className="space-y-4">
+          <SwitchField
+            name="knowledgeFromChatEnabled"
+            label="Build knowledge from group chats"
+            description="One group per hour, oldest first, picking up where the last run left off. Entries arrive unverified for review — a model's reading of a chat log is evidence, not fact. Nothing is ever sent to a customer from this."
+            defaultChecked={settings.knowledgeFromChatEnabled}
+          />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field
+              label="Minimum new messages per group"
+              hint="A group with less new conversation than this is skipped — there is not enough there to draw a reliable conclusion from."
+            >
+              <Input
+                name="knowledgeMinMessagesPerGroup"
+                type="number"
+                min={1}
+                defaultValue={settings.knowledgeMinMessagesPerGroup}
+              />
+            </Field>
+          </div>
         </div>
       </Card>
 

@@ -22,7 +22,13 @@ export async function resolveAiAdminClient(): Promise<{ client: Anthropic; model
 
   const provider = modelConfig.provider;
   if (provider.status !== "ACTIVE") return null;
-  if (provider.kind !== "ANTHROPIC") return null; // only kind implemented so far
+  // Anthropic only, and deliberately so: the Assistant needs real multi-turn tool-calling,
+  // and the OpenAI-compatible tool protocol is a different wire format, not a base-URL swap.
+  // Point the ADMIN_ASSISTANT slot at an Anthropic provider even when everything else runs
+  // through OpenRouter or a local model.
+  if (provider.kind !== "ANTHROPIC") return null;
+  // Null would mean a keyless provider was assigned to this slot — not valid for Anthropic.
+  if (!provider.apiKeyCiphertext) return null;
 
   const apiKey = decryptSecret(provider.apiKeyCiphertext);
   return {

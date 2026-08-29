@@ -1,8 +1,15 @@
 import { prisma, decryptSecret } from "@support-automation/db";
+import { AI_PROVIDER_PROFILES, isOpenAiCompatibleKind } from "@support-automation/shared";
 import type { AiModelJob } from "@prisma/client";
 import { AnthropicClient } from "./AnthropicClient.js";
 import { OpenAiCompatibleClient } from "./OpenAiCompatibleClient.js";
 import type { AiClient } from "./AiClient.js";
+
+/** OpenRouter asks callers to identify themselves; it uses these for its own rankings page. */
+const OPENROUTER_HEADERS = {
+  "HTTP-Referer": "https://github.com/support-message-automation",
+  "X-Title": "Support Message Automation",
+};
 
 /**
  * Resolves the configured AiClient for a given job (e.g. "LEARNING"), or null if AI shouldn't run
@@ -20,11 +27,11 @@ import type { AiClient } from "./AiClient.js";
  * AI_UNAVAILABLE human fallback and fired an alert instead of replying, with nothing in the
  * dashboard explaining why. Do not re-add a job-specific flag to this function.
  *
- * Two AiProviderKind values have a real client implementation today: ANTHROPIC and OPENAI (the
- * latter covers any endpoint speaking the standard OpenAI-compatible chat-completions protocol —
- * OpenAI's own API, a self-hosted/local runtime, or a custom internal proxy — see
- * OpenAiCompatibleClient's doc comment). GOOGLE/CUSTOM remain reserved, unimplemented enum values;
- * a provider configured with either resolves to null here, same as any other "not ready" state.
+ * ANTHROPIC has its own SDK-backed client. OPENAI, OPENROUTER and OLLAMA all speak the standard
+ * chat-completions protocol and share OpenAiCompatibleClient, differing only in default endpoint,
+ * whether a key is sent, and how long a response may take. GOOGLE/CUSTOM remain reserved,
+ * unimplemented enum values; a provider configured with either resolves to null here, same as any
+ * other "not ready" state.
  */
 export async function resolveAiClient(job: AiModelJob): Promise<AiClient | null> {
   const settings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
@@ -36,12 +43,27 @@ export async function resolveAiClient(job: AiModelJob): Promise<AiClient | null>
   const provider = modelConfig.provider;
   if (provider.status !== "ACTIVE") return null;
 
-  const apiKey = decryptSecret(provider.apiKeyCiphertext);
+  const profile = AI_PROVIDER_PROFILES[provider.kind as keyof typeof AI_PROVIDER_PROFILES];
+  if (!profile?.implemented) return null;
+
+  // Null only for a keyless local runtime. A hosted provider saved without a key is a
+  // misconfiguration, not a reason to fire off an unauthenticated request.
+  const apiKey = provider.apiKeyCiphertext ? decryptSecret(provider.apiKeyCiphertext) : null;
+  if (profile.requiresApiKey && !apiKey) return null;
+
   if (provider.kind === "ANTHROPIC") {
-    return new AnthropicClient(provider.id, modelConfig.modelId, apiKey, provider.apiUrl);
+    return new AnthropicClient(provider.id, modelConfig.modelId, apiKey!, provider.apiUrl);
   }
-  if (provider.kind === "OPENAI") {
-    return new OpenAiCompatibleClient(provider.id, modelConfig.modelId, apiKey, provider.apiUrl);
+
+  if (isOpenAiCompatibleKind(provider.kind)) {
+    return new OpenAiCompatibleClient(provider.id, modelConfig.modelId, {
+      apiKey,
+      baseURL: provider.apiUrl || profile.defaultApiUrl,
+      extraHeaders: provider.kind === "OPENROUTER" ? OPENROUTER_HEADERS : undefined,
+      // A model running on local hardware is genuinely slower than a hosted API.
+      slowRuntime: provider.kind === "OLLAMA",
+    });
   }
+
   return null; // GOOGLE/CUSTOM — no client implementation yet
 }

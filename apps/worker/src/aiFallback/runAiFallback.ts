@@ -1,8 +1,15 @@
-import { prisma, createAiFallbackDecision, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import {
+  prisma,
+  createAiFallbackDecision,
+  createRuleProposalFromAiReply,
+  resolveWhatsAppAccount,
+  isResolutionError,
+} from "@support-automation/db";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
-import type { AutomationSettings } from "@prisma/client";
+import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
+import { findRelevantKnowledge } from "./knowledgeContext.js";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
 import { checkAutoReplySafety } from "../pipeline/safety.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
@@ -13,7 +20,14 @@ export interface RunAiFallbackParams {
   chatId: string;
   toPhone: string;
   senderName?: string | null;
-  group: { id: string; name: string; isMonitored: boolean; aiAutomationEnabled: boolean; aiSuppressedUntil: Date | null } | null;
+  group: {
+    id: string;
+    name: string;
+    isMonitored: boolean;
+    aiAutomationEnabled: boolean;
+    aiAutomationExcluded: boolean;
+    aiSuppressedUntil: Date | null;
+  } | null;
   automationSettings: AutomationSettings;
   /** Test-only seam (mirrors aiAnalysisJob.ts's clientOverride) — production call sites never pass it. */
   clientOverride?: AiClient;
@@ -39,10 +53,16 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     automationEnabled: params.automationSettings.automationEnabled,
     mode: params.automationSettings.mode,
     group: params.group
-      ? { isMonitored: params.group.isMonitored, aiAutomationEnabled: params.group.aiAutomationEnabled, aiSuppressedUntil: params.group.aiSuppressedUntil }
+      ? {
+          isMonitored: params.group.isMonitored,
+          aiAutomationEnabled: params.group.aiAutomationEnabled,
+          aiAutomationExcluded: params.group.aiAutomationExcluded,
+          aiSuppressedUntil: params.group.aiSuppressedUntil,
+        }
       : null,
     aiEngineEnabled: aiSettings.aiEngineEnabled,
     autoResponseEnabled: aiSettings.autoResponseEnabled,
+    scope: aiSettings.aiAutomationScope,
     now: new Date(),
   });
   if (!eligibility.eligible) return;
@@ -71,6 +91,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       intent: fields.intent ?? null,
       reason,
       automationSettings: params.automationSettings,
+      aiSettings,
     });
     await createAiFallbackDecision({
       messageId: params.message.id,
@@ -111,10 +132,20 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     return;
   }
 
+  // Ground the answer in what this team has actually verified, so the AI describes how their
+  // product behaves rather than how a similar one generally does. Returns an empty list when
+  // there is nothing relevant or the lookup fails — answering ungrounded is strictly better
+  // than not answering.
+  const knowledge = await findRelevantKnowledge(params.message.body, params.group?.id ?? null);
+
   let completion;
   try {
     completion = await client.complete(
-      buildFallbackPrompt({ customerMessage: params.message.body, groupName: params.group?.name ?? null }),
+      buildFallbackPrompt({
+        customerMessage: params.message.body,
+        groupName: params.group?.name ?? null,
+        knowledge,
+      }),
     );
   } catch (err) {
     await recordHumanFallback(`AI_ERROR: ${(err as Error).message}`);
@@ -187,6 +218,52 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     outboundMessageId: outboundMessageId ?? null,
     tokensUsed: completion.tokensUsed,
   });
+
+  await maybeDraftRuleFromReply({
+    aiSettings,
+    customerMessage: params.message.body,
+    replyText: parsed.responseText,
+    confidence: parsed.confidence,
+    intent: parsed.intent,
+    sourceMessageId: params.message.id,
+    groupName: params.group?.name ?? null,
+  });
+}
+
+/**
+ * Teaches the deterministic engine what the AI just worked out: the answer becomes a rule
+ * draft, so the next customer asking the same question is served by a rule — instantly, at no
+ * API cost, and identically every time — instead of another AI call.
+ *
+ * A side effect of an already-completed reply, so it gets its own try/catch: a failure to draft
+ * a rule must never turn a message the customer was successfully answered into an error. The
+ * threshold sits above the reply threshold on purpose — answering once at 90% is fine, but
+ * codifying that answer into a standing rule deserves a higher bar.
+ */
+async function maybeDraftRuleFromReply(params: {
+  aiSettings: AiSettings;
+  customerMessage: string;
+  replyText: string;
+  confidence: number;
+  intent: string | null;
+  sourceMessageId: string;
+  groupName: string | null;
+}): Promise<void> {
+  if (!params.aiSettings.aiRuleGenerationEnabled) return;
+  if (params.confidence < params.aiSettings.aiRuleGenerationMinConfidence) return;
+
+  try {
+    await createRuleProposalFromAiReply({
+      customerMessage: params.customerMessage,
+      replyText: params.replyText,
+      confidence: params.confidence,
+      intent: params.intent,
+      sourceMessageId: params.sourceMessageId,
+      groupName: params.groupName,
+    });
+  } catch (err) {
+    console.error("[aiFallback] failed to draft a rule from an AI reply", err);
+  }
 }
 
 /**
@@ -208,6 +285,7 @@ async function sendHumanFallbackAlert(params: {
   intent: string | null;
   reason: string;
   automationSettings: AutomationSettings;
+  aiSettings: AiSettings;
 }): Promise<string | null> {
   const payload: Record<string, unknown> = {
     alertKind: "AI_ASSISTANCE_REQUIRED",
@@ -220,12 +298,20 @@ async function sendHumanFallbackAlert(params: {
     reason: params.reason,
   };
 
-  if (params.automationSettings.whatsappNotificationGroupIds.length > 0) {
+  // A dedicated AI-takeover destination if one is configured, otherwise the general
+  // notification group — so an existing deployment keeps alerting exactly where it already
+  // did, and a team that wants AI hand-offs in their own channel can have that instead.
+  const takeoverDestinations =
+    params.aiSettings.takeoverNotifyGroupIds.length > 0
+      ? params.aiSettings.takeoverNotifyGroupIds
+      : params.automationSettings.whatsappNotificationGroupIds;
+
+  if (takeoverDestinations.length > 0) {
     const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP");
     if (!isResolutionError(resolution)) {
       const { id } = await enqueueNotification({
         type: "WHATSAPP",
-        destination: params.automationSettings.whatsappNotificationGroupIds[0]!,
+        destination: takeoverDestinations[0]!,
         accountId: resolution.accountId,
         relatedMessageId: params.messageId,
         payload,

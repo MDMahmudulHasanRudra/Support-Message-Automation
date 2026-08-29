@@ -65,6 +65,13 @@ enum ActionType {
   /// Manual custom send to a WhatsApp group via the Group Message Sender —
   /// never produced by the rule engine, only by a human-confirmed broadcast job.
   GROUP_BROADCAST
+  /// A human typing a reply in the WhatsApp Chat inbox. Never produced by the rule
+  /// engine or by AI — only by an authenticated dashboard user pressing send. Still
+  /// travels the one outbound queue like every other send, but the queue treats it
+  /// differently: the automation kill switch does not cancel it (the switch stops the
+  /// robot, not the operator), and hitting an account rate limit defers it rather than
+  /// discarding it, so a person's message is never silently dropped.
+  MANUAL_REPLY
 }
 
 enum OutboundMessageStatus {
@@ -199,6 +206,11 @@ enum WorkerCommandType {
   /// account-agnostic shape as AI_ANALYSIS_BATCH: there is at most one connected TeamsAccount, and
   /// it needs no WhatsApp session at all.
   TEAMS_SYNC_NOW
+  /// The dashboard's "Build knowledge now" button (payload: { groupId }) — reads one group's
+  /// stored conversation and distils it into knowledge entries immediately, instead of waiting
+  /// for that group's turn in startGroupKnowledgeProcessor's hourly rotation. Reads the Message
+  /// table only; needs no WhatsApp session, same as the two above.
+  BUILD_GROUP_KNOWLEDGE
 }
 
 enum WorkerCommandStatus {
@@ -471,19 +483,32 @@ model WhatsAppGroup {
   /// assigned but temporarily pause escalation for this one group without clearing it.
   escalationMonitoringEnabled Boolean             @default(true)
   /// Opt-in for the Hybrid AI Automation fallback layer — mirrors escalationMonitoringEnabled's
-  /// per-group-toggle shape. Default false: a group must be explicitly enabled in addition to
-  /// being isMonitored and the global AiSettings gates being on, before AI ever fires for it.
+  /// per-group-toggle shape. Default false: under AiAutomationScope.PER_GROUP a group must be
+  /// explicitly enabled in addition to being isMonitored and the global AiSettings gates being
+  /// on, before AI ever fires for it. Ignored under ALL_MONITORED_GROUPS — use
+  /// aiAutomationExcluded to hold a group back in that mode.
   aiAutomationEnabled         Boolean             @default(false)
+  /// A hard "never let AI answer here", honoured under every scope. For the groups where a
+  /// wrong answer costs more than a slow one — a key account, a billing dispute, anywhere a
+  /// human must always speak. Beats every other AI gate.
+  aiAutomationExcluded        Boolean             @default(false)
   /// Hybrid AI Automation (Slice 3) human-takeover: set to now + AiSettings.
   /// humanTakeoverCooldownMinutes whenever a team member sends a message in this group (see
   /// processIncomingMessage.ts); the AI fallback layer treats a future value here as a silent
   /// ineligibility gate (apps/worker/src/aiFallback/eligibility.ts) — "AI must not immediately
   /// interfere" once a human is actively handling the conversation. Null means not suppressed.
   aiSuppressedUntil           DateTime?
+  /// Knowledge builder: when this group's conversation was last distilled into knowledge
+  /// entries, and the timestamp of the newest message that run covered. The pair is the
+  /// incremental watermark — a later run only reads what arrived after it, so re-running
+  /// is cheap and never re-reads the same conversation twice.
+  knowledgeBuiltAt            DateTime?
+  knowledgeBuiltThroughAt     DateTime?
   createdAt                   DateTime            @default(now())
   updatedAt                   DateTime            @updatedAt
 
   messages             Message[]
+  knowledgeItems       AiKnowledgeItem[]
   broadcastMessages    OutboundMessage[]
   participantAddItems  GroupParticipantAddItem[]
   escalationCases      SupportEscalationCase[]
@@ -913,8 +938,26 @@ model SystemLog {
 enum AiProviderKind {
   ANTHROPIC
   OPENAI
+  /// OpenRouter — one key, hundreds of models behind the standard OpenAI
+  /// chat-completions protocol. Its own kind rather than OPENAI-with-a-URL so the
+  /// provider form can prefill the endpoint and the docs can name it.
+  OPENROUTER
+  /// A local Ollama (or any other keyless OpenAI-compatible runtime). The only kind
+  /// that legitimately has no API key — see AiProvider.apiKeyCiphertext.
+  OLLAMA
   GOOGLE
   CUSTOM
+}
+
+/// How widely the Hybrid AI Automation fallback is allowed to answer. Both values keep
+/// AI strictly reply-triggered and only on a genuine NO_MATCH — the scope decides which
+/// groups are eligible, never whether AI outranks a rule that already matched.
+enum AiAutomationScope {
+  /// Today's behaviour: a group must have WhatsAppGroup.aiAutomationEnabled set.
+  PER_GROUP
+  /// Every monitored group is eligible without per-group opt-in. Groups flagged
+  /// WhatsAppGroup.aiAutomationExcluded are still held back.
+  ALL_MONITORED_GROUPS
 }
 
 enum AiProviderStatus {
@@ -979,6 +1022,26 @@ model AiSettings {
   /// layer for that group (see WhatsAppGroup.aiSuppressedUntil) — "AI must not immediately
   /// interfere" once a human is actively handling a conversation.
   humanTakeoverCooldownMinutes    Int      @default(30)
+  /// Which groups the AI fallback may answer in. Default PER_GROUP preserves the exact
+  /// behaviour that shipped before this field existed.
+  aiAutomationScope               AiAutomationScope @default(PER_GROUP)
+  /// After AI answers a message, draft a reusable AutomationRule from it so the same
+  /// question is handled deterministically (and for free) next time. The draft always
+  /// lands as a PENDING_REVIEW RuleProposal — never an active rule.
+  aiRuleGenerationEnabled         Boolean  @default(false)
+  /// Minimum AI confidence before a reply is worth turning into a rule draft. Above the
+  /// reply threshold on purpose: answering once at 90% is fine, but codifying that answer
+  /// into a standing rule deserves a higher bar.
+  aiRuleGenerationMinConfidence   Int      @default(95)
+  /// WhatsApp group ids that receive "AI could not handle this, a human is needed" alerts.
+  /// Empty falls back to AutomationSettings.whatsappNotificationGroupIds, so existing
+  /// deployments keep alerting exactly where they already did.
+  takeoverNotifyGroupIds          String[] @default([])
+  /// Read whole group conversations and distil them into knowledge base entries.
+  knowledgeFromChatEnabled        Boolean  @default(false)
+  /// A group with fewer stored messages than this is skipped by the knowledge builder —
+  /// there is not enough conversation there to draw a reliable conclusion from.
+  knowledgeMinMessagesPerGroup    Int      @default(25)
   screenshotResponseEnabled       Boolean  @default(false)
   chatLearningEnabled             Boolean  @default(false)
   softwareLearningEnabled         Boolean  @default(false)
@@ -1000,7 +1063,10 @@ model AiProvider {
   name             String
   kind             AiProviderKind
   apiUrl           String?
-  apiKeyCiphertext String
+  /// Null only for a keyless local runtime (kind OLLAMA). Every hosted provider still
+  /// requires one, enforced in apps/web/src/server/actions/aiProviders.ts rather than by
+  /// the column, so the single genuinely-keyless case does not need a sentinel value.
+  apiKeyCiphertext String?
   status           AiProviderStatus @default(ACTIVE)
   priority         Int              @default(0)
   lastTestedAt     DateTime?
@@ -1045,6 +1111,11 @@ model AiKnowledgeItem {
   module          String?
   softwareVersion String?
   source          String              @default("MANUAL")
+  /// Set when this entry was distilled from a WhatsApp group conversation by the knowledge
+  /// builder — the audit trail back to where the claim came from. SetNull, not Cascade:
+  /// deleting a group must not erase what was learned from it.
+  sourceGroupId   String?
+  sourceGroup     WhatsAppGroup?      @relation(fields: [sourceGroupId], references: [id], onDelete: SetNull)
   confidence      Int?
   aiGenerated     Boolean             @default(false)
   humanVerified   Boolean             @default(true)
@@ -1059,6 +1130,7 @@ model AiKnowledgeItem {
 
   @@index([category])
   @@index([status])
+  @@index([sourceGroupId])
 }
 
 /// One immutable snapshot per edit (spec section 10 — "never simply
@@ -1523,10 +1595,29 @@ enum RuleProposalStatus {
 /// One row per human-facing proposal, at most one per PatternCandidate (see @@unique below) — a
 /// candidate that's rejected or withdrawn does not get a second proposal; if the same pattern
 /// keeps recurring, that continues to accumulate as fresh evidence on the same candidate.
+/// Where a RuleProposal came from. Both land in the same review queue and approve through
+/// the same code path; only the evidence behind them differs.
+enum RuleProposalSource {
+  /// Conversation Learning's deterministic recurring-pattern detector.
+  CONVERSATION_LEARNING
+  /// A single message the AI fallback answered well enough to be worth codifying.
+  AI_REPLY
+}
+
 model RuleProposal {
-  id                 String           @id @default(cuid())
-  patternCandidateId String           @unique
-  patternCandidate   PatternCandidate @relation(fields: [patternCandidateId], references: [id], onDelete: Cascade)
+  id                 String            @id @default(cuid())
+  /// Null for an AI_REPLY proposal, which has no recurring pattern behind it. Postgres
+  /// permits many NULLs under a unique index, so one-candidate-one-proposal still holds.
+  patternCandidateId String?           @unique
+  patternCandidate   PatternCandidate? @relation(fields: [patternCandidateId], references: [id], onDelete: Cascade)
+
+  source RuleProposalSource @default(CONVERSATION_LEARNING)
+  /// The message that prompted an AI_REPLY proposal, kept for review context.
+  sourceMessageId String?  @db.Text
+  /// Deterministic keyword signature of the message this was drafted from
+  /// (packages/engine's derivePatternSignature). Unique, so a question the AI answers
+  /// fifty times produces one draft rather than fifty identical ones.
+  sourceSignature String?  @unique
 
   // Fully-formed AutomationRule draft — same shape as the real row, so approval is a pure copy.
   name            String

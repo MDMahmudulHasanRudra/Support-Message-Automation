@@ -5,7 +5,7 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Badge, type BadgeColor, Button, Card, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
-import { KnowledgeStatusActions, RestoreVersionButton } from "./KnowledgeActions";
+import { KnowledgeStatusActions, KnowledgeVerifyAction, RestoreVersionButton } from "./KnowledgeActions";
 
 export default async function KnowledgeItemPage({ params }: { params: Promise<{ id: string }> }) {
   await requireSession();
@@ -15,6 +15,7 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
     where: { id },
     include: {
       createdBy: { select: { name: true, email: true } },
+      sourceGroup: { select: { name: true } },
       versions: { orderBy: { version: "desc" }, include: { createdBy: { select: { name: true, email: true } } } },
     },
   });
@@ -35,13 +36,45 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
       <Card className="mb-6">
         <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
           <Field label="Status" value={<Badge color={statusColor(item.status)} dot>{item.status}</Badge>} />
-          <Field label="Source" value={item.aiGenerated ? "AI Generated" : "Manual"} />
+          <Field
+            label="Reviewed"
+            value={
+              item.humanVerified ? (
+                <Badge color="green" dot>
+                  Verified
+                </Badge>
+              ) : (
+                <Badge color="yellow" dot>
+                  Needs review
+                </Badge>
+              )
+            }
+          />
+          <Field
+            label="Source"
+            value={
+              item.sourceGroup
+                ? `Learned from ${item.sourceGroup.name}`
+                : item.aiGenerated
+                  ? "AI generated"
+                  : "Manual"
+            }
+          />
           <Field label="Created by" value={item.createdBy?.name ?? item.createdBy?.email ?? "—"} />
           <Field label="Software" value={[item.software, item.softwareVersion].filter(Boolean).join(" ") || "—"} />
         </dl>
-        <div className="mt-4">
+        <div className="mt-4 flex flex-wrap items-center gap-2">
           <KnowledgeStatusActions itemId={item.id} status={item.status} />
+          <KnowledgeVerifyAction itemId={item.id} verified={item.humanVerified} />
         </div>
+
+        {!item.humanVerified && item.sourceGroup ? (
+          <p className="mt-3 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">
+            Distilled from this group&apos;s conversation by the knowledge builder. Read it against
+            what you know before marking it verified — a model&apos;s reading of a chat log is
+            evidence, not fact.
+          </p>
+        ) : null}
       </Card>
 
       <Card className="mb-6">

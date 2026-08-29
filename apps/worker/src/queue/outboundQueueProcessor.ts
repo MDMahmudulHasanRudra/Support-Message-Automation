@@ -15,6 +15,8 @@ import {
 const STUCK_PROCESSING_TIMEOUT_MS = 2 * 60_000;
 /** How long to defer a GROUP_BROADCAST row when its job's own per-minute cap is hit — not a failure, just a wait. */
 const JOB_RATE_LIMIT_DEFER_MS = 15_000;
+/** How long to defer a human's MANUAL_REPLY when an account rate limit is already exhausted. */
+const MANUAL_RATE_LIMIT_DEFER_MS = 20_000;
 
 /** Crash recovery: rows left in PROCESSING by a worker that died mid-send go back to PENDING. */
 export async function recoverStuckOutboundMessages(): Promise<number> {
@@ -129,9 +131,17 @@ export async function processOneViaRegistry(registry: import("../provider/Provid
 
 async function processClaimedMessage(message: OutboundMessage, provider: WhatsAppProvider): Promise<void> {
   const isBroadcast = message.actionType === "GROUP_BROADCAST" && Boolean(message.broadcastJobId);
+  // A person typed this in the WhatsApp Chat inbox and pressed send. It rides the same single
+  // outbound queue as everything else — there is still exactly one send path — but two of the
+  // queue's automation-shaped behaviours do not apply to it, below.
+  const isManualReply = message.actionType === "MANUAL_REPLY";
   const settings = await getAutomationSettings();
 
-  if (!settings.automationEnabled) {
+  // The kill switch pauses automation. It is not a WhatsApp-wide send freeze, and cancelling an
+  // operator's own typed message because the robot is paused would be both surprising and, in the
+  // middle of an incident, exactly backwards — pausing automation is usually *why* a human has
+  // stepped in to reply by hand.
+  if (!settings.automationEnabled && !isManualReply) {
     await prisma.outboundMessage.update({
       where: { id: message.id },
       data: { status: "CANCELLED", failureReason: "Automation was paused before this message could be sent." },
@@ -164,6 +174,20 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
       perClient.perDay >= settings.maxRepliesPerClientPerDay;
 
     if (limitExceeded) {
+      if (isManualReply) {
+        // Account rate limits exist to protect the WhatsApp number, so they still bind a manual
+        // reply — but RATE_LIMITED is terminal, and silently discarding something a person wrote
+        // is not acceptable. Defer instead and let it send once the window clears.
+        await prisma.outboundMessage.update({
+          where: { id: message.id },
+          data: {
+            status: "PENDING",
+            scheduledAt: new Date(Date.now() + MANUAL_RATE_LIMIT_DEFER_MS),
+            failureReason: "Waiting for the account rate-limit window to clear.",
+          },
+        });
+        return;
+      }
       await prisma.outboundMessage.update({
         where: { id: message.id },
         data: { status: "RATE_LIMITED", failureReason: "Rate or per-client limit reached at send time." },
@@ -206,6 +230,23 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
         data: { status: "SKIPPED", failureReason: "Membership could not be verified." },
       });
       await maybeCompleteBroadcastJob(message.broadcastJobId!);
+      return;
+    }
+  }
+
+  if (isManualReply) {
+    // Same live membership check the broadcast path does, for the same reason: the group list the
+    // inbox rendered from can be minutes stale, and sending into a group this account has been
+    // removed from is an error worth reporting rather than a silent provider failure.
+    const isMember = await provider.verifyGroupMembership(message.chatId);
+    if (!isMember) {
+      await prisma.outboundMessage.update({
+        where: { id: message.id },
+        data: {
+          status: "SKIPPED",
+          failureReason: "This account is no longer a member of the group, so the message was not sent.",
+        },
+      });
       return;
     }
   }

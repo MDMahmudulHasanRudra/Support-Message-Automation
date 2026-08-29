@@ -15,9 +15,19 @@ import type { AiSettings } from "@prisma/client";
 let originalAiSettings: AiSettings;
 const createdProviderIds: string[] = [];
 
-async function makeProvider(kind: "ANTHROPIC" | "OPENAI" | "GOOGLE" | "CUSTOM") {
+async function makeProvider(
+  kind: "ANTHROPIC" | "OPENAI" | "OPENROUTER" | "OLLAMA" | "GOOGLE" | "CUSTOM",
+  overrides: { apiKeyCiphertext?: string | null; apiUrl?: string | null } = {},
+) {
   const provider = await prisma.aiProvider.create({
-    data: { name: `Test ${kind} Provider`, kind, apiKeyCiphertext: encryptSecret("fake-test-key"), status: "ACTIVE" },
+    data: {
+      name: `Test ${kind} Provider`,
+      kind,
+      apiKeyCiphertext:
+        overrides.apiKeyCiphertext === undefined ? encryptSecret("fake-test-key") : overrides.apiKeyCiphertext,
+      apiUrl: overrides.apiUrl ?? null,
+      status: "ACTIVE",
+    },
   });
   createdProviderIds.push(provider.id);
   return provider;
@@ -63,6 +73,32 @@ describe("resolveAiClient — provider kind resolution", () => {
 
     const client = await resolveAiClient("RESPONSE");
     expect(client).toBeInstanceOf(OpenAiCompatibleClient);
+  });
+
+  it("resolves an OPENROUTER provider to OpenAiCompatibleClient", async () => {
+    const provider = await makeProvider("OPENROUTER");
+    await assignResponseModel(provider.id);
+
+    const client = await resolveAiClient("RESPONSE");
+    expect(client).toBeInstanceOf(OpenAiCompatibleClient);
+  });
+
+  it("resolves a keyless OLLAMA provider — the one kind that legitimately has no API key", async () => {
+    const provider = await makeProvider("OLLAMA", {
+      apiKeyCiphertext: null,
+      apiUrl: "http://127.0.0.1:11434/v1",
+    });
+    await assignResponseModel(provider.id);
+
+    const client = await resolveAiClient("RESPONSE");
+    expect(client).toBeInstanceOf(OpenAiCompatibleClient);
+  });
+
+  it("refuses a hosted provider saved without a key rather than sending an unauthenticated request", async () => {
+    const provider = await makeProvider("OPENROUTER", { apiKeyCiphertext: null });
+    await assignResponseModel(provider.id);
+
+    expect(await resolveAiClient("RESPONSE")).toBeNull();
   });
 
   it("resolves an unimplemented kind (GOOGLE) to null, failing closed rather than throwing", async () => {

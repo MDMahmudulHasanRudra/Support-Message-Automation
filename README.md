@@ -9,6 +9,20 @@ module, field, and behavior in the app.
 
 ## Status
 
+**Most recent additions:** a WhatsApp-Web-style **Chat inbox** (read every group's conversation and
+reply from the dashboard, through the same outbound queue automation uses); **Automation by AI**
+(a scope switch to let the AI fallback answer in every monitored group, a hard per-group exclusion,
+and optional drafting of reusable rules from confident AI answers — always as proposals a human
+approves); a **knowledge builder** that reads stored group conversations and distils them into
+review-pending knowledge entries; and **OpenRouter / self-hosted Ollama** support alongside
+Anthropic and OpenAI.
+
+> **Deploying these requires two migrations** (`20260829120000_add_manual_reply_action_type` and
+> `20260829140000_ai_automation_providers_knowledge`). Run `pnpm db:migrate:deploy` before starting
+> the new build — the chat inbox cannot send and AI settings cannot be saved until they are applied.
+> Both are additive; every new column defaults to the behaviour that existed before it.
+
+
 Well past the original foundation phase. Shipped and live: multi-account WhatsApp connections with
 per-service account routing, the rule engine (keyword/exact/contains/regex matching, priority
 resolution, a dry Rule Tester), the DB-backed outbound send queue, Group Message Sender (manual +

@@ -1,13 +1,6 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
-import {
-  ArrowRight,
-  BookOpen,
-  Cpu,
-  KeyRound,
-  Settings as SettingsIcon,
-  type LucideIcon,
-} from "lucide-react";
+import { ArrowRight, BookOpen, Cpu, Gauge, KeyRound, Settings as SettingsIcon, type LucideIcon } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile } from "@/components/ui";
@@ -89,7 +82,13 @@ export default async function AiLearningDashboardPage() {
       />
 
       <SectionHeader title="Sections" description="Jump into a specific area of the AI Learning module." />
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <HubLink
+          href="/ai-learning/activity"
+          icon={Gauge}
+          label="AI Activity"
+          description={`${aiRepliedCount} replied · ${humanFallbackCount} handed off`}
+        />
         <HubLink
           href="/ai-learning/knowledge-base"
           icon={BookOpen}

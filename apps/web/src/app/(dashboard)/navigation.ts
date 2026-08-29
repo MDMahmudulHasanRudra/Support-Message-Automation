@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Terminal as ConsoleIcon,
   Cpu,
+  Gauge,
   EyeOff,
   Fingerprint,
   FlaskConical,
@@ -16,6 +17,7 @@ import {
   LayoutDashboard,
   Link2,
   ListChecks,
+  MessageCircleMore,
   MessagesSquare,
   Power,
   Route,
@@ -62,6 +64,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Messages",
     links: [
+      { href: "/chat", label: "WhatsApp Chat", icon: MessageCircleMore },
       { href: "/messages", label: "All Messages", icon: MessagesSquare },
       { href: "/messages?decision=SUPPORT_REQUIRED", label: "Needs Attention", icon: AlertCircle },
       { href: "/messages?decision=IGNORE", label: "Ignored Messages", icon: EyeOff },
@@ -125,6 +128,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "AI Learning",
     links: [
       { href: "/ai-learning", label: "Overview", icon: Sparkles },
+      { href: "/ai-learning/activity", label: "AI Activity", icon: Gauge },
       { href: "/ai-learning/knowledge-base", label: "Knowledge Base", icon: BookOpen },
       { href: "/ai-learning/providers", label: "AI Providers", icon: KeyRound },
       { href: "/ai-learning/models", label: "AI Models", icon: Cpu },

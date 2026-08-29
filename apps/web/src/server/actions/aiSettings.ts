@@ -29,6 +29,15 @@ export async function updateAiSettings(
     const raw = Number(formData.get(key));
     return Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : fallback;
   };
+  // Only the two scopes the enum defines — anything else falls back to the conservative one
+  // rather than being written through to the database unchecked.
+  const scope = formData.get("aiAutomationScope") === "ALL_MONITORED_GROUPS" ? "ALL_MONITORED_GROUPS" : "PER_GROUP";
+  // One WhatsApp group id per line, blanks dropped — the same shape the general notification
+  // group field already uses.
+  const takeoverNotifyGroupIds = String(formData.get("takeoverNotifyGroupIds") ?? "")
+    .split(/[\r\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   await prisma.aiSettings.upsert({
     where: { id: "global" },
@@ -48,6 +57,12 @@ export async function updateAiSettings(
       autoResponseConfidenceThreshold: percent("autoResponseConfidenceThreshold", 90),
       aiReplyCooldownSeconds: nonNegativeInt("aiReplyCooldownSeconds", 300),
       humanTakeoverCooldownMinutes: nonNegativeInt("humanTakeoverCooldownMinutes", 30),
+      aiAutomationScope: scope,
+      aiRuleGenerationEnabled: flag("aiRuleGenerationEnabled"),
+      aiRuleGenerationMinConfidence: percent("aiRuleGenerationMinConfidence", 95),
+      takeoverNotifyGroupIds,
+      knowledgeFromChatEnabled: flag("knowledgeFromChatEnabled"),
+      knowledgeMinMessagesPerGroup: nonNegativeInt("knowledgeMinMessagesPerGroup", 25),
     },
     create: { id: "global" },
   });

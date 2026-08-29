@@ -46,6 +46,7 @@ export default async function RuleProposalsPage({ searchParams }: { searchParams
     id: proposal.id,
     name: proposal.name,
     confidenceScoreSnapshot: proposal.confidenceScoreSnapshot,
+    source: proposal.source,
     status: proposal.status,
     createdAtLabel: formatDateTime(proposal.createdAt),
   }));

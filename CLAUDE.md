@@ -284,6 +284,93 @@ Conversation history is held in client-side React state only (every tool is read
 client-trusted history carries no real risk); each turn still re-runs live tool queries, so answers
 are always fresh regardless of what the client claims happened earlier.
 
+### WhatsApp Chat inbox (`apps/web/src/app/(dashboard)/chat/`, `src/server/chatInbox.ts`)
+
+A WhatsApp-Web-style two-pane inbox: conversation list (layout-level, so it keeps scroll/search
+across navigations) plus thread and composer. Reads only what the app already stores — it never
+asks the worker for history, so a thread goes back to whenever monitoring began. Sending writes
+one `OutboundMessage` with `actionType: MANUAL_REPLY` and stops there (same DB-mediated hand-off
+as the Teams resolution notifier); the worker sends it. `MANUAL_REPLY` is the one action type the
+queue treats differently: **the automation kill switch does not cancel it** (the switch stops the
+robot, not the operator) and an account rate limit **defers** it rather than discarding it, since
+silently dropping something a person typed is not acceptable. It still gets the same live
+group-membership check the broadcast path does. Not-yet-confirmed sends render as dashed "queued"
+bubbles; a `SENT` row whose `providerMessageId` already exists as a stored `Message` is skipped as
+a duplicate, because WhatsApp echoes our own sends back through `onAnyMessage`. Polls via
+`AutoRefresh` (4s) — there is no websocket.
+
+### Automation by AI (`AiSettings.aiAutomationScope`, `aiRuleGenerationEnabled`)
+
+`AiAutomationScope` decides **which groups** the fallback may answer in — `PER_GROUP` (the
+original per-group opt-in) or `ALL_MONITORED_GROUPS`. It never changes **when** AI runs: the
+fallback is still only reached on a genuine `NO_MATCH`, so a rule that matched always wins.
+`WhatsAppGroup.aiAutomationExcluded` is a hard opt-out honoured under every scope and checked
+before the scope rules. `recordHumanTakeover()` now takes the group's flags and decides
+eligibility itself, because under `ALL_MONITORED_GROUPS` the per-group opt-in flag is usually
+false and the old caller-side check would have stopped pausing AI when a human replied.
+
+With `aiRuleGenerationEnabled`, a confident AI answer also drafts a rule:
+`createRuleProposalFromAiReply()` (`packages/db`) writes a `RuleProposal` with
+`source: AI_REPLY`, deduplicated on `sourceSignature` (packages/engine's
+`derivePatternSignature`), so a question asked fifty times yields one draft. `patternCandidateId`
+is nullable for exactly this reason — approve/reject guard on it. Approval still produces a
+**DRAFT** rule a human separately activates; nothing AI writes reaches a customer automatically.
+
+Human-fallback alerts route to `AiSettings.takeoverNotifyGroupIds`, falling back to
+`AutomationSettings.whatsappNotificationGroupIds` so existing deployments alert where they always did.
+
+### Knowledge-grounded AI answers (`apps/worker/src/aiFallback/knowledgeContext.ts`)
+
+Closes the loop the knowledge builder opens. Before this the knowledge base was **write-only** —
+conversations were distilled into it and reviewed, but nothing read it back, so the AI answered
+from the model's general knowledge alone. `findRelevantKnowledge()` now runs before every AI
+completion, narrowing by `derivePatternSignature` keywords in SQL and ranking by keyword overlap
+(same-group provenance breaks ties). `selectRelevantKnowledge()` is the pure ranking half, split
+out so it is unit-testable without a DB.
+
+**Only `humanVerified: true` + `ACTIVE` entries are ever retrieved, and that is load-bearing.**
+Knowledge-builder output is unverified by design; feeding an unverified model-distilled claim
+back into a customer-facing answer would launder a hallucination into a citation and re-cite it
+with growing apparent authority. Human verification is what breaks that cycle. When grounding is
+present the prompt also instructs the model to decline (`SHOULD_REPLY: NO`) rather than fill a gap
+the reference material does not cover.
+
+### AI Activity log (`(dashboard)/ai-learning/activity/`)
+
+The read view over `AiFallbackDecision` — one row per message the rule engine missed in an
+AI-eligible group, with what the AI drafted, whether it was sent, and the diagnostic reason for
+every handoff (translated into plain language beside the raw code, which is what appears in logs).
+Filters by outcome/group/time window; stat tiles are scoped to the window and group but
+deliberately **not** to the outcome filter, so filtering to handoffs cannot report "100% handed
+off". Before this existed, AI decisions could only be read one message at a time, which made the
+first week of running AI automation effectively unobservable.
+
+### Knowledge from group conversations (`apps/worker/src/knowledge/`)
+
+`startGroupKnowledgeProcessor` (hourly, one group per tick, oldest-first) reads a monitored
+group's stored messages and distils them into `AiKnowledgeItem` rows. Gated on `aiEngineEnabled`
++ `knowledgeFromChatEnabled`, both off by default. Incremental via
+`WhatsAppGroup.knowledgeBuiltAt`/`knowledgeBuiltThroughAt`. The transcript is reduced to
+`[CUSTOMER]`/`[SUPPORT]` roles before it reaches the model, so no name or number can be copied
+into an entry. Entries land `humanVerified: false` with `sourceGroupId` set — a model's reading
+of a chat log is evidence, not fact. `setKnowledgeVerified()` is the way out of that queue
+(a button on the knowledge detail page); verification is deliberately independent of
+`status`, since an entry can be ACTIVE-but-unchecked or verified-but-deliberately-inactive. On-demand via a `BUILD_GROUP_KNOWLEDGE` WorkerCommand
+(the Groups page's "Learn" button). Parsing is a record-separated text format, unit-tested in
+`apps/worker/src/__tests__/groupKnowledgePrompt.test.ts` (pure, safe to run against any DB).
+
+### AI providers
+
+`AiProviderKind` now covers ANTHROPIC, OPENAI, **OPENROUTER**, **OLLAMA** (GOOGLE/CUSTOM remain
+reserved and unimplemented). The last three all share `OpenAiCompatibleClient`; only the default
+endpoint, whether an `Authorization` header is sent, and the timeout differ.
+`AiProvider.apiKeyCiphertext` is nullable **only** for the keyless local runtime — the requirement
+is enforced in `aiProviders.ts`, not by the column. `packages/shared/src/aiProviders.ts` is the
+one catalog of kinds/endpoints/key-requirements, read by both the provider form and
+`resolveAiClient`, so what the UI suggests is what the request uses. The **AI Admin Assistant
+remains Anthropic-only** by design — it needs real tool-calling, which is a different wire format,
+not a base-URL swap.
+
 ### apps/web
 
 Server-rendered (App Router), no client-side data layer — pages fetch via `prisma.*` directly in
@@ -305,7 +392,8 @@ through `resolveWhatsAppAccount(serviceKey)` (`packages/db`) — the single cent
 every sending feature must call, never re-derive the Primary/pinned/fallback decision at the call
 site.
 
-Sidebar nav groups, top to bottom (a pinned "Overview" link sits above all of them): Messages,
+Sidebar nav groups, top to bottom (a pinned "Overview" link sits above all of them; Messages
+leads with the WhatsApp Chat inbox): Messages,
 Escalations, Support Activity, Teams Integration, WhatsApp, Automation, Bulk Messaging, AI Learning,
 Conversation Learning, System — ordered by day-to-day check frequency, not by when each feature
 shipped. See `PROJECT_REFERENCE.md` for every link in every group.

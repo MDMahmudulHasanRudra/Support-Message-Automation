@@ -17,7 +17,9 @@ import {
 import {
   bulkSetMonitoring,
   requestGroupParticipantCount,
+  requestGroupKnowledgeBuild,
   toggleGroupAiAutomation,
+  toggleGroupAiExcluded,
   toggleGroupMonitoring,
   type BulkMonitoringResult,
 } from "@/server/actions/groups";
@@ -37,6 +39,14 @@ export interface GroupRow {
   assignedTeamMemberName: string | null;
   escalationMonitoringEnabled: boolean;
   aiAutomationEnabled: boolean;
+  /** A hard "never let AI answer here" — honoured even when the global scope has opted every
+   * monitored group in. */
+  aiAutomationExcluded: boolean;
+  /** True when AiSettings.aiAutomationScope has opted every monitored group in, so this row's
+   * own opt-in switch is not what decides eligibility. */
+  aiScopeIsGlobal: boolean;
+  /** ISO timestamp of the last knowledge-builder run for this group, or null if never. */
+  knowledgeBuiltAt: string | null;
   /** ISO timestamp — while in the future, the AI fallback layer is paused for this group (a team
    * member sent a message recently; see WhatsAppGroup.aiSuppressedUntil). Null = not suppressed. */
   aiSuppressedUntil: string | null;
@@ -135,6 +145,22 @@ export function GroupsTable({
     setTogglingAiId(id);
     startToggleAi(async () => {
       await toggleGroupAiAutomation(id);
+      router.refresh();
+    });
+  }
+
+  function toggleAiExcluded(id: string) {
+    setTogglingAiId(id);
+    startToggleAi(async () => {
+      await toggleGroupAiExcluded(id);
+      router.refresh();
+    });
+  }
+
+  function buildKnowledge(id: string) {
+    setTogglingAiId(id);
+    startToggleAi(async () => {
+      await requestGroupKnowledgeBuild(id);
       router.refresh();
     });
   }
@@ -299,22 +325,79 @@ export function GroupsTable({
                 </Td>
                 <Td>
                   <div className="flex flex-col items-start gap-1">
-                    <Badge color={g.aiAutomationEnabled ? "green" : "gray"} dot>
-                      {g.aiAutomationEnabled ? "Enabled" : "Disabled"}
-                    </Badge>
-                    {g.aiAutomationEnabled && g.aiSuppressedUntil && new Date(g.aiSuppressedUntil) > new Date() ? (
+                    {/* An exclusion beats every other AI gate, so it is what the badge reports
+                        when set — otherwise the row would claim "Enabled" for a group AI is
+                        never allowed to answer in. */}
+                    {g.aiAutomationExcluded ? (
+                      <Tooltip content="AI will never answer in this group, whatever the global scope says.">
+                        <Badge color="red" dot>
+                          Excluded
+                        </Badge>
+                      </Tooltip>
+                    ) : g.aiAutomationEnabled || g.aiScopeIsGlobal ? (
+                      <Tooltip
+                        content={
+                          g.aiScopeIsGlobal && !g.aiAutomationEnabled
+                            ? "Eligible because AI Settings is set to answer in every monitored group."
+                            : "Switched on for this group."
+                        }
+                      >
+                        <Badge color="green" dot>
+                          {g.aiScopeIsGlobal && !g.aiAutomationEnabled ? "On (all groups)" : "Enabled"}
+                        </Badge>
+                      </Tooltip>
+                    ) : (
+                      <Badge color="gray" dot>
+                        Disabled
+                      </Badge>
+                    )}
+
+                    {!g.aiAutomationExcluded && g.aiSuppressedUntil && new Date(g.aiSuppressedUntil) > new Date() ? (
                       <Tooltip content="A team member sent a message recently — the AI fallback layer is paused for this group until then.">
                         <Badge color="yellow">Human active until {new Date(g.aiSuppressedUntil).toLocaleTimeString()}</Badge>
                       </Tooltip>
                     ) : null}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      loading={isTogglingAi && togglingAiId === g.id}
-                      onClick={() => toggleAiAutomation(g.id)}
-                    >
-                      {g.aiAutomationEnabled ? "Disable AI" : "Enable AI"}
-                    </Button>
+
+                    <div className="flex flex-wrap items-center gap-1">
+                      {/* Hidden while excluded: the opt-in switch has no effect there, and
+                          offering it would suggest otherwise. */}
+                      {!g.aiAutomationExcluded ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          loading={isTogglingAi && togglingAiId === g.id}
+                          onClick={() => toggleAiAutomation(g.id)}
+                        >
+                          {g.aiAutomationEnabled ? "Disable AI" : "Enable AI"}
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={isTogglingAi && togglingAiId === g.id}
+                        onClick={() => toggleAiExcluded(g.id)}
+                      >
+                        {g.aiAutomationExcluded ? "Allow AI" : "Exclude"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={isTogglingAi && togglingAiId === g.id}
+                        onClick={() => buildKnowledge(g.id)}
+                        title="Read this group's stored conversation and distil it into knowledge entries"
+                      >
+                        Learn
+                      </Button>
+                    </div>
+
+                    {/* Without this the Learn button looked like it did nothing: the build is
+                        queued for the worker, so there is no immediate result to show — only
+                        evidence that a run has happened. */}
+                    <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                      {g.knowledgeBuiltAt
+                        ? `Knowledge built ${new Date(g.knowledgeBuiltAt).toLocaleDateString()}`
+                        : "Never learned from"}
+                    </span>
                   </div>
                 </Td>
                 <Td>

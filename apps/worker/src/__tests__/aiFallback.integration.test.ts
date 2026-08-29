@@ -154,9 +154,15 @@ describe("checkAiFallbackEligibility", () => {
   const baseCtx = {
     automationEnabled: true,
     mode: "SAFE_AUTO_REPLY" as const,
-    group: { isMonitored: true, aiAutomationEnabled: true, aiSuppressedUntil: null as Date | null },
+    group: {
+      isMonitored: true,
+      aiAutomationEnabled: true,
+      aiAutomationExcluded: false,
+      aiSuppressedUntil: null as Date | null,
+    },
     aiEngineEnabled: true,
     autoResponseEnabled: true,
+    scope: "PER_GROUP" as const,
     now,
   };
 
@@ -181,11 +187,43 @@ describe("checkAiFallbackEligibility", () => {
   });
 
   it("blocks an unmonitored group", () => {
-    expect(checkAiFallbackEligibility({ ...baseCtx, group: { isMonitored: false, aiAutomationEnabled: true, aiSuppressedUntil: null } }).eligible).toBe(false);
+    expect(checkAiFallbackEligibility({ ...baseCtx, group: { ...baseCtx.group, isMonitored: false } }).eligible).toBe(false);
   });
 
   it("blocks a group that hasn't opted in to AI automation", () => {
-    expect(checkAiFallbackEligibility({ ...baseCtx, group: { isMonitored: true, aiAutomationEnabled: false, aiSuppressedUntil: null } }).eligible).toBe(false);
+    expect(checkAiFallbackEligibility({ ...baseCtx, group: { ...baseCtx.group, aiAutomationEnabled: false } }).eligible).toBe(false);
+  });
+
+  it("is eligible in a group that never opted in, once the scope is ALL_MONITORED_GROUPS", () => {
+    expect(
+      checkAiFallbackEligibility({
+        ...baseCtx,
+        scope: "ALL_MONITORED_GROUPS",
+        group: { ...baseCtx.group, aiAutomationEnabled: false },
+      }),
+    ).toEqual({ eligible: true });
+  });
+
+  it("still blocks an unmonitored group under ALL_MONITORED_GROUPS", () => {
+    // The wider scope opts in every *monitored* group — it is not a way to reach groups
+    // nobody asked the system to watch.
+    expect(
+      checkAiFallbackEligibility({
+        ...baseCtx,
+        scope: "ALL_MONITORED_GROUPS",
+        group: { ...baseCtx.group, isMonitored: false },
+      }).eligible,
+    ).toBe(false);
+  });
+
+  it("an explicit per-group exclusion beats even ALL_MONITORED_GROUPS", () => {
+    expect(
+      checkAiFallbackEligibility({
+        ...baseCtx,
+        scope: "ALL_MONITORED_GROUPS",
+        group: { ...baseCtx.group, aiAutomationExcluded: true },
+      }).eligible,
+    ).toBe(false);
   });
 
   it("blocks when a team member is actively handling the group (human takeover)", () => {

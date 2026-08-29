@@ -29,7 +29,11 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
   if (filter === "archived") where.status = "ARCHIVED";
 
   const [items, allCount, activeCount, inactiveCount, archivedCount] = await Promise.all([
-    prisma.aiKnowledgeItem.findMany({ where, orderBy: { updatedAt: "desc" } }),
+    prisma.aiKnowledgeItem.findMany({
+      where,
+      orderBy: { updatedAt: "desc" },
+      include: { sourceGroup: { select: { name: true } } },
+    }),
     prisma.aiKnowledgeItem.count({ where: searchOnlyWhere }),
     prisma.aiKnowledgeItem.count({ where: { ...searchOnlyWhere, status: "ACTIVE" } }),
     prisma.aiKnowledgeItem.count({ where: { ...searchOnlyWhere, status: "INACTIVE" } }),
@@ -43,6 +47,8 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
     status: item.status,
     currentVersion: item.currentVersion,
     aiGenerated: item.aiGenerated,
+    humanVerified: item.humanVerified,
+    sourceGroupName: item.sourceGroup?.name ?? null,
     updatedAtLabel: formatDateTime(item.updatedAt),
   }));
 

@@ -2,6 +2,7 @@ import { prisma } from "@support-automation/db";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { processOneGroupKnowledgeBuild } from "../knowledge/groupKnowledgeJob.js";
 import { processOneAiAnalysisBatch } from "../learning/aiAnalysisJob.js";
 import { runTeamsSync } from "../teams/graphSync.js";
 
@@ -185,6 +186,10 @@ export async function processOneCommand(accountId: string, provider: WhatsAppPro
     await executeTeamsSyncNowCommand(command);
     return true;
   }
+  if (command.type === "BUILD_GROUP_KNOWLEDGE") {
+    await executeBuildGroupKnowledgeCommand(command);
+    return true;
+  }
   await executeClaimedCommand(command, accountId, provider);
   return true;
 }
@@ -210,6 +215,13 @@ export async function processOneCommandViaRegistry(registry: ProviderRegistry): 
   // no WhatsApp session either.
   if (command.type === "TEAMS_SYNC_NOW") {
     await executeTeamsSyncNowCommand(command);
+    return true;
+  }
+
+  // Reads the Message table only — no WhatsApp session, so it must also be handled before the
+  // accountId-required check below.
+  if (command.type === "BUILD_GROUP_KNOWLEDGE") {
+    await executeBuildGroupKnowledgeCommand(command);
     return true;
   }
 
@@ -243,6 +255,34 @@ async function executeAiAnalysisBatchCommand(command: ClaimedCommand): Promise<v
     await prisma.workerCommand.update({
       where: { id: command.id },
       data: { status: "DONE", processedAt: new Date(), result: { didWork } },
+    });
+  } catch (err) {
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "FAILED", processedAt: new Date(), result: { error: (err as Error).message } },
+    });
+  }
+}
+
+/**
+ * The dashboard's "Build knowledge now" button — reads one group's stored conversation and
+ * distils it immediately, rather than waiting for its turn in the hourly rotation. Never touches
+ * a WhatsApp provider/account.
+ */
+async function executeBuildGroupKnowledgeCommand(command: ClaimedCommand): Promise<void> {
+  try {
+    const payload = (command.payload ?? {}) as { groupId?: string };
+    if (!payload.groupId) {
+      await prisma.workerCommand.update({
+        where: { id: command.id },
+        data: { status: "FAILED", processedAt: new Date(), result: { error: "No groupId in payload." } },
+      });
+      return;
+    }
+    const result = await processOneGroupKnowledgeBuild(undefined, payload.groupId);
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "DONE", processedAt: new Date(), result: { ...result } },
     });
   } catch (err) {
     await prisma.workerCommand.update({

@@ -3,7 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, ConfirmDialog } from "@/components/ui";
-import { restoreKnowledgeVersion, setKnowledgeStatus } from "@/server/actions/aiKnowledge";
+import {
+  restoreKnowledgeVersion,
+  setKnowledgeStatus,
+  setKnowledgeVerified,
+} from "@/server/actions/aiKnowledge";
 
 export function KnowledgeStatusActions({ itemId, status }: { itemId: string; status: string }) {
   const router = useRouter();
@@ -33,6 +37,36 @@ export function KnowledgeStatusActions({ itemId, status }: { itemId: string; sta
         </Button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The exit from the review queue. An entry the knowledge builder distilled from a conversation
+ * arrives unverified; this is how a person confirms it reads correctly, or sends it back.
+ */
+export function KnowledgeVerifyAction({ itemId, verified }: { itemId: string; verified: boolean }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  function apply(next: boolean) {
+    startTransition(async () => {
+      await setKnowledgeVerified(itemId, next);
+      router.refresh();
+    });
+  }
+
+  if (verified) {
+    return (
+      <Button variant="ghost" size="sm" loading={pending} onClick={() => apply(false)}>
+        Mark unverified
+      </Button>
+    );
+  }
+
+  return (
+    <Button variant="secondary" size="sm" loading={pending} onClick={() => apply(true)}>
+      Mark verified
+    </Button>
   );
 }
 

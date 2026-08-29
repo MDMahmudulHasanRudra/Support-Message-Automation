@@ -53,6 +53,40 @@ export async function toggleGroupAiAutomation(id: string): Promise<void> {
   revalidatePath("/groups");
 }
 
+/**
+ * A hard "never let AI answer here", honoured under every AiAutomationScope — including
+ * ALL_MONITORED_GROUPS. For the groups where a wrong answer costs more than a slow one.
+ * Deliberately separate from aiAutomationEnabled above, which is an opt-IN and therefore
+ * meaningless as a way to hold a group back once the scope has opted everything in.
+ */
+export async function toggleGroupAiExcluded(id: string): Promise<void> {
+  await requireSession();
+  const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
+  await prisma.whatsAppGroup.update({ where: { id }, data: { aiAutomationExcluded: !group.aiAutomationExcluded } });
+  revalidatePath("/groups");
+}
+
+/**
+ * Queues a "read this group's conversation and distil it into knowledge" run, instead of
+ * waiting for the group's turn in the worker's hourly rotation. Same insert-a-WorkerCommand
+ * hand-off every other on-demand worker action uses — the web app never calls the worker.
+ * Deduplicated against an already-queued run for the same group so repeated clicks are free.
+ */
+export async function requestGroupKnowledgeBuild(id: string): Promise<void> {
+  await requireSession();
+
+  const existing = await prisma.workerCommand.findFirst({
+    where: { type: "BUILD_GROUP_KNOWLEDGE", status: { in: ["PENDING", "PROCESSING"] } },
+  });
+  // The worker processes commands strictly serially, so a second queued build would simply
+  // wait behind the first; checking by type alone keeps the queue clean.
+  if (!existing) {
+    await prisma.workerCommand.create({ data: { type: "BUILD_GROUP_KNOWLEDGE", payload: { groupId: id } } });
+  }
+
+  revalidatePath("/groups");
+}
+
 export interface BulkMonitoringResult {
   requested: number;
   updated: number;

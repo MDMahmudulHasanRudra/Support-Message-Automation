@@ -17,6 +17,7 @@ import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
 import { startPatternDetectionProcessor } from "./learning/patternDetectionProcessor.js";
 import { startAiAnalysisProcessor } from "./learning/aiAnalysisProcessor.js";
+import { startGroupKnowledgeProcessor } from "./knowledge/groupKnowledgeProcessor.js";
 import { startTeamsSyncProcessor, resolveTeamsSyncIntervalMs } from "./teams/teamsSyncProcessor.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
@@ -76,6 +77,7 @@ async function main() {
     startSessionSegmentationProcessor(),
     startPatternDetectionProcessor(),
     startAiAnalysisProcessor(),
+    startGroupKnowledgeProcessor(),
     // Microsoft Teams Integration — polling sync, always registered but a no-op every tick until
     // MICROSOFT_CLIENT_ID/SECRET/TENANT_ID/REDIRECT_URI are configured AND an admin completes the
     // OAuth connect flow (see getValidTeamsAccessToken()'s doc comment), same zero-effect-until-

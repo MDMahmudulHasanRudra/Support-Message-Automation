@@ -19,7 +19,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
     "@prisma/client": "^5.20.0",
-    "@support-automation/db": "workspace:*"
+    "@support-automation/db": "workspace:*",
+    "@support-automation/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.7.5",

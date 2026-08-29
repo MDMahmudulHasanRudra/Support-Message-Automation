@@ -55,6 +55,7 @@ export const ACTION_TYPE = [
   "FORWARD",
   "STOP_PROCESSING",
   "GROUP_BROADCAST",
+  "MANUAL_REPLY",
 ] as const;
 export type ActionType = (typeof ACTION_TYPE)[number];
 

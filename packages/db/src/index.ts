@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import type { AiFallbackOutcome, Prisma, WhatsAppServiceKey } from "@prisma/client";
-import { validateRegexSafety } from "@support-automation/engine";
+import { derivePatternSignature, validateRegexSafety } from "@support-automation/engine";
 import type { RuleAction } from "@support-automation/shared";
 
 // Standard Next.js/Node singleton pattern: avoids exhausting Postgres
@@ -199,6 +199,76 @@ export async function createRuleProposalFromCandidate(candidateId: string): Prom
   return { id: proposal.id };
 }
 
+/**
+ * A one-word signature would match half the inbox. Two distinctive tokens is the floor at
+ * which a drafted rule is specific enough to be worth a reviewer's time.
+ */
+const MIN_SIGNATURE_KEYWORDS_FOR_DRAFT = 2;
+
+export type DraftRuleFromAiReplyResult =
+  | { created: true; proposalId: string }
+  | { created: false; reason: string };
+
+/**
+ * Turns one message the AI answered well into a reusable AutomationRule draft, so the next
+ * customer asking the same thing is served by the deterministic engine — instantly, free, and
+ * identically every time — instead of another AI call.
+ *
+ * The draft always lands as a PENDING_REVIEW RuleProposal and is approved into a **DRAFT**
+ * AutomationRule, never an active one. Two humans decisions still stand between an AI's answer
+ * and a customer receiving it automatically: approving the proposal, and activating the rule.
+ * That is deliberate — an AI answer that was right once is not yet a policy.
+ *
+ * Deduplicated on the message's keyword signature, which is unique across proposals: a question
+ * asked fifty times produces one draft, not fifty. Lives here beside
+ * createRuleProposalFromCandidate() for the same reason that one does — both mint the same kind
+ * of row, and a second copy of that logic would drift.
+ */
+export async function createRuleProposalFromAiReply(params: {
+  customerMessage: string;
+  replyText: string;
+  confidence: number;
+  intent: string | null;
+  sourceMessageId: string;
+  groupName: string | null;
+}): Promise<DraftRuleFromAiReplyResult> {
+  const signature = derivePatternSignature(params.customerMessage);
+  if (signature.keywords.length < MIN_SIGNATURE_KEYWORDS_FOR_DRAFT) {
+    return { created: false, reason: "TOO_GENERIC" };
+  }
+
+  const label = params.intent?.trim() || signature.keywords.slice(0, 4).join(", ");
+
+  try {
+    const proposal = await prisma.ruleProposal.create({
+      data: {
+        source: "AI_REPLY",
+        sourceSignature: signature.patternKey,
+        sourceMessageId: params.sourceMessageId,
+        name: `AI: ${label}`.slice(0, 120),
+        description:
+          `Drafted from a question the AI answered at ${params.confidence}% confidence` +
+          `${params.groupName ? ` in ${params.groupName}` : ""}. Approving creates a DRAFT rule; ` +
+          `review the reply text before activating it.`,
+        type: "AUTO_REPLY",
+        matchType: "KEYWORDS",
+        keywords: signature.keywords,
+        actions: [{ type: "AUTO_REPLY" }] as unknown as Prisma.InputJsonValue,
+        replyMessage: params.replyText,
+        confidenceScoreSnapshot: params.confidence,
+      },
+    });
+    return { created: true, proposalId: proposal.id };
+  } catch (err) {
+    // P2002 on sourceSignature is the dedup working: this question already has a draft
+    // waiting for review. Not an error, and not worth logging as one.
+    if ((err as { code?: string }).code === "P2002") {
+      return { created: false, reason: "ALREADY_DRAFTED" };
+    }
+    throw err;
+  }
+}
+
 export type ApproveRuleProposalResult = { ruleId: string } | { error: string };
 
 /**
@@ -260,10 +330,15 @@ export async function approveRuleProposalById(params: {
         autoApproved: params.autoApproved,
       },
     });
-    await tx.patternCandidate.update({
-      where: { id: proposal.patternCandidateId },
-      data: { status: "APPROVED" },
-    });
+    // Only a CONVERSATION_LEARNING proposal has a candidate to close out. An AI_REPLY
+    // proposal is drafted straight from one answered message, so there is nothing upstream
+    // to mark approved.
+    if (proposal.patternCandidateId) {
+      await tx.patternCandidate.update({
+        where: { id: proposal.patternCandidateId },
+        data: { status: "APPROVED" },
+      });
+    }
     return rule;
   });
 

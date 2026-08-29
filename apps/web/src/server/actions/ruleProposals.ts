@@ -47,7 +47,11 @@ export async function rejectRuleProposal(id: string, reviewNote: string | null):
       where: { id },
       data: { status: "REJECTED", reviewedById: session.userId, reviewedAt: new Date(), reviewNote },
     }),
-    prisma.patternCandidate.update({ where: { id: proposal.patternCandidateId }, data: { status: "REJECTED" } }),
+    // Only a CONVERSATION_LEARNING proposal has a pattern candidate behind it. An AI_REPLY
+    // proposal is drafted from one answered message, so there is nothing upstream to reject.
+    ...(proposal.patternCandidateId
+      ? [prisma.patternCandidate.update({ where: { id: proposal.patternCandidateId }, data: { status: "REJECTED" } })]
+      : []),
   ]);
 
   revalidatePath("/conversation-learning/rule-proposals");

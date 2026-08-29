@@ -80,6 +80,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
           escalationMonitoringEnabled: true,
           isMonitored: true,
           aiAutomationEnabled: true,
+          aiAutomationExcluded: true,
           aiSuppressedUntil: true,
         },
       })
@@ -148,10 +149,16 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
       await markHumanReplied(raw.chatId);
       // Human takeover (Slice 3): a separate, independent concern from escalation's SLA timers —
       // pause the AI fallback layer for this group briefly so it doesn't immediately answer a
-      // different customer's next message while a human is actively engaged. Skipped for groups
-      // that don't use AI at all, to avoid a pointless write.
-      if (group?.aiAutomationEnabled) {
-        await recordHumanTakeover(group.id);
+      // different customer's next message while a human is actively engaged. Whether this group
+      // is AI-eligible now depends on AiSettings.aiAutomationScope, so recordHumanTakeover()
+      // makes that call itself and no-ops for a group AI could never answer in.
+      if (group) {
+        await recordHumanTakeover({
+          id: group.id,
+          isMonitored: group.isMonitored,
+          aiAutomationEnabled: group.aiAutomationEnabled,
+          aiAutomationExcluded: group.aiAutomationExcluded,
+        });
       }
     } else if (group?.priority && group.escalationMonitoringEnabled) {
       await openOrContinueCase({
@@ -260,6 +267,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
               name: group.name,
               isMonitored: group.isMonitored,
               aiAutomationEnabled: group.aiAutomationEnabled,
+              aiAutomationExcluded: group.aiAutomationExcluded,
               aiSuppressedUntil: group.aiSuppressedUntil,
             }
           : null,

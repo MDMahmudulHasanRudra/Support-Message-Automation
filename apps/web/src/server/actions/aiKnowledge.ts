@@ -148,6 +148,36 @@ export async function updateKnowledgeItem(
   redirect(`/ai-learning/knowledge-base/${id}`);
 }
 
+/**
+ * Marks a knowledge entry as checked by a person, or sends it back for review.
+ *
+ * Entries written by the group knowledge builder arrive `humanVerified: false` on purpose — a
+ * model's reading of a chat log is evidence, not fact. Without this action the review queue had
+ * no exit and every distilled entry would sit as "Needs review" forever, which is worse than not
+ * flagging them at all: a warning nobody can clear stops being read.
+ *
+ * Deliberately separate from status: an entry can be ACTIVE and unverified (it is being used, but
+ * nobody has confirmed it), or verified and INACTIVE (checked, but deliberately not in play).
+ */
+export async function setKnowledgeVerified(id: string, verified: boolean): Promise<void> {
+  const session = await requireSession();
+  const item = await prisma.aiKnowledgeItem.update({
+    where: { id },
+    data: { humanVerified: verified },
+    select: { title: true },
+  });
+
+  await logSystemEvent(
+    "INFO",
+    "ai-learning",
+    `Knowledge item "${item.title}" marked ${verified ? "verified" : "unverified"}`,
+    { itemId: id, userId: session.userId },
+  );
+
+  revalidatePath("/ai-learning/knowledge-base");
+  revalidatePath(`/ai-learning/knowledge-base/${id}`);
+}
+
 export async function setKnowledgeStatus(id: string, status: AiKnowledgeStatus): Promise<void> {
   await requireSession();
   const item = await prisma.aiKnowledgeItem.update({ where: { id }, data: { status } });

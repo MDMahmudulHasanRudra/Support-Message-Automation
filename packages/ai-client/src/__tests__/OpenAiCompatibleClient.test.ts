@@ -31,7 +31,7 @@ describe("OpenAiCompatibleClient", () => {
       ),
     );
 
-    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", FAKE_API_KEY, "https://example.invalid/v1");
+    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", { apiKey: FAKE_API_KEY, baseURL: "https://example.invalid/v1" });
     const result = await client.complete({ systemPrompt: "system text", userPrompt: "user text", maxTokens: 300, temperature: 0 });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -57,7 +57,7 @@ describe("OpenAiCompatibleClient", () => {
 
   it("defaults to the real OpenAI API base URL when apiUrl is blank", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: "hi" } }] }), { status: 200 }));
-    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", FAKE_API_KEY, null);
+    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", { apiKey: FAKE_API_KEY, baseURL: null });
 
     await client.complete({ userPrompt: "hello" });
 
@@ -67,7 +67,7 @@ describe("OpenAiCompatibleClient", () => {
 
   it("omits the system message entirely when no systemPrompt is given", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: "hi" } }] }), { status: 200 }));
-    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", FAKE_API_KEY, "https://example.invalid/v1");
+    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", { apiKey: FAKE_API_KEY, baseURL: "https://example.invalid/v1" });
 
     await client.complete({ userPrompt: "hello" });
 
@@ -78,7 +78,7 @@ describe("OpenAiCompatibleClient", () => {
 
   it("throws on a non-ok response, without leaking the API key in the error message", async () => {
     fetchMock.mockResolvedValue(new Response("unauthorized", { status: 401 }));
-    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", FAKE_API_KEY, "https://example.invalid/v1");
+    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", { apiKey: FAKE_API_KEY, baseURL: "https://example.invalid/v1" });
 
     await expect(client.complete({ userPrompt: "hello" })).rejects.toThrow(/401/);
     try {
@@ -90,7 +90,7 @@ describe("OpenAiCompatibleClient", () => {
 
   it("returns empty text rather than throwing when the response has no choices", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", FAKE_API_KEY, "https://example.invalid/v1");
+    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", { apiKey: FAKE_API_KEY, baseURL: "https://example.invalid/v1" });
 
     const result = await client.complete({ userPrompt: "hello" });
     expect(result.text).toBe("");
@@ -109,11 +109,60 @@ describe("OpenAiCompatibleClient", () => {
       }),
     );
 
-    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", FAKE_API_KEY, "https://example.invalid/v1");
+    const client = new OpenAiCompatibleClient("provider-1", "gpt-test", { apiKey: FAKE_API_KEY, baseURL: "https://example.invalid/v1" });
     const promise = client.complete({ userPrompt: "hello" });
     const assertion = expect(promise).rejects.toThrow(/timed out/i);
 
     await vi.advanceTimersByTimeAsync(30_000);
     await assertion;
+  });
+  it("omits the Authorization header entirely when there is no API key (a local Ollama)", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: "local answer" } }] }), { status: 200 }),
+    );
+
+    const client = new OpenAiCompatibleClient("provider-local", "llama3", {
+      apiKey: null,
+      baseURL: "http://127.0.0.1:11434/v1",
+    });
+    const result = await client.complete({ userPrompt: "hello" });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://127.0.0.1:11434/v1/chat/completions");
+    // Not "Bearer null", and not an empty Authorization — absent.
+    expect(Object.keys(init.headers)).not.toContain("Authorization");
+    expect(result.text).toBe("local answer");
+  });
+
+  it("sends any extra headers a gateway requires alongside the key", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: "routed" } }] }), { status: 200 }),
+    );
+
+    const client = new OpenAiCompatibleClient("provider-or", "anthropic/claude-3.5-sonnet", {
+      apiKey: FAKE_API_KEY,
+      baseURL: "https://openrouter.ai/api/v1",
+      extraHeaders: { "HTTP-Referer": "https://example.invalid", "X-Title": "Support Automation" },
+    });
+    await client.complete({ userPrompt: "hello" });
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers.Authorization).toBe(`Bearer ${FAKE_API_KEY}`);
+    expect(init.headers["X-Title"]).toBe("Support Automation");
+  });
+
+  it("treats a 200 response carrying an error envelope as a failure, not an empty reply", async () => {
+    // OpenRouter and some proxies report upstream failures this way. Parsed as an empty
+    // reply it would look like the model declining, which is a different outcome entirely.
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "upstream model is overloaded" } }), { status: 200 }),
+    );
+
+    const client = new OpenAiCompatibleClient("provider-or", "some/model", {
+      apiKey: FAKE_API_KEY,
+      baseURL: "https://openrouter.ai/api/v1",
+    });
+
+    await expect(client.complete({ userPrompt: "hello" })).rejects.toThrow(/overloaded/i);
   });
 });
