@@ -953,6 +953,21 @@ enum AiProviderKind {
 /// How widely the Hybrid AI Automation fallback is allowed to answer. Both values keep
 /// AI strictly reply-triggered and only on a genuine NO_MATCH — the scope decides which
 /// groups are eligible, never whether AI outranks a rule that already matched.
+/// What the AI is permitted to answer from.
+///
+/// The distinction this encodes is the important one: a model *knowing* an answer is not the
+/// same as this software having the *authority* to give it. A model can describe how billing
+/// software generally works; it cannot know how THIS company's billing works, and a fluent guess
+/// about a refund window or support hours is worse than no answer at all.
+enum AiResponseMode {
+  /// Nothing verified covers it, nothing gets answered. The safe default.
+  STRICT_KNOWLEDGE_ONLY
+  /// General questions ("what is PPPoE?") may be answered from the model's own knowledge, while
+  /// anything about this company — its product behaviour, policies, pricing, accounts — still
+  /// requires verified knowledge. That second half is not configurable; see AiSettings.
+  KNOWLEDGE_PLUS_GENERAL
+}
+
 enum AiAutomationScope {
   /// Today's behaviour: a group must have WhatsAppGroup.aiAutomationEnabled set.
   PER_GROUP
@@ -1090,11 +1105,17 @@ model AiSettings {
   /// A group with fewer stored messages than this is skipped by the knowledge builder —
   /// there is not enough conversation there to draw a reliable conclusion from.
   knowledgeMinMessagesPerGroup    Int      @default(25)
-  /// When on, the AI may only answer a customer if verified knowledge actually covers the
-  /// question; with nothing to ground an answer in it hands off to a person instead of
-  /// answering from the model's own general knowledge. Off by default so existing behaviour is
-  /// unchanged, but this is the switch that makes "AI never guesses about our product" true.
-  requireKnowledgeForAiReply      Boolean  @default(false)
+  /// What the AI may answer from. STRICT_KNOWLEDGE_ONLY is the default and the safe choice.
+  ///
+  /// Note what is deliberately NOT configurable: under either mode, a question about this
+  /// company's own product, policies or accounts is answered only from verified knowledge, and
+  /// otherwise goes to a person. Relaxing the mode widens what counts as answerable *general*
+  /// conversation; it never lets the model invent this business's behaviour.
+  aiResponseMode                  AiResponseMode @default(STRICT_KNOWLEDGE_ONLY)
+  /// The bar for an answer given from the model's own knowledge with nothing verified behind it.
+  /// Deliberately separate from, and normally higher than, autoResponseConfidenceThreshold:
+  /// an ungrounded answer carries more risk than one backed by the team's own material.
+  generalAnswerMinConfidence      Int      @default(90)
   screenshotResponseEnabled       Boolean  @default(false)
   chatLearningEnabled             Boolean  @default(false)
   softwareLearningEnabled         Boolean  @default(false)

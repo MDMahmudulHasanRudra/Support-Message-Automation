@@ -139,11 +139,10 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // than not answering.
   const knowledge = await findRelevantKnowledge(params.message.body, params.group?.id ?? null);
 
-  // "Never guess about our product." With this on, an unanswerable question reaches a person
-  // instead of the model's general knowledge — which is the right default for a product whose
-  // behaviour nothing outside this company could know. Checked before the API call, so an
-  // ungroundable question costs nothing.
-  if (aiSettings.requireKnowledgeForAiReply && knowledge.length === 0) {
+  // Under STRICT_KNOWLEDGE_ONLY, nothing verified means nothing answered — whatever the
+  // question turns out to be about. Since the outcome does not depend on the classification,
+  // this is decided before the API call, so an ungroundable question costs nothing at all.
+  if (aiSettings.aiResponseMode === "STRICT_KNOWLEDGE_ONLY" && knowledge.length === 0) {
     await recordHumanFallback("NO_KNOWLEDGE");
     return;
   }
@@ -175,6 +174,17 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     await recordHumanFallback("MALFORMED_RESPONSE", commonFields);
     return;
   }
+
+  // The rule that is deliberately not configurable. A model knowing how billing software
+  // generally works is not the same as this software having the authority to state how THIS
+  // company's billing works — and a fluent guess about a refund window or support hours is
+  // worse than no answer, because it sounds official. Relaxing the response mode widens what
+  // counts as answerable general conversation; it never licenses inventing this business.
+  const groundedInVerifiedKnowledge = knowledge.length > 0;
+  if (parsed.scope === "BUSINESS_SPECIFIC" && !groundedInVerifiedKnowledge) {
+    await recordHumanFallback("NO_BUSINESS_KNOWLEDGE", commonFields);
+    return;
+  }
   if (!parsed.shouldReply) {
     await recordHumanFallback("AI_DECLINED", commonFields);
     return;
@@ -183,8 +193,16 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     await recordHumanFallback("EMPTY_RESPONSE", commonFields);
     return;
   }
-  if (parsed.confidence < aiSettings.autoResponseConfidenceThreshold) {
-    await recordHumanFallback("LOW_CONFIDENCE", commonFields);
+  // An ungrounded general answer is held to its own, normally higher bar: there is no team
+  // material behind it, only the model's own confidence in itself.
+  const requiredConfidence = groundedInVerifiedKnowledge
+    ? aiSettings.autoResponseConfidenceThreshold
+    : Math.max(aiSettings.autoResponseConfidenceThreshold, aiSettings.generalAnswerMinConfidence);
+  if (parsed.confidence < requiredConfidence) {
+    await recordHumanFallback(
+      groundedInVerifiedKnowledge ? "LOW_CONFIDENCE" : "LOW_CONFIDENCE_GENERAL",
+      commonFields,
+    );
     return;
   }
 
@@ -245,6 +263,10 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
 
   await maybeDraftRuleFromReply({
     aiSettings,
+    // A rule is a standing answer this company gives. An ungrounded general answer is the
+    // model talking about the world, not this business stating its position, so it must never
+    // harden into one — even when the model was confident.
+    groundedInVerifiedKnowledge,
     customerMessage: params.message.body,
     replyText: parsed.responseText,
     confidence: parsed.confidence,
@@ -266,6 +288,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
  */
 async function maybeDraftRuleFromReply(params: {
   aiSettings: AiSettings;
+  groundedInVerifiedKnowledge: boolean;
   customerMessage: string;
   replyText: string;
   confidence: number;
@@ -274,6 +297,7 @@ async function maybeDraftRuleFromReply(params: {
   groupName: string | null;
 }): Promise<void> {
   if (!params.aiSettings.aiRuleGenerationEnabled) return;
+  if (!params.groundedInVerifiedKnowledge) return;
   if (params.confidence < params.aiSettings.aiRuleGenerationMinConfidence) return;
 
   try {

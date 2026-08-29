@@ -363,9 +363,29 @@ be *interpreted*, documentation must be *preserved*. They share only the record 
 `humanVerified: false` and only verified entries are ever retrieved. Discarding archives rather
 than deletes.
 
-`AiSettings.requireKnowledgeForAiReply` closes the loop: with it on, AI hands off
-(`NO_KNOWLEDGE`) rather than answering from the model's general knowledge when nothing verified
-covers the question. Checked before the API call, so an ungroundable question costs nothing.
+### What AI may answer (`AiSettings.aiResponseMode`)
+
+The distinction this encodes: a model *knowing* an answer is not the same as this software
+having the *authority* to give it. A model can describe how billing software generally works; it
+cannot know how THIS company's billing works, and a fluent guess about a refund window sounds
+official, which makes it worse than silence.
+
+Every AI reply is therefore classified `BUSINESS_SPECIFIC` or `GENERAL` by the same call that
+drafts it (`SCOPE:` in the response format). Parsing **fails closed** — a missing, empty or
+unrecognised value is read as `BUSINESS_SPECIFIC`, so a format slip can never be mistaken for
+permission to speak for the business.
+
+- `STRICT_KNOWLEDGE_ONLY` (default): no verified knowledge, no answer. Decided **before** the API
+  call, since the classification cannot change the outcome — an ungroundable question costs nothing.
+- `KNOWLEDGE_PLUS_GENERAL`: ordinary questions ("what is PPPoE?") may be answered from the model's
+  own knowledge, held to `generalAnswerMinConfidence` (normally higher than the main threshold,
+  because nothing of the team's stands behind them).
+
+**The business-question guard is deliberately not configurable.** Under either mode,
+`BUSINESS_SPECIFIC` + no verified knowledge → `NO_BUSINESS_KNOWLEDGE` handoff. Relaxing the mode
+widens what counts as answerable general conversation; there is no setting that lets the model
+invent this company's behaviour. For the same reason an ungrounded general answer never drafts a
+rule — a rule is a standing answer the company gives, not the model talking about the world.
 
 ### Knowledge-grounded AI answers (`apps/worker/src/aiFallback/knowledgeContext.ts`)
 

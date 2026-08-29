@@ -93,6 +93,64 @@ export function AiSettingsForm({ settings }: { settings: AiSettings }) {
 
       <Card>
         <SectionHeader
+          title="What AI is allowed to answer"
+          description="A model knowing an answer is not the same as this software having the authority to give it. This decides where that line sits."
+        />
+
+        <div className="space-y-4">
+          <Field label="Response mode">
+            <Select name="aiResponseMode" defaultValue={settings.aiResponseMode}>
+              <option value="STRICT_KNOWLEDGE_ONLY">
+                Strict — only answer from verified knowledge
+              </option>
+              <option value="KNOWLEDGE_PLUS_GENERAL">
+                Knowledge + general — also answer ordinary questions
+              </option>
+            </Select>
+          </Field>
+
+          {settings.aiResponseMode === "STRICT_KNOWLEDGE_ONLY" ? (
+            <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+              Nothing in the verified knowledge base covering the question means nobody gets an
+              answer from AI — it goes to a person. The safe choice, and the right one until the
+              knowledge base has some substance to it.
+            </p>
+          ) : (
+            <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+              AI may answer ordinary questions from its own knowledge — &ldquo;what is
+              PPPoE?&rdquo;, &ldquo;how does a static IP work?&rdquo; — the kind of thing any
+              informed person would answer the same way for any company.
+            </p>
+          )}
+
+          <Alert tone="info" title="This part is not configurable">
+            Under either mode, a question about <strong>your</strong> business — how your software
+            behaves, your pricing, policies, support hours, or anything about a customer&apos;s own
+            account — is answered only from verified knowledge, and otherwise goes to a person.
+            There is no setting that lets the model invent your company&apos;s answer, because a
+            fluent guess about your refund window is worse than no answer at all: it sounds
+            official.
+          </Alert>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field
+              label="Minimum confidence for a general answer"
+              hint="Applies only to answers given without verified knowledge behind them. Normally higher than the main threshold — there is no team material supporting these, only the model's confidence in itself."
+            >
+              <Input
+                name="generalAnswerMinConfidence"
+                type="number"
+                min={0}
+                max={100}
+                defaultValue={settings.generalAnswerMinConfidence}
+              />
+            </Field>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionHeader
           title="Automation by AI"
           description="Which conversations the AI may answer, and whether it turns what it learns into reusable rules. AI only ever runs after the rule engine finds no match — a rule that matched always wins."
         />
@@ -165,12 +223,6 @@ export function AiSettingsForm({ settings }: { settings: AiSettings }) {
           description="Reads the group conversations already stored here and distils them into knowledge base entries — what each group asks about, and what answers resolved it."
         />
         <div className="space-y-4">
-          <SwitchField
-            name="requireKnowledgeForAiReply"
-            label="Only answer from verified knowledge"
-            description="With this on, AI hands off to a person whenever nothing in the verified knowledge base covers the question, instead of answering from the model's own general knowledge. The right setting for a product whose behaviour nobody outside your company could know — but expect more handoffs until the knowledge base fills up."
-            defaultChecked={settings.requireKnowledgeForAiReply}
-          />
           <SwitchField
             name="knowledgeFromChatEnabled"
             label="Build knowledge from group chats"

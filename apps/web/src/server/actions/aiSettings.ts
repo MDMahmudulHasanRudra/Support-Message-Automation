@@ -32,6 +32,9 @@ export async function updateAiSettings(
   // Only the two scopes the enum defines — anything else falls back to the conservative one
   // rather than being written through to the database unchecked.
   const scope = formData.get("aiAutomationScope") === "ALL_MONITORED_GROUPS" ? "ALL_MONITORED_GROUPS" : "PER_GROUP";
+  // Anything unrecognised falls back to the stricter mode rather than being written through.
+  const responseMode =
+    formData.get("aiResponseMode") === "KNOWLEDGE_PLUS_GENERAL" ? "KNOWLEDGE_PLUS_GENERAL" : "STRICT_KNOWLEDGE_ONLY";
   // One WhatsApp group id per line, blanks dropped — the same shape the general notification
   // group field already uses.
   const takeoverNotifyGroupIds = String(formData.get("takeoverNotifyGroupIds") ?? "")
@@ -62,7 +65,8 @@ export async function updateAiSettings(
       aiRuleGenerationMinConfidence: percent("aiRuleGenerationMinConfidence", 95),
       takeoverNotifyGroupIds,
       knowledgeFromChatEnabled: flag("knowledgeFromChatEnabled"),
-      requireKnowledgeForAiReply: flag("requireKnowledgeForAiReply"),
+      aiResponseMode: responseMode,
+      generalAnswerMinConfidence: percent("generalAnswerMinConfidence", 90),
       knowledgeMinMessagesPerGroup: nonNegativeInt("knowledgeMinMessagesPerGroup", 25),
     },
     create: { id: "global" },
