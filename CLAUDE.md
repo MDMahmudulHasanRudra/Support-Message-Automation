@@ -340,6 +340,33 @@ is nullable for exactly this reason — approve/reject guard on it. Approval sti
 Human-fallback alerts route to `AiSettings.takeoverNotifyGroupIds`, falling back to
 `AutomationSettings.whatsappNotificationGroupIds` so existing deployments alert where they always did.
 
+### Knowledge Center — manual imports (`apps/worker/src/knowledge/knowledgeImportJob.ts`)
+
+The knowledge base has **two** sources that converge on one review queue. The conversation
+builder learns from customer chats; the importer takes your own documentation. A fresh install
+has an empty knowledge base, so the importer is the only way the AI can know anything about the
+product on day one.
+
+`KnowledgeImport` is a job row, not an inline server action: a manual is chunked
+(`chunkDocument` splits on the document's own paragraph/sentence structure, never a fixed
+offset), each chunk is a separate API call, and the whole thing has to survive a restart and
+report progress. `startKnowledgeImportProcessor` (15s) drains it. A failing chunk marks the
+import `PARTIAL` and **keeps every entry the other chunks produced** — a 40-page manual failing
+at page 30 still leaves 29 pages of knowledge. `rawText` is retained so Retry needs no re-upload.
+
+Only plain text today (.txt/.md); PDF/DOCX would need a parsing dependency this repo does not
+carry. `buildImportPrompt` is deliberately separate from the conversation prompt: a chat log must
+be *interpreted*, documentation must be *preserved*. They share only the record format and
+`parseKnowledgeRecords`.
+
+`/ai-learning/knowledge-base/review` is the trust boundary — everything from both sources lands
+`humanVerified: false` and only verified entries are ever retrieved. Discarding archives rather
+than deletes.
+
+`AiSettings.requireKnowledgeForAiReply` closes the loop: with it on, AI hands off
+(`NO_KNOWLEDGE`) rather than answering from the model's general knowledge when nothing verified
+covers the question. Checked before the API call, so an ungroundable question costs nothing.
+
 ### Knowledge-grounded AI answers (`apps/worker/src/aiFallback/knowledgeContext.ts`)
 
 Closes the loop the knowledge builder opens. Before this the knowledge base was **write-only** —

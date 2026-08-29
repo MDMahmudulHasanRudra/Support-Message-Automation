@@ -33,6 +33,8 @@ export interface AiActivityRow {
  */
 const REASON_HELP: Record<string, string> = {
   AI_UNAVAILABLE: "No AI provider is configured for the RESPONSE job, or the AI engine is off.",
+  NO_KNOWLEDGE:
+    "Nothing in the verified knowledge base covers this question, and AI Settings requires grounding before it may answer.",
   LOW_CONFIDENCE: "The AI answered, but below your confidence threshold, so it was not sent.",
   AI_DECLINED: "The AI judged that this needs a person, and chose not to answer.",
   EMPTY_RESPONSE: "The AI said it would reply but returned nothing usable.",

@@ -139,6 +139,15 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // than not answering.
   const knowledge = await findRelevantKnowledge(params.message.body, params.group?.id ?? null);
 
+  // "Never guess about our product." With this on, an unanswerable question reaches a person
+  // instead of the model's general knowledge — which is the right default for a product whose
+  // behaviour nothing outside this company could know. Checked before the API call, so an
+  // ungroundable question costs nothing.
+  if (aiSettings.requireKnowledgeForAiReply && knowledge.length === 0) {
+    await recordHumanFallback("NO_KNOWLEDGE");
+    return;
+  }
+
   let completion;
   try {
     completion = await client.complete(

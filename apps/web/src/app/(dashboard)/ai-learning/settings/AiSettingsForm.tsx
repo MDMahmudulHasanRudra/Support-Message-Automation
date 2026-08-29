@@ -166,6 +166,12 @@ export function AiSettingsForm({ settings }: { settings: AiSettings }) {
         />
         <div className="space-y-4">
           <SwitchField
+            name="requireKnowledgeForAiReply"
+            label="Only answer from verified knowledge"
+            description="With this on, AI hands off to a person whenever nothing in the verified knowledge base covers the question, instead of answering from the model's own general knowledge. The right setting for a product whose behaviour nobody outside your company could know — but expect more handoffs until the knowledge base fills up."
+            defaultChecked={settings.requireKnowledgeForAiReply}
+          />
+          <SwitchField
             name="knowledgeFromChatEnabled"
             label="Build knowledge from group chats"
             description="One group per hour, oldest first, picking up where the last run left off. Entries arrive unverified for review — a model's reading of a chat log is evidence, not fact. Nothing is ever sent to a customer from this."

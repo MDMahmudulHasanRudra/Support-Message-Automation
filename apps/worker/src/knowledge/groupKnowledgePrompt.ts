@@ -25,7 +25,7 @@ export interface GroupKnowledgePrompt {
 }
 
 /** Categories the extractor may choose. Mirrors AiKnowledgeCategory minus the ones no conversation can produce. */
-const ALLOWED_CATEGORIES: AiKnowledgeCategory[] = [
+export const ALLOWED_KNOWLEDGE_CATEGORIES: AiKnowledgeCategory[] = [
   "FAQ",
   "TROUBLESHOOTING",
   "WORKFLOW",
@@ -73,7 +73,7 @@ export function buildGroupKnowledgePrompt(input: {
     `Return between 0 and 8 knowledge entries. Separate entries with a line containing only ${RECORD_SEPARATOR}.`,
     "Each entry must use EXACTLY this format, one field per line:",
     "TITLE: <a short descriptive title>",
-    `CATEGORY: <one of: ${ALLOWED_CATEGORIES.join(", ")}>`,
+    `CATEGORY: <one of: ${ALLOWED_KNOWLEDGE_CATEGORIES.join(", ")}>`,
     "QUESTION: <the question a customer would ask, or NONE>",
     "ANSWER: <the answer, written so it can be reused with any customer>",
     "CONFIDENCE: <a single integer 0-100 — how well the conversation supports this>",
@@ -90,19 +90,22 @@ export interface ExtractedKnowledge {
   question: string | null;
   answer: string;
   confidence: number;
+  /** Which part of the product this is about, when the source made that clear. */
+  module: string | null;
 }
 
 function parseOne(block: string): ExtractedKnowledge | null {
   const title = block.match(/TITLE:\s*(.+)/i)?.[1]?.trim();
   const categoryRaw = block.match(/CATEGORY:\s*([A-Z_]+)/i)?.[1]?.trim().toUpperCase();
   const questionRaw = block.match(/QUESTION:\s*(.+)/i)?.[1]?.trim();
+  const moduleRaw = block.match(/MODULE:\s*(.+)/i)?.[1]?.trim();
   // Answer runs to the end of the block or the next known field, whichever comes first.
-  const answer = block.match(/ANSWER:\s*([\s\S]+?)(?:\nCONFIDENCE:|$)/i)?.[1]?.trim();
+  const answer = block.match(/ANSWER:\s*([\s\S]+?)(?:\nCONFIDENCE:|\nMODULE:|$)/i)?.[1]?.trim();
   const confidenceRaw = block.match(/CONFIDENCE:\s*(-?\d+)/i)?.[1];
 
   if (!title || !answer) return null;
 
-  const category = ALLOWED_CATEGORIES.find((c) => c === categoryRaw);
+  const category = ALLOWED_KNOWLEDGE_CATEGORIES.find((c) => c === categoryRaw);
   if (!category) return null;
 
   const question = !questionRaw || questionRaw.toUpperCase() === "NONE" ? null : questionRaw;
@@ -110,11 +113,16 @@ function parseOne(block: string): ExtractedKnowledge | null {
   // caller's own threshold then decides, in one place, whether it is worth keeping.
   const confidence = confidenceRaw ? Math.max(0, Math.min(100, Number(confidenceRaw))) : 0;
 
-  return { title: title.slice(0, 200), category, question, answer, confidence };
+  const moduleName = !moduleRaw || moduleRaw.toUpperCase() === "NONE" ? null : moduleRaw.slice(0, 120);
+
+  return { title: title.slice(0, 200), category, question, answer, confidence, module: moduleName };
 }
 
-/** Exported for direct unit testing — pure text parsing, no IO. */
-export function parseGroupKnowledgeResponse(text: string): ExtractedKnowledge[] {
+/**
+ * Parses the shared knowledge-record format, used by both the group-conversation extractor and
+ * the document/pasted-text importer. Exported for direct unit testing — pure text parsing, no IO.
+ */
+export function parseKnowledgeRecords(text: string): ExtractedKnowledge[] {
   const trimmed = text.trim();
   if (!trimmed || /^NOTHING\b/i.test(trimmed)) return [];
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_TRANSCRIPT_CHARS,
   buildGroupKnowledgePrompt,
-  parseGroupKnowledgeResponse,
+  parseKnowledgeRecords,
 } from "../knowledge/groupKnowledgePrompt.js";
 
 /**
@@ -46,9 +46,9 @@ describe("buildGroupKnowledgePrompt", () => {
   });
 });
 
-describe("parseGroupKnowledgeResponse", () => {
+describe("parseKnowledgeRecords", () => {
   it("parses several records separated by the record marker", () => {
-    const entries = parseGroupKnowledgeResponse(
+    const entries = parseKnowledgeRecords(
       [
         "TITLE: Receipt printer offline after update",
         "CATEGORY: TROUBLESHOOTING",
@@ -72,28 +72,28 @@ describe("parseGroupKnowledgeResponse", () => {
   });
 
   it("returns nothing for the explicit NOTHING reply", () => {
-    expect(parseGroupKnowledgeResponse("NOTHING")).toEqual([]);
-    expect(parseGroupKnowledgeResponse("  nothing  ")).toEqual([]);
+    expect(parseKnowledgeRecords("NOTHING")).toEqual([]);
+    expect(parseKnowledgeRecords("  nothing  ")).toEqual([]);
   });
 
   it("returns nothing for an empty response", () => {
-    expect(parseGroupKnowledgeResponse("")).toEqual([]);
+    expect(parseKnowledgeRecords("")).toEqual([]);
   });
 
   it("drops a record with an unknown category rather than guessing one", () => {
-    const entries = parseGroupKnowledgeResponse(
+    const entries = parseKnowledgeRecords(
       ["TITLE: Something", "CATEGORY: BANANA", "ANSWER: An answer.", "CONFIDENCE: 90"].join("\n"),
     );
     expect(entries).toEqual([]);
   });
 
   it("drops a record missing a title or an answer", () => {
-    expect(parseGroupKnowledgeResponse("CATEGORY: FAQ\nANSWER: orphan\nCONFIDENCE: 90")).toEqual([]);
-    expect(parseGroupKnowledgeResponse("TITLE: orphan\nCATEGORY: FAQ\nCONFIDENCE: 90")).toEqual([]);
+    expect(parseKnowledgeRecords("CATEGORY: FAQ\nANSWER: orphan\nCONFIDENCE: 90")).toEqual([]);
+    expect(parseKnowledgeRecords("TITLE: orphan\nCATEGORY: FAQ\nCONFIDENCE: 90")).toEqual([]);
   });
 
   it("treats a missing confidence as zero so the caller's threshold decides", () => {
-    const entries = parseGroupKnowledgeResponse(
+    const entries = parseKnowledgeRecords(
       ["TITLE: Untrusted", "CATEGORY: FAQ", "ANSWER: Some answer."].join("\n"),
     );
     expect(entries).toHaveLength(1);
@@ -101,8 +101,8 @@ describe("parseGroupKnowledgeResponse", () => {
   });
 
   it("clamps an out-of-range confidence", () => {
-    const high = parseGroupKnowledgeResponse("TITLE: t\nCATEGORY: FAQ\nANSWER: a\nCONFIDENCE: 150");
-    const low = parseGroupKnowledgeResponse("TITLE: t\nCATEGORY: FAQ\nANSWER: a\nCONFIDENCE: -20");
+    const high = parseKnowledgeRecords("TITLE: t\nCATEGORY: FAQ\nANSWER: a\nCONFIDENCE: 150");
+    const low = parseKnowledgeRecords("TITLE: t\nCATEGORY: FAQ\nANSWER: a\nCONFIDENCE: -20");
     expect(high[0]!.confidence).toBe(100);
     expect(low[0]!.confidence).toBe(0);
   });
@@ -110,7 +110,7 @@ describe("parseGroupKnowledgeResponse", () => {
   it("keeps every complete record when the model trails off mid-answer", () => {
     // The whole reason for a record separator rather than JSON: a truncated response still
     // yields the records that did complete.
-    const entries = parseGroupKnowledgeResponse(
+    const entries = parseKnowledgeRecords(
       [
         "TITLE: First",
         "CATEGORY: FAQ",
@@ -125,7 +125,7 @@ describe("parseGroupKnowledgeResponse", () => {
   });
 
   it("keeps a multi-line answer intact", () => {
-    const entries = parseGroupKnowledgeResponse(
+    const entries = parseKnowledgeRecords(
       ["TITLE: Steps", "CATEGORY: SOP", "ANSWER: Step one.\nStep two.\nStep three.", "CONFIDENCE: 80"].join("\n"),
     );
     expect(entries[0]!.answer).toBe("Step one.\nStep two.\nStep three.");

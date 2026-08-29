@@ -3,7 +3,7 @@ import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import {
   buildGroupKnowledgePrompt,
-  parseGroupKnowledgeResponse,
+  parseKnowledgeRecords,
   type ExtractedKnowledge,
 } from "./groupKnowledgePrompt.js";
 
@@ -107,7 +107,7 @@ export async function processOneGroupKnowledgeBuild(
   let extracted: ExtractedKnowledge[];
   try {
     const completion = await client.complete(prompt);
-    extracted = parseGroupKnowledgeResponse(completion.text).slice(0, MAX_ENTRIES_PER_RUN);
+    extracted = parseKnowledgeRecords(completion.text).slice(0, MAX_ENTRIES_PER_RUN);
   } catch (err) {
     // Leave the watermark untouched so the same window is retried next time rather than skipped.
     await logSystemEvent("WARN", "knowledge-builder", `Knowledge extraction failed for "${group.name}"`, {
@@ -119,7 +119,7 @@ export async function processOneGroupKnowledgeBuild(
 
   const newestMessageAt = messages[messages.length - 1]!.timestampWa;
   const worthStoring = extracted.filter((entry) => entry.confidence >= MIN_CONFIDENCE_TO_STORE);
-  const created = await storeExtractedKnowledge(group.id, worthStoring);
+  const created = await storeExtractedKnowledge(group.id, group.name, worthStoring);
 
   await prisma.whatsAppGroup.update({
     where: { id: group.id },
@@ -144,7 +144,11 @@ export async function processOneGroupKnowledgeBuild(
  * until that exists, a cheap exact check that occasionally lets a near-duplicate through is far
  * better than the alternative, which is the same entry re-created on every single run.
  */
-async function storeExtractedKnowledge(groupId: string, entries: ExtractedKnowledge[]): Promise<number> {
+async function storeExtractedKnowledge(
+  groupId: string,
+  groupName: string,
+  entries: ExtractedKnowledge[],
+): Promise<number> {
   if (entries.length === 0) return 0;
 
   const existing = await prisma.aiKnowledgeItem.findMany({
@@ -162,8 +166,11 @@ async function storeExtractedKnowledge(groupId: string, entries: ExtractedKnowle
       category: entry.category,
       question: entry.question,
       answer: entry.answer,
+      module: entry.module,
       source: "CHAT_LEARNING",
       sourceGroupId: groupId,
+      // Denormalised so the review queue can show provenance without a join.
+      sourceLabel: `Conversation in ${groupName}`,
       confidence: entry.confidence,
       aiGenerated: true,
       // The whole point of the review queue: a model's reading of a chat log is evidence a

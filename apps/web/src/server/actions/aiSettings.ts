@@ -62,6 +62,7 @@ export async function updateAiSettings(
       aiRuleGenerationMinConfidence: percent("aiRuleGenerationMinConfidence", 95),
       takeoverNotifyGroupIds,
       knowledgeFromChatEnabled: flag("knowledgeFromChatEnabled"),
+      requireKnowledgeForAiReply: flag("requireKnowledgeForAiReply"),
       knowledgeMinMessagesPerGroup: nonNegativeInt("knowledgeMinMessagesPerGroup", 25),
     },
     create: { id: "global" },

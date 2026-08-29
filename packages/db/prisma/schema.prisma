@@ -311,6 +311,7 @@ model User {
   createdOutboundSends       OutboundMessage[]
   createdParticipantAddJobs  GroupParticipantAddJob[]
   createdKnowledgeItems      AiKnowledgeItem[]
+  createdKnowledgeImports    KnowledgeImport[]
   createdKnowledgeVersions   AiKnowledgeVersion[]
   resolvedEscalationCases    SupportEscalationCase[]
   triggeredEscalationEvents  SupportEscalationEvent[]
@@ -995,6 +996,53 @@ enum AiKnowledgeCategory {
   SCREENSHOT
 }
 
+/// How a batch of pasted text or an uploaded document is turned into knowledge entries.
+/// Modelled as a job rather than done inline because a manual can be far larger than one
+/// model call: it is chunked, each chunk costs an API round trip, and the whole thing has to
+/// survive a worker restart and report progress while it runs.
+enum KnowledgeImportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  /// Some chunks produced entries before a later one failed — whatever was extracted is kept.
+  PARTIAL
+  FAILED
+}
+
+enum KnowledgeImportSourceType {
+  PASTED_TEXT
+  DOCUMENT
+}
+
+model KnowledgeImport {
+  id         String                    @id @default(cuid())
+  /// What this came from, in the operator's words — a file name, or a title they typed.
+  /// Copied onto every entry it produces so a reviewer can see the origin without a join.
+  label      String
+  sourceType KnowledgeImportSourceType @default(PASTED_TEXT)
+  /// The extracted plain text. Kept after processing so a failed or disappointing import can be
+  /// re-run against a better prompt without asking anyone to find the original file again.
+  rawText    String
+  /// Optional module hint applied to every entry produced, e.g. "MikroTik Integration".
+  module     String?
+  status     KnowledgeImportStatus     @default(PENDING)
+  chunksTotal    Int                   @default(0)
+  chunksDone     Int                   @default(0)
+  entriesCreated Int                   @default(0)
+  /// Operator-facing failure text; never a stack trace.
+  error       String?
+  createdById String?
+  createdBy   User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  items AiKnowledgeItem[]
+
+  @@index([status, createdAt])
+}
+
 enum AiKnowledgeStatus {
   ACTIVE
   INACTIVE
@@ -1042,6 +1090,11 @@ model AiSettings {
   /// A group with fewer stored messages than this is skipped by the knowledge builder —
   /// there is not enough conversation there to draw a reliable conclusion from.
   knowledgeMinMessagesPerGroup    Int      @default(25)
+  /// When on, the AI may only answer a customer if verified knowledge actually covers the
+  /// question; with nothing to ground an answer in it hands off to a person instead of
+  /// answering from the model's own general knowledge. Off by default so existing behaviour is
+  /// unchanged, but this is the switch that makes "AI never guesses about our product" true.
+  requireKnowledgeForAiReply      Boolean  @default(false)
   screenshotResponseEnabled       Boolean  @default(false)
   chatLearningEnabled             Boolean  @default(false)
   softwareLearningEnabled         Boolean  @default(false)
@@ -1116,6 +1169,14 @@ model AiKnowledgeItem {
   /// deleting a group must not erase what was learned from it.
   sourceGroupId   String?
   sourceGroup     WhatsAppGroup?      @relation(fields: [sourceGroupId], references: [id], onDelete: SetNull)
+  /// Set when this entry came from a pasted-text or document import. SetNull for the same
+  /// reason as sourceGroupId: deleting the import record must not erase what was learned.
+  importId        String?
+  import          KnowledgeImport?    @relation(fields: [importId], references: [id], onDelete: SetNull)
+  /// Free-text origin shown in the review queue — a file name, a group name, or "Manual entry".
+  /// Denormalised on purpose so the queue can show provenance without joining two optional
+  /// relations for every row.
+  sourceLabel     String?
   confidence      Int?
   aiGenerated     Boolean             @default(false)
   humanVerified   Boolean             @default(true)
@@ -1131,6 +1192,9 @@ model AiKnowledgeItem {
   @@index([category])
   @@index([status])
   @@index([sourceGroupId])
+  @@index([importId])
+  /// The review queue's own query shape: "everything still waiting to be checked, newest first."
+  @@index([humanVerified, createdAt])
 }
 
 /// One immutable snapshot per edit (spec section 10 — "never simply
