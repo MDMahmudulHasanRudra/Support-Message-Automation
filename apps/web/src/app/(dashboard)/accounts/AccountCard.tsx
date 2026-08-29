@@ -1,15 +1,28 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { QrCode } from "lucide-react";
 import {
   Badge,
   type BadgeColor,
   Button,
   Card,
   ConfirmDialog,
-  StatusDot,
   useToast,
 } from "@/components/ui";
+import { QrConnectDialog } from "./QrConnectDialog";
+
+/** What the operator should do next, per status — the card's job is to answer that, not just report state. */
+const STATUS_HINT: Record<string, string> = {
+  CONNECTED: "Sending and receiving normally.",
+  DISCONNECTED: "Not linked to a phone. Connect to scan a QR code.",
+  RECONNECTING: "The worker is bringing this session back up.",
+  AUTHENTICATION_REQUIRED: "Waiting for a QR scan on the phone.",
+  SESSION_ERROR: "The session broke. Reconnect, and log out first if that does not clear it.",
+  OUTBOUND_PAUSED: "Receiving, but not sending.",
+  RATE_LIMITED: "Holding back sends to protect the number.",
+  ERROR: "Something went wrong. Check System Logs for the reason.",
+};
 
 const STATUS_COLOR: Record<string, BadgeColor> = {
   CONNECTED: "green",
@@ -61,6 +74,35 @@ export function AccountCard({
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [qrOpen, setQrOpen] = useState(false);
+  const previousStatus = useRef(account.status);
+
+  const needsScan = account.status === "AUTHENTICATION_REQUIRED";
+  const isConnected = account.status === "CONNECTED";
+
+  /**
+   * Opens on the transition *into* a scannable state, not on every render where one exists.
+   *
+   * The page polls while a QR is live and the code itself rotates every few seconds, so
+   * re-opening whenever a code is present would reopen the dialog seconds after the operator
+   * closed it. Reacting to the edge means it appears exactly once per linking attempt, and
+   * closing it stays closed.
+   */
+  useEffect(() => {
+    const wasNeedingScan = previousStatus.current === "AUTHENTICATION_REQUIRED";
+    const justStartedNeedingScan = !wasNeedingScan && account.status === "AUTHENTICATION_REQUIRED";
+    const justConnected = wasNeedingScan && account.status === "CONNECTED";
+    previousStatus.current = account.status;
+
+    if (justStartedNeedingScan) queueMicrotask(() => setQrOpen(true));
+    if (justConnected) {
+      showToast({ tone: "success", title: `${account.label} connected` });
+      // Left open for a beat so the success state is actually seen, rather than the dialog
+      // vanishing at the same instant the phone says "linked".
+      const timer = setTimeout(() => setQrOpen(false), 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [account.status, account.label, showToast]);
 
   const closeDialog = () => {
     setDialog(null);
@@ -170,7 +212,7 @@ export function AccountCard({
           </dd>
         </div>
         <div>
-          <dt className="text-xs text-[color:var(--color-muted-foreground)]">Last heartbeat</dt>
+          <dt className="text-xs text-[color:var(--color-muted-foreground)]">Worker last seen</dt>
           <dd className="mt-0.5 text-[color:var(--color-foreground)]">
             {account.lastHeartbeatAt ? new Date(account.lastHeartbeatAt).toLocaleString() : "—"}
           </dd>
@@ -195,37 +237,21 @@ export function AccountCard({
         </p>
       ) : null}
 
-      {account.status === "AUTHENTICATION_REQUIRED" && account.qrCode ? (
-        <div className="mt-4">
-          {account.qrStale ? (
-            <div className="flex h-56 w-56 flex-col items-center justify-center rounded-[var(--radius-md)] border border-dashed border-[var(--color-border-strong)] text-center text-sm text-[color:var(--color-muted-foreground)]">
-              Waiting for a fresh QR code…
-              <span className="mt-1 text-xs">(previous code expired)</span>
-            </div>
-          ) : (
-            <>
-              <p className="mb-2 text-sm font-medium text-[color:var(--color-foreground)]">
-                Scan this QR code with WhatsApp:
-              </p>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={account.qrCode}
-                alt="WhatsApp QR code"
-                className="h-56 w-56 rounded-[var(--radius-md)] border border-[var(--color-border)]"
-              />
-            </>
-          )}
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-[color:var(--color-muted-foreground)]">
-            <span>
-              Updated {account.qrUpdatedAt ? new Date(account.qrUpdatedAt).toLocaleTimeString() : "—"} · this
-              page refreshes automatically
-            </span>
-            <StatusDot color="blue" pulse />
-          </p>
-        </div>
+      {STATUS_HINT[account.status] ? (
+        <p className="mt-3 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">
+          {STATUS_HINT[account.status]}
+        </p>
       ) : null}
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
+        {/* When an account is not linked, connecting is the only thing anyone came here to do —
+            so it is the one filled button, rather than a fifth equal-weight option. */}
+        {!isConnected ? (
+          <Button onClick={() => (needsScan ? setQrOpen(true) : setDialog("reconnect"))}>
+            <QrCode className="size-3.5" aria-hidden />
+            {needsScan ? "Show QR code" : "Connect"}
+          </Button>
+        ) : null}
         <Button variant="secondary" onClick={() => setDialog("reconnect")}>
           Reconnect
         </Button>
@@ -250,6 +276,19 @@ export function AccountCard({
           </Button>
         ) : null}
       </div>
+
+      <QrConnectDialog
+        open={qrOpen}
+        onClose={() => setQrOpen(false)}
+        account={account}
+        reconnectPending={isPending}
+        onReconnect={() =>
+          startTransition(async () => {
+            await onReconnect();
+            showToast({ tone: "info", title: "New code requested" });
+          })
+        }
+      />
 
       <ConfirmDialog
         open={dialog === "reconnect"}

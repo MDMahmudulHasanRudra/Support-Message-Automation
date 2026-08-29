@@ -145,6 +145,25 @@ pre-multi-account session and a Primary account both exist → connects every co
 **sequentially, never concurrently** (`ProviderRegistry.connectAccount()` — OpenWA's `connect()`
 does a process-global `process.chdir()`, so concurrent connects race).
 
+### WhatsApp Accounts page (`(dashboard)/accounts/`)
+
+Linking is a modal (`QrConnectDialog`), not an inline 224px image: scanning is a two-device task
+and the QR needs to be big enough to read across a desk. The code is always rendered **on white
+with quiet-zone padding regardless of theme** — a dark-on-dark QR is unscannable and the failure
+looks like a broken camera rather than a contrast problem. The dialog opens on the *transition
+into* `AUTHENTICATION_REQUIRED`, never on every render where a code exists: the page polls while
+a QR is live and the code rotates every few seconds, so the latter would reopen the dialog
+seconds after the operator closed it.
+
+**Polling is gated on work actually being in flight** (`AUTHENTICATION_REQUIRED`/`RECONNECTING`,
+or a pending `WorkerCommand`) — not on `status !== CONNECTED`, which kept the page re-querying
+every 4s forever for a permanently disconnected spare number whose status cannot change on its
+own.
+
+The page reports **worker liveness** from the newest `lastHeartbeatAt`. Every control here writes
+a `WorkerCommand` and waits; with the worker down they all still "succeed" and then do nothing,
+and the heartbeat is the only thing that distinguishes that from a slow reconnect.
+
 ### WhatsApp provider abstraction
 
 `apps/worker/src/provider/WhatsAppProvider.ts` defines the interface (connect/disconnect/

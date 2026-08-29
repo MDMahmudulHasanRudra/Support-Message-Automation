@@ -33,14 +33,12 @@ function isQrStale(qrUpdatedAtIso: string | null, nowMs: number): boolean {
 
 export default async function AccountsPage() {
   await requireSession();
-  const accounts = await prisma.whatsAppAccount.findMany({ orderBy: { createdAt: "asc" } });
-  const pendingCommands = await prisma.workerCommand.count({
-    where: { status: { in: ["PENDING", "PROCESSING"] } },
-  });
-  const routes = await prisma.whatsAppServiceRoute.findMany({
-    where: { enabled: true, accountId: { not: null } },
-  });
-  const anyAccountMidConnection = accounts.some((a) => a.status !== "CONNECTED");
+  // Three independent reads, so one round trip rather than three sequential ones.
+  const [accounts, pendingCommands, routes] = await Promise.all([
+    prisma.whatsAppAccount.findMany({ orderBy: { createdAt: "asc" } }),
+    prisma.workerCommand.count({ where: { status: { in: ["PENDING", "PROCESSING"] } } }),
+    prisma.whatsAppServiceRoute.findMany({ where: { enabled: true, accountId: { not: null } } }),
+  ]);
 
   const usedByAccountId = new Map<string, string[]>();
   for (const route of routes) {
@@ -53,6 +51,39 @@ export default async function AccountsPage() {
 
   // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
   const nowMs = Date.now();
+
+  /**
+   * Poll only while something is genuinely in flight.
+   *
+   * This used to refresh whenever any account was not CONNECTED, which meant a permanently
+   * disconnected account — the normal resting state of a spare number nobody is linking — kept
+   * the page re-querying every four seconds forever, for a value that cannot change on its own.
+   * A DISCONNECTED account only moves when the worker is asked to move it, and that ask is a
+   * WorkerCommand, so pending work is the honest signal.
+   */
+  const isSettling = accounts.some(
+    (account) => account.status === "AUTHENTICATION_REQUIRED" || account.status === "RECONNECTING",
+  );
+  const shouldPoll = isSettling || pendingCommands > 0;
+
+  /**
+   * Whether the worker is alive at all.
+   *
+   * Every button on this page writes a WorkerCommand row and waits for the worker to act on it.
+   * With the worker down they all still "succeed" — the row is written, the toast says the
+   * request went in — and then nothing happens, with no way to tell that from a slow reconnect.
+   * The heartbeat is the one signal that separates the two, so it is worth stating plainly
+   * rather than leaving as a timestamp to interpret.
+   */
+  const WORKER_STALE_AFTER_MS = 60_000;
+  const lastHeartbeatMs = accounts.reduce<number | null>((newest, account) => {
+    const at = account.lastHeartbeatAt?.getTime() ?? null;
+    if (at === null) return newest;
+    return newest === null || at > newest ? at : newest;
+  }, null);
+  const workerOffline = lastHeartbeatMs === null || nowMs - lastHeartbeatMs > WORKER_STALE_AFTER_MS;
+  const workerSilentForMinutes =
+    lastHeartbeatMs === null ? null : Math.floor((nowMs - lastHeartbeatMs) / 60_000);
   const accountData: AccountCardData[] = accounts.map((account) => {
     const qrUpdatedAt = account.qrUpdatedAt?.toISOString() ?? null;
     return {
@@ -135,7 +166,15 @@ export default async function AccountsPage() {
         }
       />
 
-      {pendingCommands > 0 ? (
+      {workerOffline ? (
+        <div className="mb-6">
+          <Alert tone="danger" title="The worker is not responding">
+            {lastHeartbeatMs === null
+              ? "It has never checked in. Nothing on this page will take effect until it is running — actions are queued for it, not performed here."
+              : `Last seen ${workerSilentForMinutes === 0 ? "under a minute" : `${workerSilentForMinutes} minute(s)`} ago. Connecting, reconnecting and logging out all queue work for the worker, so they will appear to succeed and then do nothing until it is back.`}
+          </Alert>
+        </div>
+      ) : pendingCommands > 0 ? (
         <div className="mb-6">
           <Alert tone="info" title={`${pendingCommands} command(s) waiting for the worker`}>
             The worker polls for new commands roughly every 1.5 seconds.
@@ -164,7 +203,9 @@ export default async function AccountsPage() {
         </div>
       )}
 
-      {anyAccountMidConnection ? <AutoRefresh /> : null}
+      {/* A live QR rotates every few seconds, so it gets a tighter interval than a command
+          waiting its turn in the queue. */}
+      {shouldPoll ? <AutoRefresh intervalMs={isSettling ? 3000 : 5000} /> : null}
     </div>
   );
 }
