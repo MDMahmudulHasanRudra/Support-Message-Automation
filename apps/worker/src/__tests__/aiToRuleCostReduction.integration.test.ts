@@ -111,7 +111,17 @@ beforeEach(async () => {
   await resetAutomationSettings();
   await prisma.aiSettings.update({
     where: { id: "global" },
-    data: { aiEngineEnabled: true, autoResponseEnabled: true, autoResponseConfidenceThreshold: 90, humanReviewThreshold: 40 },
+    data: {
+      aiEngineEnabled: true,
+      autoResponseEnabled: true,
+      autoResponseConfidenceThreshold: 90,
+      humanReviewThreshold: 40,
+      // This suite is about the cost-reduction loop, not the knowledge gate, so it runs in the
+      // permissive mode and its canned answers declare SCOPE: GENERAL. Under the default
+      // STRICT_KNOWLEDGE_ONLY the AI would never be called at all with an empty knowledge base.
+      aiResponseMode: "KNOWLEDGE_PLUS_GENERAL",
+      generalAnswerMinConfidence: 90,
+    },
   });
   await prisma.learningSettings.update({
     where: { id: "global" },
@@ -148,7 +158,7 @@ describe("AI-handled pattern → Rule Proposal → activated rule → AI never c
     // both confidently answered by the (mocked) AI fallback layer.
     for (const group of [groupA, groupB]) {
       const client = new MockAiClient();
-      client.nextText = `INTENT: internet issue\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: ${aiReplyText}`;
+      client.nextText = `INTENT: internet issue\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: ${aiReplyText}`;
       const whatsappMessageId = randomUUID();
 
       await processIncomingMessage(
@@ -207,7 +217,7 @@ describe("AI-handled pattern → Rule Proposal → activated rule → AI never c
     // A DRAFT rule must never fire — matching message still reaches AI (proving the rule is truly
     // inert, not just "would have matched").
     const preActivationClient = new MockAiClient();
-    preActivationClient.nextText = `INTENT: internet issue\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: ${aiReplyText}`;
+    preActivationClient.nextText = `INTENT: internet issue\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: ${aiReplyText}`;
     await processIncomingMessage(
       {
         accountId: account.id,

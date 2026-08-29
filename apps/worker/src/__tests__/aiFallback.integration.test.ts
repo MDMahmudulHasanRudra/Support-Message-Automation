@@ -61,6 +61,12 @@ async function resetAiSettings(overrides: Partial<AiSettings> = {}) {
       aiEngineEnabled: true,
       autoResponseEnabled: true,
       autoResponseConfidenceThreshold: 90,
+      // These suites exercise the confidence, cooldown and idempotency machinery. The default
+      // STRICT_KNOWLEDGE_ONLY mode would short-circuit every one of them before the AI is even
+      // called, so they opt into the permissive mode and their canned answers declare
+      // SCOPE: GENERAL. The knowledge gate itself has its own tests at the end of this file.
+      aiResponseMode: "KNOWLEDGE_PLUS_GENERAL",
+      generalAnswerMinConfidence: 90,
       ...overrides,
     },
   });
@@ -125,7 +131,7 @@ afterEach(async () => {
 
 describe("parseFallbackResponse", () => {
   it("parses a well-formed response", () => {
-    const result = parseFallbackResponse("INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?");
+    const result = parseFallbackResponse("INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?");
     expect(result.intent).toBe("package change");
     expect(result.confidence).toBe(96);
     expect(result.shouldReply).toBe(true);
@@ -133,7 +139,7 @@ describe("parseFallbackResponse", () => {
   });
 
   it("treats SHOULD_REPLY: NO + RESPONSE: NONE as no drafted reply", () => {
-    const result = parseFallbackResponse("INTENT: complaint\nCONFIDENCE: 40\nSHOULD_REPLY: NO\nRESPONSE: NONE");
+    const result = parseFallbackResponse("INTENT: complaint\nSCOPE: GENERAL\nCONFIDENCE: 40\nSHOULD_REPLY: NO\nRESPONSE: NONE");
     expect(result.shouldReply).toBe(false);
     expect(result.responseText).toBeNull();
   });
@@ -290,7 +296,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
 
   it("invokes AI exactly once on a genuine NO_MATCH and replies when confidence clears the threshold", async () => {
     const client = new MockAiClient();
-    client.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package would you like?";
+    client.nextText = "INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package would you like?";
 
     const senderPhone = uniquePhone();
     await processIncomingMessage(
@@ -313,7 +319,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
 
   it("falls back to human when confidence is below the threshold", async () => {
     const client = new MockAiClient();
-    client.nextText = "INTENT: unclear\nCONFIDENCE: 55\nSHOULD_REPLY: YES\nRESPONSE: Maybe this helps?";
+    client.nextText = "INTENT: unclear\nSCOPE: GENERAL\nCONFIDENCE: 55\nSHOULD_REPLY: YES\nRESPONSE: Maybe this helps?";
 
     await processIncomingMessage(
       { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "something ambiguous", timestampWa: new Date() },
@@ -323,7 +329,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
     const message = await prisma.message.findFirstOrThrow({ where: { accountId: account.id } });
     const decision = await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: message.id } });
     expect(decision.outcome).toBe("HUMAN_FALLBACK");
-    expect(decision.reason).toBe("LOW_CONFIDENCE");
+    expect(decision.reason).toBe("LOW_CONFIDENCE_GENERAL");
     expect(decision.notificationId).not.toBeNull();
 
     const notification = await prisma.notification.findUniqueOrThrow({ where: { id: decision.notificationId! } });
@@ -334,7 +340,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
 
   it("falls back to human when the AI declines to reply", async () => {
     const client = new MockAiClient();
-    client.nextText = "INTENT: complaint\nCONFIDENCE: 92\nSHOULD_REPLY: NO\nRESPONSE: NONE";
+    client.nextText = "INTENT: complaint\nSCOPE: GENERAL\nCONFIDENCE: 92\nSHOULD_REPLY: NO\nRESPONSE: NONE";
 
     await processIncomingMessage(
       { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "a real complaint", timestampWa: new Date() },
@@ -434,7 +440,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
   it("falls back to human when the safety re-check blocks the send (rate limit exhausted)", async () => {
     await resetAutomationSettings({ maxRepliesPerClientPerHour: 0 });
     const client = new MockAiClient();
-    client.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure!";
+    client.nextText = "INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure!";
 
     await processIncomingMessage(
       { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "package change please", timestampWa: new Date() },
@@ -451,7 +457,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
   describe("confidence boundaries (Slice 3)", () => {
     async function sendWithConfidence(confidenceLine: string, senderPhone: string) {
       const client = new MockAiClient();
-      client.nextText = `INTENT: test\n${confidenceLine}\nSHOULD_REPLY: YES\nRESPONSE: A drafted reply.`;
+      client.nextText = `INTENT: test\nSCOPE: GENERAL\n${confidenceLine}\nSHOULD_REPLY: YES\nRESPONSE: A drafted reply.`;
       await processIncomingMessage(
         { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone, direction: "INCOMING", body: "boundary test message", timestampWa: new Date() },
         client,
@@ -473,13 +479,13 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
     it("confidence one below the threshold (89) falls back to human", async () => {
       const decision = await sendWithConfidence("CONFIDENCE: 89", uniquePhone());
       expect(decision.outcome).toBe("HUMAN_FALLBACK");
-      expect(decision.reason).toBe("LOW_CONFIDENCE");
+      expect(decision.reason).toBe("LOW_CONFIDENCE_GENERAL");
     });
 
     it("confidence 0 falls back to human", async () => {
       const decision = await sendWithConfidence("CONFIDENCE: 0", uniquePhone());
       expect(decision.outcome).toBe("HUMAN_FALLBACK");
-      expect(decision.reason).toBe("LOW_CONFIDENCE");
+      expect(decision.reason).toBe("LOW_CONFIDENCE_GENERAL");
     });
 
     it("missing confidence entirely fails closed (never treated as 100%)", async () => {
@@ -502,7 +508,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
       await resetAiSettings({ aiReplyCooldownSeconds: 3600 });
       const senderPhone = uniquePhone();
       const firstClient = new MockAiClient();
-      firstClient.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+      firstClient.nextText = "INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
       await processIncomingMessage(
         { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone, direction: "INCOMING", body: "first message", timestampWa: new Date() },
         firstClient,
@@ -528,7 +534,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
     it("does not block a different client in the same cooldown window", async () => {
       await resetAiSettings({ aiReplyCooldownSeconds: 3600 });
       const firstClient = new MockAiClient();
-      firstClient.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+      firstClient.nextText = "INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
       await processIncomingMessage(
         { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "first client message", timestampWa: new Date() },
         firstClient,
@@ -536,7 +542,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
 
       const otherPhone = uniquePhone();
       const secondClient = new MockAiClient();
-      secondClient.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+      secondClient.nextText = "INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
       await processIncomingMessage(
         { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone: otherPhone, direction: "INCOMING", body: "different client message", timestampWa: new Date() },
         secondClient,
@@ -553,7 +559,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
       const senderPhone = uniquePhone();
       for (let i = 0; i < 2; i++) {
         const client = new MockAiClient();
-        client.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+        client.nextText = "INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
         await processIncomingMessage(
           { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId, chatId: group.whatsappGroupId, senderPhone, direction: "INCOMING", body: `message ${i}`, timestampWa: new Date() },
           client,
@@ -605,7 +611,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
       });
 
       const client = new MockAiClient();
-      client.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+      client.nextText = "INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
       await processIncomingMessage(
         { accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: otherGroup.whatsappGroupId, chatId: otherGroup.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING", body: "unmatched in other group", timestampWa: new Date() },
         client,
@@ -618,7 +624,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
 describe("Hybrid AI Automation — duplicate-delivery idempotency (Slice 3)", () => {
   it("never invokes AI, or creates a second decision, when the same WhatsApp event is redelivered", async () => {
     const client = new MockAiClient();
-    client.nextText = "INTENT: package change\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
+    client.nextText = "INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package?";
     const raw = {
       accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId,
       chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING" as const,
@@ -632,5 +638,137 @@ describe("Hybrid AI Automation — duplicate-delivery idempotency (Slice 3)", ()
     expect(await prisma.message.count({ where: { accountId: account.id } })).toBe(1);
     expect(await prisma.aiFallbackDecision.count({ where: { accountId: account.id } })).toBe(1);
     expect(await prisma.outboundMessage.count({ where: { accountId: account.id } })).toBe(1);
+  });
+});
+
+/**
+ * The authority boundary: what the AI is permitted to claim about this business.
+ *
+ * Every other suite in this file opts into KNOWLEDGE_PLUS_GENERAL so it can exercise the
+ * confidence and cooldown machinery. These tests are the ones that actually pin the gate down,
+ * including the failure mode that matters most — a response that never declared a scope at all
+ * must be treated as if it had said BUSINESS_SPECIFIC.
+ */
+describe("Hybrid AI Automation — knowledge authority gate", () => {
+  const CANNED_GENERAL = "INTENT: definition\nSCOPE: GENERAL\nCONFIDENCE: 99\nSHOULD_REPLY: YES\nRESPONSE: PPPoE is a protocol.";
+  const CANNED_BUSINESS = "INTENT: refund policy\nSCOPE: BUSINESS_SPECIFIC\nCONFIDENCE: 99\nSHOULD_REPLY: YES\nRESPONSE: We refund within 14 days.";
+  const CANNED_NO_SCOPE = "INTENT: refund policy\nCONFIDENCE: 99\nSHOULD_REPLY: YES\nRESPONSE: We refund within 14 days.";
+
+  async function ask(client: MockAiClient, body: string) {
+    await processIncomingMessage(
+      {
+        accountId: account.id, whatsappMessageId: randomUUID(), whatsappGroupId: group.whatsappGroupId,
+        chatId: group.whatsappGroupId, senderPhone: uniquePhone(), direction: "INCOMING" as const,
+        body, timestampWa: new Date(),
+      },
+      client,
+    );
+    const message = await prisma.message.findFirstOrThrow({
+      where: { accountId: account.id }, orderBy: { createdAt: "desc" },
+    });
+    return prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: message.id } });
+  }
+
+  it("under Strict, answers nothing without verified knowledge — and spends no API call doing it", async () => {
+    await resetAiSettings({ aiResponseMode: "STRICT_KNOWLEDGE_ONLY" });
+    const client = new MockAiClient();
+    client.nextText = CANNED_GENERAL;
+
+    const decision = await ask(client, "what is PPPoE anyway");
+
+    expect(decision.outcome).toBe("HUMAN_FALLBACK");
+    expect(decision.reason).toBe("NO_KNOWLEDGE");
+    // The classification cannot change the outcome here, so the decision is made before the
+    // provider is ever called. An ungroundable question must cost nothing.
+    expect(client.requests).toHaveLength(0);
+  });
+
+  it("under Knowledge + General, answers a general question with no knowledge behind it", async () => {
+    await resetAiSettings({ aiResponseMode: "KNOWLEDGE_PLUS_GENERAL" });
+    const client = new MockAiClient();
+    client.nextText = CANNED_GENERAL;
+
+    const decision = await ask(client, "what is PPPoE anyway");
+
+    expect(decision.outcome).toBe("AI_REPLIED");
+  });
+
+  it("refuses a business question with no verified knowledge, even in the permissive mode", async () => {
+    // The guard with no setting behind it. A model can produce a fluent refund policy for any
+    // company; this one has no authority to state ours.
+    await resetAiSettings({ aiResponseMode: "KNOWLEDGE_PLUS_GENERAL" });
+    const client = new MockAiClient();
+    client.nextText = CANNED_BUSINESS;
+
+    const decision = await ask(client, "how many days for a refund on my invoice");
+
+    expect(decision.outcome).toBe("HUMAN_FALLBACK");
+    expect(decision.reason).toBe("NO_BUSINESS_KNOWLEDGE");
+  });
+
+  it("treats a response with no SCOPE line as business-specific, not as permission", async () => {
+    // The fail-closed path. A truncated reply or a model that ignored the format must never be
+    // read as clearance to speak for the business.
+    await resetAiSettings({ aiResponseMode: "KNOWLEDGE_PLUS_GENERAL" });
+    const client = new MockAiClient();
+    client.nextText = CANNED_NO_SCOPE;
+
+    const decision = await ask(client, "how many days for a refund on my invoice");
+
+    expect(decision.outcome).toBe("HUMAN_FALLBACK");
+    expect(decision.reason).toBe("NO_BUSINESS_KNOWLEDGE");
+  });
+
+  it("answers a business question once verified knowledge covers it", async () => {
+    await resetAiSettings({ aiResponseMode: "STRICT_KNOWLEDGE_ONLY" });
+    const knowledge = await prisma.aiKnowledgeItem.create({
+      data: {
+        title: "Refund window for an invoice",
+        category: "POLICY",
+        question: "How many days do customers have to request a refund on an invoice?",
+        answer: "Refunds on an invoice can be requested within fourteen days.",
+        status: "ACTIVE",
+        // Verified is the whole point — an unverified entry must not unlock this.
+        humanVerified: true,
+      },
+    });
+
+    try {
+      const client = new MockAiClient();
+      client.nextText = CANNED_BUSINESS;
+
+      const decision = await ask(client, "how many days for a refund on my invoice");
+
+      expect(decision.outcome).toBe("AI_REPLIED");
+    } finally {
+      await prisma.aiKnowledgeItem.delete({ where: { id: knowledge.id } });
+    }
+  });
+
+  it("does not let an UNVERIFIED entry unlock a business answer", async () => {
+    // Knowledge the builder wrote but nobody checked is exactly what must not reach a customer.
+    await resetAiSettings({ aiResponseMode: "STRICT_KNOWLEDGE_ONLY" });
+    const knowledge = await prisma.aiKnowledgeItem.create({
+      data: {
+        title: "Refund window for an invoice",
+        category: "POLICY",
+        question: "How many days do customers have to request a refund on an invoice?",
+        answer: "Refunds on an invoice can be requested within fourteen days.",
+        status: "ACTIVE",
+        humanVerified: false,
+      },
+    });
+
+    try {
+      const client = new MockAiClient();
+      client.nextText = CANNED_BUSINESS;
+
+      const decision = await ask(client, "how many days for a refund on my invoice");
+
+      expect(decision.outcome).toBe("HUMAN_FALLBACK");
+      expect(decision.reason).toBe("NO_KNOWLEDGE");
+    } finally {
+      await prisma.aiKnowledgeItem.delete({ where: { id: knowledge.id } });
+    }
   });
 });

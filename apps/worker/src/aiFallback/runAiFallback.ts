@@ -175,6 +175,19 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     return;
   }
 
+  // What the AI itself concluded is checked before whether we would have permitted it. Both
+  // end in a handoff, but "the AI judged this needs a person" is a more useful thing to read in
+  // the activity log than "we would not have let it answer anyway" — the first tells an
+  // operator something about the question, the second only about configuration.
+  if (!parsed.shouldReply) {
+    await recordHumanFallback("AI_DECLINED", commonFields);
+    return;
+  }
+  if (!parsed.responseText) {
+    await recordHumanFallback("EMPTY_RESPONSE", commonFields);
+    return;
+  }
+
   // The rule that is deliberately not configurable. A model knowing how billing software
   // generally works is not the same as this software having the authority to state how THIS
   // company's billing works — and a fluent guess about a refund window or support hours is
@@ -183,14 +196,6 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   const groundedInVerifiedKnowledge = knowledge.length > 0;
   if (parsed.scope === "BUSINESS_SPECIFIC" && !groundedInVerifiedKnowledge) {
     await recordHumanFallback("NO_BUSINESS_KNOWLEDGE", commonFields);
-    return;
-  }
-  if (!parsed.shouldReply) {
-    await recordHumanFallback("AI_DECLINED", commonFields);
-    return;
-  }
-  if (!parsed.responseText) {
-    await recordHumanFallback("EMPTY_RESPONSE", commonFields);
     return;
   }
   // An ungrounded general answer is held to its own, normally higher bar: there is no team
