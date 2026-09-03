@@ -584,6 +584,13 @@ anything safety/UI/DB related; this is the subset most likely to bite an unfamil
   reconnects).
 - **"Active" ≠ "Monitored"** for WhatsApp groups — active means the account is still a member;
   monitored means an admin opted it into automation. Never conflate them in queries or UI.
+- **Test groups lift throttles, never safety.** `WhatsAppGroup.testModeEnabled` exempts one group
+  from cooldowns, per-client and global rate limits, the randomised reply delay, and
+  SAFE_AUTO_REPLY's rule-type restriction — so every message and rule type can be exercised
+  back-to-back. It must never bypass the kill switch, MANUAL_ONLY, the monitored-group
+  requirement, membership verification, the queue, idempotency, account isolation, loop
+  prevention, or the AI's business-question guard. The number serving the test groups is the same
+  one serving every customer, and rate limits are what stop it being banned.
 - **Anti-spam philosophy is load-bearing, not incidental**: automation is conservative and
   reply-triggered-by-incoming-message only; no unrestricted bulk mode; every auto-reply path
   respects per-client/global rate limits and rule-level cooldowns (`AutomationSettings`,

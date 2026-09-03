@@ -498,6 +498,22 @@ model WhatsAppGroup {
   /// on, before AI ever fires for it. Ignored under ALL_MONITORED_GROUPS — use
   /// aiAutomationExcluded to hold a group back in that mode.
   aiAutomationEnabled         Boolean             @default(false)
+
+  /// Testing mode: exempt this group from the anti-spam THROTTLES so every kind of message and
+  /// rule can be exercised back-to-back without waiting out a cooldown or a per-hour cap.
+  ///
+  /// It relaxes exactly four things: rule/AI cooldowns, per-client limits, global rate limits, and
+  /// the randomised human-like reply delay. It also lets rule types that SAFE_AUTO_REPLY would
+  /// hold back run here, since otherwise most rule types can never be exercised at all.
+  ///
+  /// It deliberately does NOT bypass anything on this project's own "must stay active during
+  /// test-group testing" list: the kill switch, MANUAL_ONLY, the monitored-group requirement,
+  /// group membership verification, the outbound queue, idempotency, account isolation or loop
+  /// prevention. Nor the AI's business-question guard, which is not configurable by design.
+  ///
+  /// Meant only for the approved test groups. Rate limits are what keep the WhatsApp number from
+  /// being banned, and the number serving these test groups also serves every real customer.
+  testModeEnabled             Boolean             @default(false)
   /// A hard "never let AI answer here", honoured under every scope. For the groups where a
   /// wrong answer costs more than a slow one — a key account, a billing dispute, anywhere a
   /// human must always speak. Beats every other AI gate.

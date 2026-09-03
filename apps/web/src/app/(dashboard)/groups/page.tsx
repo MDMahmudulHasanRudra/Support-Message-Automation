@@ -93,6 +93,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
     escalationMonitoringEnabled: g.escalationMonitoringEnabled,
     aiAutomationEnabled: g.aiAutomationEnabled,
     aiAutomationExcluded: g.aiAutomationExcluded,
+    testModeEnabled: g.testModeEnabled,
     aiScopeIsGlobal,
     knowledgeBuiltAt: g.knowledgeBuiltAt?.toISOString() ?? null,
     aiSuppressedUntil: g.aiSuppressedUntil?.toISOString() ?? null,

@@ -292,6 +292,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
           raw,
           groupId: group?.id ?? null,
           groupName: group?.name ?? null,
+          testMode: group?.testModeEnabled ?? false,
           matchedRule: result.matchedRule,
           matchedRuleRow,
           settings,
@@ -368,6 +369,7 @@ async function resolveGroup(raw: RawIncomingMessage) {
       aiAutomationEnabled: true,
       aiAutomationExcluded: true,
       aiSuppressedUntil: true,
+      testModeEnabled: true,
     },
   });
 }
@@ -407,11 +409,13 @@ async function executeAction(params: {
   raw: RawIncomingMessage;
   groupId: string | null;
   groupName: string | null;
+  /** True for a group an admin marked as a test group — see WhatsAppGroup.testModeEnabled. */
+  testMode: boolean;
   matchedRule: EngineRule | null;
   matchedRuleRow: { replyMessage: string | null; cooldownSeconds: number | null; replyDelayMinMs: number | null; replyDelayMaxMs: number | null } | null;
   settings: Awaited<ReturnType<typeof getAutomationSettings>>;
 }): Promise<ActionExecutionRecord> {
-  const { action, message, raw, groupId, groupName, matchedRule, matchedRuleRow, settings } = params;
+  const { action, message, raw, groupId, groupName, testMode, matchedRule, matchedRuleRow, settings } = params;
 
   switch (action.type) {
     case "IGNORE":
@@ -456,6 +460,7 @@ async function executeAction(params: {
         settings,
         ruleDelayMinMs: matchedRuleRow.replyDelayMinMs,
         ruleDelayMaxMs: matchedRuleRow.replyDelayMaxMs,
+        testMode,
       });
       return {
         type: "AUTO_REPLY",
@@ -477,6 +482,7 @@ async function executeAction(params: {
         ruleId: matchedRule?.id ?? null,
         actionType: "FORWARD",
         settings,
+        testMode,
       });
       return {
         type: "FORWARD",

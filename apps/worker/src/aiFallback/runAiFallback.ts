@@ -29,6 +29,8 @@ export interface RunAiFallbackParams {
     aiAutomationEnabled: boolean;
     aiAutomationExcluded: boolean;
     aiSuppressedUntil: Date | null;
+    /** See WhatsAppGroup.testModeEnabled — lifts the anti-spam throttles for an approved test group. */
+    testModeEnabled?: boolean;
   } | null;
   automationSettings: AutomationSettings;
   /** Test-only seam (mirrors aiAnalysisJob.ts's clientOverride) — production call sites never pass it. */
@@ -257,6 +259,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     ruleId: null,
     actionType: "AUTO_REPLY",
     settings: params.automationSettings,
+      testMode: params.group?.testModeEnabled ?? false,
   });
 
   await createAiFallbackDecision({

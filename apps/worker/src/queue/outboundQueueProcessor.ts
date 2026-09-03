@@ -161,7 +161,15 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
     if (stopped === "STOP_TICK") return;
   }
 
-  if (settings.rateLimitingEnabled) {
+  // Same test-group exemption the pre-send gate applies (pipeline/safety.ts). Re-read here rather
+  // than trusted from queue time, because a group can be taken out of test mode while a message
+  // sits in the queue.
+  const inTestMode = message.groupId
+    ? ((await prisma.whatsAppGroup.findUnique({ where: { id: message.groupId }, select: { testModeEnabled: true } }))
+        ?.testModeEnabled ?? false)
+    : false;
+
+  if (settings.rateLimitingEnabled && !inTestMode) {
     const [global, perClient] = await Promise.all([
       getGlobalRateLimitUsage(message.accountId),
       getPerClientLimitUsage(message.accountId, message.toPhone),

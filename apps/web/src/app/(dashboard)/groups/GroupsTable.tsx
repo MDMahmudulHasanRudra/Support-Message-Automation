@@ -19,6 +19,7 @@ import {
   requestGroupParticipantCount,
   requestGroupKnowledgeBuild,
   toggleGroupAiAutomation,
+  toggleGroupTestMode,
   toggleGroupAiExcluded,
   toggleGroupMonitoring,
   type BulkMonitoringResult,
@@ -42,6 +43,7 @@ export interface GroupRow {
   /** A hard "never let AI answer here" — honoured even when the global scope has opted every
    * monitored group in. */
   aiAutomationExcluded: boolean;
+  testModeEnabled: boolean;
   /** True when AiSettings.aiAutomationScope has opted every monitored group in, so this row's
    * own opt-in switch is not what decides eligibility. */
   aiScopeIsGlobal: boolean;
@@ -145,6 +147,14 @@ export function GroupsTable({
     setTogglingAiId(id);
     startToggleAi(async () => {
       await toggleGroupAiAutomation(id);
+      router.refresh();
+    });
+  }
+
+  function toggleTestMode(id: string) {
+    setTogglingAiId(id);
+    startToggleAi(async () => {
+      await toggleGroupTestMode(id);
       router.refresh();
     });
   }
@@ -352,6 +362,12 @@ export function GroupsTable({
                       </Badge>
                     )}
 
+                    {g.testModeEnabled ? (
+                      <Tooltip content="Testing group: cooldowns, rate limits and the reply delay are lifted here so every message and rule type can be exercised back-to-back. The kill switch, monitoring requirement and membership checks still apply.">
+                        <Badge color="yellow">Test mode — no throttles</Badge>
+                      </Tooltip>
+                    ) : null}
+
                     {!g.aiAutomationExcluded && g.aiSuppressedUntil && new Date(g.aiSuppressedUntil) > new Date() ? (
                       <Tooltip content="A team member sent a message recently — the AI fallback layer is paused for this group until then.">
                         <Badge color="yellow">Human active until {new Date(g.aiSuppressedUntil).toLocaleTimeString()}</Badge>
@@ -387,6 +403,19 @@ export function GroupsTable({
                         title="Read this group's stored conversation and distil it into knowledge entries"
                       >
                         Learn
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={isTogglingAi && togglingAiId === g.id}
+                        onClick={() => toggleTestMode(g.id)}
+                        title={
+                          g.testModeEnabled
+                            ? "Put this group back under the normal rate limits and cooldowns"
+                            : "Lift cooldowns, rate limits and the reply delay for this group so every message type can be tested. Only for groups nobody outside the team is in."
+                        }
+                      >
+                        {g.testModeEnabled ? "Exit test mode" : "Test mode"}
                       </Button>
                     </div>
 

@@ -30,6 +30,12 @@ export async function enqueueOutboundMessage(params: {
   settings: Pick<AutomationSettings, "defaultReplyDelayMinMs" | "defaultReplyDelayMaxMs">;
   ruleDelayMinMs?: number | null;
   ruleDelayMaxMs?: number | null;
+  /**
+   * True for a group an admin marked as a test group. The randomised 3-15s delay exists to make
+   * automated replies look human to WhatsApp's spam heuristics; in a test group it only makes
+   * every check take a quarter of a minute longer than it needs to.
+   */
+  testMode?: boolean;
 }): Promise<{ queued: boolean; outboundMessageId?: string }> {
   const idempotencyKey = buildOutboundIdempotencyKey({
     accountId: params.accountId,
@@ -39,10 +45,12 @@ export async function enqueueOutboundMessage(params: {
     actionType: params.actionType,
   });
 
-  const delayMs = randomDelayMs(
-    params.ruleDelayMinMs ?? params.settings.defaultReplyDelayMinMs,
-    params.ruleDelayMaxMs ?? params.settings.defaultReplyDelayMaxMs,
-  );
+  const delayMs = params.testMode
+    ? 0
+    : randomDelayMs(
+        params.ruleDelayMinMs ?? params.settings.defaultReplyDelayMinMs,
+        params.ruleDelayMaxMs ?? params.settings.defaultReplyDelayMaxMs,
+      );
 
   try {
     const created = await prisma.outboundMessage.create({

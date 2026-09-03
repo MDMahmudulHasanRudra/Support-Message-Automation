@@ -54,6 +54,28 @@ export async function toggleGroupAiAutomation(id: string): Promise<void> {
 }
 
 /**
+ * Marks a group as a testing group, exempting it from the anti-spam THROTTLES so every message and
+ * rule type can be exercised back-to-back — no cooldowns, no per-client or global rate limits, no
+ * randomised reply delay, and rule types SAFE_AUTO_REPLY would otherwise hold back.
+ *
+ * It lifts throttles only. The kill switch, MANUAL_ONLY, the monitored-group requirement, group
+ * membership verification, the outbound queue, idempotency, account isolation and loop prevention
+ * all stay fully active — that is this project's own written policy for test-group testing, and it
+ * is what keeps a test group from becoming a way around the safety layer.
+ *
+ * Higher stakes than the AI toggle above, which fails safe to nothing happening: this one makes
+ * MORE messages go out, on the same WhatsApp number that serves every real customer. Rate limits
+ * are what stop that number being banned, so this belongs only on a group nobody outside the team
+ * is in.
+ */
+export async function toggleGroupTestMode(id: string): Promise<void> {
+  await requireSession();
+  const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
+  await prisma.whatsAppGroup.update({ where: { id }, data: { testModeEnabled: !group.testModeEnabled } });
+  revalidatePath("/groups");
+}
+
+/**
  * A hard "never let AI answer here", honoured under every AiAutomationScope — including
  * ALL_MONITORED_GROUPS. For the groups where a wrong answer costs more than a slow one.
  * Deliberately separate from aiAutomationEnabled above, which is an opt-IN and therefore
