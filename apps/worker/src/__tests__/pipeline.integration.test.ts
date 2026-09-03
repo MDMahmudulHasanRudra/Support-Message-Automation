@@ -334,7 +334,7 @@ describe("Scenario 10: rate limit reached -> safely blocked", () => {
     expect(await prisma.outboundMessage.count({ where: { accountId: account.id } })).toBe(0);
   });
 
-  it("marks an already-queued message RATE_LIMITED at send time if the limit is now exceeded", async () => {
+  it("defers an already-queued auto-reply at send time rather than discarding the customer's answer", async () => {
     const provider = new MockProvider();
     const outbound = await prisma.outboundMessage.create({
       data: {
@@ -346,6 +346,31 @@ describe("Scenario 10: rate limit reached -> safely blocked", () => {
         // not-yet-due to the very next line's `new Date()` (host clock), and processOne() finds
         // nothing to claim. Intermittent by nature: it only bites when the round trip is quicker
         // than the skew.
+        scheduledAt: new Date(Date.now() - 60_000),
+      },
+    });
+    await resetSettings({ globalMaxPerMinute: 0 });
+
+    await processOne(provider);
+
+    // Every auto-reply answers a question a customer actually asked. Dropping it means they are
+    // simply never answered, which is worse than answering late — so the row goes back to PENDING
+    // with a future scheduledAt and is retried once the window clears.
+    const row = await prisma.outboundMessage.findUniqueOrThrow({ where: { id: outbound.id } });
+    expect(row.status).toBe("PENDING");
+    expect(row.scheduledAt.getTime()).toBeGreaterThan(Date.now());
+    expect(row.attemptCount).toBe(1);
+    expect(provider.sentMessages).toHaveLength(0);
+  });
+
+  it("gives up on an auto-reply only after the deferral budget is spent", async () => {
+    // Bounded, so a permanently-exhausted limit cannot leave rows cycling forever.
+    const provider = new MockProvider();
+    const outbound = await prisma.outboundMessage.create({
+      data: {
+        accountId: account.id, chatId: uniquePhone(), toPhone: uniquePhone(), body: "waited too long",
+        actionType: "AUTO_REPLY", idempotencyKey: randomUUID(), status: "PENDING",
+        attemptCount: 20,
         scheduledAt: new Date(Date.now() - 60_000),
       },
     });

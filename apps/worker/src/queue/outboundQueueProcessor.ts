@@ -17,6 +17,14 @@ const STUCK_PROCESSING_TIMEOUT_MS = 2 * 60_000;
 const JOB_RATE_LIMIT_DEFER_MS = 15_000;
 /** How long to defer a human's MANUAL_REPLY when an account rate limit is already exhausted. */
 const MANUAL_RATE_LIMIT_DEFER_MS = 20_000;
+/** How long to hold an auto-reply that hit an account limit before trying again. */
+const RATE_LIMIT_DEFER_MS = 30_000;
+/**
+ * How many times an auto-reply may be deferred for rate limits before it is abandoned. Roughly
+ * ten minutes of waiting: long enough to ride out a genuine burst, short enough that a customer
+ * is not answered so late the reply is confusing.
+ */
+const MAX_RATE_LIMIT_DEFERRALS = 20;
 
 /** Crash recovery: rows left in PROCESSING by a worker that died mid-send go back to PENDING. */
 export async function recoverStuckOutboundMessages(): Promise<number> {
@@ -43,6 +51,31 @@ async function claimNextOutboundMessage() {
   if (claim.count === 0) return null; // lost the race (shouldn't happen with a single worker, but defensive)
 
   return prisma.outboundMessage.findUniqueOrThrow({ where: { id: candidate.id } });
+}
+
+/**
+ * Whether this queued send belongs to a group an admin marked as a test group.
+ *
+ * Resolved through `relatedMessage.groupId` — the conversation this is a reply to — with
+ * `OutboundMessage.groupId` as the fallback for the broadcast path, which is the only path that
+ * sets it.
+ */
+async function isTestModeSend(message: OutboundMessage): Promise<boolean> {
+  if (message.relatedMessageId) {
+    const related = await prisma.message.findUnique({
+      where: { id: message.relatedMessageId },
+      select: { group: { select: { testModeEnabled: true } } },
+    });
+    if (related?.group) return related.group.testModeEnabled;
+  }
+  if (message.groupId) {
+    const group = await prisma.whatsAppGroup.findUnique({
+      where: { id: message.groupId },
+      select: { testModeEnabled: true },
+    });
+    return group?.testModeEnabled ?? false;
+  }
+  return false;
 }
 
 async function computeNextRetryDelayMs(attemptCount: number): Promise<number> {
@@ -164,10 +197,12 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
   // Same test-group exemption the pre-send gate applies (pipeline/safety.ts). Re-read here rather
   // than trusted from queue time, because a group can be taken out of test mode while a message
   // sits in the queue.
-  const inTestMode = message.groupId
-    ? ((await prisma.whatsAppGroup.findUnique({ where: { id: message.groupId }, select: { testModeEnabled: true } }))
-        ?.testModeEnabled ?? false)
-    : false;
+  //
+  // The group is resolved through the message this is a reply TO. OutboundMessage.groupId is
+  // deliberately null for automation-generated rows — it belongs to the broadcast path, which
+  // addresses a group directly — so reading it here found nothing and every test-group reply was
+  // still rate limited. That is what the send-time check got wrong the first time.
+  const inTestMode = await isTestModeSend(message);
 
   if (settings.rateLimitingEnabled && !inTestMode) {
     const [global, perClient] = await Promise.all([
@@ -196,6 +231,24 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
         });
         return;
       }
+      // An auto-reply answers a question a customer actually asked — every row this path produces
+      // is triggered by an incoming message, never sent unprompted. Discarding it means that
+      // customer is simply never answered, which is a worse outcome than answering late and is
+      // not what a rate limit is for. So it defers, like a manual reply, up to a bounded number of
+      // attempts before giving up for real.
+      if (!isBroadcast && message.attemptCount < MAX_RATE_LIMIT_DEFERRALS) {
+        await prisma.outboundMessage.update({
+          where: { id: message.id },
+          data: {
+            status: "PENDING",
+            attemptCount: { increment: 1 },
+            scheduledAt: new Date(Date.now() + RATE_LIMIT_DEFER_MS),
+            failureReason: "Waiting for the account rate-limit window to clear.",
+          },
+        });
+        return;
+      }
+
       await prisma.outboundMessage.update({
         where: { id: message.id },
         data: { status: "RATE_LIMITED", failureReason: "Rate or per-client limit reached at send time." },

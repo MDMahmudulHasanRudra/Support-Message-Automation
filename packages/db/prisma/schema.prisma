@@ -948,11 +948,22 @@ model AutomationSettings {
   id                           String         @id @default("global")
   mode                         AutomationMode @default(SAFE_AUTO_REPLY)
   automationEnabled            Boolean        @default(true)
-  maxRepliesPerClientPerHour   Int            @default(3)
-  maxRepliesPerClientPerDay    Int            @default(10)
-  globalMaxPerMinute           Int            @default(5)
-  globalMaxPerHour             Int            @default(100)
-  globalMaxPerDay              Int            @default(500)
+  /// Per-conversation ceilings. Every message this system sends automatically is a REPLY to an
+  /// incoming customer message — it never initiates contact, and loop prevention stops it
+  /// answering its own or a colleague's messages. So this number is not "how much can we spam one
+  /// person"; it is "how many of this customer's own questions will we answer before going
+  /// silent". At the original 3/hour, a customer asking a fourth question got nothing back.
+  ///
+  /// It still exists to bound a runaway rule or a reply loop, which would fire far faster than a
+  /// person can type.
+  maxRepliesPerClientPerHour   Int            @default(60)
+  maxRepliesPerClientPerDay    Int            @default(500)
+  /// Account-wide burst protection across ALL conversations — this is the one that genuinely
+  /// guards the WhatsApp number. A ceiling, not a target: real volume is driven by how much
+  /// customers message in.
+  globalMaxPerMinute           Int            @default(20)
+  globalMaxPerHour             Int            @default(600)
+  globalMaxPerDay              Int            @default(5000)
   rateLimitingEnabled          Boolean        @default(true)
   defaultReplyDelayMinMs       Int            @default(3000)
   defaultReplyDelayMaxMs       Int            @default(15000)
