@@ -86,7 +86,14 @@ export async function checkAutoReplySafety(params: {
   }
 
   if (settings.rateLimitingEnabled) {
-    const perClient = await getPerClientLimitUsage(accountId, toPhone);
+    // Five independent COUNTs — fetched together, as the send-time re-check in
+    // outboundQueueProcessor.ts already does, rather than in two serial round trips. The
+    // precedence of the checks below is unchanged.
+    const [perClient, global] = await Promise.all([
+      getPerClientLimitUsage(accountId, toPhone),
+      getGlobalRateLimitUsage(accountId),
+    ]);
+
     if (perClient.perHour >= settings.maxRepliesPerClientPerHour) {
       return {
         allowed: false,
@@ -100,7 +107,6 @@ export async function checkAutoReplySafety(params: {
       };
     }
 
-    const global = await getGlobalRateLimitUsage(accountId);
     if (global.perMinute >= settings.globalMaxPerMinute) {
       return {
         allowed: false,

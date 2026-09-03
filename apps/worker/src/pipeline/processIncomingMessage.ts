@@ -69,22 +69,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
   const isFromTeamMember = await isActiveTeamMember(raw.senderPhone);
   traceStage(traceId, "TEAM_MEMBER_CHECK", { isFromTeamMember });
 
-  const group = raw.whatsappGroupId
-    ? await prisma.whatsAppGroup.findUnique({
-        where: { accountId_whatsappGroupId: { accountId: raw.accountId, whatsappGroupId: raw.whatsappGroupId } },
-        select: {
-          id: true,
-          name: true,
-          priority: true,
-          assignedTeamMemberId: true,
-          escalationMonitoringEnabled: true,
-          isMonitored: true,
-          aiAutomationEnabled: true,
-          aiAutomationExcluded: true,
-          aiSuppressedUntil: true,
-        },
-      })
-    : null;
+  const group = await resolveGroup(raw);
   if (raw.whatsappGroupId) {
     traceStage(traceId, "GROUP_RESOLVED", { whatsappGroupId: raw.whatsappGroupId, resolvedGroupId: group?.id ?? null });
   }
@@ -140,197 +125,218 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
   traceStage(traceId, "MESSAGE_PERSISTED", { messageId: message.id });
   traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: false, result: "unique — proceeding" });
 
-  // Priority-Based Support Monitoring & Escalation runs alongside the rule engine, never gated
-  // by its decision — a human reply always stops escalation, and a priority group always starts
-  // monitoring, regardless of what (if anything) the rule engine matched. Fire-and-forget with
-  // its own error boundary: an escalation-tracking failure must never break message processing.
+  // Everything from here to the processingStatus settle below runs AFTER the Message row exists,
+  // because that row is this pipeline's dedupe guard and has to be written before any work that
+  // could fire twice. That ordering has a cost: an unexpected throw in between (a rule regex the
+  // engine chokes on, a transient failure in the action loop or the AutomationExecution insert)
+  // used to leave the row PENDING forever — and WhatsApp's redelivery then hits the P2002 path
+  // above and returns "already processed", so it was never retried and the customer never answered.
+  // Marking it FAILED makes it visibly unprocessed instead of silently stuck.
   try {
-    if (isFromTeamMember) {
-      await markHumanReplied(raw.chatId);
-      // Human takeover (Slice 3): a separate, independent concern from escalation's SLA timers —
-      // pause the AI fallback layer for this group briefly so it doesn't immediately answer a
-      // different customer's next message while a human is actively engaged. Whether this group
-      // is AI-eligible now depends on AiSettings.aiAutomationScope, so recordHumanTakeover()
-      // makes that call itself and no-ops for a group AI could never answer in.
-      if (group) {
-        await recordHumanTakeover({
-          id: group.id,
-          isMonitored: group.isMonitored,
-          aiAutomationEnabled: group.aiAutomationEnabled,
-          aiAutomationExcluded: group.aiAutomationExcluded,
+    // Priority-Based Support Monitoring & Escalation runs alongside the rule engine, never gated
+    // by its decision — a human reply always stops escalation, and a priority group always starts
+    // monitoring, regardless of what (if anything) the rule engine matched. Fire-and-forget with
+    // its own error boundary: an escalation-tracking failure must never break message processing.
+    try {
+      if (isFromTeamMember) {
+        await markHumanReplied(raw.chatId);
+        // Human takeover (Slice 3): a separate, independent concern from escalation's SLA timers —
+        // pause the AI fallback layer for this group briefly so it doesn't immediately answer a
+        // different customer's next message while a human is actively engaged. Whether this group
+        // is AI-eligible now depends on AiSettings.aiAutomationScope, so recordHumanTakeover()
+        // makes that call itself and no-ops for a group AI could never answer in.
+        if (group) {
+          await recordHumanTakeover({
+            id: group.id,
+            isMonitored: group.isMonitored,
+            aiAutomationEnabled: group.aiAutomationEnabled,
+            aiAutomationExcluded: group.aiAutomationExcluded,
+          });
+        }
+      } else if (group?.priority && group.escalationMonitoringEnabled) {
+        await openOrContinueCase({
+          accountId: raw.accountId,
+          groupId: group.id,
+          chatId: raw.chatId,
+          clientPhone: raw.senderPhone,
+          priority: group.priority,
+          assignedTeamMemberId: group.assignedTeamMemberId,
+          triggerMessageId: message.id,
+          timestampWa: raw.timestampWa,
         });
       }
-    } else if (group?.priority && group.escalationMonitoringEnabled) {
-      await openOrContinueCase({
-        accountId: raw.accountId,
-        groupId: group.id,
-        chatId: raw.chatId,
-        clientPhone: raw.senderPhone,
-        priority: group.priority,
-        assignedTeamMemberId: group.assignedTeamMemberId,
-        triggerMessageId: message.id,
-        timestampWa: raw.timestampWa,
-      });
+    } catch (err) {
+      console.error("[escalation] failed to update support escalation state", err);
     }
-  } catch (err) {
-    console.error("[escalation] failed to update support escalation state", err);
-  }
 
-  // Support Activity Tracking — same fire-and-forget philosophy as the escalation block above: a
-  // detection failure must never break message processing, and it is a true no-op end-to-end when
-  // SupportActivitySettings.enabled is false (checked first thing inside the detector).
-  try {
-    const activityResult = await detectSupportActivity({
-      accountId: raw.accountId,
-      groupId: group?.id ?? null,
-      isFromTeamMember,
-      senderPhone: raw.senderPhone,
-      messageId: message.id,
-      body: raw.body,
-      timestampWa: raw.timestampWa,
-      quotedMessage: quotedMessage
-        ? { senderPhone: quotedMessage.senderPhone, isFromTeamMember: quotedMessage.isFromTeamMember }
+    // Support Activity Tracking — same fire-and-forget philosophy as the escalation block above: a
+    // detection failure must never break message processing, and it is a true no-op end-to-end when
+    // SupportActivitySettings.enabled is false (checked first thing inside the detector).
+    try {
+      const activityResult = await detectSupportActivity({
+        accountId: raw.accountId,
+        groupId: group?.id ?? null,
+        isFromTeamMember,
+        senderPhone: raw.senderPhone,
+        messageId: message.id,
+        body: raw.body,
+        timestampWa: raw.timestampWa,
+        quotedMessage: quotedMessage
+          ? { senderPhone: quotedMessage.senderPhone, isFromTeamMember: quotedMessage.isFromTeamMember }
+          : null,
+        mentionedPhones: raw.mentionedPhones ?? [],
+      });
+      // Support session open/close tracking piggybacks on a successfully-recorded activity — never a
+      // separate detection pass. Its own nested try/catch so a session-tracking bug can never hide
+      // the fact that the SupportActivity row itself was already recorded correctly.
+      if (activityResult) {
+        try {
+          await updateSupportSessionForActivity(activityResult);
+        } catch (err) {
+          console.error("[support-activity] failed to update support session", err);
+        }
+      }
+    } catch (err) {
+      console.error("[support-activity] failed to record support activity", err);
+    }
+
+    const activeRuleRows = await prisma.automationRule.findMany({ where: { status: "ACTIVE" } });
+    const rules: EngineRule[] = activeRuleRows.map(toEngineRule);
+    const ruleRowById = new Map(activeRuleRows.map((r) => [r.id, r]));
+
+    const result = evaluate({
+      message: {
+        body: raw.body,
+        senderPhone: raw.senderPhone,
+        isFromTeamMember,
+        groupId: group?.id ?? null,
+        chatId: raw.chatId,
+        timestamp: raw.timestampWa,
+      },
+      previousMessage: previous
+        ? { senderPhone: previous.senderPhone, isFromTeamMember: previous.isFromTeamMember }
         : null,
-      mentionedPhones: raw.mentionedPhones ?? [],
+      rules,
     });
-    // Support session open/close tracking piggybacks on a successfully-recorded activity — never a
-    // separate detection pass. Its own nested try/catch so a session-tracking bug can never hide
-    // the fact that the SupportActivity row itself was already recorded correctly.
-    if (activityResult) {
+
+    const matchedRuleRow = result.matchedRule ? ruleRowById.get(result.matchedRule.id) ?? null : null;
+
+    // The engine (packages/engine/evaluate.ts) evaluates every active rule in a
+    // single priority-sorted pass rather than as separate sequential gates —
+    // these three lines map that one result onto the conceptual categories
+    // requested for tracing (which RuleType, if any, won), they are NOT
+    // separate evaluation steps in the actual engine.
+    const matchedType = matchedRuleRow?.type ?? null;
+    traceStage(traceId, "IGNORE_RULE_CHECK", {
+      matched: matchedType === "DEFAULT_IGNORE" || (matchedType === null && result.finalDecision === "IGNORE"),
+      matchedRuleType: matchedType,
+    });
+    traceStage(traceId, "DEFAULT_RULE_CHECK", {
+      matched: matchedType === "TEAM_FILTER" || matchedType === "LAST_SENDER" || matchedType === "EXCEPTION",
+      matchedRuleType: matchedType,
+    });
+    traceStage(traceId, "AUTOMATION_RULE_CHECK", {
+      matched: matchedType === "AUTO_REPLY" || matchedType === "GENERIC" || matchedType === "SUPPORT_ESCALATION",
+      matchedRuleType: matchedType,
+    });
+
+    const settings = await getAutomationSettings();
+
+    // Hybrid AI Automation fallback layer — only on a genuine rule-miss (never on the team-member-
+    // filter IGNORE, which is a different synthetic decision). Own try/catch, same fire-and-forget-
+    // but-logged philosophy as the escalation/support-activity hooks above: a failure here must
+    // never break message processing. See apps/worker/src/aiFallback/runAiFallback.ts.
+    if (result.finalDecision === "NO_MATCH") {
       try {
-        await updateSupportSessionForActivity(activityResult);
+        await runAiFallback({
+          message: { id: message.id, body: raw.body, timestampWa: raw.timestampWa },
+          accountId: raw.accountId,
+          chatId: raw.chatId,
+          toPhone: raw.senderPhone,
+          senderName: raw.senderName,
+          group: group
+            ? {
+                id: group.id,
+                name: group.name,
+                isMonitored: group.isMonitored,
+                aiAutomationEnabled: group.aiAutomationEnabled,
+                aiAutomationExcluded: group.aiAutomationExcluded,
+                aiSuppressedUntil: group.aiSuppressedUntil,
+              }
+            : null,
+          automationSettings: settings,
+          clientOverride: aiClientOverride,
+        });
       } catch (err) {
-        console.error("[support-activity] failed to update support session", err);
+        console.error("[ai-fallback] failed to run AI fallback stage", err);
+        // A true unexpected exception here (unlike a graceful HUMAN_FALLBACK, which is already fully
+        // captured in its own AiFallbackDecision row) would otherwise leave no structured trace
+        // beyond a console line — worth one SystemLog entry, same convention patternDetectionJob.ts/
+        // aiAnalysisJob.ts already use for their own failure paths. Deliberately not logging every
+        // ordinary outcome here (see this file's own MESSAGE_NORMALIZED trace-volume comment).
+        await logSystemEvent("ERROR", "ai-fallback", "AI fallback stage threw an unexpected error", {
+          messageId: message.id,
+          accountId: raw.accountId,
+          error: (err as Error).message,
+        });
       }
     }
-  } catch (err) {
-    console.error("[support-activity] failed to record support activity", err);
-  }
 
-  const activeRuleRows = await prisma.automationRule.findMany({ where: { status: "ACTIVE" } });
-  const rules: EngineRule[] = activeRuleRows.map(toEngineRule);
-  const ruleRowById = new Map(activeRuleRows.map((r) => [r.id, r]));
+    const executedActions: ActionExecutionRecord[] = [];
 
-  const result = evaluate({
-    message: {
-      body: raw.body,
-      senderPhone: raw.senderPhone,
-      isFromTeamMember,
-      groupId: group?.id ?? null,
-      chatId: raw.chatId,
-      timestamp: raw.timestampWa,
-    },
-    previousMessage: previous
-      ? { senderPhone: previous.senderPhone, isFromTeamMember: previous.isFromTeamMember }
-      : null,
-    rules,
-  });
-
-  const matchedRuleRow = result.matchedRule ? ruleRowById.get(result.matchedRule.id) ?? null : null;
-
-  // The engine (packages/engine/evaluate.ts) evaluates every active rule in a
-  // single priority-sorted pass rather than as separate sequential gates —
-  // these three lines map that one result onto the conceptual categories
-  // requested for tracing (which RuleType, if any, won), they are NOT
-  // separate evaluation steps in the actual engine.
-  const matchedType = matchedRuleRow?.type ?? null;
-  traceStage(traceId, "IGNORE_RULE_CHECK", {
-    matched: matchedType === "DEFAULT_IGNORE" || (matchedType === null && result.finalDecision === "IGNORE"),
-    matchedRuleType: matchedType,
-  });
-  traceStage(traceId, "DEFAULT_RULE_CHECK", {
-    matched: matchedType === "TEAM_FILTER" || matchedType === "LAST_SENDER" || matchedType === "EXCEPTION",
-    matchedRuleType: matchedType,
-  });
-  traceStage(traceId, "AUTOMATION_RULE_CHECK", {
-    matched: matchedType === "AUTO_REPLY" || matchedType === "GENERIC" || matchedType === "SUPPORT_ESCALATION",
-    matchedRuleType: matchedType,
-  });
-
-  const settings = await getAutomationSettings();
-
-  // Hybrid AI Automation fallback layer — only on a genuine rule-miss (never on the team-member-
-  // filter IGNORE, which is a different synthetic decision). Own try/catch, same fire-and-forget-
-  // but-logged philosophy as the escalation/support-activity hooks above: a failure here must
-  // never break message processing. See apps/worker/src/aiFallback/runAiFallback.ts.
-  if (result.finalDecision === "NO_MATCH") {
-    try {
-      await runAiFallback({
-        message: { id: message.id, body: raw.body, timestampWa: raw.timestampWa },
-        accountId: raw.accountId,
-        chatId: raw.chatId,
-        toPhone: raw.senderPhone,
-        senderName: raw.senderName,
-        group: group
-          ? {
-              id: group.id,
-              name: group.name,
-              isMonitored: group.isMonitored,
-              aiAutomationEnabled: group.aiAutomationEnabled,
-              aiAutomationExcluded: group.aiAutomationExcluded,
-              aiSuppressedUntil: group.aiSuppressedUntil,
-            }
-          : null,
-        automationSettings: settings,
-        clientOverride: aiClientOverride,
-      });
-    } catch (err) {
-      console.error("[ai-fallback] failed to run AI fallback stage", err);
-      // A true unexpected exception here (unlike a graceful HUMAN_FALLBACK, which is already fully
-      // captured in its own AiFallbackDecision row) would otherwise leave no structured trace
-      // beyond a console line — worth one SystemLog entry, same convention patternDetectionJob.ts/
-      // aiAnalysisJob.ts already use for their own failure paths. Deliberately not logging every
-      // ordinary outcome here (see this file's own MESSAGE_NORMALIZED trace-volume comment).
-      await logSystemEvent("ERROR", "ai-fallback", "AI fallback stage threw an unexpected error", {
-        messageId: message.id,
-        accountId: raw.accountId,
-        error: (err as Error).message,
-      });
+    for (const action of result.actions) {
+      executedActions.push(
+        await executeAction({
+          action,
+          message,
+          raw,
+          groupId: group?.id ?? null,
+          groupName: group?.name ?? null,
+          matchedRule: result.matchedRule,
+          matchedRuleRow,
+          settings,
+        }),
+      );
     }
-  }
 
-  const executedActions: ActionExecutionRecord[] = [];
-
-  for (const action of result.actions) {
-    executedActions.push(
-      await executeAction({
-        action,
-        message,
-        raw,
-        groupId: group?.id ?? null,
-        groupName: group?.name ?? null,
-        matchedRule: result.matchedRule,
-        matchedRuleRow,
-        settings,
-      }),
-    );
-  }
-
-  await prisma.automationExecution.create({
-    data: {
-      messageId: message.id,
-      ruleId: result.matchedRule?.id ?? null,
-      actionsExecuted: executedActions as unknown as Prisma.InputJsonValue,
-      decision: result.finalDecision,
-      reasonTrace: result.trace as unknown as Prisma.InputJsonValue,
-      idempotencyKey: buildExecutionIdempotencyKey({
+    await prisma.automationExecution.create({
+      data: {
         messageId: message.id,
         ruleId: result.matchedRule?.id ?? null,
-      }),
-    },
-  });
+        actionsExecuted: executedActions as unknown as Prisma.InputJsonValue,
+        decision: result.finalDecision,
+        reasonTrace: result.trace as unknown as Prisma.InputJsonValue,
+        idempotencyKey: buildExecutionIdempotencyKey({
+          messageId: message.id,
+          ruleId: result.matchedRule?.id ?? null,
+        }),
+      },
+    });
 
-  traceStage(traceId, "ACTION_DECISION", {
-    finalDecision: result.finalDecision,
-    matchedRuleId: result.matchedRule?.id ?? null,
-    matchedRuleName: result.matchedRule?.name ?? null,
-    executedActions,
-  });
+    traceStage(traceId, "ACTION_DECISION", {
+      finalDecision: result.finalDecision,
+      matchedRuleId: result.matchedRule?.id ?? null,
+      matchedRuleName: result.matchedRule?.name ?? null,
+      executedActions,
+    });
 
-  await prisma.message.update({
-    where: { id: message.id },
-    data: { processingStatus: result.finalDecision === "IGNORE" ? "IGNORED" : "PROCESSED" },
-  });
+    await prisma.message.update({
+      where: { id: message.id },
+      data: { processingStatus: result.finalDecision === "IGNORE" ? "IGNORED" : "PROCESSED" },
+    });
+  } catch (err) {
+    await prisma.message
+      .update({ where: { id: message.id }, data: { processingStatus: "FAILED" } })
+      .catch((markErr) => console.error("[pipeline] could not mark message FAILED", markErr));
+    // Message has no column for the failure text, so the detail goes where the dashboard can
+    // already read it. Never swallowed: rethrown so ProviderRegistry's existing handler still logs.
+    await logSystemEvent("ERROR", "pipeline", "Message processing failed after the message was stored", {
+      messageId: message.id,
+      accountId: raw.accountId,
+      error: (err as Error).message,
+    }).catch(() => undefined);
+    throw err;
+  }
 
   await prisma.processingCheckpoint.upsert({
     where: { accountId: raw.accountId },
@@ -343,11 +349,41 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
   });
 }
 
+/**
+ * Resolves the raw event's WhatsApp group id to our own WhatsAppGroup row — null when the message
+ * isn't from a group, or from one this account hasn't synced yet. Shared by both storage paths so
+ * there is exactly one lookup, not a second one that could drift.
+ */
+async function resolveGroup(raw: RawIncomingMessage) {
+  if (!raw.whatsappGroupId) return null;
+  return prisma.whatsAppGroup.findUnique({
+    where: { accountId_whatsappGroupId: { accountId: raw.accountId, whatsappGroupId: raw.whatsappGroupId } },
+    select: {
+      id: true,
+      name: true,
+      priority: true,
+      assignedTeamMemberId: true,
+      escalationMonitoringEnabled: true,
+      isMonitored: true,
+      aiAutomationEnabled: true,
+      aiAutomationExcluded: true,
+      aiSuppressedUntil: true,
+    },
+  });
+}
+
 async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> {
+  // These messages are never automated, but they are still the other half of every conversation —
+  // our own replies come back through this path on WhatsApp's echo. Without groupId the chat
+  // inbox's thread query (which filters on it) could not see them at all, so a thread showed only
+  // the customer's side and its awaiting-reply signal could never clear. An unknown group still
+  // stores the message, with groupId null, exactly as the incoming path does.
+  const group = await resolveGroup(raw);
   try {
     await prisma.message.create({
       data: {
         accountId: raw.accountId,
+        groupId: group?.id ?? null,
         whatsappMessageId: raw.whatsappMessageId,
         chatId: raw.chatId,
         senderPhone: raw.senderPhone,

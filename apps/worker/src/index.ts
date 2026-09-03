@@ -11,7 +11,7 @@ import {
 import { recoverStuckNotifications, startNotificationDispatcher } from "./notifications/dispatcher.js";
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
-import { startCommandProcessor } from "./commands/commandProcessor.js";
+import { recoverStuckCommands, startCommandProcessor } from "./commands/commandProcessor.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
@@ -38,9 +38,10 @@ async function main() {
   const recoveredOutbound = await recoverStuckOutboundMessages();
   const recoveredNotifications = await recoverStuckNotifications();
   const recoveredParticipantAdds = await recoverStuckParticipantAddItems();
-  if (recoveredOutbound > 0 || recoveredNotifications > 0 || recoveredParticipantAdds > 0) {
+  const recoveredCommands = await recoverStuckCommands();
+  if (recoveredOutbound > 0 || recoveredNotifications > 0 || recoveredParticipantAdds > 0 || recoveredCommands > 0) {
     console.log(
-      `[worker] crash recovery: requeued ${recoveredOutbound} outbound message(s), ${recoveredNotifications} notification(s), ${recoveredParticipantAdds} group-participant-add item(s)`,
+      `[worker] crash recovery: requeued ${recoveredOutbound} outbound message(s), ${recoveredNotifications} notification(s), ${recoveredParticipantAdds} group-participant-add item(s); failed ${recoveredCommands} interrupted worker command(s)`,
     );
   }
 

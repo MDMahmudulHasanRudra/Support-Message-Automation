@@ -99,23 +99,32 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * a single, complete getGroups() snapshot. A second caller that arrives
  * while one is already running gets the SAME in-flight result instead of
  * starting a competing sync.
+ *
+ * Keyed by accountId, because the conflict this guards against is per-session: two accounts sync
+ * different providers and write disjoint rows. A single shared slot meant the second account
+ * connecting during startup was handed the FIRST account's promise, so its own getGroups() never
+ * ran — it ended up with zero groups while the log reported the other account's count.
  */
-let syncInFlight: Promise<number> | null = null;
+const syncInFlight = new Map<string, Promise<number>>();
 
 export async function syncGroupsWithTimeoutAndRetry(
   accountId: string,
   provider: WhatsAppProvider,
 ): Promise<number> {
-  if (syncInFlight) {
-    console.log("[groupsync] GROUP_SYNC_ALREADY_IN_PROGRESS -- reusing the in-flight sync instead of starting a second one");
-    return syncInFlight;
+  const alreadyRunning = syncInFlight.get(accountId);
+  if (alreadyRunning) {
+    console.log(
+      `[groupsync] GROUP_SYNC_ALREADY_IN_PROGRESS accountId=${accountId} -- reusing the in-flight sync instead of starting a second one`,
+    );
+    return alreadyRunning;
   }
 
-  syncInFlight = runSyncWithRetry(accountId, provider);
+  const run = runSyncWithRetry(accountId, provider);
+  syncInFlight.set(accountId, run);
   try {
-    return await syncInFlight;
+    return await run;
   } finally {
-    syncInFlight = null;
+    syncInFlight.delete(accountId);
   }
 }
 
@@ -126,7 +135,7 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const count = await withTimeout(syncGroups(accountId, provider), GROUP_SYNC_TIMEOUT_MS);
-      await logSystemEvent("INFO", "provider", "GROUP_SYNC_COMPLETED", { groupCount: count, attempt });
+      await logSystemEvent("INFO", "provider", "GROUP_SYNC_COMPLETED", { accountId, groupCount: count, attempt });
       return count;
     } catch (err) {
       const message = (err as Error).message ?? String(err);
@@ -146,6 +155,35 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
   }
   // Unreachable: the loop above always either returns or throws on the last attempt.
   throw new Error("syncGroupsWithTimeoutAndRetry: exhausted attempts without resolving");
+}
+
+/**
+ * Crash recovery for commands interrupted mid-flight. RESYNC_GROUPS can legitimately run 150s per
+ * attempt plus retries, so it is the one most likely to be caught by a redeploy — and until now a
+ * PROCESSING row was never reclaimed, so the dashboard button spun forever with no error.
+ *
+ * No age cutoff, unlike the queue recoveries: this runs once at boot before startCommandProcessor
+ * exists, so nothing can legitimately be in flight and every PROCESSING row is orphaned by
+ * definition (WorkerCommand has no updatedAt column to age one by in any case).
+ *
+ * FAILED rather than back to PENDING: re-running is harmless for GET_QR or RECONNECT, but not for
+ * every type — a re-run SEND_LIVE_TEST would put a second real message into a chat, and a re-run
+ * LOGOUT would tear down a session that may have come up healthy since. Silently repeating a
+ * side-effectful command is not the house default, so the operator gets an actionable reason and
+ * one click to retry instead.
+ */
+export async function recoverStuckCommands(): Promise<number> {
+  const result = await prisma.workerCommand.updateMany({
+    where: { status: "PROCESSING" },
+    data: {
+      status: "FAILED",
+      processedAt: new Date(),
+      result: {
+        error: "The worker restarted while this command was running, so it did not finish. Run it again.",
+      },
+    },
+  });
+  return result.count;
 }
 
 async function claimNextCommand() {

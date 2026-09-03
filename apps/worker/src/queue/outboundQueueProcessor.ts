@@ -192,6 +192,10 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
         where: { id: message.id },
         data: { status: "RATE_LIMITED", failureReason: "Rate or per-client limit reached at send time." },
       });
+      // RATE_LIMITED is terminal — the row is never reclaimed — so this path has to settle the job
+      // like every other terminal one. Without it a broadcast whose last row hit an account limit
+      // sat RUNNING forever.
+      if (isBroadcast) await maybeCompleteBroadcastJob(message.broadcastJobId!);
       return;
     }
   }

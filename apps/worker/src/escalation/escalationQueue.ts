@@ -31,22 +31,34 @@ const PRIORITY_POLICY_DEFAULTS: Record<SupportPriority, Omit<Prisma.SupportPrior
   P3: { firstAlertMinutes: 15, secondAlertMinutes: 30, memberEscalationMinutes: 60, adminEscalationMinutes: 120, followUpIntervalMinutes: 120, maxEscalations: 3 },
 };
 
-/** Lazily seeds all three policy rows on first use, same "upsert on read" pattern as every other settings model in this app. */
+/**
+ * Lazily seeds all three policy rows on first use. Reads first and only seeds what is genuinely
+ * missing: this runs once per customer message in a priority group, and three unconditional
+ * upserts took write locks on the same three rows every time — from inside openOrContinueCase's
+ * transaction, at that.
+ */
 export async function getSupportPriorityPolicies(): Promise<Record<SupportPriority, Prisma.SupportPriorityPolicyGetPayload<{}>>> {
   const priorities: SupportPriority[] = ["P1", "P2", "P3"];
-  const rows = await Promise.all(
-    priorities.map((priority) =>
-      prisma.supportPriorityPolicy.upsert({
-        where: { priority },
-        update: {},
-        create: { priority, ...PRIORITY_POLICY_DEFAULTS[priority] },
-      }),
-    ),
-  );
+  const existing = await prisma.supportPriorityPolicy.findMany({ where: { priority: { in: priorities } } });
+  const rows =
+    existing.length === priorities.length
+      ? existing
+      : await Promise.all(
+          priorities.map((priority) =>
+            prisma.supportPriorityPolicy.upsert({
+              where: { priority },
+              update: {},
+              create: { priority, ...PRIORITY_POLICY_DEFAULTS[priority] },
+            }),
+          ),
+        );
   return Object.fromEntries(rows.map((r) => [r.priority, r])) as Record<SupportPriority, (typeof rows)[number]>;
 }
 
+/** Read-first for the same reason getAutomationSettings() is — see its doc comment. */
 export async function getSupportEscalationSettings() {
+  const existing = await prisma.supportEscalationSettings.findUnique({ where: { id: "global" } });
+  if (existing) return existing;
   return prisma.supportEscalationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
 }
 
@@ -55,6 +67,15 @@ export async function getSupportEscalationSettings() {
  * lastCustomerMessageAt without resetting the escalation clock (spec's
  * Condition C: another customer message while waiting continues the
  * existing policy, it doesn't restart it).
+ *
+ * "One open case per chat" is a real invariant with no unique constraint able to express it
+ * ("open" is a set of seven statuses, not a value), and the caller is genuinely concurrent —
+ * ProviderRegistry dispatches each incoming message with a fire-and-forget
+ * `processIncomingMessage(...).catch(...)`, so two customer messages arriving together both ran
+ * the find and both created a case, firing the entire tier ladder twice. A transaction-scoped
+ * advisory lock on the chat serializes just this check-then-insert, per chat, and is released
+ * automatically when the transaction ends (including on rollback) — no lock row to clean up, and
+ * no contention between different conversations.
  */
 export async function openOrContinueCase(params: {
   accountId: string;
@@ -66,39 +87,46 @@ export async function openOrContinueCase(params: {
   triggerMessageId: string;
   timestampWa: Date;
 }): Promise<void> {
-  const existing = await prisma.supportEscalationCase.findFirst({
-    where: { chatId: params.chatId, status: { in: ACTIVE_STATUSES } },
-  });
-  if (existing) {
-    await prisma.supportEscalationCase.update({
-      where: { id: existing.id },
-      data: { lastCustomerMessageAt: params.timestampWa },
-    });
-    return;
-  }
-
+  // Read outside the transaction on purpose: everything inside runs on the transaction's own
+  // connection, and reaching for a second one from in there would hold two connections per
+  // concurrent message. Cheap now that this is a plain read after the first call seeds the rows.
   const policies = await getSupportPriorityPolicies();
   const policy = policies[params.priority];
 
-  await prisma.supportEscalationCase.create({
-    data: {
-      accountId: params.accountId,
-      groupId: params.groupId,
-      chatId: params.chatId,
-      clientPhone: params.clientPhone,
-      priority: params.priority,
-      status: "NEW",
-      triggerMessageId: params.triggerMessageId,
-      lastCustomerMessageAt: params.timestampWa,
-      assignedTeamMemberId: params.assignedTeamMemberId,
-      firstAlertMinutes: policy.firstAlertMinutes,
-      secondAlertMinutes: policy.secondAlertMinutes,
-      memberEscalationMinutes: policy.memberEscalationMinutes,
-      adminEscalationMinutes: policy.adminEscalationMinutes,
-      followUpIntervalMinutes: policy.followUpIntervalMinutes,
-      maxEscalations: policy.maxEscalations,
-      nextCheckAt: addMinutes(new Date(), policy.firstAlertMinutes),
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${params.chatId}::text))`;
+
+    const existing = await tx.supportEscalationCase.findFirst({
+      where: { chatId: params.chatId, status: { in: ACTIVE_STATUSES } },
+    });
+    if (existing) {
+      await tx.supportEscalationCase.update({
+        where: { id: existing.id },
+        data: { lastCustomerMessageAt: params.timestampWa },
+      });
+      return;
+    }
+
+    await tx.supportEscalationCase.create({
+      data: {
+        accountId: params.accountId,
+        groupId: params.groupId,
+        chatId: params.chatId,
+        clientPhone: params.clientPhone,
+        priority: params.priority,
+        status: "NEW",
+        triggerMessageId: params.triggerMessageId,
+        lastCustomerMessageAt: params.timestampWa,
+        assignedTeamMemberId: params.assignedTeamMemberId,
+        firstAlertMinutes: policy.firstAlertMinutes,
+        secondAlertMinutes: policy.secondAlertMinutes,
+        memberEscalationMinutes: policy.memberEscalationMinutes,
+        adminEscalationMinutes: policy.adminEscalationMinutes,
+        followUpIntervalMinutes: policy.followUpIntervalMinutes,
+        maxEscalations: policy.maxEscalations,
+        nextCheckAt: addMinutes(new Date(), policy.firstAlertMinutes),
+      },
+    });
   });
 }
 
