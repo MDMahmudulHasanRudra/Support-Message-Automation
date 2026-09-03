@@ -52,17 +52,20 @@ export async function getGroupParticipantCandidates(groupId: string): Promise<Gr
       orderBy: { _count: { senderPhone: "desc" } },
       take: 100,
     }),
-    prisma.internalTeamMember.findMany({ select: { phoneNumber: true } }),
+    prisma.internalTeamMember.findMany({ select: { phoneNumber: true, whatsappId: true } }),
   ]);
 
   // Compared as digits, not as raw strings: the same person is "+8801700000123" on the roster and
   // "8801700000123" in a message row, and a raw comparison would offer an existing colleague as a
-  // new candidate — then add them a second time.
+  // new candidate — then add them a second time. The identifier WhatsApp actually sends is also
+  // compared as-is, since a LID has no format to normalise.
   const alreadyOnRoster = new Set(
     existing.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((d): d is string => d !== null),
   );
-  const isOnRoster = (phone: string) => {
-    const digits = normalizePhoneNumber(phone);
+  const knownWhatsAppIds = new Set(existing.map((m) => m.whatsappId).filter((id): id is string => Boolean(id)));
+  const isOnRoster = (senderId: string) => {
+    if (knownWhatsAppIds.has(senderId)) return true;
+    const digits = normalizePhoneNumber(senderId);
     return digits !== null && alreadyOnRoster.has(digits);
   };
   const candidatePhones = senders.map((s) => s.senderPhone).filter((phone) => !isOnRoster(phone));
@@ -165,10 +168,11 @@ export async function readGroupParticipants(groupId: string): Promise<RosterFetc
     ?.participants;
   if (!Array.isArray(raw)) return { status: "IDLE", participants: [] };
 
-  const existing = await prisma.internalTeamMember.findMany({ select: { phoneNumber: true } });
+  const existing = await prisma.internalTeamMember.findMany({ select: { phoneNumber: true, whatsappId: true } });
   const onRoster = new Set(
     existing.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((d): d is string => d !== null),
   );
+  const knownWhatsAppIds = new Set(existing.map((m) => m.whatsappId).filter((id): id is string => Boolean(id)));
 
   const participants = raw
     // The signed-in account is the business's own WhatsApp line, never a colleague to add.
@@ -180,6 +184,7 @@ export async function readGroupParticipants(groupId: string): Promise<RosterFetc
       lastSeenAt: new Date(0),
     }))
     .filter((p) => {
+      if (knownWhatsAppIds.has(p.phoneNumber)) return false;
       const digits = normalizePhoneNumber(p.phoneNumber);
       return digits !== null && !onRoster.has(digits);
     });
@@ -228,17 +233,23 @@ export async function addTeamMembersFromGroup(
   // "8801700000123" are the same colleague. Two rows for one person splits their support activity
   // across two identities and makes per-member counts quietly wrong, so the duplicate check is
   // done on digits before the insert rather than left to the unique index.
-  const existing = await prisma.internalTeamMember.findMany({ select: { phoneNumber: true } });
+  const existing = await prisma.internalTeamMember.findMany({ select: { phoneNumber: true, whatsappId: true } });
   const seen = new Set(
     existing.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((d): d is string => d !== null),
   );
+  const seenWhatsAppIds = new Set(existing.map((m) => m.whatsappId).filter((id): id is string => Boolean(id)));
 
-  const toCreate: Array<{ name: string; phoneNumber: string }> = [];
+  const toCreate: Array<{ name: string; phoneNumber: string; whatsappId: string }> = [];
   for (const entry of parsed) {
+    if (seenWhatsAppIds.has(entry.phoneNumber)) continue;
     const digits = normalizePhoneNumber(entry.phoneNumber);
     if (digits === null || seen.has(digits)) continue;
     seen.add(digits);
-    toCreate.push({ name: entry.name, phoneNumber: entry.phoneNumber });
+    seenWhatsAppIds.add(entry.phoneNumber);
+    // Whatever this identifier is — a phone number or a LID — it is exactly what arrives on this
+    // person's messages, so it is recorded as such. That is what makes the match survive an admin
+    // later correcting `phoneNumber` to the person's real, human-readable number.
+    toCreate.push({ name: entry.name, phoneNumber: entry.phoneNumber, whatsappId: entry.phoneNumber });
   }
 
   if (toCreate.length === 0) {
@@ -249,6 +260,7 @@ export async function addTeamMembersFromGroup(
     data: toCreate.map((entry) => ({
       name: entry.name,
       phoneNumber: entry.phoneNumber,
+      whatsappId: entry.whatsappId,
       role,
       department,
       status: "ACTIVE" as const,

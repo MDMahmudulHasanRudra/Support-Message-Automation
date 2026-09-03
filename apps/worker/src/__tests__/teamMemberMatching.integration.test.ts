@@ -17,9 +17,13 @@ import { isActiveTeamMember, resolveActiveTeamMember } from "../pipeline/teamFil
 
 const createdIds: string[] = [];
 
-async function makeMember(phoneNumber: string, status: "ACTIVE" | "INACTIVE" = "ACTIVE") {
+async function makeMember(
+  phoneNumber: string,
+  status: "ACTIVE" | "INACTIVE" = "ACTIVE",
+  whatsappId?: string,
+) {
   const member = await prisma.internalTeamMember.create({
-    data: { name: `Matching Test ${randomUUID()}`, phoneNumber, role: "Support", status },
+    data: { name: `Matching Test ${randomUUID()}`, phoneNumber, whatsappId, role: "Support", status },
   });
   createdIds.push(member.id);
   return member;
@@ -94,6 +98,58 @@ describe("team member matching — who must NOT match", () => {
     for (const junk of ["", "@c.us", "not-a-number", "12"]) {
       expect(await resolveActiveTeamMember(junk)).toBeNull();
     }
+  });
+});
+
+describe("WhatsApp LID senders", () => {
+  /**
+   * WhatsApp migrated group participants to a "LID" — a 14-15 digit identifier that is
+   * deliberately not the person's phone number, so their real number never appears on a message
+   * sent in a group. This was found in production: 1,118 of 1,151 stored messages carried a
+   * 14-15 digit sender, and a roster member ("Mhafuz Rhaman", stored as 8801894431222) was
+   * arriving as 161679983804516. Every colleague was being processed as a customer again.
+   */
+  it("matches a member by the identifier WhatsApp actually sends", async () => {
+    const member = await makeMember("+8801894431222", "ACTIVE", "161679983804516");
+    expect(await resolveActiveTeamMember("161679983804516")).toMatchObject({ id: member.id });
+  });
+
+  it("still matches that member by phone number, so nothing regresses", async () => {
+    const member = await makeMember("+8801894431222", "ACTIVE", "161679983804516");
+    expect(await resolveActiveTeamMember("8801894431222@c.us")).toMatchObject({ id: member.id });
+  });
+
+  it("keeps matching after an admin corrects the phone number to the real one", async () => {
+    // The reason the identifier is stored separately rather than in phoneNumber: editing the
+    // human-readable number must never silently stop the person being recognised.
+    const member = await makeMember("161679983804516", "ACTIVE", "161679983804516");
+    await prisma.internalTeamMember.update({
+      where: { id: member.id },
+      data: { phoneNumber: "+8801894431222" },
+    });
+    expect(await resolveActiveTeamMember("161679983804516")).toMatchObject({ id: member.id });
+  });
+
+  it("does not match a different LID", async () => {
+    await makeMember("+8801894431222", "ACTIVE", "161679983804516");
+    expect(await resolveActiveTeamMember("222200183419092")).toBeNull();
+  });
+
+  it("does not match an INACTIVE member by their LID either", async () => {
+    await makeMember("+8801894431222", "INACTIVE", "161679983804516");
+    expect(await resolveActiveTeamMember("161679983804516")).toBeNull();
+  });
+
+  it("compares a LID exactly, never by digits", async () => {
+    // A LID is opaque — there is no format a person could have typed wrongly, and loose matching
+    // would risk colliding with a real phone number that shares its digits.
+    await makeMember("+8801894431222", "ACTIVE", "161679983804516");
+    expect(await resolveActiveTeamMember("+16167998380 4516")).toBeNull();
+  });
+
+  it("ignores an empty whatsappId rather than matching everything", async () => {
+    await makeMember("+8801700000123");
+    expect(await resolveActiveTeamMember("")).toBeNull();
   });
 });
 

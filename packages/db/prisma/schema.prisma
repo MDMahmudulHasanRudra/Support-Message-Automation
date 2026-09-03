@@ -538,6 +538,18 @@ model InternalTeamMember {
   id          String           @id @default(cuid())
   name        String
   phoneNumber String           @unique
+  /// The opaque identifier WhatsApp actually puts on this person's messages.
+  ///
+  /// WhatsApp migrated group participants to "LID" (linked id) — a 14-15 digit number that is
+  /// deliberately NOT the phone number, so a member's real number never appears on their messages
+  /// in a group. Matching on phone number alone therefore stopped working entirely: every
+  /// colleague was processed as a customer again, which is the same class of outage the JID fix
+  /// addressed, from a different cause.
+  ///
+  /// Nullable and additive: a member added by phone number still matches by phone number, and one
+  /// picked out of message history matches by this. Editing the phone number to the person's real
+  /// one never breaks matching, because this keeps working.
+  whatsappId  String?          @unique
   role        String
   department  String?
   status      TeamMemberStatus @default(ACTIVE)
