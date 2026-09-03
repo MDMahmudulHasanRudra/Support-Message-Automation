@@ -59,11 +59,32 @@ export async function provisionAiProviderFromEnv(): Promise<void> {
   }
 }
 
-/** Fills only the job slots nobody has claimed. `job` is @unique, so this is a safe upsert-if-absent. */
+/**
+ * Fills only the job slots nobody has claimed, and repairs one specific mis-entry.
+ *
+ * The repair exists because it was found in production: every job slot had a `modelId` of
+ * `"OPENROUTER"` — the provider *kind* typed into the model field. OpenRouter answers that with
+ * `"OPENROUTER is not a valid model ID"`, so every AI feature in the deployment was dead, silently,
+ * with the dashboard showing a green ACTIVE provider throughout.
+ *
+ * The repair is deliberately narrow: only a `modelId` that is exactly a provider kind name, which
+ * is never a real model id on any provider. Anything else an admin has set is left alone, because
+ * "the environment quietly overrides what you configured" is a worse failure than this one.
+ */
 async function ensureModelConfigs(providerId: string, modelId: string): Promise<void> {
+  const kindNames = new Set(Object.keys(AI_PROVIDER_PROFILES));
+
   for (const job of JOBS_TO_FILL) {
     const claimed = await prisma.aiModelConfig.findUnique({ where: { job } });
-    if (claimed) continue;
-    await prisma.aiModelConfig.create({ data: { job, providerId, modelId } });
+    if (!claimed) {
+      await prisma.aiModelConfig.create({ data: { job, providerId, modelId } });
+      continue;
+    }
+    if (kindNames.has(claimed.modelId.trim().toUpperCase())) {
+      await prisma.aiModelConfig.update({ where: { job }, data: { modelId } });
+      console.warn(
+        `[bootstrap] repaired ${job}: "${claimed.modelId}" is a provider kind, not a model id — set to "${modelId}"`,
+      );
+    }
   }
 }

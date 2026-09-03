@@ -66,7 +66,11 @@ services:
       MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
-      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
+      # Softify Forge — product knowledge from the ISPDIGITAL repository. Both apps read these:
+      # the worker to do the reading, the dashboard for its settings page. Unset means the
+      # integration is simply absent, which is the documented default (see FORGE_SETUP.md).
+      FORGE_API_KEY: ${FORGE_API_KEY}
+      FORGE_API_URL: ${FORGE_API_URL}
     ports:
       - "${WEB_PORT:-8668}:3000"
     healthcheck:
@@ -107,6 +111,14 @@ services:
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
       MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
+      # Softify Forge — the worker does the reading (see FORGE_SETUP.md). Unset means the
+      # integration is absent, and both Forge loops return immediately every tick.
+      FORGE_API_KEY: ${FORGE_API_KEY}
+      FORGE_API_URL: ${FORGE_API_URL}
+      # Seeds an AiProvider + model config on boot so a deployment is usable without opening the
+      # dashboard. Never overwrites a provider an admin already configured.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL}
     # No `ports:` here on purpose: the worker's health endpoint binds to
     # 127.0.0.1 inside the container only, for its own HEALTHCHECK to use.
     # The dashboard never talks to the worker over HTTP (see ARCHITECTURE.md).
