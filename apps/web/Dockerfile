@@ -20,6 +20,7 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/engine/package.json packages/engine/package.json
 COPY packages/teams-client/package.json packages/teams-client/package.json
+COPY packages/forge-client/package.json packages/forge-client/package.json
 COPY apps/web/package.json apps/web/package.json
 RUN npm install -g pnpm@11.9.0
 RUN pnpm install --frozen-lockfile --filter @support-automation/web...
@@ -30,6 +31,7 @@ COPY packages/shared packages/shared
 COPY packages/db packages/db
 COPY packages/engine packages/engine
 COPY packages/teams-client packages/teams-client
+COPY packages/forge-client packages/forge-client
 COPY apps/web apps/web
 RUN pnpm --filter @support-automation/db generate
 # packages/shared, packages/engine, and packages/teams-client ship compiled
@@ -38,6 +40,7 @@ RUN pnpm --filter @support-automation/db generate
 RUN pnpm --filter @support-automation/shared build
 RUN pnpm --filter @support-automation/engine build
 RUN pnpm --filter @support-automation/teams-client build
+RUN pnpm --filter @support-automation/forge-client build
 RUN pnpm --filter @support-automation/web build
 
 # ---------------------------------------------------------------------------

@@ -59,6 +59,7 @@ COPY packages/db/package.json packages/db/package.json
 COPY packages/engine/package.json packages/engine/package.json
 COPY packages/ai-client/package.json packages/ai-client/package.json
 COPY packages/teams-client/package.json packages/teams-client/package.json
+COPY packages/forge-client/package.json packages/forge-client/package.json
 COPY apps/worker/package.json apps/worker/package.json
 RUN npm install -g pnpm@11.9.0
 RUN pnpm install --frozen-lockfile --filter @support-automation/worker...
@@ -70,6 +71,7 @@ COPY packages/db packages/db
 COPY packages/engine packages/engine
 COPY packages/ai-client packages/ai-client
 COPY packages/teams-client packages/teams-client
+COPY packages/forge-client packages/forge-client
 COPY apps/worker apps/worker
 RUN pnpm --filter @support-automation/db generate
 # packages/shared, packages/engine, packages/ai-client, and packages/teams-client are consumed as
@@ -82,6 +84,9 @@ RUN pnpm --filter @support-automation/shared build
 RUN pnpm --filter @support-automation/engine build
 RUN pnpm --filter @support-automation/ai-client build
 RUN pnpm --filter @support-automation/teams-client build
+# Must precede the worker build: the worker imports @support-automation/forge-client, which
+# resolves to its dist/ output rather than its source.
+RUN pnpm --filter @support-automation/forge-client build
 RUN pnpm --filter @support-automation/worker build
 
 # ---------------------------------------------------------------------------
