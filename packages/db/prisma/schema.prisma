@@ -606,9 +606,16 @@ model Message {
   @@index([chatId, timestampWa])
   @@index([groupId, timestampWa])
   @@index([processingStatus])
-  @@index([conversationSessionId])
+  /// Pattern detection reads a session's messages in send order; the bare conversationSessionId
+  /// index left Postgres sorting every time. This compound covers both shapes.
+  @@index([conversationSessionId, timestampWa])
   @@index([quotedMessageId])
   @@index([senderPhone])
+  /// The All Messages page orders by timestampWa with no other filter, and the Overview's
+  /// "recent messages" panel does the same — both were full scan + top-N sort without this.
+  @@index([timestampWa])
+  /// Dashboard message-volume counts filter direction + a createdAt window.
+  @@index([direction, createdAt])
 }
 
 model AutomationRule {
@@ -682,8 +689,11 @@ model OutboundMessage {
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
 
-  /// Group Message Sender only (actionType = GROUP_BROADCAST) — every field
-  /// below is null for automation-generated rows.
+  /// Set by the two paths that target a group directly: GROUP_BROADCAST (Group Message Sender) and
+  /// MANUAL_REPLY (the chat inbox, which needs it to show a queued bubble in the right thread).
+  /// Null for automation-generated rows, which are addressed by chatId/toPhone instead.
+  /// Note this is the SEND QUEUE's group link — distinct from Message.groupId, which is set on both
+  /// Message write paths (the incoming message, and WhatsApp's echo of our own send).
   groupId           String?
   group             WhatsAppGroup?     @relation(fields: [groupId], references: [id], onDelete: SetNull)
   /// Group name at send time, independent of the group later being renamed/removed.
@@ -703,6 +713,9 @@ model OutboundMessage {
   @@index([broadcastJobId, status])
   @@index([groupId, status])
   @@index([relatedMessageId])
+  /// The global rate-limit check's exact WHERE shape (accountId + status SENT + sentAt window),
+  /// run several times per outbound send.
+  @@index([accountId, status, sentAt])
 }
 
 /// One row per "send this message to these groups" batch created through the
@@ -1029,9 +1042,18 @@ enum KnowledgeImportStatus {
   FAILED
 }
 
+/// Where an import's text came from. Every value converges on the same KnowledgeImport row and
+/// the same chunk-and-review pipeline — only the extraction step in front differs, so adding a
+/// source is a new extractor plus a value here, never a second pipeline.
 enum KnowledgeImportSourceType {
   PASTED_TEXT
   DOCUMENT
+  /// A fetched web page (sourceUrl holds the address; re-import is manual, never crawled).
+  URL
+  PDF
+  DOCX
+  /// A .csv/.xlsx of question/answer rows, parsed into entries directly with no AI call.
+  SPREADSHEET
 }
 
 model KnowledgeImport {
@@ -1045,6 +1067,11 @@ model KnowledgeImport {
   rawText    String
   /// Optional module hint applied to every entry produced, e.g. "MikroTik Integration".
   module     String?
+  /// For a URL import: the page this text was fetched from. Retained so an operator can re-run
+  /// the import when they know the page changed — deliberately manual, there is no crawler.
+  sourceUrl  String?
+  /// Original upload file name, kept for provenance once rawText has replaced the bytes.
+  fileName   String?
   status     KnowledgeImportStatus     @default(PENDING)
   chunksTotal    Int                   @default(0)
   chunksDone     Int                   @default(0)
@@ -1203,6 +1230,10 @@ model AiKnowledgeItem {
   /// Denormalised on purpose so the queue can show provenance without joining two optional
   /// relations for every row.
   sourceLabel     String?
+  /// For an entry distilled from a fetched web page: the page it came from, so a reviewer can
+  /// check the claim against its source and an operator can tell which entries a changed page
+  /// affects. Null for every other origin.
+  sourceUrl       String?
   confidence      Int?
   aiGenerated     Boolean             @default(false)
   humanVerified   Boolean             @default(true)
@@ -1221,6 +1252,8 @@ model AiKnowledgeItem {
   @@index([importId])
   /// The review queue's own query shape: "everything still waiting to be checked, newest first."
   @@index([humanVerified, createdAt])
+  /// Browsing/filtering the knowledge base by module, which the list page now supports.
+  @@index([module])
 }
 
 /// One immutable snapshot per edit (spec section 10 — "never simply
@@ -1659,7 +1692,9 @@ model PatternCandidateEvidence {
   createdAt             DateTime               @default(now())
 
   @@unique([patternCandidateId, conversationSessionId])
-  @@index([patternCandidateId])
+  /// The Unknown Patterns page picks the newest evidence row per candidate with a DISTINCT ON;
+  /// ordering by createdAt inside each candidate is what makes that an index walk instead of a sort.
+  @@index([patternCandidateId, createdAt])
 }
 
 // ---------------------------------------------------------------------------
