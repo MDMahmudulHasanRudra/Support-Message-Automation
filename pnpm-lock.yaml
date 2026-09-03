@@ -25,6 +25,9 @@ importers:
       '@support-automation/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@support-automation/forge-client':
+        specifier: workspace:*
+        version: link:../../packages/forge-client
       '@support-automation/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -95,6 +98,9 @@ importers:
       '@support-automation/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@support-automation/forge-client':
+        specifier: workspace:*
+        version: link:../../packages/forge-client
       '@support-automation/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -173,6 +179,18 @@ importers:
       '@support-automation/shared':
         specifier: workspace:*
         version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.7.5
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.2
+        version: 2.1.9(@types/node@22.20.1)(lightningcss@1.32.0)(terser@5.49.2)
+
+  packages/forge-client:
     devDependencies:
       '@types/node':
         specifier: ^22.7.5

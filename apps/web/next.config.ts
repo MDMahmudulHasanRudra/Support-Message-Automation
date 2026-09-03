@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
     "@support-automation/engine",
     "@support-automation/shared",
     "@support-automation/teams-client",
+    "@support-automation/forge-client",
   ],
   experimental: {
     // Default (1MB) is too small for a real Group Message Sender Excel upload.

@@ -206,6 +206,10 @@ enum WorkerCommandType {
   /// account-agnostic shape as AI_ANALYSIS_BATCH: there is at most one connected TeamsAccount, and
   /// it needs no WhatsApp session at all.
   TEAMS_SYNC_NOW
+  /// Forge's "Sync now" button — re-reads the ISPDIGITAL repository immediately instead of waiting
+  /// for startForgeKnowledgeProcessor's six-hour interval. Account-agnostic like AI_ANALYSIS_BATCH
+  /// and TEAMS_SYNC_NOW: it talks to Forge and the knowledge base, never to a WhatsApp session.
+  FORGE_SYNC_NOW
   /// "Add from a group" on Internal Team Members (payload: { groupId }) — asks WhatsApp who is
   /// actually in a group, so colleagues can be added by ticking real names instead of typing
   /// numbers. Distinct from reading Message history, which only knows people who have already
@@ -1054,6 +1058,9 @@ enum KnowledgeImportSourceType {
   DOCX
   /// A .csv/.xlsx of question/answer rows, parsed into entries directly with no AI call.
   SPREADSHEET
+  /// A file read out of the ISPDIGITAL repository through Softify Forge — either a hand-written
+  /// user guide or the source files behind one product module. See apps/worker/src/forge/.
+  FORGE_REPO
 }
 
 model KnowledgeImport {
@@ -1338,6 +1345,10 @@ model AiFallbackDecision {
 
   tokensUsed Int?
   createdAt  DateTime @default(now())
+
+  /// Set when this decision's unanswered question was queued for research against the ISPDIGITAL
+  /// repository — see ForgeResearchTask.
+  forgeResearchTask ForgeResearchTask?
 
   @@index([accountId, createdAt])
   @@index([outcome, createdAt])
@@ -2351,4 +2362,112 @@ model TeamsIntegrationSettings {
   notificationTemplate       String   @default("Hi {{customerName}}, your issue has been resolved by our support team. Thank you for your patience!")
   pollingIntervalMinutes     Int      @default(3)
   updatedAt                  DateTime @updatedAt
+}
+
+
+// ---------------------------------------------------------------------------
+// Softify Forge — product knowledge sourced from the ISPDIGITAL repository
+// ---------------------------------------------------------------------------
+
+/// Singleton row (id is always the literal string "global"), matching AutomationSettings and
+/// friends. Everything defaults off: an install with no Forge credentials must behave exactly as
+/// it did before this integration existed.
+model ForgeSettings {
+  id String @id @default("global")
+
+  /// Master switch. Off means every Forge job is a no-op regardless of credentials.
+  enabled Boolean @default(false)
+
+  /// The Forge project whose repository this deployment learns from. Discovered via
+  /// `GET /projects` and chosen by an admin — never guessed, because a key can be in scope for
+  /// several projects and learning from the wrong one is silent and wrong.
+  projectId   String?
+  projectName String?
+
+  /// Tier 1: hand-written, customer-facing documents (docs/user-guides/**, product overviews).
+  /// Authoritative by definition — a guide the team wrote FOR customers.
+  syncUserGuides Boolean @default(true)
+
+  /// Tier 2: for each Forge module, read the source files behind it and write a user-facing
+  /// explanation. This is the tier that lets the assistant answer about modules nobody has
+  /// hand-documented yet, and the reason the disclosure gate exists.
+  syncModuleGuides Boolean @default(true)
+
+  /// Tier 3: when a customer question cannot be answered from verified knowledge, research it
+  /// against the code and file the answer for review. Off by default — it spends AI budget in
+  /// response to customer traffic, which an operator should opt into knowingly.
+  researchUnanswered Boolean @default(false)
+
+  /// Entries from tier 1 are published without review when true (an admin decision recorded here
+  /// rather than hard-coded, so it can be tightened without a deploy). Tiers 2 and 3 are NEVER
+  /// auto-verified: a model's reading of source code is evidence, not fact.
+  autoVerifyUserGuides Boolean @default(true)
+
+  lastSyncStartedAt   DateTime?
+  lastSyncCompletedAt DateTime?
+  /// Operator-facing text only — never a stack trace.
+  lastSyncError       String?
+
+  updatedAt DateTime @updatedAt
+}
+
+/// One question a customer asked that verified knowledge could not answer, queued for research
+/// against the repository.
+///
+/// This is the "if the docs do not have the answer, go to the code" path. It deliberately runs
+/// AFTER the customer has already been handed to a human rather than in front of them: reading
+/// source code takes several API calls and many seconds, and — the real reason — it would put
+/// raw source into the same prompt that drafts a customer reply. The answer it produces goes to
+/// the review queue, so the NEXT customer to ask gets it instantly and safely.
+model ForgeResearchTask {
+  id String @id @default(cuid())
+
+  /// The customer's question, verbatim, as the thing to research.
+  question String
+
+  /// The AI fallback decision that exposed the gap. SetNull rather than Cascade: pruning old
+  /// decisions must not discard research that has not been done yet.
+  fallbackDecisionId String?             @unique
+  fallbackDecision   AiFallbackDecision? @relation(fields: [fallbackDecisionId], references: [id], onDelete: SetNull)
+
+  /// Normalised keyword signature of the question (packages/engine's derivePatternSignature), so
+  /// the same question asked fifty times queues one research task rather than fifty.
+  signature String @unique
+
+  /// How many times this question has now been asked — the priority signal for which gap to
+  /// close first.
+  askedCount Int @default(1)
+
+  status ForgeResearchStatus @default(PENDING)
+
+  /// Which Forge module the router picked, if any — recorded so a reviewer can see what the
+  /// research actually looked at.
+  moduleSlug String?
+
+  /// Operator-facing failure text; never a stack trace.
+  error String?
+
+  /// Set when research produced an entry, so the queue can link to what it created.
+  producedItemId String?
+
+  attemptCount Int       @default(0)
+  scheduledAt  DateTime  @default(now())
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([askedCount])
+}
+
+enum ForgeResearchStatus {
+  PENDING
+  PROCESSING
+  /// Research produced a knowledge entry, now awaiting human review like any other AI output.
+  ANSWERED
+  /// The code did not contain a customer-answerable answer, or every candidate entry was
+  /// blocked by the disclosure gate. Kept, not deleted — it is the record of a real gap.
+  NO_ANSWER
+  FAILED
 }

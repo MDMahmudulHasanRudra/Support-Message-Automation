@@ -5,6 +5,7 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { processOneGroupKnowledgeBuild } from "../knowledge/groupKnowledgeJob.js";
 import { processOneAiAnalysisBatch } from "../learning/aiAnalysisJob.js";
 import { runTeamsSync } from "../teams/graphSync.js";
+import { runForgeKnowledgeSync } from "../forge/forgeKnowledgeJob.js";
 
 const GROUP_SYNC_PROGRESS_INTERVAL = 250;
 
@@ -263,6 +264,12 @@ export async function processOneCommandViaRegistry(registry: ProviderRegistry): 
     return true;
   }
 
+  // Talks to Forge and the knowledge base only — no WhatsApp session either.
+  if (command.type === "FORGE_SYNC_NOW") {
+    await executeForgeSyncNowCommand(command);
+    return true;
+  }
+
   if (!command.accountId) {
     await prisma.workerCommand.update({
       where: { id: command.id },
@@ -335,6 +342,27 @@ async function executeBuildGroupKnowledgeCommand(command: ClaimedCommand): Promi
 async function executeTeamsSyncNowCommand(command: ClaimedCommand): Promise<void> {
   try {
     const result = await runTeamsSync();
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "DONE", processedAt: new Date(), result: { ...result } },
+    });
+  } catch (err) {
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "FAILED", processedAt: new Date(), result: { error: (err as Error).message } },
+    });
+  }
+}
+
+/**
+ * A full repository re-read can take a couple of minutes across dozens of model calls, which is
+ * far longer than any other command here. It still runs inline: the command processor is strictly
+ * serial by design, and the alternative — a detached promise — would let a second Sync now start
+ * on top of the first.
+ */
+async function executeForgeSyncNowCommand(command: ClaimedCommand): Promise<void> {
+  try {
+    const result = await runForgeKnowledgeSync();
     await prisma.workerCommand.update({
       where: { id: command.id },
       data: { status: "DONE", processedAt: new Date(), result: { ...result } },

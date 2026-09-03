@@ -20,6 +20,12 @@ import { startAiAnalysisProcessor } from "./learning/aiAnalysisProcessor.js";
 import { startGroupKnowledgeProcessor } from "./knowledge/groupKnowledgeProcessor.js";
 import { startKnowledgeImportProcessor } from "./knowledge/knowledgeImportProcessor.js";
 import { startTeamsSyncProcessor, resolveTeamsSyncIntervalMs } from "./teams/teamsSyncProcessor.js";
+import {
+  ensureForgeSettings,
+  startForgeKnowledgeProcessor,
+  startForgeResearchProcessor,
+} from "./forge/forgeProcessor.js";
+import { provisionAiProviderFromEnv } from "./bootstrap/provisionAiProviderFromEnv.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -50,6 +56,12 @@ async function main() {
   // own doc comment. It also becomes Primary automatically if this is a fresh install.
   const legacyAccount = await ensureLegacyAccountExists();
   await ensurePrimaryAccountExists();
+
+  // Both are idempotent and never fatal: a deployment that supplies OPENROUTER_* or FORGE_* in
+  // its environment gets configured without anyone opening the dashboard, and one that does not
+  // is left exactly as it was.
+  await provisionAiProviderFromEnv();
+  await ensureForgeSettings();
 
   const registry = new ProviderRegistry();
 
@@ -86,6 +98,11 @@ async function main() {
     // OAuth connect flow (see getValidTeamsAccessToken()'s doc comment), same zero-effect-until-
     // configured convention as Conversation Learning above.
     startTeamsSyncProcessor(await resolveTeamsSyncIntervalMs()),
+    // Softify Forge — learns ISPDIGITAL's own documentation and modules into the knowledge base.
+    // Registered unconditionally; both loops return immediately unless FORGE_API_KEY/FORGE_API_URL
+    // are set AND an admin enabled the integration, same convention as Teams above.
+    startForgeKnowledgeProcessor(),
+    startForgeResearchProcessor(),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

@@ -38,6 +38,7 @@ const SOURCE_LABEL = {
   PDF: "PDF",
   DOCX: "Word document",
   SPREADSHEET: "Spreadsheet",
+  FORGE_REPO: "Product repository",
 } as const;
 
 /**

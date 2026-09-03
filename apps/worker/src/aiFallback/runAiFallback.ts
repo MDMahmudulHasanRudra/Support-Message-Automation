@@ -10,6 +10,7 @@ import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
+import { recordUnansweredQuestion } from "../forge/forgeResearchJob.js";
 import { recordAiSupportActivity } from "../supportActivity/recordAiSupport.js";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
 import { checkAutoReplySafety } from "../pipeline/safety.js";
@@ -94,7 +95,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       automationSettings: params.automationSettings,
       aiSettings,
     });
-    await createAiFallbackDecision({
+    const decision = await createAiFallbackDecision({
       messageId: params.message.id,
       accountId: params.accountId,
       groupId: params.group?.id ?? null,
@@ -108,6 +109,26 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       notificationId,
       tokensUsed: fields.tokensUsed ?? null,
     });
+
+    // The customer has already been handed to a human above; this only queues the question to be
+    // researched against the product's own source later, so the NEXT person to ask gets an
+    // answer. Restricted to the two reasons that actually mean "nobody has written this down" —
+    // a low-confidence or safety-blocked answer is a different problem, and researching it would
+    // fill the queue with questions that already have answers.
+    //
+    // Fire-and-forget with its own error boundary, exactly like the escalation and
+    // support-activity hooks in processIncomingMessage.ts: a research-queue failure must never
+    // change what the customer experienced.
+    if (reason === "NO_BUSINESS_KNOWLEDGE" || reason === "NO_KNOWLEDGE") {
+      try {
+        await recordUnansweredQuestion({
+          question: params.message.body,
+          fallbackDecisionId: "id" in decision ? decision.id : null,
+        });
+      } catch (err) {
+        console.error("[forge] failed to queue an unanswered question for research", err);
+      }
+    }
   };
 
   // A cheap pre-check, before spending a real AI API call: if this exact (account, client) pair is

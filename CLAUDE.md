@@ -112,6 +112,7 @@ apps/worker    dedicated Node/TS process — the ONLY process that owns the Open
 packages/db    Prisma schema, migrations, seed, PrismaClient singleton — raw TS source, no build step
 packages/engine   pure rule-evaluation engine (matchers, priority, regex safety) — one implementation, imported by both apps
 packages/ai-client   thin Claude (Anthropic) completion client — used only by apps/worker's AI-assisted Conversation Learning analysis job
+packages/forge-client   thin Softify Forge REST wrapper (plain fetch) + the disclosure gate that decides what a customer may be told — used by apps/worker's Forge jobs and apps/web's Forge settings page
 packages/teams-client   thin Microsoft OAuth + Graph API wrapper (plain fetch, no SDK) — used by apps/web's Teams connect/callback routes and apps/worker's sync job
 packages/shared   canonical enum/type definitions (engine can't depend on @prisma/client, so these are the source of truth; Prisma schema enums are kept in sync by convention, not tooling)
 ```
@@ -152,6 +153,8 @@ since `setInterval` doesn't await its callback)
 | `startPatternDetectionProcessor` | 15min | deterministic, AI-free recurring-pattern scoring → `PatternCandidate` (same enable-flag gate) |
 | `startAiAnalysisProcessor` | 6h | optional AI-assisted rescoring via `packages/ai-client` (gated on `AiSettings.aiEngineEnabled` + `.learningEnabled`; also triggerable on-demand via an `AI_ANALYSIS_BATCH` WorkerCommand) |
 | `startTeamsSyncProcessor` | 3min (admin-configurable) | polls Microsoft Graph for joined teams/channels/messages, scoped to channels linked to an open `SupportIssue`; runs resolution-keyword matching on each new message (no-ops until Microsoft OAuth env vars are set **and** an admin completes the connect flow; also triggerable on-demand via a `TEAMS_SYNC_NOW` WorkerCommand) |
+| `startForgeKnowledgeProcessor` | 6h | reads ISPDIGITAL's own docs + module source through Softify Forge into the knowledge base (no-op until `FORGE_API_KEY`/`FORGE_API_URL` are set **and** an admin enables it; on-demand via a `FORGE_SYNC_NOW` WorkerCommand) |
+| `startForgeResearchProcessor` | 2min | works through customer questions verified knowledge could not answer, researching each against the product's source (same gate, plus `ForgeSettings.researchUnanswered`, off by default) |
 | heartbeat | 15s | health state + DB connectivity log |
 
 On boot: health server → DB connectivity check (fatal if unreachable) → crash recovery (resets
@@ -459,6 +462,48 @@ back into a customer-facing answer would launder a hallucination into a citation
 with growing apparent authority. Human verification is what breaks that cycle. When grounding is
 present the prompt also instructs the model to decline (`SHOULD_REPLY: NO`) rather than fill a gap
 the reference material does not cover.
+
+### Product knowledge from the ISPDIGITAL repository (`apps/worker/src/forge/`, `packages/forge-client`)
+
+The third knowledge source, after the conversation builder and manual imports: the product's **own
+repository**, read through Softify Forge's REST API (`FORGE_API_KEY`/`FORGE_API_URL`). This is what
+lets the assistant answer "how do I void an invoice" on a fresh install. **`FORGE_SETUP.md` is the
+full reference** — read it before changing anything here.
+
+Three tiers, differing only in how much authority the source has: hand-written user guides
+(`docs/user-guides/**`, product overviews) → per-module guides the model writes by reading the
+source behind each Forge module → on-demand research of one customer question that nothing covered.
+Tier 1 may be auto-verified (`ForgeSettings.autoVerifyUserGuides`, the admin's recorded decision);
+**tiers 2 and 3 are never auto-verified regardless of any setting** — a model's reading of source
+code is evidence, not fact. Everything reuses `KnowledgeImport` rows and `parseKnowledgeRecords`
+rather than a parallel pipeline.
+
+**The customer-facing path is unchanged and has no repository access.** `findRelevantKnowledge()`
+still retrieves only `humanVerified: true` + `ACTIVE`; Forge simply contributes more entries. Tier 3
+runs *after* the human handoff, never in front of the customer — reading source takes seconds and
+several round trips, and doing it inline would put raw code into the same prompt that drafts a
+customer reply, which is the exact arrangement the disclosure rule exists to prevent.
+
+**`checkKnowledgeSafety()` (`packages/forge-client/src/knowledgeSafety.ts`) is load-bearing, and the
+prompt is not trusted to do its job.** Every generated entry is re-checked mechanically; anything
+naming code, schema, tables, endpoints, infrastructure, servers or credentials is dropped and
+logged, never stored — not even as a draft. This is not theoretical: the first live run stored and
+auto-verified "this will create a `CustomerBillMaster` for each customer", produced by faithfully
+summarising a manual written *for customers* that introduces those names itself. The
+`internal-identifier` rule (compound capitalised words minus an allowlist of real product/vendor
+names) exists because of that, and is tested against the exact strings that leaked. The gate must
+also stay quiet on ordinary support English — a check that blocks real answers gets ignored, and an
+ignored check protects nothing.
+
+A module whose `sourcePaths` do not resolve produces **nothing**, deliberately: given a module name
+and no source, the model invents a plausible guide (observed — "Support & Tickets" produced five
+confident answers from zero bytes). `packages/forge-client` implements only read endpoints; Forge's
+task/comment/daily-log writes are deliberately not wrapped.
+
+`apps/worker/src/bootstrap/provisionAiProviderFromEnv.ts` turns `OPENROUTER_API_KEY`/
+`OPENROUTER_MODEL` into a real `AiProvider` + `AiModelConfig` on boot — without it a key in `.env`
+looks configured and does nothing, since every AI feature resolves its client from the table. It
+never overwrites an existing provider or steals a job slot an admin already assigned.
 
 ### AI Activity log (`(dashboard)/ai-learning/activity/`)
 
