@@ -21,6 +21,22 @@ const MAX_ENTRIES = 3;
 /** A long answer is truncated rather than dropped — the opening usually carries the substance. */
 const MAX_ANSWER_CHARS = 700;
 
+/**
+ * How many keyword-matching entries the ranking step is allowed to see.
+ *
+ * Raised from 40 because the importers can now add a few hundred entries in an afternoon, and
+ * anything past this ceiling is never ranked at all. Still bounded so a large knowledge base
+ * cannot pull an unbounded result into worker memory on every AI reply; a few hundred rows of
+ * title/question/answer is a small read next to the provider round trip it precedes.
+ */
+const MAX_CANDIDATES = 250;
+/**
+ * A reserved slice for entries learned in the group the customer is writing in. Group provenance
+ * is a real signal about which answer applies — it is what breaks ties in the ranking — so it
+ * must not be lost to the global cut just because those entries happen to be older.
+ */
+const MAX_SAME_GROUP_CANDIDATES = 50;
+
 export interface KnowledgeSnippet {
   id: string;
   title: string;
@@ -92,6 +108,14 @@ export function selectRelevantKnowledge(
  * base of any realistic size this is one cheap query per AI call, which is negligible next to the
  * provider round trip it precedes. Never throws — the caller treats an empty list and a failed
  * lookup identically, because answering without grounding is strictly better than not answering.
+ *
+ * The candidate query is ordered, and that is not cosmetic. Without an `orderBy` Postgres returns
+ * an arbitrary page of matching rows in whatever order it reads them, so the entry that would
+ * have ranked first could be discarded by `take` before ranking ever ran — and the odds of that
+ * grew with every entry an importer added. Newest-first is the meaningful order to cut on: an
+ * entry edited or verified more recently is the more likely description of how the product
+ * behaves today. `id` breaks the remaining ties so the same question always builds the same
+ * prompt, which is what makes an unexpected AI answer reproducible.
  */
 export async function findRelevantKnowledge(
   customerMessage: string,
@@ -101,23 +125,38 @@ export async function findRelevantKnowledge(
   const { keywords } = derivePatternSignature(customerMessage);
   if (keywords.length === 0) return [];
 
+  const matchesAnyKeyword = keywords.flatMap((keyword) => [
+    { title: { contains: keyword, mode: "insensitive" as const } },
+    { question: { contains: keyword, mode: "insensitive" as const } },
+    { answer: { contains: keyword, mode: "insensitive" as const } },
+  ]);
+  const where = {
+    status: "ACTIVE" as const,
+    // The safety gate. See this file's header for why it is not negotiable.
+    humanVerified: true,
+    OR: matchesAnyKeyword,
+  };
+  const select = { id: true, title: true, question: true, answer: true, sourceGroupId: true };
+  const orderBy = [{ updatedAt: "desc" as const }, { id: "asc" as const }];
+
   try {
-    const candidates = await prisma.aiKnowledgeItem.findMany({
-      where: {
-        status: "ACTIVE",
-        // The safety gate. See this file's header for why it is not negotiable.
-        humanVerified: true,
-        OR: keywords.flatMap((keyword) => [
-          { title: { contains: keyword, mode: "insensitive" as const } },
-          { question: { contains: keyword, mode: "insensitive" as const } },
-          { answer: { contains: keyword, mode: "insensitive" as const } },
-        ]),
-      },
-      select: { id: true, title: true, question: true, answer: true, sourceGroupId: true },
-      // A generous ceiling on what ranking sees — enough that the best entry is in the set,
-      // bounded so a huge knowledge base cannot pull an unbounded result into memory.
-      take: 40,
-    });
+    const [general, sameGroup] = await Promise.all([
+      prisma.aiKnowledgeItem.findMany({ where, select, orderBy, take: MAX_CANDIDATES }),
+      groupId
+        ? prisma.aiKnowledgeItem.findMany({
+            where: { ...where, sourceGroupId: groupId },
+            select,
+            orderBy,
+            take: MAX_SAME_GROUP_CANDIDATES,
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const candidates = [...general];
+    const seen = new Set(general.map((entry) => entry.id));
+    for (const entry of sameGroup) {
+      if (!seen.has(entry.id)) candidates.push(entry);
+    }
 
     return selectRelevantKnowledge(customerMessage, candidates, groupId, limit);
   } catch (err) {

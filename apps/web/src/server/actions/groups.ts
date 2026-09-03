@@ -76,10 +76,17 @@ export async function requestGroupKnowledgeBuild(id: string): Promise<void> {
   await requireSession();
 
   const existing = await prisma.workerCommand.findFirst({
-    where: { type: "BUILD_GROUP_KNOWLEDGE", status: { in: ["PENDING", "PROCESSING"] } },
+    where: {
+      type: "BUILD_GROUP_KNOWLEDGE",
+      status: { in: ["PENDING", "PROCESSING"] },
+      // Scoped to this group, not just the type. Checking by type alone meant a queued build for
+      // group A silently swallowed the click on group B — the action returned successfully and
+      // group B was never built, which is the worst kind of no-op.
+      payload: { path: ["groupId"], equals: id },
+    },
   });
-  // The worker processes commands strictly serially, so a second queued build would simply
-  // wait behind the first; checking by type alone keeps the queue clean.
+  // The worker processes commands strictly serially, so a second queued build for the *same*
+  // group would only repeat work that is already about to happen.
   if (!existing) {
     await prisma.workerCommand.create({ data: { type: "BUILD_GROUP_KNOWLEDGE", payload: { groupId: id } } });
   }

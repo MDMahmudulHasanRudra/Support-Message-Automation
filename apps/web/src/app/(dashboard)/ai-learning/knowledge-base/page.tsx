@@ -1,17 +1,36 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import type { Prisma } from "@prisma/client";
+import type { AiKnowledgeCategory, Prisma } from "@prisma/client";
+import { KNOWLEDGE_IMPORT_CATEGORIES } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
-import { Button, FilterBar, HelpButton, HelpSection, Input, PageHeader } from "@/components/ui";
+import {
+  Button,
+  ButtonLink,
+  FilterBar,
+  HelpButton,
+  HelpSection,
+  Input,
+  PageHeader,
+  Pagination,
+  Select,
+} from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { KnowledgeTable, type KnowledgeRow } from "./KnowledgeTable";
 
 type FilterKey = "all" | "active" | "inactive" | "archived";
 
+/** Matches the review queue's own page size — the importers can now add hundreds of entries at
+ * once, and this page previously rendered every row in one document. */
+const PAGE_SIZE = 25;
+
 interface SearchParams {
   search?: string;
   filter?: string;
+  category?: string;
+  module?: string;
+  page?: string;
 }
 
 export default async function KnowledgeBasePage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -19,52 +38,97 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
   const params = await searchParams;
   const filter: FilterKey = isFilterKey(params.filter) ? params.filter : "all";
   const search = (params.search ?? "").trim();
+  const category = isCategory(params.category) ? params.category : null;
+  const moduleName = (params.module ?? "").trim();
+  const page = Math.max(1, Number(params.page ?? "1") || 1);
 
-  const searchOnlyWhere: Prisma.AiKnowledgeItemWhereInput = search
-    ? { title: { contains: search, mode: "insensitive" } }
-    : {};
-  const where: Prisma.AiKnowledgeItemWhereInput = { ...searchOnlyWhere };
+  // Everything except the status chips. The chips' own counts are computed against this, so each
+  // one says how many entries have that status *within the current search and filters* rather
+  // than across the whole table, which would make them useless as soon as anything is filtered.
+  const facetWhere: Prisma.AiKnowledgeItemWhereInput = {
+    // Title-only search was too narrow to find anything imported: an entry's title is derived
+    // from its question, so the words an operator remembers are usually in the answer.
+    ...(search
+      ? {
+          OR: [
+            { title: { contains: search, mode: "insensitive" as const } },
+            { question: { contains: search, mode: "insensitive" as const } },
+            { answer: { contains: search, mode: "insensitive" as const } },
+            { module: { contains: search, mode: "insensitive" as const } },
+          ],
+        }
+      : {}),
+    ...(category ? { category } : {}),
+    ...(moduleName ? { module: moduleName } : {}),
+  };
+
+  const where: Prisma.AiKnowledgeItemWhereInput = { ...facetWhere };
   if (filter === "active") where.status = "ACTIVE";
   if (filter === "inactive") where.status = "INACTIVE";
   if (filter === "archived") where.status = "ARCHIVED";
 
-  const [items, allCount, activeCount, inactiveCount, archivedCount] = await Promise.all([
+  const [items, total, allCount, activeCount, inactiveCount, archivedCount, moduleRows] = await Promise.all([
     prisma.aiKnowledgeItem.findMany({
       where,
       orderBy: { updatedAt: "desc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
       include: { sourceGroup: { select: { name: true } } },
     }),
-    prisma.aiKnowledgeItem.count({ where: searchOnlyWhere }),
-    prisma.aiKnowledgeItem.count({ where: { ...searchOnlyWhere, status: "ACTIVE" } }),
-    prisma.aiKnowledgeItem.count({ where: { ...searchOnlyWhere, status: "INACTIVE" } }),
-    prisma.aiKnowledgeItem.count({ where: { ...searchOnlyWhere, status: "ARCHIVED" } }),
+    prisma.aiKnowledgeItem.count({ where }),
+    prisma.aiKnowledgeItem.count({ where: facetWhere }),
+    prisma.aiKnowledgeItem.count({ where: { ...facetWhere, status: "ACTIVE" } }),
+    prisma.aiKnowledgeItem.count({ where: { ...facetWhere, status: "INACTIVE" } }),
+    prisma.aiKnowledgeItem.count({ where: { ...facetWhere, status: "ARCHIVED" } }),
+    prisma.aiKnowledgeItem.findMany({
+      where: { module: { not: null } },
+      distinct: ["module"],
+      select: { module: true },
+      orderBy: { module: "asc" },
+      take: 200,
+    }),
   ]);
+
+  const knownModules = moduleRows.map((row) => row.module).filter((m): m is string => Boolean(m));
 
   const rows: KnowledgeRow[] = items.map((item) => ({
     id: item.id,
     title: item.title,
     category: item.category,
+    module: item.module,
     status: item.status,
     currentVersion: item.currentVersion,
     aiGenerated: item.aiGenerated,
     humanVerified: item.humanVerified,
     sourceGroupName: item.sourceGroup?.name ?? null,
+    sourceLabel: item.sourceLabel,
+    sourceUrl: item.sourceUrl,
     updatedAtLabel: formatDateTime(item.updatedAt),
   }));
+
+  const query = { search, category, module: moduleName };
 
   return (
     <div>
       <PageHeader
         title="Knowledge Base"
-        description="The application's permanent AI knowledge store. Manually curated for now — later phases add automated ingestion."
+        description="Everything the AI is allowed to know about your software — written by hand, imported from your documentation, or learned from real conversations."
         actions={
           <>
             <HelpButton moduleTitle="Knowledge Base">
               <HelpSection title="What this is">
                 <p>
-                  A manually written, versioned library of FAQs, SOPs, and known answers — not
-                  currently used to generate any live customer reply (see the AI Learning help for
-                  why). Safe to build up now for whenever that changes.
+                  A versioned library of FAQs, SOPs and known answers. Only entries that are both
+                  ACTIVE and verified are ever retrieved to answer a customer, so this page is the
+                  full picture and Pending Review is the part that isn't in play yet.
+                </p>
+              </HelpSection>
+              <HelpSection title="Where entries come from">
+                <p>
+                  Three places, all shown in the Source column: written here by hand, produced by
+                  an import of your own documentation, or distilled from a monitored group's
+                  conversations. An entry imported from a web page keeps a link to that page, so a
+                  claim can be checked against its source rather than taken on trust.
                 </p>
               </HelpSection>
               <HelpSection title="Versioning">
@@ -75,13 +139,19 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
                   content into a brand-new "current" version.
                 </p>
               </HelpSection>
-              <HelpSection title="Active / Inactive / Archived">
+              <HelpSection title="Export">
                 <p>
-                  These only affect how items are organized and filtered here — since nothing consumes
-                  this knowledge base yet, changing an item's status has no other effect right now.
+                  Export downloads what the current filters show, with the importable columns first
+                  and spelled the way the import template spells them — so an export can be edited
+                  in Excel and uploaded straight back. Knowledge you built up over months should
+                  never be trapped in one application.
                 </p>
               </HelpSection>
             </HelpButton>
+            <ButtonLink href={`/api/knowledge/export${buildExportQuery(query, filter)}`} download>
+              <Download className="size-3.5" aria-hidden />
+              Export
+            </ButtonLink>
             <Link href="/ai-learning/knowledge-base/new">
               <Button>Add Knowledge</Button>
             </Link>
@@ -91,34 +161,92 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
 
       <FilterBar>
         <form className="flex flex-wrap items-end gap-2" method="GET">
-          <Input name="search" placeholder="Search title…" defaultValue={search} className="w-64" />
+          <Input
+            name="search"
+            placeholder="Search title, question, answer…"
+            defaultValue={search}
+            className="w-64"
+          />
+          <Select name="category" defaultValue={category ?? ""} className="w-44">
+            <option value="">All categories</option>
+            {KNOWLEDGE_IMPORT_CATEGORIES.map((value) => (
+              <option key={value} value={value}>
+                {value.replace(/_/g, " ")}
+              </option>
+            ))}
+          </Select>
+          <Select name="module" defaultValue={moduleName} className="w-44">
+            <option value="">All modules</option>
+            {knownModules.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </Select>
           <input type="hidden" name="filter" value={filter} />
           <Button type="submit" size="sm">
             Search
           </Button>
         </form>
         <div className="flex flex-wrap gap-1.5">
-          <FilterChip href={buildHref(search, "all")} active={filter === "all"} label={`All (${allCount})`} />
-          <FilterChip href={buildHref(search, "active")} active={filter === "active"} label={`Active (${activeCount})`} />
-          <FilterChip href={buildHref(search, "inactive")} active={filter === "inactive"} label={`Inactive (${inactiveCount})`} />
-          <FilterChip href={buildHref(search, "archived")} active={filter === "archived"} label={`Archived (${archivedCount})`} />
+          <FilterChip href={buildHref(query, "all")} active={filter === "all"} label={`All (${allCount})`} />
+          <FilterChip href={buildHref(query, "active")} active={filter === "active"} label={`Active (${activeCount})`} />
+          <FilterChip href={buildHref(query, "inactive")} active={filter === "inactive"} label={`Inactive (${inactiveCount})`} />
+          <FilterChip href={buildHref(query, "archived")} active={filter === "archived"} label={`Archived (${archivedCount})`} />
         </div>
       </FilterBar>
 
-      <KnowledgeTable items={rows} />
+      <KnowledgeTable
+        items={rows}
+        filtered={Boolean(search || category || moduleName) || filter !== "all"}
+      />
+      <Pagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        buildHref={(next) => buildHref(query, filter, next)}
+      />
     </div>
   );
+}
+
+interface QueryState {
+  search: string;
+  category: AiKnowledgeCategory | null;
+  module: string;
 }
 
 function isFilterKey(value: string | undefined): value is FilterKey {
   return value === "all" || value === "active" || value === "inactive" || value === "archived";
 }
 
-function buildHref(search: string, filter: FilterKey): string {
+function isCategory(value: string | undefined): value is AiKnowledgeCategory {
+  return (KNOWLEDGE_IMPORT_CATEGORIES as readonly string[]).includes(value ?? "");
+}
+
+function buildParams(query: QueryState): URLSearchParams {
   const qs = new URLSearchParams();
-  if (search) qs.set("search", search);
+  if (query.search) qs.set("search", query.search);
+  if (query.category) qs.set("category", query.category);
+  if (query.module) qs.set("module", query.module);
+  return qs;
+}
+
+function buildHref(query: QueryState, filter: FilterKey, page?: number): string {
+  const qs = buildParams(query);
   qs.set("filter", filter);
+  // Page 1 is left off so a changed filter drops the caller back to the first page rather than
+  // landing on a page number the new result set may not have.
+  if (page && page > 1) qs.set("page", String(page));
   return `/ai-learning/knowledge-base?${qs.toString()}`;
+}
+
+/** The export route takes the real status, not this page's chip key. */
+function buildExportQuery(query: QueryState, filter: FilterKey): string {
+  const qs = buildParams(query);
+  if (filter !== "all") qs.set("status", filter.toUpperCase());
+  const value = qs.toString();
+  return value ? `?${value}` : "";
 }
 
 function FilterChip({ href, active, label }: { href: string; active: boolean; label: string }) {

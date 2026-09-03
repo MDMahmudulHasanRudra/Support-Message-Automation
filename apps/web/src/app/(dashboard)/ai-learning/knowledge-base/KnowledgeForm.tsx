@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
-import { Button, Card, Field, Input, SectionHeader, Select, Textarea } from "@/components/ui";
+import { Alert, Button, Card, Field, Input, SectionHeader, Select, Textarea } from "@/components/ui";
 import type { KnowledgeFormState } from "@/server/actions/aiKnowledge";
 
 const CATEGORIES = [
@@ -95,8 +96,24 @@ export function KnowledgeForm({
 
       {state.error ? <p className="text-sm text-[color:var(--color-danger)]">{state.error}</p> : null}
 
+      {state.duplicateWarning ? (
+        <>
+          <Alert tone="warning" title="An entry with this title already exists">
+            {state.duplicateWarning.message}{" "}
+            <Link href={`/ai-learning/knowledge-base/${state.duplicateWarning.existingId}`} className="link">
+              Open the existing entry
+            </Link>
+          </Alert>
+          {/* Present only after the warning, so a second submit goes through. Retrieval picks
+              between entries by keyword overlap, so two answers to the same question compete and
+              the winner is effectively arbitrary — but sometimes a separate entry is genuinely
+              the right call, and only the person writing it knows which case this is. */}
+          <input type="hidden" name="allowDuplicate" value="on" />
+        </>
+      ) : null}
+
       <Button type="submit" loading={pending}>
-        {submitLabel}
+        {state.duplicateWarning ? "Create anyway" : submitLabel}
       </Button>
     </form>
   );

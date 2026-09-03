@@ -30,6 +30,16 @@ const STATUS_COLOR = {
   FAILED: "red",
 } as const;
 
+/** Plain words for the enum — "PASTED_TEXT" is a column name, not something to show an operator. */
+const SOURCE_LABEL = {
+  PASTED_TEXT: "Pasted text",
+  DOCUMENT: "Text file",
+  URL: "Web page",
+  PDF: "PDF",
+  DOCX: "Word document",
+  SPREADSHEET: "Spreadsheet",
+} as const;
+
 /**
  * Feeds the knowledge base from your own documentation, rather than waiting for it to be learned
  * from customer conversations. On a fresh install this is the only way the AI can know anything
@@ -99,12 +109,31 @@ export default async function KnowledgeImportPage() {
                 produces and overrides the AI's own guess.
               </p>
             </HelpSection>
-            <HelpSection title="File formats">
+            <HelpSection title="What you can give it">
               <p>
-                Plain text only for now — .txt and .md. PDF and Word would need a document-parsing
-                library this app doesn't carry yet; until then, copy the text out and paste it. The
-                result is identical, because the first thing a parser would do is extract that same
-                text.
+                Paste text, upload a document (.pdf, .docx, .txt, .md), or point it at a public
+                documentation page. All three end up the same way: the text is split into sections
+                and each one is read separately.
+              </p>
+              <p>
+                A scanned PDF is refused rather than queued, because a page of images has no text
+                to read and the import could only ever produce nothing — run it through OCR first.
+                A password-protected PDF is refused for the same reason. A fetched page keeps its
+                address on every entry it produces, so a reviewer can check a claim against the
+                page it came from.
+              </p>
+            </HelpSection>
+            <HelpSection title="Spreadsheets skip the AI entirely">
+              <p>
+                A .xlsx or .csv with Question and Answer columns is not sent to a model at all. The
+                rows already are the answers, so a model could only restate them — and put a
+                possible hallucination between what you wrote and what gets stored. The file is
+                validated row by row and the entries are created immediately, with a report saying
+                what happened to each row.
+              </p>
+              <p>
+                Download Template gives you the exact columns. Only Question and Answer are
+                required; Title, Category and Module are filled in for you if you leave them out.
               </p>
             </HelpSection>
             <HelpSection title="If an import fails">
@@ -142,10 +171,23 @@ export default async function KnowledgeImportPage() {
                     <Td>
                       <span className="block truncate text-[13px] font-medium">{job.label}</span>
                       <span className="mt-0.5 block text-[10px] text-[color:var(--color-muted-foreground)]">
-                        {job.module ? `${job.module} · ` : ""}
-                        {formatDateTime(job.createdAt)}
+                        {SOURCE_LABEL[job.sourceType]}
+                        {job.module ? ` · ${job.module}` : ""}
+                        {` · ${formatDateTime(job.createdAt)}`}
                         {job.createdBy ? ` · ${job.createdBy.name}` : ""}
                       </span>
+                      {/* The page an entry came from is the difference between a reviewer checking
+                          a claim and guessing at it, so it is a real link, not just text. */}
+                      {job.sourceUrl ? (
+                        <a
+                          href={job.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="link mt-0.5 block truncate text-[10px]"
+                        >
+                          {job.sourceUrl}
+                        </a>
+                      ) : null}
                       {job.status === "PROCESSING" && job.chunksTotal > 0 ? (
                         <span className="mt-2 block">
                           <ProgressBar value={job.chunksDone} max={job.chunksTotal} />

@@ -81,6 +81,11 @@ export default async function KnowledgeReviewPage({
                 nothing is deleted, because what the AI got wrong is itself worth keeping. If an
                 entry is nearly right, edit it first and then verify.
               </p>
+              <p>
+                The checkboxes do the same to a whole page at once, which an import of a hundred
+                entries makes necessary. Both bulk actions confirm and name the count first — a
+                page waved through unread is exactly what this queue exists to prevent.
+              </p>
             </HelpSection>
             <HelpSection title="What to check for">
               <p>

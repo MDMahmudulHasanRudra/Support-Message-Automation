@@ -4,5 +4,6 @@ export * from "./rule-types.js";
 export * from "./groupBroadcast.js";
 export * from "./groupParticipantAdd.js";
 export * from "./automationRuleImport.js";
+export * from "./knowledgeImportRows.js";
 export * from "./excelSafety.js";
 export * from "./permissions.js";

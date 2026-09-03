@@ -4,8 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Check, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
-import { Badge, Button, Card, EmptyState } from "@/components/ui";
-import { setKnowledgeStatus, setKnowledgeVerified } from "@/server/actions/aiKnowledge";
+import { Alert, Badge, Button, Card, Checkbox, ConfirmDialog, EmptyState } from "@/components/ui";
+import {
+  bulkArchiveKnowledge,
+  bulkSetKnowledgeVerified,
+  setKnowledgeStatus,
+  setKnowledgeVerified,
+  type BulkKnowledgeResult,
+} from "@/server/actions/aiKnowledge";
 
 export interface ReviewRow {
   id: string;
@@ -19,6 +25,8 @@ export interface ReviewRow {
   createdAtLabel: string;
 }
 
+type BulkKind = "verify" | "discard";
+
 /**
  * The queue where AI-structured knowledge becomes usable — or doesn't.
  *
@@ -27,11 +35,19 @@ export interface ReviewRow {
  * boundary of the whole knowledge system, so the two decisions are deliberately one click each
  * and the full answer is readable without leaving the page: a reviewer who has to open twenty
  * detail pages will stop reviewing.
+ *
+ * The bulk controls exist for the same reason and stop short of the same line. An import can
+ * produce a hundred entries at once, so clearing a page has to be possible in one action — but
+ * both bulk actions ask for confirmation and name the count, because the difference between
+ * reading a page and waving it through is the only thing this queue is protecting.
  */
 export function ReviewQueue({ rows }: { rows: ReviewRow[] }) {
   const router = useRouter();
   const [expandedId, setExpandedId] = useState<string | null>(rows[0]?.id ?? null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [confirming, setConfirming] = useState<BulkKind | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   if (rows.length === 0) {
@@ -42,6 +58,16 @@ export function ReviewQueue({ rows }: { rows: ReviewRow[] }) {
         </EmptyState>
       </Card>
     );
+  }
+
+  const allSelected = selected.length === rows.length;
+
+  function toggle(id: string) {
+    setSelected((current) => (current.includes(id) ? current.filter((value) => value !== id) : [...current, id]));
+  }
+
+  function toggleAll() {
+    setSelected(allSelected ? [] : rows.map((row) => row.id));
   }
 
   function verify(id: string) {
@@ -62,14 +88,63 @@ export function ReviewQueue({ rows }: { rows: ReviewRow[] }) {
     });
   }
 
+  function runBulk(kind: BulkKind) {
+    const ids = selected;
+    setConfirming(null);
+    setBulkError(null);
+    startTransition(async () => {
+      const result: BulkKnowledgeResult =
+        kind === "verify" ? await bulkSetKnowledgeVerified(ids) : await bulkArchiveKnowledge(ids);
+      if (result.error) {
+        setBulkError(result.error);
+        return;
+      }
+      setSelected([]);
+      router.refresh();
+    });
+  }
+
   return (
     <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3.5 py-2.5">
+        <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[color:var(--color-foreground)]">
+          <Checkbox checked={allSelected} onChange={toggleAll} aria-label="Select every entry on this page" />
+          Select all on this page
+        </label>
+        <span className="tabular text-[11px] text-[color:var(--color-muted-foreground)]">
+          {selected.length} selected
+        </span>
+        <div className="ml-auto flex gap-1.5">
+          <Button size="sm" disabled={selected.length === 0 || pending} onClick={() => setConfirming("verify")}>
+            <Check className="size-3.5" aria-hidden />
+            Verify selected
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={selected.length === 0 || pending}
+            onClick={() => setConfirming("discard")}
+          >
+            <Trash2 className="size-3.5" aria-hidden />
+            Discard selected
+          </Button>
+        </div>
+      </div>
+
+      {bulkError ? <Alert tone="danger">{bulkError}</Alert> : null}
+
       {rows.map((row) => {
         const expanded = expandedId === row.id;
         const busy = pending && busyId === row.id;
         return (
           <Card key={row.id} className="p-0">
             <div className="flex items-start gap-3 p-4">
+              <Checkbox
+                className="mt-1"
+                checked={selected.includes(row.id)}
+                onChange={() => toggle(row.id)}
+                aria-label={`Select "${row.title}"`}
+              />
               <button
                 type="button"
                 onClick={() => setExpandedId(expanded ? null : row.id)}
@@ -122,6 +197,26 @@ export function ReviewQueue({ rows }: { rows: ReviewRow[] }) {
           </Card>
         );
       })}
+
+      <ConfirmDialog
+        open={confirming === "verify"}
+        onClose={() => setConfirming(null)}
+        onConfirm={() => runBulk("verify")}
+        title={`Verify ${selected.length} ${selected.length === 1 ? "entry" : "entries"}?`}
+        description="Verified entries can be used to answer customers immediately. Only verify what you have read."
+        confirmLabel="Verify"
+        loading={pending}
+      />
+      <ConfirmDialog
+        open={confirming === "discard"}
+        onClose={() => setConfirming(null)}
+        onConfirm={() => runBulk("discard")}
+        title={`Discard ${selected.length} ${selected.length === 1 ? "entry" : "entries"}?`}
+        description="They are archived, not deleted — you can still find them under the Archived filter on the Knowledge Base page."
+        confirmLabel="Discard"
+        tone="danger"
+        loading={pending}
+      />
     </div>
   );
 }

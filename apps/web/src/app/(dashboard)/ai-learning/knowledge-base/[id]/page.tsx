@@ -53,11 +53,21 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
           <Field
             label="Source"
             value={
-              item.sourceGroup
-                ? `Learned from ${item.sourceGroup.name}`
-                : item.aiGenerated
-                  ? "AI generated"
-                  : "Manual"
+              item.sourceGroup ? (
+                `Learned from ${item.sourceGroup.name}`
+              ) : item.sourceUrl ? (
+                // A real link, because checking the claim against the page it came from is the
+                // whole difference between reviewing an entry and guessing at it.
+                <a href={item.sourceUrl} target="_blank" rel="noreferrer noopener" className="link break-all text-sm">
+                  {item.sourceUrl}
+                </a>
+              ) : item.sourceLabel ? (
+                `Imported from ${item.sourceLabel}`
+              ) : item.aiGenerated ? (
+                "AI generated"
+              ) : (
+                "Manual"
+              )
             }
           />
           <Field label="Created by" value={item.createdBy?.name ?? item.createdBy?.email ?? "—"} />

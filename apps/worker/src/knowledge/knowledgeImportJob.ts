@@ -114,7 +114,7 @@ export async function processOneKnowledgeImport(clientOverride?: AiClient): Prom
       .filter((entry) => entry.confidence >= MIN_CONFIDENCE_TO_STORE)
       .slice(0, MAX_ENTRIES_PER_IMPORT - created);
 
-    created += await storeImportedKnowledge(job.id, job.label, job.module, worthStoring);
+    created += await storeImportedKnowledge(job, worthStoring);
 
     await prisma.knowledgeImport.update({
       where: { id: job.id },
@@ -161,12 +161,11 @@ async function failImport(importId: string, error: string): Promise<void> {
  * cross-source title collision is a judgement call for the reviewer, not for this function.
  */
 async function storeImportedKnowledge(
-  importId: string,
-  label: string,
-  moduleHint: string | null,
+  job: { id: string; label: string; module: string | null; sourceUrl: string | null },
   entries: ExtractedKnowledge[],
 ): Promise<number> {
   if (entries.length === 0) return 0;
+  const importId = job.id;
 
   const existing = await prisma.aiKnowledgeItem.findMany({
     where: { importId, title: { in: entries.map((e) => e.title) } },
@@ -189,10 +188,14 @@ async function storeImportedKnowledge(
       question: entry.question,
       answer: entry.answer,
       // The operator's module hint wins over the model's guess: they know their product.
-      module: moduleHint ?? entry.module,
+      module: job.module ?? entry.module,
       source: "IMPORT",
       importId,
-      sourceLabel: label,
+      sourceLabel: job.label,
+      // Null for every source but a fetched page. A reviewer checking a claim against the page it
+      // was read from is the difference between reviewing and guessing, and a label alone
+      // ("Billing docs") does not say which page.
+      sourceUrl: job.sourceUrl,
       confidence: entry.confidence,
       aiGenerated: true,
       humanVerified: false,

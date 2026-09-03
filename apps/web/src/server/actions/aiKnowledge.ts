@@ -9,6 +9,12 @@ import { logSystemEvent } from "@/server/logSystemEvent";
 
 export interface KnowledgeFormState {
   error?: string;
+  /**
+   * A near-certain duplicate the operator has not yet chosen to accept. Not an error: two entries
+   * can legitimately share a title, and only the person writing it knows whether this one is the
+   * same fact restated or a genuinely different case.
+   */
+  duplicateWarning?: { message: string; existingId: string };
 }
 
 const CATEGORIES: AiKnowledgeCategory[] = [
@@ -70,6 +76,26 @@ export async function createKnowledgeItem(
   const session = await requireSession();
   const parsed = parseFields(formData);
   if ("error" in parsed) return parsed;
+
+  // Checked before creating, and only once: a second submit carries allowDuplicate and goes
+  // through. The knowledge base is retrieved by keyword overlap, so two entries answering the
+  // same question compete with each other and whichever wins is effectively arbitrary — worth a
+  // sentence of warning, not worth blocking, since a duplicate is sometimes the right call.
+  if (formData.get("allowDuplicate") !== "on") {
+    const existing = await prisma.aiKnowledgeItem.findFirst({
+      where: { title: { equals: parsed.title, mode: "insensitive" }, status: { not: "ARCHIVED" } },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, title: true, humanVerified: true },
+    });
+    if (existing) {
+      return {
+        duplicateWarning: {
+          existingId: existing.id,
+          message: `An entry titled "${existing.title}" already exists${existing.humanVerified ? " and is verified" : " and is waiting for review"}. Check it first — editing that one keeps its history together. Submit again to create this as a separate entry anyway.`,
+        },
+      };
+    }
+  }
 
   const item = await prisma.aiKnowledgeItem.create({
     data: {
@@ -176,6 +202,89 @@ export async function setKnowledgeVerified(id: string, verified: boolean): Promi
 
   revalidatePath("/ai-learning/knowledge-base");
   revalidatePath(`/ai-learning/knowledge-base/${id}`);
+}
+
+/**
+ * A ceiling on one bulk action, not a technical limit.
+ *
+ * Verifying is the moment an entry becomes something the system will say to a customer, so the
+ * bulk control exists to spare a reviewer twenty round trips through a single import — not to
+ * make "verify everything" a one-click habit. A cap keeps the action the size of a queue page.
+ */
+const MAX_BULK_KNOWLEDGE_IDS = 100;
+
+export interface BulkKnowledgeResult {
+  updated: number;
+  /** Actionable prose for the operator; the caller shows it as-is. */
+  error?: string;
+}
+
+function normalizeBulkIds(ids: string[]): string[] {
+  return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+}
+
+function checkBulkIds(ids: string[]): { ids: string[] } | BulkKnowledgeResult {
+  const unique = normalizeBulkIds(ids);
+  if (unique.length === 0) return { updated: 0, error: "Select at least one entry first." };
+  if (unique.length > MAX_BULK_KNOWLEDGE_IDS) {
+    return {
+      updated: 0,
+      error: `That is ${unique.length} entries at once, over the limit of ${MAX_BULK_KNOWLEDGE_IDS}. Work through them a page at a time — verifying is what lets an entry answer a customer.`,
+    };
+  }
+  return { ids: unique };
+}
+
+/**
+ * Verifies several entries at once.
+ *
+ * An importer can now produce a hundred entries in one afternoon, and a queue that can only be
+ * cleared one entry at a time is a queue that stops being cleared — which would leave verified
+ * retrieval starved while the review backlog grew. Already-verified and archived rows are
+ * excluded by the `where` rather than by the caller, so a stale selection can neither resurrect a
+ * discarded entry nor inflate the reported count.
+ */
+export async function bulkSetKnowledgeVerified(ids: string[]): Promise<BulkKnowledgeResult> {
+  const session = await requireSession();
+  const checked = checkBulkIds(ids);
+  if (!("ids" in checked)) return checked;
+
+  const { count } = await prisma.aiKnowledgeItem.updateMany({
+    where: { id: { in: checked.ids }, humanVerified: false, status: { not: "ARCHIVED" } },
+    data: { humanVerified: true },
+  });
+
+  await logSystemEvent("INFO", "ai-learning", `${count} knowledge entries verified`, {
+    count,
+    itemIds: checked.ids,
+    userId: session.userId,
+  });
+  revalidatePath("/ai-learning/knowledge-base/review");
+  revalidatePath("/ai-learning/knowledge-base");
+  return { updated: count };
+}
+
+/** Discards several entries at once — archived, never deleted, exactly like the single-entry path. */
+export async function bulkArchiveKnowledge(ids: string[]): Promise<BulkKnowledgeResult> {
+  const session = await requireSession();
+  const checked = checkBulkIds(ids);
+  if (!("ids" in checked)) return checked;
+
+  const { count } = await prisma.aiKnowledgeItem.updateMany({
+    where: { id: { in: checked.ids }, status: { not: "ARCHIVED" } },
+    // ARCHIVED, not deleted: what a model got wrong is itself evidence, and this codebase
+    // soft-deletes anything with historical value.
+    data: { status: "ARCHIVED" },
+  });
+
+  await logSystemEvent("INFO", "ai-learning", `${count} knowledge entries discarded (archived)`, {
+    count,
+    itemIds: checked.ids,
+    userId: session.userId,
+  });
+  revalidatePath("/ai-learning/knowledge-base/review");
+  revalidatePath("/ai-learning/knowledge-base");
+  return { updated: count };
 }
 
 export async function setKnowledgeStatus(id: string, status: AiKnowledgeStatus): Promise<void> {
