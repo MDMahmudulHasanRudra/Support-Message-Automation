@@ -21,7 +21,12 @@ export default async function EditAiProviderPage({ params }: { params: Promise<{
   return (
     <div>
       <PageHeader title={`Edit Provider: ${provider.name}`} />
-      <AiProviderForm action={updateAiProvider.bind(null, provider.id)} defaults={defaults} submitLabel="Save Changes" />
+      <AiProviderForm
+        action={updateAiProvider.bind(null, provider.id)}
+        defaults={defaults}
+        submitLabel="Save Changes"
+        providerId={provider.id}
+      />
     </div>
   );
 }

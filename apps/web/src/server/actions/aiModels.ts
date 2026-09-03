@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import type { AiModelJob } from "@prisma/client";
+import { aiProviderProfile } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -30,6 +31,19 @@ export async function setAiModelConfig(_prevState: AiModelFormState, formData: F
 
   const provider = await prisma.aiProvider.findUnique({ where: { id: providerId } });
   if (!provider) return { error: "Provider not found." };
+
+  // Every other slot goes through packages/ai-client, which is provider-agnostic. The Admin
+  // Assistant does not: it is built on Anthropic's tool-calling wire format
+  // (Anthropic.Tool / ToolUseBlock / ToolResultBlockParam in server/aiAdmin/chat.ts), which the
+  // OpenAI-compatible protocol expresses completely differently — it is not a base-URL swap.
+  // Assigning anything else used to save cleanly and leave the widget insisting it was
+  // "not configured yet" forever, with nothing anywhere naming the real reason.
+  if (jobRaw === "ADMIN_ASSISTANT" && provider.kind !== "ANTHROPIC") {
+    const label = aiProviderProfile(provider.kind)?.label ?? provider.kind;
+    return {
+      error: `The Admin Assistant needs Anthropic's tool-calling API, and "${provider.name}" is ${label}. Add an Anthropic provider and assign that here. Every other job slot works with any provider type.`,
+    };
+  }
 
   await prisma.aiModelConfig.upsert({
     where: { job: jobRaw },

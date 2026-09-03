@@ -1,14 +1,14 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { KeyRound } from "lucide-react";
+import { useActionState, useState, useTransition } from "react";
+import { KeyRound, PlugZap } from "lucide-react";
 import {
   AI_PROVIDER_PROFILES,
   SELECTABLE_AI_PROVIDER_KINDS,
   type AiProviderKind,
 } from "@support-automation/shared";
 import { Alert, Button, Card, Field, Input, SectionHeader, Select } from "@/components/ui";
-import type { AiProviderFormState } from "@/server/actions/aiProviders";
+import { testAiProviderConnection, type AiProviderFormState } from "@/server/actions/aiProviders";
 
 export interface AiProviderFormDefaults {
   name?: string;
@@ -30,12 +30,17 @@ export function AiProviderForm({
   action,
   defaults = {},
   submitLabel = "Save",
+  providerId,
 }: {
   action: (prevState: AiProviderFormState, formData: FormData) => Promise<AiProviderFormState>;
   defaults?: AiProviderFormDefaults;
   submitLabel?: string;
+  /** Set on the edit page only — a provider must exist before there is anything to test. */
+  providerId?: string;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
+  const [testing, startTest] = useTransition();
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const initialKind = (defaults.kind as AiProviderKind) ?? "ANTHROPIC";
   const [kind, setKind] = useState<AiProviderKind>(initialKind);
   // Only overwritten when the type changes, so an endpoint typed by hand survives a re-render.
@@ -52,6 +57,20 @@ export function AiProviderForm({
       apiUrl === "" ||
       SELECTABLE_AI_PROVIDER_KINDS.some((k) => AI_PROVIDER_PROFILES[k].defaultApiUrl === apiUrl);
     if (isUntouched) setApiUrl(AI_PROVIDER_PROFILES[next].defaultApiUrl ?? "");
+    // A verdict about the previous vendor's key and endpoint says nothing about this one's.
+    setTestResult(null);
+  }
+
+  function runTest() {
+    if (!providerId) return;
+    setTestResult(null);
+    startTest(async () => {
+      const result = await testAiProviderConnection(providerId);
+      setTestResult({
+        ok: result.ok,
+        text: result.ok ? (result.message ?? "The connection works.") : (result.error ?? "The test failed."),
+      });
+    });
   }
 
   return (
@@ -139,9 +158,32 @@ export function AiProviderForm({
 
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
 
-      <Button type="submit" loading={pending}>
-        {submitLabel}
-      </Button>
+      {testResult ? (
+        <Alert tone={testResult.ok ? "success" : "danger"} title={testResult.ok ? "Connection verified" : "Test failed"}>
+          {testResult.text}
+        </Alert>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit" loading={pending}>
+          {submitLabel}
+        </Button>
+        {providerId ? (
+          <>
+            {/* Saving redirects to the list, so without this the only way to test was to save,
+                navigate back, and find the row again. This tests what is SAVED — a key typed above
+                but not yet submitted is not part of the request, and the label has to say so
+                rather than let a green result be read as approval of unsaved edits. */}
+            <Button type="button" variant="secondary" loading={testing} onClick={runTest}>
+              <PlugZap className="size-4" aria-hidden />
+              Test saved connection
+            </Button>
+            <span className="text-xs text-[color:var(--color-muted-foreground)]">
+              Tests the credentials currently saved, not the edits above — save first, then test.
+            </span>
+          </>
+        ) : null}
+      </div>
     </form>
   );
 }
