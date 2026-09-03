@@ -3,8 +3,9 @@ import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { OutboundMessageStatus, Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { Badge, type BadgeColor, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select, Table, Td, Th } from "@/components/ui";
+import { Alert, Badge, type BadgeColor, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select, Table, Td, Th } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
+import { parseDhakaDayFromInput } from "@/lib/supportActivityPeriod";
 
 const STATUS_OPTIONS = ["PENDING", "PROCESSING", "SENT", "FAILED", "CANCELLED", "RATE_LIMITED", "SKIPPED"] as const;
 
@@ -30,10 +31,18 @@ export default async function GroupBroadcastHistoryPage({
   if (filters.accountId) where.accountId = filters.accountId;
   if (filters.status) where.status = filters.status as OutboundMessageStatus;
   if (filters.group) where.groupNameSnapshot = { contains: filters.group, mode: "insensitive" };
-  if (filters.from || filters.to) {
+  // Dhaka calendar days, and an unparseable value is dropped and reported instead of reaching
+  // Prisma as an Invalid Date — that threw a validation error and replaced the whole page.
+  const fromDay = parseDhakaDayFromInput(filters.from);
+  const toDay = parseDhakaDayFromInput(filters.to);
+  const invalidDateFilters = [
+    filters.from && !fromDay ? "From" : null,
+    filters.to && !toDay ? "To" : null,
+  ].filter((label): label is string => label !== null);
+  if (fromDay || toDay) {
     where.createdAt = {
-      ...(filters.from ? { gte: new Date(filters.from) } : {}),
-      ...(filters.to ? { lte: new Date(`${filters.to}T23:59:59.999Z`) } : {}),
+      ...(fromDay ? { gte: fromDay.start } : {}),
+      ...(toDay ? { lt: toDay.end } : {}),
     };
   }
 
@@ -70,6 +79,17 @@ export default async function GroupBroadcastHistoryPage({
           </HelpButton>
         }
       />
+
+      {invalidDateFilters.length > 0 ? (
+        <div className="mb-6">
+          <Alert tone="warning" title="Date filter ignored">
+            {invalidDateFilters.length > 1
+              ? "From and To are not valid dates."
+              : `${invalidDateFilters[0]} is not a valid date.`}{" "}
+            Pick one with the date picker (YYYY-MM-DD) — the rows below are unfiltered by date.
+          </Alert>
+        </div>
+      ) : null}
 
       <form method="GET">
         <FilterBar>

@@ -4,7 +4,7 @@ import { Inbox, Search, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
-import type { ConversationSummary } from "@/server/chatInbox";
+import { CONVERSATION_LIST_LIMIT, type ConversationSummary } from "@/server/chatInbox";
 
 function relativeTime(value: Date | null): string {
   if (!value) return "";
@@ -25,10 +25,11 @@ function relativeTime(value: Date | null): string {
  * The left pane, rendered once by the chat layout so it keeps its scroll position as you
  * move between conversations.
  *
- * Filtering is local rather than a server round-trip: the layout already loaded every
- * active group (name and last line only), so matching in the browser is instant and costs
- * nothing. The active conversation comes from the pathname, since a layout cannot read
- * route params.
+ * Filtering is local rather than a server round-trip: the layout already loaded the group list
+ * (name and last line only), so matching in the browser is instant and costs nothing. That also
+ * means local search cannot reach past CONVERSATION_LIST_LIMIT, so the cap is surfaced below
+ * rather than left invisible. The active conversation comes from the pathname, since a layout
+ * cannot read route params.
  */
 export function ConversationList({ conversations }: { conversations: ConversationSummary[] }) {
   const pathname = usePathname();
@@ -41,6 +42,10 @@ export function ConversationList({ conversations }: { conversations: Conversatio
     () => conversations.filter((conversation) => conversation.awaitingReply).length,
     [conversations],
   );
+
+  // A full page means the server-side bound is biting, and because the search above filters only
+  // what was loaded, anything past the cap is unreachable from here — so say so.
+  const capped = conversations.length >= CONVERSATION_LIST_LIMIT;
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -98,6 +103,13 @@ export function ConversationList({ conversations }: { conversations: Conversatio
             <span>awaiting a reply</span>
             <span className="ml-auto text-[10px] opacity-70">{waitingOnly ? "Show all" : "Show only"}</span>
           </button>
+        ) : null}
+
+        {capped ? (
+          <p className="mt-2 text-[11px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+            Showing the first {CONVERSATION_LIST_LIMIT} groups. Search here filters only these — use the
+            Groups page to stop monitoring ones you do not need in the inbox.
+          </p>
         ) : null}
       </div>
 

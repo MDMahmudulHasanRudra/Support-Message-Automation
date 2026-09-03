@@ -11,15 +11,26 @@ import { logSystemEvent } from "@/server/logSystemEvent";
 const SESSION_COOKIE = "support_automation_session";
 const PERMISSION_DENIED_ERROR = "You do not have permission to perform this action.";
 
-/** Identifies which UserSession row belongs to the browser making this request, so the Active
- * Sessions page can mark it "CURRENT DEVICE" and the global revoke can optionally spare it. */
-export async function getCurrentSessionId(): Promise<string | null> {
+/** Cookie → UserSession row id, carrying no authorization of its own. Module-private on purpose:
+ * every export in a "use server" file is a public POST endpoint, so the guarded wrapper below is
+ * the only way in from outside, while the revoke actions here (which have already authenticated)
+ * call this directly rather than paying for a second session lookup. */
+async function readCurrentSessionId(): Promise<string | null> {
   const store = await cookies();
   const secret = store.get(SESSION_COOKIE)?.value;
   if (!secret) return null;
   const secretHash = createHash("sha256").update(secret).digest("hex");
   const record = await prisma.userSession.findUnique({ where: { secretHash }, select: { id: true } });
   return record?.id ?? null;
+}
+
+/** Identifies which UserSession row belongs to the browser making this request, so the Active
+ * Sessions page can mark it "CURRENT DEVICE" and the global revoke can optionally spare it.
+ * requireSession() first, like every other export here: unguarded, this was an anonymous,
+ * unrate-limited "is this cookie still live?" oracle reachable by POSTing to the action. */
+export async function getCurrentSessionId(): Promise<string | null> {
+  await requireSession();
+  return readCurrentSessionId();
 }
 
 export async function revokeSession(sessionId: string): Promise<{ error?: string }> {
@@ -47,7 +58,7 @@ export async function revokeAllOtherSessions(userId: string): Promise<{ error?: 
   const session = await requireSession();
   if (!(await hasPermission(session, "users.force_logout"))) return { error: PERMISSION_DENIED_ERROR };
 
-  const currentSessionId = await getCurrentSessionId();
+  const currentSessionId = await readCurrentSessionId();
 
   const result = await prisma.userSession.updateMany({
     where: {
@@ -77,7 +88,7 @@ export async function revokeAllSessionsExceptMine(): Promise<{ error?: string }>
   const session = await requireSession();
   if (!(await hasPermission(session, "users.force_logout"))) return { error: PERMISSION_DENIED_ERROR };
 
-  const currentSessionId = await getCurrentSessionId();
+  const currentSessionId = await readCurrentSessionId();
 
   const result = await prisma.userSession.updateMany({
     where: {

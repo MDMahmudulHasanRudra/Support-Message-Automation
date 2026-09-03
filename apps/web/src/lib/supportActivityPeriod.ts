@@ -47,3 +47,49 @@ export function getSupportActivityPeriodRange(
       return getDhakaDayRange(when);
   }
 }
+
+/**
+ * A `YYYY-MM-DD` value from an `<input type="date">` (or a URL query param) resolved to the Dhaka
+ * calendar day it names — `null` when it is absent or is not a real date, so a caller can ignore a
+ * malformed filter instead of handing Prisma an Invalid Date and getting a validation crash.
+ *
+ * The browser's date input always submits UTC-shaped `YYYY-MM-DD`, but the day it names is the
+ * user's day, which here is Dhaka's — parsing it as a UTC instant shifts the window six hours.
+ */
+export function parseDhakaDayFromInput(value: string | null | undefined): { start: Date; end: Date } | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const utcMidnightMs = Date.UTC(year, month, day);
+  if (Number.isNaN(utcMidnightMs)) return null;
+
+  // Date.UTC rolls an impossible component over rather than rejecting it (2026-02-31 becomes
+  // March 3), so round-trip and refuse anything that did not come back as it was typed.
+  const roundTrip = new Date(utcMidnightMs);
+  if (roundTrip.getUTCFullYear() !== year || roundTrip.getUTCMonth() !== month || roundTrip.getUTCDate() !== day) {
+    return null;
+  }
+
+  const start = new Date(utcMidnightMs - DHAKA_OFFSET_MS);
+  return { start, end: new Date(start.getTime() + DAY_MS) };
+}
+
+/**
+ * [start, end) spanning the Dhaka days named by two date-input values, inclusive of both — the
+ * shape a "from / to" filter pair means. Null unless both parse, so a half-filled or malformed
+ * pair falls back to the caller's default window rather than silently filtering on garbage.
+ */
+export function parseDhakaDayRangeFromInput(
+  from: string | null | undefined,
+  to: string | null | undefined,
+): { start: Date; end: Date } | null {
+  const fromDay = parseDhakaDayFromInput(from);
+  const toDay = parseDhakaDayFromInput(to);
+  if (!fromDay || !toDay) return null;
+  if (toDay.end <= fromDay.start) return null;
+  return { start: fromDay.start, end: toDay.end };
+}

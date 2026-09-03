@@ -4,6 +4,7 @@ import { prisma } from "@support-automation/db";
 import { isTeamsClientConfigured } from "@support-automation/teams-client";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
+import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 import { Alert, ButtonLink, Card, HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import { TeamsConnectionCard } from "./TeamsConnectionCard";
 
@@ -16,10 +17,14 @@ export default async function TeamsIntegrationPage({
   const { connectError, cancelled, justConnected } = await searchParams;
   const account = await prisma.teamsAccount.findUnique({ where: { id: "global" } });
 
+  // Dhaka midnight, not the container's — under UTC, setHours() started "today" at 06:00 Dhaka
+  // and silently dropped everything resolved overnight.
+  const todayStart = getDhakaDayRange(new Date()).start;
+
   const [openIssueCount, resolvedTodayCount, teamsCount, channelsCount, messagesCount] = await Promise.all([
     prisma.supportIssue.count({ where: { status: { notIn: ["RESOLVED", "CLOSED"] } } }),
     prisma.supportIssue.count({
-      where: { status: "RESOLVED", resolvedAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
+      where: { status: "RESOLVED", resolvedAt: { gte: todayStart } },
     }),
     prisma.teamsTeam.count(),
     prisma.teamsChannel.count(),

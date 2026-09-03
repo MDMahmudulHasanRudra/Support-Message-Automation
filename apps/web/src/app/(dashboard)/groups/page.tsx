@@ -39,32 +39,43 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
   if (filter === "active") where.isActive = true;
   if (filter === "inactive") where.isActive = false;
 
-  const [groups, totalCount, allCount, monitoredCount, unmonitoredCount, activeCount, inactiveCount, teamMembers] =
-    await Promise.all([
-      prisma.whatsAppGroup.findMany({
-        where,
-        include: { account: { select: { label: true } }, assignedTeamMember: { select: { name: true } } },
-        orderBy: { name: "asc" },
-        skip: (page - 1) * PAGE_SIZE,
-        take: PAGE_SIZE,
-      }),
-      prisma.whatsAppGroup.count({ where }),
-      prisma.whatsAppGroup.count({ where: searchOnlyWhere }),
-      prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isMonitored: true } }),
-      prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isMonitored: false } }),
-      prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isActive: true } }),
-      prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isActive: false } }),
-      prisma.internalTeamMember.findMany({ where: { status: "ACTIVE" }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
-    ]);
+  const [
+    groups,
+    totalCount,
+    allCount,
+    monitoredCount,
+    unmonitoredCount,
+    activeCount,
+    inactiveCount,
+    teamMembers,
+    aiSettings,
+  ] = await Promise.all([
+    prisma.whatsAppGroup.findMany({
+      where,
+      include: { account: { select: { label: true } }, assignedTeamMember: { select: { name: true } } },
+      orderBy: { name: "asc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+    prisma.whatsAppGroup.count({ where }),
+    prisma.whatsAppGroup.count({ where: searchOnlyWhere }),
+    prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isMonitored: true } }),
+    prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isMonitored: false } }),
+    prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isActive: true } }),
+    prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isActive: false } }),
+    prisma.internalTeamMember.findMany({ where: { status: "ACTIVE" }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    // Whether a row's own opt-in switch is what decides AI eligibility depends on the global
+    // scope, so the table is told which mode it is rendering in rather than guessing. It depends
+    // on nothing above it, so it rides along with the rest instead of adding a ninth round trip
+    // after they have all finished.
+    prisma.aiSettings.upsert({
+      where: { id: "global" },
+      update: {},
+      create: { id: "global" },
+      select: { aiAutomationScope: true },
+    }),
+  ]);
 
-  // Whether a row's own opt-in switch is what decides AI eligibility depends on the global
-  // scope, so the table is told which mode it is rendering in rather than guessing.
-  const aiSettings = await prisma.aiSettings.upsert({
-    where: { id: "global" },
-    update: {},
-    create: { id: "global" },
-    select: { aiAutomationScope: true },
-  });
   const aiScopeIsGlobal = aiSettings.aiAutomationScope === "ALL_MONITORED_GROUPS";
 
   const rows: GroupRow[] = groups.map((g) => ({

@@ -100,7 +100,20 @@ export async function sendChatMessage(
       revalidatePath(`/chat/${groupId}`);
       return { sentAt: Date.now() };
     }
-    throw err;
+
+    // Anything else — the group deleted between the lookup above and this insert, a dropped
+    // connection — has to come back through the same error channel every other failure here uses.
+    // Rethrowing replaced the composer with a generic error boundary, so the operator's typed
+    // message vanished with nothing said about it.
+    await logSystemEvent("ERROR", "chat-inbox", "Failed to queue a manual reply", {
+      error: (err as Error).message,
+      groupId: group.id,
+      accountId: group.accountId,
+      userId: session.userId,
+    });
+    return {
+      error: `Your message to ${group.name} could not be queued because of a server error, and was not sent. Try again — if it keeps failing, check System Logs.`,
+    };
   }
 
   await logSystemEvent("INFO", "chat-inbox", `Queued a manual reply to ${group.name}`, {

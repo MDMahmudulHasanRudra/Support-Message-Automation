@@ -1,5 +1,5 @@
 import { prisma } from "@support-automation/db";
-import type { PatternCandidateStatus } from "@prisma/client";
+import { Prisma, type NotificationStatus, type PatternCandidateStatus } from "@prisma/client";
 import { requireSession } from "@/server/auth";
 import { EmptyState, HelpButton, HelpSection, PageHeader, Pagination } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
@@ -13,6 +13,10 @@ const RESOLVED_STATUSES: PatternCandidateStatus[] = ["APPROVED", "REJECTED", "ME
 interface SearchParams {
   page?: string;
 }
+
+/** The two per-candidate previews this page renders, and all it reads from either table. */
+type EvidencePreview = { patternCandidateId: string; body: string };
+type NotificationPreview = { patternCandidateId: string; status: NotificationStatus };
 
 export default async function UnknownPatternsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   await requireSession();
@@ -43,34 +47,33 @@ export default async function UnknownPatternsPage({ searchParams }: { searchPara
   ]);
 
   const candidateIds = candidates.map((c) => c.id);
-  const [evidenceRows, notifications] = candidateIds.length
+  // Two `DISTINCT ON`s rather than two unbounded findMany calls: only the newest row per candidate
+  // is ever rendered, and the previous shape fetched every evidence row with its whole joined
+  // Message — tens of megabytes deserialised to produce one preview string per candidate. Postgres
+  // walks the index once per candidate and stops, and only the two displayed columns come back.
+  const [latestEvidence, latestNotifications]: [EvidencePreview[], NotificationPreview[]] = candidateIds.length
     ? await Promise.all([
-        prisma.patternCandidateEvidence.findMany({
-          where: { patternCandidateId: { in: candidateIds } },
-          include: { matchedMessage: true },
-          orderBy: { createdAt: "desc" },
-        }),
-        prisma.notification.findMany({
-          where: { relatedPatternCandidateId: { in: candidateIds } },
-          orderBy: { createdAt: "desc" },
-        }),
+        prisma.$queryRaw<EvidencePreview[]>`
+          SELECT DISTINCT ON (e."patternCandidateId") e."patternCandidateId", m."body"
+          FROM "PatternCandidateEvidence" e
+          JOIN "Message" m ON m."id" = e."matchedMessageId"
+          WHERE e."patternCandidateId" IN (${Prisma.join(candidateIds)})
+          ORDER BY e."patternCandidateId", e."createdAt" DESC
+        `,
+        prisma.$queryRaw<NotificationPreview[]>`
+          SELECT DISTINCT ON (n."relatedPatternCandidateId")
+            n."relatedPatternCandidateId" AS "patternCandidateId", n."status"::text AS status
+          FROM "Notification" n
+          WHERE n."relatedPatternCandidateId" IN (${Prisma.join(candidateIds)})
+          ORDER BY n."relatedPatternCandidateId", n."createdAt" DESC
+        `,
       ])
     : [[], []];
 
-  // Both lists are globally sorted newest-first, so the first row seen per candidate id while
-  // iterating is already that candidate's most recent — no per-group query needed.
-  const latestMessageByCandidateId = new Map<string, string>();
-  for (const evidence of evidenceRows) {
-    if (latestMessageByCandidateId.has(evidence.patternCandidateId) || !evidence.matchedMessage) continue;
-    latestMessageByCandidateId.set(evidence.patternCandidateId, evidence.matchedMessage.body);
-  }
-  const latestNotificationByCandidateId = new Map<string, (typeof notifications)[number]>();
-  for (const notification of notifications) {
-    if (!notification.relatedPatternCandidateId || latestNotificationByCandidateId.has(notification.relatedPatternCandidateId)) {
-      continue;
-    }
-    latestNotificationByCandidateId.set(notification.relatedPatternCandidateId, notification);
-  }
+  const latestMessageByCandidateId = new Map(latestEvidence.map((row) => [row.patternCandidateId, row.body]));
+  const latestNotificationStatusByCandidateId = new Map(
+    latestNotifications.map((row) => [row.patternCandidateId, row.status]),
+  );
 
   const rows: UnknownPatternRow[] = candidates.map((candidate) => ({
     id: candidate.id,
@@ -83,7 +86,7 @@ export default async function UnknownPatternsPage({ searchParams }: { searchPara
     firstSeenAtLabel: formatDateTime(candidate.firstSeenAt),
     lastSeenAtLabel: formatDateTime(candidate.lastSeenAt),
     latestExample: latestMessageByCandidateId.get(candidate.id) ?? null,
-    notificationStatus: latestNotificationByCandidateId.get(candidate.id)?.status ?? null,
+    notificationStatus: latestNotificationStatusByCandidateId.get(candidate.id) ?? null,
   }));
 
   return (

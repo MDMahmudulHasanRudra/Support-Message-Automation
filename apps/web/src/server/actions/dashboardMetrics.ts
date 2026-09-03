@@ -45,13 +45,16 @@ export interface Slice {
 }
 
 /**
- * Both message-volume series come out of a single scan.
+ * Both message-volume series come out of a single aggregate query.
  *
- * `Message` carries no index on `createdAt`/`direction`, so every dated count over
- * it is a sequential scan; the fourteen daily counts and twenty-four hourly counts
- * these charts need would have been thirty-eight of them. Selecting one column over
- * the window and bucketing in memory is one scan instead — and it replaced the seven
- * that used to back the overview sparkline.
+ * The fourteen daily counts and twenty-four hourly counts these charts need would have
+ * been thirty-eight separate counts, so this used to select one column over the whole
+ * fourteen-day window and bucket it in Node — which meant transferring and deserialising
+ * every incoming message of the last fortnight on every render of the landing page.
+ * Postgres buckets it instead: `date_trunc` to the hour returns at most 14 × 24 rows, and
+ * because Dhaka is a whole-hour offset from UTC, hour buckets nest exactly inside the Dhaka
+ * day boundaries the daily series uses, so one grouping feeds both series with the same
+ * bucket semantics as before. Served by `Message`'s `[direction, createdAt]` index.
  */
 export async function getMessageLoadSeries(nowMs: number) {
   const todayStartMs = getDhakaDayRange(new Date(nowMs)).start.getTime();
@@ -62,10 +65,13 @@ export async function getMessageLoadSeries(nowMs: number) {
   const currentHourStartMs = Math.floor(nowMs / HOUR_MS) * HOUR_MS;
   const hourWindowStartMs = currentHourStartMs - (LOAD_HOURS - 1) * HOUR_MS;
 
-  const rows = await prisma.message.findMany({
-    where: { direction: "INCOMING", createdAt: { gte: new Date(dayWindowStartMs) } },
-    select: { createdAt: true },
-  });
+  const buckets = await prisma.$queryRaw<Array<{ bucketStart: Date; messageCount: bigint }>>`
+    SELECT date_trunc('hour', m."createdAt") AS "bucketStart", COUNT(*) AS "messageCount"
+    FROM "Message" m
+    WHERE m."direction" = 'INCOMING'::"MessageDirection"
+      AND m."createdAt" >= ${new Date(dayWindowStartMs)}
+    GROUP BY 1
+  `;
 
   const daily: TimeBucket[] = Array.from({ length: VOLUME_DAYS }, (_, index) => {
     const startMs = dayWindowStartMs + index * DAY_MS;
@@ -76,14 +82,15 @@ export async function getMessageLoadSeries(nowMs: number) {
     return { label: hourLabelFormat.format(new Date(startMs)), value: 0, startMs };
   });
 
-  for (const row of rows) {
-    const ms = row.createdAt.getTime();
+  for (const bucket of buckets) {
+    const ms = bucket.bucketStart.getTime();
+    const count = Number(bucket.messageCount);
 
     const dayIndex = Math.floor((ms - dayWindowStartMs) / DAY_MS);
-    if (dayIndex >= 0 && dayIndex < VOLUME_DAYS) daily[dayIndex].value += 1;
+    if (dayIndex >= 0 && dayIndex < VOLUME_DAYS) daily[dayIndex].value += count;
 
     const hourIndex = Math.floor((ms - hourWindowStartMs) / HOUR_MS);
-    if (hourIndex >= 0 && hourIndex < LOAD_HOURS) hourly[hourIndex].value += 1;
+    if (hourIndex >= 0 && hourIndex < LOAD_HOURS) hourly[hourIndex].value += count;
   }
 
   // Week-over-week on whole days: the two halves of the same window, so the

@@ -2,7 +2,8 @@
 import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { HelpButton, HelpSection, PageHeader, Pagination } from "@/components/ui";
+import { Alert, HelpButton, HelpSection, PageHeader, Pagination } from "@/components/ui";
+import { parseDhakaDayFromInput } from "@/lib/supportActivityPeriod";
 import { MessagesFilterBar, type MessageFilters } from "./MessagesFilterBar";
 import { MessagesTable, type MessageRow } from "./MessagesTable";
 
@@ -26,10 +27,20 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
       { senderName: { contains: params.sender, mode: "insensitive" } },
     ];
   }
-  if (params.dateFrom || params.dateTo) {
+  // Both bounds name Dhaka calendar days, not UTC ones, so a one-day filter returns that day as
+  // the operator lived it. An unparseable value is dropped and reported rather than handed to
+  // Prisma as an Invalid Date, which threw and replaced the page with a generic error screen that
+  // gave no hint the date filter was at fault.
+  const dateFromDay = parseDhakaDayFromInput(params.dateFrom);
+  const dateToDay = parseDhakaDayFromInput(params.dateTo);
+  const invalidDateFilters = [
+    params.dateFrom && !dateFromDay ? "From" : null,
+    params.dateTo && !dateToDay ? "To" : null,
+  ].filter((label): label is string => label !== null);
+  if (dateFromDay || dateToDay) {
     where.timestampWa = {
-      ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
-      ...(params.dateTo ? { lte: new Date(`${params.dateTo}T23:59:59.999Z`) } : {}),
+      ...(dateFromDay ? { gte: dateFromDay.start } : {}),
+      ...(dateToDay ? { lt: dateToDay.end } : {}),
     };
   }
   const executionFilter: Prisma.AutomationExecutionWhereInput = {};
@@ -125,6 +136,17 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
           </HelpButton>
         }
       />
+
+      {invalidDateFilters.length > 0 ? (
+        <div className="mb-6">
+          <Alert tone="warning" title="Date filter ignored">
+            {invalidDateFilters.length > 1
+              ? "From and To are not valid dates."
+              : `${invalidDateFilters[0]} is not a valid date.`}{" "}
+            Pick one with the date picker (YYYY-MM-DD) — the results below are unfiltered by date.
+          </Alert>
+        </div>
+      ) : null}
 
       <MessagesFilterBar
         defaults={params}

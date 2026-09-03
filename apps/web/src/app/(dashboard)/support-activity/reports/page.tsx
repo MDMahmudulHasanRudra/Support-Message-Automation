@@ -4,7 +4,7 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
 import { formatDurationShort, formatElapsedShort } from "@/lib/duration";
-import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
+import { getDhakaDayRange, parseDhakaDayRangeFromInput } from "@/lib/supportActivityPeriod";
 import { getGroupSessionHistory, getGroupSupportHistory } from "@/server/supportActivityReports";
 import {
   Badge,
@@ -32,14 +32,6 @@ interface SearchParams {
   to?: string;
 }
 
-function parseCustomRange(from?: string, to?: string): { start: Date; end: Date } | null {
-  if (!from || !to) return null;
-  const start = new Date(`${from}T00:00:00.000Z`);
-  const end = new Date(`${to}T23:59:59.999Z`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
-  return { start, end };
-}
-
 export default async function SupportActivityReportsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   await requireSession();
   const { groupId, from, to } = await searchParams;
@@ -50,7 +42,9 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
     select: { id: true, name: true },
   });
 
-  const customRange = parseCustomRange(from, to);
+  // Dhaka days, the same as the getDhakaDayRange() fallback below — the picked dates were being
+  // read as UTC, so choosing today in the picker and leaving it blank gave two different windows.
+  const customRange = parseDhakaDayRangeFromInput(from, to);
   const range = customRange ?? getDhakaDayRange(new Date());
   const history = groupId ? await getGroupSupportHistory(groupId, range) : null;
   // Sessions are shown across every group by default (not gated behind picking one) so this page

@@ -11,6 +11,19 @@ import { Prisma } from "@prisma/client";
  * to whenever this app started monitoring the group and grows from there.
  */
 
+/**
+ * Upper bound on the conversation list. Not pagination: the list is a sidebar you scan and search,
+ * and page two of a chat list is where conversations go to be lost. It exists so the raw `IN (...)`
+ * below can never be handed an unbounded id list on an account that belongs to thousands of groups,
+ * and it is set well above the number of groups a support account realistically monitors, so in
+ * practice it is a guardrail rather than a filter. This function accepts a search term that narrows
+ * server-side, but neither caller passes one today — the inbox filters the loaded list in the
+ * browser — so the cap is genuinely the ceiling on what the inbox can reach. ConversationList
+ * renders a "showing the first N" line when the list comes back full, so the bound is never
+ * invisible once it starts biting.
+ */
+export const CONVERSATION_LIST_LIMIT = 300;
+
 /** Statuses meaning "written, but not yet confirmed on WhatsApp". */
 const UNSETTLED_OUTBOUND: Prisma.OutboundMessageWhereInput["status"] = {
   in: ["PENDING", "PROCESSING", "RATE_LIMITED", "FAILED", "CANCELLED", "SKIPPED"],
@@ -67,6 +80,7 @@ export async function getChatConversations(search?: string): Promise<Conversatio
       account: { select: { label: true } },
     },
     orderBy: { name: "asc" },
+    take: CONVERSATION_LIST_LIMIT,
   });
 
   if (groups.length === 0) return [];
@@ -199,11 +213,14 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
   });
   if (!group) return null;
 
-  const [messages, totalMessages, outbound] = await Promise.all([
+  const [windowed, outbound] = await Promise.all([
     prisma.message.findMany({
       where: { groupId },
       orderBy: { timestampWa: "desc" },
-      take: limit,
+      // One row past the window is all it takes to know older history exists. This used to be a
+      // COUNT of the group's entire message history, run on every 4s poll of every open tab, for
+      // a value only ever read as a boolean.
+      take: limit + 1,
       select: {
         id: true,
         body: true,
@@ -215,7 +232,6 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
         whatsappMessageId: true,
       },
     }),
-    prisma.message.count({ where: { groupId } }),
     prisma.outboundMessage.findMany({
       where: { chatId: group.whatsappGroupId },
       orderBy: { createdAt: "desc" },
@@ -233,6 +249,9 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
       },
     }),
   ]);
+
+  const hasMore = windowed.length > limit;
+  const messages = hasMore ? windowed.slice(0, limit) : windowed;
 
   const storedWhatsAppIds = new Set(messages.map((m) => m.whatsappMessageId));
 
@@ -306,6 +325,6 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
       participantCount: group.participantCount,
     },
     entries,
-    hasMore: totalMessages > messages.length,
+    hasMore,
   };
 }

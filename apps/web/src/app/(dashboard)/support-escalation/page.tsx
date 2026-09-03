@@ -3,8 +3,9 @@ import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import type { EscalationStatus } from "@prisma/client";
-import { Badge, type BadgeColor, Button, EmptyState, HelpButton, HelpSection, PageHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import { Alert, Badge, type BadgeColor, Button, EmptyState, HelpButton, HelpSection, PageHeader, StatTile, Table, Td, Th } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
+import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 
 const ACTIVE_STATUSES: EscalationStatus[] = [
   "NEW",
@@ -16,20 +17,36 @@ const ACTIVE_STATUSES: EscalationStatus[] = [
   "FOLLOW_UP",
 ];
 
+/**
+ * This list is unpaginated on purpose — it is a "deal with these now" queue, and the longest-waiting
+ * case is always at the top, so page two would be where cases go to be forgotten. It is still
+ * bounded: an escalation storm (or monitoring switched on across hundreds of groups at once) must
+ * not turn the page into a multi-thousand-row render. Anything beyond the cap is announced, never
+ * silently dropped.
+ */
+const ACTIVE_CASE_LIMIT = 200;
+
 export default async function SupportEscalationDashboardPage() {
   await requireSession();
 
-  const [activeCases, waitingCount, escalatedCount, pausedCount, resolvedTodayCount] = await Promise.all([
-    prisma.supportEscalationCase.findMany({
-      where: { status: { in: ACTIVE_STATUSES } },
-      include: { group: { select: { name: true } }, assignedTeamMember: { select: { name: true } } },
-      orderBy: { lastCustomerMessageAt: "asc" },
-    }),
-    prisma.supportEscalationCase.count({ where: { status: { in: ["NEW", "MONITORING", "WAITING_FOR_HUMAN"] } } }),
-    prisma.supportEscalationCase.count({ where: { status: { in: ["SECOND_ALERT", "MEMBER_ESCALATED", "ADMIN_ESCALATED", "FOLLOW_UP"] } } }),
-    prisma.supportEscalationCase.count({ where: { status: "PAUSED" } }),
-    prisma.supportEscalationCase.count({ where: { resolvedAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } }),
-  ]);
+  // Dhaka midnight, not the container's — under UTC, setHours() started "today" at 06:00 Dhaka
+  // and quietly omitted everything resolved overnight.
+  const todayStart = getDhakaDayRange(new Date()).start;
+
+  const [activeCases, activeCaseCount, waitingCount, escalatedCount, pausedCount, resolvedTodayCount] =
+    await Promise.all([
+      prisma.supportEscalationCase.findMany({
+        where: { status: { in: ACTIVE_STATUSES } },
+        include: { group: { select: { name: true } }, assignedTeamMember: { select: { name: true } } },
+        orderBy: { lastCustomerMessageAt: "asc" },
+        take: ACTIVE_CASE_LIMIT,
+      }),
+      prisma.supportEscalationCase.count({ where: { status: { in: ACTIVE_STATUSES } } }),
+      prisma.supportEscalationCase.count({ where: { status: { in: ["NEW", "MONITORING", "WAITING_FOR_HUMAN"] } } }),
+      prisma.supportEscalationCase.count({ where: { status: { in: ["SECOND_ALERT", "MEMBER_ESCALATED", "ADMIN_ESCALATED", "FOLLOW_UP"] } } }),
+      prisma.supportEscalationCase.count({ where: { status: "PAUSED" } }),
+      prisma.supportEscalationCase.count({ where: { resolvedAt: { gte: todayStart } } }),
+    ]);
 
   return (
     <div>
@@ -84,6 +101,15 @@ export default async function SupportEscalationDashboardPage() {
         <StatTile label="Paused" value={pausedCount} />
         <StatTile label="Resolved today" value={resolvedTodayCount} tone="success" />
       </div>
+
+      {activeCaseCount > activeCases.length ? (
+        <div className="mb-6">
+          <Alert tone="warning" title={`Showing the longest-waiting ${activeCases.length} of ${activeCaseCount} active cases`}>
+            Resolve or stop escalation on some of these to see the rest. Every case is still counted
+            in the totals above and reachable from its own case page.
+          </Alert>
+        </div>
+      ) : null}
 
       {activeCases.length === 0 ? (
         <EmptyState>No active priority support cases right now.</EmptyState>

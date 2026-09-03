@@ -229,7 +229,9 @@ export async function getSupportActivityDashboardSummary(nowMs: number) {
 }
 
 export async function getTeamsIntegrationSummary(nowMs: number) {
-  const todayStart = new Date(new Date(nowMs).setHours(0, 0, 0, 0));
+  // Dhaka, like every other "today" on this dashboard — setHours() would have used the
+  // container's own timezone, so the same page could report two different days at once.
+  const todayStart = getDhakaDayRange(new Date(nowMs)).start;
   const [account, openIssueCount, resolvedTodayCount] = await Promise.all([
     prisma.teamsAccount.findUnique({ where: { id: "global" } }),
     prisma.supportIssue.count({ where: { status: { notIn: ["RESOLVED", "CLOSED"] } } }),
@@ -245,10 +247,9 @@ export async function getTeamsIntegrationSummary(nowMs: number) {
 
 /**
  * The seven per-day counts that used to back the overview sparkline were dropped
- * when the 14-day volume chart replaced it: `Message` has no index on
- * `createdAt`/`direction`, so each was its own sequential scan, and
- * `getMessageLoadSeries` in dashboardMetrics.ts now derives both the daily and the
- * hourly series from a single one.
+ * when the 14-day volume chart replaced it: `getMessageLoadSeries` in
+ * dashboardMetrics.ts now derives both the daily and the hourly series from a
+ * single aggregate query.
  */
 export async function getRecentMessageActivity(nowMs: number) {
   const since24h = hoursAgo(24, nowMs);
