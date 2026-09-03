@@ -1194,6 +1194,14 @@ model AiSettings {
   /// Deliberately separate from, and normally higher than, autoResponseConfidenceThreshold:
   /// an ungrounded answer carries more risk than one backed by the team's own material.
   generalAnswerMinConfidence      Int      @default(90)
+
+  /// The language the AI answers in unless the customer clearly wrote in another one.
+  ///
+  /// Without a stated default the model infers a language from whatever it was sent, and a
+  /// one-word message carries almost no signal: "Hello" was answered in Portuguese and a short
+  /// question in transliterated Hindi, to Bengali-speaking customers. A default plus an explicit
+  /// "do not switch on weak evidence" rule is what stops that.
+  defaultReplyLanguage            String   @default("Bengali (Bangla)")
   screenshotResponseEnabled       Boolean  @default(false)
   chatLearningEnabled             Boolean  @default(false)
   softwareLearningEnabled         Boolean  @default(false)

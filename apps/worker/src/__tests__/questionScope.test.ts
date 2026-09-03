@@ -108,3 +108,88 @@ describe("buildFallbackPrompt — scope instruction", () => {
     expect(without.userPrompt).toContain("SCOPE:");
   });
 });
+
+describe("buildFallbackPrompt — reply language", () => {
+  /**
+   * Live customers were answered in Portuguese and transliterated Hindi. The prompt said only "in
+   * the customer's own language", so a one-word "Hello" — which carries almost no signal — got
+   * whatever the model guessed.
+   *
+   * Two later attempts failed in the opposite direction, which is why the shape here is what it
+   * is. Stating a default and demanding "no doubt" before switching made the model answer clear
+   * English and clear Devanagari Hindi in Bengali too. What works is making the model DECIDE the
+   * language on its own output line before drafting, against an ordered checklist — the same
+   * trick that makes SCOPE reliable. Verified against the real model on all eleven cases below.
+   */
+  const prompt = (overrides: Partial<Parameters<typeof buildFallbackPrompt>[0]> = {}) =>
+    buildFallbackPrompt({ customerMessage: "hello", groupName: null, ...overrides });
+
+  it("names the configured language as the default", () => {
+    expect(prompt({ defaultReplyLanguage: "Bengali (Bangla)" }).systemPrompt).toContain("Bengali (Bangla)");
+  });
+
+  it("falls back to Bengali when no language is configured", () => {
+    // A caller that forgets the setting must still get the safe behaviour, not the model's guess.
+    expect(prompt().systemPrompt).toContain("Bengali (Bangla)");
+    expect(prompt({ defaultReplyLanguage: "   " }).systemPrompt).toContain("Bengali (Bangla)");
+  });
+
+  it("honours a different configured language", () => {
+    const systemPrompt = prompt({ defaultReplyLanguage: "Spanish" }).systemPrompt;
+    expect(systemPrompt).toContain("Answer in Spanish");
+    // The Bengali detection rules stay coherent for any default. Phrasing them in terms of the
+    // configured language once produced the line "That is English, not English."
+    expect(systemPrompt).not.toMatch(/That is (\w+) rather than English, so answer in \./);
+  });
+
+  it("makes the model state the language before drafting", () => {
+    // The load-bearing part: without an explicit decision the model just follows the default and
+    // answers a Hindi question in Bengali.
+    const built = prompt();
+    expect(built.systemPrompt).toMatch(/decide which language the customer wrote in/i);
+    expect(built.userPrompt).toContain("LANGUAGE:");
+    expect(built.userPrompt).toContain("six lines");
+  });
+
+  it("checks the ambiguous cases before the English case", () => {
+    // Order decides the outcome. With the English rule first, "Hello" was answered in English
+    // while "hi" was answered in Bengali — same kind of message, different language.
+    const systemPrompt = prompt().systemPrompt;
+    const greeting = systemPrompt.indexOf("A greeting or a single word");
+    const english = systemPrompt.indexOf("complete, fluent sentence or question in English");
+    expect(greeting).toBeGreaterThan(-1);
+    expect(english).toBeGreaterThan(-1);
+    expect(greeting).toBeLessThan(english);
+  });
+
+  it("keeps greetings on the default language", () => {
+    const systemPrompt = prompt().systemPrompt;
+    expect(systemPrompt).toContain("hello");
+    expect(systemPrompt).toMatch(/NOT a fluent English sentence/i);
+  });
+
+  it("says romanised Bengali is Bengali, not English", () => {
+    const systemPrompt = prompt().systemPrompt;
+    expect(systemPrompt).toContain("bill kivabe generate korbo");
+    expect(systemPrompt).toMatch(/Bengali rather than English/i);
+  });
+
+  it("allows a real switch for another script and for fluent English", () => {
+    const systemPrompt = prompt().systemPrompt;
+    expect(systemPrompt).toMatch(/non-Latin script/i);
+    expect(systemPrompt).toMatch(/Devanagari/i);
+    expect(systemPrompt).toMatch(/complete, fluent sentence or question in English/i);
+  });
+
+  it("sends numbers, links and mixed messages to the default", () => {
+    const systemPrompt = prompt().systemPrompt;
+    expect(systemPrompt).toMatch(/only a number, a link, an invoice reference/i);
+    expect(systemPrompt).toMatch(/mixed languages/i);
+  });
+
+  it("keeps the language rules alongside the scope rules rather than replacing them", () => {
+    const systemPrompt = prompt().systemPrompt;
+    expect(systemPrompt).toContain("BUSINESS_SPECIFIC");
+    expect(systemPrompt).toContain("LANGUAGE.");
+  });
+});

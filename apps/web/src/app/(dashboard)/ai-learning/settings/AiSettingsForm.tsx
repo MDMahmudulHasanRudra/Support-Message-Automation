@@ -145,6 +145,19 @@ export function AiSettingsForm({ settings }: { settings: AiSettings }) {
                 defaultValue={settings.generalAnswerMinConfidence}
               />
             </Field>
+
+            <Field
+              label="Default reply language"
+              hint="What the AI answers in unless the customer clearly wrote in another language. It switches for a message in another script, or a fluent English sentence — but a greeting, a number, or Bengali typed in Latin letters all stay in this language."
+            >
+              <Input
+                name="defaultReplyLanguage"
+                type="text"
+                maxLength={60}
+                placeholder="Bengali (Bangla)"
+                defaultValue={settings.defaultReplyLanguage}
+              />
+            </Field>
           </div>
         </div>
       </Card>

@@ -67,6 +67,11 @@ export async function updateAiSettings(
       knowledgeFromChatEnabled: flag("knowledgeFromChatEnabled"),
       aiResponseMode: responseMode,
       generalAnswerMinConfidence: percent("generalAnswerMinConfidence", 90),
+      // Free text: the model is told this by name, so "Bengali (Bangla)", "English" or "Arabic"
+      // all work. Empty falls back to the schema default rather than leaving the model to guess,
+      // which is how customers ended up being answered in Portuguese.
+      defaultReplyLanguage:
+        String(formData.get("defaultReplyLanguage") ?? "").trim().slice(0, 60) || "Bengali (Bangla)",
       knowledgeMinMessagesPerGroup: nonNegativeInt("knowledgeMinMessagesPerGroup", 25),
     },
     create: { id: "global" },

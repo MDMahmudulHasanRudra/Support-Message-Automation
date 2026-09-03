@@ -11,6 +11,12 @@ export interface FallbackPromptInput {
   customerMessage: string;
   groupName: string | null;
   /**
+   * The language to answer in unless the customer clearly wrote in another one
+   * (`AiSettings.defaultReplyLanguage`). Defaults here too, so a caller that forgets it still
+   * gets the safe behaviour rather than the model's guess.
+   */
+  defaultReplyLanguage?: string;
+  /**
    * Verified knowledge-base entries related to this question, if any. Always
    * human-verified — see knowledgeContext.ts for why unverified entries never reach here.
    */
@@ -26,13 +32,31 @@ export interface FallbackPrompt {
 
 export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt {
   const knowledge = input.knowledge ?? [];
+  const language = input.defaultReplyLanguage?.trim() || "Bengali (Bangla)";
 
   const systemPrompt = [
     "You are assisting a WhatsApp-based customer support automation system. A customer sent a",
     "message that did not match any configured automation rule. Classify the message and, only if",
-    "you are confident a short reply in the customer's own language is safe and complete, draft one.",
+    "you are confident a short reply is safe and complete, draft one.",
     "You only ever classify and draft text — you cannot and must not attempt to send messages,",
     "execute commands, or take any action beyond returning the requested assessment.",
+    "",
+    "LANGUAGE. Before drafting anything, decide which language the customer wrote in, and report it",
+    "on the LANGUAGE line. Then write RESPONSE in that same language. Deciding first is the point:",
+    "it stops every reply defaulting to the same language regardless of what was asked.",
+    "",
+    "Work down this list and stop at the first line that matches:",
+    `1. A greeting or a single word — \"hello\", \"hi\", \"ok\", \"thanks\", \"yes\", \"please\", \"sure\"?`,
+    `   ${language}. These appear inside conversations in every language and settle nothing. A`,
+    "   one-word greeting is NOT a fluent English sentence, whatever language the word comes from.",
+    `2. Only a number, a link, an invoice reference, a product name or an emoji? ${language}.`,
+    "3. Written in a non-Latin script — Devanagari, Arabic, Chinese, Tamil and so on? That script's",
+    "   language. Answer in it.",
+    `4. Bengali script? Answer in ${language}.`,
+    "5. Bengali written in Latin letters — \"bill kivabe generate korbo\", \"amar net kaj korche na\"?",
+    `   That is Bengali rather than English, so answer in ${language}.`,
+    "6. A complete, fluent sentence or question in English, of several words? English.",
+    `7. Anything else — mixed languages, or a message you cannot place confidently? ${language}.`,
     "You must also decide the SCOPE of the question.",
     "BUSINESS_SPECIFIC means answering it correctly requires knowing something about THIS",
     "particular company — how their software behaves, their pricing, policies, support hours,",
@@ -75,9 +99,10 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
     `Customer message: "${input.customerMessage}"`,
     ...referenceBlock,
     "",
-    "Respond in EXACTLY this format, five lines, nothing else:",
+    "Respond in EXACTLY this format, six lines, nothing else:",
     "INTENT: <a short 2-4 word label>",
     "SCOPE: <BUSINESS_SPECIFIC or GENERAL>",
+    "LANGUAGE: <the language you decided, and are writing RESPONSE in>",
     "CONFIDENCE: <a single integer 0-100>",
     "SHOULD_REPLY: <YES or NO — NO if this needs a human>",
     "RESPONSE: <the drafted reply, or NONE if SHOULD_REPLY is NO>",

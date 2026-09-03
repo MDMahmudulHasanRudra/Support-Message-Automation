@@ -176,6 +176,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       buildFallbackPrompt({
         customerMessage: params.message.body,
         groupName: params.group?.name ?? null,
+        defaultReplyLanguage: aiSettings.defaultReplyLanguage,
         knowledge,
       }),
     );
