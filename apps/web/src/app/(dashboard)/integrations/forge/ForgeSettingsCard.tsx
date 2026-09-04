@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw, Plug } from "lucide-react";
-import { Alert, Badge, Button, Card, Field, SectionHeader, SwitchField } from "@/components/ui";
+import { Alert, Badge, Button, Card, Field, SectionHeader, Select, SwitchField } from "@/components/ui";
 import {
   checkForgeConnection,
   readForgeSyncStatus,
@@ -145,11 +145,10 @@ export function ForgeSettingsCard({
             label="Project to learn from"
             hint="The Forge project whose repository holds the product your customers ask about."
           >
-            <select
+            <Select
               name="projectId"
               value={selectedProject}
               onChange={(event) => setSelectedProject(event.target.value)}
-              className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px]"
             >
               <option value="">Not selected</option>
               {check.projects!.map((project) => (
@@ -157,7 +156,7 @@ export function ForgeSettingsCard({
                   {project.name}
                 </option>
               ))}
-            </select>
+            </Select>
             <input
               type="hidden"
               name="projectName"

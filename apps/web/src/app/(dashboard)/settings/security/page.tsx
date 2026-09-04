@@ -31,8 +31,8 @@ export default async function SecuritySettingsPage() {
             <HelpSection title="Danger Zone">
               <p>
                 Force-signs out App Users from every device immediately, without waiting for
-                their session to expire naturally. "Except Mine" is the safer default and cannot
-                lock you out mid-action; the "Including Mine" option will redirect you to the
+                their session to expire naturally. “Except Mine” is the safer default and cannot
+                lock you out mid-action; the “Including Mine” option will redirect you to the
                 login page too.
               </p>
             </HelpSection>

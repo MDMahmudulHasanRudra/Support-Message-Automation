@@ -61,7 +61,7 @@ export default async function UserSessionsPage({ params }: { params: Promise<{ i
                 One row per login. A user can be signed in on several devices at once — logging
                 out of one does not affect the others. Revoking a session takes effect
                 immediately: that device is rejected on its very next request, it does not wait
-                for the session's natural expiry.
+                for the session’s natural expiry.
               </p>
             </HelpSection>
           </HelpButton>

@@ -50,8 +50,8 @@ export default async function UsersPage() {
               </HelpSection>
               <HelpSection title="Sessions">
                 <p>
-                  Open a user's Sessions page to see every device currently logged in and to force
-                  a logout — one device, or all of that user's other devices at once.
+                  Open a user’s Sessions page to see every device currently logged in and to force
+                  a logout — one device, or all of that user’s other devices at once.
                 </p>
               </HelpSection>
             </HelpButton>

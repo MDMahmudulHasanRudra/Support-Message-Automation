@@ -121,7 +121,7 @@ export function RuleImportDialog({ onClose, onImported }: { onClose: () => void;
           ) : null}
           <p className="text-xs text-[color:var(--color-muted-foreground)]">
             Every imported rule is created as <strong>DRAFT</strong> regardless of anything in the
-            file — review and Activate them (individually or via Bulk Activate) once you're happy
+            file — review and Activate them (individually or via Bulk Activate) once you’re happy
             with them.
           </p>
         </div>
