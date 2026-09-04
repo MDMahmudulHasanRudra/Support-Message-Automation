@@ -19,6 +19,7 @@ import { startPatternDetectionProcessor } from "./learning/patternDetectionProce
 import { startAiAnalysisProcessor } from "./learning/aiAnalysisProcessor.js";
 import { startGroupKnowledgeProcessor } from "./knowledge/groupKnowledgeProcessor.js";
 import { startKnowledgeImportProcessor } from "./knowledge/knowledgeImportProcessor.js";
+import { startCommunicationStyleProcessor } from "./knowledge/communicationStyleProcessor.js";
 import { startTeamsSyncProcessor, resolveTeamsSyncIntervalMs } from "./teams/teamsSyncProcessor.js";
 import {
   ensureForgeSettings,
@@ -93,6 +94,8 @@ async function main() {
     startAiAnalysisProcessor(),
     startGroupKnowledgeProcessor(),
     startKnowledgeImportProcessor(),
+    // Learns how the team writes. No-ops every tick until an admin turns it on.
+    startCommunicationStyleProcessor(),
     // Microsoft Teams Integration — polling sync, always registered but a no-op every tick until
     // MICROSOFT_CLIENT_ID/SECRET/TENANT_ID/REDIRECT_URI are configured AND an admin completes the
     // OAuth connect flow (see getValidTeamsAccessToken()'s doc comment), same zero-effect-until-

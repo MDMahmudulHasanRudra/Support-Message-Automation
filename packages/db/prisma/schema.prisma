@@ -210,6 +210,10 @@ enum WorkerCommandType {
   /// for startForgeKnowledgeProcessor's six-hour interval. Account-agnostic like AI_ANALYSIS_BATCH
   /// and TEAMS_SYNC_NOW: it talks to Forge and the knowledge base, never to a WhatsApp session.
   FORGE_SYNC_NOW
+  /// The Communication Style page's "Rebuild now" — reads the team's own replies and re-derives
+  /// the style profile immediately instead of waiting for the twelve-hour loop. Account-agnostic
+  /// like the other three: it reads stored messages and writes one settings row.
+  BUILD_COMMUNICATION_STYLE
   /// "Add from a group" on Internal Team Members (payload: { groupId }) — asks WhatsApp who is
   /// actually in a group, so colleagues can be added by ticking real names instead of typing
   /// numbers. Distinct from reading Message history, which only knows people who have already
@@ -322,6 +326,7 @@ model User {
   createdKnowledgeItems      AiKnowledgeItem[]
   createdKnowledgeImports    KnowledgeImport[]
   createdKnowledgeVersions   AiKnowledgeVersion[]
+  approvedStyleProfiles      CommunicationStyleProfile[]
   resolvedEscalationCases    SupportEscalationCase[]
   triggeredEscalationEvents  SupportEscalationEvent[]
   triggeredLearningBatchJobs LearningBatchJob[]
@@ -1202,6 +1207,14 @@ model AiSettings {
   /// question in transliterated Hindi, to Bengali-speaking customers. A default plus an explicit
   /// "do not switch on weak evidence" rule is what stops that.
   defaultReplyLanguage            String   @default("Bengali (Bangla)")
+
+  /// Learn HOW the support team writes — tone, greetings, how a problem is acknowledged — from
+  /// the replies executives actually send, and apply that to AI answers.
+  ///
+  /// Distinct from knowledgeFromChatEnabled, which learns WHAT the team knows. This learns manner,
+  /// not fact, and produces no knowledge entries at all. Off by default, and even when on the
+  /// learned guidance does nothing until a person approves it — see CommunicationStyleProfile.
+  communicationStyleLearningEnabled Boolean @default(false)
   screenshotResponseEnabled       Boolean  @default(false)
   chatLearningEnabled             Boolean  @default(false)
   softwareLearningEnabled         Boolean  @default(false)
@@ -2517,4 +2530,41 @@ enum ForgeResearchStatus {
   /// blocked by the disclosure gate. Kept, not deleted — it is the record of a real gap.
   NO_ANSWER
   FAILED
+}
+
+
+/// Singleton row (id is always the literal string "global").
+///
+/// How this support team talks, distilled from the replies its executives actually wrote, and
+/// injected into the AI's reply prompt so its answers sound like the team rather than like a
+/// model. It holds manner only — greetings, formality, sentence length, how a delay or a
+/// complaint is acknowledged — and never a product fact: facts come from the knowledge base,
+/// which has its own verification.
+///
+/// `humanApproved` is the trust boundary, and it is stricter than the knowledge base's. A wrong
+/// knowledge entry produces one wrong answer; wrong style guidance shapes EVERY answer, so
+/// guidance is applied to nothing until a person has read it. Rebuilding always clears it.
+model CommunicationStyleProfile {
+  id String @id @default("global")
+
+  /// The distilled guidance, in prose, as it will be given to the model. Null until first built.
+  guidance String?
+
+  /// How many real support replies the current guidance was drawn from — the reviewer's main
+  /// signal for whether it rests on enough evidence to trust.
+  messagesAnalyzed Int @default(0)
+
+  /// Newest reply covered, so a rebuild reads only what is new rather than everything again.
+  builtThroughAt DateTime?
+  lastBuiltAt    DateTime?
+  /// Operator-facing text only — never a stack trace.
+  lastError      String?
+
+  /// Nothing reaches a customer until this is true. Cleared by every rebuild.
+  humanApproved Boolean   @default(false)
+  approvedAt    DateTime?
+  approvedById  String?
+  approvedBy    User?     @relation(fields: [approvedById], references: [id], onDelete: SetNull)
+
+  updatedAt DateTime @updatedAt
 }

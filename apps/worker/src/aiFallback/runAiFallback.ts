@@ -11,6 +11,7 @@ import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
 import { recordUnansweredQuestion } from "../forge/forgeResearchJob.js";
+import { getApprovedStyleGuidance } from "../knowledge/communicationStyleJob.js";
 import { recordAiSupportActivity } from "../supportActivity/recordAiSupport.js";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
 import { checkAutoReplySafety } from "../pipeline/safety.js";
@@ -177,6 +178,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
         customerMessage: params.message.body,
         groupName: params.group?.name ?? null,
         defaultReplyLanguage: aiSettings.defaultReplyLanguage,
+        styleGuidance: await getApprovedStyleGuidance(),
         knowledge,
       }),
     );

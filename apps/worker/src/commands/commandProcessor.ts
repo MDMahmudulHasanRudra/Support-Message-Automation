@@ -6,6 +6,7 @@ import { processOneGroupKnowledgeBuild } from "../knowledge/groupKnowledgeJob.js
 import { processOneAiAnalysisBatch } from "../learning/aiAnalysisJob.js";
 import { runTeamsSync } from "../teams/graphSync.js";
 import { runForgeKnowledgeSync } from "../forge/forgeKnowledgeJob.js";
+import { buildCommunicationStyleProfile } from "../knowledge/communicationStyleJob.js";
 
 const GROUP_SYNC_PROGRESS_INTERVAL = 250;
 
@@ -270,6 +271,12 @@ export async function processOneCommandViaRegistry(registry: ProviderRegistry): 
     return true;
   }
 
+  // Reads stored messages and writes one settings row — no WhatsApp session either.
+  if (command.type === "BUILD_COMMUNICATION_STYLE") {
+    await executeBuildCommunicationStyleCommand(command);
+    return true;
+  }
+
   if (!command.accountId) {
     await prisma.workerCommand.update({
       where: { id: command.id },
@@ -363,6 +370,21 @@ async function executeTeamsSyncNowCommand(command: ClaimedCommand): Promise<void
 async function executeForgeSyncNowCommand(command: ClaimedCommand): Promise<void> {
   try {
     const result = await runForgeKnowledgeSync();
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "DONE", processedAt: new Date(), result: { ...result } },
+    });
+  } catch (err) {
+    await prisma.workerCommand.update({
+      where: { id: command.id },
+      data: { status: "FAILED", processedAt: new Date(), result: { error: (err as Error).message } },
+    });
+  }
+}
+
+async function executeBuildCommunicationStyleCommand(command: ClaimedCommand): Promise<void> {
+  try {
+    const result = await buildCommunicationStyleProfile();
     await prisma.workerCommand.update({
       where: { id: command.id },
       data: { status: "DONE", processedAt: new Date(), result: { ...result } },

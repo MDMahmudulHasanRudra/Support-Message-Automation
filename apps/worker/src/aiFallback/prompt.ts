@@ -11,6 +11,12 @@ export interface FallbackPromptInput {
   customerMessage: string;
   groupName: string | null;
   /**
+   * How this team writes, learned from their own replies and approved by a person
+   * (`CommunicationStyleProfile`). Absent whenever the feature is off, unbuilt or unapproved, in
+   * which case the assistant writes exactly as it did before this existed.
+   */
+  styleGuidance?: string | null;
+  /**
    * The language to answer in unless the customer clearly wrote in another one
    * (`AiSettings.defaultReplyLanguage`). Defaults here too, so a caller that forgets it still
    * gets the safe behaviour rather than the model's guess.
@@ -33,6 +39,7 @@ export interface FallbackPrompt {
 export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt {
   const knowledge = input.knowledge ?? [];
   const language = input.defaultReplyLanguage?.trim() || "Bengali (Bangla)";
+  const styleGuidance = input.styleGuidance?.trim() || null;
 
   const systemPrompt = [
     "You are assisting a WhatsApp-based customer support automation system. A customer sent a",
@@ -66,6 +73,19 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
     "When in any doubt at all, answer BUSINESS_SPECIFIC. Being wrong in that direction costs a",
     "short wait for a human; being wrong in the other direction means inventing this company's",
     "policy in front of their customer.",
+    // Placed after the language and scope rules, and stated as subordinate to them, because style
+    // is the least important of the three: a reply in the wrong language or one that invents
+    // company policy is broken no matter how well it matches the team's voice.
+    ...(styleGuidance
+      ? [
+          "",
+          "HOUSE STYLE. This team writes to its customers like this:",
+          styleGuidance,
+          "Match that manner. It never overrides anything above: not the language rules, not the",
+          "scope rules, and never a fact. If the style suggests being reassuring and you have",
+          "nothing to reassure them with, hand over to a human instead of inventing comfort.",
+        ]
+      : []),
     ...(knowledge.length > 0
       ? [
           "You are given reference material from this team's own verified knowledge base.",

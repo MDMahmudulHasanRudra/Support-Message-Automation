@@ -146,6 +146,15 @@ export function AiSettingsForm({ settings }: { settings: AiSettings }) {
               />
             </Field>
 
+            <div className="md:col-span-2">
+              <SwitchField
+                name="communicationStyleLearningEnabled"
+                defaultChecked={settings.communicationStyleLearningEnabled}
+                label="Learn how the team writes"
+                description="Studies the replies your executives actually send and describes their manner — greetings, formality, length, how they acknowledge a problem — so AI answers sound like your team. It learns manner only, never product facts, and nothing applies until you approve it on the Communication Style page."
+              />
+            </div>
+
             <Field
               label="Default reply language"
               hint="What the AI answers in unless the customer clearly wrote in another language. It switches for a message in another script, or a fluent English sentence — but a greeting, a number, or Bengali typed in Latin letters all stay in this language."
