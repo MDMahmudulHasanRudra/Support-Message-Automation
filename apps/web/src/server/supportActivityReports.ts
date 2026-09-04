@@ -258,6 +258,98 @@ export async function getDailyHoursWorked(range: DateRange): Promise<HoursWorked
     .sort((a, b) => b.totalSeconds - a.totalSeconds);
 }
 
+export interface ExecutiveWorkloadRow {
+  teamMemberId: string;
+  name: string;
+  /** Distinct groups this person handled in the period. */
+  groupsHandled: number;
+  messageCount: number;
+  /**
+   * Time on support, measured as the span from a person's first message to their last, within one
+   * group on one day, summed across every such span.
+   *
+   * Per group AND per day on purpose. Summing one span across a whole week would count the nights
+   * in between as work; summing one span across every group at once would count the gap while
+   * they were busy elsewhere. A day in a single group is the largest window where "first to last"
+   * genuinely means "engaged with this".
+   *
+   * A day where somebody sent one message is zero seconds, which is honest rather than flattering
+   * — a single reply has no duration to measure. The message count beside it is what stops that
+   * reading as "did nothing".
+   */
+  activeSeconds: number;
+  firstAt: Date;
+  lastAt: Date;
+}
+
+/**
+ * What each executive actually handled in a period: how many groups, how many messages, and how
+ * long they were engaged.
+ *
+ * This replaces getDailyHoursWorked for the headline view. That function sums
+ * SupportSession.durationSeconds, which is only written when a session COMPLETES, which requires a
+ * rule whose keyword carries marksCompletion. A deployment running the "any team member message
+ * counts" rule — the configuration this module is most often used in — has no such keyword, so its
+ * sessions never complete and its hours-worked report is permanently empty while looking healthy.
+ * Reading the activity rows directly has no such dependency.
+ *
+ * One query rather than one per member: the previous per-member breakdown issued a groupBy and
+ * then a second lookup, and anything wanting durations on top would have added a third per row.
+ */
+export async function getExecutiveWorkload(range: DateRange): Promise<ExecutiveWorkloadRow[]> {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      teamMemberId: string;
+      name: string;
+      groupsHandled: bigint;
+      messageCount: bigint;
+      activeSeconds: number | null;
+      firstAt: Date;
+      lastAt: Date;
+    }>
+  >`
+    WITH spans AS (
+      SELECT
+        a."teamMemberId",
+        a."groupId",
+        -- Dhaka calendar day, so a shift is bounded the way the person lived it rather than by
+        -- UTC midnight, which falls at 06:00 local and would split every morning in two.
+        date_trunc('day', a."occurredAt" AT TIME ZONE 'Asia/Dhaka') AS local_day,
+        MIN(a."occurredAt") AS first_at,
+        MAX(a."occurredAt") AS last_at,
+        COUNT(*) AS messages
+      FROM "SupportActivity" a
+      WHERE a."actor" = 'TEAM_MEMBER'
+        AND a."teamMemberId" IS NOT NULL
+        AND a."occurredAt" >= ${range.start}
+        AND a."occurredAt" < ${range.end}
+      GROUP BY a."teamMemberId", a."groupId", local_day
+    )
+    SELECT
+      s."teamMemberId"                                        AS "teamMemberId",
+      t."name"                                                AS "name",
+      COUNT(DISTINCT s."groupId")                             AS "groupsHandled",
+      SUM(s.messages)                                         AS "messageCount",
+      SUM(EXTRACT(EPOCH FROM (s.last_at - s.first_at)))::int  AS "activeSeconds",
+      MIN(s.first_at)                                         AS "firstAt",
+      MAX(s.last_at)                                          AS "lastAt"
+    FROM spans s
+    JOIN "InternalTeamMember" t ON t."id" = s."teamMemberId"
+    GROUP BY s."teamMemberId", t."name"
+    ORDER BY "messageCount" DESC
+  `;
+
+  return rows.map((row) => ({
+    teamMemberId: row.teamMemberId,
+    name: row.name,
+    groupsHandled: Number(row.groupsHandled),
+    messageCount: Number(row.messageCount),
+    activeSeconds: row.activeSeconds ?? 0,
+    firstAt: row.firstAt,
+    lastAt: row.lastAt,
+  }));
+}
+
 export interface TeamAvailabilityRow {
   teamMemberId: string;
   name: string;

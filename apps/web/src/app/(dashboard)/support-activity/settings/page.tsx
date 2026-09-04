@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { ButtonLink, Card, HelpButton, HelpSection, PageHeader, SectionHeader } from "@/components/ui";
 import { SupportActivitySettingsForm } from "./SupportActivitySettingsForm";
 
 export default async function SupportActivitySettingsPage() {
@@ -15,8 +15,8 @@ export default async function SupportActivitySettingsPage() {
   return (
     <div>
       <PageHeader
-        title="Support Activity Settings"
-        description="Manage support keywords and rules on their own pages."
+        title="Support Activity Setup"
+        description="Whether tracking runs, how it counts, and which messages count as support."
         actions={
           <HelpButton moduleTitle="Support Activity Settings">
             <HelpSection title="What this page is for">
@@ -38,6 +38,25 @@ export default async function SupportActivitySettingsPage() {
       />
 
       <SupportActivitySettingsForm settings={settings} />
+
+      {/* Rules and Keywords were two more nav entries for the same job as this page: deciding what
+          counts. They keep their own routes — this is where you now find them. */}
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        <Card>
+          <SectionHeader
+            title="Rules"
+            description="Which messages count as support — every message, a keyword, a reply to a customer, or an @mention."
+          />
+          <ButtonLink href="/support-activity/rules">Manage rules</ButtonLink>
+        </Card>
+        <Card>
+          <SectionHeader
+            title="Keywords"
+            description="The words a keyword rule looks for, and which of them mark a conversation finished."
+          />
+          <ButtonLink href="/support-activity/keywords">Manage keywords</ButtonLink>
+        </Card>
+      </div>
     </div>
   );
 }

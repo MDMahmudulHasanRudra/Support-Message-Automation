@@ -301,8 +301,37 @@ export async function toggleTeamMemberStatus(id: string): Promise<void> {
   revalidatePath("/team-members");
 }
 
-export async function deleteTeamMember(id: string): Promise<void> {
+export interface DeleteTeamMemberResult {
+  /** True when the row was kept and deactivated instead of removed, because it has history. */
+  deactivated: boolean;
+}
+
+/**
+ * Removes a team member, or deactivates them if removing would destroy history.
+ *
+ * `SupportActivity.teamMemberId` is SetNull, so a hard delete silently orphans every activity that
+ * person ever recorded — their past work becomes unattributable, and the per-executive reports
+ * quietly under-count for ever. That had already happened here: the two TEAM_MEMBER activity rows
+ * in the live database have a null teamMemberId and no name to show, because the member was
+ * deleted after the rows were written.
+ *
+ * So a member with history is deactivated instead, which is this project's stated
+ * soft-delete-over-hard-delete rule and what the status field already exists for. Somebody added
+ * by mistake, who has recorded nothing, is genuinely deleted — keeping a typo on the roster for
+ * ever would be its own kind of mess.
+ */
+export async function deleteTeamMember(id: string): Promise<DeleteTeamMemberResult> {
   await requireSession();
+
+  const activityCount = await prisma.supportActivity.count({ where: { teamMemberId: id } });
+  if (activityCount > 0) {
+    await prisma.internalTeamMember.update({ where: { id }, data: { status: "INACTIVE" } });
+    revalidatePath("/team-members");
+    revalidatePath("/support-activity");
+    return { deactivated: true };
+  }
+
   await prisma.internalTeamMember.delete({ where: { id } });
   revalidatePath("/team-members");
+  return { deactivated: false };
 }

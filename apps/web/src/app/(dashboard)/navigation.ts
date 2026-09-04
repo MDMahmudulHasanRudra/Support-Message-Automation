@@ -83,12 +83,10 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Support Activity",
     links: [
-      { href: "/support-activity", label: "Activity", icon: Activity },
       { href: "/support-activity/team", label: "Team Performance", icon: Users },
+      { href: "/support-activity", label: "Activity Feed", icon: Activity },
       { href: "/support-activity/reports", label: "Reports", icon: BarChart3 },
-      { href: "/support-activity/rules", label: "Rules", icon: ClipboardList },
-      { href: "/support-activity/keywords", label: "Keywords", icon: Tag },
-      { href: "/support-activity/settings", label: "Settings", icon: SettingsIcon },
+      { href: "/support-activity/settings", label: "Setup", icon: SettingsIcon },
     ],
   },
   {
