@@ -87,11 +87,21 @@ async function collectSupportReplies(builtThroughAt: Date | null) {
   return prisma.message.findMany({
     where: {
       ...(builtThroughAt ? { timestampWa: { gt: builtThroughAt } } : {}),
-      ...(excludedGroupIds.length ? { groupId: { notIn: excludedGroupIds } } : {}),
       ...(ourMessageIds.length ? { whatsappMessageId: { notIn: ourMessageIds } } : {}),
-      OR: [
-        { direction: "OUTGOING" },
-        { direction: "INCOMING", isFromTeamMember: true },
+      // NOT IN never matches NULL — SQL's three-valued logic, which Prisma's `notIn` inherits. A
+      // bare `groupId: { notIn: [...] }` therefore discarded every message whose group was never
+      // resolved, which on the live database was 319 of 361 outgoing messages: the profile was
+      // built from 2 replies instead of ~336. The null case has to be spelled out.
+      ...(excludedGroupIds.length
+        ? { OR: [{ groupId: null }, { groupId: { notIn: excludedGroupIds } }] }
+        : {}),
+      AND: [
+        {
+          OR: [
+            { direction: "OUTGOING" },
+            { direction: "INCOMING", isFromTeamMember: true },
+          ],
+        },
       ],
     },
     orderBy: { timestampWa: "desc" },
