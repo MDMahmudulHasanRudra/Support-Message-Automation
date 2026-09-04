@@ -170,7 +170,10 @@ describe("Scenario 3: provider failure -> retry, then exhausted", () => {
     let row = await prisma.groupParticipantAddItem.findFirstOrThrow({ where: { jobId: job.id } });
     expect(row.status).toBe("PENDING");
     expect(row.attemptCount).toBe(1);
+    // The raw code is kept for diagnosis, but an operator must be told what to actually do:
+    // a bare INSUFFICIENT_PERMISSIONS gives them nowhere to go.
     expect(row.failureReason).toMatch(/INSUFFICIENT_PERMISSIONS/);
+    expect(row.failureReason).toMatch(/not an admin of that group/i);
 
     // Force the retry to be due now instead of waiting out the real backoff delay.
     await prisma.groupParticipantAddItem.update({ where: { id: row.id }, data: { scheduledAt: new Date() } });

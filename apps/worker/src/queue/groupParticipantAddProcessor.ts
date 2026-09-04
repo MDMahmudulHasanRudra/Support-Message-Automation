@@ -170,11 +170,36 @@ async function processClaimedItem(item: GroupParticipantAddItem, provider: Whats
   return;
 }
 
+/**
+ * Turns WhatsApp's own status codes into something an operator can act on.
+ *
+ * `addParticipant` answers with a bare code — `INSUFFICIENT_PERMISSIONS`, `NOT_A_CONTACT` — and it
+ * was being stored and displayed verbatim, unlike every other failure on this path ("Group no
+ * longer found.", "Membership could not be verified."). A support lead reading
+ * INSUFFICIENT_PERMISSIONS has no way to know the fix is to make this number a group admin first.
+ *
+ * The raw code is kept in parentheses: it is what appears in WhatsApp's own documentation and in
+ * any issue report, and dropping it would trade one kind of unhelpfulness for another.
+ */
+export function describeAddFailure(code: string): string {
+  const explanations: Record<string, string> = {
+    INSUFFICIENT_PERMISSIONS:
+      "This number is not an admin of that group, so WhatsApp will not let it add anyone. Make it a group admin and retry.",
+    NOT_A_CONTACT:
+      "WhatsApp would not add this person automatically — their privacy settings require an invite link instead.",
+    GROUP_DOES_NOT_EXIST: "That group no longer exists on WhatsApp.",
+    NOT_A_GROUP_CHAT: "That conversation is not a group, so nobody can be added to it.",
+  };
+  const explanation = explanations[code.trim().toUpperCase()];
+  return explanation ? `${explanation} (${code.trim()})` : code;
+}
+
 async function handleAddFailure(
   item: GroupParticipantAddItem,
   retryMaxAttempts: number,
-  failureReason: string,
+  rawFailure: string,
 ): Promise<void> {
+  const failureReason = describeAddFailure(rawFailure);
   const attemptCount = item.attemptCount + 1;
   if (attemptCount >= retryMaxAttempts) {
     await prisma.groupParticipantAddItem.update({
