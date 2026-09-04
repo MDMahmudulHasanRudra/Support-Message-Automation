@@ -124,6 +124,11 @@ export interface BulkMonitoringResult {
   error?: string;
 }
 
+export interface BulkAiAutomationResult extends BulkMonitoringResult {
+  /** Groups left alone because they carry the hard "never let AI answer here" opt-out. */
+  skippedExcluded: number;
+}
+
 /**
  * Single atomic updateMany — Postgres already guarantees this is all-or-nothing, so there's no
  * separate transaction to wrap it in. Idempotent by construction: setting isMonitored to a value
@@ -162,6 +167,60 @@ export async function bulkSetMonitoring(groupIds: string[], enabled: boolean): P
 
   revalidatePath("/groups");
   return { requested: dedupedIds.length, updated, alreadyInTargetState, notFound };
+}
+
+/**
+ * The same bulk treatment for the AI opt-in, which had none: with 1,847 groups and one switch per
+ * row, turning AI on for a batch meant 1,847 individual clicks.
+ *
+ * Reports the same breakdown as bulkSetMonitoring and converges the same way — re-running with the
+ * same selection is a no-op rather than a second write.
+ *
+ * `aiAutomationExcluded` is deliberately NOT cleared here. It is a hard "never let AI answer in
+ * this group", set on the groups where a wrong answer costs the most, and a bulk enable is exactly
+ * the sort of broad gesture that should not quietly override a specific one. Those rows are
+ * reported as skipped instead, so the operator can see the exclusion held.
+ */
+export async function bulkSetAiAutomation(groupIds: string[], enabled: boolean): Promise<BulkAiAutomationResult> {
+  await requireSession();
+
+  const dedupedIds = [...new Set(groupIds.filter((id) => typeof id === "string" && id.length > 0))];
+  if (dedupedIds.length === 0) {
+    return { requested: 0, updated: 0, alreadyInTargetState: 0, notFound: 0, skippedExcluded: 0, error: "No groups selected." };
+  }
+
+  const existing = await prisma.whatsAppGroup.findMany({
+    where: { id: { in: dedupedIds } },
+    select: { id: true, aiAutomationEnabled: true, aiAutomationExcluded: true },
+  });
+  const existingIds = new Set(existing.map((g) => g.id));
+  const notFound = dedupedIds.filter((id) => !existingIds.has(id)).length;
+
+  // Only meaningful when switching AI on: excluding a group already stops AI, so turning the
+  // opt-in off there changes nothing anyone would notice.
+  const excluded = enabled ? existing.filter((g) => g.aiAutomationExcluded) : [];
+  const eligible = existing.filter((g) => !enabled || !g.aiAutomationExcluded);
+
+  const alreadyInTargetState = eligible.filter((g) => g.aiAutomationEnabled === enabled).length;
+  const idsToChange = eligible.filter((g) => g.aiAutomationEnabled !== enabled).map((g) => g.id);
+
+  let updated = 0;
+  if (idsToChange.length > 0) {
+    const result = await prisma.whatsAppGroup.updateMany({
+      where: { id: { in: idsToChange } },
+      data: { aiAutomationEnabled: enabled },
+    });
+    updated = result.count;
+  }
+
+  revalidatePath("/groups");
+  return {
+    requested: dedupedIds.length,
+    updated,
+    alreadyInTargetState,
+    notFound,
+    skippedExcluded: excluded.length,
+  };
 }
 
 /**

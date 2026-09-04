@@ -15,6 +15,7 @@ import {
   Tooltip,
 } from "@/components/ui";
 import {
+  bulkSetAiAutomation,
   bulkSetMonitoring,
   requestGroupParticipantCount,
   requestGroupKnowledgeBuild,
@@ -22,6 +23,7 @@ import {
   toggleGroupTestMode,
   toggleGroupAiExcluded,
   toggleGroupMonitoring,
+  type BulkAiAutomationResult,
   type BulkMonitoringResult,
 } from "@/server/actions/groups";
 import { GroupPriorityDialog, type TeamMemberOption } from "./GroupPriorityDialog";
@@ -54,7 +56,24 @@ export interface GroupRow {
   aiSuppressedUntil: string | null;
 }
 
-type PendingBulkAction = "enable" | "disable" | null;
+type PendingBulkAction = "enable" | "disable" | "ai-enable" | "ai-disable" | null;
+
+/** Each bulk action says what it actually does — a shared "monitoring" wording would be wrong for
+ *  three of the four, and a confirmation that misdescribes the action is worse than none. */
+const BULK_COPY: Record<Exclude<PendingBulkAction, null>, { title: string; description: string; confirmLabel: string }> = {
+  enable: { title: "Enable monitoring?", description: "This will enable monitoring", confirmLabel: "Enable Monitoring" },
+  disable: { title: "Disable monitoring?", description: "This will disable monitoring", confirmLabel: "Disable Monitoring" },
+  "ai-enable": {
+    title: "Let AI answer in these groups?",
+    description: "The AI will be allowed to reply when no rule matches. Groups excluded from AI are left alone",
+    confirmLabel: "Enable AI",
+  },
+  "ai-disable": {
+    title: "Stop AI answering in these groups?",
+    description: "Only rules will reply; anything they miss goes to a human",
+    confirmLabel: "Disable AI",
+  },
+};
 
 export function GroupsTable({
   groups,
@@ -71,7 +90,7 @@ export function GroupsTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingBulkAction>(null);
-  const [lastResult, setLastResult] = useState<BulkMonitoringResult | null>(null);
+  const [lastResult, setLastResult] = useState<BulkMonitoringResult | BulkAiAutomationResult | null>(null);
 
   const [toggleTarget, setToggleTarget] = useState<GroupRow | null>(null);
   const [isToggling, startToggle] = useTransition();
@@ -110,10 +129,13 @@ export function GroupsTable({
 
   async function confirmBulk() {
     if (!pendingAction) return;
-    const enabled = pendingAction === "enable";
+    const isAi = pendingAction.startsWith("ai-");
+    const enabled = pendingAction === "enable" || pendingAction === "ai-enable";
     setBusy(true);
     try {
-      const result = await bulkSetMonitoring([...selected], enabled);
+      const result = isAi
+        ? await bulkSetAiAutomation([...selected], enabled)
+        : await bulkSetMonitoring([...selected], enabled);
       setLastResult(result);
       setPendingAction(null);
       if (!result.error) {
@@ -219,6 +241,22 @@ export function GroupsTable({
           >
             Bulk Disable Monitoring
           </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy || selected.size === 0}
+            onClick={() => setPendingAction("ai-enable")}
+          >
+            Bulk Enable AI
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy || selected.size === 0}
+            onClick={() => setPendingAction("ai-disable")}
+          >
+            Bulk Disable AI
+          </Button>
         </div>
       </div>
 
@@ -242,6 +280,11 @@ export function GroupsTable({
                 ) : null}
                 {lastResult.notFound > 0 ? (
                   <li>{lastResult.notFound} not found (may have been removed)</li>
+                ) : null}
+                {/* Reported rather than silently folded into "already correct": an operator who
+                    selected a group and got nothing needs to know the exclusion is why. */}
+                {"skippedExcluded" in lastResult && lastResult.skippedExcluded > 0 ? (
+                  <li>{lastResult.skippedExcluded} left alone — excluded from AI</li>
                 ) : null}
               </ul>
             )}
@@ -449,9 +492,9 @@ export function GroupsTable({
         onClose={() => setPendingAction(null)}
         onConfirm={confirmBulk}
         loading={busy}
-        title={pendingAction === "enable" ? "Enable monitoring?" : "Disable monitoring?"}
-        description={`This will ${pendingAction === "enable" ? "enable" : "disable"} monitoring for ${selected.size} group(s).`}
-        confirmLabel={pendingAction === "enable" ? "Enable Monitoring" : "Disable Monitoring"}
+        title={BULK_COPY[pendingAction ?? "enable"].title}
+        description={`${BULK_COPY[pendingAction ?? "enable"].description} for ${selected.size} group(s).`}
+        confirmLabel={BULK_COPY[pendingAction ?? "enable"].confirmLabel}
       />
 
       <ConfirmDialog
