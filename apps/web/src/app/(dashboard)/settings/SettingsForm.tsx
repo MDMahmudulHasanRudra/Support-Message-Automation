@@ -101,6 +101,18 @@ export function SettingsForm({
           <Field label="Max retry attempts">
             <Input name="retryMaxAttempts" type="number" defaultValue={settings.retryMaxAttempts} />
           </Field>
+          <Field
+            label="Retry backoff (seconds)"
+            hint="How long to wait before each retry, in order. The last value is reused if there are more attempts than entries."
+          >
+            <Input
+              name="retryIntervalsSeconds"
+              defaultValue={(Array.isArray(settings.retryIntervalsMs) ? (settings.retryIntervalsMs as number[]) : [])
+                .map((ms) => Math.round(ms / 1000))
+                .join(", ")}
+              placeholder="30, 300, 900"
+            />
+          </Field>
         </div>
       </Card>
 

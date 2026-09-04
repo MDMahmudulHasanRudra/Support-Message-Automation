@@ -52,9 +52,22 @@ export interface SettingsFormState {
   success?: boolean;
 }
 
+/** "30, 300, 900" -> [30000, 300000, 900000]. Falls back to the stored schedule. */
+function parseRetryIntervals(raw: FormDataEntryValue | null, current: unknown): number[] {
+  const fallback = Array.isArray(current) ? (current as number[]) : [30_000, 300_000, 900_000];
+  const parsed = String(raw ?? "")
+    .split(/[,\s]+/)
+    .map((part) => Number(part.trim()))
+    .filter((seconds) => Number.isFinite(seconds) && seconds > 0)
+    // One second floor, one hour ceiling per step: a zero-second backoff is a retry storm, and
+    // anything past an hour is indistinguishable from giving up.
+    .map((seconds) => Math.min(3_600, Math.max(1, Math.round(seconds))) * 1000);
+  return parsed.length > 0 ? parsed.slice(0, 10) : fallback;
+}
+
 export async function updateSafetySettings(_prevState: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
   await requireSession();
-  await getOrCreateSettings();
+  const current = await getOrCreateSettings();
 
   const num = (key: string) => Number(formData.get(key) ?? 0);
 
@@ -70,6 +83,11 @@ export async function updateSafetySettings(_prevState: SettingsFormState, formDa
       defaultReplyDelayMinMs: num("defaultReplyDelayMinMs"),
       defaultReplyDelayMaxMs: num("defaultReplyDelayMaxMs"),
       retryMaxAttempts: num("retryMaxAttempts"),
+      // Entered as seconds, stored as milliseconds — same reasoning as the broadcast delays: a
+      // backoff list typed in thousandths invites a digit slip nobody notices until retries are
+      // hammering a rate-limited number. An empty or unparseable list keeps the current schedule
+      // rather than silently becoming "retry immediately".
+      retryIntervalsMs: parseRetryIntervals(formData.get("retryIntervalsSeconds"), current.retryIntervalsMs),
       teamsWebhookUrl: String(formData.get("teamsWebhookUrl") ?? "").trim() || null,
       whatsappNotificationGroupIds: formData.getAll("whatsappNotificationGroupIds").map(String),
     },

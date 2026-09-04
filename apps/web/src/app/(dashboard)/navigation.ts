@@ -125,6 +125,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/group-message-sender", label: "Group Message Sender", icon: Send },
       { href: "/group-message-sender/history", label: "Broadcast History", icon: History },
       { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
+      { href: "/group-message-sender/settings", label: "Sending Limits", icon: SettingsIcon },
     ],
   },
   {
