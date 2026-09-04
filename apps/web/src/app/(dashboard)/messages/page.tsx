@@ -21,12 +21,22 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
   const where: Prisma.MessageWhereInput = {};
   if (params.accountId) where.accountId = params.accountId;
   if (params.group) where.group = { name: { contains: params.group, mode: "insensitive" } };
+  // AND-ed rather than merged into a single OR: sender and text are separate questions, and
+  // putting both in one `where.OR` would widen the result instead of narrowing it — "this sender
+  // OR anyone who mentioned this word" is never what an operator means.
+  const clauses: Prisma.MessageWhereInput[] = [];
   if (params.sender) {
-    where.OR = [
-      { senderPhone: { contains: params.sender, mode: "insensitive" } },
-      { senderName: { contains: params.sender, mode: "insensitive" } },
-    ];
+    clauses.push({
+      OR: [
+        { senderPhone: { contains: params.sender, mode: "insensitive" } },
+        { senderName: { contains: params.sender, mode: "insensitive" } },
+      ],
+    });
   }
+  if (params.text?.trim()) {
+    clauses.push({ body: { contains: params.text.trim(), mode: "insensitive" } });
+  }
+  if (clauses.length > 0) where.AND = clauses;
   // Both bounds name Dhaka calendar days, not UTC ones, so a one-day filter returns that day as
   // the operator lived it. An unparseable value is dropped and reported rather than handed to
   // Prisma as an Invalid Date, which threw and replaced the page with a generic error screen that
@@ -55,7 +65,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
   }
 
   const hasActiveFilters = Boolean(
-    params.accountId || params.group || params.sender || params.dateFrom || params.dateTo ||
+    params.accountId || params.group || params.sender || params.text || params.dateFrom || params.dateTo ||
     params.decision || params.ruleId || params.autoReplyStatus || params.notificationStatus,
   );
 

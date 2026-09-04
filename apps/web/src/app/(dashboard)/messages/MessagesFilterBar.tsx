@@ -26,6 +26,7 @@ export interface MessageFilters {
   accountId?: string;
   group?: string;
   sender?: string;
+  text?: string;
   dateFrom?: string;
   dateTo?: string;
   decision?: string;
@@ -72,6 +73,15 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
         </FilterField>
         <FilterField label="Sender">
           <Input name="sender" placeholder="Phone or name…" defaultValue={defaults.sender ?? ""} className="w-40" />
+        </FilterField>
+        <FilterField label="Message text">
+          <Input
+            name="text"
+            type="search"
+            placeholder="Words in the message…"
+            defaultValue={defaults.text ?? ""}
+            className="w-48"
+          />
         </FilterField>
         <FilterField label="From">
           <Input name="dateFrom" type="date" defaultValue={defaults.dateFrom ?? ""} className="w-36" />

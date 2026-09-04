@@ -12,6 +12,7 @@ export * from "./Help";
 export * from "./PageHeader";
 export * from "./Pagination";
 export * from "./ProgressBar";
+export * from "./SearchField";
 export * from "./Sparkline";
 export * from "./StatTile";
 export * from "./StepIndicator";

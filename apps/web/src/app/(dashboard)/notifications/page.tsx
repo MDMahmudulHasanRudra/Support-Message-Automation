@@ -1,23 +1,61 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { Badge, type BadgeColor, EmptyState, HelpButton, HelpSection, PageHeader, Table, Td, Th, Tooltip } from "@/components/ui";
+import type { Prisma } from "@prisma/client";
+import { Badge, type BadgeColor, Button, ButtonLink, EmptyState, FilterBar, HelpButton, HelpSection, PageHeader, Pagination, Select, Table, Td, Th, Tooltip } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { TestNotificationForm } from "./TestNotificationForm";
 import { RetryNotificationButton } from "./RetryNotificationButton";
 
-export default async function NotificationsPage() {
+const PAGE_SIZE = 50;
+const STATUSES = ["PENDING", "SENT", "FAILED", "RETRYING"] as const;
+
+interface NotificationsSearchParams {
+  status?: string;
+  page?: string;
+}
+
+export default async function NotificationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<NotificationsSearchParams>;
+}) {
   await requireSession();
-  const notifications = await prisma.notification.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 100,
-  });
+  const filters = await searchParams;
+
+  const where: Prisma.NotificationWhereInput = {};
+  if (filters.status && STATUSES.includes(filters.status as (typeof STATUSES)[number])) {
+    where.status = filters.status as Prisma.EnumNotificationStatusFilter["equals"];
+  }
+
+  // Paginated and filterable. It was a bare "newest 100", which on a delivery log is exactly
+  // backwards: the notification you come here to investigate is usually a failed one, and failures
+  // are the rows most likely to have scrolled past the cap.
+  const page = Math.max(1, Number(filters.page ?? "1") || 1);
+  const [notifications, totalCount, failedCount] = await Promise.all([
+    prisma.notification.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+    prisma.notification.count({ where }),
+    prisma.notification.count({ where: { status: "FAILED" } }),
+  ]);
+
+  const buildHref = (nextPage: number) => {
+    const qs = new URLSearchParams();
+    if (filters.status) qs.set("status", filters.status);
+    if (nextPage > 1) qs.set("page", String(nextPage));
+    const query = qs.toString();
+    return query ? `/notifications?${query}` : "/notifications";
+  };
 
   return (
     <div>
       <PageHeader
         title="Notifications"
-        description="Delivery status for Teams and WhatsApp support-group alerts."
+        description={`${totalCount.toLocaleString()} alert${totalCount === 1 ? "" : "s"} to Teams and WhatsApp support groups, newest first.`}
         actions={
           <HelpButton moduleTitle="Notifications">
             <HelpSection title="What this page is for — and isn't">
@@ -64,8 +102,38 @@ export default async function NotificationsPage() {
 
       <TestNotificationForm />
 
+      <form method="GET">
+        <FilterBar>
+          <Select name="status" defaultValue={filters.status ?? ""} className="w-40">
+            <option value="">All statuses</option>
+            {STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </Select>
+          <Button type="submit" size="sm">
+            Filter
+          </Button>
+          {/* Failures are why anyone opens this page, so they get one click rather than a
+              dropdown plus a submit. */}
+          {failedCount > 0 && filters.status !== "FAILED" ? (
+            <ButtonLink href="/notifications?status=FAILED" variant="ghost" size="sm">
+              Show {failedCount} failed
+            </ButtonLink>
+          ) : null}
+          {filters.status ? (
+            <ButtonLink href="/notifications" variant="ghost" size="sm">
+              Clear
+            </ButtonLink>
+          ) : null}
+        </FilterBar>
+      </form>
+
       {notifications.length === 0 ? (
-        <EmptyState>No notifications yet.</EmptyState>
+        <EmptyState>
+          {filters.status ? `No ${filters.status.toLowerCase()} notifications.` : "No notifications yet."}
+        </EmptyState>
       ) : (
         <Table>
           <thead>
@@ -112,6 +180,10 @@ export default async function NotificationsPage() {
           </tbody>
         </Table>
       )}
+
+      {notifications.length > 0 ? (
+        <Pagination page={page} pageSize={PAGE_SIZE} total={totalCount} buildHref={buildHref} />
+      ) : null}
     </div>
   );
 }
