@@ -1097,13 +1097,33 @@ enum AiProviderKind {
 /// same as this software having the *authority* to give it. A model can describe how billing
 /// software generally works; it cannot know how THIS company's billing works, and a fluent guess
 /// about a refund window or support hours is worse than no answer at all.
+/// Which sources the AI may draw on when answering.
+///
+/// There are exactly three at answer time, and the modes are their meaningful combinations:
+///
+///   1. The verified knowledge base. Always available, in every mode. Everything the system
+///      learns — from conversations, manual imports, and the scheduled Forge sync — lands here,
+///      which is why "conversation learning" is not a mode of its own: it is already in all of
+///      them.
+///   2. Live research against the product's own source through Forge, at the moment of asking.
+///   3. The model's general knowledge, for questions that are not about this company at all.
+///
+/// The business-question guard sits outside all of this and is not configurable: anything about
+/// this company's behaviour, pricing, policies or a customer's account is answered only from
+/// verified knowledge, whatever the mode.
 enum AiResponseMode {
   /// Nothing verified covers it, nothing gets answered. The safe default.
   STRICT_KNOWLEDGE_ONLY
+  /// Verified knowledge, plus reading the product's own source when nothing covers the question.
+  /// What it learns is saved, so the same question is answered instantly next time.
+  KNOWLEDGE_PLUS_FORGE
   /// General questions ("what is PPPoE?") may be answered from the model's own knowledge, while
   /// anything about this company — its product behaviour, policies, pricing, accounts — still
   /// requires verified knowledge. That second half is not configurable; see AiSettings.
   KNOWLEDGE_PLUS_GENERAL
+  /// Everything: verified knowledge, live research against the product source, and general
+  /// knowledge for questions that are not about this company.
+  KNOWLEDGE_FORGE_GENERAL
 }
 
 enum AiAutomationScope {
@@ -1256,16 +1276,6 @@ model AiSettings {
   /// team member, so the request for help appears where the conversation is rather than only in a
   /// separate alerts group. Off by default — it puts an extra message in front of the customer.
   mentionTeamOnHandover           Boolean  @default(false)
-
-  /// When no verified knowledge covers a customer's question, research it against the product's
-  /// own source there and then, and answer from what is found — instead of handing over and
-  /// researching it afterwards for the next person.
-  ///
-  /// Off by default, and it needs the Forge integration enabled and pointed at a project, because
-  /// it reads that project's source. Two things change when it is on: a customer waits longer for
-  /// a harder question, and answers written this way become reusable knowledge without a human
-  /// reading them first — the mechanical disclosure gate is what stands in for that review.
-  deepAnswerEnabled               Boolean  @default(false)
   /// WhatsApp group ids that receive "AI could not handle this, a human is needed" alerts.
   /// Empty falls back to AutomationSettings.whatsappNotificationGroupIds, so existing
   /// deployments keep alerting exactly where they already did.

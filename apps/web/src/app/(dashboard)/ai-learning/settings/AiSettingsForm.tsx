@@ -16,6 +16,29 @@ const ENGINE_TOGGLES: Array<{ key: keyof AiSettings; label: string }> = [
   { key: "announcementAiEnabled", label: "Announcement AI" },
 ];
 
+const MODE_COPY: Record<string, { title: string; detail: string }> = {
+  STRICT_KNOWLEDGE_ONLY: {
+    title: "Only what your team has verified.",
+    detail:
+      "Nothing covering the question means nobody gets an answer from AI — it goes to a person. The safe choice, and the right one until the knowledge base has some substance to it.",
+  },
+  KNOWLEDGE_PLUS_FORGE: {
+    title: "Verified knowledge, and the product's own source when that runs out.",
+    detail:
+      "When nothing covers a question, AI reads the source behind the relevant module, works out the answer, and replies. What it learns is saved, so the same question is answered instantly next time. A hard question takes noticeably longer, and answers written this way become reusable without a person reading them first — the disclosure check that strips anything naming code, tables or internals stands in for that review. Needs Product Knowledge connected.",
+  },
+  KNOWLEDGE_PLUS_GENERAL: {
+    title: "Verified knowledge, plus ordinary questions answered from general knowledge.",
+    detail:
+      "“What is PPPoE?”, “how does a static IP work?” — the kind of thing any informed person would answer the same way for any company. Anything about your business still needs verified knowledge.",
+  },
+  KNOWLEDGE_FORGE_GENERAL: {
+    title: "Every source available.",
+    detail:
+      "Verified knowledge first, then the product's own source when nothing covers the question, and general knowledge for questions that are not about your company at all. The most complete answers and the slowest on hard questions. Needs Product Knowledge connected.",
+  },
+};
+
 export function AiSettingsForm({
   settings,
   groups,
@@ -106,31 +129,29 @@ export function AiSettingsForm({
         <div className="space-y-4">
           <Field label="Response mode">
             <Select name="aiResponseMode" defaultValue={settings.aiResponseMode}>
-              <option value="STRICT_KNOWLEDGE_ONLY">
-                Strict — only answer from verified knowledge
-              </option>
-              <option value="KNOWLEDGE_PLUS_GENERAL">
-                Knowledge + general — also answer ordinary questions
-              </option>
+              <option value="STRICT_KNOWLEDGE_ONLY">Verified knowledge only</option>
+              <option value="KNOWLEDGE_PLUS_FORGE">Knowledge + read the product source</option>
+              <option value="KNOWLEDGE_PLUS_GENERAL">Knowledge + general questions</option>
+              <option value="KNOWLEDGE_FORGE_GENERAL">Everything — knowledge, product source, and general</option>
             </Select>
           </Field>
 
-          {settings.aiResponseMode === "STRICT_KNOWLEDGE_ONLY" ? (
-            <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-              Nothing in the verified knowledge base covering the question means nobody gets an
-              answer from AI — it goes to a person. The safe choice, and the right one until the
-              knowledge base has some substance to it.
+          <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] p-4">
+            <p className="text-[13px] font-medium text-[color:var(--color-foreground)]">
+              {MODE_COPY[settings.aiResponseMode]?.title}
             </p>
-          ) : (
-            <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-              AI may answer ordinary questions from its own knowledge — &ldquo;what is
-              PPPoE?&rdquo;, &ldquo;how does a static IP work?&rdquo; — the kind of thing any
-              informed person would answer the same way for any company.
+            <p className="mt-1 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+              {MODE_COPY[settings.aiResponseMode]?.detail}
             </p>
-          )}
+          </div>
 
-          <Alert tone="info" title="This part is not configurable">
-            Under either mode, a question about <strong>your</strong> business — how your software
+          <Alert tone="info" title="What every mode has in common">
+            Your <strong>knowledge base is used in all four</strong> — everything the system learns
+            from conversations, imports and the scheduled product sync lands there, so there is no
+            separate mode for those.
+            <br />
+            <br />
+            And in every mode, a question about <strong>your</strong> business — how your software
             behaves, your pricing, policies, support hours, or anything about a customer&apos;s own
             account — is answered only from verified knowledge, and otherwise goes to a person.
             There is no setting that lets the model invent your company&apos;s answer, because a
@@ -161,18 +182,28 @@ export function AiSettingsForm({
               />
             </div>
 
-            <Field
-              label="Default reply language"
-              hint="What the AI answers in unless the customer clearly wrote in another language. It switches for a message in another script, or a fluent English sentence — but a greeting, a number, or Bengali typed in Latin letters all stay in this language."
-            >
-              <Input
-                name="defaultReplyLanguage"
-                type="text"
-                maxLength={60}
-                placeholder="Bengali (Bangla)"
-                defaultValue={settings.defaultReplyLanguage}
-              />
-            </Field>
+          <Field
+            label="Default reply language"
+            hint="Pick one, or type any other language. AI answers in this unless the customer clearly wrote in another — it switches for a message in a different script, or a fluent English sentence, but a greeting, a number, or Bengali typed in Latin letters all stay in this language."
+          >
+            {/* A list-backed input rather than a dropdown: the three below cover nearly every
+                case here, but the field is free text on purpose so a deployment serving another
+                language is not locked out of its own product. */}
+            <Input
+              name="defaultReplyLanguage"
+              list="reply-language-options"
+              defaultValue={settings.defaultReplyLanguage}
+              placeholder="Bengali (Bangla)"
+              maxLength={60}
+            />
+            <datalist id="reply-language-options">
+              <option value="Bengali (Bangla)">Bengali — replies in Bangla script</option>
+              <option value="English">English</option>
+              <option value="Banglish (Bengali written in Latin letters)">
+                Banglish — Bengali words, Latin letters
+              </option>
+            </datalist>
+          </Field>
           </div>
         </div>
       </Card>
@@ -231,15 +262,6 @@ export function AiSettingsForm({
           title="When AI cannot handle it"
           description="Every time AI declines, is unsure, or fails, one alert is sent so a person can take over. Replying in that group then pauses AI there for the takeover cooldown above."
         />
-        <div className="mb-4">
-          <SwitchField
-            name="deepAnswerEnabled"
-            defaultChecked={settings.deepAnswerEnabled}
-            label="Research the answer instead of giving up"
-            description="When nothing in the knowledge base covers a question, read the product’s own source right then, work out the answer, and reply — rather than handing over and researching it for the next person. What it learns is saved, so the same question is answered instantly afterwards. Needs Product Knowledge (Forge) connected. Two trade-offs: a hard question takes noticeably longer to answer, and answers written this way become reusable knowledge without a person reading them first — the disclosure check that strips anything naming code, tables or internals is what stands in for that review."
-          />
-        </div>
-
         <div className="mb-4">
           <SwitchField
             name="mentionTeamOnHandover"

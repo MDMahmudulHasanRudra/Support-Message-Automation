@@ -187,8 +187,12 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // below then answers from, exactly as if someone had written them months ago. So raw source
   // never reaches the prompt that drafts a customer reply, and every gate after this point still
   // applies unchanged. It is slower, which is the trade: a harder question takes longer.
+  const mayResearch =
+    aiSettings.aiResponseMode === "KNOWLEDGE_PLUS_FORGE" ||
+    aiSettings.aiResponseMode === "KNOWLEDGE_FORGE_GENERAL";
+
   let deepAnswerReason: string | undefined;
-  if (knowledge.length === 0 && aiSettings.deepAnswerEnabled) {
+  if (knowledge.length === 0 && mayResearch) {
     const researched = await researchForCustomerQuestion({
       question: params.message.body,
       groupId: params.group?.id ?? null,
@@ -201,7 +205,14 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // Under STRICT_KNOWLEDGE_ONLY, nothing verified means nothing answered — whatever the
   // question turns out to be about. Since the outcome does not depend on the classification,
   // this is decided before the API call, so an ungroundable question costs nothing at all.
-  if (aiSettings.aiResponseMode === "STRICT_KNOWLEDGE_ONLY" && knowledge.length === 0) {
+  // Every mode except the two that allow general knowledge needs something verified behind the
+  // answer. Written as "may not answer generally" rather than a list of modes, so adding another
+  // source later cannot silently start letting ungrounded answers through.
+  const mayAnswerGenerally =
+    aiSettings.aiResponseMode === "KNOWLEDGE_PLUS_GENERAL" ||
+    aiSettings.aiResponseMode === "KNOWLEDGE_FORGE_GENERAL";
+
+  if (!mayAnswerGenerally && knowledge.length === 0) {
     // Naming why the research came back empty, so a handover after a deep-answer attempt is
     // distinguishable from one where nothing was tried — "NO_KNOWLEDGE" alone would hide that.
     await recordHumanFallback(deepAnswerReason ? `NO_KNOWLEDGE: ${deepAnswerReason}` : "NO_KNOWLEDGE");
