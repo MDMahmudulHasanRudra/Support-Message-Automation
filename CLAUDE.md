@@ -87,7 +87,13 @@ AI provider) fail or self-skip, which silently hid ~80 tests — so the isolated
 while covering far less than the shared-DB path. The key is test-only and encrypts nothing but
 fixtures in a database that gets dropped.
 
-Two harness details worth knowing before you chase an intermittent red:
+Three harness details worth knowing before you chase an intermittent red:
+- **The isolated `DATABASE_URL` bounds the Prisma pool on purpose**
+  (`connection_limit=5&pool_timeout=30&connect_timeout=30`). Each vitest worker holds its own pool,
+  and the default churned enough connections through Docker Desktop's port forward that a request
+  occasionally failed with "Can't reach database server" while Postgres itself sat healthy and
+  idle — surfacing as *unrelated* suites failing at random. Note the URL is quoted in the script:
+  `cmd.exe` reads `&` in a query string as a command separator and silently splits the line.
 - **Fixtures that will be claimed by a queue processor must set `scheduledAt` explicitly.** The DB
   container's clock runs a few milliseconds ahead of the host's, so a row relying on the schema's
   `@default(now())` can read as not-yet-due to the very next line's host-clock `new Date()`.
@@ -111,7 +117,7 @@ apps/web       Next.js dashboard — reads/writes Postgres directly via Prisma; 
 apps/worker    dedicated Node/TS process — the ONLY process that owns the OpenWA/Chromium session
 packages/db    Prisma schema, migrations, seed, PrismaClient singleton — raw TS source, no build step
 packages/engine   pure rule-evaluation engine (matchers, priority, regex safety) — one implementation, imported by both apps
-packages/ai-client   thin Claude (Anthropic) completion client — used only by apps/worker's AI-assisted Conversation Learning analysis job
+packages/ai-client   text-only, no-tools completion client (Anthropic + one OpenAI-compatible client covering OpenAI/OpenRouter/Ollama/Google) — used by every worker-side AI job: the AI fallback, deep answers, both Forge jobs, all three knowledge builders, and Conversation Learning analysis. The text-only-no-tools contract is a safety invariant; the AI Admin Assistant needs tool-calling and therefore does NOT use this package
 packages/forge-client   thin Softify Forge REST wrapper (plain fetch) + the disclosure gate that decides what a customer may be told — used by apps/worker's Forge jobs and apps/web's Forge settings page
 packages/teams-client   thin Microsoft OAuth + Graph API wrapper (plain fetch, no SDK) — used by apps/web's Teams connect/callback routes and apps/worker's sync job
 packages/shared   canonical enum/type definitions (engine can't depend on @prisma/client, so these are the source of truth; Prisma schema enums are kept in sync by convention, not tooling)
@@ -151,7 +157,10 @@ since `setInterval` doesn't await its callback)
 | `startEscalationProcessor` | 15s | advances at most one due `SupportEscalationCase` per tick |
 | `startSessionSegmentationProcessor` | 5min | Conversation Learning: buckets messages into `ConversationSession` (no-ops unless `LearningSettings.conversationLearningEnabled`) |
 | `startPatternDetectionProcessor` | 15min | deterministic, AI-free recurring-pattern scoring → `PatternCandidate` (same enable-flag gate) |
+| `startKnowledgeImportProcessor` | 15s | drains manual Knowledge Center imports (pasted text, uploaded file, URL, spreadsheet), one chunk at a time |
 | `startAiAnalysisProcessor` | 6h | optional AI-assisted rescoring via `packages/ai-client` (gated on `AiSettings.aiEngineEnabled` + `.learningEnabled`; also triggerable on-demand via an `AI_ANALYSIS_BATCH` WorkerCommand) |
+| `startGroupKnowledgeProcessor` | 1h | distils one monitored group's stored conversation into knowledge entries (gated on `aiEngineEnabled` + `knowledgeFromChatEnabled`) |
+| `startCommunicationStyleProcessor` | 12h | rebuilds `CommunicationStyleProfile` from the team's own replies — manner, never fact (gated on `aiEngineEnabled` + `communicationStyleLearningEnabled`) |
 | `startTeamsSyncProcessor` | 3min (admin-configurable) | polls Microsoft Graph for joined teams/channels/messages, scoped to channels linked to an open `SupportIssue`; runs resolution-keyword matching on each new message (no-ops until Microsoft OAuth env vars are set **and** an admin completes the connect flow; also triggerable on-demand via a `TEAMS_SYNC_NOW` WorkerCommand) |
 | `startForgeKnowledgeProcessor` | 6h | reads ISPDIGITAL's own docs + module source through Softify Forge into the knowledge base (no-op until `FORGE_API_KEY`/`FORGE_API_URL` are set **and** an admin enables it; on-demand via a `FORGE_SYNC_NOW` WorkerCommand) |
 | `startForgeResearchProcessor` | 2min | works through customer questions verified knowledge could not answer, researching each against the product's source (same gate, plus `ForgeSettings.researchUnanswered`, off by default) |
@@ -245,6 +254,23 @@ support activity recorded, human takeover never pausing the AI, and the loop-pre
 that stops the system answering its own staff never engaging. `toRawIncomingMessage` now also
 strips the JID domain, so `Message.senderPhone` holds a phone number rather than a JID.
 
+**WhatsApp now identifies group participants by a LID, not a phone number** — an opaque 14–15
+digit id that is deliberately not their number. Digits-only matching alone therefore stopped
+recognising anybody: `resolveActiveTeamMember` matches `InternalTeamMember.whatsappId` **exactly**
+first, then falls back to the digits-normalized phone. Adding someone from message history is the
+only way to map most of a roster, and that history carries nothing but the LID — so it lands in
+`whatsappId` and, because `phoneNumber` is required and unique, in `phoneNumber` too.
+
+That is fine for **recognising** them and useless for **messaging** them: a direct send to a LID
+goes nowhere. `hasReachablePhoneNumber()` (`packages/shared/src/groupParticipantAdd.ts`) names the
+distinction — a stored number equal to the stored WhatsApp id means no human ever typed one — and
+**every send addressed to a person rather than a group must call it first**: the escalation member
+tier, the Notification Center's direct recipients, and the AI handover mention all skip an
+unreachable member with a log instead of enqueueing into nothing. It is surfaced where it can be
+fixed (a "Needs phone number" badge on Team Members, disabled notification checkboxes with the
+reason on their edit page), not as a per-alert delivery failure, which would be noise about a
+problem that can only be fixed somewhere else.
+
 **The roster can be populated from WhatsApp's own membership list, not just message history.**
 `getGroupParticipantCandidates()` reads who has spoken in a group, which is nobody at all for a
 quiet group or one being set up before any traffic exists — exactly when you most want to fill the
@@ -286,13 +312,37 @@ Every person-measuring report (`getPerTeamMemberBreakdown`, `getTeamAvailability
 `actor: TEAM_MEMBER` explicitly so AI work can never inflate someone's numbers;
 `getActorBreakdown()` reports the split, including `aiOnlyGroups` — groups no human touched.
 
+**`getExecutiveWorkload()` is the headline report, and `getDailyHoursWorked()` is the trap it
+replaced.** Hours-worked sums `SupportSession.durationSeconds`, which is only written when a
+session COMPLETES, which needs a rule whose keyword carries `marksCompletion` — a deployment
+running the `ANY_MESSAGE` rule (the configuration this module is most often used in, and the one
+running here) has no such keyword, so its sessions never complete and its hours report is
+permanently empty **while looking perfectly healthy**. `getExecutiveWorkload()` instead reads the
+activity rows directly: one raw-SQL query spanning each person's first→last message **per group
+per Dhaka calendar day**, summed. Per group *and* per day deliberately — one span across a week
+would count the nights in between, one span across every group at once would count the time they
+were busy elsewhere. A day with one message is zero seconds, which is honest rather than
+flattering; the message count beside it is what says they were working. `date_trunc('day', … AT
+TIME ZONE 'Asia/Dhaka')` bounds the shift the way the person lived it: UTC midnight falls at 06:00
+local and would split every morning in two.
+
+**A team member with recorded activity is deactivated, never deleted.** `SupportActivity.teamMemberId`
+is `SetNull`, so hard-deleting someone silently orphaned every activity they ever recorded — this
+had already happened in the live database. Someone added by mistake with no activity is still
+genuinely deleted. Sidebar nav for this module is four entries, not six: Rules and Keywords were
+two more lines for the same job as Settings (deciding what counts), so **Setup** hosts them with
+their routes unchanged, and **Team Performance** leads because it is the question the module gets
+opened to answer.
+
 Team members can be added by picking real senders out of a group
 (`getGroupParticipantCandidates`) rather than typing numbers: the phone number is the exact match
 key, and a typo silently classifies a colleague as a customer.
 
-`REACTION` as a fifth trigger type is a documented, deliberately deferred future phase —
-WhatsApp reactions need a separate `client.onReaction()` subscription and a new table, not just a
-new enum value.
+`REACTION` as a fifth trigger type stays unbuilt, and should: beyond needing a separate
+subscription and a new table, OpenWA's `onReaction()` is gated behind an **Insiders licence this
+deployment does not have**, so the trigger would appear configured in the UI and never fire once.
+(`sendTextWithMentions`, used by the handover mention, is *not* licence-gated — the two are often
+assumed to go together.)
 
 ### Hybrid AI Automation / AI Fallback (`apps/worker/src/aiFallback/`)
 
@@ -309,6 +359,86 @@ group — sets `WhatsAppGroup.aiSuppressedUntil` to now + `AiSettings.humanTakeo
 so the AI fallback layer stays silently ineligible for that group while a human is actively
 handling it. This is a distinct system from the AI Admin Assistant below and from
 `packages/ai-client`'s Conversation Learning caller — do not conflate the three.
+
+**Asking a person by name, inside the customer's own group** (`aiFallback/mentionTeam.ts`,
+`AiSettings.mentionTeamOnHandover`, off by default). The ordinary handover alert goes to a separate
+notifications group: it tells the team, but not *where*, and the customer sees nothing happen at
+all. `mentionTeamForHandover()` posts in the conversation itself and tags the group's
+`assignedTeamMember`, or whoever opted into `AI_HUMAN_FALLBACK` alerts if there is none, **capped
+at three** — tagging everybody turns a request for help into a broadcast nobody feels responsible
+for. Anyone failing `hasReachablePhoneNumber()` is skipped: a mention addresses a real contact, and
+tagging a LID resolves to nobody, producing a message that *looks* like help was summoned when it
+was not. Off by default because it puts an extra message in front of a customer, which is a
+decision about tone rather than plumbing. It goes through `enqueueOutboundMessage` like everything
+else — `OutboundMessage.mentions` carries the contact ids and the provider uses
+`sendTextWithMentions` only when that array is non-empty, so no ordinary reply changes send path to
+serve this.
+
+### Outbound rate limits are shaped for conversation, not for one acknowledgement
+
+The original limits assumed automation sent a single acknowledgement per customer. Once AI answers
+customers, "3 replies per client per hour" stopped being a spam ceiling and became **a cap on how
+many of that customer's own questions get answered** — a fourth question in an hour got nothing
+back, and the reply was *discarded*. Three things were fixed together, and the reasoning matters
+more than the numbers:
+
+- **Per-client limits bound a runaway loop, not a conversation.** Automation only ever replies, and
+  loop prevention stops it answering its own or a colleague's messages, so these were raised
+  (60/hour, 500/day) — still far below what a runaway rule or reply loop does, since those fire
+  faster than a person types. **Global** limits are the ones genuinely protecting the WhatsApp
+  number across all conversations (20/min, 600/hour, 5000/day) — ceilings, not targets.
+- **`RATE_LIMITED` is no longer terminal for an auto-reply.** Every row this path produces is a
+  reply to a message a customer actually sent, so discarding one means that customer is never
+  answered at all. It now **defers** (as `MANUAL_REPLY` already did) up to 20 attempts across about
+  ten minutes, then gives up for real so a permanently exhausted limit cannot cycle forever.
+- **The test-group exemption resolves the group through `relatedMessage.groupId`.** It read
+  `OutboundMessage.groupId`, which the schema is explicit is null for automation-generated rows —
+  that column belongs to the broadcast path — so a group put in test mode was still rate limited at
+  send time.
+
+None of this touches the kill switch, MANUAL_ONLY, membership verification, idempotency or loop
+prevention. See the anti-spam bullet under Engineering standards: these defaults were loosened
+**on explicit request**, for this reason; do not loosen them further unasked.
+
+### Notification Center (`apps/worker/src/notifications/eventSettings.ts`, `(dashboard)/notifications/events/`)
+
+`NotificationType` was the *channel* (TEAMS | WHATSAPP) all along; nothing recorded **why** a
+notification was raised, so every alert went wherever the two global destination settings pointed,
+together. A team buried in unknown-pattern alerts had exactly one remedy: remove the notification
+group, which also silenced escalations.
+
+`NotificationEvent` is derived from the five places in the worker that actually raise one, not
+invented: `SUPPORT_ESCALATION`, `AI_HUMAN_FALLBACK`, `RULE_NOTIFY_TEAMS`, `RULE_NOTIFY_WHATSAPP`,
+`UNKNOWN_PATTERN`. Each gets its own `NotificationEventSetting` — enabled, per-channel switches,
+and its own WhatsApp destination list.
+
+**The gate lives inside `enqueueNotification()`**, which now *requires* an `event`, so a new caller
+cannot forget it — and muting means **nothing is written**, not that a row is created and quietly
+skipped later, which would leave the delivery log full of things that never went. The escalation
+path checks separately because it writes its `Notification` inside the same transaction as the
+`SupportEscalationEvent`; those two have to land together or a tier fires twice.
+
+**It fails open throughout.** A missing row, an unmigrated database, a lookup that throws — all
+deliver the notification. A suppressed alert is noise; a silently dropped escalation is a customer
+nobody saw, and the two are indistinguishable from the console. Being additive is the other half:
+no settings row means "behave exactly as before" (every event on, both channels, global
+destinations), and an event with an **empty** group list *inherits* the global list rather than
+sending nowhere — "not configured" and "configured to nobody" are different intentions, and
+reading them the same way would break alerts for anyone who merely opened a card and saved it.
+Notifications predating the column keep a null `event` and are reported as such; inferring what
+each was for after the fact would be a guess presented as history.
+
+`TeamMemberNotificationPreference` is the other half: who *additionally* receives an alert as a
+direct message — the difference between "the escalations group was told" and "the person on call
+was told". Opt-in **per member per event** (somebody wants escalations at 2am and never wants
+pattern suggestions), stored as row *presence* rather than a row per event with a boolean, so
+adding an event type later cannot silently start messaging everyone who happened to have a row.
+Three deliberate properties: it is **additive** (the group copy is still sent — the group is the
+record, the DM is the tap on the shoulder); **WhatsApp only and only alongside the WhatsApp copy**,
+so a Teams webhook does not also fan out to everyone's phone; and per-recipient failures are
+swallowed, with anyone already receiving the alert at that exact chat skipped rather than sent it
+twice. `getDirectRecipients()` **fails closed**, unlike the rest of the module — a DM is an
+addition, so if it throws the group has still been told.
 
 ### Microsoft Teams Integration (`apps/worker/src/teams/`, `apps/web/src/server/teamsAuth/`,
 `apps/web/src/app/(dashboard)/integrations/teams/`, `apps/web/src/app/(dashboard)/issues/`)
@@ -346,8 +476,18 @@ WhatsApp message to the customer via a direct `OutboundMessage` insert (not
 pipeline's non-null-`incomingMessageId` + rule-cooldown contract that doesn't apply here), routed
 through `resolveWhatsAppAccount("TEAMS_RESOLUTION_NOTIFY")`. `TEAMS_SETUP.md` has the exact Azure
 App Registration steps — real OAuth credentials cannot be fabricated and must come from the user.
-Full session/duration analytics, real-time webhooks, and Teams-data CSV export are documented,
-deliberately deferred future phases.
+
+Of that phase, **CSV/xlsx export shipped** (`apps/web/src/app/api/teams/export/route.ts`: Issues
+with resolution timing, or the synced channel messages — mirroring the Support Activity export,
+including why a Route Handler is the justified exception here). Issue rows carry **minutes**
+to resolve, not seconds: these are conversations between people over hours or days, and
+second-level precision would imply an accuracy that polling every few minutes cannot have. The
+other two remain unbuilt for different reasons. **Real-time webhooks are blocked by topology, not
+effort** — Graph change notifications need a publicly reachable HTTPS endpoint to deliver to, and
+this runs behind Docker on a private port, so the subscription code would register and never
+receive, which is worse than nothing because it looks finished. **Session/duration analytics have
+nothing to compute from** (0 Teams messages, 0 channels, no connected account); numbers derived
+from an empty table are a page of zeroes that implies a working integration.
 
 ### AI Admin Assistant (`apps/web/src/server/aiAdmin/`)
 
@@ -414,10 +554,12 @@ report progress. `startKnowledgeImportProcessor` (15s) drains it. A failing chun
 import `PARTIAL` and **keeps every entry the other chunks produced** — a 40-page manual failing
 at page 30 still leaves 29 pages of knowledge. `rawText` is retained so Retry needs no re-upload.
 
-Only plain text today (.txt/.md); PDF/DOCX would need a parsing dependency this repo does not
-carry. `buildImportPrompt` is deliberately separate from the conversation prompt: a chat log must
-be *interpreted*, documentation must be *preserved*. They share only the record format and
-`parseKnowledgeRecords`.
+`KnowledgeImportSourceType` covers `PASTED_TEXT`, `DOCUMENT`, `URL` (fetched once, never
+crawled — re-import is a deliberate manual act), `PDF`, `DOCX`, `SPREADSHEET` and `FORGE_REPO`. A
+spreadsheet of question/answer rows is parsed into entries **directly, with no AI call** — there is
+nothing to interpret. `buildImportPrompt` is deliberately separate from the conversation prompt: a
+chat log must be *interpreted*, documentation must be *preserved*. They share only the record
+format and `parseKnowledgeRecords`.
 
 `/ai-learning/knowledge-base/review` is the trust boundary — everything from both sources lands
 `humanVerified: false` and only verified entries are ever retrieved. Discarding archives rather
@@ -435,17 +577,120 @@ drafts it (`SCOPE:` in the response format). Parsing **fails closed** — a miss
 unrecognised value is read as `BUSINESS_SPECIFIC`, so a format slip can never be mistaken for
 permission to speak for the business.
 
-- `STRICT_KNOWLEDGE_ONLY` (default): no verified knowledge, no answer. Decided **before** the API
-  call, since the classification cannot change the outcome — an ungroundable question costs nothing.
-- `KNOWLEDGE_PLUS_GENERAL`: ordinary questions ("what is PPPoE?") may be answered from the model's
-  own knowledge, held to `generalAnswerMinConfidence` (normally higher than the main threshold,
-  because nothing of the team's stands behind them).
+**There are exactly four modes because at answer time there are exactly three sources** — the
+verified knowledge base, live research against the product's own source, and the model's general
+knowledge. Conversation learning is **not** a fourth: it, manual imports and the scheduled Forge
+sync all *write into* the knowledge base, so they are already present in every mode. A fifth mode
+differing only by "conversation learning" would have behaved identically to the fourth, and a
+setting that does nothing is worse than no setting.
 
-**The business-question guard is deliberately not configurable.** Under either mode,
+| Mode | Sources |
+|---|---|
+| `STRICT_KNOWLEDGE_ONLY` (default) | verified knowledge |
+| `KNOWLEDGE_PLUS_FORGE` | verified knowledge + live product-source research |
+| `KNOWLEDGE_PLUS_GENERAL` | verified knowledge + the model's general knowledge |
+| `KNOWLEDGE_FORGE_GENERAL` | all three |
+
+Under the two modes that do **not** allow general answers, no verified knowledge means no answer,
+whatever the question turns out to be about — decided **before** the reply completion, since the
+classification cannot change the outcome, so an ungroundable question costs nothing. The gate is
+written as "may not answer generally" rather than a list of modes, so adding another source later
+cannot silently start letting ungrounded answers through. General answers are held to
+`generalAnswerMinConfidence` (normally higher than the main threshold, because nothing of the
+team's stands behind them).
+
+**The business-question guard is deliberately not configurable.** Under *every* mode,
 `BUSINESS_SPECIFIC` + no verified knowledge → `NO_BUSINESS_KNOWLEDGE` handoff. Relaxing the mode
 widens what counts as answerable general conversation; there is no setting that lets the model
 invent this company's behaviour. For the same reason an ungrounded general answer never drafts a
 rule — a rule is a standing answer the company gives, not the model talking about the world.
+
+The web side must read `AI_RESPONSE_MODES` from `apps/web/src/lib/aiResponseModes.ts` — one
+`satisfies readonly AiResponseMode[]` list plus an `isAiResponseMode()` guard, shared by the form
+and the server action. It exists because the action previously carried its own hand-written
+whitelist of the two modes that existed then, so both new modes were accepted by the form and
+silently saved as `STRICT_KNOWLEDGE_ONLY`; a `satisfies`-checked list fails to compile when the
+enum grows instead.
+
+### Researching an answer while the customer waits (`apps/worker/src/aiFallback/deepAnswer.ts`)
+
+What the two Forge modes above actually do. When `findRelevantKnowledge()` comes back empty,
+`researchForCustomerQuestion()` reads the product's own source right then, works out the answer,
+and stores what it learned so the next person gets it instantly.
+
+**It returns GROUNDING, not a reply** — sanitised `AiKnowledgeItem` rows the normal prompt then
+answers from, exactly as if a human had written them months ago. Three things follow, and they are
+the whole reason for the shape:
+
+- Raw source never reaches the prompt that drafts a customer reply. That arrangement is precisely
+  what the disclosure rule exists to prevent.
+- Every existing gate still applies afterwards — scope classification, confidence threshold,
+  response mode, the send-time safety re-check. It is not a bypass; it is a way of having something
+  to be grounded in.
+- `checkKnowledgeEntrySafety()` runs here too. This is the one path where an entry can reach a
+  customer in the same breath as being written, so it is the last place that should trust a prompt
+  to have behaved.
+
+Entries land `humanVerified: true` (`source: DEEP_ANSWER`) — recording one as unverified *while
+sending it to a customer* would be incoherent, and would also mean it could never be reused, which
+is the point. The mechanical gate stands in for that review, and the setting's own description says
+plainly that this is the trade. It also **requires the Forge integration to be enabled and pointed
+at a project**: turning on a mode should not quietly start reading a repository nobody connected.
+Never throws — the caller is mid-conversation, and a research failure must leave the ordinary
+handover intact. A handoff after a failed attempt records `NO_KNOWLEDGE: <reason>` so it is
+distinguishable from one where nothing was tried.
+
+### What language AI answers in (`AiSettings.defaultReplyLanguage`)
+
+Default `"Bengali (Bangla)"`. Without a stated default the model infers a language from whatever it
+was sent, and a one-word message carries almost no signal — "Hello" was answered in Portuguese and
+a short transliterated-Hindi question in Bengali, to Bengali-speaking customers.
+
+`buildFallbackPrompt` makes the model **decide the language first and report it** on a `LANGUAGE:`
+line before drafting, then write `RESPONSE` in it. Deciding first is the mechanism: two earlier
+attempts that only described the policy in prose produced replies that quietly defaulted to one
+language regardless of the question. The checklist is **ordered, and the order is load-bearing** —
+the greeting rule must come before the English rule, or "hello" is read as fluent English:
+
+1. A greeting or single word (`hello`, `ok`, `thanks`, `yes`) → the default. These appear inside
+   conversations in every language and settle nothing.
+2. Only a number, link, invoice reference, product name or emoji → the default.
+3. Non-Latin script that is not Bengali (Devanagari, Arabic, Chinese, Tamil) → that language.
+4. Bengali script → the default.
+5. Bengali written in Latin letters ("bill kivabe generate korbo") → Bengali, not English.
+6. A complete, fluent English sentence of several words → English.
+7. Anything else — mixed, or not confidently placeable → the default.
+
+The dashboard control is `ReplyLanguageField.tsx`: a real `Select` offering Bangla / Banglish /
+English plus "Other language…", which reveals a text input. It was a `datalist`-backed input — a
+text box that happens to offer suggestions once you start typing — so nothing on screen said the
+options existed. The field stays typeable because a deployment serving another language should not
+be locked out of its own product; the value is passed to the model **by name**, so anything it
+recognises works.
+
+### Learning how the team writes (`apps/worker/src/knowledge/communicationStyle*.ts`)
+
+`AiSettings.communicationStyleLearningEnabled`, off by default. Learns the **manner** executives
+write in — greetings, formality, answer length, how a problem is acknowledged before it is solved
+— and applies it to AI replies.
+
+Deliberately separate from `knowledgeFromChatEnabled`, which learns **what** the team knows.
+Conflating them would let "our team says refunds take 3 days" arrive dressed as a tone note and
+skip the verification a product claim is supposed to get, so `parseStyleGuidance` drops any line
+that reads like a fact — a duration, a price, a policy, a promise, a support-hours claim — and is
+unit-tested in both directions (real style notes survive; product claims do not).
+
+It reads outgoing messages this system did **not** send (executives typing from the business phone)
+plus incoming messages from roster members, excluding anything the automation or AI sent — learning
+tone from its own output would tighten a loop around whatever voice it started with — and excluding
+the internal notification groups, whose contents are machine-written alerts.
+
+`CommunicationStyleProfile.humanApproved` gates it: even switched on, the guidance reaches nothing
+until a person approves it on `/ai-learning/communication-style`, and **every rebuild clears that
+approval** so new wording never inherits the trust given to the old. A wrong knowledge entry
+produces one wrong answer; wrong style guidance shapes every answer, with no per-reply review to
+catch it. In the prompt, style is explicitly **subordinate**: it never overrides the language
+rules, the business-question guard, or a fact.
 
 ### Knowledge-grounded AI answers (`apps/worker/src/aiFallback/knowledgeContext.ts`)
 
@@ -531,9 +776,14 @@ of a chat log is evidence, not fact. `setKnowledgeVerified()` is the way out of 
 
 ### AI providers
 
-`AiProviderKind` now covers ANTHROPIC, OPENAI, **OPENROUTER**, **OLLAMA** (GOOGLE/CUSTOM remain
-reserved and unimplemented). The last three all share `OpenAiCompatibleClient`; only the default
-endpoint, whether an `Authorization` header is sent, and the timeout differ.
+`AiProviderKind` covers ANTHROPIC, OPENAI, **OPENROUTER**, **OLLAMA** and **GOOGLE** (only
+`CUSTOM` remains reserved). All but Anthropic share `OpenAiCompatibleClient` via
+`OPENAI_COMPATIBLE_KINDS`; only the default endpoint, whether an `Authorization` header is sent,
+and the timeout differ. Gemini needs no client of its own — Google publishes an OpenAI-compatible
+chat-completions endpoint, so enabling it was adding the kind and prefilling the URL. **`CUSTOM`
+stays reserved deliberately**: every OpenAI-compatible endpoint is already reachable by choosing
+OPENAI and setting the API URL, so implementing it would be a second way to do one thing, and the
+way with no prefilled endpoint and no key rules to guide anyone.
 `AiProvider.apiKeyCiphertext` is nullable **only** for the keyless local runtime — the requirement
 is enforced in `aiProviders.ts`, not by the column. `packages/shared/src/aiProviders.ts` is the
 one catalog of kinds/endpoints/key-requirements, read by both the provider form and
@@ -554,7 +804,24 @@ invoked from a client event handler. UI is a small custom component kit under
 (see `Sparkline.tsx`) by deliberate choice. `Switch`/`SwitchField` (a standalone boolean/master
 toggle) is distinct from `Checkbox` (an item inside a multi-select list) — don't use them
 interchangeably. `ButtonLink` renders a real `<a href>` styled like `Button`, for cases (like a file
-download) that must stay real navigation, not a client `onClick`. `(dashboard)/DashboardShell.tsx`
+download) that must stay real navigation, not a client `onClick`. `GroupPicker` is the shared,
+searchable WhatsApp-group selector — **never ask anyone to type a raw group id**
+(`1234567890-1234567890@g.us`): nobody knows those from memory, they get pasted from somewhere
+else, and one wrong character is a destination that silently never receives anything. It also
+carries the feedback-loop warning when a chosen group is one the system monitors, which a textarea
+could not. `SearchField` is the shared list-search control; it is a plain **GET form**, not
+debounced client state, matching every other filter in this app — which also means a searched list
+can be bookmarked, shared and survives a refresh. It carries the page's other filters through as
+hidden fields so searching narrows rather than silently resets them.
+`(dashboard)/loading.tsx` and `(dashboard)/error.tsx` exist at the **group** level so all ~75
+routes inherit them (two of seventy-five had a loading state and one had an error boundary before);
+the two routes with layout-specific skeletons keep theirs, since Next prefers the nearest one, and
+the group-level skeleton is deliberately generic because it stands in for pages with very different
+layouts. Touch sizing is scoped to `pointer: coarse`, **not a screen width** — a narrow browser
+window on a laptop is still a mouse and keeps the tight spacing; a large tablet is still a finger.
+Growing the controls themselves was chosen over an invisible enlarged hit area, because two ghost
+buttons in a table row would have ended up with overlapping invisible regions, and a tap landing on
+the wrong action is worse than a row being a few pixels taller. `(dashboard)/DashboardShell.tsx`
 is a Client Component wrapping `Sidebar` + page content + the floating AI chat — it owns the mobile
 nav drawer and a pathname-keyed page-entrance animation; `layout.tsx` itself stays an async Server
 Component doing only data-fetching. Multi-account routing for WhatsApp-sending features goes
@@ -562,11 +829,34 @@ through `resolveWhatsAppAccount(serviceKey)` (`packages/db`) — the single cent
 every sending feature must call, never re-derive the Primary/pinned/fallback decision at the call
 site.
 
-Sidebar nav groups, top to bottom (a pinned "Overview" link sits above all of them; Messages
-leads with the WhatsApp Chat inbox): Messages,
+Nav lives in one place — `(dashboard)/navigation.ts`. Groups, top to bottom (a pinned
+"Overview" link sits above all of them; Messages leads with the WhatsApp Chat inbox): Messages,
 Escalations, Support Activity, Teams Integration, WhatsApp, Automation, Bulk Messaging, AI Learning,
-Conversation Learning, System — ordered by day-to-day check frequency, not by when each feature
-shipped. See `PROJECT_REFERENCE.md` for every link in every group.
+Conversation Learning, System, Users & Permissions — ordered by day-to-day check frequency, not by
+when each feature shipped. See `PROJECT_REFERENCE.md` for every link in every group.
+
+**Every settings column should have a control, and the audit that closed the last gaps is worth
+not undoing.** `GroupBroadcastSettings` had six columns and no form anywhere — so the throttles
+governing the riskiest thing this product does (sending the same message to hundreds of groups,
+from the number that also serves every customer) were permanently whatever the schema defaulted to.
+Bulk Messaging → **Sending Limits** now covers pace, size, retries and the repeat cooldown, and
+`AutomationSettings.retryIntervalsMs` sits beside its own attempt count on Settings. Both **take
+seconds and store milliseconds** — a backoff list typed in thousandths invites the one-digit slip
+that turns a fifteen-second gap into a fifteen-millisecond one, and nobody notices until retries
+are hammering a rate-limited number; convert once, at the boundary. Every value is **clamped
+server-side** rather than trusted from the form, and an empty or unparseable backoff list keeps the
+current schedule rather than quietly becoming "retry immediately". That leaves `automationEnabled`
+as the only settings column with no form field, which is correct: it is the kill switch and has its
+own confirmed control on Automation Control rather than sitting among ordinary inputs.
+
+**Bulk actions read current state before writing**, so they report "8 enabled, 1 already on, 1 not
+found" rather than "Done", and converge on a re-run instead of writing twice. `bulkSetAiAutomation`
+mirrors `bulkSetMonitoring` with one deliberate difference: it **never clears
+`aiAutomationExcluded`**. That flag is a hard "never let AI answer here", and a broad gesture must
+not quietly override a specific one — those rows are reported as "left alone — excluded from AI",
+because an operator who selected a group and saw nothing happen needs to know why. The confirmation
+dialog describes the action it is actually confirming; a confirmation that misdescribes what it is
+about to do is worse than no confirmation.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)
@@ -594,9 +884,14 @@ anything safety/UI/DB related; this is the subset most likely to bite an unfamil
 - **Anti-spam philosophy is load-bearing, not incidental**: automation is conservative and
   reply-triggered-by-incoming-message only; no unrestricted bulk mode; every auto-reply path
   respects per-client/global rate limits and rule-level cooldowns (`AutomationSettings`,
-  `AutomationRule.cooldownSeconds`). Don't loosen these defaults without being asked.
+  `AutomationRule.cooldownSeconds`). Don't loosen these defaults without being asked. The
+  per-client limits *were* loosened once, on explicit request and for a stated reason — see
+  "Outbound rate limits are shaped for conversation" above; the global limits protecting the number
+  itself, and every safety gate, were untouched.
 - **Soft-delete over hard-delete** for records with historical value (e.g. deactivate a
-  `WhatsAppGroup` the account left, don't delete it).
+  `WhatsAppGroup` the account left, don't delete it) — this now includes an `InternalTeamMember`
+  who has recorded support activity, since `SupportActivity.teamMemberId` is `SetNull` and deleting
+  them orphans their whole history.
 - **Errors must be actionable** ("Group membership verification failed. The message was not sent.
   [Retry]"), never a bare "Error occurred"; no internal stack traces surfaced to the dashboard UI.
 - **Production safety checklist** before touching live-connected functionality: check current

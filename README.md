@@ -9,18 +9,38 @@ module, field, and behavior in the app.
 
 ## Status
 
-**Most recent additions:** a WhatsApp-Web-style **Chat inbox** (read every group's conversation and
-reply from the dashboard, through the same outbound queue automation uses); **Automation by AI**
-(a scope switch to let the AI fallback answer in every monitored group, a hard per-group exclusion,
-and optional drafting of reusable rules from confident AI answers — always as proposals a human
-approves); a **knowledge builder** that reads stored group conversations and distils them into
-review-pending knowledge entries; and **OpenRouter / self-hosted Ollama** support alongside
-Anthropic and OpenAI.
+**Most recent additions:**
 
-> **Deploying these requires two migrations** (`20260829120000_add_manual_reply_action_type` and
-> `20260829140000_ai_automation_providers_knowledge`). Run `pnpm db:migrate:deploy` before starting
-> the new build — the chat inbox cannot send and AI settings cannot be saved until they are applied.
-> Both are additive; every new column defaults to the behaviour that existed before it.
+- **Product knowledge from the ISPDIGITAL repository.** The assistant reads the product's own user
+  guides and module source through Softify Forge, so it can answer "how do I void an invoice" on a
+  fresh install. A mechanical disclosure gate re-checks every generated entry and drops anything
+  naming code, schema, tables, endpoints or infrastructure — the prompt is not trusted to do that
+  job. See `FORGE_SETUP.md`.
+- **Four AI response modes**, from "verified knowledge only" (the default) up to knowledge +
+  live product-source research + general knowledge. With research on, a question nothing covers is
+  looked up while the customer waits and the answer is kept for next time. What is *not*
+  configurable, under any mode: a question about this company's own product, policies or accounts
+  is answered only from verified knowledge, or it goes to a person.
+- **A default reply language** (Bangla, English, Banglish, or type your own), with the model
+  deciding and reporting the language before it drafts — so a one-word "hello" no longer swings the
+  whole reply into another language.
+- **Notification Center.** Alerts now carry a reason (escalation, AI handover, rule notify,
+  unknown pattern), each independently switchable, channelled and routed — and team members can
+  opt into direct messages for the events they personally want, per event.
+- **Support Activity rebuilt** around who handled what and for how long: per-executive groups,
+  messages and engaged time for today, this week and this month, read from the activity rows
+  themselves rather than from sessions that may never close.
+- **AI can ask a person by name** in the customer's own group when it hands over, instead of only
+  alerting a separate group the customer cannot see.
+- **Communication-style learning** — the assistant can learn how your executives write (never what
+  they claim), and nothing reaches a customer until a person approves the guidance.
+- Knowledge imports from **URLs, PDFs, Word files and spreadsheets**; **Google Gemini** as a
+  provider; a **Teams CSV/xlsx export**; searchable, paginated high-volume lists; loading and error
+  states on every page; and touch-sized controls on phones and tablets.
+
+> **Deploying requires running the pending migrations** — `pnpm db:migrate:deploy` before starting
+> the new build. Every one is additive, and each new column defaults to the behaviour that existed
+> before it, so an existing deployment behaves identically until someone changes a setting.
 
 
 Well past the original foundation phase. Shipped and live: multi-account WhatsApp connections with
@@ -35,9 +55,20 @@ Assistant chat widget, and a Microsoft Teams Integration (P0 slice: one-click, p
 connection — Connect → Microsoft login → Allow → Connected, with automatic Teams/channel discovery
 and an optional Manage Teams & Channels selection screen — Teams/channel/message sync,
 resolution-keyword detection, and automatic WhatsApp customer notification, linked to WhatsApp
-conversations via a new Issue-tracking model — see `TEAMS_SETUP.md` to configure). AI Learning (a
-knowledge-base + provider/model configuration module) is intentionally a foundation-only phase —
-see `PROJECT_REFERENCE.md` for exactly what is and isn't live yet.
+conversations via a new Issue-tracking model — see `TEAMS_SETUP.md` to configure), a
+WhatsApp-Web-style Chat inbox, and AI Learning — no longer a foundation-only phase: the knowledge
+base is now written to by three sources (group conversations, manual imports, and the product's own
+repository via Softify Forge), read back by every AI answer, and gated by a human-verification
+queue that only verified entries escape.
+
+Deliberately **not** built, each for a stated reason rather than for lack of time: `REACTION` as a
+support trigger (OpenWA's `onReaction` is behind an Insiders licence this deployment does not have,
+so it would look configured and never fire once), Microsoft Graph real-time webhooks (they need a
+publicly reachable HTTPS endpoint; this runs on a private port, so the code would register and
+never receive), Teams session/duration analytics (nothing to compute from yet — the export exists
+for the day someone connects it), and the `CUSTOM` AI provider kind (every OpenAI-compatible
+endpoint is already reachable by choosing OpenAI and setting the API URL). See
+`PROJECT_REFERENCE.md` for exactly what each module does today.
 
 ## Requirements
 
@@ -98,7 +129,8 @@ apps/web       Next.js dashboard — pages, server actions, the AI Admin Assista
 apps/worker    dedicated OpenWA worker — message pipeline, outbound queue, escalation/learning/support-activity/teams jobs
 packages/db    Prisma schema, migrations, client
 packages/engine   rule evaluation engine (matchers, priority, regex safety, pattern-detection scoring)
-packages/ai-client   text-only AI-provider completion client (Anthropic today), used only by the worker's opt-in Conversation Learning AI analysis job
+packages/ai-client   text-only, no-tools AI completion client (Anthropic, OpenAI, OpenRouter, Ollama, Google), used by every worker-side AI job
+packages/forge-client   Softify Forge REST wrapper + the disclosure gate deciding what a customer may be told
 packages/teams-client   Microsoft OAuth + Graph API wrapper, used by apps/web (connect flow) and apps/worker (sync)
 packages/shared   shared enums/types
 ```
@@ -111,7 +143,9 @@ packages/shared   shared enums/types
   philosophy, production safety checklist, etc.).
 - `TEAMS_SETUP.md` — how to register the Azure App Registration the Microsoft Teams Integration
   needs (client ID/secret/tenant ID/redirect URI) — required before that feature can connect.
-- The four root-level `*.md` build-spec documents (`RULE-BASED SUPPORT MESSAGE AUTOMATION.md`,
+- `FORGE_SETUP.md` — how to point the product-knowledge integration at Softify Forge and the
+  ISPDIGITAL repository, what each of its three tiers reads, and what the disclosure gate blocks.
+- The five root-level `*.md` build-spec documents (`RULE-BASED SUPPORT MESSAGE AUTOMATION.md`,
   `WHATSAPP ACCOUNT SAFETY AND ANTI-SPAM REQUIREMENTS.md`,
   `Priority-Based Support Monitoring & Escalation — Implementation Command.md`,
   `AI Learning & Knowledge System — Full Development Prompt.md`, and the newer

@@ -26,9 +26,10 @@ matching section here in the same change.
 10. [AI Learning](#ai-learning)
 11. [Conversation Learning](#conversation-learning)
 12. [System](#system)
-13. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
-14. [Background jobs (apps/worker)](#background-jobs-appsworker)
-15. [Safety & anti-spam features, end to end](#safety--anti-spam-features-end-to-end)
+13. [Users & Permissions](#users--permissions)
+14. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
+15. [Background jobs (apps/worker)](#background-jobs-appsworker)
+16. [Safety & anti-spam features, end to end](#safety--anti-spam-features-end-to-end)
 
 ---
 
@@ -44,8 +45,9 @@ Two long-running processes plus Postgres:
   anything that needs the live browser session (reconnect, fetch QR, resync groups, logout); the
   worker writes live connection state back onto `WhatsAppAccount` for the dashboard to poll.
 
-A single logged-in session currently has full access to everything — there is no role/permission
-system yet (every feature described below is available to any authenticated user).
+Access is governed by **Permission Modules** — a named set of permissions assigned to a user (see
+[Users & Permissions](#users--permissions)). A user with no module assigned has full access, which
+is what keeps a single-admin deployment working without configuring anything.
 
 ---
 
@@ -73,6 +75,18 @@ or changes anything; every number links to the real page where you'd act on it.
 
 Sidebar group: **Messages**
 
+- **WhatsApp Chat** (`/chat`) — a WhatsApp-Web-style two-pane inbox: a searchable conversation list
+  (rendered at layout level, so it keeps scroll position and search across navigations) plus the
+  thread and a composer. It reads only what this app already stores, so a thread goes back to
+  whenever monitoring began — it never asks the worker for history. Sending writes one
+  `OutboundMessage` with `actionType: MANUAL_REPLY` and stops there; the worker sends it.
+  `MANUAL_REPLY` is the one action type the queue treats differently: **the automation kill switch
+  does not cancel it** (the switch stops the robot, not the operator) and a rate limit **defers**
+  rather than discards it, since silently dropping something a person typed is not acceptable. It
+  still gets the same live group-membership check the broadcast path does. Unconfirmed sends render
+  as dashed "queued" bubbles; a `SENT` row whose provider message id already exists as a stored
+  message is skipped as a duplicate, because WhatsApp echoes our own sends back to us. Polls every
+  4s — there is no websocket.
 - **All Messages** (`/messages`) — every processed message, filterable by Account, Group (name
   contains), Sender (phone/name contains), From/To date, Decision (`IGNORE`, `AUTO_REPLY`,
   `SUPPORT_REQUIRED`, `STOPPED`, `ACTIONED`, `NO_MATCH`), matched Rule, Auto-Reply status
@@ -83,6 +97,8 @@ Sidebar group: **Messages**
 - **Needs Attention** (`/messages?decision=SUPPORT_REQUIRED`) — a redirect/filtered view of the
   same page, not a separate implementation.
 - **Ignored Messages** (`/messages?decision=IGNORE`) — same, filtered to `IGNORE`.
+- The message-text search is AND-ed with the sender filter rather than folded into the same OR:
+  "this sender **or** anyone who mentioned this word" is never what is meant.
 - **Message detail** (`/messages/[id]`) — the full record: message body/metadata, the complete rule
   evaluation trace (every rule considered, matched/applied/reason, applied ones highlighted),
   actions executed, every outbound reply's status/body/attempts, every notification's
@@ -148,47 +164,78 @@ Automatically detects when a configured support team member's message inside a W
 satisfies a configured rule, and turns that into countable, reportable activity — entirely separate
 from the rule engine's automated replies. Off by default.
 
-### Activity — `/support-activity`
+The sidebar carries **four** entries, not six: Rules and Keywords were two more lines for the same
+job as Settings — deciding what counts — so **Setup** hosts them, with their routes unchanged.
+Team Performance leads, because it is the question the module gets opened to answer.
+
+### Team Performance — `/support-activity/team`
+
+The headline page. Stat tiles: Executives active, Groups covered, Messages sent (by people, not
+AI), Time engaged. Then one row per executive, busiest first: Groups, Messages, **Time engaged**,
+First, Last (both in Asia/Dhaka), and a *today / week / month* group count in the final column —
+the whole point of the page in one cell, since whether a load is a spike or a person's normal is
+the actual question. A green dot marks anyone active in the last few minutes. Below it, a "Who is
+around" panel: green = active in the last few minutes, amber = worked today, grey = not yet.
+
+**How time is measured, and why it is not "hours worked":** each row is the span from a person's
+first message to their last **within one group on one Dhaka calendar day**, summed across every
+such span. Per group *and* per day deliberately — one span across a week would count the nights in
+between; one span across every group at once would count the time they were busy elsewhere. **A day
+with one message shows zero**, which is honest rather than flattering: a single reply is a moment,
+not a span, and the message count beside it is what says they were working. This reads the activity
+rows directly, so it does not depend on a support session ever closing — the previous hours-worked
+figure summed session durations, which are only written when a session *completes*, which needs a
+completion keyword; a deployment using the "any message counts" rule has none, so that number was
+permanently empty while looking perfectly healthy.
+
+### Activity Feed — `/support-activity`
 
 Stat tiles (labeled "Today's"/"This Week's"/"This Month's ..." depending on the configured
 counting period): Support Groups, Support Activities, Active Support Members, Total Supported
 Groups (all-time), Repeated Support Activities (activities minus unique groups — a positive number
 means at least one group got hit more than once). A 30-day trend Sparkline. A Recent Activity table
-(last 10, across every group) with **Export CSV** / **Export Excel** links.
-
-### Team Performance — `/support-activity/team`
-
-Read-only report: one row per team member with any activity in the current counting period, and
-their activity count. Export CSV/Excel here too. Links out to Internal Team Members for actually
-managing the roster — this page never duplicates that CRUD.
+(last 10, across every group) with **Export CSV** / **Export Excel** links. Rows are labelled by
+**actor** — a person or the AI — and every person-measuring number on this module filters to
+`TEAM_MEMBER` explicitly, so AI work can never inflate someone's figures. The split, including
+"groups no human touched", is reported separately.
 
 ### Reports — `/support-activity/reports`
 
 Pick a group (and optionally a custom From/To date range, overriding the default period) to see its
 detection timeline plus the "Counted Support" vs. "Activities" distinction for that one group (in
 `UNIQUE_GROUP` terms: 1 if anything happened, 0 if not). Export CSV/Excel scoped to that group+range.
+Also answers "what is happening right now" without picking a group first: open sessions sorted so
+the most actionable (stale, then other open, then most recently started) surface first.
 
-### Rules — `/support-activity/rules` (+ `/new`, `/[id]/edit`)
-
-Each rule combines: **Trigger Type** (`Keyword Match`, `Reply to Customer`, `Mention`), **Keywords**
-(multi-select, only for Keyword Match), **Team Member Scope** (all, or a specific multi-select),
-**Group Scope** (all, or a specific multi-select), Active/Disabled. The first active rule (and,
-for Keyword Match, its first matching keyword) that applies wins — at most one Support Activity per
-message. Row actions: Edit, Disable/Enable, Delete.
-
-### Keywords — `/support-activity/keywords`
-
-Simple CRUD: Value, Match Mode (Contains/Exact), Case Sensitive toggle, Active/Disabled. Contains
-matches at a whole-word boundary; case-insensitive is the default.
-
-### Settings — `/support-activity/settings`
+### Setup — `/support-activity/settings`
 
 Master **Enable Support Activity Tracking** switch (default off — no existing automation is
 affected either way). **Counting Mode**: `Unique Group` (each group counts once per period),
 `Every Activity` (every match counts), `Per Team Member` (totals per member — confirmed semantics:
 two activities by the same member in the *same* group still count as 2, not 1). **Counting
-Period**: `Daily`, `Weekly` (Sunday-start), `Monthly`. Links out to Keywords/Rules for the actual
-detection logic.
+Period**: `Daily`, `Weekly` (Sunday-start), `Monthly`. Counting is always computed live against the
+raw activity table, never pre-aggregated, so changing a setting retroactively reinterprets history.
+Hosts the two pages below.
+
+#### Rules — `/support-activity/rules` (+ `/new`, `/[id]/edit`)
+
+Each rule combines: **Trigger Type** (`Keyword Match`, `Reply to Customer`, `Mention`, `Any
+Message`), **Keywords** (multi-select, only for Keyword Match), **Team Member Scope** (all, or a
+specific multi-select), **Group Scope** (all, or a specific multi-select), Active/Disabled. The
+first active rule (and, for Keyword Match, its first matching keyword) that applies wins — at most
+one Support Activity per message. `Any Message` is evaluated **last**, because it matches everything
+and would otherwise shadow a keyword rule — and only a keyword rule can mark a session complete, so
+an "any message" rule would quietly stop sessions ever completing. Row actions: Edit,
+Disable/Enable, Delete.
+
+`Reaction` is deliberately **not** offered: OpenWA's reaction subscription is behind an Insiders
+licence this deployment does not have, so the trigger would appear configured in the UI and never
+fire once.
+
+#### Keywords — `/support-activity/keywords`
+
+Simple CRUD: Value, Match Mode (Contains/Exact), Case Sensitive toggle, Active/Disabled. Contains
+matches at a whole-word boundary; case-insensitive is the default.
 
 ---
 
@@ -261,6 +308,21 @@ Notification Message Template (`{{customerName}}`/`{{issueId}}`/`{{executiveName
 **Polling Interval (minutes)** — how often the worker checks Microsoft Graph for new messages in
 linked channels.
 
+### Export
+
+`/api/teams/export` returns either the Issues (with their resolution timing) or the synced channel
+messages, as CSV or xlsx. Issue rows carry **minutes** to resolve, not seconds: these are
+conversations between people over hours or days, and second-level precision would imply an accuracy
+that polling every few minutes cannot have.
+
+**Not built, deliberately.** *Real-time webhooks* are blocked by topology rather than effort —
+Microsoft Graph change notifications need a publicly reachable HTTPS endpoint to deliver to, and
+this runs behind Docker on a private port, so the subscription code would register and never
+receive, which is worse than nothing because it looks finished. *Session and duration analytics*
+have nothing to compute from yet (no connected account, no synced messages); numbers derived from
+an empty table are a page of zeroes that implies a working integration. The export above is what
+makes it analysable the day someone connects it.
+
 ### Team Performance addition
 
 The existing **Team Performance** page (`/support-activity/team`) now also shows **Issues Handled**
@@ -301,16 +363,44 @@ badge, Participants (fetch-on-demand if unknown), Last Synced, Priority Support 
 member ("Configure" dialog), **AI Automation** (Enabled/Disabled badge + Enable/Disable AI button —
 the Hybrid AI Automation fallback layer's per-group opt-in; a yellow "Human active until …" badge
 appears when a team member's recent message has temporarily suppressed AI for that group), Manage
-(Start/Stop Monitoring). Bulk-select + Bulk Enable/Disable Monitoring. **Active** (the account is
-still a member, auto-managed by resync) and **Monitored** (an admin opted this group into
-automation) are deliberately distinct concepts, never conflated.
+(Start/Stop Monitoring), and **Learn** (builds knowledge from that group's stored conversation on
+demand rather than waiting for the hourly job). Bulk-select + Bulk Enable/Disable Monitoring **and
+Bulk Enable/Disable AI**. Bulk actions read current state first, so they report "8 enabled, 1
+already on, 1 not found" rather than "Done", and converge on a re-run instead of writing twice.
+Bulk AI enable **never clears a group's hard AI exclusion** — that flag is a "never let AI answer
+here", set where a wrong answer costs most, and a broad gesture must not quietly override a
+specific one; those rows are reported as "left alone — excluded from AI" so an operator who
+selected a group and saw nothing happen knows why. **Active** (the account is still a member,
+auto-managed by resync) and **Monitored** (an admin opted this group into automation) are
+deliberately distinct concepts, never conflated.
+
+Which groups AI may answer in is set on AI Settings, not here: either per-group opt-in (the
+default) or every monitored group. The per-group exclusion is honoured under both.
 
 ### Internal Team Members — `/team-members` (+ `/[id]/edit`)
 
-CRUD: Name, Phone Number (exact match key — this is how the system recognizes a message as coming
-from staff, not a client), Role, Department (optional), Active/Inactive. Disabling stops treating
-that number as staff going forward without losing the record; deleting removes it permanently.
-Neither touches already-stored message history.
+CRUD: Name, Phone Number, Role, Department (optional), with Disable/Enable and Delete as row
+actions. The edit page also carries an **"Alert this person directly"** card — a checkbox per
+notification event, sending that alert to them as a WhatsApp message *in addition to* whichever
+shared group it already goes to. Disabling stops treating them as staff going forward without
+losing the record. **Someone with recorded support activity is deactivated
+rather than deleted** — activity rows point at the member, so deleting them orphans their whole
+history; someone added by mistake with no activity is still genuinely deleted.
+
+Two ways to fill the roster without typing numbers, which matters because a typo silently
+classifies a colleague as a customer: pick real senders out of a group's **message history**, or
+ask WhatsApp for the group's **membership list** (the only option for a quiet group, or one being
+set up before any traffic exists). Both compare numbers normalized to digits before offering or
+inserting anyone, so the same colleague cannot be added twice as `+8801…` and `8801…`, splitting
+their activity across two identities.
+
+**Recognition and reachability are different things.** WhatsApp now identifies group participants
+by an opaque id rather than their phone number, and adding someone from message history carries
+nothing but that id — so it lands in both fields. That is fine for recognising them (matching is by
+identifier) and useless for messaging them: a direct message to such an id goes nowhere. Those rows
+carry a **"Needs phone number"** badge, and their direct-notification checkboxes are disabled with
+the reason. Escalations, direct alerts and AI handover mentions all skip them with a log rather than
+enqueueing into nothing.
 
 ---
 
@@ -395,40 +485,119 @@ group membership immediately before each add.
 **Job detail** (`/group-member-adder/jobs/[id]`): same progress/Stop/Retry pattern as broadcast
 jobs, with an "Added" status column instead of "Sent" and no provider-ID column.
 
+### Sending Limits — `/group-message-sender/settings`
+
+The throttles governing the riskiest thing this product does: sending the same message to hundreds
+of groups, from the number that also serves every customer. Shortest gap and Longest gap between
+sends (seconds, 1–120), Messages per minute across all running broadcasts (1–30), Maximum groups
+per broadcast (1–2000 — the wizard refuses more), Retries per group (0–5), and Repeat cooldown
+(minutes before the same group can be included in another broadcast; 0 disables it).
+
+These columns existed from the start with **no form anywhere**, so they were permanently whatever
+the schema defaulted to. The form takes seconds and stores milliseconds — a send delay typed in
+thousandths invites the one-digit slip that turns a fifteen-second gap into a fifteen-millisecond
+one, and nobody notices until retries are hammering a rate-limited number. Every value is clamped
+server-side rather than trusted from the form: a delay of zero or a per-minute cap of 500 is how a
+WhatsApp number gets banned, and there is no second chance to discover that.
+
 ---
 
 ## AI Learning
 
-Sidebar group: **AI Learning** — **Phase 1, foundation only.** Every page here explicitly states
-that nothing on it (except the Providers "Test Connection" button) currently affects WhatsApp
-behavior — it's pre-configuration for later phases that don't exist yet, with one live exception:
-the **Admin Assistant** model slot, which powers the floating AI chat widget (see below).
+Sidebar group: **AI Learning** — no longer a foundation-only phase. The knowledge base is written
+to by three sources, read back by every AI answer, and gated by a human-verification queue that
+only verified entries escape. **Everything here is off by default**, and the master `AI Engine`
+switch gates all of it.
 
-- **Overview** (`/ai-learning`): 4 hub links, knowledge stat tiles (Total/Active/Inactive/
-  Archived), an AI Status card mirroring the 4 master toggles, recently-updated knowledge list.
+- **Overview** (`/ai-learning`): hub links, knowledge stat tiles (Total/Active/Inactive/Archived),
+  an AI Status card mirroring the master toggles, recently-updated knowledge list.
+- **AI Activity** (`/ai-learning/activity`): the read view over every AI decision — one row per
+  message the rule engine missed in an AI-eligible group, showing what the AI drafted, whether it
+  was sent, and the reason for every handoff in plain language beside the raw code that appears in
+  logs. Filters by outcome, group and time window. Stat tiles are scoped to the window and group
+  but deliberately **not** to the outcome filter, so filtering to handoffs cannot report "100%
+  handed off". Before this page existed, AI decisions could only be read one message at a time.
 - **Knowledge Base** (`/ai-learning/knowledge-base` + new/edit): Title, Category (11 options —
   Software, Workflow, FAQ, Troubleshooting, Customer Response, SOP, Requirement, Feature, Policy,
   Announcement, Screenshot), Software/Module/Version (optional), Question/Intent (optional), Answer
   (required), Procedure (optional). Every edit creates a new version rather than overwriting — full
-  history with restore.
-- **AI Providers** (`/ai-learning/providers` + new/edit): Name, Kind (Anthropic/OpenAI/Google/
-  Custom — only Anthropic is actually implemented), API URL (optional), API Key (encrypted at
-  rest, blank on edit = keep current). Row actions: Test Connection (a real API call), Edit,
-  Enable/Disable, Delete.
-- **AI Models** (`/ai-learning/models`): 6 fixed job slots — Learning, Response, Vision, Document,
-  Embedding, **Admin Assistant** — each just a Provider + free-text Model ID, saved independently.
-  Admin Assistant is the only slot anything actually calls today.
-- **AI Settings** (`/ai-learning/settings`): 8 boolean toggles (AI Engine, Learning, Auto Response,
-  Screenshot Response, Chat Learning, Software Learning, Requirement Learning, Announcement AI —
-  all default off). **AI Engine + Auto Response together gate the live Hybrid AI Automation
-  fallback layer** (the rest are reserved for later phases) — it fires only when the deterministic
-  rule engine finds no match at all, and only for groups individually opted in on the Groups page.
-  Three more fields tune it: **Auto-Response Confidence Threshold** (0–100, AI may reply at/above
-  this, otherwise a human is asked for help instead), **AI Reply Cooldown (seconds)** (reuses the
-  same per-client cooldown mechanism as rule auto-replies), **Human Takeover Cooldown (minutes)**
-  (how long a team member's message pauses AI for that group). Plus 4 unrelated threshold numbers
-  (Duplicate Similarity, Learning Confidence, Auto Approval, Human Review — all 0–100, reserved for
-  later phases).
+  history with restore. Each entry also carries its **source** (typed by hand, imported, learned
+  from a group conversation, read from the product repository, or researched live for a customer)
+  and a **verified** flag, set from the entry's own detail page. Verification is deliberately
+  independent of status: an entry can be active-but-unchecked, or verified-but-deliberately-inactive.
+- **Import Knowledge** (`/ai-learning/knowledge-base/import`): bring in your own documentation —
+  pasted text, an uploaded file, a URL, a PDF, a Word document, or a spreadsheet of question/answer
+  rows (parsed directly, with no AI call, because there is nothing to interpret). A manual is split
+  on its own paragraph and sentence structure, never at a fixed offset, and each chunk is a separate
+  call — so a 40-page manual that fails at page 30 is marked **Partial** and **keeps the 29 pages
+  the other chunks produced**. The original text is retained, so Retry needs no re-upload. Imports
+  are job rows drained by a background loop, so progress survives a restart.
+- **Pending Review** (`/ai-learning/knowledge-base/review`): the trust boundary. Everything the AI
+  writes — from chats, from the product repository, from an import — lands unverified, and **only
+  verified, active entries are ever used to answer a customer**. Bulk verify and bulk archive;
+  discarding archives rather than deletes.
+- **Communication Style** (`/ai-learning/communication-style`): the guidance the assistant has
+  distilled about *how* your executives write — greetings, formality, answer length — with how many
+  real replies it was drawn from, and an **Approve** button. Nothing reaches a customer until a
+  person approves it, and **every rebuild clears that approval**, so new wording never inherits the
+  trust given to the old. It learns manner only: any line that reads like a fact (a duration, a
+  price, a policy, a promise) is dropped, because a product claim must go through knowledge
+  verification rather than arriving dressed as a tone note.
+- **Product Knowledge** (`/integrations/forge`): reads ISPDIGITAL's own user guides and module
+  source through Softify Forge into the knowledge base. Three tiers, differing in how much authority
+  the source has: hand-written user guides (which may be auto-verified, if the admin chooses),
+  per-module guides the model writes by reading the source behind each module, and on-demand
+  research of a single customer question nothing covered. **Tiers 2 and 3 are never auto-verified,
+  regardless of any setting** — a model's reading of source code is evidence, not fact. Every
+  generated entry is re-checked mechanically and anything naming code, schema, tables, endpoints,
+  infrastructure or credentials is dropped and logged, never stored. Requires `FORGE_API_KEY` /
+  `FORGE_API_URL`; see `FORGE_SETUP.md`.
+- **AI Providers** (`/ai-learning/providers` + new/edit): Name, Kind (Anthropic, OpenAI,
+  OpenRouter, Ollama, Google — `Custom` remains reserved, since any OpenAI-compatible endpoint is
+  already reachable by choosing OpenAI and setting the API URL), API URL (prefilled per kind), API
+  Key (encrypted at rest, blank on edit = keep current; only a local Ollama may have none). Row
+  actions: Test Connection (a real API call), Edit, Enable/Disable, Delete.
+- **AI Models** (`/ai-learning/models`): 6 fixed job slots — Learning, **Response**, Vision,
+  Document, Embedding, **Admin Assistant** — each a Provider + Model ID, saved independently.
+  Response drives every customer-facing answer and knowledge build; Admin Assistant drives the
+  floating chat and is **Anthropic-only**, because it needs real tool-calling, which is a different
+  wire format rather than a base-URL swap.
+- **AI Settings** (`/ai-learning/settings`) — grouped by what they decide:
+  - **Master toggles**: AI Engine, Learning, Auto Response, plus the reserved Screenshot Response,
+    Chat Learning, Software Learning, Requirement Learning and Announcement AI. AI Engine + Auto
+    Response together gate the live fallback layer, which fires **only** when the rule engine finds
+    no match at all.
+  - **Replying**: Auto-Response Confidence Threshold (0–100; below it a human is asked instead),
+    AI Reply Cooldown (seconds), Human Takeover Cooldown (minutes — how long a team member's own
+    message pauses AI in that group).
+  - **Response mode** — what AI may answer from: *Verified knowledge only* (default), *Knowledge +
+    product source*, *Knowledge + general questions*, or *Everything*. Each explains itself, and its
+    cost, in the panel underneath: the two that read source are slower on hard questions, and their
+    answers become reusable knowledge without a person reading them first. **What no mode changes:**
+    a question about this company's own product, policies, pricing or accounts is answered only from
+    verified knowledge, or it goes to a person. With a general mode on, *Minimum confidence for a
+    general answer* applies — normally higher than the main threshold, because nothing of the
+    team's stands behind those.
+  - **Answer in** — the default reply language, as a dropdown: Bangla, Banglish, English, or
+    *Other language…* which reveals a text box. AI switches away from it only on real evidence — a
+    message in a different script, or a fluent English sentence; a greeting, a bare number, or
+    Bengali typed in Latin letters all stay in the default.
+  - **Learn how the team writes** — the communication-style switch described above.
+  - **Write rules from good answers** — a confident AI answer also drafts a reusable rule, above its
+    own (higher) confidence bar. The draft always lands as a proposal a human approves, and approval
+    produces a **draft** rule someone separately activates. Nothing AI writes reaches a customer
+    automatically.
+  - **Handover**: *Also tag a team member in the customer's own group* (off by default — it puts an
+    extra message in front of a customer; it tags the group's assigned member, or up to three people
+    who opted into handover alerts, and skips anyone whose stored number cannot actually receive a
+    message), and *Send takeover alerts to these WhatsApp groups* — a searchable group picker, not
+    a box for pasting raw group ids. Left empty, alerts go wherever the global notification
+    destinations already point.
+  - **Build knowledge from group chats** + *Minimum new messages per group* — a group with less
+    conversation than this is skipped, because there is not enough there to draw a reliable
+    conclusion from.
+  - Four learning thresholds (Duplicate Similarity, Learning Confidence, Auto Approval, Human
+    Review), all 0–100.
 
 ---
 
@@ -473,15 +642,50 @@ Sidebar group: **System**
   the automation kill switch) and a table of the last 100 notifications (type, destination, status,
   attempts, failure reason) with a **Retry** action on failed rows (re-queues for the dispatcher,
   does not re-run the originating rule).
+- **Notification Center** (`/notifications/events`): one card per reason an alert can be raised —
+  *Support escalation*, *AI handed over to a human*, *Rule alert — WhatsApp*, *Rule alert — Teams*,
+  *Unrecognised question pattern* — each independently switchable, with its own Teams/WhatsApp
+  channel switches and its own WhatsApp destination groups. This exists because a team buried in
+  pattern alerts previously had exactly one remedy: remove the notification group, which also
+  silenced escalations. Every card is additive by default: **off means nothing is raised at all**
+  (not raised-then-dropped, which would fill the delivery log with things that never went), and an
+  **empty** destination list *inherits* the global destinations rather than sending nowhere. Team
+  members can also opt in, per event, to receive an alert as a **direct message** — additive to the
+  group copy, never a replacement; the group is the record, the DM is the tap on the shoulder.
+  Anyone whose stored number is really a WhatsApp id cannot receive one, and their checkboxes are
+  disabled with the reason on their own edit page. Notifications predating this module keep no event
+  and are reported as such, rather than having one guessed for them after the fact.
 - **Settings** (`/settings`): the general `AutomationSettings` form — Per-Client Reply Limits (max
   per client per hour/day), Global Rate Limiting (enable switch + max per minute/hour/day), Reply
-  Delay & Retries (default delay min/max, max retry attempts), Notification Destinations (Teams
-  webhook URL, WhatsApp notification group multi-select — warns if a selected group is also
-  Monitored, a feedback-loop risk). Does **not** include the kill switch or automation mode (see
-  Automation Control) or account routing (see Account Routing).
-- **System Logs** (`/logs`): filterable by Level (Info/Warn/Error) and Scope (free-text contains).
-  Expandable rows reveal pretty-printed metadata JSON. Capped at 200 rows. This is an
-  internal diagnostic trail ("why didn't X happen"), not a place to read chat content.
+  Delay & Retries (default delay min/max, max retry attempts, **and the retry backoff intervals** —
+  how long it waits between attempts, which was previously editable nowhere, making the retry
+  controls half-present), Notification Destinations (Teams webhook URL, WhatsApp notification group
+  multi-select — warns if a selected group is also Monitored, a feedback-loop risk). Does **not**
+  include the kill switch or automation mode (see Automation Control) or account routing (see
+  Account Routing).
+- **System Logs** (`/logs`): filterable by Level (Info/Warn/Error), Scope (free-text contains) and
+  message text, **paginated with a real total** — it was previously capped at "newest 200" with no
+  paging, so on a page whose entire purpose is finding out what happened, the entry you were looking
+  for was often the one you could not reach. Expandable rows reveal pretty-printed metadata JSON.
+  An internal diagnostic trail ("why didn't X happen"), not a place to read chat content.
+
+---
+
+## Users & Permissions
+
+Sidebar group: **Users & Permissions**
+
+- **App Users** (`/users` + new/edit): dashboard logins — Username (the login identifier; email is
+  optional), Name, Password, Active, and an assigned Permission Module. An inactive user is
+  rejected at login **and** every already-issued session of theirs is rejected too; they are never
+  deleted, so their audit history (rules created, cases resolved, knowledge approved) stays intact.
+- **Permission Modules** (`/permissions` + new/edit): a named set of permissions assigned to users.
+  Four are seeded as system modules — those cannot be renamed or deleted, though the permissions
+  inside them remain editable. A user with **no** module assigned has full access, which is what
+  keeps a single-admin deployment working with nothing configured.
+- **Security Settings** (`/settings/security`): Session Lifetime (hours, 1-720), Failed Attempts
+  Before Lockout, Attempt Window (minutes) and Lockout Duration (minutes). The lockout check runs
+  **before** the password is verified.
 
 ---
 
@@ -513,13 +717,21 @@ once.
 | Escalation processor | 15s | Advances at most one due escalation case per tick |
 | Session segmentation | 5min | Conversation Learning: buckets messages into sessions (gated) |
 | Pattern detection | 15min | Deterministic, AI-free recurring-pattern scoring (gated) |
+| Knowledge import processor | 15s | Drains manual Knowledge Center imports, one chunk at a time |
 | AI-assisted analysis | 6h | Optional AI rescoring, or on-demand via the dashboard (gated) |
+| Group knowledge builder | 1h | Distils one monitored group's stored conversation into knowledge entries, oldest first (gated; also on-demand via the Groups page's **Learn** button) |
+| Communication style builder | 12h | Rebuilds the style guidance from the team's own replies — manner, never fact (gated; needs approval before it is used) |
 | Teams sync | 3min (admin-configurable) | Polls Microsoft Graph for linked channels' messages, runs resolution matching (no-ops until connected; also on-demand via **Sync Now**) |
+| Product knowledge sync | 6h | Reads the ISPDIGITAL repository's user guides and module source through Softify Forge (no-ops until configured and enabled; also on-demand) |
+| Unanswered-question research | 2min | Works through customer questions verified knowledge could not answer, researching each against the product's source (same gate, plus its own switch, off by default) |
 | Heartbeat | 15s | Health state + DB connectivity log |
 
 Support Activity Tracking's detector and the Hybrid AI Automation fallback layer are **not**
 scheduled loops — they're inline, fire-and-forget steps inside the incoming-message pipeline
-itself, right alongside the escalation side effect.
+itself, right alongside the escalation side effect. Researching an unanswered question *while the
+customer waits* is likewise inline (it is what the two "product source" response modes do); the
+2-minute loop above is the offline version, which researches after a handover so the next customer
+is answered instantly.
 
 ---
 
