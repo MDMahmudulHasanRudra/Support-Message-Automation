@@ -62,6 +62,7 @@ export async function updateAiSettings(
       humanTakeoverCooldownMinutes: nonNegativeInt("humanTakeoverCooldownMinutes", 30),
       aiAutomationScope: scope,
       aiRuleGenerationEnabled: flag("aiRuleGenerationEnabled"),
+      mentionTeamOnHandover: flag("mentionTeamOnHandover"),
       aiRuleGenerationMinConfidence: percent("aiRuleGenerationMinConfidence", 95),
       takeoverNotifyGroupIds,
       knowledgeFromChatEnabled: flag("knowledgeFromChatEnabled"),

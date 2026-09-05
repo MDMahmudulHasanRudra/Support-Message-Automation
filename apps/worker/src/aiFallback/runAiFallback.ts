@@ -11,6 +11,7 @@ import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
 import { recordUnansweredQuestion } from "../forge/forgeResearchJob.js";
+import { mentionTeamForHandover } from "./mentionTeam.js";
 import { getApprovedStyleGuidance } from "../knowledge/communicationStyleJob.js";
 import { recordAiSupportActivity } from "../supportActivity/recordAiSupport.js";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
@@ -122,6 +123,21 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     // Fire-and-forget with its own error boundary, exactly like the escalation and
     // support-activity hooks in processIncomingMessage.ts: a research-queue failure must never
     // change what the customer experienced.
+    // Ask for help inside the customer's own group, by name, when that is switched on. Additive:
+    // the alert above has already gone to the notifications group, and this is about the request
+    // landing where the conversation is rather than replacing it.
+    if (aiSettings.mentionTeamOnHandover && params.group?.id) {
+      await mentionTeamForHandover({
+        accountId: params.accountId,
+        groupId: params.group.id,
+        chatId: params.chatId,
+        toPhone: params.toPhone,
+        incomingMessageId: params.message.id,
+        settings: params.automationSettings,
+        testMode: params.group.testModeEnabled ?? false,
+      });
+    }
+
     if (reason === "NO_BUSINESS_KNOWLEDGE" || reason === "NO_KNOWLEDGE") {
       try {
         await recordUnansweredQuestion({

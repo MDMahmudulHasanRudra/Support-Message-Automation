@@ -8,6 +8,7 @@ export * from "./Dialog";
 export * from "./EmptyState";
 export * from "./Field";
 export * from "./FilterBar";
+export * from "./GroupPicker";
 export * from "./Help";
 export * from "./PageHeader";
 export * from "./Pagination";

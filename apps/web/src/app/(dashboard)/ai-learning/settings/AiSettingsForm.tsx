@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect } from "react";
-import { Alert, Button, Card, Field, Input, SectionHeader, Select, SwitchField, Textarea, useToast } from "@/components/ui";
+import { Alert, Button, Card, Field, GroupPicker, Input, SectionHeader, Select, SwitchField, Textarea, type PickableGroup, useToast } from "@/components/ui";
 import { updateAiSettings, type AiSettingsFormState } from "@/server/actions/aiSettings";
 import type { AiSettings } from "@prisma/client";
 
@@ -16,7 +16,13 @@ const ENGINE_TOGGLES: Array<{ key: keyof AiSettings; label: string }> = [
   { key: "announcementAiEnabled", label: "Announcement AI" },
 ];
 
-export function AiSettingsForm({ settings }: { settings: AiSettings }) {
+export function AiSettingsForm({
+  settings,
+  groups,
+}: {
+  settings: AiSettings;
+  groups: PickableGroup[];
+}) {
   const [state, formAction, pending] = useActionState<AiSettingsFormState, FormData>(updateAiSettings, {});
   const { showToast } = useToast();
 
@@ -225,16 +231,21 @@ export function AiSettingsForm({ settings }: { settings: AiSettings }) {
           title="When AI cannot handle it"
           description="Every time AI declines, is unsure, or fails, one alert is sent so a person can take over. Replying in that group then pauses AI there for the takeover cooldown above."
         />
-        <Field
-          label="Send takeover alerts to these WhatsApp groups"
-          hint="One group id per line. Leave blank to use the general notification group from Settings — existing setups keep alerting exactly where they already do."
-        >
-          <Textarea
+        <div className="mb-4">
+          <SwitchField
+            name="mentionTeamOnHandover"
+            defaultChecked={settings.mentionTeamOnHandover}
+            label="Also tag a team member in the customer's own group"
+            description="Posts one message in the conversation itself, @mentioning the group's assigned member — or whoever opted into handover alerts if there is none. The customer sees that somebody has been called, and the person is asked where the work actually is. Off by default: it puts an extra message in front of the customer."
+          />
+        </div>
+
+        <Field label="Send takeover alerts to these WhatsApp groups">
+          <GroupPicker
             name="takeoverNotifyGroupIds"
-            rows={3}
-            defaultValue={settings.takeoverNotifyGroupIds.join("\n")}
-            placeholder="1234567890-1234567890@g.us"
-            className="font-[family-name:var(--font-mono)] text-xs"
+            groups={groups}
+            defaultSelected={settings.takeoverNotifyGroupIds}
+            emptyMeaning="Nothing selected — takeover alerts go to the general notification group from Settings, exactly as they do now."
           />
         </Field>
       </Card>

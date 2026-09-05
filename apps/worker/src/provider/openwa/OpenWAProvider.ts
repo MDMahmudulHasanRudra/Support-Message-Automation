@@ -380,13 +380,27 @@ export class OpenWAProvider implements WhatsAppProvider {
     });
   }
 
-  async sendMessage(chatId: string, body: string): Promise<SendResult> {
+  async sendMessage(chatId: string, body: string, mentions?: string[]): Promise<SendResult> {
     if (!this.client) return { success: false, error: "Provider is not connected." };
     try {
       // ChatId is a branded template-literal string type; a plain runtime
       // string (from our DB) is structurally valid but needs an explicit
       // cast to satisfy the literal-pattern check.
-      const result = await this.client.sendText(chatId as ChatId, body as Content);
+      //
+      // sendTextWithMentions only when there is actually someone to tag: it is a different
+      // WhatsApp send path, and routing every ordinary reply through it to pass an empty array
+      // would change the behaviour of every message in the product to serve one feature.
+      // `hideTags: false` keeps the @name visible in the message — the whole point here is that a
+      // person reading the group can see who is being asked.
+      const result =
+        mentions && mentions.length > 0
+          ? await this.client.sendTextWithMentions(
+              chatId as ChatId,
+              body as Content,
+              false,
+              mentions as ContactId[],
+            )
+          : await this.client.sendText(chatId as ChatId, body as Content);
       return {
         success: Boolean(result),
         providerMessageId: typeof result === "string" ? result : undefined,

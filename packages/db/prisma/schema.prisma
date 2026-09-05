@@ -777,6 +777,10 @@ model OutboundMessage {
   relatedMessage   Message?              @relation(fields: [relatedMessageId], references: [id], onDelete: SetNull)
   ruleId           String?
   rule             AutomationRule?       @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  /// Contact ids to @mention when this is sent. Empty for almost everything — set only by the AI
+  /// handover mention, which tags a team member inside the customer's own group so a human is
+  /// pulled into the conversation rather than told about it somewhere else.
+  mentions         String[]              @default([])
   actionType       ActionType
   idempotencyKey   String                @unique
   status           OutboundMessageStatus @default(PENDING)
@@ -1247,6 +1251,11 @@ model AiSettings {
   /// reply threshold on purpose: answering once at 90% is fine, but codifying that answer
   /// into a standing rule deserves a higher bar.
   aiRuleGenerationMinConfidence   Int      @default(95)
+
+  /// When AI hands a conversation to a person, also post in the customer's own group tagging a
+  /// team member, so the request for help appears where the conversation is rather than only in a
+  /// separate alerts group. Off by default — it puts an extra message in front of the customer.
+  mentionTeamOnHandover           Boolean  @default(false)
   /// WhatsApp group ids that receive "AI could not handle this, a human is needed" alerts.
   /// Empty falls back to AutomationSettings.whatsappNotificationGroupIds, so existing
   /// deployments keep alerting exactly where they already did.

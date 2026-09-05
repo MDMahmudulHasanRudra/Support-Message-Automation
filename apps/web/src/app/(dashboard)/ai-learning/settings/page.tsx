@@ -6,7 +6,14 @@ import { AiSettingsForm } from "./AiSettingsForm";
 
 export default async function AiSettingsPage() {
   await requireSession();
-  const settings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+  const [settings, groups] = await Promise.all([
+    prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+    prisma.whatsAppGroup.findMany({
+      where: { isActive: true },
+      select: { whatsappGroupId: true, name: true, isMonitored: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   return (
     <div>
@@ -42,7 +49,7 @@ export default async function AiSettingsPage() {
           </HelpButton>
         }
       />
-      <AiSettingsForm settings={settings} />
+      <AiSettingsForm settings={settings} groups={groups} />
     </div>
   );
 }

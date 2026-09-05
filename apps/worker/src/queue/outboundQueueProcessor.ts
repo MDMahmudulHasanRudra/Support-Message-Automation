@@ -317,7 +317,7 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
   }
 
   try {
-    const result = await provider.sendMessage(message.chatId, message.body);
+    const result = await provider.sendMessage(message.chatId, message.body, message.mentions);
     if (result.success) {
       await prisma.outboundMessage.update({
         where: { id: message.id },

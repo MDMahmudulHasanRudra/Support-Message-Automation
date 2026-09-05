@@ -36,6 +36,8 @@ export async function enqueueOutboundMessage(params: {
    * every check take a quarter of a minute longer than it needs to.
    */
   testMode?: boolean;
+  /** Contact ids to @mention. Only the AI handover mention sets this. */
+  mentions?: string[];
 }): Promise<{ queued: boolean; outboundMessageId?: string }> {
   const idempotencyKey = buildOutboundIdempotencyKey({
     accountId: params.accountId,
@@ -64,6 +66,7 @@ export async function enqueueOutboundMessage(params: {
         actionType: params.actionType,
         idempotencyKey,
         delayMs,
+        mentions: params.mentions ?? [],
         scheduledAt: new Date(Date.now() + delayMs),
       },
     });

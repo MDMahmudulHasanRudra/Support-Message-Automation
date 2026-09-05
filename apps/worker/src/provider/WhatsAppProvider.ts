@@ -44,7 +44,11 @@ export interface WhatsAppProvider {
   getConnectionStatus(): ConnectionStatus;
   getGroups(): Promise<GroupInfo[]>;
   subscribeToMessages(handler: (message: RawIncomingMessage) => void): void;
-  sendMessage(chatId: string, body: string): Promise<SendResult>;
+  /**
+   * `mentions` are contact ids ("<digits>@c.us") to tag. WhatsApp only notifies a mentioned person
+   * if they are a participant of that chat; tagging someone who is not simply renders as text.
+   */
+  sendMessage(chatId: string, body: string, mentions?: string[]): Promise<SendResult>;
   getAccountInfo(): Promise<AccountInfo>;
   /**
    * Lightweight, single-chat membership check used by the Group Message
