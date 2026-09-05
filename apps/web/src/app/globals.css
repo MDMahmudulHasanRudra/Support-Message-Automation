@@ -465,3 +465,45 @@ p {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Touch pointers
+   ---------------------------------------------------------------------------
+   This console is dense on purpose: a support lead reads it on a desktop all
+   day, and small controls in a table row are what let a row stay one line.
+   That same density on a phone means a 32px button under a fingertip.
+
+   Scoped to the pointer rather than the screen width, because that is the real
+   distinction — a narrow browser window on a laptop is still a mouse and keeps
+   the tight spacing; a large tablet is still a finger and gets the bigger
+   targets.
+
+   These grow the controls themselves rather than adding an invisible larger
+   hit area. A halo is tempting because it changes no layout, but two ghost
+   buttons sitting side by side in a table row would end up with overlapping
+   invisible regions, and a tap landing on the wrong action is a worse problem
+   than a row being a few pixels taller.
+   --------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  /* 44px is the Apple HIG minimum and what most people are calibrated to.
+     min-height rather than height, so anything already taller is untouched. */
+  button,
+  [role="button"] {
+    min-height: 40px;
+  }
+
+  /* Checkboxes are the smallest thing anyone is asked to hit, and they sit in
+     the multi-select lists where a mis-tap selects the wrong row. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-height: 20px;
+    min-width: 20px;
+  }
+
+  /* Form controls, so a dropdown or a date field is not a sliver. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+  select,
+  textarea {
+    min-height: 40px;
+  }
+}

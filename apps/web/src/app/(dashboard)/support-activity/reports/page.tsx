@@ -120,7 +120,7 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
         ) : (
           <>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <StatTile label={`Counted Support (${rangeLabel})`} value={history?.countedSupport ?? 0} />
                 <StatTile label={`Activities (${rangeLabel})`} value={history?.rawActivityCount ?? 0} />
               </div>

@@ -97,7 +97,7 @@ export function TeamsConnectionCard({ info }: { info: TeamsConnectionInfo }) {
             {info.email ? <ModuleCardRow label="Email">{info.email}</ModuleCardRow> : null}
             <ModuleCardRow label="Last Sync">{info.lastSyncAt ?? "Just now"}</ModuleCardRow>
           </div>
-          <div className="grid grid-cols-3 gap-2 rounded-[var(--radius-sm)] bg-[var(--color-neutral-bg)]/50 p-3 text-center">
+          <div className="grid grid-cols-1 gap-2 rounded-[var(--radius-sm)] bg-[var(--color-neutral-bg)]/50 p-3 text-center min-[380px]:grid-cols-3">
             <div>
               <p className="text-lg font-semibold tabular-nums">{info.teamsCount}</p>
               <p className="text-[11px] text-[color:var(--color-muted-foreground)]">Teams</p>
