@@ -3,7 +3,8 @@ import { Plus } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
-import { Button, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { Download } from "lucide-react";
+import { Button, ButtonLink, HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import { IssuesTable, type IssueRow } from "./IssuesTable";
 
 export default async function IssuesPage() {
@@ -31,6 +32,10 @@ export default async function IssuesPage() {
         description="Links a customer's WhatsApp conversation to a developer's Teams thread — resolving the Teams thread can notify the customer automatically."
         actions={
           <>
+            <ButtonLink href="/api/teams/export?type=issues&format=xlsx">
+              <Download className="size-3.5" aria-hidden />
+              Export
+            </ButtonLink>
             <HelpButton moduleTitle="Issues">
               <HelpSection title="What this page is for">
                 <p>
