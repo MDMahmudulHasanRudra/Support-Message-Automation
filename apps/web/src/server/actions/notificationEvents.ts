@@ -50,3 +50,33 @@ export async function setNotificationEventEnabled(event: string, enabled: boolea
   revalidatePath("/notifications/events");
   revalidatePath("/notifications");
 }
+
+/**
+ * Which events one team member wants as a direct message.
+ *
+ * Stored as presence rather than a row per event with a boolean: an opt-in that does not exist is
+ * simply off, so a new event type added later does not silently start messaging everybody who
+ * happened to have a row.
+ */
+export async function updateMemberNotificationPreferences(
+  teamMemberId: string,
+  formData: FormData,
+): Promise<void> {
+  await requireSession();
+
+  const chosen = formData
+    .getAll("events")
+    .map(String)
+    .filter(isNotificationEvent);
+
+  await prisma.$transaction([
+    prisma.teamMemberNotificationPreference.deleteMany({ where: { teamMemberId } }),
+    prisma.teamMemberNotificationPreference.createMany({
+      data: chosen.map((event) => ({ teamMemberId, event })),
+      skipDuplicates: true,
+    }),
+  ]);
+
+  revalidatePath(`/team-members/${teamMemberId}/edit`);
+  revalidatePath("/notifications/events");
+}

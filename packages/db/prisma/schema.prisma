@@ -197,6 +197,25 @@ enum NotificationEvent {
   SUPPORT_ESCALATION
 }
 
+/// One team member's opt-in to be alerted directly about one kind of event.
+///
+/// The Notification Center's per-event settings decide whether an alert is raised and which shared
+/// groups it goes to. This decides who additionally gets it as a direct message — the difference
+/// between "the escalations group was told" and "the person on call was told".
+///
+/// Opt-in per member per event rather than a single "notify me" switch: the whole point is that
+/// somebody wants escalations at 2am and does not want unknown-pattern suggestions ever.
+model TeamMemberNotificationPreference {
+  teamMemberId String
+  teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  event        NotificationEvent
+
+  createdAt DateTime @default(now())
+
+  @@id([teamMemberId, event])
+  @@index([event])
+}
+
 /// Per-event delivery settings — the Notification Center's unit of configuration.
 ///
 /// Rows are created lazily on first use, so a deployment that has never opened the page behaves
@@ -633,6 +652,7 @@ model InternalTeamMember {
   completedSupportSessions  SupportSession[]        @relation("SupportSessionCompleted")
   supportRuleScopes         SupportRuleTeamMember[]
   supportIssues             SupportIssue[]
+  notificationPreferences TeamMemberNotificationPreference[]
 }
 
 model Message {

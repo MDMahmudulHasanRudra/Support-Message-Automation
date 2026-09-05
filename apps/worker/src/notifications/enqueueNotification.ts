@@ -1,6 +1,6 @@
 import { prisma } from "@support-automation/db";
 import type { NotificationEvent, NotificationType, Prisma } from "@prisma/client";
-import { getEventDelivery } from "./eventSettings.js";
+import { getDirectRecipients, getEventDelivery } from "./eventSettings.js";
 
 /**
  * Records a notification to be sent. The actual delivery (Teams webhook /
@@ -31,6 +31,37 @@ export async function enqueueNotification(params: {
     // AiFallbackDecision's notificationId, say) does not need a second code path, but no delivery
     // row exists and the dispatcher will never see it.
     return { id: "", suppressed: true };
+  }
+
+  // Direct copies to the people who asked to be told about this event personally. Additive: the
+  // shared group is still notified below, and a DM never replaces it — the group is the record,
+  // the DM is the tap on the shoulder.
+  //
+  // WhatsApp only, and only for the WhatsApp copy, so a Teams webhook does not also fan out to
+  // everyone's phone. Failures are swallowed per recipient: one person with a stale number must
+  // not stop the alert reaching the group or the others.
+  if (params.type === "WHATSAPP" && params.accountId) {
+    for (const recipient of await getDirectRecipients(params.event)) {
+      // Skip if this alert is already going to that exact chat, so somebody who has opted in AND
+      // is in the destination group does not get it twice.
+      if (recipient.chatId === params.destination) continue;
+      try {
+        await prisma.notification.create({
+          data: {
+            type: "WHATSAPP",
+            event: params.event,
+            destination: recipient.chatId,
+            accountId: params.accountId,
+            relatedMessageId: params.relatedMessageId ?? null,
+            relatedRuleId: params.relatedRuleId ?? null,
+            relatedPatternCandidateId: params.relatedPatternCandidateId ?? null,
+            payload: params.payload as Prisma.InputJsonValue,
+          },
+        });
+      } catch {
+        // Deliberately quiet: the group copy below is what matters.
+      }
+    }
   }
 
   const created = await prisma.notification.create({

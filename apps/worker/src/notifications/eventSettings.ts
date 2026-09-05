@@ -1,5 +1,6 @@
 import { prisma } from "@support-automation/db";
 import type { NotificationEvent, NotificationType } from "@prisma/client";
+import { buildWhatsAppContactId, hasReachablePhoneNumber, normalizePhoneNumber } from "@support-automation/shared";
 
 /**
  * The Notification Center's read side, used by every place that raises a notification.
@@ -57,4 +58,48 @@ export async function getEventDelivery(event: NotificationEvent): Promise<EventD
  */
 export function resolveWhatsAppDestinations(delivery: EventDelivery, globalGroupIds: string[]): string[] {
   return delivery.whatsappGroupIds ?? globalGroupIds;
+}
+
+export interface DirectRecipient {
+  teamMemberId: string;
+  name: string;
+  /** The 1:1 WhatsApp chat id to send to. */
+  chatId: string;
+}
+
+/**
+ * The team members who asked to be told about this event directly, as opposed to via a shared
+ * group.
+ *
+ * Silently skips anyone unreachable — someone mapped from message history has a WhatsApp id where
+ * their phone number should be, which identifies them in a group perfectly and cannot receive a
+ * direct message. That is surfaced where it can be fixed (a "Needs phone number" badge on Team
+ * Members) rather than as a delivery failure per alert, which would be noise on every escalation.
+ *
+ * Fails closed on error, unlike the rest of this module: a direct message is an ADDITION to the
+ * group alert, never a replacement for it. If this throws, the shared group has still been told,
+ * so the safe move is to send no extra copies rather than risk duplicating one.
+ */
+export async function getDirectRecipients(event: NotificationEvent): Promise<DirectRecipient[]> {
+  try {
+    const preferences = await prisma.teamMemberNotificationPreference.findMany({
+      where: { event, teamMember: { status: "ACTIVE" } },
+      select: { teamMember: { select: { id: true, name: true, phoneNumber: true, whatsappId: true } } },
+    });
+
+    const recipients: DirectRecipient[] = [];
+    for (const { teamMember } of preferences) {
+      if (!hasReachablePhoneNumber(teamMember)) continue;
+      const digits = normalizePhoneNumber(teamMember.phoneNumber);
+      if (!digits) continue;
+      recipients.push({
+        teamMemberId: teamMember.id,
+        name: teamMember.name,
+        chatId: buildWhatsAppContactId(digits),
+      });
+    }
+    return recipients;
+  } catch {
+    return [];
+  }
 }

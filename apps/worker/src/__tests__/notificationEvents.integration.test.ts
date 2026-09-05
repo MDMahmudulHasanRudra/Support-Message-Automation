@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@support-automation/db";
 import type { WhatsAppAccount } from "@prisma/client";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
-import { getEventDelivery, resolveWhatsAppDestinations } from "../notifications/eventSettings.js";
+import { getDirectRecipients, getEventDelivery, resolveWhatsAppDestinations } from "../notifications/eventSettings.js";
 
 /**
  * The Notification Center decides whether an alert is raised at all, which makes it the one place
@@ -145,5 +145,87 @@ describe("the event is recorded on the notification", () => {
 
     expect(row.event).toBe("SUPPORT_ESCALATION");
     expect(row.type).toBe("WHATSAPP");
+  });
+});
+
+describe("direct alerts to individual team members", () => {
+  const createdMemberIds: string[] = [];
+
+  async function optIn(phoneNumber: string, whatsappId: string | null) {
+    const member = await prisma.internalTeamMember.create({
+      data: { name: `Notify Test ${randomUUID()}`, phoneNumber, whatsappId, role: "Support", status: "ACTIVE" },
+    });
+    createdMemberIds.push(member.id);
+    await prisma.teamMemberNotificationPreference.create({
+      data: { teamMemberId: member.id, event: "SUPPORT_ESCALATION" },
+    });
+    return member;
+  }
+
+  afterEach(async () => {
+    if (createdMemberIds.length) {
+      await prisma.internalTeamMember.deleteMany({ where: { id: { in: createdMemberIds } } });
+      createdMemberIds.length = 0;
+    }
+  });
+
+  it("includes a member who opted in and has a real number", async () => {
+    const member = await optIn("+8801700000501", null);
+    const recipients = await getDirectRecipients("SUPPORT_ESCALATION");
+
+    expect(recipients.map((r) => r.teamMemberId)).toContain(member.id);
+    expect(recipients.find((r) => r.teamMemberId === member.id)?.chatId).toBe("8801700000501@c.us");
+  });
+
+  it("skips a member whose stored number is really a WhatsApp id", async () => {
+    // Recognised in groups, unreachable by DM. Skipped silently here and surfaced on Team Members
+    // instead, so an escalation is not accompanied by a delivery failure on every single alert.
+    const member = await optIn("161679983804516", "161679983804516");
+    const recipients = await getDirectRecipients("SUPPORT_ESCALATION");
+
+    expect(recipients.map((r) => r.teamMemberId)).not.toContain(member.id);
+  });
+
+  it("does not include a member who opted into a different event", async () => {
+    const member = await optIn("+8801700000502", null);
+    const recipients = await getDirectRecipients("UNKNOWN_PATTERN");
+
+    expect(recipients.map((r) => r.teamMemberId)).not.toContain(member.id);
+  });
+
+  it("does not include an inactive member", async () => {
+    const member = await optIn("+8801700000503", null);
+    await prisma.internalTeamMember.update({ where: { id: member.id }, data: { status: "INACTIVE" } });
+
+    const recipients = await getDirectRecipients("SUPPORT_ESCALATION");
+    expect(recipients.map((r) => r.teamMemberId)).not.toContain(member.id);
+  });
+
+  it("sends the member a copy in addition to the group, not instead of it", async () => {
+    // The group alert is the record; the direct message is the tap on the shoulder. Losing the
+    // group copy to gain a DM would be a downgrade.
+    const member = await optIn("+8801700000504", null);
+    await raise("SUPPORT_ESCALATION");
+
+    const rows = await prisma.notification.findMany({ where: { event: "SUPPORT_ESCALATION" } });
+    expect(rows.some((row) => row.destination === "123@g.us")).toBe(true);
+    expect(rows.some((row) => row.destination === "8801700000504@c.us")).toBe(true);
+    expect(member.id).toBeTruthy();
+  });
+
+  it("does not send twice when the destination is already that person's chat", async () => {
+    await optIn("+8801700000505", null);
+    await enqueueNotification({
+      type: "WHATSAPP",
+      event: "SUPPORT_ESCALATION",
+      destination: "8801700000505@c.us",
+      accountId: account.id,
+      payload: { body: "test" },
+    });
+
+    const rows = await prisma.notification.findMany({
+      where: { event: "SUPPORT_ESCALATION", destination: "8801700000505@c.us" },
+    });
+    expect(rows).toHaveLength(1);
   });
 });
