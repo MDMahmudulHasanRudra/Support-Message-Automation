@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { Alert, Button, Card, Field, GroupPicker, Input, SectionHeader, Select, SwitchField, Textarea, type PickableGroup, useToast } from "@/components/ui";
 import { ReplyLanguageField } from "./ReplyLanguageField";
 import { updateAiSettings, type AiSettingsFormState } from "@/server/actions/aiSettings";
@@ -48,6 +48,7 @@ export function AiSettingsForm({
   groups: PickableGroup[];
 }) {
   const [state, formAction, pending] = useActionState<AiSettingsFormState, FormData>(updateAiSettings, {});
+  const [responseMode, setResponseMode] = useState(settings.aiResponseMode as string);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -129,7 +130,11 @@ export function AiSettingsForm({
 
         <div className="space-y-4">
           <Field label="Response mode">
-            <Select name="aiResponseMode" defaultValue={settings.aiResponseMode}>
+            <Select
+              name="aiResponseMode"
+              value={responseMode}
+              onChange={(event) => setResponseMode(event.target.value)}
+            >
               <option value="STRICT_KNOWLEDGE_ONLY">Verified knowledge only</option>
               <option value="KNOWLEDGE_PLUS_FORGE">Knowledge + read the product source</option>
               <option value="KNOWLEDGE_PLUS_GENERAL">Knowledge + general questions</option>
@@ -139,10 +144,10 @@ export function AiSettingsForm({
 
           <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] p-4">
             <p className="text-[13px] font-medium text-[color:var(--color-foreground)]">
-              {MODE_COPY[settings.aiResponseMode]?.title}
+              {MODE_COPY[responseMode]?.title}
             </p>
             <p className="mt-1 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-              {MODE_COPY[settings.aiResponseMode]?.detail}
+              {MODE_COPY[responseMode]?.detail}
             </p>
           </div>
 
