@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 import { Alert, Button, Card, Field, GroupPicker, Input, SectionHeader, Select, SwitchField, Textarea, type PickableGroup, useToast } from "@/components/ui";
+import { ReplyLanguageField } from "./ReplyLanguageField";
 import { updateAiSettings, type AiSettingsFormState } from "@/server/actions/aiSettings";
 import type { AiSettings } from "@prisma/client";
 
@@ -182,28 +183,7 @@ export function AiSettingsForm({
               />
             </div>
 
-          <Field
-            label="Default reply language"
-            hint="Pick one, or type any other language. AI answers in this unless the customer clearly wrote in another — it switches for a message in a different script, or a fluent English sentence, but a greeting, a number, or Bengali typed in Latin letters all stay in this language."
-          >
-            {/* A list-backed input rather than a dropdown: the three below cover nearly every
-                case here, but the field is free text on purpose so a deployment serving another
-                language is not locked out of its own product. */}
-            <Input
-              name="defaultReplyLanguage"
-              list="reply-language-options"
-              defaultValue={settings.defaultReplyLanguage}
-              placeholder="Bengali (Bangla)"
-              maxLength={60}
-            />
-            <datalist id="reply-language-options">
-              <option value="Bengali (Bangla)">Bengali — replies in Bangla script</option>
-              <option value="English">English</option>
-              <option value="Banglish (Bengali written in Latin letters)">
-                Banglish — Bengali words, Latin letters
-              </option>
-            </datalist>
-          </Field>
+          <ReplyLanguageField defaultValue={settings.defaultReplyLanguage} />
           </div>
         </div>
       </Card>
