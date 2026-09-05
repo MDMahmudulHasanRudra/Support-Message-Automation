@@ -3,6 +3,7 @@ import {
   AlertCircle,
   BarChart3,
   Bell,
+  BellRing,
   BookOpen,
   ClipboardCheck,
   ClipboardList,
@@ -155,6 +156,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "System",
     links: [
       { href: "/notifications", label: "Notifications", icon: Bell },
+      { href: "/notifications/events", label: "Notification Center", icon: BellRing },
       { href: "/settings", label: "Settings", icon: SettingsIcon },
       { href: "/logs", label: "System Logs", icon: ConsoleIcon },
     ],

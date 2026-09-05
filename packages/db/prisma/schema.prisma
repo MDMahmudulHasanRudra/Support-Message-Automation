@@ -174,9 +174,52 @@ enum EscalationRecipientType {
   SYSTEM
 }
 
+/// The CHANNEL a notification goes out on. Distinct from NotificationEvent, which is why it was
+/// sent — the two were conflated before the Notification Center existed, so nothing recorded the
+/// reason and per-event routing, muting or reporting were all impossible.
 enum NotificationType {
   TEAMS
   WHATSAPP
+}
+
+/// Why a notification was sent. Derived from the five places in the worker that actually raise
+/// one, not invented — see apps/web/src/app/(dashboard)/notifications/events.
+enum NotificationEvent {
+  /// A rule with a NOTIFY_TEAMS action matched.
+  RULE_NOTIFY_TEAMS
+  /// A rule with a NOTIFY_WHATSAPP action matched.
+  RULE_NOTIFY_WHATSAPP
+  /// The AI could not answer a customer and handed the conversation to a person.
+  AI_HUMAN_FALLBACK
+  /// Pattern detection found a recurring question nothing handles yet.
+  UNKNOWN_PATTERN
+  /// A priority support case crossed an SLA tier.
+  SUPPORT_ESCALATION
+}
+
+/// Per-event delivery settings — the Notification Center's unit of configuration.
+///
+/// Rows are created lazily on first use, so a deployment that has never opened the page behaves
+/// exactly as it did before: `enabled` defaults true and the destination overrides are null,
+/// which means "use the global destinations", which is the old behaviour exactly.
+model NotificationEventSetting {
+  event NotificationEvent @id
+
+  /// Off means the event raises nothing at all. The point of the module: a team drowning in
+  /// unknown-pattern alerts can silence that one without losing escalation alerts.
+  enabled Boolean @default(true)
+
+  /// Per-channel switches. Both default on, matching the previous behaviour where an event went
+  /// wherever the global settings pointed.
+  sendToTeams    Boolean @default(true)
+  sendToWhatsApp Boolean @default(true)
+
+  /// WhatsApp groups for THIS event. Empty means fall back to
+  /// AutomationSettings.whatsappNotificationGroupIds, so routing is opt-in per event rather than
+  /// something every deployment has to configure before notifications work at all.
+  whatsappGroupIds String[] @default([])
+
+  updatedAt DateTime @updatedAt
 }
 
 enum NotificationStatus {
@@ -887,6 +930,9 @@ model GroupParticipantAddSettings {
 }
 
 model Notification {
+  /// Why this was sent. Nullable because rows written before the Notification Center existed have
+  /// no event to attribute, and guessing one from the payload would be a fabrication.
+  event NotificationEvent?
   id                        String             @id @default(cuid())
   type                      NotificationType
   /// Which WhatsApp account this was (or will be) sent through — only meaningful for
@@ -918,6 +964,8 @@ model Notification {
   @@index([status])
   @@index([relatedMessageId])
   @@index([relatedPatternCandidateId])
+
+  @@index([event, createdAt])
 }
 
 model WorkerCommand {

@@ -423,6 +423,7 @@ async function sendUnknownPatternAlert(
   for (const destination of automationSettings.whatsappNotificationGroupIds) {
     await enqueueNotification({
       type: "WHATSAPP",
+      event: "UNKNOWN_PATTERN",
       destination,
       accountId: resolution.accountId,
       relatedMessageId: latestEvidence?.matchedMessage.id ?? null,

@@ -1,4 +1,5 @@
 import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { getEventDelivery } from "../notifications/eventSettings.js";
 import type { EscalationStatus, Prisma, SupportEscalationCase, SupportPriority } from "@prisma/client";
 import { buildWhatsAppContactId, normalizePhoneNumber } from "@support-automation/shared";
 import { getAutomationSettings } from "../pipeline/settings.js";
@@ -193,6 +194,13 @@ async function fireEscalationEvent(params: {
   body: string;
   accountId: string;
 }): Promise<boolean> {
+  // Muting is checked here rather than inside enqueueNotification, because this path writes the
+  // Notification inside the same transaction as the SupportEscalationEvent — the two have to land
+  // together or a tier can fire twice. Fails open like the rest of the Notification Center: an
+  // escalation nobody saw is far worse than one that should have been muted.
+  const delivery = await getEventDelivery("SUPPORT_ESCALATION");
+  if (!delivery.enabled || !delivery.allowsChannel("WHATSAPP")) return false;
+
   try {
     await prisma.$transaction(async (tx) => {
       const event = await tx.supportEscalationEvent.create({
@@ -208,6 +216,12 @@ async function fireEscalationEvent(params: {
       const notification = await tx.notification.create({
         data: {
           type: "WHATSAPP",
+          // Written directly rather than through enqueueNotification() because it has to share the
+          // transaction that creates the SupportEscalationEvent — the two must land together or
+          // not at all, or a tier can fire twice. It still carries its event so the Notification
+          // Center can report on it; muting is checked by the caller instead, see
+          // shouldRaiseEscalationNotification().
+          event: "SUPPORT_ESCALATION",
           destination: params.destination,
           accountId: params.accountId,
           relatedMessageId: params.caseRow.triggerMessageId,

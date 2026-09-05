@@ -6,6 +6,7 @@ import type { AiClient } from "@support-automation/ai-client";
 import { enqueueOutboundMessage } from "./enqueueOutbound.js";
 import { buildExecutionIdempotencyKey } from "./idempotency.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
+import { getEventDelivery, resolveWhatsAppDestinations } from "../notifications/eventSettings.js";
 import { checkAutoReplySafety } from "./safety.js";
 import { getAutomationSettings } from "./settings.js";
 import { isActiveTeamMember } from "./teamFilter.js";
@@ -497,6 +498,7 @@ async function executeAction(params: {
       }
       await enqueueNotification({
         type: "TEAMS",
+        event: "RULE_NOTIFY_TEAMS",
         destination: settings.teamsWebhookUrl,
         relatedMessageId: message.id,
         relatedRuleId: matchedRule?.id ?? null,
@@ -520,9 +522,14 @@ async function executeAction(params: {
         `[whatsapp-routing] service=NOTIFY_WHATSAPP account=${resolution.accountLabel} accountId=${resolution.accountId} source=${resolution.source} action=ENQUEUE`,
       );
       const payload = buildNotificationPayload(raw, groupName, matchedRule, action);
-      for (const destination of settings.whatsappNotificationGroupIds) {
+      // Per-event routing: this event's own groups if the Notification Center has any, otherwise
+      // the global list this deployment always used.
+      const delivery = await getEventDelivery("RULE_NOTIFY_WHATSAPP");
+      const destinations = resolveWhatsAppDestinations(delivery, settings.whatsappNotificationGroupIds);
+      for (const destination of destinations) {
         await enqueueNotification({
           type: "WHATSAPP",
+          event: "RULE_NOTIFY_WHATSAPP",
           destination,
           accountId: resolution.accountId,
           relatedMessageId: message.id,

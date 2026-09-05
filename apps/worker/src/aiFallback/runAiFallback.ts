@@ -391,6 +391,7 @@ async function sendHumanFallbackAlert(params: {
     if (!isResolutionError(resolution)) {
       const { id } = await enqueueNotification({
         type: "WHATSAPP",
+        event: "AI_HUMAN_FALLBACK",
         destination: takeoverDestinations[0]!,
         accountId: resolution.accountId,
         relatedMessageId: params.messageId,
@@ -403,6 +404,7 @@ async function sendHumanFallbackAlert(params: {
   if (params.automationSettings.teamsWebhookUrl) {
     const { id } = await enqueueNotification({
       type: "TEAMS",
+      event: "AI_HUMAN_FALLBACK",
       destination: params.automationSettings.teamsWebhookUrl,
       relatedMessageId: params.messageId,
       payload,
