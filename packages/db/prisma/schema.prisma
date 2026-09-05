@@ -1256,6 +1256,16 @@ model AiSettings {
   /// team member, so the request for help appears where the conversation is rather than only in a
   /// separate alerts group. Off by default — it puts an extra message in front of the customer.
   mentionTeamOnHandover           Boolean  @default(false)
+
+  /// When no verified knowledge covers a customer's question, research it against the product's
+  /// own source there and then, and answer from what is found — instead of handing over and
+  /// researching it afterwards for the next person.
+  ///
+  /// Off by default, and it needs the Forge integration enabled and pointed at a project, because
+  /// it reads that project's source. Two things change when it is on: a customer waits longer for
+  /// a harder question, and answers written this way become reusable knowledge without a human
+  /// reading them first — the mechanical disclosure gate is what stands in for that review.
+  deepAnswerEnabled               Boolean  @default(false)
   /// WhatsApp group ids that receive "AI could not handle this, a human is needed" alerts.
   /// Empty falls back to AutomationSettings.whatsappNotificationGroupIds, so existing
   /// deployments keep alerting exactly where they already did.

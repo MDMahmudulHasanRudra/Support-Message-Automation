@@ -12,6 +12,7 @@ import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
 import { recordUnansweredQuestion } from "../forge/forgeResearchJob.js";
 import { mentionTeamForHandover } from "./mentionTeam.js";
+import { researchForCustomerQuestion } from "./deepAnswer.js";
 import { getApprovedStyleGuidance } from "../knowledge/communicationStyleJob.js";
 import { recordAiSupportActivity } from "../supportActivity/recordAiSupport.js";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
@@ -177,13 +178,33 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // product behaves rather than how a similar one generally does. Returns an empty list when
   // there is nothing relevant or the lookup fails — answering ungrounded is strictly better
   // than not answering.
-  const knowledge = await findRelevantKnowledge(params.message.body, params.group?.id ?? null);
+  let knowledge = await findRelevantKnowledge(params.message.body, params.group?.id ?? null);
+
+  // Nothing written down covers this. With deep answers on, go and find out now rather than
+  // handing over and researching it for the next person.
+  //
+  // This produces GROUNDING, not a reply — sanitised knowledge entries that the normal prompt
+  // below then answers from, exactly as if someone had written them months ago. So raw source
+  // never reaches the prompt that drafts a customer reply, and every gate after this point still
+  // applies unchanged. It is slower, which is the trade: a harder question takes longer.
+  let deepAnswerReason: string | undefined;
+  if (knowledge.length === 0 && aiSettings.deepAnswerEnabled) {
+    const researched = await researchForCustomerQuestion({
+      question: params.message.body,
+      groupId: params.group?.id ?? null,
+      client,
+    });
+    knowledge = researched.snippets;
+    deepAnswerReason = researched.reason;
+  }
 
   // Under STRICT_KNOWLEDGE_ONLY, nothing verified means nothing answered — whatever the
   // question turns out to be about. Since the outcome does not depend on the classification,
   // this is decided before the API call, so an ungroundable question costs nothing at all.
   if (aiSettings.aiResponseMode === "STRICT_KNOWLEDGE_ONLY" && knowledge.length === 0) {
-    await recordHumanFallback("NO_KNOWLEDGE");
+    // Naming why the research came back empty, so a handover after a deep-answer attempt is
+    // distinguishable from one where nothing was tried — "NO_KNOWLEDGE" alone would hide that.
+    await recordHumanFallback(deepAnswerReason ? `NO_KNOWLEDGE: ${deepAnswerReason}` : "NO_KNOWLEDGE");
     return;
   }
 

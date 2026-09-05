@@ -233,6 +233,15 @@ export function AiSettingsForm({
         />
         <div className="mb-4">
           <SwitchField
+            name="deepAnswerEnabled"
+            defaultChecked={settings.deepAnswerEnabled}
+            label="Research the answer instead of giving up"
+            description="When nothing in the knowledge base covers a question, read the product’s own source right then, work out the answer, and reply — rather than handing over and researching it for the next person. What it learns is saved, so the same question is answered instantly afterwards. Needs Product Knowledge (Forge) connected. Two trade-offs: a hard question takes noticeably longer to answer, and answers written this way become reusable knowledge without a person reading them first — the disclosure check that strips anything naming code, tables or internals is what stands in for that review."
+          />
+        </div>
+
+        <div className="mb-4">
+          <SwitchField
             name="mentionTeamOnHandover"
             defaultChecked={settings.mentionTeamOnHandover}
             label="Also tag a team member in the customer's own group"

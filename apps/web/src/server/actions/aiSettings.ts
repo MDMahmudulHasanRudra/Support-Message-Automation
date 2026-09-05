@@ -63,6 +63,7 @@ export async function updateAiSettings(
       aiAutomationScope: scope,
       aiRuleGenerationEnabled: flag("aiRuleGenerationEnabled"),
       mentionTeamOnHandover: flag("mentionTeamOnHandover"),
+      deepAnswerEnabled: flag("deepAnswerEnabled"),
       aiRuleGenerationMinConfidence: percent("aiRuleGenerationMinConfidence", 95),
       takeoverNotifyGroupIds,
       knowledgeFromChatEnabled: flag("knowledgeFromChatEnabled"),
