@@ -101,15 +101,21 @@ describe("resolveAiClient — provider kind resolution", () => {
     expect(await resolveAiClient("RESPONSE")).toBeNull();
   });
 
-  it("resolves an unimplemented kind (GOOGLE) to null, failing closed rather than throwing", async () => {
+  it("resolves a GOOGLE provider to OpenAiCompatibleClient", async () => {
+    // Gemini is reached through Google's own OpenAI-compatible chat-completions endpoint, so it
+    // needs no client of its own — it was unimplemented because their original API shape differed,
+    // which is no longer the constraint.
     const provider = await makeProvider("GOOGLE");
     await assignResponseModel(provider.id);
 
     const client = await resolveAiClient("RESPONSE");
-    expect(client).toBeNull();
+    expect(client).toBeInstanceOf(OpenAiCompatibleClient);
   });
 
-  it("resolves an unimplemented kind (CUSTOM) to null", async () => {
+  // CUSTOM stays reserved on purpose: every OpenAI-compatible endpoint is already reachable by
+  // choosing OPENAI and setting the API URL, so implementing this too would be a second way to do
+  // one thing.
+  it("resolves the still-reserved kind (CUSTOM) to null, failing closed rather than throwing", async () => {
     const provider = await makeProvider("CUSTOM");
     await assignResponseModel(provider.id);
 

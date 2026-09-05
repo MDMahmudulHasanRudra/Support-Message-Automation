@@ -71,7 +71,8 @@ export async function resolveAiClient(job: AiModelJob): Promise<AiClient | null>
  *
  * ANTHROPIC has its own SDK-backed client. OPENAI, OPENROUTER and OLLAMA all speak the standard
  * chat-completions protocol and share OpenAiCompatibleClient, differing only in default endpoint,
- * whether a key is sent, and how long a response may take. GOOGLE/CUSTOM remain reserved,
+ * whether a key is sent, and how long a response may take. GOOGLE joins them via Google's own
+ * OpenAI-compatible endpoint. CUSTOM remains reserved,
  * unimplemented enum values; a provider configured with either resolves to no client here, same as
  * any other "not ready" state.
  */

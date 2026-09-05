@@ -86,16 +86,22 @@ export const AI_PROVIDER_PROFILES: Record<AiProviderKind, AiProviderProfile> = {
   GOOGLE: {
     kind: "GOOGLE",
     label: "Google Gemini",
-    description: "Not implemented yet — Gemini's API differs enough to need its own client.",
-    defaultApiUrl: null,
+    description: "Gemini models direct from Google, through their OpenAI-compatible endpoint.",
+    // Google publishes an OpenAI-compatible chat-completions surface, so this needs no client of
+    // its own — the note that Gemini's API "differs enough to need its own client" was true of
+    // their original API shape and is no longer why this was unimplemented.
+    defaultApiUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     requiresApiKey: true,
-    implemented: false,
-    exampleModelId: "gemini-1.5-pro",
-    apiUrlHint: "",
+    implemented: true,
+    exampleModelId: "gemini-2.0-flash",
+    apiUrlHint: "Prefilled with Google's OpenAI-compatible endpoint. Leave it unless you proxy Gemini.",
   },
   CUSTOM: {
     kind: "CUSTOM",
     label: "Custom",
+    // Deliberately still reserved. Every OpenAI-compatible endpoint is already reachable by
+    // choosing OpenAI and setting the API URL, so offering this too would be a second way to do
+    // one thing — and the one that carries no prefilled endpoint or key rules to guide anyone.
     description: "Reserved. For anything OpenAI-compatible, use OpenAI and set the API URL instead.",
     defaultApiUrl: null,
     requiresApiKey: true,
@@ -111,7 +117,7 @@ export const SELECTABLE_AI_PROVIDER_KINDS: AiProviderKind[] = AI_PROVIDER_KIND.f
 );
 
 /** Kinds served by the shared OpenAI-compatible chat-completions client. */
-export const OPENAI_COMPATIBLE_KINDS: AiProviderKind[] = ["OPENAI", "OPENROUTER", "OLLAMA"];
+export const OPENAI_COMPATIBLE_KINDS: AiProviderKind[] = ["OPENAI", "OPENROUTER", "OLLAMA", "GOOGLE"];
 
 export function isOpenAiCompatibleKind(kind: string): boolean {
   return (OPENAI_COMPATIBLE_KINDS as string[]).includes(kind);
