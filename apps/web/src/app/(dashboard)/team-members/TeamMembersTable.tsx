@@ -3,13 +3,14 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Badge, Button, ConfirmDialog, EmptyState, Table, Td, Th } from "@/components/ui";
+import { Badge, Button, ConfirmDialog, EmptyState, Table, Td, Th, Tooltip } from "@/components/ui";
 import { deleteTeamMember, toggleTeamMemberStatus } from "@/server/actions/teamMembers";
 
 export interface TeamMemberRow {
   id: string;
   name: string;
   phoneNumber: string;
+  whatsappId: string | null;
   role: string;
   department: string | null;
   status: string;
@@ -54,7 +55,18 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
           {members.map((m) => (
             <tr key={m.id}>
               <Td>{m.name}</Td>
-              <Td className="font-[family-name:var(--font-mono)] text-xs">{m.phoneNumber}</Td>
+              <Td className="font-[family-name:var(--font-mono)] text-xs">
+                {m.phoneNumber}
+                {/* Mapped from message history, so this is a WhatsApp id rather than a number.
+                    It recognises them fine; it cannot receive an escalation. */}
+                {m.whatsappId && m.whatsappId.trim() === m.phoneNumber.trim() ? (
+                  <Tooltip content="This is a WhatsApp id, not a phone number. They will be recognised in groups, but a support escalation cannot reach them directly until you enter their real number.">
+                    <span className="ml-2 align-middle">
+                      <Badge color="yellow">Needs phone number</Badge>
+                    </span>
+                  </Tooltip>
+                ) : null}
+              </Td>
               <Td>{m.role}</Td>
               <Td>{m.department ?? "—"}</Td>
               <Td>

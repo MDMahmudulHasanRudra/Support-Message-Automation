@@ -1,7 +1,7 @@
 import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import { getEventDelivery } from "../notifications/eventSettings.js";
 import type { EscalationStatus, Prisma, SupportEscalationCase, SupportPriority } from "@prisma/client";
-import { buildWhatsAppContactId, normalizePhoneNumber } from "@support-automation/shared";
+import { buildWhatsAppContactId, hasReachablePhoneNumber, normalizePhoneNumber } from "@support-automation/shared";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { formatEscalationAlert } from "./formatEscalationMessage.js";
@@ -282,6 +282,19 @@ async function fireMemberTier(caseRow: SupportEscalationCase, level: number, acc
     });
     return;
   }
+  // Recognising this person and messaging them are different problems. Someone mapped from message
+  // history has a WhatsApp LID stored as their number, which identifies them perfectly and cannot
+  // receive a direct message — so this tier would send into nothing and report success.
+  if (!hasReachablePhoneNumber(member)) {
+    await logSystemEvent(
+      "WARN",
+      "support-escalation",
+      "Assigned team member has no real phone number, only a WhatsApp id — member tier skipped",
+      { caseId: caseRow.id, teamMemberId: member.id, teamMemberName: member.name },
+    );
+    return;
+  }
+
   const memberDigits = normalizePhoneNumber(member.phoneNumber);
   if (!memberDigits) {
     await logSystemEvent("WARN", "support-escalation", "Assigned team member has an unusable phone number — member tier skipped", {
