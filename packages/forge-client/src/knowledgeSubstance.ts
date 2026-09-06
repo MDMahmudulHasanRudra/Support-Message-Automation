@@ -19,6 +19,14 @@
  * to judge quality: a terse entry that names a real screen or a real number passes, because
  * brevity is not the defect — emptiness is.
  *
+ * **Length was tried as a rule and removed.** A 120-character floor looked reasonable against a
+ * knowledge base whose median answer is under 200, and on the first live run it withheld exactly
+ * three entries, all of them good: a complete procurement workflow ("Requisition -> Approval ->
+ * Purchase Order -> Goods Receipt -> Payment", 113 characters), and two precise facts about due
+ * amounts and double-entry accounting. Density is not the same as length, and a rule that holds
+ * back the three best entries of a batch to catch nothing is worse than no rule. Do not add it
+ * back; if short filler needs catching, catch it by what it fails to say.
+ *
  * Pure functions over strings, so they can be unit tested exhaustively without a database, a
  * network, or a model.
  */
@@ -85,9 +93,6 @@ const NUMBER = /\d/;
  */
 const MID_SENTENCE_PROPER_NOUN = /[a-z,]\s+(?:[A-Z][a-zA-Z]+|b[A-Z][a-z]+)/;
 
-/** Below this an "answer" is a sentence fragment, not an answer — matched to the observed floor. */
-const MIN_SUBSTANTIVE_ANSWER_CHARS = 120;
-
 function countGenericMarkers(text: string): number {
   return GENERIC_MARKERS.filter((marker) => marker.test(text)).length;
 }
@@ -116,7 +121,6 @@ export function checkKnowledgeSubstance(answer: string): SubstanceVerdict {
 
   const bare = !hasConcreteAnchor(stripGenericMarkers(text));
 
-  if (text.length < MIN_SUBSTANTIVE_ANSWER_CHARS) reasons.push("too-short");
   // Boilerplate is only a defect when nothing survives it. Run against the live knowledge base,
   // "names nothing concrete" on its own failed 88 of 318 entries, and reading them showed the
   // rule was wrong rather than the entries: "a bill can be cancelled, which creates a reversal
@@ -137,8 +141,6 @@ export function checkKnowledgeEntrySubstance(entry: { answer: string }): Substan
 /** Plain language for a reviewer, mirroring `describeViolation` next door. */
 export function describeSubstanceReason(id: string): string {
   switch (id) {
-    case "too-short":
-      return "The answer is too short to carry a procedure or a fact.";
     case "generic-advice":
       return "The answer is mostly generic advice that would fit any product.";
     default:

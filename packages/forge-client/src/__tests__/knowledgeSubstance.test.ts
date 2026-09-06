@@ -68,13 +68,6 @@ describe("checkKnowledgeSubstance — real entries that must FAIL", () => {
     expect(verdict.reasons).toContain("generic-advice");
   });
 
-  it("flags a short answer that says nothing", () => {
-    const verdict = checkKnowledgeSubstance(
-      "If you don't receive a response, please check if your question was submitted correctly.",
-    );
-    expect(verdict.substantive).toBe(false);
-    expect(verdict.reasons).toContain("too-short");
-  });
 
 });
 
@@ -104,15 +97,34 @@ describe("naming nothing concrete is advisory, not disqualifying", () => {
   });
 });
 
+describe("short but dense answers survive — the entries a length rule wrongly withheld", () => {
+  // Verbatim from the first live sync after the gate shipped. A 120-character floor held all
+  // three back, and all three were among the best entries in that batch of 132.
+  const WITHHELD_IN_PRODUCTION = [
+    "The procurement workflow is: Requisition (Request) --> Approval --> Purchase Order --> Goods Receipt --> Payment.",
+    "The due amount for each period includes all unpaid balances from all previous periods.",
+    "Every financial transaction creates balanced journal entries to ensure double-entry accounting.",
+  ];
+
+  for (const answer of WITHHELD_IN_PRODUCTION) {
+    it(`keeps: ${answer.slice(0, 45)}…`, () => {
+      const verdict = checkKnowledgeSubstance(answer);
+      expect(verdict.substantive).toBe(true);
+      expect(verdict.reasons).toEqual([]);
+    });
+  }
+});
+
 describe("reasons are reportable", () => {
   it("describes every rule it can emit", () => {
-    for (const id of ["too-short", "generic-advice"]) {
+    for (const id of ["generic-advice"]) {
       expect(describeSubstanceReason(id)).not.toMatch(/did not meet/);
     }
   });
 
-  it("collects every reason that applies, not just the first", () => {
+  it("flags a short answer that is nothing but boilerplate", () => {
     const verdict = checkKnowledgeSubstance("Try again later or contact support for further assistance.");
-    expect(verdict.reasons).toEqual(expect.arrayContaining(["too-short", "generic-advice"]));
+    expect(verdict.substantive).toBe(false);
+    expect(verdict.reasons).toEqual(["generic-advice"]);
   });
 });
