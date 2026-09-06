@@ -10,6 +10,7 @@ import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
+import { expandQueryTerms } from "./queryExpansion.js";
 import { recordUnansweredQuestion } from "../forge/forgeResearchJob.js";
 import { mentionTeamForHandover } from "./mentionTeam.js";
 import { researchForCustomerQuestion } from "./deepAnswer.js";
@@ -178,7 +179,16 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // product behaves rather than how a similar one generally does. Returns an empty list when
   // there is nothing relevant or the lookup fails — answering ungrounded is strictly better
   // than not answering.
-  let knowledge = await findRelevantKnowledge(params.message.body, params.group?.id ?? null);
+  //
+  // When the customer's own words find nothing, the search is retried in English rather than
+  // giving up on the knowledge base — most of these entries are English and most of these
+  // customers are not writing in it (see queryExpansion.ts). This runs before the deep-answer
+  // research below on purpose: researching the product's source to answer a question four
+  // verified entries already cover is the expensive way to arrive somewhere we could have
+  // reached with one small call.
+  let knowledge = await findRelevantKnowledge(params.message.body, params.group?.id ?? null, undefined, () =>
+    expandQueryTerms(client, params.message.body),
+  );
 
   // Nothing written down covers this. With deep answers on, go and find out now rather than
   // handing over and researching it for the next person.
