@@ -75,7 +75,7 @@ export function Sidebar({
           <BrandMark className="size-8 shrink-0" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-semibold leading-tight tracking-[-0.01em] text-[color:var(--color-foreground)]">
-              Support Automation
+              Softify Assist
             </p>
             <p className="truncate text-[11px] text-[color:var(--color-muted-foreground)]">{username}</p>
           </div>

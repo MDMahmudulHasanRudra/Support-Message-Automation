@@ -15,11 +15,12 @@ needs any of this.
 ### 1. Register an app in Azure
 
 1. Go to [Azure Portal → Microsoft Entra ID → App registrations → New registration](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/CreateApplicationBlade).
-2. Name it (e.g. "Support Automation — Teams Integration").
+2. Name it (e.g. "Softify Assist — Teams Integration").
 3. **Supported account types**: "Accounts in this organizational directory only" (single tenant) —
    this integration is designed for one connected organization, not a multi-tenant app.
 4. **Redirect URI**: platform "Web", value matching `MICROSOFT_REDIRECT_URI` below exactly
-   (e.g. `http://localhost:3000/api/teams/callback` for local dev, or your real domain in production).
+   (`https://assist.softifybd.com/api/teams/callback` in production, or
+   `http://localhost:8668/api/teams/callback` for local dev — register both if you need both).
 5. Click **Register**.
 
 ### 2. Create a client secret

@@ -12,7 +12,7 @@ export interface AiAdminChatResult {
   toolsUsed: string[];
 }
 
-const SYSTEM_PROMPT = `You are the AI Admin Assistant for a WhatsApp Support Automation dashboard.
+const SYSTEM_PROMPT = `You are the AI Admin Assistant for Softify Assist, a WhatsApp support automation dashboard.
 
 Rules:
 - Only state facts you got back from a tool call. If a tool doesn't give you what you need, say the information isn't available — never invent numbers, group names, statuses, or settings.

@@ -4,8 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Rule-based WhatsApp support automation: a Next.js dashboard (`apps/web`), a dedicated OpenWA
-worker (`apps/worker`), and a PostgreSQL/Prisma backend (`packages/db`), run via Docker Compose.
+**Softify Assist** (production: `https://assist.softifybd.com`). Rule-based WhatsApp support
+automation: a Next.js dashboard (`apps/web`), a dedicated OpenWA worker (`apps/worker`), and a
+PostgreSQL/Prisma backend (`packages/db`), run via Docker Compose. The npm scope
+(`@support-automation/*`), the git repo name (`support-crm`) and the Docker volume names predate
+the product name and are deliberately unchanged — renaming them touches every import and every
+stateful volume, so treat "Softify Assist" as the user-facing name only.
 `README.md`'s status line is kept current — check it first for what's actually shipped.
 `ARCHITECTURE.md` is the durable, still-accurate design reference (component boundaries,
 DB-mediated web⇄worker coordination, provider abstraction, full data model by feature area); treat
@@ -37,7 +41,7 @@ that deploy against the live DB without the user's explicit go-ahead.
 pnpm install
 pnpm --filter @support-automation/db generate   # generate Prisma client (run after install / schema changes)
 
-pnpm dev:web                                     # apps/web on :3000
+PORT=8668 pnpm dev:web                           # apps/web (NEXTAUTH_URL must match the port)
 pnpm dev:worker                                  # apps/worker
 
 pnpm build                                       # build all packages/apps
@@ -52,7 +56,7 @@ Docker (full stack, matches production topology):
 ```bash
 cp .env.example .env
 docker compose up -d --build
-docker compose ps    # postgres, app (:3000), worker (no published port) should all be healthy
+docker compose ps    # postgres, app (:8668 on the host), worker (no published port) should all be healthy
 ```
 
 ### Testing
