@@ -1,4 +1,5 @@
 import type { AiClient } from "@support-automation/ai-client";
+import { formatConversationTranscript, type ConversationTurn } from "./conversationContext.js";
 
 /**
  * Turns a customer's question into English search terms, so verified knowledge written in English
@@ -50,6 +51,12 @@ const SYSTEM_PROMPT = [
   `- At most ${MAX_TERMS} keywords. Prefer nouns and verbs that would appear in a manual.`,
   "- If the message carries no searchable subject at all (a greeting, 'ok', 'thanks'), output",
   "  nothing at all.",
+  "",
+  "You may be given the conversation so far. A follow-up question often carries no subject of its",
+  "own — 'does the same apply for this client?' is unsearchable until you read what 'the same'",
+  "was. Take the subject from the earlier turns and write keywords for THAT, not for the",
+  "pronouns. If the conversation does not settle what is being asked either, output nothing:",
+  "searching for the wrong subject is worse than searching for none.",
 ].join("\n");
 
 /**
@@ -92,14 +99,23 @@ export function parseExpandedTerms(raw: string): string[] {
  * retrieval already came back empty — so every failure mode has to degrade to "no expansion",
  * leaving exactly the behaviour that existed before this function did.
  */
-export async function expandQueryTerms(client: AiClient, customerMessage: string): Promise<string[]> {
+export async function expandQueryTerms(
+  client: AiClient,
+  customerMessage: string,
+  conversation: ConversationTurn[] = [],
+): Promise<string[]> {
   const question = customerMessage.trim().slice(0, MAX_MESSAGE_CHARS);
   if (question.length < MIN_TERM_LENGTH) return [];
+
+  const transcript = formatConversationTranscript(conversation);
+  const userPrompt = transcript
+    ? `Conversation so far:\n${transcript}\n\nLatest message to search for:\n${question}`
+    : question;
 
   try {
     const completion = await client.complete({
       systemPrompt: SYSTEM_PROMPT,
-      userPrompt: question,
+      userPrompt,
       // Keywords, not prose. Small enough that a model ignoring the format runs out before it can
       // write a paragraph the parser would have to reject anyway.
       maxTokens: 120,

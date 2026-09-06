@@ -6,6 +6,7 @@
  */
 
 import type { KnowledgeSnippet } from "./knowledgeContext.js";
+import { formatConversationTranscript, type ConversationTurn } from "./conversationContext.js";
 
 export interface FallbackPromptInput {
   customerMessage: string;
@@ -27,6 +28,15 @@ export interface FallbackPromptInput {
    * human-verified — see knowledgeContext.ts for why unverified entries never reach here.
    */
   knowledge?: KnowledgeSnippet[];
+  /**
+   * The turns before this message in the same conversation, oldest first, already reduced to
+   * roles (`conversationContext.ts`). Present so a follow-up reads as a follow-up — "same process
+   * for this client?" is unanswerable without it, and was being answered anyway.
+   *
+   * It is context, never evidence. What was said earlier explains the question; only verified
+   * knowledge may justify the answer, and the prompt says so in as many words.
+   */
+  conversation?: ConversationTurn[];
 }
 
 export interface FallbackPrompt {
@@ -38,6 +48,7 @@ export interface FallbackPrompt {
 
 export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt {
   const knowledge = input.knowledge ?? [];
+  const transcript = formatConversationTranscript(input.conversation ?? []);
   const language = input.defaultReplyLanguage?.trim() || "Bengali (Bangla)";
   const styleGuidance = input.styleGuidance?.trim() || null;
 
@@ -86,6 +97,18 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
           "nothing to reassure them with, hand over to a human instead of inventing comfort.",
         ]
       : []),
+    ...(transcript
+      ? [
+          "CONVERSATION SO FAR. You are given the recent turns of this conversation because a",
+          "customer's message is often a follow-up — \"does the same apply here?\" means nothing on",
+          "its own, and answering it as though it were a fresh question is how a confident wrong",
+          "answer gets sent. Use the transcript to work out WHAT IS BEING ASKED.",
+          "Never use it to work out what is TRUE. Earlier replies in it are what was said, not what",
+          "has been verified — including this system's own, which may have been wrong. A fact still",
+          "has to come from the reference material or from a person, exactly as it would if the",
+          "conversation were not there.",
+        ]
+      : []),
     ...(knowledge.length > 0
       ? [
           "You are given reference material from this team's own verified knowledge base.",
@@ -114,8 +137,13 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
         ]
       : [];
 
+  const conversationBlock = transcript
+    ? ["", "Conversation so far (oldest first, this team's replies marked SUPPORT):", transcript, ""]
+    : [];
+
   const userPrompt = [
     `Group: ${input.groupName ?? "(direct message)"}`,
+    ...conversationBlock,
     `Customer message: "${input.customerMessage}"`,
     ...referenceBlock,
     "",

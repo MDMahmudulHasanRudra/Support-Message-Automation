@@ -11,6 +11,7 @@ import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
 import { expandQueryTerms } from "./queryExpansion.js";
+import { loadConversationContext } from "./conversationContext.js";
 import { recordUnansweredQuestion } from "../forge/forgeResearchJob.js";
 import { mentionTeamForHandover } from "./mentionTeam.js";
 import { researchForCustomerQuestion } from "./deepAnswer.js";
@@ -186,8 +187,18 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // research below on purpose: researching the product's source to answer a question four
   // verified entries already cover is the expensive way to arrive somewhere we could have
   // reached with one small call.
+  // The turns before this one, so a follow-up is understood as a follow-up rather than as the
+  // first thing anyone ever said. Empty for the first message of a conversation, and empty if the
+  // read fails — both leave exactly the behaviour that existed before this.
+  const conversation = await loadConversationContext({
+    accountId: params.accountId,
+    chatId: params.chatId,
+    currentMessageId: params.message.id,
+    currentMessageAt: params.message.timestampWa ?? new Date(),
+  });
+
   let knowledge = await findRelevantKnowledge(params.message.body, params.group?.id ?? null, undefined, () =>
-    expandQueryTerms(client, params.message.body),
+    expandQueryTerms(client, params.message.body, conversation),
   );
 
   // Nothing written down covers this. With deep answers on, go and find out now rather than
@@ -238,6 +249,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
         defaultReplyLanguage: aiSettings.defaultReplyLanguage,
         styleGuidance: await getApprovedStyleGuidance(),
         knowledge,
+        conversation,
       }),
     );
   } catch (err) {
