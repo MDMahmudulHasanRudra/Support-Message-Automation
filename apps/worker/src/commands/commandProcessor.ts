@@ -445,9 +445,34 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         // so the dashboard doesn't keep showing an account that's no longer actually connected.
         await provider.logout();
         await prisma.whatsAppAccount.update({ where: { id: accountId }, data: { phoneNumber: null } });
+
+        // Logging out is "this account left every group" as far as this app can tell, and it is
+        // the one case syncGroups' own deactivation sweep can never cover: that sweep runs from a
+        // live provider result, and a logged-out account never produces one again. Without this
+        // the rows stay isActive, so the chat inbox keeps listing conversations this number can no
+        // longer reach and every send fails membership verification at the queue — which is
+        // exactly how it looked: a full inbox where nothing could be answered.
+        //
+        // Deactivate only. isMonitored, aiAutomationEnabled and the rest stay untouched, because
+        // logging the SAME number back in must restore the setup rather than silently wipe it —
+        // syncGroups' upsert sets isActive true again and everything is as it was. Deleting these
+        // rows is never an option: Message, SupportActivity, SupportSession, escalation cases and
+        // AI decisions all hang off them.
+        const { count: deactivated } = await prisma.whatsAppGroup.updateMany({
+          where: { accountId, isActive: true },
+          data: { isActive: false },
+        });
+        if (deactivated > 0) {
+          await logSystemEvent("INFO", "commands", "Deactivated an account's groups after logout", {
+            accountId,
+            deactivated,
+            note: "Settings kept — reconnecting the same number restores them.",
+          });
+        }
+
         await prisma.workerCommand.update({
           where: { id: command.id },
-          data: { status: "DONE", processedAt: new Date(), result: { loggedOut: true } },
+          data: { status: "DONE", processedAt: new Date(), result: { loggedOut: true, groupsDeactivated: deactivated } },
         });
         break;
       }

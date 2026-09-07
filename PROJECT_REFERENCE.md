@@ -347,6 +347,22 @@ which services explicitly route to it. When `AUTHENTICATION_REQUIRED`, shows the
 **Logout** (danger — ends the session, needs a fresh QR), **Delete** (only if not Primary and more
 than one account exists). A banner shows how many commands are waiting for the worker to pick up.
 
+**Replacing the number that serves customers.** Primary and Account Routing decide where
+*notifications* go — they do **not** decide which number answers a customer. A reply always goes
+out on the account that received the message, because that is the account actually in the group;
+sending from another number fails the live membership check. So switching Primary does not move
+conversations. When a connected account has another account's group setup available to inherit, a
+**Moving to a new number** card appears here: it copies monitoring, AI, priority tier and assigned
+member for every group both numbers are in, and reports how many would carry before you commit.
+Nothing is removed from the other account. Logging an account out now deactivates its groups, so
+they leave the chat inbox instead of sitting there unanswerable — their settings are kept, and
+reconnecting the same number restores them.
+
+Two cautions the card states in place: the new number must be added to the groups on WhatsApp
+first (**Add Number to Groups** does it in bulk, but only from an account still in them — so keep
+the old number connected until that is done), and if both numbers stay in the same groups with AI
+on, customers get answered twice.
+
 ### Account Routing — `/accounts/routing`
 
 One row per real WhatsApp-sending service: **Support Notifications**, **Escalations**, **Unknown

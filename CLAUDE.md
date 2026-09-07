@@ -195,6 +195,41 @@ worker is down" from "the worker is up but this account will not connect". Every
 a `WorkerCommand` and waits; with the worker down they all still "succeed" and then do nothing,
 and the heartbeat is the only thing that distinguishes that from a slow reconnect.
 
+### Replacing the number that serves customers (`accounts.ts`, `GroupSetupTransfer.tsx`)
+
+**A customer reply always goes out on the account that received the message** — `runAiFallback` is
+handed `accountId: raw.accountId` and never calls `resolveWhatsAppAccount()`. Primary and Account
+Routing govern only the four *notification* service keys (`NOTIFY_WHATSAPP`, `PRIORITY_SUPPORT`,
+`CONVERSATION_LEARNING`, `TEAMS_RESOLUTION_NOTIFY`); none of them is "reply to a customer", and
+none could be — the send would fail `verifyGroupMembership` from an account that is not in the
+group. Setting an account Primary does not move existing conversations onto it.
+
+**Logout deactivates that account's groups** (the `LOGOUT` command handler). This is the one case
+`syncGroups`' own deactivation sweep can never cover: that sweep compares against a live provider
+result, and a logged-out account never produces one again. Left active, the rows keep filling the
+chat inbox (which filters `isActive: true`) with conversations the number can no longer reach, and
+every send fails membership verification at the queue. It sets `isActive: false` **only** —
+`isMonitored`, `aiAutomationEnabled` and the rest are untouched, so reconnecting the same number
+restores the setup via `syncGroups`' upsert. Deleting the rows is never an option: `Message`,
+`SupportActivity`, `SupportSession`, escalation cases, AI decisions and issues all hang off them.
+
+**`adoptGroupSetupFromAccount()` carries the setup across.** Because `WhatsAppGroup` is
+`@@unique([accountId, whatsappGroupId])`, one WhatsApp group is a separate row per account, so a
+new number's groups arrive with every flag at its default — unusable at roster scale. This copies
+`isMonitored`, `aiAutomationEnabled`, `aiAutomationExcluded`, `testModeEnabled`,
+`escalationMonitoringEnabled`, `priority` and `assignedTeamMemberId` for every **shared** group.
+Not copied, deliberately: the knowledge-build watermarks (they mark a position in *that* account's
+own stored messages) and `aiSuppressedUntil` (a live takeover timer, not a setting).
+
+It is an **explicit action, not something that fires on connect**. Two accounts running side by
+side is a supported arrangement, so "a new account appeared" cannot be read as "it is replacing
+that one" — and guessing wrong turns monitoring on for hundreds of groups under a second number,
+which means **every customer gets answered twice**. `getGroupSetupCandidates()` previews it, and
+its `wouldCarry` figure is the load-bearing number: setup can only land on a group the new account
+is also in, and a new number is in nothing until somebody adds it. "0 of 1,848 would carry" is the
+answer, not an error — the groups must be joined first, and **`addGroupParticipant` also verifies
+membership**, so bulk-adding the new number requires the old one still connected.
+
 ### WhatsApp provider abstraction
 
 `apps/worker/src/provider/WhatsAppProvider.ts` defines the interface (connect/disconnect/
