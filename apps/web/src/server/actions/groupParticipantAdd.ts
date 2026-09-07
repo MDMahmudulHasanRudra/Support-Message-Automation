@@ -13,7 +13,8 @@ export interface ParticipantAddTargetInput {
 
 export interface CreateParticipantAddJobInput {
   accountId: string;
-  phoneNumber: string;
+  /** One or more numbers. The work queued is every number against every group. */
+  phoneNumbers: string[];
   targets: ParticipantAddTargetInput[];
 }
 
@@ -37,8 +38,26 @@ export async function createGroupParticipantAddJob(
   const account = await prisma.whatsAppAccount.findUnique({ where: { id: input.accountId } });
   if (!account) return { error: "WhatsApp account not found." };
 
-  const phoneNumber = normalizePhoneNumber(input.phoneNumber);
-  if (!phoneNumber) return { error: "Enter a valid phone number (digits only, with country code)." };
+  // Normalize first, then dedupe on the normalized form: "+8801700000000" and "8801700000000" are
+  // one person, and queueing both would add them once and then report a failure for the second.
+  const phoneNumbers: string[] = [];
+  const invalid: string[] = [];
+  for (const raw of input.phoneNumbers) {
+    const normalized = normalizePhoneNumber(raw);
+    if (!normalized) {
+      if (raw.trim()) invalid.push(raw.trim());
+      continue;
+    }
+    if (!phoneNumbers.includes(normalized)) phoneNumbers.push(normalized);
+  }
+  if (invalid.length > 0) {
+    return {
+      error: `Not a valid number (digits and country code only): ${invalid.slice(0, 3).join(", ")}${
+        invalid.length > 3 ? ` and ${invalid.length - 3} more` : ""
+      }.`,
+    };
+  }
+  if (phoneNumbers.length === 0) return { error: "Add at least one phone number." };
 
   const dedupedTargets = dedupeByGroupId(input.targets);
   if (dedupedTargets.length === 0) return { error: "No target groups selected." };
@@ -49,9 +68,14 @@ export async function createGroupParticipantAddJob(
     create: { id: "global" },
   });
 
-  if (dedupedTargets.length > settings.maxPerJob) {
+  // The cap counts real work — every number against every group — not group rows. 5 people across
+  // 500 groups is 2,500 adds however few groups were ticked, and pacing is what makes that safe.
+  const totalAdds = dedupedTargets.length * phoneNumbers.length;
+  if (totalAdds > settings.maxPerJob) {
     return {
-      error: `This job has ${dedupedTargets.length} groups, exceeding the configured maximum of ${settings.maxPerJob} per job. Split it into smaller jobs.`,
+      error: `That is ${totalAdds.toLocaleString()} adds (${phoneNumbers.length} number${
+        phoneNumbers.length === 1 ? "" : "s"
+      } × ${dedupedTargets.length.toLocaleString()} groups), over the limit of ${settings.maxPerJob.toLocaleString()} per job. Raise it on Sending Limits, or select fewer.`,
     };
   }
 
@@ -84,9 +108,9 @@ export async function createGroupParticipantAddJob(
     data: {
       accountId: input.accountId,
       createdById: session.userId,
-      phoneNumber,
-      totalRequested: dedupedTargets.length,
-      queuedCount: toQueue.length,
+      phoneNumbers,
+      totalRequested: dedupedTargets.length * phoneNumbers.length,
+      queuedCount: toQueue.length * phoneNumbers.length,
       preQueueSkipped: preQueueSkipReasons.length,
       preQueueSkipReasons: preQueueSkipReasons as unknown as Prisma.InputJsonValue,
       delayMinMs: settings.delayMinMs,
@@ -97,17 +121,28 @@ export async function createGroupParticipantAddJob(
     },
   });
 
+  // Grouped by number rather than by group: one person lands everywhere before the next begins,
+  // so a job stopped halfway leaves whole people done instead of everybody half-added.
+  //
+  // createMany in chunks — a 2,000-row job issuing 2,000 separate inserts kept a server action
+  // open long enough to look hung, and the wizard cannot report progress until it returns.
   let cumulativeDelayMs = 0;
-  for (const target of toQueue) {
-    cumulativeDelayMs += randomDelayMs(settings.delayMinMs, settings.delayMaxMs);
-    await prisma.groupParticipantAddItem.create({
-      data: {
+  const rows: Prisma.GroupParticipantAddItemCreateManyInput[] = [];
+  for (const phone of phoneNumbers) {
+    for (const target of toQueue) {
+      cumulativeDelayMs += randomDelayMs(settings.delayMinMs, settings.delayMaxMs);
+      rows.push({
         jobId: job.id,
         groupId: target.groupId,
         groupNameSnapshot: target.groupName,
+        phoneNumber: phone,
         scheduledAt: new Date(Date.now() + cumulativeDelayMs),
-      },
-    });
+      });
+    }
+  }
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await prisma.groupParticipantAddItem.createMany({ data: rows.slice(i, i + CHUNK) });
   }
 
   revalidatePath("/group-member-adder");

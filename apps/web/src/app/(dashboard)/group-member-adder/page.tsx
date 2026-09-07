@@ -2,12 +2,17 @@
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { HelpButton, HelpSection, PageHeader } from "@/components/ui";
-import { GroupParticipantAddWizard, type AdderAccount } from "./GroupParticipantAddWizard";
+import { hasReachablePhoneNumber } from "@support-automation/shared";
+import {
+  GroupParticipantAddWizard,
+  type AdderAccount,
+  type AdderTeamMember,
+} from "./GroupParticipantAddWizard";
 
 export default async function GroupParticipantAdderPage() {
   await requireSession();
 
-  const [accounts, settings, automationSettings] = await Promise.all([
+  const [accounts, settings, automationSettings, roster] = await Promise.all([
     prisma.whatsAppAccount.findMany({
       where: { status: "CONNECTED" },
       include: { groups: { where: { isActive: true }, orderBy: { name: "asc" } } },
@@ -15,7 +20,25 @@ export default async function GroupParticipantAdderPage() {
     }),
     prisma.groupParticipantAddSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
     prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+    prisma.internalTeamMember.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, name: true, phoneNumber: true, whatsappId: true, role: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
+
+  // Anyone mapped from message history has a WhatsApp id where their number should be, and WhatsApp
+  // cannot add a participant by that — the add would fail for every group in the job. Left out of
+  // the picker entirely rather than offered and then failing hundreds of times; Team Members is
+  // where that gets fixed, and it already flags them.
+  const teamMembers: AdderTeamMember[] = roster
+    .filter(hasReachablePhoneNumber)
+    .map((member) => ({
+      id: member.id,
+      name: member.name,
+      phoneNumber: member.phoneNumber,
+      role: member.role,
+    }));
 
   const wizardAccounts: AdderAccount[] = accounts.map((a) => ({
     id: a.id,
@@ -28,29 +51,50 @@ export default async function GroupParticipantAdderPage() {
     <div>
       <PageHeader
         title="Add Number to Groups"
-        description="Add a phone number as a participant of every synchronized group, or a manual selection. Reuses the outbound queue's kill switch and its own dedicated throttling — adding participants is a stronger ban signal than messaging, so it's paced more conservatively."
+        description="Add one or more people to many WhatsApp groups at once. Queue it and leave — it works through the list on its own, paced to keep the account safe."
         actions={
           <HelpButton moduleTitle="Add Number to Groups">
             <HelpSection title="What this does">
               <p>
-                Adds one phone number as a participant to many WhatsApp groups at once — e.g. adding a
-                new teammate or a bot number to every support group in one go. Enter the number with
-                country code, digits only (no leading +), then pick target groups manually or select all.
+                Adds people as participants to many WhatsApp groups at once — a new teammate across
+                every support group, or your whole roster across a set of new ones. Pick team members
+                from the list, type other numbers, or both; everyone chosen is added to every group
+                you select.
+              </p>
+              <p>
+                Anyone already in a group is skipped without an add being attempted, so re-running
+                the same roster over a wider set of groups is safe and only does the new work.
+              </p>
+            </HelpSection>
+            <HelpSection title="Queue it once and leave it">
+              <p>
+                One job covers every number against every group, so five people across five hundred
+                groups is 2,500 adds — the wizard shows the count and a time estimate before you
+                confirm. It runs in the background at a fixed pace, survives a restart, and needs
+                nobody watching. A large job is not slower per add; it simply has more to do.
               </p>
             </HelpSection>
             <HelpSection title="Why this is paced more conservatively than Group Message Sender">
               <p>
                 WhatsApp treats bulk "add participant" actions as a stronger ban signal than bulk
-                messaging, so this feature is deliberately slower and smaller-batch: a 10–30 second delay
-                between adds (vs. 5–15s for messages), capped at 3 per minute (vs. 6), up to 100 groups per
-                job (vs. 200), and only 1 retry on failure (vs. 2) — the app biases toward account safety
-                over speed here.
+                messaging, so this is deliberately slower: a 10–30 second gap between adds (vs. 5–15s
+                for messages) and 3 per minute (vs. 6). That per-minute cap applies across every
+                running job, not to each one separately — which is what makes a large job safe, and
+                what makes splitting one into several pointless.
+              </p>
+              <p>
+                Change any of it on <strong>Add-to-Groups Limits</strong>.
               </p>
             </HelpSection>
             <HelpSection title="Before every add">
               <p>
                 The worker double-checks live that the account is still actually a member of the target
                 group before attempting to add — it never relies blindly on possibly-stale synced data.
+              </p>
+              <p>
+                Team members whose stored number is really a WhatsApp id are left out of the picker
+                entirely: WhatsApp cannot add a participant by that, so offering them would fail for
+                every group in the job. Fix those on Internal Team Members, where they are flagged.
               </p>
             </HelpSection>
             <HelpSection title="If automation is paused">
@@ -65,7 +109,9 @@ export default async function GroupParticipantAdderPage() {
       />
       <GroupParticipantAddWizard
         accounts={wizardAccounts}
+        teamMembers={teamMembers}
         maxPerJob={settings.maxPerJob}
+        maxPerMinute={settings.maxPerMinute}
         automationEnabled={automationSettings.automationEnabled}
       />
     </div>

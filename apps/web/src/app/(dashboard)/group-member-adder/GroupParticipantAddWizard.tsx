@@ -21,6 +21,7 @@ import {
   StepIndicator,
   Table,
   Td,
+  Textarea,
 } from "@/components/ui";
 import { createGroupParticipantAddJob } from "@/server/actions/groupParticipantAdd";
 
@@ -37,21 +38,37 @@ export interface AdderAccount {
   groups: AdderGroup[];
 }
 
-const STEP_LABELS = ["Select Account", "Number & Groups", "Review & Confirm"];
+const STEP_LABELS = ["Select Account", "Numbers & Groups", "Review & Confirm"];
+
+/** A roster member who can actually be added — see `reachable` on the page for what excludes one. */
+export interface AdderTeamMember {
+  id: string;
+  name: string;
+  phoneNumber: string;
+  role: string;
+}
 
 export function GroupParticipantAddWizard({
   accounts,
+  teamMembers,
   maxPerJob,
+  maxPerMinute,
   automationEnabled,
 }: {
   accounts: AdderAccount[];
+  teamMembers: AdderTeamMember[];
   maxPerJob: number;
+  maxPerMinute: number;
   automationEnabled: boolean;
 }) {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
-  const [phoneNumber, setPhoneNumber] = useState("");
+  // Two ways in, because both are real: adding the support roster to new groups is a pick-list
+  // job, and adding a number nobody has onboarded yet is a typing job. Kept as separate inputs
+  // rather than one combined box so picking a colleague cannot be undone by a stray keystroke.
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
+  const [extraNumbers, setExtraNumbers] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Map<string, string>>(new Map());
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -59,7 +76,34 @@ export function GroupParticipantAddWizard({
   const [error, setError] = useState<string | null>(null);
 
   const account = accounts.find((a) => a.id === accountId) ?? accounts[0] ?? null;
-  const normalizedPhone = normalizePhoneNumber(phoneNumber);
+
+  // Anything separated by a newline, comma or space. People paste from a spreadsheet, a chat
+  // message or their own notes, and rejecting a list because it used the wrong separator is a
+  // pointless thing to make somebody fix by hand.
+  const typedNumbers = useMemo(
+    () => extraNumbers.split(/[\s,;]+/).map((entry) => entry.trim()).filter(Boolean),
+    [extraNumbers],
+  );
+  const invalidTyped = useMemo(
+    () => typedNumbers.filter((entry) => !normalizePhoneNumber(entry)),
+    [typedNumbers],
+  );
+
+  const phoneNumbers = useMemo(() => {
+    const out: string[] = [];
+    for (const member of teamMembers) {
+      if (!selectedMemberIds.has(member.id)) continue;
+      const normalized = normalizePhoneNumber(member.phoneNumber);
+      if (normalized && !out.includes(normalized)) out.push(normalized);
+    }
+    for (const entry of typedNumbers) {
+      const normalized = normalizePhoneNumber(entry);
+      // Deduped against the picked members too: a number typed by hand that turns out to be a
+      // colleague already ticked would otherwise be queued twice, added once, and reported failed.
+      if (normalized && !out.includes(normalized)) out.push(normalized);
+    }
+    return out;
+  }, [teamMembers, selectedMemberIds, typedNumbers]);
 
   const filteredGroups = useMemo(() => {
     const groups = account?.groups ?? [];
@@ -72,7 +116,17 @@ export function GroupParticipantAddWizard({
     () => [...selected.entries()].map(([groupId, groupName]) => ({ groupId, groupName })),
     [selected],
   );
-  const overLimit = targets.length > maxPerJob;
+  // The unit that matters is adds, not groups: 5 people across 500 groups is 2,500 of them.
+  const totalAdds = targets.length * phoneNumbers.length;
+  const overLimit = totalAdds > maxPerJob;
+  const estimatedDuration = useMemo(() => {
+    if (totalAdds === 0 || maxPerMinute <= 0) return "—";
+    const minutes = Math.ceil(totalAdds / maxPerMinute);
+    if (minutes < 60) return `about ${minutes} minute${minutes === 1 ? "" : "s"}`;
+    const hours = minutes / 60;
+    if (hours < 24) return `about ${hours < 10 ? hours.toFixed(1) : Math.round(hours)} hours`;
+    return `about ${(hours / 24).toFixed(1)} days`;
+  }, [totalAdds, maxPerMinute]);
 
   function toggleGroup(g: AdderGroup) {
     setSelected((prev) => {
@@ -108,7 +162,7 @@ export function GroupParticipantAddWizard({
     try {
       const result = await createGroupParticipantAddJob({
         accountId: account.id,
-        phoneNumber,
+        phoneNumbers,
         targets,
       });
       if (result.error) {
@@ -167,16 +221,80 @@ export function GroupParticipantAddWizard({
 
       {step === 2 ? (
         <Card>
-          <SectionHeader title="Phone Number" />
-          <Field label="Number to add" hint="Include the country code, digits only (e.g. 8801XXXXXXXXX). No leading + needed.">
-            <Input
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="e.g. 8801XXXXXXXXX"
+          <SectionHeader
+            title="Who to add"
+            description="Pick from your team, type numbers, or both. Everyone chosen is added to every group you select below."
+          />
+
+          {teamMembers.length > 0 ? (
+            <div className="mb-4">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="text-[13px] font-medium text-[color:var(--color-foreground)]">
+                  Team members
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setSelectedMemberIds((prev) =>
+                      prev.size === teamMembers.length ? new Set() : new Set(teamMembers.map((m) => m.id)),
+                    )
+                  }
+                >
+                  {selectedMemberIds.size === teamMembers.length ? "Clear all" : `Select all (${teamMembers.length})`}
+                </Button>
+              </div>
+              <div className="max-h-56 overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--color-border)]">
+                {teamMembers.map((member) => (
+                  <label
+                    key={member.id}
+                    className="flex cursor-pointer items-center gap-3 border-b border-[color:var(--color-border)] px-3 py-2 last:border-b-0 hover:bg-[color:var(--color-muted)]"
+                  >
+                    <Checkbox
+                      checked={selectedMemberIds.has(member.id)}
+                      onChange={() =>
+                        setSelectedMemberIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(member.id)) next.delete(member.id);
+                          else next.add(member.id);
+                          return next;
+                        })
+                      }
+                    />
+                    <span className="min-w-0 flex-1 truncate text-[13px]">
+                      <span className="font-medium text-[color:var(--color-foreground)]">{member.name}</span>
+                      <span className="ml-2 text-[color:var(--color-muted-foreground)]">{member.role}</span>
+                    </span>
+                    <span className="tabular text-[13px] text-[color:var(--color-muted-foreground)]">
+                      {member.phoneNumber}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <Field
+            label="Other numbers"
+            hint="One per line, or separated by commas. Country code, digits only — no leading + needed."
+          >
+            <Textarea
+              value={extraNumbers}
+              onChange={(e) => setExtraNumbers(e.target.value)}
+              placeholder={"8801XXXXXXXXX\n8801YYYYYYYYY"}
+              rows={3}
             />
           </Field>
-          {phoneNumber.trim() && !normalizedPhone ? (
-            <FieldError>That doesn&apos;t look like a valid phone number.</FieldError>
+          {invalidTyped.length > 0 ? (
+            <FieldError>
+              Not a valid number: {invalidTyped.slice(0, 3).join(", ")}
+              {invalidTyped.length > 3 ? ` and ${invalidTyped.length - 3} more` : ""}.
+            </FieldError>
+          ) : null}
+          {phoneNumbers.length > 0 ? (
+            <p className="mt-2 text-[13px] text-[color:var(--color-muted-foreground)]">
+              {phoneNumbers.length} number{phoneNumbers.length === 1 ? "" : "s"} to add.
+            </p>
           ) : null}
 
           <div className="mt-6 border-t border-[var(--color-border)] pt-6">
@@ -225,21 +343,38 @@ export function GroupParticipantAddWizard({
 
       {step === 3 ? (
         <Card>
-          <SectionHeader title={`Review (${targets.length} group(s))`} />
+          <SectionHeader
+            title={`Review — ${totalAdds.toLocaleString()} add${totalAdds === 1 ? "" : "s"}`}
+            description={`${phoneNumbers.length} number${phoneNumbers.length === 1 ? "" : "s"} × ${targets.length.toLocaleString()} group${targets.length === 1 ? "" : "s"}. Anyone already in a group is skipped without an add being attempted.`}
+          />
           <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
             <StatTile label="Account" value={account?.label ?? ""} />
-            <StatTile label="Phone number" value={normalizedPhone ?? phoneNumber} />
-            <StatTile label="Target groups" value={targets.length} tone={overLimit ? "danger" : "neutral"} />
-            <StatTile label="Estimated queue size" value={targets.length} />
+            <StatTile label="Numbers" value={phoneNumbers.length} />
+            <StatTile label="Target groups" value={targets.length.toLocaleString()} />
+            <StatTile
+              label="Total adds"
+              value={totalAdds.toLocaleString()}
+              tone={overLimit ? "danger" : "neutral"}
+              // The honest expectation. At three per minute a full 2,000-add job runs for most of
+              // a day, and an operator who thinks it stalled will start a second one.
+              hint={estimatedDuration}
+            />
           </div>
           {overLimit ? (
             <div className="mb-3">
               <Alert tone="danger">
-                {targets.length} groups exceeds the configured maximum of {maxPerJob} per job. Remove some groups or
-                raise the limit in Settings before confirming.
+                {totalAdds.toLocaleString()} adds exceeds the maximum of {maxPerJob.toLocaleString()} per job. Select
+                fewer numbers or groups, or raise the limit on Sending Limits.
               </Alert>
             </div>
           ) : null}
+          <div className="mb-3">
+            <Alert tone="info">
+              This runs at {maxPerMinute} add{maxPerMinute === 1 ? "" : "s"} per minute across every job, so it will
+              take {estimatedDuration} and keep going on its own — leave the page, it does not need watching. Adding
+              participants is the strongest ban signal WhatsApp reacts to, which is why it is paced this way.
+            </Alert>
+          </div>
           {!automationEnabled ? (
             <div className="mb-3">
               <Alert tone="warning">
@@ -275,13 +410,13 @@ export function GroupParticipantAddWizard({
         </Button>
         {step < 3 ? (
           <Button
-            disabled={step === 2 && (targets.length === 0 || !normalizedPhone)}
+            disabled={step === 2 && (targets.length === 0 || phoneNumbers.length === 0 || invalidTyped.length > 0)}
             onClick={() => setStep((s) => Math.min(3, s + 1))}
           >
             Next
           </Button>
         ) : (
-          <Button disabled={targets.length === 0 || overLimit || !normalizedPhone} onClick={() => setConfirmOpen(true)}>
+          <Button disabled={targets.length === 0 || phoneNumbers.length === 0 || overLimit || invalidTyped.length > 0} onClick={() => setConfirmOpen(true)}>
             Confirm &amp; Queue
           </Button>
         )}
@@ -292,7 +427,7 @@ export function GroupParticipantAddWizard({
         onClose={() => setConfirmOpen(false)}
         onConfirm={handleConfirm}
         loading={confirming}
-        title={`Add ${normalizedPhone ?? phoneNumber} to ${targets.length} group(s)?`}
+        title={`Add ${phoneNumbers.length} number${phoneNumbers.length === 1 ? "" : "s"} to ${targets.length.toLocaleString()} group${targets.length === 1 ? "" : "s"}?`}
         description={
           automationEnabled
             ? "This queues the add-to-group requests for gradual processing by the worker."

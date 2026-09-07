@@ -124,6 +124,10 @@ enum GroupParticipantAddItemStatus {
   FAILED
   /// Job was stopped (by a user or the kill switch) before this item's turn came up.
   CANCELLED
+  /// This number was already in the group, so no add was attempted. Distinct from ADDED because
+  /// nothing changed, and distinct from FAILED because nothing went wrong — an operator re-running
+  /// a roster across every group needs to see which of the two happened.
+  SKIPPED_ALREADY_MEMBER
 }
 
 /// Support tier for Priority-Based Support Monitoring & Escalation. Null on WhatsAppGroup means
@@ -894,8 +898,12 @@ model GroupParticipantAddJob {
   account             WhatsAppAccount              @relation(fields: [accountId], references: [id], onDelete: Cascade)
   createdById         String?
   createdBy           User?                        @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  /// Normalized digits-only phone number (no "+", no leading zeros beyond the country code).
-  phoneNumber         String
+  /// Normalized digits-only phone numbers (no "+", no leading zeros beyond the country code).
+  /// One job adds several people across several groups: the work is (every number x every group),
+  /// one GroupParticipantAddItem each. Was a single `phoneNumber` — adding a support roster to a
+  /// set of groups meant one job per person, and the per-job rate limit made those safe only if
+  /// you also remembered to run them one at a time.
+  phoneNumbers        String[]                     @default([])
   status              GroupParticipantAddJobStatus @default(QUEUED)
   /// Snapshot of how many groups were requested vs. skipped before queueing even started
   /// (e.g. "all groups" resolved to zero active groups) — distinct from a per-item FAILED result.
@@ -926,6 +934,9 @@ model GroupParticipantAddItem {
   groupId           String
   group             WhatsAppGroup                 @relation(fields: [groupId], references: [id], onDelete: Cascade)
   groupNameSnapshot String
+  /// Which number this row adds. On the item rather than only the job, because one job now covers
+  /// several people and each (person, group) pair succeeds or fails on its own.
+  phoneNumber       String
   status            GroupParticipantAddItemStatus @default(PENDING)
   attemptCount      Int                           @default(0)
   failureReason     String?
@@ -934,7 +945,7 @@ model GroupParticipantAddItem {
   createdAt         DateTime                      @default(now())
   updatedAt         DateTime                      @updatedAt
 
-  @@unique([jobId, groupId])
+  @@unique([jobId, groupId, phoneNumber])
   @@index([status, scheduledAt])
 }
 
@@ -947,8 +958,14 @@ model GroupParticipantAddSettings {
   id               String   @id @default("global")
   delayMinMs       Int      @default(10000)
   delayMaxMs       Int      @default(30000)
+  /// Adds per minute across EVERY running job, not per job. It was per job, which meant the
+  /// per-job size cap actively created the danger it looked like it was preventing: an operator
+  /// with 2,000 groups had to split them into twenty jobs, and twenty jobs running at once ran at
+  /// twenty times this rate on the single operation WhatsApp punishes hardest.
   maxPerMinute     Int      @default(3)
-  maxPerJob        Int      @default(100)
+  /// Ceiling on (numbers x groups) queued by one job. Now that the rate limit is global, this
+  /// bounds a single mistake rather than the sending rate — a large job simply takes longer.
+  maxPerJob        Int      @default(2000)
   retryMaxAttempts Int      @default(1)
   updatedAt        DateTime @updatedAt
 }

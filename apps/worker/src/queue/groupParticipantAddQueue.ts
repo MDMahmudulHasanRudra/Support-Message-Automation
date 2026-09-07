@@ -11,10 +11,26 @@ export async function getGroupParticipantAddSettings() {
   });
 }
 
-/** Job-scoped throttle, independent of (and in addition to) the account-wide AutomationSettings rate limits. */
-export async function countJobAddedLastMinute(jobId: string): Promise<number> {
+/**
+ * Adds attempted in the last minute across EVERY job, independent of (and in addition to) the
+ * account-wide AutomationSettings rate limits.
+ *
+ * Was scoped to one job, which made the per-job size cap actively harmful rather than protective:
+ * moving 2,000 groups meant splitting into twenty jobs, nothing stopped those running at once, and
+ * twenty jobs at three per minute is sixty per minute on the single operation WhatsApp punishes
+ * hardest. A global count is what the setting always claimed to be.
+ *
+ * Counts SKIPPED_ALREADY_MEMBER too. Establishing that somebody is already in a group is itself a
+ * call to WhatsApp, so it costs the same budget as an add — pacing only the successful writes
+ * would let a large re-run hammer the API at full speed while reporting that it barely did
+ * anything.
+ */
+export async function countAddedLastMinute(): Promise<number> {
   return prisma.groupParticipantAddItem.count({
-    where: { jobId, status: "ADDED", processedAt: { gte: new Date(Date.now() - MINUTE_MS) } },
+    where: {
+      status: { in: ["ADDED", "SKIPPED_ALREADY_MEMBER"] },
+      processedAt: { gte: new Date(Date.now() - MINUTE_MS) },
+    },
   });
 }
 

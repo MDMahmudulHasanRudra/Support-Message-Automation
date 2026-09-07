@@ -62,7 +62,19 @@ export default async function GroupParticipantAddJobPage({ params }: { params: P
       <Card className="mb-4">
         <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
           <Field label="Account" value={job.account.label} />
-          <Field label="Phone number" value={job.phoneNumber} />
+          {/* One job now covers several people, so the count leads and the numbers themselves go
+              in the title — a job spanning a whole roster would otherwise push every other field
+              off the row. */}
+          <Field
+            label={job.phoneNumbers.length === 1 ? "Phone number" : `Numbers (${job.phoneNumbers.length})`}
+            value={
+              <span title={job.phoneNumbers.join(", ")}>
+                {job.phoneNumbers.length <= 2
+                  ? job.phoneNumbers.join(", ") || "—"
+                  : `${job.phoneNumbers.slice(0, 2).join(", ")} +${job.phoneNumbers.length - 2} more`}
+              </span>
+            }
+          />
           <Field label="Created by" value={job.createdBy?.name ?? job.createdBy?.email ?? "—"} />
           <Field
             label="Status"

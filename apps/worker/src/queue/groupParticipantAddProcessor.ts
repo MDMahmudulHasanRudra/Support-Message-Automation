@@ -1,9 +1,10 @@
 import { prisma } from "@support-automation/db";
 import type { GroupParticipantAddItem } from "@prisma/client";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
+import { normalizePhoneNumber } from "@support-automation/shared";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import {
-  countJobAddedLastMinute,
+  countAddedLastMinute,
   markJobStartedIfNeeded,
   markJobStoppedByKillSwitch,
   maybeCompleteParticipantAddJob,
@@ -44,7 +45,7 @@ async function claimNextItem() {
 
 /**
  * Pre-add gate: the job may have been stopped (by a user or the kill
- * switch) after this item was scheduled, or its own per-minute cap may
+ * switch) after this item was scheduled, or the per-minute cap may
  * already be exhausted by other items added since this one was queued.
  */
 async function handlePreAddChecks(item: GroupParticipantAddItem): Promise<"STOP_TICK" | "CONTINUE"> {
@@ -62,7 +63,10 @@ async function handlePreAddChecks(item: GroupParticipantAddItem): Promise<"STOP_
     return "STOP_TICK";
   }
 
-  const addedLastMinute = await countJobAddedLastMinute(item.jobId);
+  // Global, not this job's own count — see countAddedLastMinute for why the per-job version made
+  // the size cap dangerous. The ceiling still comes off this job's snapshot, so a job queued under
+  // an older, stricter setting keeps being paced by it.
+  const addedLastMinute = await countAddedLastMinute();
   if (addedLastMinute >= job.maxPerMinute) {
     // Defer, not a failure: claimNextItem() already flipped this row to PROCESSING — release it
     // back to PENDING, otherwise it would sit unreclaimed until the stuck-PROCESSING crash-recovery timeout.
@@ -153,8 +157,29 @@ async function processClaimedItem(item: GroupParticipantAddItem, provider: Whats
 
   const job = await prisma.groupParticipantAddJob.findUniqueOrThrow({ where: { id: item.jobId } });
 
+  // Already in the group? Nothing to do, and it matters that we look rather than just try: a
+  // rejected add is a signal WhatsApp counts against the number, and re-running a roster across
+  // groups it is partly already in would generate hundreds of them.
+  //
+  // Best effort by design. Participants now come back as opaque LIDs rather than phone numbers
+  // for anyone WhatsApp has migrated, so a member whose id is a LID will not match and the add is
+  // attempted anyway — which is the safe direction to be wrong in, since the attempt is what would
+  // have happened before this check existed.
+  if (await isAlreadyInGroup(provider, group.whatsappGroupId, item.phoneNumber)) {
+    await prisma.groupParticipantAddItem.update({
+      where: { id: item.id },
+      data: {
+        status: "SKIPPED_ALREADY_MEMBER",
+        processedAt: new Date(),
+        failureReason: null,
+      },
+    });
+    await maybeCompleteParticipantAddJob(item.jobId);
+    return;
+  }
+
   try {
-    const result = await provider.addGroupParticipant(group.whatsappGroupId, job.phoneNumber);
+    const result = await provider.addGroupParticipant(group.whatsappGroupId, item.phoneNumber);
     if (result.success) {
       await prisma.groupParticipantAddItem.update({
         where: { id: item.id },
@@ -168,6 +193,29 @@ async function processClaimedItem(item: GroupParticipantAddItem, provider: Whats
     await handleAddFailure(item, job.retryMaxAttempts, (err as Error).message);
   }
   return;
+}
+
+/**
+ * Whether this number is already a participant, compared on digits.
+ *
+ * Returns false on any doubt — an empty participant list (the provider is mid-reconnect, or the
+ * read failed) must read as "unknown", never as "already in", or a transient blip would silently
+ * skip every remaining group and report the job complete.
+ */
+async function isAlreadyInGroup(
+  provider: WhatsAppProvider,
+  whatsappGroupId: string,
+  phoneNumber: string,
+): Promise<boolean> {
+  try {
+    const participants = await provider.getGroupParticipants(whatsappGroupId);
+    if (participants.length === 0) return false;
+    const target = normalizePhoneNumber(phoneNumber);
+    if (!target) return false;
+    return participants.some((participant) => normalizePhoneNumber(participant.phoneNumber) === target);
+  } catch {
+    return false;
+  }
 }
 
 /**
