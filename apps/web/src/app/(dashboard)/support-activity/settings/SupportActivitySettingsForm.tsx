@@ -21,16 +21,12 @@ export function SupportActivitySettingsForm({ settings }: { settings: SupportAct
           description="Counts are always computed from the raw activity history, so changing this retroactively reinterprets past data too."
         />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field
-            label="Counting Mode"
-            hint="UNIQUE_GROUP: each group counts once per period. EVERY_ACTIVITY: every match counts. PER_TEAM_MEMBER: totals broken down per member."
-          >
-            <Select name="countingMode" defaultValue={settings.countingMode}>
-              <option value="UNIQUE_GROUP">Unique Group</option>
-              <option value="EVERY_ACTIVITY">Every Activity</option>
-              <option value="PER_TEAM_MEMBER">Per Team Member</option>
-            </Select>
-          </Field>
+          {/* There was a "Counting Mode" here offering Unique Group / Every Activity / Per Team
+              Member. Nothing read it — every number on every page was identical whichever you
+              picked — and it was redundant besides: the Activity Feed shows unique groups and total
+              activities as separate tiles, and per-member totals are their own table on Team
+              Performance. It was removed rather than wired up, because wiring it in would have
+              meant hiding one of two numbers people can already see. */}
           <Field label="Counting Period" hint="Which window the Activity and Team pages report against.">
             <Select name="countingPeriod" defaultValue={settings.countingPeriod}>
               <option value="DAILY">Daily</option>

@@ -373,6 +373,33 @@ two more lines for the same job as Settings (deciding what counts), so **Setup**
 their routes unchanged, and **Team Performance** leads because it is the question the module gets
 opened to answer.
 
+**The module measures what the team DID, so it was blind to the absence of it.** A customer
+nobody answered produces no `SupportActivity` row, opens no `SupportSession`, and therefore
+appeared nowhere — a busy week and a week with six people ignored read identically.
+`getGroupsAwaitingReply()` closes that: monitored, active groups whose newest `Message` is inbound
+and not from a team member, longest wait first. It reads `Message` rather than `SupportActivity`
+deliberately, so it depends on no rule being configured, no session completing and no counting
+setting being right. A reply is `direction = OUTGOING` (ours, including AI) **or**
+`isFromTeamMember` — an executive on the business phone produces the first, one present in the
+group as themselves produces the second.
+
+`getFirstResponseStats()` is the metric a support lead is judged on, and the module had nothing
+like it. Only messages that **start** a wait are measured — a customer sending four lines in a row
+is one person waiting once, and counting each would flatter the figure by dividing one real wait
+across three near-instant ones. **The median is the headline, not the average**: one conversation
+answered the next morning drags an average past every honest reading of the day. Average and worst
+case sit beside it, because the worst case is usually the one being complained about.
+
+**Two dead reports were deleted rather than left to be picked up.** `getDailyHoursWorked()` (0
+callers) summed `SupportSession.durationSeconds` and is the trap described above.
+`computeSupportActivityCount()` (0 callers) was the only consumer of
+`SupportActivitySettings.countingMode` — so that **setting did nothing at all**: it was saved,
+validated, offered in the form and reported by the AI assistant, while every number on every page
+stayed identical whichever value was chosen. It was dropped rather than wired up, because it is
+also redundant: the Activity Feed shows unique groups and total activities as separate tiles, and
+per-member totals are their own table, so wiring it in would have meant hiding one of two numbers
+already on screen.
+
 Team members can be added by picking real senders out of a group
 (`getGroupParticipantCandidates`) rather than typing numbers: the phone number is the exact match
 key, and a typo silently classifies a colleague as a customer.

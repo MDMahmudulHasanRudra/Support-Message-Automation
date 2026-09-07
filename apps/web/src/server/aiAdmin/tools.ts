@@ -40,7 +40,7 @@ export const AI_ADMIN_TOOLS: AiAdminTool[] = [
         getEveryActivityCount(today),
         getUniqueGroupCount(today),
       ]);
-      return { enabled: settings.enabled, countingMode: settings.countingMode, todayActivities, todaySupportedGroups };
+      return { enabled: settings.enabled, countingPeriod: settings.countingPeriod, todayActivities, todaySupportedGroups };
     },
   },
   {

@@ -1,5 +1,5 @@
 import { prisma } from "@support-automation/db";
-import type { SupportActivityActor, SupportActivityCountingMode } from "@prisma/client";
+import type { SupportActivityActor } from "@prisma/client";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 
 // Server-component-only read helpers for Support Activity Tracking's dashboard pages — no
@@ -115,20 +115,6 @@ export async function getPerTeamMemberBreakdown(range: DateRange): Promise<TeamM
     .sort((a, b) => b.activityCount - a.activityCount);
 }
 
-/** Dispatches on SupportActivitySettings.countingMode for a single headline number. */
-export async function computeSupportActivityCount(range: DateRange, mode: SupportActivityCountingMode): Promise<number> {
-  switch (mode) {
-    case "UNIQUE_GROUP":
-      return getUniqueGroupCount(range);
-    case "EVERY_ACTIVITY":
-      return getEveryActivityCount(range);
-    case "PER_TEAM_MEMBER": {
-      const breakdown = await getPerTeamMemberBreakdown(range);
-      return breakdown.reduce((sum, m) => sum + m.activityCount, 0);
-    }
-  }
-}
-
 export interface RecentActivityRow {
   id: string;
   occurredAt: Date;
@@ -219,45 +205,6 @@ export const STALE_SESSION_THRESHOLD_MS = 4 * 60 * 60 * 1000;
  *  group message must be to still count as actively available. */
 const AVAILABLE_WINDOW_MS = 30 * 60 * 1000;
 
-export interface HoursWorkedRow {
-  teamMemberId: string;
-  name: string;
-  totalSeconds: number;
-}
-
-/** Confirmed "hours worked" definition: sum of durationSeconds across every SupportSession a
- *  member closed (completedByTeamMemberId) whose completedAt falls in the given range — resolved
- *  support-session handling time, not attendance/clock-in hours. OPEN sessions never contribute
- *  (durationSeconds is null until completion); a manually-closed session only contributes if it
- *  happens to have a non-null completedByTeamMemberId, which today it never does (manual close
- *  always attributes to the admin instead — see getGroupSessionHistory's completedByLabel). */
-export async function getDailyHoursWorked(range: DateRange): Promise<HoursWorkedRow[]> {
-  const grouped = await prisma.supportSession.groupBy({
-    by: ["completedByTeamMemberId"],
-    where: {
-      status: "COMPLETED",
-      completedByTeamMemberId: { not: null },
-      completedAt: { gte: range.start, lt: range.end },
-    },
-    _sum: { durationSeconds: true },
-  });
-  if (grouped.length === 0) return [];
-
-  const members = await prisma.internalTeamMember.findMany({
-    where: { id: { in: grouped.map((g) => g.completedByTeamMemberId as string) } },
-    select: { id: true, name: true },
-  });
-  const nameById = new Map(members.map((m) => [m.id, m.name]));
-
-  return grouped
-    .map((g) => ({
-      teamMemberId: g.completedByTeamMemberId as string,
-      name: nameById.get(g.completedByTeamMemberId as string) ?? "(removed team member)",
-      totalSeconds: g._sum.durationSeconds ?? 0,
-    }))
-    .sort((a, b) => b.totalSeconds - a.totalSeconds);
-}
-
 export interface ExecutiveWorkloadRow {
   teamMemberId: string;
   name: string;
@@ -286,12 +233,13 @@ export interface ExecutiveWorkloadRow {
  * What each executive actually handled in a period: how many groups, how many messages, and how
  * long they were engaged.
  *
- * This replaces getDailyHoursWorked for the headline view. That function sums
- * SupportSession.durationSeconds, which is only written when a session COMPLETES, which requires a
- * rule whose keyword carries marksCompletion. A deployment running the "any team member message
- * counts" rule — the configuration this module is most often used in — has no such keyword, so its
- * sessions never complete and its hours-worked report is permanently empty while looking healthy.
- * Reading the activity rows directly has no such dependency.
+ * Reads the activity rows directly, and must keep doing so. The obvious alternative — summing
+ * SupportSession.durationSeconds — is a trap: that column is written only when a session
+ * COMPLETES, which requires a rule whose keyword carries marksCompletion. A deployment running the
+ * "any team member message counts" rule, which is the configuration this module is most often used
+ * in, has no such keyword, so its sessions never complete and any report built on them is
+ * permanently empty while looking perfectly healthy. A `getDailyHoursWorked` doing exactly that
+ * was deleted rather than left available to be picked up by mistake.
  *
  * One query rather than one per member: the previous per-member breakdown issued a groupBy and
  * then a second lookup, and anything wanting durations on top would have added a third per row.
@@ -527,5 +475,179 @@ export async function getGroupSupportHistory(groupId: string, range: DateRange) 
     rawActivityCount: activities.length,
     // Within a single group, UNIQUE_GROUP collapses to "1 if any activity occurred, else 0".
     countedSupport: activities.length > 0 ? 1 : 0,
+  };
+}
+
+export interface AwaitingReplyRow {
+  groupId: string;
+  groupName: string;
+  /** Who is waiting — their pushname if WhatsApp gave one, otherwise their number. */
+  customerName: string;
+  lastMessage: string;
+  waitingSince: Date;
+  waitingSeconds: number;
+  assignedTo: string | null;
+  priority: string | null;
+}
+
+/**
+ * Groups whose most recent message is from a customer — nobody has answered yet.
+ *
+ * This is the question the module could not previously answer at all. Everything else here counts
+ * what the team DID, so the one thing it was structurally blind to was the absence of it: a
+ * customer nobody replied to produces no SupportActivity row, opens no SupportSession, and
+ * therefore appeared nowhere. The busiest-looking week and a week with six people ignored look
+ * identical in an activity report.
+ *
+ * Deliberately reads `Message` rather than `SupportActivity`, so it depends on no rule being
+ * configured, no session ever completing, and no counting setting being right. If messages are
+ * being stored at all, this works.
+ *
+ * A reply is an outgoing message (ours, including AI) or an incoming one from a roster member —
+ * an executive on the business phone produces the former, an executive in the group as themselves
+ * produces the latter, and both mean the customer has been answered.
+ */
+export async function getGroupsAwaitingReply(now: Date = new Date()): Promise<AwaitingReplyRow[]> {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      groupId: string;
+      groupName: string;
+      customerName: string | null;
+      senderPhone: string;
+      lastMessage: string;
+      waitingSince: Date;
+      assignedTo: string | null;
+      priority: string | null;
+    }>
+  >`
+    WITH latest AS (
+      -- One row per group: its newest message, whoever sent it.
+      SELECT DISTINCT ON (m."groupId")
+        m."groupId"        AS group_id,
+        m."timestampWa"    AS ts,
+        m."direction"      AS direction,
+        m."isFromTeamMember" AS from_team,
+        m."body"           AS body,
+        m."senderName"     AS sender_name,
+        m."senderPhone"    AS sender_phone
+      FROM "Message" m
+      WHERE m."groupId" IS NOT NULL
+      ORDER BY m."groupId", m."timestampWa" DESC
+    )
+    SELECT
+      g."id"                  AS "groupId",
+      g."name"                AS "groupName",
+      l.sender_name           AS "customerName",
+      l.sender_phone          AS "senderPhone",
+      l.body                  AS "lastMessage",
+      l.ts                    AS "waitingSince",
+      t."name"                AS "assignedTo",
+      g."priority"::text      AS "priority"
+    FROM latest l
+    JOIN "WhatsAppGroup" g ON g."id" = l.group_id
+    LEFT JOIN "InternalTeamMember" t ON t."id" = g."assignedTeamMemberId"
+    WHERE g."isMonitored" = true
+      AND g."isActive" = true
+      -- The newest message being an inbound non-team one IS the definition of unanswered: any
+      -- reply would be newer and would have taken this row instead.
+      AND l.direction = 'INCOMING'
+      AND l.from_team = false
+    ORDER BY l.ts ASC
+    LIMIT 100
+  `;
+
+  return rows.map((row) => ({
+    groupId: row.groupId,
+    groupName: row.groupName,
+    customerName: row.customerName?.trim() || row.senderPhone,
+    lastMessage: row.lastMessage,
+    waitingSince: row.waitingSince,
+    waitingSeconds: Math.max(0, Math.round((now.getTime() - row.waitingSince.getTime()) / 1000)),
+    assignedTo: row.assignedTo,
+    priority: row.priority,
+  }));
+}
+
+export interface FirstResponseStats {
+  /** Customer messages in the range that started a wait and were eventually answered. */
+  answered: number;
+  /** Half of customers waited less than this. Null when nothing was answered in the range. */
+  medianSeconds: number | null;
+  averageSeconds: number | null;
+  /** The worst single wait, which is the one somebody complained about. */
+  slowestSeconds: number | null;
+}
+
+/**
+ * How long customers wait before somebody answers.
+ *
+ * The metric a support lead is actually judged on, and the module had nothing like it. What it had
+ * was `getAverageResolutionTime`, which reads SupportSession.durationSeconds — written only when a
+ * session COMPLETES, which needs a completion keyword. A deployment running the "any message
+ * counts" rule has none, so that number is permanently empty. This reads message timestamps, so it
+ * cannot be empty while conversations are happening.
+ *
+ * Only messages that START a wait are measured — a customer sending four lines in a row is one
+ * person waiting once, not four, and counting each would flatter the figure by dividing one real
+ * wait across three near-instant ones.
+ *
+ * **Median, not average, is the headline.** One conversation answered the next morning drags an
+ * average past every honest reading of the day; the median says what a typical customer
+ * experienced. The average and the worst case are returned beside it rather than instead of it,
+ * because the worst case is usually the one being complained about.
+ */
+export async function getFirstResponseStats(range: DateRange): Promise<FirstResponseStats> {
+  const [row] = await prisma.$queryRaw<
+    Array<{ answered: bigint; median: number | null; average: number | null; slowest: number | null }>
+  >`
+    WITH ordered AS (
+      SELECT
+        m."groupId" AS group_id,
+        m."timestampWa" AS ts,
+        (m."direction" = 'OUTGOING' OR m."isFromTeamMember" = true) AS is_reply
+      FROM "Message" m
+      JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
+      WHERE m."groupId" IS NOT NULL
+        AND g."isMonitored" = true
+        AND m."timestampWa" >= ${range.start}
+        AND m."timestampWa" < ${range.end}
+    ),
+    marked AS (
+      SELECT
+        ts,
+        is_reply,
+        LAG(is_reply) OVER (PARTITION BY group_id ORDER BY ts) AS prev_is_reply,
+        -- The next reply after this message, if any. Bounded to rows after the current one so a
+        -- message never answers itself.
+        MIN(ts) FILTER (WHERE is_reply) OVER (
+          PARTITION BY group_id ORDER BY ts
+          ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING
+        ) AS next_reply_ts
+      FROM ordered
+    ),
+    waits AS (
+      SELECT EXTRACT(EPOCH FROM (next_reply_ts - ts)) AS wait_seconds
+      FROM marked
+      WHERE is_reply = false
+        -- Starts a wait: the previous message was a reply, or there was nothing before it.
+        AND (prev_is_reply IS TRUE OR prev_is_reply IS NULL)
+        AND next_reply_ts IS NOT NULL
+    )
+    SELECT
+      COUNT(*)                                                        AS answered,
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY wait_seconds)::float AS median,
+      AVG(wait_seconds)::float                                        AS average,
+      MAX(wait_seconds)::float                                        AS slowest
+    FROM waits
+  `;
+
+  const answered = Number(row?.answered ?? 0);
+  if (answered === 0) return { answered: 0, medianSeconds: null, averageSeconds: null, slowestSeconds: null };
+
+  return {
+    answered,
+    medianSeconds: row?.median != null ? Math.round(row.median) : null,
+    averageSeconds: row?.average != null ? Math.round(row.average) : null,
+    slowestSeconds: row?.slowest != null ? Math.round(row.slowest) : null,
   };
 }

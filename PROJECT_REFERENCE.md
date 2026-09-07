@@ -188,6 +188,21 @@ figure summed session durations, which are only written when a session *complete
 completion keyword; a deployment using the "any message counts" rule has none, so that number was
 permanently empty while looking perfectly healthy.
 
+**Waiting for a reply** leads the page whenever anything is waiting: monitored groups whose
+newest message is from a customer, longest wait first, each linking straight to that conversation
+in the chat inbox. Deliberately **not** scoped to the selected period — somebody waiting since
+Friday is still waiting on Monday, and hiding them because the view says "today" is the exact
+failure it exists to fix. Waits over an hour are marked red.
+
+**Typical first reply** is the median time from a customer message to the first answer, with the
+count it is drawn from and the worst single wait beside it. Median rather than average on purpose:
+one conversation answered the next morning drags an average past every honest reading of the day.
+Only messages that *start* a wait count, so a customer sending four lines in a row is one person
+waiting once.
+
+Both read message history directly, so neither depends on rules being configured or sessions ever
+completing — they cannot be empty while conversations are happening.
+
 ### Activity Feed — `/support-activity`
 
 Stat tiles (labeled "Today's"/"This Week's"/"This Month's ..." depending on the configured
@@ -210,10 +225,14 @@ the most actionable (stale, then other open, then most recently started) surface
 ### Setup — `/support-activity/settings`
 
 Master **Enable Support Activity Tracking** switch (default off — no existing automation is
-affected either way). **Counting Mode**: `Unique Group` (each group counts once per period),
-`Every Activity` (every match counts), `Per Team Member` (totals per member — confirmed semantics:
-two activities by the same member in the *same* group still count as 2, not 1). **Counting
-Period**: `Daily`, `Weekly` (Sunday-start), `Monthly`. Counting is always computed live against the
+affected either way). **Counting Period**: `Daily`, `Weekly` (Sunday-start), `Monthly` — which
+window the Activity Feed reports against.
+
+There was also a **Counting Mode** here (Unique Group / Every Activity / Per Team Member). It was
+removed because it did nothing: no report read it, so every number on every page was identical
+whichever you picked. It was redundant too — the Activity Feed already shows unique groups and
+total activities as separate tiles, and per-member totals are their own table on Team Performance,
+so making it work would have meant hiding one of two numbers you can already see. Counting is always computed live against the
 raw activity table, never pre-aggregated, so changing a setting retroactively reinterprets history.
 Hosts the two pages below.
 

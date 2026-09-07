@@ -1996,12 +1996,6 @@ model RuleProposal {
 // engine's own evaluation — runs alongside it, never gated by its decision.
 // ---------------------------------------------------------------------------
 
-enum SupportActivityCountingMode {
-  UNIQUE_GROUP
-  EVERY_ACTIVITY
-  PER_TEAM_MEMBER
-}
-
 /// Closed enum (not a free string) so periods stay a pure enum-value + query addition, never a
 /// shape rewrite. WEEKLY starts Sunday (regional Fri/Sat weekend convention).
 enum SupportActivityCountingPeriod {
@@ -2060,12 +2054,10 @@ enum SupportSessionStatus {
 /// Singleton row (id is always the literal string "global"), same pattern as AutomationSettings/
 /// AiSettings/LearningSettings/SupportEscalationSettings. enabled defaults to false — the whole
 /// feature is off until an admin opts in; while off, apps/worker/src/supportActivity/detector.ts
-/// no-ops on every message and zero SupportActivity rows are ever written. countingMode/
 /// countingPeriod are global, not per-rule, by explicit requirement.
 model SupportActivitySettings {
   id             String                        @id @default("global")
   enabled        Boolean                       @default(false)
-  countingMode   SupportActivityCountingMode   @default(EVERY_ACTIVITY)
   countingPeriod SupportActivityCountingPeriod @default(DAILY)
   updatedAt      DateTime                      @updatedAt
 }
@@ -2153,7 +2145,6 @@ model SupportRuleTeamMember {
 /// One row per detected support-activity event — the raw, permanent history. Aggregated counts
 /// (UNIQUE_GROUP / EVERY_ACTIVITY / PER_TEAM_MEMBER, over SupportActivitySettings.countingPeriod)
 /// are always computed from this table at query time (see apps/web/src/server/
-/// supportActivityReports.ts) — this table never stores a final count, so changing countingMode/
 /// countingPeriod retroactively reinterprets all existing history correctly.
 model SupportActivity {
   id           String              @id @default(cuid())

@@ -5,7 +5,12 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { getDhakaDayRange, getDhakaMonthRange, getDhakaWeekRange } from "@/lib/supportActivityPeriod";
 import { formatDurationShort } from "@/lib/duration";
-import { getExecutiveWorkload, getTeamAvailability } from "@/server/supportActivityReports";
+import {
+  getExecutiveWorkload,
+  getFirstResponseStats,
+  getGroupsAwaitingReply,
+  getTeamAvailability,
+} from "@/server/supportActivityReports";
 import {
   Badge,
   ButtonLink,
@@ -68,13 +73,19 @@ export default async function SupportActivityTeamPage({
 
   // All three periods at once. Each is a single grouped query, so the comparison costs three
   // round trips rather than the per-member fan-out the previous page did.
-  const [todayRows, weekRows, monthRows, availability, activeMembers] = await Promise.all([
-    getExecutiveWorkload(ranges.today),
-    getExecutiveWorkload(ranges.week),
-    getExecutiveWorkload(ranges.month),
-    getTeamAvailability(now),
-    prisma.internalTeamMember.count({ where: { status: "ACTIVE" } }),
-  ]);
+  const [todayRows, weekRows, monthRows, availability, activeMembers, awaiting, response] =
+    await Promise.all([
+      getExecutiveWorkload(ranges.today),
+      getExecutiveWorkload(ranges.week),
+      getExecutiveWorkload(ranges.month),
+      getTeamAvailability(now),
+      prisma.internalTeamMember.count({ where: { status: "ACTIVE" } }),
+      // Not scoped to the selected period, deliberately: somebody waiting since Friday is still
+      // waiting on Monday, and hiding them because the view says "today" is exactly the failure
+      // this is here to fix.
+      getGroupsAwaitingReply(now),
+      getFirstResponseStats(ranges[period]),
+    ]);
 
   const rowsFor: Record<PeriodKey, typeof todayRows> = { today: todayRows, week: weekRows, month: monthRows };
   const rows = rowsFor[period];
@@ -141,7 +152,80 @@ export default async function SupportActivityTeamPage({
         ))}
       </div>
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {awaiting.length > 0 ? (
+        <div className="mb-5">
+          <Card>
+            <SectionHeader
+              title={`Waiting for a reply — ${awaiting.length}`}
+              description="Monitored groups whose newest message is from a customer. Longest wait first."
+            />
+            <div className="max-h-80 overflow-y-auto">
+              <Table>
+                <thead>
+                  <tr>
+                    <Th>Group</Th>
+                    <Th>Waiting</Th>
+                    <Th>Customer</Th>
+                    <Th>Last message</Th>
+                    <Th>Assigned</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {awaiting.slice(0, 25).map((row) => (
+                    <tr key={row.groupId}>
+                      <Td>
+                        <Link className="link font-medium" href={`/chat/${row.groupId}`}>
+                          {row.groupName}
+                        </Link>
+                      </Td>
+                      <Td className="tabular whitespace-nowrap">
+                        <Badge color={row.waitingSeconds >= 3600 ? "red" : "yellow"}>
+                          {formatDurationShort(row.waitingSeconds)}
+                        </Badge>
+                      </Td>
+                      <Td className="text-[color:var(--color-muted-foreground)]">{row.customerName}</Td>
+                      <Td className="text-[color:var(--color-muted-foreground)]">
+                        {/* Td takes no title attribute, so the full text goes on a span instead —
+                            worth keeping, since the truncated half of a message is often the half
+                            that says what the customer actually wanted. */}
+                        <span className="block max-w-xs truncate" title={row.lastMessage}>
+                          {row.lastMessage}
+                        </span>
+                      </Td>
+                      <Td className="text-[color:var(--color-muted-foreground)]">{row.assignedTo ?? "\u2014"}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </div>
+            {awaiting.length > 25 ? (
+              <p className="mt-2 text-[13px] text-[color:var(--color-muted-foreground)]">
+                Showing the 25 longest waits of {awaiting.length}.
+              </p>
+            ) : null}
+          </Card>
+        </div>
+      ) : null}
+
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <StatTile
+          label="Waiting for a reply"
+          value={awaiting.length}
+          hint={
+            awaiting.length > 0
+              ? `Longest ${formatDurationShort(awaiting[0]!.waitingSeconds)}`
+              : "Every monitored group has been answered"
+          }
+        />
+        <StatTile
+          label="Typical first reply"
+          value={response.medianSeconds != null ? formatDurationShort(response.medianSeconds) : "\u2014"}
+          hint={
+            response.answered > 0
+              ? `Median of ${response.answered.toLocaleString()} \u00b7 slowest ${formatDurationShort(response.slowestSeconds ?? 0)}`
+              : "No answered conversations in this period"
+          }
+        />
         <StatTile
           label="Executives active"
           value={`${rows.length} of ${activeMembers}`}
