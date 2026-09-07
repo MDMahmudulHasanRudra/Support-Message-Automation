@@ -5,6 +5,11 @@
  * for a strict, regex-parseable text format rather than inventing a new response shape.
  */
 
+import {
+  AUTO_TIEBREAK_LANGUAGE,
+  FALLBACK_REPLY_LANGUAGE,
+  isAutoReplyLanguage,
+} from "@support-automation/shared";
 import type { KnowledgeSnippet } from "./knowledgeContext.js";
 
 export interface FallbackPromptInput {
@@ -20,6 +25,10 @@ export interface FallbackPromptInput {
    * The language to answer in unless the customer clearly wrote in another one
    * (`AiSettings.defaultReplyLanguage`). Defaults here too, so a caller that forgets it still
    * gets the safe behaviour rather than the model's guess.
+   *
+   * `AUTO_REPLY_LANGUAGE` switches to mirroring the customer instead of leaning on a default —
+   * see `buildLanguageRules` for why that is a different checklist rather than a different value
+   * substituted into the same one.
    */
   defaultReplyLanguage?: string;
   /**
@@ -36,9 +45,76 @@ export interface FallbackPrompt {
   temperature: number;
 }
 
+/**
+ * The LANGUAGE half of the system prompt.
+ *
+ * Two checklists rather than one with a substituted value, because the two modes disagree about
+ * what an ambiguous message means. With a configured language, "unsure" resolves TO that language
+ * — the whole point of setting one. Under automatic detection there is no such answer, so the
+ * list has to be built around reading the customer instead of leaning on a default, and the
+ * ordering that makes each one work is different.
+ *
+ * What both share, and what must not be reordered in either: the greeting rule comes before the
+ * English rule. "hello" was read as a fluent English sentence otherwise, which is the specific
+ * bug that made English replies leak into Bengali conversations.
+ */
+function buildLanguageRules(configured: string): string[] {
+  const preamble = [
+    "LANGUAGE. Before drafting anything, decide which language the customer wrote in, and report it",
+    "on the LANGUAGE line. Then write RESPONSE in that same language. Deciding first is the point:",
+    "it stops every reply defaulting to the same language regardless of what was asked.",
+    "",
+  ];
+
+  if (!isAutoReplyLanguage(configured)) {
+    return [
+      ...preamble,
+      "Work down this list and stop at the first line that matches:",
+      `1. A greeting or a single word — \"hello\", \"hi\", \"ok\", \"thanks\", \"yes\", \"please\", \"sure\"?`,
+      `   ${configured}. These appear inside conversations in every language and settle nothing. A`,
+      "   one-word greeting is NOT a fluent English sentence, whatever language the word comes from.",
+      `2. Only a number, a link, an invoice reference, a product name or an emoji? ${configured}.`,
+      // "other than Bengali" is load-bearing: Bengali IS a non-Latin script, so without it this
+      // line and line 4 both claim a Bengali-script message and disagree about the answer whenever
+      // the configured language is not itself Bengali script — Banglish, for instance.
+      "3. Written in a non-Latin script other than Bengali — Devanagari, Arabic, Chinese, Tamil and",
+      "   so on? That script's language. Answer in it.",
+      `4. Bengali script? Answer in ${configured}.`,
+      "5. Bengali written in Latin letters — \"bill kivabe generate korbo\", \"amar net kaj korche na\"?",
+      `   That is Bengali rather than English, so answer in ${configured}.`,
+      "6. A complete, fluent sentence or question in English, of several words? English.",
+      `7. Anything else — mixed languages, or a message you cannot place confidently? ${configured}.`,
+    ];
+  }
+
+  return [
+    ...preamble,
+    "Automatic detection is on, and there is no configured default. Mirror the customer: reply in",
+    "the same language AND the same script they used. A message in Bengali letters is answered in",
+    "Bengali letters; one typed in Latin letters is answered in Latin letters.",
+    "",
+    "Work down this list and stop at the first line that matches:",
+    "1. Written in Bengali script? Answer in Bengali, in Bengali script.",
+    "2. Written in another non-Latin script — Devanagari, Arabic, Chinese, Tamil and so on? That",
+    "   script's language. Answer in it.",
+    // Everything from here down is Latin letters. Greeting before English, for the reason above.
+    `3. A greeting or a single word — \"hello\", \"hi\", \"ok\", \"thanks\", \"yes\", \"please\", \"sure\" —`,
+    `   or only a number, a link, an invoice reference, a product name or an emoji?`,
+    `   ${AUTO_TIEBREAK_LANGUAGE}. These carry no language signal at all, and a one-word greeting is`,
+    "   NOT a fluent English sentence whatever language the word comes from. Use the form both a",
+    "   Bengali and an English reader can follow; their next message will settle it properly.",
+    "4. Bengali words written in Latin letters — \"bill kivabe generate korbo\", \"amar net kaj korche",
+    "   na\"? Answer the same way: Bengali words in Latin letters. Do NOT switch to Bengali script,",
+    "   and do NOT answer in English. Writing back the way they typed is the point of this mode.",
+    "5. A complete, fluent sentence or question in English, of several words? English.",
+    `6. Anything else — mixed languages, or a message you cannot place confidently?`,
+    `   ${AUTO_TIEBREAK_LANGUAGE}.`,
+  ];
+}
+
 export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt {
   const knowledge = input.knowledge ?? [];
-  const language = input.defaultReplyLanguage?.trim() || "Bengali (Bangla)";
+  const language = input.defaultReplyLanguage?.trim() || FALLBACK_REPLY_LANGUAGE;
   const styleGuidance = input.styleGuidance?.trim() || null;
 
   const systemPrompt = [
@@ -48,22 +124,7 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
     "You only ever classify and draft text — you cannot and must not attempt to send messages,",
     "execute commands, or take any action beyond returning the requested assessment.",
     "",
-    "LANGUAGE. Before drafting anything, decide which language the customer wrote in, and report it",
-    "on the LANGUAGE line. Then write RESPONSE in that same language. Deciding first is the point:",
-    "it stops every reply defaulting to the same language regardless of what was asked.",
-    "",
-    "Work down this list and stop at the first line that matches:",
-    `1. A greeting or a single word — \"hello\", \"hi\", \"ok\", \"thanks\", \"yes\", \"please\", \"sure\"?`,
-    `   ${language}. These appear inside conversations in every language and settle nothing. A`,
-    "   one-word greeting is NOT a fluent English sentence, whatever language the word comes from.",
-    `2. Only a number, a link, an invoice reference, a product name or an emoji? ${language}.`,
-    "3. Written in a non-Latin script — Devanagari, Arabic, Chinese, Tamil and so on? That script's",
-    "   language. Answer in it.",
-    `4. Bengali script? Answer in ${language}.`,
-    "5. Bengali written in Latin letters — \"bill kivabe generate korbo\", \"amar net kaj korche na\"?",
-    `   That is Bengali rather than English, so answer in ${language}.`,
-    "6. A complete, fluent sentence or question in English, of several words? English.",
-    `7. Anything else — mixed languages, or a message you cannot place confidently? ${language}.`,
+    ...buildLanguageRules(language),
     "You must also decide the SCOPE of the question.",
     "BUSINESS_SPECIFIC means answering it correctly requires knowing something about THIS",
     "particular company — how their software behaves, their pricing, policies, support hours,",

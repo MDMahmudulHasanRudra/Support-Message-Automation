@@ -7,3 +7,4 @@ export * from "./automationRuleImport.js";
 export * from "./knowledgeImportRows.js";
 export * from "./excelSafety.js";
 export * from "./permissions.js";
+export * from "./replyLanguage.js";

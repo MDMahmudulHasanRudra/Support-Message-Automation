@@ -578,10 +578,21 @@ switch gates all of it.
     verified knowledge, or it goes to a person. With a general mode on, *Minimum confidence for a
     general answer* applies — normally higher than the main threshold, because nothing of the
     team's stands behind those.
-  - **Answer in** — the default reply language, as a dropdown: Bangla, Banglish, English, or
-    *Other language…* which reveals a text box. AI switches away from it only on real evidence — a
-    message in a different script, or a fluent English sentence; a greeting, a bare number, or
-    Bengali typed in Latin letters all stay in the default.
+  - **Answer in** — the reply language, as a dropdown: **Auto**, Bangla, Banglish, English, or
+    *Other language…* which reveals a text box for any language you name.
+    - Pick a **language** and AI answers in it, switching away only on real evidence — a message
+      in a different script, or a fluent English sentence. A greeting, a bare number, or Bengali
+      typed in Latin letters all stay in the chosen language.
+    - Pick **Auto** and AI reads each message and replies in the same language *and the same
+      script*: Bengali letters get Bengali letters back, Banglish gets Banglish, English gets
+      English, Hindi gets Hindi. Nothing is remembered between messages, so a customer who
+      switches language mid-conversation is followed immediately rather than being held to
+      whatever they opened with. A message with no language signal at all — a bare "hello", a
+      number, an emoji — is answered in Banglish, the one form both a Bengali and an English
+      reader can follow; their next message settles it.
+    - Worth knowing when choosing between them: picking **Banglish** as a fixed language means a
+      customer who writes in Bengali *script* is answered in Latin letters. Auto is what keeps
+      each customer in the script they chose.
   - **Learn how the team writes** — the communication-style switch described above.
   - **Write rules from good answers** — a confident AI answer also drafts a reusable rule, above its
     own (higher) confidence bar. The draft always lands as a proposal a human approves, and approval

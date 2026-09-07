@@ -649,24 +649,60 @@ a short transliterated-Hindi question in Bengali, to Bengali-speaking customers.
 `buildFallbackPrompt` makes the model **decide the language first and report it** on a `LANGUAGE:`
 line before drafting, then write `RESPONSE` in it. Deciding first is the mechanism: two earlier
 attempts that only described the policy in prose produced replies that quietly defaulted to one
-language regardless of the question. The checklist is **ordered, and the order is load-bearing** —
-the greeting rule must come before the English rule, or "hello" is read as fluent English:
+language regardless of the question.
+
+`buildLanguageRules()` emits **two different checklists**, not one with a value substituted in,
+because the modes disagree about what an ambiguous message means. With a language configured,
+"unsure" resolves *to* that language — that is what setting one is for. Under automatic detection
+there is no such answer, so the list is built around reading the customer instead, and the ordering
+that makes each work differs.
+
+**Fixed language** — order is load-bearing; the greeting rule must precede the English rule, or
+"hello" is read as fluent English:
 
 1. A greeting or single word (`hello`, `ok`, `thanks`, `yes`) → the default. These appear inside
    conversations in every language and settle nothing.
 2. Only a number, link, invoice reference, product name or emoji → the default.
-3. Non-Latin script that is not Bengali (Devanagari, Arabic, Chinese, Tamil) → that language.
+3. Non-Latin script **other than Bengali** (Devanagari, Arabic, Chinese, Tamil) → that language.
+   The exclusion is load-bearing: Bengali *is* non-Latin, so without it this rule and rule 4 both
+   claim a Bengali-script message and disagree whenever the default is not itself Bengali script —
+   picking Banglish is exactly that case.
 4. Bengali script → the default.
 5. Bengali written in Latin letters ("bill kivabe generate korbo") → Bengali, not English.
 6. A complete, fluent English sentence of several words → English.
 7. Anything else — mixed, or not confidently placeable → the default.
 
-The dashboard control is `ReplyLanguageField.tsx`: a real `Select` offering Bangla / Banglish /
-English plus "Other language…", which reveals a text input. It was a `datalist`-backed input — a
-text box that happens to offer suggestions once you start typing — so nothing on screen said the
-options existed. The field stays typeable because a deployment serving another language should not
-be locked out of its own product; the value is passed to the model **by name**, so anything it
-recognises works.
+**Automatic detection** (`AUTO_REPLY_LANGUAGE`) — mirror the customer's language *and script*:
+
+1. Bengali script → Bengali script.
+2. Another non-Latin script → that language. Script is checked first because it is an unambiguous
+   signal; reading the greeting rule first would answer a Bengali-script "হ্যালো" in Latin letters.
+3. *(everything below is Latin letters)* A greeting, single word, bare number, link, invoice
+   reference or emoji → `AUTO_TIEBREAK_LANGUAGE`. Greeting still precedes English, for the same
+   reason as above.
+4. Bengali in Latin letters → Banglish back, explicitly **not** Bengali script and **not** English.
+5. A complete, fluent English sentence → English.
+6. Anything else → `AUTO_TIEBREAK_LANGUAGE`.
+
+`AUTO_TIEBREAK_LANGUAGE` is Banglish: a message with no language signal has no correct answer, and
+Banglish is the one form a Bengali and an English reader can both follow. Detection runs per
+message and is never latched, so the customer's next message settles it properly.
+
+**The sentinel lives in `packages/shared/src/replyLanguage.ts`**, not spelled out per file — the
+`AI_RESPONSE_MODES` lesson. Four hand-written copies (form, server action, reply prompt, style
+prompt) would drift silently, and the failure is invisible: the model is politely told to answer in
+a language called `__auto__` and picks something. Any prompt that talks *about* the setting rather
+than obeying it must render it through `describeReplyLanguage()` — the communication-style prompt
+says "the assistant writes in X", which needs a phrase, not a sentinel.
+
+The dashboard control is `ReplyLanguageField.tsx`: a real `Select` offering Auto / Bangla /
+Banglish / English plus "Other language…", which reveals a text input, with the hint text changing
+per choice because the two modes make opposite promises. It was a `datalist`-backed input — a text
+box that happens to offer suggestions once you start typing — so nothing on screen said the options
+existed. The field stays typeable because a deployment serving another language should not be
+locked out of its own product; a language value is passed to the model **by name**, so anything it
+recognises works. The server action deliberately keeps **no whitelist** here (unlike the response
+mode) precisely because the field must accept a language this code has never heard of.
 
 ### Learning how the team writes (`apps/worker/src/knowledge/communicationStyle*.ts`)
 
