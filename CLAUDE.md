@@ -373,6 +373,25 @@ two more lines for the same job as Settings (deciding what counts), so **Setup**
 their routes unchanged, and **Team Performance** leads because it is the question the module gets
 opened to answer.
 
+**Presence is one timeline per person, split on an idle gap** (`SupportActivitySettings.offlineAfterMinutes`,
+default 120). Somebody is online from the moment they message any group; go that long without
+messaging and they are offline; message again and a new stretch begins. `getExecutiveWorkload()`
+sums those stretches, first message to last.
+
+Across **all** groups rather than per group, which is the correction that matters: measuring each
+group separately and adding them up double-counts anyone working two conversations at once — an
+executive in group A 10:00–11:00 who also answers group B at 10:30 was credited 60 minutes plus 15
+for one hour of work. Handling several groups at once is the normal shape of this job, so that
+inflated the busiest people most. The idle gap is what keeps a single timeline honest; without it
+one message at 09:00 and one at 18:00 would read as nine hours.
+
+**One threshold drives both readings.** "Is she online now?" and "how long was she working?" are the
+same question at different moments, and they previously had different answers — availability used a
+hardcoded 30 minutes while work time was per group per day — so somebody could show offline inside a
+stretch the same page was counting. `getPresenceTimeoutSeconds()` is the single reader, clamped to
+5 minutes–24 hours because a zero would make every message its own stretch and show everybody
+permanently offline, which reads as broken rather than misconfigured.
+
 **The module measures what the team DID, so it was blind to the absence of it.** A customer
 nobody answered produces no `SupportActivity` row, opens no `SupportSession`, and therefore
 appeared nowhere — a busy week and a week with six people ignored read identically.

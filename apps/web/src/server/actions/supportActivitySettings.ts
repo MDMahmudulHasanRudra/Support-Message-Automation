@@ -23,6 +23,13 @@ export async function setSupportActivityEnabled(enabled: boolean): Promise<void>
 export async function updateSupportActivitySettings(formData: FormData): Promise<void> {
   await requireSession();
   const enabled = formData.get("enabled") === "on";
+  // Clamped rather than rejected: this is a tuning number, and bouncing the whole form over it
+  // would discard the other fields somebody had just set.
+  const rawOffline = Number(formData.get("offlineAfterMinutes"));
+  const offlineAfterMinutes = Number.isFinite(rawOffline)
+    ? Math.min(1440, Math.max(5, Math.round(rawOffline)))
+    : 120;
+
   const countingPeriod = String(formData.get("countingPeriod") ?? "DAILY");
   if (!VALID_PERIODS.includes(countingPeriod as SupportActivityCountingPeriod)) {
     throw new Error("Invalid counting period.");
@@ -33,6 +40,7 @@ export async function updateSupportActivitySettings(formData: FormData): Promise
     where: { id: "global" },
     data: {
       enabled,
+      offlineAfterMinutes,
       countingPeriod: countingPeriod as SupportActivityCountingPeriod,
     },
   });

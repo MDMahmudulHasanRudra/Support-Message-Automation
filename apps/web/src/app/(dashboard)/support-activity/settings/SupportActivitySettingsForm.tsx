@@ -1,7 +1,15 @@
 "use client";
 
 import type { SupportActivitySettings } from "@prisma/client";
-import { Button, Card, Field, SectionHeader, Select, SwitchField } from "@/components/ui";
+import {
+  Button,
+  Card,
+  Field,
+  Input,
+  SectionHeader,
+  Select,
+  SwitchField,
+} from "@/components/ui";
 import { updateSupportActivitySettings } from "@/server/actions/supportActivitySettings";
 
 export function SupportActivitySettingsForm({ settings }: { settings: SupportActivitySettings }) {
@@ -33,6 +41,18 @@ export function SupportActivitySettingsForm({ settings }: { settings: SupportAct
               <option value="WEEKLY">Weekly (Sun-Sat)</option>
               <option value="MONTHLY">Monthly</option>
             </Select>
+          </Field>
+          <Field
+            label="Offline after (minutes)"
+            hint="An executive is online from the moment they message any group. Go this long without messaging and they count as offline; message again and they are online again. The same gap splits one stretch of work from the next. Between 5 minutes and 24 hours."
+          >
+            <Input
+              name="offlineAfterMinutes"
+              type="number"
+              min={5}
+              max={1440}
+              defaultValue={settings.offlineAfterMinutes}
+            />
           </Field>
         </div>
       </Card>

@@ -203,7 +203,24 @@ export const STALE_SESSION_THRESHOLD_MS = 4 * 60 * 60 * 1000;
 
 /** 30-minute "available now" window, confirmed requirement — how recent a team member's last
  *  group message must be to still count as actively available. */
-const AVAILABLE_WINDOW_MS = 30 * 60 * 1000;
+/**
+ * How long somebody can go quiet before they count as offline (`offlineAfterMinutes`).
+ *
+ * Read rather than hardcoded because it is load-bearing in two places at once now — the online
+ * badge and the length of a stretch of work — and those two must never disagree. They did: this
+ * was 30 minutes while work time was measured per group per day, so somebody could show as offline
+ * in the middle of a stretch the same page was counting.
+ */
+async function getPresenceTimeoutSeconds(): Promise<number> {
+  const settings = await prisma.supportActivitySettings.findUnique({
+    where: { id: "global" },
+    select: { offlineAfterMinutes: true },
+  });
+  // Clamped rather than trusted: a zero would make every message its own stretch and show everyone
+  // permanently offline, which reads as a broken report rather than a misconfigured one.
+  const minutes = Math.min(24 * 60, Math.max(5, settings?.offlineAfterMinutes ?? 120));
+  return minutes * 60;
+}
 
 export interface ExecutiveWorkloadRow {
   teamMemberId: string;
@@ -212,26 +229,34 @@ export interface ExecutiveWorkloadRow {
   groupsHandled: number;
   messageCount: number;
   /**
-   * Time on support, measured as the span from a person's first message to their last, within one
-   * group on one day, summed across every such span.
+   * Time on support: one timeline per person across every group, split wherever they went quiet
+   * for longer than `offlineAfterMinutes`, each stretch measured first message to last.
    *
-   * Per group AND per day on purpose. Summing one span across a whole week would count the nights
-   * in between as work; summing one span across every group at once would count the gap while
-   * they were busy elsewhere. A day in a single group is the largest window where "first to last"
-   * genuinely means "engaged with this".
+   * Across all groups rather than per group, which is the correction that matters. Measuring each
+   * group separately and adding them up double-counts anyone working two conversations at once —
+   * an executive in group A from 10:00 to 11:00 who also answers group B at 10:30 was credited 60
+   * minutes plus 15, for one hour of actual work. Handling several groups at once is the normal
+   * shape of this job, so that was not an edge case; it inflated the busiest people most.
    *
-   * A day where somebody sent one message is zero seconds, which is honest rather than flattering
-   * — a single reply has no duration to measure. The message count beside it is what stops that
-   * reading as "did nothing".
+   * The idle gap is what keeps a single timeline honest. Without it, one message at 09:00 and one
+   * at 18:00 would read as nine hours on support.
+   *
+   * A stretch containing one message is zero seconds, which is honest rather than flattering — a
+   * single reply has no duration. The message and session counts beside it stop that reading as
+   * "did nothing".
    */
   activeSeconds: number;
+  /** How many separate stretches of work — how many times they came back to it. */
+  sessionCount: number;
   firstAt: Date;
   lastAt: Date;
+  /** Messaged within the offline threshold of now. */
+  isOnline: boolean;
 }
 
 /**
- * What each executive actually handled in a period: how many groups, how many messages, and how
- * long they were engaged.
+ * What each executive handled in a period: how many groups, how many messages, how many separate
+ * stretches of work, and how long they were actually on support.
  *
  * Reads the activity rows directly, and must keep doing so. The obvious alternative — summing
  * SupportSession.durationSeconds — is a trap: that column is written only when a session
@@ -240,11 +265,13 @@ export interface ExecutiveWorkloadRow {
  * in, has no such keyword, so its sessions never complete and any report built on them is
  * permanently empty while looking perfectly healthy. A `getDailyHoursWorked` doing exactly that
  * was deleted rather than left available to be picked up by mistake.
- *
- * One query rather than one per member: the previous per-member breakdown issued a groupBy and
- * then a second lookup, and anything wanting durations on top would have added a third per row.
  */
-export async function getExecutiveWorkload(range: DateRange): Promise<ExecutiveWorkloadRow[]> {
+export async function getExecutiveWorkload(
+  range: DateRange,
+  now: Date = new Date(),
+): Promise<ExecutiveWorkloadRow[]> {
+  const timeoutSeconds = await getPresenceTimeoutSeconds();
+
   const rows = await prisma.$queryRaw<
     Array<{
       teamMemberId: string;
@@ -252,40 +279,78 @@ export async function getExecutiveWorkload(range: DateRange): Promise<ExecutiveW
       groupsHandled: bigint;
       messageCount: bigint;
       activeSeconds: number | null;
+      sessionCount: bigint;
       firstAt: Date;
       lastAt: Date;
     }>
   >`
-    WITH spans AS (
+    WITH events AS (
       SELECT
-        a."teamMemberId",
-        a."groupId",
-        -- Dhaka calendar day, so a shift is bounded the way the person lived it rather than by
-        -- UTC midnight, which falls at 06:00 local and would split every morning in two.
-        date_trunc('day', a."occurredAt" AT TIME ZONE 'Asia/Dhaka') AS local_day,
-        MIN(a."occurredAt") AS first_at,
-        MAX(a."occurredAt") AS last_at,
-        COUNT(*) AS messages
+        a."teamMemberId" AS member_id,
+        a."occurredAt"   AS ts,
+        a."groupId"      AS group_id
       FROM "SupportActivity" a
       WHERE a."actor" = 'TEAM_MEMBER'
         AND a."teamMemberId" IS NOT NULL
         AND a."occurredAt" >= ${range.start}
         AND a."occurredAt" < ${range.end}
-      GROUP BY a."teamMemberId", a."groupId", local_day
+    ),
+    gapped AS (
+      SELECT
+        member_id,
+        ts,
+        group_id,
+        -- A new stretch starts at the first message, and after any silence longer than the
+        -- offline threshold. Everything else continues the current one.
+        CASE
+          WHEN LAG(ts) OVER (PARTITION BY member_id ORDER BY ts) IS NULL
+            OR EXTRACT(EPOCH FROM (ts - LAG(ts) OVER (PARTITION BY member_id ORDER BY ts)))
+               > ${timeoutSeconds}
+          THEN 1 ELSE 0
+        END AS starts_stretch
+      FROM events
+    ),
+    numbered AS (
+      SELECT
+        member_id,
+        ts,
+        group_id,
+        SUM(starts_stretch) OVER (PARTITION BY member_id ORDER BY ts ROWS UNBOUNDED PRECEDING)
+          AS stretch_no
+      FROM gapped
+    ),
+    stretches AS (
+      SELECT
+        member_id,
+        stretch_no,
+        MIN(ts)  AS started,
+        MAX(ts)  AS ended,
+        COUNT(*) AS messages
+      FROM numbered
+      GROUP BY member_id, stretch_no
+    ),
+    groups_per_member AS (
+      SELECT member_id, COUNT(DISTINCT group_id) AS groups_handled
+      FROM numbered
+      GROUP BY member_id
     )
     SELECT
-      s."teamMemberId"                                        AS "teamMemberId",
-      t."name"                                                AS "name",
-      COUNT(DISTINCT s."groupId")                             AS "groupsHandled",
-      SUM(s.messages)                                         AS "messageCount",
-      SUM(EXTRACT(EPOCH FROM (s.last_at - s.first_at)))::int  AS "activeSeconds",
-      MIN(s.first_at)                                         AS "firstAt",
-      MAX(s.last_at)                                          AS "lastAt"
-    FROM spans s
-    JOIN "InternalTeamMember" t ON t."id" = s."teamMemberId"
-    GROUP BY s."teamMemberId", t."name"
+      s.member_id                                        AS "teamMemberId",
+      t."name"                                           AS "name",
+      g.groups_handled                                   AS "groupsHandled",
+      SUM(s.messages)                                    AS "messageCount",
+      SUM(EXTRACT(EPOCH FROM (s.ended - s.started)))::int AS "activeSeconds",
+      COUNT(*)                                           AS "sessionCount",
+      MIN(s.started)                                     AS "firstAt",
+      MAX(s.ended)                                       AS "lastAt"
+    FROM stretches s
+    JOIN "InternalTeamMember" t ON t."id" = s.member_id
+    JOIN groups_per_member g ON g.member_id = s.member_id
+    GROUP BY s.member_id, t."name", g.groups_handled
     ORDER BY "messageCount" DESC
   `;
+
+  const onlineCutoffMs = now.getTime() - timeoutSeconds * 1000;
 
   return rows.map((row) => ({
     teamMemberId: row.teamMemberId,
@@ -293,10 +358,15 @@ export async function getExecutiveWorkload(range: DateRange): Promise<ExecutiveW
     groupsHandled: Number(row.groupsHandled),
     messageCount: Number(row.messageCount),
     activeSeconds: row.activeSeconds ?? 0,
+    sessionCount: Number(row.sessionCount),
     firstAt: row.firstAt,
     lastAt: row.lastAt,
+    // Only meaningful when the range reaches the present — a report on last month says nothing
+    // about who is at their desk, and the comparison comes out false there anyway.
+    isOnline: row.lastAt.getTime() >= onlineCutoffMs,
   }));
 }
+
 
 export interface TeamAvailabilityRow {
   teamMemberId: string;
@@ -321,7 +391,7 @@ export async function getTeamAvailability(now: Date = new Date()): Promise<TeamA
   if (members.length === 0) return [];
 
   const todayRange = getDhakaDayRange(now);
-  const availableCutoff = new Date(now.getTime() - AVAILABLE_WINDOW_MS);
+  const availableCutoff = new Date(now.getTime() - (await getPresenceTimeoutSeconds()) * 1000);
 
   const [workingTodayRows, availableNowRows] = await Promise.all([
     // Availability is about people; an AI row must never make someone look like they were

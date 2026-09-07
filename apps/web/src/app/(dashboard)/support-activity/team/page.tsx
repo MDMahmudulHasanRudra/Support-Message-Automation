@@ -87,6 +87,14 @@ export default async function SupportActivityTeamPage({
       getFirstResponseStats(ranges[period]),
     ]);
 
+  // Named on screen rather than left implicit: "green means online" is useless without knowing
+  // what online means, and this is configurable.
+  const offlineAfterMinutes =
+    (await prisma.supportActivitySettings.findUnique({
+      where: { id: "global" },
+      select: { offlineAfterMinutes: true },
+    }))?.offlineAfterMinutes ?? 120;
+
   const rowsFor: Record<PeriodKey, typeof todayRows> = { today: todayRows, week: weekRows, month: monthRows };
   const rows = rowsFor[period];
 
@@ -262,7 +270,8 @@ export default async function SupportActivityTeamPage({
                 <Th>Executive</Th>
                 <Th>Groups</Th>
                 <Th>Messages</Th>
-                <Th>Time engaged</Th>
+                <Th>Time on support</Th>
+                <Th>Sessions</Th>
                 <Th>First</Th>
                 <Th>Last</Th>
                 <Th>Today / week / month</Th>
@@ -273,7 +282,9 @@ export default async function SupportActivityTeamPage({
                 const inToday = todayRows.find((r) => r.teamMemberId === row.teamMemberId);
                 const inWeek = weekRows.find((r) => r.teamMemberId === row.teamMemberId);
                 const inMonth = monthRows.find((r) => r.teamMemberId === row.teamMemberId);
-                const online = availability.find((a) => a.teamMemberId === row.teamMemberId)?.availableNow;
+                // From the row, not the availability list: both now use the same configured
+                // threshold, and reading one number in two places is how they drift apart.
+                const online = row.isOnline;
 
                 return (
                   <tr key={row.teamMemberId}>
@@ -291,6 +302,12 @@ export default async function SupportActivityTeamPage({
                       ) : (
                         <span className="text-[color:var(--color-muted-foreground)]">—</span>
                       )}
+                    </Td>
+                    <Td className="tabular text-[color:var(--color-muted-foreground)]">
+                      {/* Named beside the duration on purpose: "0m across 3 sessions" is a person
+                          who answered three times and moved on, which is very different from
+                          somebody who did nothing, and the duration alone cannot say so. */}
+                      {row.sessionCount}
                     </Td>
                     <Td className="tabular whitespace-nowrap text-[color:var(--color-muted-foreground)]">
                       {row.firstAt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Dhaka" })}
@@ -316,7 +333,7 @@ export default async function SupportActivityTeamPage({
           <Card>
             <SectionHeader
               title="Who is around"
-              description="Green means active in the last few minutes, amber means they have worked today, grey means not yet."
+              description={`Green means they have messaged a group within the last ${formatDurationShort(offlineAfterMinutes * 60)}, amber means they worked today but have gone quiet, grey means not yet today.`}
             />
             <div className="flex flex-wrap gap-2">
               {availability.map((member) => (

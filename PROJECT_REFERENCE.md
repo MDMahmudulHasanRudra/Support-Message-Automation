@@ -177,10 +177,19 @@ the whole point of the page in one cell, since whether a load is a spike or a pe
 the actual question. A green dot marks anyone active in the last few minutes. Below it, a "Who is
 around" panel: green = active in the last few minutes, amber = worked today, grey = not yet.
 
-**How time is measured, and why it is not "hours worked":** each row is the span from a person's
-first message to their last **within one group on one Dhaka calendar day**, summed across every
-such span. Per group *and* per day deliberately — one span across a week would count the nights in
-between; one span across every group at once would count the time they were busy elsewhere. **A day
+**Online, offline, and sessions.** An executive counts as online from the moment they message any
+group. Go longer than **Offline after** (Setup, default 2 hours) without messaging and they show as
+offline; message again and they are online again, starting a new session. The **Sessions** column is
+how many separate stretches they worked — "0m across 3 sessions" is somebody who answered three
+times and moved on, which the duration alone cannot say.
+
+**How time is measured, and why it is not "hours worked":** one timeline per person across every
+group, split wherever they went quiet for longer than the offline threshold, each stretch measured
+first message to last. Across all groups rather than per group, because measuring each group and
+adding them up double-counts anyone working two conversations at once — an hour in group A while
+also answering group B was previously counted as an hour plus fifteen minutes. The idle gap is what
+keeps one timeline honest: without it, a message at 09:00 and another at 18:00 would read as nine
+hours on support. **A day
 with one message shows zero**, which is honest rather than flattering: a single reply is a moment,
 not a span, and the message count beside it is what says they were working. This reads the activity
 rows directly, so it does not depend on a support session ever closing — the previous hours-worked
@@ -225,7 +234,10 @@ the most actionable (stale, then other open, then most recently started) surface
 ### Setup — `/support-activity/settings`
 
 Master **Enable Support Activity Tracking** switch (default off — no existing automation is
-affected either way). **Counting Period**: `Daily`, `Weekly` (Sunday-start), `Monthly` — which
+affected either way). **Offline after (minutes)**, default 120 — how long an executive can go
+without messaging any group before they count as offline, and the gap that splits one stretch of
+work from the next. One number for both, because "is she online" and "how long was she working" are
+the same question at different moments. **Counting Period**: `Daily`, `Weekly` (Sunday-start), `Monthly` — which
 window the Activity Feed reports against.
 
 There was also a **Counting Mode** here (Unique Group / Every Activity / Per Team Member). It was

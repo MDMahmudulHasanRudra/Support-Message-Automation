@@ -2060,6 +2060,16 @@ model SupportActivitySettings {
   enabled        Boolean                       @default(false)
   countingPeriod SupportActivityCountingPeriod @default(DAILY)
   updatedAt      DateTime                      @updatedAt
+  /// How long an executive can go without messaging any group before they count as offline, and
+  /// the gap that splits one stretch of work from the next.
+  ///
+  /// One number for both on purpose. "Is she online now?" and "how long was she working?" are the
+  /// same question asked about different moments, and answering them with different thresholds —
+  /// which is what happened when availability used a hardcoded 30 minutes while work time was
+  /// measured per group per day — produces a page where somebody shows as offline inside a stretch
+  /// of work the same page is counting.
+  offlineAfterMinutes Int @default(120)
+
 }
 
 /// Admin-managed keyword/phrase. Referenced by zero or more SupportRules via SupportRuleKeyword —
