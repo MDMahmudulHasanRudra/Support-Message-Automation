@@ -1,4 +1,10 @@
 import { describe, expect, it } from "vitest";
+import {
+  AUTO_REPLY_LANGUAGE,
+  AUTO_TIEBREAK_LANGUAGE,
+  FALLBACK_REPLY_LANGUAGE,
+  describeReplyLanguage,
+} from "@support-automation/shared";
 import { buildFallbackPrompt, parseFallbackResponse } from "../aiFallback/prompt.js";
 
 /**
@@ -191,5 +197,111 @@ describe("buildFallbackPrompt — reply language", () => {
     const systemPrompt = prompt().systemPrompt;
     expect(systemPrompt).toContain("BUSINESS_SPECIFIC");
     expect(systemPrompt).toContain("LANGUAGE.");
+  });
+
+  it("does not let the Bengali-script rule contradict the other-script rule", () => {
+    // Both lines can claim a Bengali-script message, and they give different answers whenever the
+    // configured language is not itself Bengali script — which is exactly what picking Banglish
+    // does. The narrowing on line 3 is what keeps them from disagreeing.
+    const systemPrompt = prompt({ defaultReplyLanguage: "Banglish (Bengali written in Latin letters)" })
+      .systemPrompt;
+    expect(systemPrompt).toMatch(/non-Latin script other than Bengali/i);
+  });
+});
+
+/**
+ * Automatic detection: mirror the customer instead of leaning on a configured language.
+ *
+ * Worth its own block because it is a different checklist, not the same one with a value swapped
+ * in — the two modes disagree about what an ambiguous message means, so every ordering assumption
+ * has to be re-pinned rather than inherited.
+ */
+describe("buildFallbackPrompt — automatic language detection", () => {
+  const auto = (overrides: Partial<Parameters<typeof buildFallbackPrompt>[0]> = {}) =>
+    buildFallbackPrompt({
+      customerMessage: "hello",
+      groupName: null,
+      defaultReplyLanguage: AUTO_REPLY_LANGUAGE,
+      ...overrides,
+    });
+
+  it("never prints the sentinel into the prompt", () => {
+    // The failure this guards is silent and total: the model is politely told to answer in a
+    // language called "__auto__", and picks something.
+    expect(auto().systemPrompt).not.toContain(AUTO_REPLY_LANGUAGE);
+  });
+
+  it("tells the model to mirror the customer rather than naming a default", () => {
+    const systemPrompt = auto().systemPrompt;
+    expect(systemPrompt).toMatch(/Automatic detection is on/i);
+    expect(systemPrompt).toMatch(/same language AND the same script/i);
+  });
+
+  it("still checks greetings before fluent English", () => {
+    // The one ordering both modes must share. Without it "hello" reads as an English sentence,
+    // which is the original bug — and it would come back unnoticed in this mode alone.
+    const systemPrompt = auto().systemPrompt;
+    const greeting = systemPrompt.indexOf("A greeting or a single word");
+    const english = systemPrompt.indexOf("complete, fluent sentence or question in English");
+    expect(greeting).toBeGreaterThan(-1);
+    expect(english).toBeGreaterThan(-1);
+    expect(greeting).toBeLessThan(english);
+  });
+
+  it("checks script before anything script-blind", () => {
+    // Bengali script is an unambiguous signal; the greeting rule is not. Reading the greeting
+    // rule first would answer a Bengali-script "হ্যালো" in Latin letters.
+    const systemPrompt = auto().systemPrompt;
+    const bengaliScript = systemPrompt.indexOf("Written in Bengali script?");
+    const greeting = systemPrompt.indexOf("A greeting or a single word");
+    expect(bengaliScript).toBeGreaterThan(-1);
+    expect(bengaliScript).toBeLessThan(greeting);
+  });
+
+  it("keeps Banglish in Latin letters instead of converting it", () => {
+    // The specific thing asked for: a customer writing Banglish gets Banglish back — not Bengali
+    // script, and not English.
+    const systemPrompt = auto().systemPrompt;
+    expect(systemPrompt).toContain("bill kivabe generate korbo");
+    expect(systemPrompt).toMatch(/Do NOT switch to Bengali script/i);
+    expect(systemPrompt).toMatch(/do NOT answer in English/i);
+  });
+
+  it("resolves a signal-free message rather than leaving it open", () => {
+    const systemPrompt = auto().systemPrompt;
+    expect(systemPrompt).toContain(AUTO_TIEBREAK_LANGUAGE);
+    expect(systemPrompt).toMatch(/carry no language signal/i);
+  });
+
+  it("keeps the scope rules and the response format intact", () => {
+    // A second checklist must not cost the guard that stops the model inventing company policy.
+    const built = auto();
+    expect(built.systemPrompt).toContain("BUSINESS_SPECIFIC");
+    expect(built.userPrompt).toContain("LANGUAGE:");
+    expect(built.userPrompt).toContain("six lines");
+  });
+
+  it("is not triggered by an ordinary language name", () => {
+    expect(buildFallbackPrompt({ customerMessage: "hi", groupName: null, defaultReplyLanguage: "English" })
+      .systemPrompt).not.toMatch(/Automatic detection is on/i);
+  });
+});
+
+describe("describeReplyLanguage — prompts that talk about the setting", () => {
+  it("renders the sentinel as a phrase, never as a language name", () => {
+    // The communication-style prompt says "The assistant writes in X"; X must be a sentence
+    // fragment that reads correctly, not "__auto__".
+    expect(describeReplyLanguage(AUTO_REPLY_LANGUAGE)).toBe("whichever language the customer used");
+    expect(describeReplyLanguage(AUTO_REPLY_LANGUAGE)).not.toContain("_");
+  });
+
+  it("passes a real language through unchanged", () => {
+    expect(describeReplyLanguage("English")).toBe("English");
+  });
+
+  it("falls back rather than returning an empty phrase", () => {
+    expect(describeReplyLanguage("")).toBe(FALLBACK_REPLY_LANGUAGE);
+    expect(describeReplyLanguage(null)).toBe(FALLBACK_REPLY_LANGUAGE);
+    expect(describeReplyLanguage(undefined)).toBe(FALLBACK_REPLY_LANGUAGE);
   });
 });

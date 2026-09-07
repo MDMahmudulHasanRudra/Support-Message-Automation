@@ -11,10 +11,17 @@
  * below drops anything that reads like a fact.
  */
 
+import { describeReplyLanguage } from "@support-automation/shared";
+
 export interface StylePromptInput {
   /** Real support replies, already stripped of names and numbers by the caller. */
   replies: string[];
-  /** What the AI is told to write in by default, so the guidance does not contradict it. */
+  /**
+   * What the AI is told to write in by default, so the guidance does not contradict it. Rendered
+   * through `describeReplyLanguage` because this prompt talks ABOUT the setting rather than
+   * obeying it — the automatic-detection sentinel is not a language name and must not be printed
+   * into a sentence as if it were one.
+   */
   defaultReplyLanguage: string;
 }
 
@@ -61,9 +68,12 @@ export function buildStyleProfilePrompt(input: StylePromptInput): StylePrompt {
   const sample = input.replies.join("\n---\n").slice(0, MAX_SAMPLE_CHARS);
 
   const userPrompt = [
-    `The assistant writes in ${input.defaultReplyLanguage} unless the customer clearly used another`,
-    "language. Describe habits that hold regardless of language — do not tell it which language to",
-    "use, that is decided elsewhere.",
+    `The assistant writes in ${describeReplyLanguage(input.defaultReplyLanguage)} unless the customer`,
+    "clearly used another language. Describe habits that hold regardless of language —",
+    // Kept on one line deliberately: a test pins this instruction as a contiguous phrase, and the
+    // lines here are joined with newlines rather than spaces, so wrapping it splits it in the
+    // prompt the model actually reads.
+    "do not tell it which language to use, that is decided elsewhere.",
     "",
     `Here are ${input.replies.length} real replies this team sent:`,
     "",

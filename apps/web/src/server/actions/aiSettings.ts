@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
+import { FALLBACK_REPLY_LANGUAGE } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
 import { isAiResponseMode } from "@/lib/aiResponseModes";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -70,12 +71,14 @@ export async function updateAiSettings(
       knowledgeFromChatEnabled: flag("knowledgeFromChatEnabled"),
       aiResponseMode: responseMode,
       generalAnswerMinConfidence: percent("generalAnswerMinConfidence", 90),
-      // Free text: the model is told this by name, so "Bengali (Bangla)", "English" or "Arabic"
-      // all work. Empty falls back to the schema default rather than leaving the model to guess,
-      // which is how customers ended up being answered in Portuguese.
       communicationStyleLearningEnabled: formData.get("communicationStyleLearningEnabled") === "on",
+      // Free text: the model is told this by name, so "Bengali (Bangla)", "English" or "Arabic"
+      // all work, and so does AUTO_REPLY_LANGUAGE, which is not a language but the instruction to
+      // detect one. Deliberately no whitelist — the field is meant to accept a language this code
+      // has never heard of. Empty falls back to the schema default rather than leaving the model
+      // to guess, which is how customers ended up being answered in Portuguese.
       defaultReplyLanguage:
-        String(formData.get("defaultReplyLanguage") ?? "").trim().slice(0, 60) || "Bengali (Bangla)",
+        String(formData.get("defaultReplyLanguage") ?? "").trim().slice(0, 60) || FALLBACK_REPLY_LANGUAGE,
       knowledgeMinMessagesPerGroup: nonNegativeInt("knowledgeMinMessagesPerGroup", 25),
     },
     create: { id: "global" },
