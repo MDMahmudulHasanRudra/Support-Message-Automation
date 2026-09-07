@@ -15,12 +15,12 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Support Message Automation",
-    template: "%s · Support Automation",
+    default: "Softify Assist",
+    template: "%s · Softify Assist",
   },
   description:
     "Rule-based WhatsApp support automation — message triage, escalation timers, and team notifications from one dashboard.",
-  applicationName: "Support Message Automation",
+  applicationName: "Softify Assist",
   robots: { index: false, follow: false },
 };
 

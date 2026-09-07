@@ -46,6 +46,13 @@ export interface KnowledgeSnippet {
   fromSameGroup: boolean;
 }
 
+/**
+ * Supplies extra search terms when the customer's own words find nothing. Injected rather than
+ * imported so this module keeps its single responsibility and stays testable without an AI client;
+ * `runAiFallback.ts` is the one caller that has a resolved client to hand it.
+ */
+export type QueryExpander = () => Promise<string[]>;
+
 interface KnowledgeCandidate {
   id: string;
   title: string;
@@ -69,8 +76,14 @@ export function selectRelevantKnowledge(
   candidates: KnowledgeCandidate[],
   groupId: string | null,
   limit = MAX_ENTRIES,
+  extraKeywords: string[] = [],
 ): KnowledgeSnippet[] {
-  const { keywords } = derivePatternSignature(customerMessage);
+  const { keywords: derived } = derivePatternSignature(customerMessage);
+  // Ranking has to score on the same vocabulary the candidates were selected with. Scoring a
+  // Banglish question against entries found by their English expansion would give every one of
+  // them an overlap of zero, and the filter below would discard the rows the query just went to
+  // the trouble of finding.
+  const keywords = [...new Set([...derived, ...extraKeywords])];
   if (keywords.length === 0) return [];
 
   const scored = candidates
@@ -121,11 +134,40 @@ export async function findRelevantKnowledge(
   customerMessage: string,
   groupId: string | null,
   limit = MAX_ENTRIES,
+  expandTerms?: QueryExpander,
 ): Promise<KnowledgeSnippet[]> {
   const { keywords } = derivePatternSignature(customerMessage);
-  if (keywords.length === 0) return [];
 
-  const matchesAnyKeyword = keywords.flatMap((keyword) => [
+  const direct = keywords.length > 0 ? await searchByTerms(customerMessage, keywords, groupId, limit, []) : [];
+  if (direct.length > 0 || !expandTerms) return direct;
+
+  // The customer's own words found nothing. Before concluding the knowledge base has no answer,
+  // search again in the language the knowledge base is actually written in — see queryExpansion.ts
+  // for why that is a different search rather than the same one repeated. Deliberately second: a
+  // question that already matched costs no extra round trip, so the expansion is only paid for
+  // where the alternative was an ungrounded answer.
+  const expanded = await expandTerms();
+  if (expanded.length === 0) return direct;
+
+  return searchByTerms(customerMessage, expanded, groupId, limit, expanded);
+}
+
+/**
+ * One narrowing query plus the ranking pass, run against whichever vocabulary the caller supplies.
+ *
+ * `searchTerms` selects the candidate rows; `rankingTerms` is what the ranker scores them on, and
+ * they differ on the expansion path — the rows are found by their English terms while the message
+ * itself is still Banglish. Never throws: the caller treats an empty list and a failed lookup
+ * identically, because answering without grounding is strictly better than not answering.
+ */
+async function searchByTerms(
+  customerMessage: string,
+  searchTerms: string[],
+  groupId: string | null,
+  limit: number,
+  rankingTerms: string[],
+): Promise<KnowledgeSnippet[]> {
+  const matchesAnyKeyword = searchTerms.flatMap((keyword) => [
     { title: { contains: keyword, mode: "insensitive" as const } },
     { question: { contains: keyword, mode: "insensitive" as const } },
     { answer: { contains: keyword, mode: "insensitive" as const } },
@@ -158,7 +200,7 @@ export async function findRelevantKnowledge(
       if (!seen.has(entry.id)) candidates.push(entry);
     }
 
-    return selectRelevantKnowledge(customerMessage, candidates, groupId, limit);
+    return selectRelevantKnowledge(customerMessage, candidates, groupId, limit, rankingTerms);
   } catch (err) {
     console.error("[aiFallback] knowledge lookup failed; answering without it", err);
     return [];

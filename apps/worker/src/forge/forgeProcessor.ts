@@ -1,4 +1,5 @@
 import { prisma } from "@support-automation/db";
+import { scheduleStartupCatchUp } from "../scheduling.js";
 import { isForgeConfigured } from "@support-automation/forge-client";
 import { runForgeKnowledgeSync } from "./forgeKnowledgeJob.js";
 import { processOneResearchTask } from "./forgeResearchJob.js";
@@ -19,11 +20,12 @@ import { processOneResearchTask } from "./forgeResearchJob.js";
  */
 export function startForgeKnowledgeProcessor(intervalMs = 6 * 60 * 60_000): NodeJS.Timeout {
   let running = false;
-  return setInterval(() => {
-    if (running) return;
-    if (!isForgeConfigured()) return;
+
+  const tick = () => {
+    if (running) return Promise.resolve();
+    if (!isForgeConfigured()) return Promise.resolve();
     running = true;
-    runForgeKnowledgeSync()
+    return runForgeKnowledgeSync()
       .then((result) => {
         if (result.ran && result.entriesCreated) {
           console.log(
@@ -38,7 +40,21 @@ export function startForgeKnowledgeProcessor(intervalMs = 6 * 60 * 60_000): Node
       .finally(() => {
         running = false;
       });
-  }, intervalMs);
+  };
+
+  // Six hours is longer than the gap between two deploys on a busy day, and a plain interval
+  // starts from zero every restart — so without this the sync can simply never run. See
+  // ../scheduling.ts; it happened, for twenty-seven hours.
+  scheduleStartupCatchUp({
+    name: "Forge knowledge sync",
+    intervalMs,
+    lastRunAt: async () =>
+      (await prisma.forgeSettings.findUnique({ where: { id: "global" }, select: { lastSyncCompletedAt: true } }))
+        ?.lastSyncCompletedAt ?? null,
+    run: tick,
+  });
+
+  return setInterval(tick, intervalMs);
 }
 
 /**

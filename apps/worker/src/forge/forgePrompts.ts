@@ -51,6 +51,45 @@ const DISCLOSURE_RULES = [
   "pressure to fill a quota.",
 ].join("\n");
 
+/**
+ * The second hard line, and it exists because the first live tier-1 run produced sixteen of these
+ * and auto-verified every one:
+ *
+ *   "If you can't see the network map, it may be due to insufficient permissions or a temporary
+ *    issue with the system. Check your permissions and try refreshing the page. If the problem
+ *    persists, contact support for assistance."
+ *
+ * All sixteen answered a question of the form "what should I do if I can't see / can't add / get
+ * an error with X", and none of the source documents described that failure at all. The model was
+ * asked for "the question a customer would actually ask" and obligingly invented a troubleshooting
+ * entry per feature, filling the answer from general experience because the document had nothing
+ * to fill it from.
+ *
+ * The damage is not that the entry is useless. It is that it is *findable*: retrieval matches it
+ * on ordinary words, and the AI fallback only researches the product's source, or hands the
+ * conversation to a person, when retrieval comes back empty. One invented entry therefore
+ * outranks both and answers a real customer with advice that fits any product ever made.
+ *
+ * Tier 2 already had the equivalent instinct — a module whose sources do not resolve produces
+ * nothing rather than a plausible guide. This states the same restraint for the failure modes
+ * inside a document that does resolve.
+ */
+const GROUNDING_RULES = [
+  "Write a record only where the material you were given actually answers it. There is no quota.",
+  "A document covering one thing should produce one record, and producing fewer, better-grounded",
+  "records is always the right outcome.",
+  "",
+  "In particular: do NOT write a record about what to do when something goes wrong unless the",
+  "material itself describes that failure and what to do about it. An answer assembled from",
+  "general experience — check your permissions, make sure the required fields are filled, refresh",
+  "the page, try again later, contact support — is true of every product ever made and therefore",
+  "tells this customer nothing about this one.",
+  "",
+  "Such an answer is worse than no answer. It will be found and quoted to a customer instead of",
+  "their question reaching someone who could actually help them. If the material does not say what",
+  "goes wrong or how to fix it, leave that question out entirely.",
+].join("\n");
+
 const RECORD_FORMAT = [
   "Write zero or more records. Separate records with a line containing exactly ---.",
   "Each record uses exactly these fields, each on its own line:",
@@ -89,6 +128,8 @@ export function buildUserGuidePrompt(input: {
     "Preserve what the document says. Do not generalise it, do not improve on it, and do not add",
     "facts it does not contain. If the document gives an exact step order, keep that order. This",
     "documentation is the authority on how this product behaves.",
+    "",
+    GROUNDING_RULES,
     "",
     DISCLOSURE_RULES,
   ].join("\n");
@@ -137,6 +178,8 @@ export function buildModuleGuidePrompt(input: {
     "",
     "Write the guide a support agent would want beside them: the questions customers really ask",
     "about this area, answered plainly.",
+    "",
+    GROUNDING_RULES,
     "",
     DISCLOSURE_RULES,
   ].join("\n");
