@@ -518,6 +518,30 @@ catalogue rather than a Prisma enum, so adding one needs no migration.
 Wording only. Whether an alert is raised, its channels, and its destination groups are the
 Notification Center's job.
 
+**Each card says whether it can currently send** (`server/notificationTemplateStatus.ts`). Without
+it the page invites a precise waste: rewrite the escalation wording, save, and never learn that
+escalation alerts are muted. It reports the actual blocker rather than a generic "off" — a muted
+event, a switched-off feature, or nothing to trigger it at all (no active rule with a notify
+action; no group carrying a priority tier, which is what escalation needs since it is SLA-timer
+driven rather than flag driven) — and links to where each is fixed. An **absent**
+`NotificationEventSetting` row counts as enabled, matching `getEventDelivery()`; reading it as off
+would show every template dead on a deployment that has simply never opened that page. It never
+disables the editor: preparing wording for something you are about to switch on is legitimate.
+
+**Test send** (`sendTemplateTestMessage`) delivers the SAVED wording with sample values to a chosen
+group, prefixed `🧪 TEST`. The prefix is not decoration — an escalation alert arriving with invented
+customer details would be acted on. It goes through the outbound queue as `MANUAL_REPLY` (a person
+pressed a button, so the kill switch correctly does not cancel it), and its idempotency key is
+timestamped rather than content-hashed because re-sending the same template while comparing wording
+is the normal way to use it. Only groups on a CONNECTED account that are still `isActive` are
+offered, monitored ones marked — alerting into a monitored group feeds the alert back in as a
+message.
+
+The customer-facing template also flags a **language mismatch**: it ships in English, while
+`defaultReplyLanguage` is usually Bengali here, so a customer mid-conversation would see the
+language change. Auto is not treated as a mismatch — there is no single language for it to disagree
+with.
+
 ### Microsoft Teams Integration (`apps/worker/src/teams/`, `apps/web/src/server/teamsAuth/`,
 `apps/web/src/app/(dashboard)/integrations/teams/`, `apps/web/src/app/(dashboard)/issues/`)
 

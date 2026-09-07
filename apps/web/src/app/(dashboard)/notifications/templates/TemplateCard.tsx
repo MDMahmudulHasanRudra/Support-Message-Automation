@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import {
   Alert,
   Badge,
@@ -8,9 +9,17 @@ import {
   Card,
   ConfirmDialog,
   SectionHeader,
+  Select,
   Textarea,
   useToast,
 } from "@/components/ui";
+
+/** A group a test message can go to. Keyed on the row id, which is what the action takes. */
+export interface TestTarget {
+  id: string;
+  name: string;
+  isMonitored: boolean;
+}
 import {
   extractPlaceholders,
   renderNotificationTemplate,
@@ -19,9 +28,11 @@ import {
 } from "@support-automation/shared";
 import {
   resetNotificationTemplate,
+  sendTemplateTestMessage,
   updateNotificationTemplate,
   type TemplateActionState,
 } from "@/server/actions/notificationTemplates";
+import type { TemplateLiveness } from "@/server/notificationTemplateStatus";
 
 /**
  * One editable message, with the preview beside it.
@@ -39,17 +50,27 @@ export function TemplateCard({
   customBody,
   updatedAt,
   updatedBy,
+  liveness,
+  testGroups,
+  replyLanguage,
 }: {
   definition: NotificationTemplateDefinition;
   /** Null when nobody has edited this one — the built-in wording is in use. */
   customBody: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
+  liveness: TemplateLiveness;
+  /** Groups a test can be sent to. Empty when no account is connected. */
+  testGroups: TestTarget[];
+  /** What AI answers customers in, so a customer-facing template can flag a mismatch. */
+  replyLanguage: string | null;
 }) {
   const [state, formAction, saving] = useActionState(updateNotificationTemplate, initialState);
   const [body, setBody] = useState(customBody ?? definition.defaultBody);
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, startReset] = useTransition();
+  const [testGroupId, setTestGroupId] = useState<string>("");
+  const [testing, startTest] = useTransition();
   const { showToast } = useToast();
 
   const samples = useMemo(
@@ -62,6 +83,32 @@ export function TemplateCard({
   const used = useMemo(() => new Set(extractPlaceholders(body)), [body]);
   const isCustomised = customBody !== null;
   const isDirty = body !== (customBody ?? definition.defaultBody);
+
+  // Only worth raising on the message a customer reads, and only when the two genuinely differ.
+  // "Auto" is not a mismatch — it means AI follows whatever the customer wrote, so there is no
+  // single language for this to disagree with.
+  const languageMismatch =
+    definition.audience === "CUSTOMER" &&
+    Boolean(replyLanguage) &&
+    !/english/i.test(replyLanguage ?? "") &&
+    !/^auto/i.test(replyLanguage ?? "");
+
+  const doTestSend = () => {
+    startTest(async () => {
+      const result = await sendTemplateTestMessage(definition.key, testGroupId);
+      if (result.error) {
+        showToast({ tone: "danger", title: result.error });
+        return;
+      }
+      showToast({
+        tone: "success",
+        title: "Test message queued",
+        // Never "sent": it goes through the same queue as everything else, and the delay is
+        // normal rather than a fault to go looking for.
+        description: "It goes through the send queue, so it usually arrives within a few seconds.",
+      });
+    });
+  };
 
   const doReset = () => {
     setConfirmReset(false);
@@ -97,6 +144,33 @@ export function TemplateCard({
           <Alert tone="warning">
             This goes into the customer&apos;s own conversation, not an internal group. Whatever it
             says is your company speaking.
+            {languageMismatch ? (
+              <>
+                {" "}
+                AI answers customers in <strong>{replyLanguage}</strong>, but this message is
+                written in English — a customer mid-conversation would see the language change.
+                Consider rewriting it to match.
+              </>
+            ) : null}
+          </Alert>
+        </div>
+      ) : null}
+
+      {!liveness.live ? (
+        // Shown rather than blocking the editor: preparing wording for something you are about to
+        // switch on is a legitimate thing to be doing. What is not legitimate is letting somebody
+        // finish, save, and never find out it cannot send.
+        <div className="mt-3">
+          <Alert tone="neutral">
+            <span className="font-medium">Not sending right now.</span> {liveness.reason}
+            {liveness.fixHref ? (
+              <>
+                {" "}
+                <Link className="link" href={liveness.fixHref}>
+                  {liveness.fixLabel}
+                </Link>
+              </>
+            ) : null}
           </Alert>
         </div>
       ) : null}
@@ -141,6 +215,46 @@ export function TemplateCard({
               </Button>
             ) : null}
           </div>
+
+          {testGroups.length > 0 ? (
+            <div className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-3">
+              <p className="mb-2 text-[13px] font-medium text-[color:var(--color-foreground)]">
+                Send a test
+              </p>
+              <p className="mb-2 text-xs text-[color:var(--color-muted-foreground)]">
+                Delivers the saved wording with the example values to a real group, clearly labelled
+                as a test. The only way to see how WhatsApp actually renders it — and the only way to
+                see a real @mention.
+              </p>
+              <Select value={testGroupId} onChange={(event) => setTestGroupId(event.target.value)}>
+                <option value="">Choose a group…</option>
+                {testGroups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.name}
+                    {group.isMonitored ? " (monitored)" : ""}
+                  </option>
+                ))}
+              </Select>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!testGroupId || testing || isDirty}
+                  onClick={doTestSend}
+                >
+                  {testing ? "Sending…" : "Send test"}
+                </Button>
+                {isDirty ? (
+                  // It sends what is SAVED, not what is typed. Letting an unsaved edit be tested
+                  // would show one message and store another.
+                  <span className="text-xs text-[color:var(--color-muted-foreground)]">
+                    Save your changes first — the test sends the saved wording.
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           {updatedAt ? (
             <p className="text-xs text-[color:var(--color-muted-foreground)]">

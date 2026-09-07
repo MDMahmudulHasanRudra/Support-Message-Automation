@@ -700,6 +700,17 @@ Sidebar group: **System**
   - There is no "add new template". This list is the set of moments the software actually has, not
     a settings list; a template added here would be a message nothing ever sends. A genuinely new
     alert needs building into the worker that raises it.
+  - Each card says whether it **can currently send**, and why not if it cannot — the feature is
+    off, the alert is muted, or nothing exists to trigger it (no rule with a notify action, no
+    group with a priority tier) — with a link to where that is fixed. Editing is never blocked:
+    preparing wording for something you are about to switch on is normal.
+  - **Send a test** delivers the saved wording with example values to a group you pick, labelled
+    as a test so nobody acts on it. A preview shows the text but not what WhatsApp does with it,
+    and for the message that tags a team member it is the only way to see a real @mention. Only
+    groups on a connected account that it is still a member of are offered; monitored groups are
+    marked, since an alert sent into one is read back in as an incoming message.
+  - The customer-facing message warns when it is in English while AI replies in another language —
+    a customer mid-conversation would otherwise see the language change.
   - Wording only — whether an alert fires, on which channels, and to which groups is on
     Notification Center.
 - **Settings** (`/settings`): the general `AutomationSettings` form — Per-Client Reply Limits (max

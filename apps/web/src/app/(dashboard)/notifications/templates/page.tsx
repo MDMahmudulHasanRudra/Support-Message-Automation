@@ -1,8 +1,9 @@
 import { prisma } from "@support-automation/db";
 import { NOTIFICATION_TEMPLATES } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
+import { getTemplateLiveness } from "@/server/notificationTemplateStatus";
 import { Alert, HelpButton, HelpSection, PageHeader } from "@/components/ui";
-import { TemplateCard } from "./TemplateCard";
+import { TemplateCard, type TestTarget } from "./TemplateCard";
 
 /**
  * Every message this system sends that a person reads, in one place, editable.
@@ -14,10 +15,26 @@ import { TemplateCard } from "./TemplateCard";
 export default async function NotificationTemplatesPage() {
   await requireSession();
 
-  const overrides = await prisma.notificationTemplate.findMany({
-    include: { updatedBy: { select: { name: true, username: true } } },
-  });
+  const [overrides, liveness, aiSettings, groups] = await Promise.all([
+    prisma.notificationTemplate.findMany({
+      include: { updatedBy: { select: { name: true, username: true } } },
+    }),
+    getTemplateLiveness(),
+    prisma.aiSettings.findUnique({ where: { id: "global" }, select: { defaultReplyLanguage: true } }),
+    // Only groups a message could actually reach: connected account, still a member. Offering a
+    // dead group would produce a test that silently never arrives, which is the opposite of what
+    // a test is for. Monitored ones are offered but marked — sending an alert into a monitored
+    // group feeds it back in as a message, and a test is exactly when somebody would do that by
+    // accident.
+    prisma.whatsAppGroup.findMany({
+      where: { isActive: true, account: { status: "CONNECTED" } },
+      select: { id: true, name: true, isMonitored: true },
+      orderBy: [{ isMonitored: "asc" }, { name: "asc" }],
+      take: 300,
+    }),
+  ]);
   const byKey = new Map(overrides.map((row) => [row.key, row]));
+  const testGroups: TestTarget[] = groups;
 
   const customerFacing = NOTIFICATION_TEMPLATES.filter((t) => t.audience === "CUSTOMER");
   const internal = NOTIFICATION_TEMPLATES.filter((t) => t.audience === "TEAM");
@@ -28,6 +45,9 @@ export default async function NotificationTemplatesPage() {
       <TemplateCard
         key={definition.key}
         definition={definition}
+        liveness={liveness[definition.key] ?? { live: true }}
+        testGroups={testGroups}
+        replyLanguage={aiSettings?.defaultReplyLanguage ?? null}
         customBody={override?.body ?? null}
         updatedAt={
           override
@@ -85,6 +105,29 @@ export default async function NotificationTemplatesPage() {
                 template added here would be a message nothing ever sends, configured on a page that
                 implies it will. If you need an alert for something not listed, that needs building
                 into the worker that raises it; ask, and it becomes one more entry here.
+              </p>
+            </HelpSection>
+            <HelpSection title="&ldquo;Not sending right now&rdquo;">
+              <p>
+                A template shows this when nothing can currently raise it — the feature is off, the
+                alert is muted in Notification Center, or nothing exists to trigger it (no rule with
+                a notify action, no group with a priority tier). You can still edit and save it;
+                preparing wording for something you are about to switch on is normal. The note is
+                there so you do not finish, save, and only later discover it never sends.
+              </p>
+            </HelpSection>
+            <HelpSection title="Send a test">
+              <p>
+                Delivers the <strong>saved</strong> wording, with the example values, to a group you
+                pick — clearly labelled as a test so nobody acts on it. A preview shows the text but
+                not what WhatsApp does with it, and for the message that tags a team member it is the
+                only way to see a real @mention.
+              </p>
+              <p>
+                It goes through the normal send queue, so it arrives in seconds rather than
+                instantly, and it lands in a real conversation — prefer a test group. Groups the
+                system monitors are marked, because an alert sent into one is read back in as an
+                incoming message.
               </p>
             </HelpSection>
             <HelpSection title="Where each one is switched on or off">
