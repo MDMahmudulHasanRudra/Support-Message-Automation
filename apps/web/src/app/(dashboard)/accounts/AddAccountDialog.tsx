@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Plus } from "lucide-react";
-import { Button, Dialog, Field, Input, useToast } from "@/components/ui";
+import { Alert, Button, Dialog, Field, Input, useToast } from "@/components/ui";
 import { addWhatsAppAccount } from "@/server/actions/accounts";
 
 export function AddAccountDialog() {
@@ -45,7 +45,19 @@ export function AddAccountDialog() {
         title="Add WhatsApp account"
         description="The worker will assign a session and show a QR code to scan once it picks this account up."
       >
-        <form action={handleSubmit}>
+        {/* The wrong turn is taken here, so the correction belongs here rather than in help text
+            nobody opens. Adding an account to REPLACE a number silently strands everything: groups
+            are per-account, so the old account keeps the monitoring and AI settings while the new
+            one starts empty, and replies keep going out on whichever account received the message
+            — which is still the old one. */}
+        <Alert tone="info">
+          This is for running a <strong>second</strong> number alongside your current one. To
+          <strong> replace</strong> the number you already use, do not add an account — use{" "}
+          <strong>Logout</strong> then <strong>Reconnect</strong> on the existing card and scan with
+          the new phone. Its groups, monitoring and AI settings all carry over on their own.
+        </Alert>
+
+        <form action={handleSubmit} className="mt-4">
           <Field
             label="Label"
             htmlFor="label"

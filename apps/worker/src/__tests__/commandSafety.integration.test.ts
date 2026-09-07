@@ -171,6 +171,62 @@ describe("LOGOUT", () => {
     }
   });
 
+  it("deactivates that account's groups but keeps their settings", async () => {
+    // Logging out is "left every group" as far as this app can see, and it is the one case
+    // syncGroups' own sweep can never cover — that sweep needs a live provider result, which a
+    // logged-out account never produces again. Left active, the rows keep filling the chat inbox
+    // with conversations this number cannot reach, and every send fails membership verification.
+    const group = await prisma.whatsAppGroup.create({
+      data: {
+        accountId: account.id,
+        whatsappGroupId: `${randomUUID().replace(/-/g, "").slice(0, 12)}-1234567890@g.us`,
+        name: `Logout Group ${randomUUID()}`,
+        isMonitored: true,
+        isActive: true,
+        aiAutomationEnabled: true,
+      },
+    });
+
+    try {
+      await prisma.workerCommand.create({ data: { type: "LOGOUT" } });
+      await processOneCommand(account.id, new MockProvider());
+
+      const refreshed = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id: group.id } });
+      expect(refreshed.isActive).toBe(false);
+      // Deactivate, never erase: reconnecting the SAME number must restore the setup rather than
+      // silently wipe it, and syncGroups' upsert flips isActive back on its own.
+      expect(refreshed.isMonitored).toBe(true);
+      expect(refreshed.aiAutomationEnabled).toBe(true);
+    } finally {
+      await prisma.whatsAppGroup.delete({ where: { id: group.id } });
+    }
+  });
+
+  it("never deactivates a different account's groups", async () => {
+    const otherAccount = await prisma.whatsAppAccount.create({
+      data: { label: `Other Account ${randomUUID()}`, status: "CONNECTED" },
+    });
+    const otherGroup = await prisma.whatsAppGroup.create({
+      data: {
+        accountId: otherAccount.id,
+        whatsappGroupId: `${randomUUID().replace(/-/g, "").slice(0, 12)}-1234567890@g.us`,
+        name: `Other Group ${randomUUID()}`,
+        isActive: true,
+      },
+    });
+
+    try {
+      await prisma.workerCommand.create({ data: { type: "LOGOUT" } });
+      await processOneCommand(account.id, new MockProvider());
+
+      const refreshed = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id: otherGroup.id } });
+      expect(refreshed.isActive).toBe(true);
+    } finally {
+      await prisma.whatsAppGroup.delete({ where: { id: otherGroup.id } });
+      await prisma.whatsAppAccount.delete({ where: { id: otherAccount.id } });
+    }
+  });
+
   it("still completes even if the underlying provider.logout() rejects", async () => {
     const provider = new MockProvider();
     provider.logout = async () => {

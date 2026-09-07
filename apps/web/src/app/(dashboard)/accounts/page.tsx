@@ -3,13 +3,16 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { Alert, Card, EmptyState, HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import {
+  adoptGroupSetupFromAccount,
   deleteWhatsAppAccount,
+  getGroupSetupCandidates,
   removePrimaryAccount,
   requestGroupResync,
   requestLogout,
   requestReconnect,
   setPrimaryAccount,
 } from "@/server/actions/accounts";
+import { GroupSetupTransfer } from "./GroupSetupTransfer";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { AccountCard, type AccountCardData } from "./AccountCard";
 import { AddAccountDialog } from "./AddAccountDialog";
@@ -84,6 +87,22 @@ export default async function AccountsPage() {
   const workerOffline = lastHeartbeatMs === null || nowMs - lastHeartbeatMs > WORKER_STALE_AFTER_MS;
   const workerSilentForMinutes =
     lastHeartbeatMs === null ? null : Math.floor((nowMs - lastHeartbeatMs) / 60_000);
+  // Moving to a new number: offered on the CONNECTED account, since that is the one taking over.
+  // Only the first is considered — two connected accounts is a deliberate side-by-side setup, not
+  // a migration, and guessing which of them is replacing the other is exactly the decision this
+  // feature refuses to make on its own.
+  const takingOver = accounts.find((account) => account.status === "CONNECTED") ?? null;
+  const transferCandidates = takingOver ? await getGroupSetupCandidates(takingOver.id) : [];
+  const transferTarget =
+    takingOver && transferCandidates.length > 0
+      ? {
+          id: takingOver.id,
+          label: takingOver.label,
+          phoneNumber: takingOver.phoneNumber,
+          candidates: transferCandidates,
+        }
+      : null;
+
   const accountData: AccountCardData[] = accounts.map((account) => {
     const qrUpdatedAt = account.qrUpdatedAt?.toISOString() ?? null;
     return {
@@ -145,6 +164,27 @@ export default async function AccountsPage() {
                   keeps happening.
                 </p>
               </HelpSection>
+              <HelpSection title="Replacing the number that serves your customers">
+                <p>
+                  Do it on the <strong>existing card</strong>, not with Add Account:{" "}
+                  <strong>Logout</strong>, then <strong>Reconnect</strong>, then scan the QR with the
+                  new phone. The account keeps its identity, so the groups resync onto the same
+                  records and monitoring, AI, priority tier and assigned member all carry over with
+                  no setup to redo. Groups the new number is not in are marked inactive and drop out
+                  of the chat inbox.
+                </p>
+                <p>
+                  Adding a second account instead leaves the old one holding every setting while the
+                  new one starts empty — and replies keep going out on whichever account received
+                  the message, which is still the old one. Add Account is for running two numbers at
+                  once, not for changing which number you use.
+                </p>
+                <p>
+                  One step this app cannot do for you: the new phone has to actually be in the
+                  groups. WhatsApp only lets a member add someone, so do that from{" "}
+                  <strong>Add Number to Groups</strong> <em>before</em> logging the old number out.
+                </p>
+              </HelpSection>
               <HelpSection title="Reconnect vs. Logout">
                 <p>
                   <strong>Reconnect</strong> tries to restore the existing session without losing it —
@@ -179,6 +219,19 @@ export default async function AccountsPage() {
           <Alert tone="info" title={`${pendingCommands} command(s) waiting for the worker`}>
             The worker polls for new commands roughly every 1.5 seconds.
           </Alert>
+        </div>
+      ) : null}
+
+      {/* Only rendered when there is genuinely setup on another account to move, so it stays out
+          of the way of the ordinary single-account deployment this page is usually serving. */}
+      {transferTarget ? (
+        <div className="mb-4">
+          <GroupSetupTransfer
+            targetLabel={transferTarget.label}
+            targetPhone={transferTarget.phoneNumber}
+            candidates={transferTarget.candidates}
+            onAdopt={adoptGroupSetupFromAccount.bind(null, transferTarget.id)}
+          />
         </div>
       ) : null}
 

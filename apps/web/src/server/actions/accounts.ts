@@ -172,3 +172,167 @@ export async function deleteWhatsAppAccount(accountId: string): Promise<DeleteAc
   revalidatePath("/accounts");
   return {};
 }
+
+export interface GroupSetupCandidate {
+  accountId: string;
+  label: string;
+  phoneNumber: string | null;
+  /** Groups on this account that carry setup worth moving. */
+  configuredGroups: number;
+  /** How many of those the target account is also in — the number that would actually carry. */
+  wouldCarry: number;
+}
+
+/**
+ * Which other accounts have group setup that could be adopted, and how much of it would land.
+ *
+ * `wouldCarry` is the honest number and the reason this is a preview rather than a one-click
+ * action: a WhatsApp group is per-account (`@@unique([accountId, whatsappGroupId])`), so setup can
+ * only carry to a group the target account is ALSO in. A new number is in nothing until somebody
+ * adds it, and "0 of 1,848 would carry" is the answer that actually explains what to do next.
+ */
+export async function getGroupSetupCandidates(targetAccountId: string): Promise<GroupSetupCandidate[]> {
+  await requireSession();
+
+  const targetGroupIds = new Set(
+    (
+      await prisma.whatsAppGroup.findMany({
+        where: { accountId: targetAccountId },
+        select: { whatsappGroupId: true },
+      })
+    ).map((g) => g.whatsappGroupId),
+  );
+
+  const others = await prisma.whatsAppAccount.findMany({
+    where: { id: { not: targetAccountId } },
+    select: { id: true, label: true, phoneNumber: true },
+  });
+
+  const candidates: GroupSetupCandidate[] = [];
+  for (const account of others) {
+    // "Configured" means somebody made a decision about this group. A row left entirely at its
+    // defaults carries nothing, and counting it would promise work that does not exist.
+    const configured = await prisma.whatsAppGroup.findMany({
+      where: {
+        accountId: account.id,
+        OR: [
+          { isMonitored: true },
+          { aiAutomationEnabled: true },
+          { aiAutomationExcluded: true },
+          { testModeEnabled: true },
+          { priority: { not: null } },
+          { assignedTeamMemberId: { not: null } },
+        ],
+      },
+      select: { whatsappGroupId: true },
+    });
+    if (configured.length === 0) continue;
+
+    candidates.push({
+      accountId: account.id,
+      label: account.label,
+      phoneNumber: account.phoneNumber,
+      configuredGroups: configured.length,
+      wouldCarry: configured.filter((g) => targetGroupIds.has(g.whatsappGroupId)).length,
+    });
+  }
+
+  return candidates.sort((a, b) => b.wouldCarry - a.wouldCarry);
+}
+
+export interface AdoptGroupSetupResult {
+  error?: string;
+  updated?: number;
+  /** Configured groups the target account is not in — it cannot be given setup for those. */
+  notShared?: number;
+}
+
+/**
+ * Copies the operational setup of every shared group from one account onto another.
+ *
+ * The case this exists for: replacing the number that serves your customers. The groups resync
+ * under the new account as fresh rows with every flag at its default, so without this an operator
+ * re-picks monitoring, AI, priority tier and assigned member on every group by hand — which for a
+ * roster in the hundreds is not a real option, and half-finished is worse than not started.
+ *
+ * Deliberately an explicit action rather than something that fires on connect. Two accounts
+ * running side by side is a supported arrangement, so "a new account appeared" cannot be read as
+ * "it is replacing that one" — and guessing wrong turns monitoring on for hundreds of groups under
+ * a second number, which means every customer gets answered twice.
+ *
+ * Copies decisions only. Not copied, on purpose: the knowledge-build watermarks (they mark a
+ * position in THIS account's own stored messages), `aiSuppressedUntil` (a live human-takeover
+ * timer, not a setting), and sync bookkeeping.
+ */
+export async function adoptGroupSetupFromAccount(
+  targetAccountId: string,
+  sourceAccountId: string,
+): Promise<AdoptGroupSetupResult> {
+  const session = await requireSession();
+  if (targetAccountId === sourceAccountId) return { error: "Pick a different account to copy from." };
+
+  const [target, source] = await Promise.all([
+    prisma.whatsAppAccount.findUnique({ where: { id: targetAccountId }, select: { id: true, label: true } }),
+    prisma.whatsAppAccount.findUnique({ where: { id: sourceAccountId }, select: { id: true, label: true } }),
+  ]);
+  if (!target || !source) return { error: "That account no longer exists." };
+
+  const configured = await prisma.whatsAppGroup.findMany({
+    where: {
+      accountId: sourceAccountId,
+      OR: [
+        { isMonitored: true },
+        { aiAutomationEnabled: true },
+        { aiAutomationExcluded: true },
+        { testModeEnabled: true },
+        { priority: { not: null } },
+        { assignedTeamMemberId: { not: null } },
+      ],
+    },
+    select: {
+      whatsappGroupId: true,
+      isMonitored: true,
+      aiAutomationEnabled: true,
+      aiAutomationExcluded: true,
+      testModeEnabled: true,
+      escalationMonitoringEnabled: true,
+      priority: true,
+      assignedTeamMemberId: true,
+    },
+  });
+
+  let updated = 0;
+  let notShared = 0;
+
+  for (const group of configured) {
+    // updateMany rather than update: it matches nothing and moves on when the target account is
+    // not in this group, which is the ordinary case rather than an error.
+    const { count } = await prisma.whatsAppGroup.updateMany({
+      where: { accountId: targetAccountId, whatsappGroupId: group.whatsappGroupId },
+      data: {
+        isMonitored: group.isMonitored,
+        aiAutomationEnabled: group.aiAutomationEnabled,
+        aiAutomationExcluded: group.aiAutomationExcluded,
+        testModeEnabled: group.testModeEnabled,
+        escalationMonitoringEnabled: group.escalationMonitoringEnabled,
+        priority: group.priority,
+        assignedTeamMemberId: group.assignedTeamMemberId,
+      },
+    });
+    if (count > 0) updated += count;
+    else notShared += 1;
+  }
+
+  await logSystemEvent("WARN", "accounts", `Group setup copied from "${source.label}" to "${target.label}"`, {
+    targetAccountId,
+    sourceAccountId,
+    updated,
+    notShared,
+    copiedBy: session.username,
+  });
+
+  revalidatePath("/accounts");
+  revalidatePath("/groups");
+  revalidatePath("/chat");
+  return { updated, notShared };
+}
