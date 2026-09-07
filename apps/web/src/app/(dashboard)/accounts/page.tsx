@@ -164,6 +164,27 @@ export default async function AccountsPage() {
                   keeps happening.
                 </p>
               </HelpSection>
+              <HelpSection title="Replacing the number that serves your customers">
+                <p>
+                  Do it on the <strong>existing card</strong>, not with Add Account:{" "}
+                  <strong>Logout</strong>, then <strong>Reconnect</strong>, then scan the QR with the
+                  new phone. The account keeps its identity, so the groups resync onto the same
+                  records and monitoring, AI, priority tier and assigned member all carry over with
+                  no setup to redo. Groups the new number is not in are marked inactive and drop out
+                  of the chat inbox.
+                </p>
+                <p>
+                  Adding a second account instead leaves the old one holding every setting while the
+                  new one starts empty — and replies keep going out on whichever account received
+                  the message, which is still the old one. Add Account is for running two numbers at
+                  once, not for changing which number you use.
+                </p>
+                <p>
+                  One step this app cannot do for you: the new phone has to actually be in the
+                  groups. WhatsApp only lets a member add someone, so do that from{" "}
+                  <strong>Add Number to Groups</strong> <em>before</em> logging the old number out.
+                </p>
+              </HelpSection>
               <HelpSection title="Reconnect vs. Logout">
                 <p>
                   <strong>Reconnect</strong> tries to restore the existing session without losing it —
