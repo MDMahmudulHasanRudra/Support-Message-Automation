@@ -2,6 +2,7 @@ import { prisma } from "@support-automation/db";
 import { buildWhatsAppContactId, hasReachablePhoneNumber, normalizePhoneNumber } from "@support-automation/shared";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { renderNotification } from "../notifications/templates.js";
 
 /**
  * Asks for help inside the customer's own group, by name.
@@ -18,11 +19,14 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
  * idempotency all apply. It is not a second send path.
  */
 
-/** Who to tag, in preference order. */
-async function resolveMentionTargets(groupId: string): Promise<Array<{ name: string; chatId: string }>> {
+/** Who to tag, in preference order, plus the group's own name for the message template. */
+async function resolveMentionTargets(
+  groupId: string,
+): Promise<{ targets: Array<{ name: string; chatId: string }>; groupName: string }> {
   const group = await prisma.whatsAppGroup.findUnique({
     where: { id: groupId },
     select: {
+      name: true,
       assignedTeamMember: { select: { id: true, name: true, phoneNumber: true, whatsappId: true, status: true } },
     },
   });
@@ -50,7 +54,7 @@ async function resolveMentionTargets(groupId: string): Promise<Array<{ name: str
     if (!digits) continue;
     targets.push({ name: member.name, chatId: buildWhatsAppContactId(digits) });
   }
-  return targets;
+  return { targets, groupName: group?.name ?? "" };
 }
 
 export interface MentionHandoverParams {
@@ -69,7 +73,7 @@ export interface MentionHandoverParams {
  */
 export async function mentionTeamForHandover(params: MentionHandoverParams): Promise<boolean> {
   try {
-    const targets = await resolveMentionTargets(params.groupId);
+    const { targets, groupName } = await resolveMentionTargets(params.groupId);
     if (targets.length === 0) {
       await logSystemEvent("INFO", "ai-fallback", "Handover mention skipped — nobody taggable for this group", {
         groupId: params.groupId,
@@ -80,9 +84,18 @@ export async function mentionTeamForHandover(params: MentionHandoverParams): Pro
     // WhatsApp renders a mention as the @-prefixed number in the body; the client displays the
     // saved name over it. The names are included in plain text too so the message still reads
     // sensibly for anyone whose phone shows the raw number instead.
+    //
+    // The wording is editable (Notification Templates) because the customer reads it — this is the
+    // one alert in the system that is the company speaking rather than an internal note. {{mentions}}
+    // is required at save time: without it the tags vanish and the message announces that help was
+    // summoned while reaching nobody.
     const tags = targets.map((target) => `@${target.chatId.split("@")[0]}`).join(" ");
     const names = targets.map((target) => target.name).join(", ");
-    const body = `${tags}\n\nA customer here needs a person — ${names}, could you take a look?`;
+    const body = await renderNotification("AI_HANDOVER_MENTION", {
+      mentions: tags,
+      names,
+      groupName,
+    });
 
     const { queued } = await enqueueOutboundMessage({
       accountId: params.accountId,

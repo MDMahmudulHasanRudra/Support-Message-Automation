@@ -26,7 +26,7 @@ export class WhatsAppNotificationProvider implements NotificationProvider {
     if (!provider) {
       return { success: false, error: `WhatsApp account ${accountId} is not connected in this worker.` };
     }
-    const text = formatSupportAlert(payload);
+    const text = await formatSupportAlert(payload);
     console.log(`[whatsapp-routing] account=${accountId} recipient=${destination} action=SEND`);
     const result = await provider.sendMessage(destination, text);
     return { success: result.success, error: result.error };

@@ -158,6 +158,7 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/notifications", label: "Notifications", icon: Bell },
       { href: "/notifications/events", label: "Notification Center", icon: BellRing },
+      { href: "/notifications/templates", label: "Notification Templates", icon: MessageSquareQuote },
       { href: "/settings", label: "Settings", icon: SettingsIcon },
       { href: "/logs", label: "System Logs", icon: ConsoleIcon },
     ],

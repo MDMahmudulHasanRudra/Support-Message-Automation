@@ -682,6 +682,26 @@ Sidebar group: **System**
   Anyone whose stored number is really a WhatsApp id cannot receive one, and their checkboxes are
   disabled with the reason on their own edit page. Notifications predating this module keep no event
   and are reported as such, rather than having one guessed for them after the fact.
+- **Notification Templates** (`/notifications/templates`): the wording of every message this
+  system sends that a person reads — the AI handover alert, the message posted in a customer's own
+  group when AI tags somebody, rule alerts, the recurring-question suggestion, and the five
+  escalation tiers. Each card shows a **live preview** built from example values, because nobody
+  can judge "Waiting: {{waitingMinutes}} minute(s)" but everybody can judge "Waiting: 37
+  minute(s)". Placeholders are click-to-insert and listed per template; using one that belongs to a
+  different template is refused when you save, since it would otherwise send as literal text.
+  Leaving one out is fine — that detail is simply not shown, and a line containing only an empty
+  placeholder is removed rather than left dangling.
+  - A template you have not edited has **no stored row**: it uses the built-in wording and will
+    pick up future improvements to it. **Reset to default** deletes your version rather than
+    copying today's default into place, so it goes back to tracking the app.
+  - One template is marked **Customers read this** — the message posted in their own conversation
+    when AI tags a team member. `{{mentions}}` cannot be removed from it: without the tags the
+    customer reads that somebody was called when nobody was.
+  - There is no "add new template". This list is the set of moments the software actually has, not
+    a settings list; a template added here would be a message nothing ever sends. A genuinely new
+    alert needs building into the worker that raises it.
+  - Wording only — whether an alert fires, on which channels, and to which groups is on
+    Notification Center.
 - **Settings** (`/settings`): the general `AutomationSettings` form — Per-Client Reply Limits (max
   per client per hour/day), Global Rate Limiting (enable switch + max per minute/hour/day), Reply
   Delay & Retries (default delay min/max, max retry attempts, **and the retry backoff intervals** —

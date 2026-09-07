@@ -479,6 +479,45 @@ swallowed, with anyone already receiving the alert at that exact chat skipped ra
 twice. `getDirectRecipients()` **fails closed**, unlike the rest of the module — a DM is an
 addition, so if it throws the group has still been told.
 
+### Notification Templates (`packages/shared/src/notificationTemplates.ts`, `(dashboard)/notifications/templates/`)
+
+Every message this system sends that a person reads, in one editable catalogue: the AI handover
+alert, the message posted in the customer's own group when AI tags somebody, rule alerts, the
+unknown-pattern suggestion, and the five escalation tiers.
+
+**Default wording lives in code; the table holds only overrides.** No rows are seeded — an absent
+`NotificationTemplate` row means "use the built-in", the same shape as `NotificationEventSetting`.
+Three things follow, and they are the reason for the shape: a fresh install works with nothing
+configured; an unedited template keeps tracking wording improvements shipped later; and **Reset is
+a DELETE**, not a copy of the current default, so a reset template goes back to tracking the app
+rather than freezing at whatever it said that day.
+
+`renderNotification()` (`apps/worker/src/notifications/templates.ts`) **never throws and never
+returns empty**. A missing row, an unreadable database, a stored body that has since become invalid,
+or an edit that renders to nothing once the variables are filled in — all fall through to the
+built-in. Same fail-open reasoning as `getEventDelivery()`: a slightly wrong alert is noise, a
+dropped escalation is a customer nobody saw. A stored body is **re-validated before use**, because a
+template saved against an older catalogue can name a variable that no longer exists, and that would
+reach a customer as a literal `{{oldName}}`.
+
+`validateTemplateBody()` runs in the browser *and* in the server action — the client check is a
+convenience a stale tab walks straight past. It refuses unknown placeholders (naming the valid ones),
+empty bodies, anything over 4000 characters, and removal of `{{mentions}}` from
+`AI_HANDOVER_MENTION`: without it the tags vanish and the customer reads that help was summoned
+while nobody was actually tagged. At render time an unknown placeholder is left **visible** rather
+than blanked, matching the Teams template this borrows from — a visible `{{typo}}` in an internal
+alert is a bug report; a silent gap looks like missing data. A line whose only content was an empty
+variable is dropped, so an unassigned case has no "Assigned to:" line rather than a dangling one.
+
+**There is deliberately no "add template" button.** The catalogue is the set of moments the worker
+actually raises, not a settings list — a row nothing sends, configured on a page implying it will,
+is the dead-setting problem this project keeps removing. A new alert is a code change; its entry
+here is one line of that change. `key` is a plain `String @id` validated against the shared
+catalogue rather than a Prisma enum, so adding one needs no migration.
+
+Wording only. Whether an alert is raised, its channels, and its destination groups are the
+Notification Center's job.
+
 ### Microsoft Teams Integration (`apps/worker/src/teams/`, `apps/web/src/server/teamsAuth/`,
 `apps/web/src/app/(dashboard)/integrations/teams/`, `apps/web/src/app/(dashboard)/issues/`)
 

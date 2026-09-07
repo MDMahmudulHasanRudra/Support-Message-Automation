@@ -5,7 +5,7 @@ import { formatSupportAlert } from "./formatMessage.js";
 export class TeamsProvider implements NotificationProvider {
   /** Teams has no account concept — accountId is always null for this provider and simply ignored. */
   async send(destination: string, payload: Record<string, unknown>): Promise<NotificationSendResult> {
-    const text = formatSupportAlert(payload);
+    const text = await formatSupportAlert(payload);
     try {
       const response = await fetch(destination, {
         method: "POST",

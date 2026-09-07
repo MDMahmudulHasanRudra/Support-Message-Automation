@@ -225,6 +225,27 @@ model TeamMemberNotificationPreference {
 /// Rows are created lazily on first use, so a deployment that has never opened the page behaves
 /// exactly as it did before: `enabled` defaults true and the destination overrides are null,
 /// which means "use the global destinations", which is the old behaviour exactly.
+/// A customised notification message. Rows exist ONLY for templates somebody edited — the default
+/// wording lives in packages/shared/src/notificationTemplates.ts, so a fresh install works with
+/// nothing here, an unedited template keeps tracking improvements shipped later, and "reset to
+/// default" is a delete rather than a copy of whatever the default was that day.
+///
+/// `key` is a plain string rather than an enum on purpose: the catalogue is defined in code and
+/// validated against it, so adding a template is a code change with no migration attached.
+model NotificationTemplate {
+  key String @id
+
+  /// The custom wording, with {{placeholder}} variables. Validated against the key's declared
+  /// variables before it is written — an unknown placeholder is refused at save time rather than
+  /// discovered in front of a customer.
+  body String
+
+  updatedById String?
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}
+
 model NotificationEventSetting {
   event NotificationEvent @id
 
@@ -393,6 +414,7 @@ model User {
   createdKnowledgeImports    KnowledgeImport[]
   createdKnowledgeVersions   AiKnowledgeVersion[]
   approvedStyleProfiles      CommunicationStyleProfile[]
+  editedNotificationTemplates NotificationTemplate[]
   resolvedEscalationCases    SupportEscalationCase[]
   triggeredEscalationEvents  SupportEscalationEvent[]
   triggeredLearningBatchJobs LearningBatchJob[]

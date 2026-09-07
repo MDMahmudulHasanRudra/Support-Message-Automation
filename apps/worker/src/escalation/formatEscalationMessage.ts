@@ -1,12 +1,19 @@
 import { prisma } from "@support-automation/db";
 import type { SupportEscalationCase } from "@prisma/client";
+import { renderNotification } from "../notifications/templates.js";
 
-const EVENT_TITLES: Record<string, string> = {
-  FIRST_NOTIFICATION: "🔔 PRIORITY SUPPORT — New Message",
-  SECOND_NOTIFICATION: "🚨 HIGH PRIORITY SUPPORT — Still Waiting",
-  MEMBER_NOTIFICATION: "🚨 Personal Reminder — Priority Client Waiting",
-  ADMIN_NOTIFICATION: "🆘 ESCALATED TO ADMIN — No Human Response Yet",
-  FOLLOW_UP: "🆘 ESCALATION FOLLOW-UP — Still Unresolved",
+/**
+ * Which template each tier uses. The five differ only in their heading, but they are five separate
+ * templates rather than one with a `{{title}}` variable: a deployment that wants the admin
+ * escalation to read differently from the first nudge should be able to rewrite it outright, and a
+ * shared body with a swapped heading cannot express that.
+ */
+const TIER_TEMPLATE: Record<string, string> = {
+  FIRST_NOTIFICATION: "ESCALATION_FIRST",
+  SECOND_NOTIFICATION: "ESCALATION_SECOND",
+  MEMBER_NOTIFICATION: "ESCALATION_MEMBER",
+  ADMIN_NOTIFICATION: "ESCALATION_ADMIN",
+  FOLLOW_UP: "ESCALATION_FOLLOW_UP",
 };
 
 /**
@@ -26,18 +33,18 @@ export async function formatEscalationAlert(params: {
   ]);
 
   const waitingMinutes = Math.round((Date.now() - caseRow.lastCustomerMessageAt.getTime()) / 60_000);
-  const lines = [
-    EVENT_TITLES[eventType] ?? eventType,
-    "",
-    `Priority: ${caseRow.priority}`,
-    `Group: ${group?.name ?? "(unknown group)"}`,
-    `Client: ${triggerMessage?.senderName ?? caseRow.clientPhone}`,
-    `Waiting: ${waitingMinutes} minute(s) since last customer message`,
-    `Message: ${truncate(triggerMessage?.body ?? "(message unavailable)", 300)}`,
-  ];
-  if (recipientName) lines.push(`Assigned to: ${recipientName}`);
-  lines.push("", "Please review the conversation and respond.");
-  return lines.join("\n");
+
+  return renderNotification(TIER_TEMPLATE[eventType] ?? "ESCALATION_FIRST", {
+    priority: caseRow.priority,
+    groupName: group?.name ?? "(unknown group)",
+    clientName: triggerMessage?.senderName ?? caseRow.clientPhone,
+    waitingMinutes: String(waitingMinutes),
+    customerMessage: truncate(triggerMessage?.body ?? "(message unavailable)", 300),
+    // Empty rather than a placeholder word: renderNotificationTemplate drops a label whose only
+    // content was an empty variable, so an unassigned case simply has no "Assigned to" line
+    // instead of one reading "Assigned to: (nobody)".
+    assignedTo: recipientName ?? "",
+  });
 }
 
 function truncate(text: string, maxLength: number): string {
