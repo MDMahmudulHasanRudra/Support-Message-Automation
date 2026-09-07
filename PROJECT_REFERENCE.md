@@ -1,6 +1,6 @@
 # Project Reference
 
-This is the exhaustive, page-by-page functional reference for Support Message Automation — every
+This is the exhaustive, page-by-page functional reference for Softify Assist — every
 sidebar module, every page, every field, every button, and what it actually does. If you want the
 *design* rationale (why the system is shaped this way) read `ARCHITECTURE.md`; if you're an AI
 agent working on the code read `CLAUDE.md`; if you just want to run the thing read `README.md`.

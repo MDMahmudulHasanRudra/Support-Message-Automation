@@ -4,6 +4,7 @@ import {
   ForgeClient,
   ForgeRequestError,
   checkKnowledgeEntrySafety,
+  checkKnowledgeEntrySubstance,
   isForgeConfigured,
   loadForgeConfigFromEnv,
   type ForgeKnowledgeModule,
@@ -28,6 +29,13 @@ import { buildModuleGuidePrompt, buildUserGuidePrompt } from "./forgePrompts.js"
  * entry that mentions code, schema, endpoints or credentials is dropped and counted, never
  * stored — not even as an unverified draft, because a draft is one careless click from being
  * verified.
+ *
+ * Tier 1 additionally passes `checkKnowledgeSubstance()` before it may be **auto-verified**. The
+ * two gates are deliberately different in severity: a disclosure violation is never stored, while
+ * a vague entry is stored and merely denied the automatic verification, because it is a draft
+ * worth improving rather than a leak. This exists because auto-verified filler is worse than an
+ * empty knowledge base — retrieval matches it, which stops the deep-answer research and the
+ * handover from ever running. See `knowledgeSubstance.ts`.
  *
  * Each unit of work becomes a `KnowledgeImport` row, reusing the existing import machinery for
  * progress, retry and provenance rather than inventing a parallel one.
@@ -171,9 +179,28 @@ async function storeEntries(params: {
       sourceLabel: params.sourceLabel,
       confidence: entry.confidence,
       aiGenerated: true,
-      humanVerified: params.humanVerified,
+      // Auto-verification is per entry, not per batch. A tier-1 document is authoritative, but a
+      // model summarising one still produces the occasional "refresh the page, contact your IT
+      // support" — and auto-verifying that puts it straight in front of customers, where it does
+      // more harm than the gap it fills. It still gets stored; it just has to be read by a person
+      // first, which is what the admin's setting was always promising for the ones worth trusting.
+      humanVerified: params.humanVerified && checkKnowledgeEntrySubstance(entry).substantive,
     })),
   });
+
+  const withheld = params.humanVerified
+    ? fresh.filter((entry) => !checkKnowledgeEntrySubstance(entry).substantive)
+    : [];
+  if (withheld.length > 0) {
+    // Visible, like the safety gate's own blocks: an operator has to be able to see the gate
+    // working and judge whether it is too strict, rather than wonder why the review queue grew.
+    await logSystemEvent("INFO", "forge", "Stored entries unverified: they did not pass the substance check", {
+      sourceLabel: params.sourceLabel,
+      count: withheld.length,
+      titles: withheld.slice(0, 5).map((entry) => entry.title).join(" | "),
+    });
+  }
+
   return { created: fresh.length, blocked };
 }
 

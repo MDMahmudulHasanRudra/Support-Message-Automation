@@ -95,7 +95,7 @@ export function DashboardShell({
               </>
             ) : null}
             <span className="truncate font-medium text-[color:var(--color-foreground)]">
-              {location?.label ?? "Support Automation"}
+              {location?.label ?? "Softify Assist"}
             </span>
           </nav>
 

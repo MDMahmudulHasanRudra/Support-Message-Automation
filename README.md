@@ -1,7 +1,9 @@
-# Support Message Automation
+# Softify Assist
 
 Rule-based WhatsApp support automation: a Next.js dashboard, a dedicated
 OpenWA worker, and a PostgreSQL/Prisma backend, run via Docker Compose.
+
+Runs in production at **https://assist.softifybd.com**.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the durable system design, and
 [PROJECT_REFERENCE.md](./PROJECT_REFERENCE.md) for an exhaustive, page-by-page reference of every
@@ -80,10 +82,10 @@ endpoint is already reachable by choosing OpenAI and setting the API URL). See
 ```bash
 cp .env.example .env      # fill in real values
 docker compose up -d --build
-docker compose ps         # all three services should report healthy
+docker compose ps         # postgres, app and worker should report healthy (migrate is one-shot)
 ```
 
-- Dashboard: http://localhost:3000
+- Dashboard: http://localhost:8668 (the host port is `WEB_PORT`, default 8668; the container still listens on 3000)
 - Health checks: `GET /api/health` (web), internal-only on the worker (see `ARCHITECTURE.md`)
 
 ## Local development (without Docker)
@@ -91,7 +93,7 @@ docker compose ps         # all three services should report healthy
 ```bash
 pnpm install
 pnpm --filter @support-automation/db generate
-pnpm dev:web       # apps/web on :3000
+PORT=8668 pnpm dev:web   # apps/web — pick any free port; NEXTAUTH_URL must match it
 pnpm dev:worker    # apps/worker
 ```
 

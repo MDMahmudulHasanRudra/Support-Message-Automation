@@ -1,4 +1,6 @@
+import { prisma } from "@support-automation/db";
 import { buildCommunicationStyleProfile } from "./communicationStyleJob.js";
+import { scheduleStartupCatchUp } from "../scheduling.js";
 
 /**
  * Rebuilds the communication-style profile on a slow cadence.
@@ -14,10 +16,11 @@ import { buildCommunicationStyleProfile } from "./communicationStyleJob.js";
  */
 export function startCommunicationStyleProcessor(intervalMs = 12 * 60 * 60_000): NodeJS.Timeout {
   let running = false;
-  return setInterval(() => {
-    if (running) return;
+
+  const tick = () => {
+    if (running) return Promise.resolve();
     running = true;
-    buildCommunicationStyleProfile()
+    return buildCommunicationStyleProfile()
       .then((result) => {
         if (result.ran && result.guidanceChanged) {
           console.log(`[style] rebuilt from ${result.repliesAnalyzed} replies — awaiting approval`);
@@ -29,5 +32,20 @@ export function startCommunicationStyleProcessor(intervalMs = 12 * 60 * 60_000):
       .finally(() => {
         running = false;
       });
-  }, intervalMs);
+  };
+
+  // Twelve hours is the longest interval in this worker and therefore the easiest to starve
+  // entirely — see ../scheduling.ts. Last in the stagger, since a style rebuild is the least
+  // urgent of the three and its output waits on human approval anyway.
+  scheduleStartupCatchUp({
+    name: "Communication style rebuild",
+    intervalMs,
+    delayMs: 240_000,
+    lastRunAt: async () =>
+      (await prisma.communicationStyleProfile.findUnique({ where: { id: "global" }, select: { lastBuiltAt: true } }))
+        ?.lastBuiltAt ?? null,
+    run: tick,
+  });
+
+  return setInterval(tick, intervalMs);
 }

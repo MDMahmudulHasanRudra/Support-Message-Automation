@@ -48,6 +48,47 @@ describe("every Forge prompt states the disclosure rules", () => {
   }
 });
 
+describe("guide prompts refuse to invent troubleshooting", () => {
+  // Sixteen auto-verified entries in the live knowledge base were invented troubleshooting of
+  // exactly this shape — "check your permissions, refresh the page, contact support" — for
+  // failures the source documents never described. They are findable, so they were answering
+  // real customers instead of letting the question reach a person.
+  const guidePrompts = {
+    "user guide": buildUserGuidePrompt({
+      documentTitle: "Monthly Billing",
+      moduleHint: null,
+      chunk: "text",
+      chunkIndex: 0,
+      chunkCount: 1,
+    }),
+    "module guide": buildModuleGuidePrompt({ moduleName: "Billing", moduleSummary: null, sources: SOURCES }),
+  };
+
+  for (const [name, prompt] of Object.entries(guidePrompts)) {
+    it(`${name}: forbids a failure record the material does not describe`, () => {
+      const system = prompt.systemPrompt.toLowerCase();
+      expect(system).toContain("what to do when something goes wrong");
+      expect(system).toContain("unless the");
+    });
+
+    it(`${name}: names the boilerplate it must not produce`, () => {
+      // Naming the exact phrases matters: "do not be generic" is advice, a list is an instruction.
+      const system = prompt.systemPrompt.toLowerCase();
+      expect(system).toContain("check your permissions");
+      expect(system).toContain("refresh");
+      expect(system).toContain("contact support");
+    });
+
+    it(`${name}: says an ungrounded answer is worse than none`, () => {
+      expect(prompt.systemPrompt.toLowerCase()).toContain("worse than no answer");
+    });
+
+    it(`${name}: removes the pressure to fill a quota`, () => {
+      expect(prompt.systemPrompt.toLowerCase()).toContain("no quota");
+    });
+  }
+});
+
 describe("record format stays in step with the shared parser", () => {
   it("asks only for categories the parser accepts", () => {
     const prompt = buildUserGuidePrompt({
