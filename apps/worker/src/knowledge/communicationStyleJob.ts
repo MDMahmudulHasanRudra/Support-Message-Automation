@@ -151,16 +151,31 @@ export async function buildCommunicationStyleProfile(clientOverride?: AiClient):
     .filter((body) => body.length >= 15 && !isSystemNotification(body));
 
   if (replies.length < MIN_REPLIES_FOR_A_PROFILE) {
-    // Not enough to see a habit. Recorded rather than silent, because "why is there no profile"
-    // is the first question anyone will ask of a feature they just switched on.
+    // Two very different situations reach here, and reporting them the same way was wrong.
+    //
+    // collectSupportReplies only returns replies written SINCE the last build, so once a profile
+    // exists the steady state is zero new ones — that is the feature working, not failing. It was
+    // recorded as an error regardless, which put "Only 0 support replies available — 25 are needed
+    // before a style can be described" on a page that was simultaneously showing a described style,
+    // in use, built from 62 replies. Read literally it says the feature cannot work, while it is
+    // working.
+    const hasProfile = Boolean(profile.guidance?.trim());
     await prisma.communicationStyleProfile.update({
       where: { id: "global" },
       data: {
         lastBuiltAt: new Date(),
-        lastError: `Only ${replies.length} support replies available — ${MIN_REPLIES_FOR_A_PROFILE} are needed before a style can be described.`,
+        // Clearing it matters as much as not setting it: a genuine shortage recorded before the
+        // first successful build must not stay on screen forever afterwards.
+        lastError: hasProfile
+          ? null
+          : `Only ${replies.length} support replies available — ${MIN_REPLIES_FOR_A_PROFILE} are needed before a style can be described.`,
       },
     });
-    return { ran: false, skipped: "NOT_ENOUGH_REPLIES", repliesAnalyzed: replies.length };
+    return {
+      ran: false,
+      skipped: hasProfile ? "NOTHING_NEW_TO_LEARN_FROM" : "NOT_ENOUGH_REPLIES",
+      repliesAnalyzed: replies.length,
+    };
   }
 
   const ai = clientOverride ?? (await resolveAiClient("LEARNING"));
