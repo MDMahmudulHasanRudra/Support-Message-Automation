@@ -885,6 +885,27 @@ completion, narrowing by `derivePatternSignature` keywords in SQL and ranking by
 (same-group provenance breaks ties). `selectRelevantKnowledge()` is the pure ranking half, split
 out so it is unit-testable without a DB.
 
+**`AiKnowledgeItem.procedure` reaches the prompt, and did not for a long time.** The column
+existed, the knowledge form let people type steps into it, and nothing ever read it — a stored
+"Billing list → Payment → Pay → Submit" reached no customer. It is now selected, truncated on the
+same budget as the answer, and rendered as a `Steps:` line *after* the answer, since the model reads
+the end of an entry more reliably than the middle. No AI job writes it yet; only hand-written
+entries carry one.
+
+**The prompt asks for steps, and forbids inventing them in the same breath.** `HOW TO WRITE THE
+ANSWER` tells the model to give a procedure in the order it is done, naming what the person opens
+or clicks, warm and plain. That instruction creates its own risk — asked for confident navigation a
+model will happily invent a screen, which the Forge work already caught it doing from zero bytes of
+source — so `NEVER INVENT A STEP` sits directly under it, with "cover the part you can and hand over
+for the rest". The block sits **after** the language rules and **before** the scope rules, and the
+ordering is asserted: style is subordinate to both, exactly as the house-style guidance is.
+
+This is deliberately **not** mode-dependent. `aiResponseMode` governs which sources may be used;
+how the answer is written is a separate axis. Making the formatting depend on the mode would mean
+the same question got a worse-written answer under a stricter setting, which is incoherent — though
+the effect is most visible in the two Forge modes, since those are the ones that can produce a
+procedure from the product's own source.
+
 **Only `humanVerified: true` + `ACTIVE` entries are ever retrieved, and that is load-bearing.**
 Knowledge-builder output is unverified by design; feeding an unverified model-distilled claim
 back into a customer-facing answer would launder a hallucination into a citation and re-cite it

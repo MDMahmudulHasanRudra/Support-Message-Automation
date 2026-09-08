@@ -93,6 +93,7 @@ describe("selectRelevantKnowledge with expanded terms", () => {
     question: "How do I remove a bKash payment entry?",
     answer: "Open the customer's payment list, select the bKash entry and choose Delete.",
     sourceGroupId: null,
+    procedure: null,
   };
   const ROUTER = {
     id: "k2",
@@ -100,6 +101,7 @@ describe("selectRelevantKnowledge with expanded terms", () => {
     question: "How is a new router provisioned?",
     answer: "Add the device under Network, then push the profile.",
     sourceGroupId: null,
+    procedure: null,
   };
 
   it("ranks an English entry for a Banglish question once the terms are supplied", () => {

@@ -644,7 +644,17 @@ switch gates all of it.
     team's stands behind those.
   - **Answer in** — the reply language, as a dropdown: **Auto**, Bangla, Banglish, English, or
     *Other language…* which reveals a text box for any language you name.
-    - Pick a **language** and AI answers in it, switching away only on real evidence — a message
+    - **Answers are written as steps.** When somebody asks how to do something, AI gives the steps in
+    the order they are done, naming what to open or click — "Billing list → Payment → Pay → enter
+    the amount → choose the receiving account → Submit" rather than a paragraph about it — in plain,
+    friendly wording. It is told never to invent a step: where the material runs out it says so and
+    hands over, because a wrong click sends somebody hunting through software they already find
+    confusing. This applies in every response mode; the mode decides what may be used, not how the
+    answer reads.
+  - The **Procedure** field on a knowledge entry is what AI builds those steps from when one is
+    written. It had been editable and unread — steps typed into it reached no customer — so filling
+    it in on your most-asked entries is now the highest-value thing you can do to that page.
+  - Pick a **language** and AI answers in it, switching away only on real evidence — a message
       in a different script, or a fluent English sentence. A greeting, a bare number, or Bengali
       typed in Latin letters all stay in the chosen language.
     - Pick **Auto** and AI reads each message and replies in the same language *and the same

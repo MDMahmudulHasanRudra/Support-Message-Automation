@@ -14,6 +14,7 @@ const PRINTER = {
   question: "Why did my receipt printer stop working after updating?",
   answer: "Reinstall the printer driver from Settings, then restart the terminal.",
   sourceGroupId: "group-a",
+  procedure: null,
 };
 const STOCK = {
   id: "k2",
@@ -21,6 +22,7 @@ const STOCK = {
   question: "When does inventory sync?",
   answer: "Inventory syncs nightly at 2am; same-day edits appear the next morning.",
   sourceGroupId: "group-b",
+  procedure: null,
 };
 const REFUND = {
   id: "k3",
@@ -28,6 +30,7 @@ const REFUND = {
   question: "How long do customers have to request a refund?",
   answer: "Refunds can be requested within fourteen days of purchase.",
   sourceGroupId: null,
+  procedure: null,
 };
 
 describe("selectRelevantKnowledge", () => {
@@ -55,8 +58,8 @@ describe("selectRelevantKnowledge", () => {
 
   it("prefers an entry learned from the same group when relevance ties", () => {
     const sameText = { title: "Sync question", question: null, answer: "Inventory syncs nightly." };
-    const fromThisGroup = { ...sameText, id: "a-here", sourceGroupId: "group-x" };
-    const fromElsewhere = { ...sameText, id: "b-elsewhere", sourceGroupId: "group-y" };
+    const fromThisGroup = { ...sameText, id: "a-here", sourceGroupId: "group-x", procedure: null };
+    const fromElsewhere = { ...sameText, id: "b-elsewhere", sourceGroupId: "group-y", procedure: null };
 
     const picked = selectRelevantKnowledge("inventory syncs question", [fromElsewhere, fromThisGroup], "group-x");
 
@@ -72,6 +75,7 @@ describe("selectRelevantKnowledge", () => {
       question: null,
       answer: "Printer notes.",
       sourceGroupId: "group-x",
+      procedure: null,
     };
     const picked = selectRelevantKnowledge(
       "receipt printer offline after updating the terminal",
@@ -89,6 +93,7 @@ describe("selectRelevantKnowledge", () => {
       question: null,
       answer: "Reinstall the printer driver.",
       sourceGroupId: null,
+      procedure: null,
     }));
 
     expect(selectRelevantKnowledge("printer driver reinstall", many, null)).toHaveLength(3);
@@ -101,6 +106,7 @@ describe("selectRelevantKnowledge", () => {
       question: null,
       answer: "Reinstall the printer driver.",
       sourceGroupId: null,
+      procedure: null,
     }));
 
     const first = selectRelevantKnowledge("printer driver reinstall", many, null);
@@ -115,6 +121,7 @@ describe("selectRelevantKnowledge", () => {
       question: null,
       answer: `Reinstall the printer driver. ${"x".repeat(2000)}`,
       sourceGroupId: null,
+      procedure: null,
     };
 
     const picked = selectRelevantKnowledge("printer driver reinstall", [longAnswer], null);
@@ -142,6 +149,7 @@ describe("buildFallbackPrompt with knowledge", () => {
           question: "Why is it offline?",
           answer: "Reinstall the driver.",
           fromSameGroup: true,
+          procedure: null,
         },
       ],
     });
@@ -157,7 +165,7 @@ describe("buildFallbackPrompt with knowledge", () => {
     const prompt = buildFallbackPrompt({
       customerMessage: "printer offline",
       groupName: null,
-      knowledge: [{ id: "k1", title: "T", question: null, answer: "A", fromSameGroup: false }],
+      knowledge: [{ id: "k1", title: "T", question: null, answer: "A", fromSameGroup: false, procedure: null }],
     });
 
     expect(prompt.systemPrompt).toContain("SHOULD_REPLY");
@@ -168,7 +176,7 @@ describe("buildFallbackPrompt with knowledge", () => {
     const prompt = buildFallbackPrompt({
       customerMessage: "printer offline",
       groupName: null,
-      knowledge: [{ id: "k1", title: "T", question: null, answer: "A", fromSameGroup: false }],
+      knowledge: [{ id: "k1", title: "T", question: null, answer: "A", fromSameGroup: false, procedure: null }],
     });
 
     for (const field of ["INTENT:", "CONFIDENCE:", "SHOULD_REPLY:", "RESPONSE:"]) {

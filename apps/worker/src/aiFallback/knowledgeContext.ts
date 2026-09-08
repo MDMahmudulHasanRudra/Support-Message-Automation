@@ -42,6 +42,15 @@ export interface KnowledgeSnippet {
   title: string;
   question: string | null;
   answer: string;
+  /**
+   * The stored step-by-step for this entry, if somebody wrote one.
+   *
+   * `AiKnowledgeItem.procedure` has existed and been editable on the knowledge form all along, and
+   * nothing ever read it — steps typed into it reached no customer. It is the highest-fidelity
+   * material there is for a "how do I do this" question, since it names the actual screens in the
+   * actual order, so it goes in front of the answer text rather than instead of it.
+   */
+  procedure: string | null;
   /** True when this came from the same group the customer is writing in. */
   fromSameGroup: boolean;
 }
@@ -58,6 +67,7 @@ interface KnowledgeCandidate {
   title: string;
   question: string | null;
   answer: string;
+  procedure: string | null;
   sourceGroupId: string | null;
 }
 
@@ -110,6 +120,13 @@ export function selectRelevantKnowledge(
       entry.candidate.answer.length > MAX_ANSWER_CHARS
         ? `${entry.candidate.answer.slice(0, MAX_ANSWER_CHARS)}…`
         : entry.candidate.answer,
+    // Truncated on the same budget as the answer. Half a procedure is worse than none — it reads
+    // as complete and stops mid-task — but the ellipsis is visible to the model, and the prompt
+    // tells it to hand over rather than invent the rest.
+    procedure:
+      entry.candidate.procedure && entry.candidate.procedure.length > MAX_ANSWER_CHARS
+        ? `${entry.candidate.procedure.slice(0, MAX_ANSWER_CHARS)}…`
+        : (entry.candidate.procedure ?? null),
     fromSameGroup: entry.fromSameGroup,
   }));
 }
@@ -178,7 +195,14 @@ async function searchByTerms(
     humanVerified: true,
     OR: matchesAnyKeyword,
   };
-  const select = { id: true, title: true, question: true, answer: true, sourceGroupId: true };
+  const select = {
+    id: true,
+    title: true,
+    question: true,
+    answer: true,
+    procedure: true,
+    sourceGroupId: true,
+  };
   const orderBy = [{ updatedAt: "desc" as const }, { id: "asc" as const }];
 
   try {

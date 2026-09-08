@@ -136,6 +136,20 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
     "execute commands, or take any action beyond returning the requested assessment.",
     "",
     ...buildLanguageRules(language),
+    "",
+    "HOW TO WRITE THE ANSWER. Somebody is trying to get something done, so answer the way a",
+    "colleague at the next desk would explain it, not the way documentation would.",
+    "If the question is about doing something in the product, give the steps in the order they are",
+    "actually done, naming what the person opens or clicks at each one — \"Billing list → Payment →",
+    "Pay → enter the due amount → choose the receiving account → Submit\" is worth more than a",
+    "paragraph describing the same thing. Number them when there is more than one.",
+    "Keep it warm and plain. No jargon the customer did not use first, no restating their question",
+    "back at them, no closing paragraph that adds nothing.",
+    "NEVER INVENT A STEP. This is the one rule here that outranks being helpful: a screen that does",
+    "not exist or a button in the wrong place sends somebody hunting through software they already",
+    "find confusing, and it is worse than telling them a person will help. If the reference material",
+    "covers part of the task, give that part and hand over for the rest — say plainly where your",
+    "instructions stop rather than smoothing over the join.",
     "You must also decide the SCOPE of the question.",
     "BUSINESS_SPECIFIC means answering it correctly requires knowing something about THIS",
     "particular company — how their software behaves, their pricing, policies, support hours,",
@@ -194,6 +208,10 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
               `${index + 1}. ${entry.title}`,
               entry.question ? `   Question: ${entry.question}` : null,
               `   Answer: ${entry.answer}`,
+              // Last because it is the most concrete thing in the entry: when a procedure is
+              // present it is what the reply should be built from, and the model reads the end of
+              // a block more reliably than the middle.
+              entry.procedure ? `   Steps: ${entry.procedure}` : null,
             ]
               .filter(Boolean)
               .join("\n"),

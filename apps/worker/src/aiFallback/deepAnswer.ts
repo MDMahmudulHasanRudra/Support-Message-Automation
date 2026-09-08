@@ -135,6 +135,7 @@ export async function researchForCustomerQuestion(params: {
         title: stored.title,
         question: stored.question,
         answer: stored.answer,
+        procedure: stored.procedure,
         fromSameGroup: true,
       });
     }

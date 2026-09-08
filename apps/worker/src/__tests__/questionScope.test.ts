@@ -107,7 +107,7 @@ describe("buildFallbackPrompt — scope instruction", () => {
     const withKnowledge = buildFallbackPrompt({
       customerMessage: "q",
       groupName: null,
-      knowledge: [{ id: "k", title: "t", question: null, answer: "a", fromSameGroup: false }],
+      knowledge: [{ id: "k", title: "t", question: null, answer: "a", fromSameGroup: false, procedure: null }],
     });
     const without = buildFallbackPrompt({ customerMessage: "q", groupName: null });
     expect(withKnowledge.userPrompt).toContain("SCOPE:");
@@ -303,5 +303,75 @@ describe("describeReplyLanguage — prompts that talk about the setting", () => 
     expect(describeReplyLanguage("")).toBe(FALLBACK_REPLY_LANGUAGE);
     expect(describeReplyLanguage(null)).toBe(FALLBACK_REPLY_LANGUAGE);
     expect(describeReplyLanguage(undefined)).toBe(FALLBACK_REPLY_LANGUAGE);
+  });
+});
+
+/**
+ * How the answer is written, as opposed to what it may be drawn from.
+ *
+ * Worth pinning separately because the two are independent and get confused: the response mode
+ * decides which sources are allowed, this decides the shape of the reply. A procedure answered
+ * from verified knowledge alone should read exactly the same as one answered with the product
+ * source behind it — making the formatting depend on the mode would mean the same question got a
+ * worse-written answer under a stricter setting, which is incoherent.
+ */
+describe("buildFallbackPrompt — answering with steps", () => {
+  const prompt = (overrides: Partial<Parameters<typeof buildFallbackPrompt>[0]> = {}) =>
+    buildFallbackPrompt({ customerMessage: "kivabe payment korbo?", groupName: null, ...overrides });
+
+  it("asks for the steps in the order they are done, naming what to click", () => {
+    const systemPrompt = prompt().systemPrompt;
+    expect(systemPrompt).toMatch(/steps in the order they are/i);
+    expect(systemPrompt).toMatch(/opens or clicks/i);
+  });
+
+  it("refuses invented steps in the strongest terms it uses anywhere", () => {
+    // The risk this instruction creates. Asked for confident navigation, a model will happily
+    // invent a screen — the Forge work already caught it producing five confident answers about a
+    // module from zero bytes of source. A wrong click sends somebody hunting through software they
+    // already find confusing.
+    const systemPrompt = prompt().systemPrompt;
+    expect(systemPrompt).toContain("NEVER INVENT A STEP");
+    expect(systemPrompt).toMatch(/hand over for the rest/i);
+  });
+
+  it("does not let the friendly tone outrank the language or scope rules", () => {
+    // Style is subordinate everywhere else in this prompt; it has to stay subordinate here too.
+    const systemPrompt = prompt().systemPrompt;
+    const language = systemPrompt.indexOf("LANGUAGE.");
+    const howToWrite = systemPrompt.indexOf("HOW TO WRITE THE ANSWER");
+    const scope = systemPrompt.indexOf("You must also decide the SCOPE");
+    expect(language).toBeGreaterThan(-1);
+    expect(howToWrite).toBeGreaterThan(language);
+    expect(scope).toBeGreaterThan(howToWrite);
+  });
+
+  it("puts a stored procedure in front of the model", () => {
+    // AiKnowledgeItem.procedure was editable on the knowledge form and read by nothing — steps
+    // typed into it reached no customer. This is the assertion that it now arrives.
+    const built = prompt({
+      knowledge: [
+        {
+          id: "k1",
+          title: "Taking a payment",
+          question: null,
+          answer: "Payments are recorded against the customer's bill.",
+          procedure: "Billing list → Payment → Pay → enter amount → choose account → Submit",
+          fromSameGroup: false,
+        },
+      ],
+    });
+
+    expect(built.userPrompt).toContain("Steps:");
+    expect(built.userPrompt).toContain("Billing list → Payment → Pay");
+  });
+
+  it("omits the steps line entirely when no procedure was written", () => {
+    const built = prompt({
+      knowledge: [
+        { id: "k1", title: "T", question: null, answer: "A", procedure: null, fromSameGroup: false },
+      ],
+    });
+    expect(built.userPrompt).not.toContain("Steps:");
   });
 });
