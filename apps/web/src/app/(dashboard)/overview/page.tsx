@@ -18,6 +18,7 @@ import {
   Td,
   Th,
 } from "@/components/ui";
+import { getGroupsAwaitingReply } from "@/server/supportActivityReports";
 import {
   AreaChart,
   BarList,
@@ -42,10 +43,14 @@ import {
   getTeamsIntegrationSummary,
 } from "@/server/actions/dashboardSummary";
 import {
+  getAiOutcomeSeries,
   getBusiestGroups,
   getDecisionMix,
   getDeliveryOutcomes,
+  getExecutiveLoad,
   getMessageLoadSeries,
+  getResponseTimeSeries,
+  getSupportActorMix,
 } from "@/server/actions/dashboardMetrics";
 
 function formatAgeShort(ms: number): string {
@@ -80,6 +85,11 @@ export default async function OverviewPage() {
     decisionMix,
     deliveryOutcomes,
     busiestGroups,
+    aiOutcomes,
+    responseTimes,
+    actorMix,
+    executiveLoad,
+    awaiting,
   ] = await Promise.all([
     getAccountsRoutingSummary(),
     getAutomationOutboundSummary(nowMs),
@@ -96,6 +106,11 @@ export default async function OverviewPage() {
     getDecisionMix(nowMs),
     getDeliveryOutcomes(nowMs),
     getBusiestGroups(nowMs),
+    getAiOutcomeSeries(nowMs),
+    getResponseTimeSeries(nowMs),
+    getSupportActorMix(nowMs),
+    getExecutiveLoad(nowMs),
+    getGroupsAwaitingReply(new Date(nowMs)),
   ]);
 
   const disconnectedAccounts = accountsRouting.accounts.filter((a) => a.status !== "CONNECTED");
@@ -171,6 +186,11 @@ export default async function OverviewPage() {
               ? "success"
               : "warning"
           }
+        />
+        <StatTile
+          label="Waiting for a reply"
+          value={awaiting.length}
+          tone={awaiting.length > 0 ? "warning" : "success"}
         />
         <StatTile label="Incoming messages (24h)" value={recentActivity.messagesLast24h} />
         <StatTile
@@ -261,7 +281,100 @@ export default async function OverviewPage() {
             <ColumnChart data={messageLoad.hourly} ariaLabel="Incoming messages per hour, last 24 hours" />
           </ChartCard>
 
+          <ChartCard
+            className="lg:col-span-2"
+            title="AI answers and handovers"
+            description="Every message the rule engine missed in an AI-eligible group, by day. A handover is the safety rule working, not a failure."
+            headline={
+              aiOutcomes.answeredSharePercent === null ? undefined : (
+                <ChartHeadline
+                  value={`${aiOutcomes.answeredSharePercent}%`}
+                  caption={`answered without a person \u00b7 ${formatCount(aiOutcomes.totalHandedOver)} handed over`}
+                />
+              )
+            }
+          >
+            {/* Two stacked charts rather than one two-series plot: the kit has no grouped-series
+                chart, and inventing one for this would be a bigger change than the question
+                deserves. Reading them as a pair still answers it — the shapes diverge when the
+                ratio moves. */}
+            <div className="space-y-3">
+              <div>
+                <p className="mb-1 text-xs text-[color:var(--color-muted-foreground)]">
+                  Answered by AI
+                </p>
+                <ColumnChart
+                  data={aiOutcomes.replied}
+                  ariaLabel="Messages answered by AI per day, last 14 days"
+                  height={64}
+                  labelEvery={3}
+                />
+              </div>
+              <div>
+                <p className="mb-1 text-xs text-[color:var(--color-muted-foreground)]">
+                  Handed to a person
+                </p>
+                <ColumnChart
+                  data={aiOutcomes.handedOver}
+                  ariaLabel="Messages handed to a person per day, last 14 days"
+                  height={64}
+                  labelEvery={3}
+                />
+              </div>
+            </div>
+          </ChartCard>
+
+          <ChartCard
+            title="Support delivered"
+            description="Who answered customers over the last 7 days."
+            headline={
+              actorMix.aiOnlyGroups > 0 ? (
+                <ChartHeadline
+                  value={formatCount(actorMix.aiOnlyGroups)}
+                  caption="groups no colleague touched"
+                />
+              ) : undefined
+            }
+          >
+            <DonutChart
+              slices={actorMix.slices}
+              total={actorMix.total}
+              centerLabel="activities"
+              ariaLabel="Support activities by actor, last 7 days"
+            />
+          </ChartCard>
+
+          <ChartCard
+            className="lg:col-span-2"
+            title="How long customers wait"
+            description="Median minutes to a first reply, by day. Median rather than average — one conversation answered next morning would drag an average past every honest reading of the day."
+            headline={
+              responseTimes.latestMedianMinutes === null ? undefined : (
+                <ChartHeadline
+                  value={`${responseTimes.latestMedianMinutes}m`}
+                  caption="most recent day with replies"
+                />
+              )
+            }
+          >
+            <AreaChart
+              data={responseTimes.daily}
+              ariaLabel="Median minutes to first reply per day, last 14 days"
+              unitLabel="min"
+            />
+          </ChartCard>
+
           <div className="flex flex-col gap-4">
+            <ChartCard
+              title="Busiest executives"
+              description="Support messages per person over the last 7 days."
+            >
+              <BarList
+                items={executiveLoad.people}
+                emptyMessage="No support activity recorded in the last 7 days."
+              />
+            </ChartCard>
+
             <ChartCard
               title="Outbound delivery"
               description="Every message the send queue handled in the last 24 hours."

@@ -71,6 +71,23 @@ or changes anything; every number links to the real page where you'd act on it.
 
 ---
 
+### Overview charts
+
+Nine hand-rolled SVG charts, no charting library. Beyond the original five (message volume by day,
+automation decisions, load by hour, outbound delivery, busiest groups):
+
+- **Waiting for a reply** — a tile leading the row, because it is the only number on the page that
+  means somebody is waiting right now. Green when nothing is.
+- **AI answers and handovers** — two daily series over 14 days. A handover is the safety rule
+  working rather than a failure, and is not coloured as one; what matters is the ratio moving.
+- **How long customers wait** — median minutes to a first reply, per day. The same definition of a
+  wait that Team Performance uses, so the two pages cannot disagree.
+- **Support delivered** — people vs AI over 7 days, with "groups no colleague touched" beside it:
+  either the automation working exactly as intended, or conversations quietly going unattended.
+- **Busiest executives** — support messages per person over 7 days. Raw counts here rather than
+  the presence-based duration on Team Performance, which is the more careful measure and lives on
+  the page that can explain how it is derived.
+
 ## Messages
 
 Sidebar group: **Messages**

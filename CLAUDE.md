@@ -1013,6 +1013,26 @@ through `resolveWhatsAppAccount(serviceKey)` (`packages/db`) — the single cent
 every sending feature must call, never re-derive the Primary/pinned/fallback decision at the call
 site.
 
+**The Overview charts are hand-rolled inline SVG** (`components/charts/`: `AreaChart`,
+`ColumnChart`, `DonutChart`, `StackedBar`, `BarList`, wrapped in `ChartCard`) — there is no
+charting library and adding one is not the answer to wanting another chart. Colour comes from the
+design system, and which set matters: `--chart-1..6` are **identity** slots for categorical series,
+status tokens (`--color-success`/`warning`/`danger`) are for **state**. Painting AI green or amber
+in the human-vs-AI split would editorialise a ratio the reader is meant to judge; painting a failed
+send anything but danger would hide it.
+
+Nine charts, and each has to answer a question somebody acts on — decorative dashboards are
+explicitly against the standards. The four newest: **AI answers and handovers** (a handover is the
+safety rule working, not a failure, and is not coloured as one), **how long customers wait** (median
+per day, same wait definition as `getFirstResponseStats` — two response-time numbers computed
+differently on two pages is worse than one), **support delivered** (people vs AI, with
+`aiOnlyGroups` as the figure worth watching), and **busiest executives**.
+
+`getResponseTimeSeries` is the heaviest query on the landing page — a window function over fourteen
+days of messages partitioned by group, leaning on `Message`'s `[groupId, timestampWa]` and
+`[timestampWa]` indexes. If volume ever makes it the bottleneck the answer is a nightly rollup, not
+a narrower window: the "wait" definition must stay identical to Team Performance's.
+
 Nav lives in one place — `(dashboard)/navigation.ts`. Groups, top to bottom (a pinned
 "Overview" link sits above all of them; Messages leads with the WhatsApp Chat inbox): Messages,
 Escalations, Support Activity, Teams Integration, WhatsApp, Automation, Bulk Messaging, AI Learning,
