@@ -136,7 +136,24 @@ export async function setChatCategory(
   });
 
   const { count } = await prisma.whatsAppGroup.updateMany({
-    where: { id: { in: ids }, chatCategoryId: categoryId ? { not: categoryId } : { not: null } },
+    where: {
+      id: { in: ids },
+      // The OR is not defensive noise, it is the whole correctness of this action.
+      //
+      // `{ not: x }` compiles to `"chatCategoryId" <> x`, and in SQL `NULL <> 'abc'` is NULL
+      // rather than TRUE — so the shorthand silently matches no uncategorised row at all.
+      // Assigning a category to conversations that had none therefore updated exactly zero rows
+      // and reported "0 moved", which is every conversation on a fresh install and was the entire
+      // observed symptom. Removing a category still worked, because `{ not: null }` compiles to
+      // `IS NOT NULL` and NULL-safety is only a problem when comparing against a value.
+      //
+      // Verified against a real database, because the intuitive rewrites are also wrong: Prisma
+      // 5.22 compiles the `NOT: { chatCategoryId: x }` block form to the same NULL-excluding
+      // comparison. Spelling the null case out is what actually works.
+      ...(categoryId
+        ? { OR: [{ chatCategoryId: null }, { chatCategoryId: { not: categoryId } }] }
+        : { chatCategoryId: { not: null } }),
+    },
     data: { chatCategoryId: categoryId },
   });
 

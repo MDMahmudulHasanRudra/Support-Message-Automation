@@ -1332,6 +1332,19 @@ current schedule rather than quietly becoming "retry immediately". That leaves `
 as the only settings column with no form field, which is correct: it is the kill switch and has its
 own confirmed control on Automation Control rather than sitting among ordinary inputs.
 
+**`{ not: value }` on a NULLABLE column silently skips every NULL row, and it has already shipped
+a broken feature.** Prisma compiles it to `column <> value`, and in SQL `NULL <> 'abc'` is NULL
+rather than TRUE. `setChatCategory` used `chatCategoryId: { not: categoryId }` to avoid rewriting
+rows already in the target category — which meant assigning a category to uncategorised
+conversations matched **zero** rows and reported "0 moved". That is every conversation on a fresh
+install, so the category feature appeared completely dead while removing a category worked fine
+(`{ not: null }` compiles to `IS NOT NULL`, and NULL-safety only bites when comparing to a value).
+
+Spell the null case out — `OR: [{ col: null }, { col: { not: value } }]`. The intuitive rewrites do
+not work: Prisma 5.22 compiles the `NOT: { col: value }` block form to the same NULL-excluding
+comparison, verified against a real database (0 rows vs the 2 expected). Every other `not:` filter
+in this repo is on a required column and is therefore safe; check nullability before adding one.
+
 **Bulk actions read current state before writing**, so they report "8 enabled, 1 already on, 1 not
 found" rather than "Done", and converge on a re-run instead of writing twice. `bulkSetAiAutomation`
 mirrors `bulkSetMonitoring` with one deliberate difference: it **never clears
