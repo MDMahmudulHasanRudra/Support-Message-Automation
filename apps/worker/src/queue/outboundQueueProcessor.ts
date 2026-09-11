@@ -1,3 +1,4 @@
+import { countMetric } from "../health/metrics.js";
 import { trackTick } from "../lifecycle.js";
 import { prisma } from "@support-automation/db";
 import type { OutboundMessage } from "@prisma/client";
@@ -329,6 +330,7 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
           providerMessageId: result.providerMessageId ?? undefined,
         },
       });
+      countMetric("replied");
       if (isBroadcast) await maybeCompleteBroadcastJob(message.broadcastJobId!);
     } else {
       await handleSendFailure(message, result.error ?? "Unknown provider error");

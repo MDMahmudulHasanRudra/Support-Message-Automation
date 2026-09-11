@@ -1,3 +1,4 @@
+import { countMetric } from "../health/metrics.js";
 import { prisma } from "@support-automation/db";
 import { loadStoredMessageContext, runAutomationStage } from "./processIncomingMessage.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -72,6 +73,7 @@ export async function recoverStrandedMessages(batchSize = BATCH_SIZE): Promise<M
       if (!context) continue; // deleted between the query and now
       await runAutomationStage(context.raw, context.stored, `recovery:${id}`);
       result.recovered += 1;
+      countMetric("retried");
     } catch (err) {
       // runAutomationStage already marked the row FAILED and logged the detail. FAILED is not
       // picked up again, so a message that cannot be processed is retried exactly once and then

@@ -1,3 +1,4 @@
+import { countMetric } from "../health/metrics.js";
 import { prisma } from "@support-automation/db";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { processIncomingMessage, storeMissedMessage } from "./processIncomingMessage.js";
@@ -138,8 +139,10 @@ export async function catchUpMissedMessages(accountId: string, provider: WhatsAp
         if (shouldAutomateRecoveredMessage(raw.timestampWa, now)) {
           await processIncomingMessage(raw);
           result.automated += 1;
+          countMetric("retried");
         } else if (await storeMissedMessage(raw)) {
           result.stored += 1;
+          countMetric("retried");
         } else {
           result.duplicates += 1;
         }

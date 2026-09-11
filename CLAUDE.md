@@ -353,6 +353,19 @@ younger may still be in flight (the AI call has a retry budget), older is histor
 outstanding question. A retry that throws lands FAILED, which is not picked up again — so one retry,
 then visibly failed, never a loop.
 
+**Counters live in memory, and the health code does not depend on them** (`health/metrics.ts`,
+`health/server.ts`). Everything durable is already derivable from rows that exist —
+`Message.processingStatus`, `OutboundMessage.status`, `AiFallbackDecision.outcome` — and the
+dashboard reads exactly those, so a metrics table would be a second, drifting answer to a question
+already answered correctly. What a table cannot tell you is what this PROCESS has seen, which is the
+question when the suspicion is that it has stopped seeing anything: `received` counts the provider
+handoff itself, so `received` flat while the groups are busy names the listener rather than the
+pipeline. A message never received leaves no row anywhere. `/metrics` serves them; `/health`
+includes them but **the 200/503 decision stays on database connectivity alone** — restarting the
+container cannot fix an unscanned QR or a session waiting on a human, and letting session state
+decide the exit code would cycle Chromium against a problem only a person with the phone can solve,
+losing every healthy session with it.
+
 **`checkCollectionHealth()` is the answer to "we look healthy, so why is nothing arriving?"** It
 never infers anything from silence, because silence is not evidence — a group can be quiet all
 night. When a CONNECTED account with monitored groups has stored nothing for 45 minutes, it asks the

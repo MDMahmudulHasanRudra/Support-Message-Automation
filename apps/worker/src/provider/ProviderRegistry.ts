@@ -1,3 +1,4 @@
+import { countMetric } from "../health/metrics.js";
 import { OpenWAProvider } from "./openwa/OpenWAProvider.js";
 import type { WhatsAppProvider } from "./WhatsAppProvider.js";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
@@ -64,6 +65,10 @@ export class ProviderRegistry {
     }
 
     provider.subscribeToMessages((message) => {
+      // Counted here rather than after storing: the question this answers is whether the provider
+      // is still handing anything over at all, and a message dropped by a later filter still
+      // proves it was.
+      countMetric("received");
       // PHASE 6.1: the exact OpenWA -> worker event handoff point — logged here, not inside the
       // provider, since this is the provider-agnostic boundary any future provider implementation
       // would call through identically.

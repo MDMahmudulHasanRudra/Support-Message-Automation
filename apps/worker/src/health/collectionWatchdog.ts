@@ -1,3 +1,4 @@
+import { countMetric } from "./metrics.js";
 import { prisma } from "@support-automation/db";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
@@ -99,6 +100,7 @@ export async function checkCollectionHealth(registry: ProviderRegistry): Promise
       continue;
     }
 
+    countMetric("collectionBreaks");
     console.error(
       `[watchdog] account "${account.label}" reports CONNECTED but has stored nothing for ${finding.quietForMinutes}m while WhatsApp holds newer messages — collection is broken`,
     );

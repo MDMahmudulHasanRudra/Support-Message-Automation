@@ -1,3 +1,4 @@
+import { countMetric } from "../health/metrics.js";
 import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { evaluate, type EngineRule } from "@support-automation/engine";
@@ -304,7 +305,9 @@ export async function runAutomationStage(
       where: { id: message.id },
       data: { processingStatus: result.finalDecision === "IGNORE" ? "IGNORED" : "PROCESSED" },
     });
+    countMetric("processed");
   } catch (err) {
+    countMetric("failed");
     await prisma.message
       .update({ where: { id: message.id }, data: { processingStatus: "FAILED" } })
       .catch((markErr) => console.error("[pipeline] could not mark message FAILED", markErr));
