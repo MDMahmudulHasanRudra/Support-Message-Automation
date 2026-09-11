@@ -178,7 +178,10 @@ export default async function OverviewPage() {
       ) : null}
 
       <div className="stagger-children mb-7 grid grid-cols-2 gap-3.5 sm:grid-cols-4">
+        {/* Each href lands on the rows this number counted, already filtered. Where no page
+            lists those rows, the tile stays inert — see the outbound queue below. */}
         <StatTile
+          href="/accounts"
           label="Connected accounts"
           value={`${accountsRouting.connectedCount}/${accountsRouting.accounts.length}`}
           tone={
@@ -188,33 +191,50 @@ export default async function OverviewPage() {
           }
         />
         <StatTile
+          href="/support-activity/team"
           label="Waiting for a reply"
           value={awaiting.length}
           tone={awaiting.length > 0 ? "warning" : "success"}
         />
-        <StatTile label="Incoming messages (24h)" value={recentActivity.messagesLast24h} />
+        {/* `within=24h` rather than a date: the tile counts a rolling window, and a calendar-day
+            filter would land on a different set than the number shown. */}
         <StatTile
+          href="/messages?within=24h"
+          label="Incoming messages (24h)"
+          value={recentActivity.messagesLast24h}
+        />
+        <StatTile
+          href="/messages?decision=SUPPORT_REQUIRED&within=24h"
           label="Support required (24h)"
           value={automationOutbound.supportRequiredLast24h}
           tone={automationOutbound.supportRequiredLast24h > 0 ? "warning" : "neutral"}
         />
-        <StatTile label="Active rules" value={automationOutbound.activeRuleCount} />
+        <StatTile href="/rules?status=ACTIVE" label="Active rules" value={automationOutbound.activeRuleCount} />
+        {/* Deliberately not a link. This counts every unsettled outbound row — auto-replies,
+            manual sends and broadcast rows alike — and no page lists that queue in full. The
+            closest candidate, /messages?autoReplyStatus=PENDING, covers only the auto-reply
+            subset, so it would show a smaller number under the same label and send somebody
+            hunting for the difference. An outbound-queue page would make this linkable. */}
         <StatTile
           label="Outbound queue (pending)"
           value={automationOutbound.outboundPendingCount}
           tone={automationOutbound.outboundPendingCount > 0 ? "warning" : "neutral"}
         />
         <StatTile
+          href="/notifications?status=FAILED"
           label="Failed notifications (24h)"
           value={notifications.failed24h}
           tone={notifications.failed24h > 0 ? "danger" : "neutral"}
         />
+        {/* No query needed: Active Cases only ever lists open ones, so the page IS the filter. */}
         <StatTile
+          href="/support-escalation"
           label="Open escalation cases"
           value={escalation.openCaseCount}
           tone={escalation.openCaseCount > 0 ? "warning" : "neutral"}
         />
         <StatTile
+          href="/conversation-learning/unknown-patterns"
           label="Unresolved unknown patterns"
           value={conversationLearning.unknownPatternCount}
           tone={conversationLearning.unknownPatternCount > 0 ? "warning" : "neutral"}
@@ -229,6 +249,7 @@ export default async function OverviewPage() {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <ChartCard
             className="lg:col-span-2"
+            href="/messages?within=14d"
             title="Incoming message volume"
             description="Daily totals for the last 14 days, on Asia/Dhaka day boundaries."
             headline={
@@ -254,6 +275,7 @@ export default async function OverviewPage() {
           </ChartCard>
 
           <ChartCard
+            href="/messages?within=24h"
             title="Automation decisions"
             description="What the rule engine decided in the last 24 hours."
           >
@@ -267,6 +289,7 @@ export default async function OverviewPage() {
 
           <ChartCard
             className="lg:col-span-2"
+            href="/messages?within=24h"
             title="Message load by hour"
             description="Rolling 24 hours — the darker column is the busiest hour."
             headline={
@@ -283,6 +306,7 @@ export default async function OverviewPage() {
 
           <ChartCard
             className="lg:col-span-2"
+            href="/ai-learning/activity"
             title="AI answers and handovers"
             description="Every message the rule engine missed in an AI-eligible group, by day. A handover is the safety rule working, not a failure."
             headline={
@@ -325,6 +349,7 @@ export default async function OverviewPage() {
           </ChartCard>
 
           <ChartCard
+            href="/support-activity"
             title="Support delivered"
             description="Who answered customers over the last 7 days."
             headline={
@@ -346,6 +371,7 @@ export default async function OverviewPage() {
 
           <ChartCard
             className="lg:col-span-2"
+            href="/support-activity/team"
             title="How long customers wait"
             description="Median minutes to a first reply, by day. Median rather than average — one conversation answered next morning would drag an average past every honest reading of the day."
             headline={
@@ -366,6 +392,7 @@ export default async function OverviewPage() {
 
           <div className="flex flex-col gap-4">
             <ChartCard
+              href="/support-activity/team"
               title="Busiest executives"
               description="Support messages per person over the last 7 days."
             >

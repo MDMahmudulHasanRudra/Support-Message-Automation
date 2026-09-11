@@ -33,6 +33,14 @@ export interface MessageFilters {
   ruleId?: string;
   autoReplyStatus?: string;
   notificationStatus?: string;
+  /**
+   * A rolling window — "24h" or "7d" — as opposed to the calendar-day bounds above.
+   *
+   * Set by the Overview tiles, which count rolling hours, so clicking one lands on the same rows
+   * it counted. Ignored whenever dateFrom/dateTo are present: a shorthand must not override a
+   * date somebody typed.
+   */
+  within?: string;
 }
 
 export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilters; options: FilterOptions }) {

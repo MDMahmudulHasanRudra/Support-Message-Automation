@@ -1106,6 +1106,26 @@ per day, same wait definition as `getFirstResponseStats` — two response-time n
 differently on two pages is worse than one), **support delivered** (people vs AI, with
 `aiOnlyGroups` as the figure worth watching), and **busiest executives**.
 
+**Every Overview figure that has somewhere honest to go is a link** — `StatTile` and `ChartCard`
+both take an optional `href`, and it stays optional on purpose. A tile that lands on a page where
+the reader rebuilds the dashboard's own query by hand is worse than one that does not move: it
+promises the eighteen rows and delivers a search box. So the outbound-queue tile and the outbound
+delivery chart are deliberately **inert** — that count includes auto-replies, manual sends and
+broadcast rows, and no page lists the queue in full; `/messages?autoReplyStatus=PENDING` is only
+the auto-reply subset and would show a smaller number under the same label.
+
+`/messages` gained a **`within`** param (`24h` / `7d` / `14d`) for this, and that is not
+decoration: the tiles count a ROLLING window while `dateFrom`/`dateTo` name Dhaka calendar days, so
+a tile linking with `dateFrom=today` would land on a different set than the number it displayed —
+wrong before lunch and wronger at midnight. Explicit dates still win when both are present; a
+shorthand must not override something somebody typed. The value is whitelisted rather than parsed,
+because a pasted `within=9999` should fall through to no window rather than scan the table.
+
+A tile is a real `<a>`, never a div with `onClick` — middle-click, ctrl-click and open-in-new-tab
+are how somebody triages a dashboard. `ChartCard` puts its link in the header instead of wrapping
+the card, because a chart is content you read and hover, and one anchor over the whole surface
+turns every one of those into a navigation.
+
 `getResponseTimeSeries` is the heaviest query on the landing page — a window function over fourteen
 days of messages partitioned by group, leaning on `Message`'s `[groupId, timestampWa]` and
 `[timestampWa]` indexes. If volume ever makes it the bottleneck the answer is a nightly rollup, not

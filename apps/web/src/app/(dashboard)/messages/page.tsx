@@ -41,6 +41,16 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
   // the operator lived it. An unparseable value is dropped and reported rather than handed to
   // Prisma as an Invalid Date, which threw and replaced the page with a generic error screen that
   // gave no hint the date filter was at fault.
+  // Read once at the top of the request, matching how the Overview page takes its clock — a
+  // rolling window computed twice inside one render could straddle a second boundary.
+  // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
+  const nowMs = Date.now();
+
+  // Whitelisted rather than parsed freely: this is a link target, and an arbitrary `within=9999`
+  // from a pasted URL should fall through to "no window" rather than scan the whole table.
+  const withinHours =
+    params.within === "24h" ? 24 : params.within === "7d" ? 24 * 7 : params.within === "14d" ? 24 * 14 : null;
+
   const dateFromDay = parseDhakaDayFromInput(params.dateFrom);
   const dateToDay = parseDhakaDayFromInput(params.dateTo);
   const invalidDateFilters = [
@@ -52,6 +62,16 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
       ...(dateFromDay ? { gte: dateFromDay.start } : {}),
       ...(dateToDay ? { lt: dateToDay.end } : {}),
     };
+  } else if (withinHours) {
+    // A ROLLING window, which the day bounds above cannot express — and that gap is why this
+    // exists. The Overview's "(24h)" tiles count the last twenty-four hours from now, so a tile
+    // linking here with `dateFrom=today` would land on a different set than the number it showed:
+    // wrong before lunch, wronger at midnight. Anything that has to reproduce the dashboard's own
+    // query by hand is the failure this whole feature is meant to remove.
+    //
+    // Explicit dates win when both are present: a shorthand must never quietly override something
+    // somebody typed.
+    where.timestampWa = { gte: new Date(nowMs - withinHours * 60 * 60 * 1000) };
   }
   const executionFilter: Prisma.AutomationExecutionWhereInput = {};
   if (params.decision) executionFilter.decision = params.decision;
@@ -66,7 +86,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
 
   const hasActiveFilters = Boolean(
     params.accountId || params.group || params.sender || params.text || params.dateFrom || params.dateTo ||
-    params.decision || params.ruleId || params.autoReplyStatus || params.notificationStatus,
+    params.decision || params.ruleId || params.autoReplyStatus || params.notificationStatus || withinHours,
   );
 
   const [messages, totalCount, accounts, rules] = await Promise.all([
