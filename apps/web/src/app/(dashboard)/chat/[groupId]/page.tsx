@@ -8,6 +8,8 @@ import { markChatReviewed } from "@/server/actions/chatOrganisation";
 import { Composer } from "../Composer";
 import { MarkWaitingButton } from "../MarkWaitingButton";
 import { AiActiveNotice, MessageThread } from "../MessageThread";
+import { ThreadScroller } from "../ThreadScroller";
+import { conversationAvatar } from "../avatar";
 
 export const metadata = { title: "WhatsApp Chat" };
 
@@ -36,6 +38,11 @@ export default async function ChatConversationPage({
   // Whether the customer's newest message is still unanswered. Drives the one control that would
   // otherwise be a button doing nothing: putting an already-answered conversation "back" in the
   // waiting list would put it nowhere.
+  // The same tinted monogram the list uses, from the same function. A different avatar treatment
+  // either side of one click makes the header read as a different object than the row that opened
+  // it; identical ones make the navigation feel like the row expanded.
+  const avatar = conversationAvatar(group.id, group.name);
+
   const lastEntry = entries.at(-1);
   const isUnanswered = lastEntry?.kind === "INCOMING" && !lastEntry.isTeamMember;
 
@@ -58,9 +65,10 @@ export default async function ChatConversationPage({
 
         <span
           aria-hidden
-          className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] text-[11px] font-semibold uppercase text-[color:var(--color-muted-foreground)]"
+          style={{ background: avatar.background, color: avatar.color }}
+          className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-lg)] text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)]"
         >
-          {group.name.slice(0, 2)}
+          {avatar.initials}
         </span>
 
         <div className="min-w-0 flex-1">
@@ -107,7 +115,9 @@ export default async function ChatConversationPage({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-surface-sunken)]">
+      {/* Opens on the newest message rather than the oldest, and stays put while you read back.
+          See ThreadScroller. */}
+      <ThreadScroller key={group.id} latestEntryId={lastEntry?.id ?? null}>
         {hasMore ? (
           <p className="px-6 pt-4 text-center text-[11px] text-[color:var(--color-muted-foreground)]">
             Showing the most recent messages. Older history is on the{" "}
@@ -118,7 +128,7 @@ export default async function ChatConversationPage({
           </p>
         ) : null}
         <MessageThread entries={entries} />
-      </div>
+      </ThreadScroller>
 
       {group.aiAutomationEnabled ? <AiActiveNotice suppressedUntil={group.aiSuppressedUntil} /> : null}
       <Composer groupId={group.id} disabledReason={disabledReason} savedReplies={savedReplies} />

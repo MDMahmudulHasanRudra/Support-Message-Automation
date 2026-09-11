@@ -1,7 +1,7 @@
 "use client";
 
 import { SendHorizontal } from "lucide-react";
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Textarea } from "@/components/ui";
 import { sendChatMessage, type ChatSendState } from "@/server/actions/chat";
 import { SavedReplyManager } from "./SavedReplyManager";
@@ -11,6 +11,13 @@ const INITIAL: ChatSendState = {};
 
 /** Where an unsent draft lives, per conversation. */
 const draftKey = (groupId: string) => `chat-draft:${groupId}`;
+
+/**
+ * How tall the box may grow before it scrolls internally. Roughly eight lines: enough that a real
+ * support answer is visible while writing it, short enough that the conversation it is about does
+ * not disappear behind the thing being written about it.
+ */
+const MAX_COMPOSER_PX = 168;
 
 /**
  * Writes one reply into the outbound queue. Enter sends, Shift+Enter starts a new line —
@@ -38,6 +45,26 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [managingReplies, setManagingReplies] = useState(false);
 
+  /**
+   * Grows the box to fit what is in it, up to a cap.
+   *
+   * It was a fixed single line with `resize-none`, so writing anything longer than the width of
+   * the pane scrolled a one-line window over your own paragraph. Support answers are paragraphs;
+   * you cannot proofread one through a slot.
+   *
+   * The height is reset to `auto` before measuring because `scrollHeight` on an element with an
+   * explicit height reports that height, not the content's — so without the reset the box would
+   * grow and never shrink back when text is deleted.
+   */
+  const autoGrow = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const next = Math.min(textarea.scrollHeight, MAX_COMPOSER_PX);
+    textarea.style.height = `${next}px`;
+    textarea.style.overflowY = textarea.scrollHeight > MAX_COMPOSER_PX ? "auto" : "hidden";
+  }, []);
+
   // Restore on arrival. Keyed by group, so switching conversations swaps drafts rather than
   // carrying one into the wrong chat — the worst possible failure for this feature.
   useEffect(() => {
@@ -49,7 +76,10 @@ export function Composer({
       // Private mode, or storage disabled. A composer that works without drafts is fine; one that
       // fails to render because storage threw is not.
     }
-  }, [groupId]);
+    // A restored draft of four lines has to arrive four lines tall, not one line tall with the
+    // rest hidden.
+    autoGrow();
+  }, [groupId, autoGrow]);
 
   useEffect(() => {
     // Clear only once the action has actually resolved and re-rendered, never in onSubmit:
@@ -57,12 +87,15 @@ export function Composer({
     // submit an empty message (the same trap FloatingAiChat documents).
     if (!state.sentAt) return;
     formRef.current?.reset();
+    // reset() empties the value but leaves the inline height from whatever was just sent, so the
+    // empty box would keep the shape of the paragraph that is no longer in it.
+    autoGrow();
     try {
       window.localStorage.removeItem(draftKey(groupId));
     } catch {
       /* see above */
     }
-  }, [state.sentAt, groupId]);
+  }, [state.sentAt, groupId, autoGrow]);
 
   function rememberDraft(value: string) {
     try {
@@ -92,6 +125,7 @@ export function Composer({
     const caret = before.length + separator.length + body.length;
     textarea.focus();
     textarea.setSelectionRange(caret, caret);
+    autoGrow();
     rememberDraft(textarea.value);
   }
 
@@ -130,9 +164,20 @@ export function Composer({
           required
           maxLength={4096}
           placeholder="Type a message…  (Enter to send, Shift+Enter for a new line)"
-          className="min-h-10 resize-none py-2.5"
-          onChange={(event) => rememberDraft(event.target.value)}
+          className="min-h-10 resize-none py-2.5 transition-[height] duration-[var(--duration-fast)] ease-[var(--ease-out)]"
+          onChange={(event) => {
+            autoGrow();
+            rememberDraft(event.target.value);
+          }}
           onKeyDown={(event) => {
+            // Cmd/Ctrl+Enter sends too. Enter-to-send is the convention, but anyone who has been
+            // burned by it once starts using Shift+Enter for everything and then needs a
+            // deliberate way to actually send.
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              formRef.current?.requestSubmit();
+              return;
+            }
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               formRef.current?.requestSubmit();
@@ -140,7 +185,7 @@ export function Composer({
           }}
         />
 
-        <Button type="submit" loading={pending} aria-label="Send message" className="h-10 shrink-0 px-3.5">
+        <Button type="submit" loading={pending} aria-label="Send message" className="h-10 shrink-0 self-end px-3.5">
           {pending ? null : <SendHorizontal className="size-4" aria-hidden />}
         </Button>
       </form>

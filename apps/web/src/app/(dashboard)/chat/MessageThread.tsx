@@ -124,7 +124,7 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
                 {entry.body}
               </p>
             ) : (
-              <div className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}>
+              <div className={`group/bubble flex ${isOutbound ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[min(38rem,80%)] ${isOutbound ? "items-end" : "items-start"} flex flex-col`}>
                   {/* Named once per run, not once per message. */}
                   {!isOutbound && startsRun ? (
@@ -141,9 +141,9 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
                       side said this", carried by geometry rather than another label. Mid-run
                       bubbles keep both inner corners tight so a run reads as one block. */}
                   <div
-                    className={`px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] ${
+                    className={`px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] transition-shadow duration-[var(--duration-fast)] ease-[var(--ease-out)] group-hover/bubble:shadow-[var(--shadow-sm)] ${
                       isOutbound
-                        ? `rounded-l-[var(--radius-lg)] ${startsRun ? "rounded-tr-[var(--radius-lg)]" : "rounded-tr-[var(--radius-xs)]"} ${endsRun ? "rounded-br-[var(--radius-xs)]" : "rounded-br-[var(--radius-xs)]"}`
+                        ? `rounded-l-[var(--radius-lg)] rounded-br-[var(--radius-xs)] ${startsRun ? "rounded-tr-[var(--radius-lg)]" : "rounded-tr-[var(--radius-xs)]"}`
                         : `rounded-r-[var(--radius-lg)] ${startsRun ? "rounded-tl-[var(--radius-lg)]" : "rounded-tl-[var(--radius-xs)]"} rounded-bl-[var(--radius-xs)]`
                     } ${
                       entry.kind === "QUEUED"
@@ -159,8 +159,12 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
                   <span
                     className={`mt-1 flex items-center gap-1 px-1 text-[10px] text-[color:var(--color-muted-foreground)] ${
                       // A timestamp under every line of a four-line run is noise; under the last
-                      // one it is the information. The rest keep theirs in the title attribute.
-                      endsRun || queued ? "" : "hidden"
+                      // one it is the information. The rest are laid out but transparent, so they
+                      // appear on hover of that message without the run reflowing when they do —
+                      // `hidden` would have made every hover shift the messages below it.
+                      endsRun || queued
+                        ? ""
+                        : "h-0 overflow-hidden opacity-0 transition-opacity duration-[var(--duration-fast)] group-hover/bubble:h-auto group-hover/bubble:opacity-100"
                     }`}
                     title={formatDateTime(entry.at)}
                   >

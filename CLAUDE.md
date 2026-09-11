@@ -877,6 +877,36 @@ works to protect. The badge clears on the list's own 4s refresh.
 That number answers "which customers has nobody answered" and feeds Team Performance; letting a
 review mark clear it would let a lead empty the backlog by scrolling through it.
 
+**The inbox is a tool somebody drives all day, and the UI is built for that rather than for a
+screenshot.** Four rules worth not undoing:
+
+*The filter rail scrolls sideways, never wraps.* Wrapping was harmless at two categories and pushed
+the first conversation below the fold at six: the header grew downward without limit while the list
+it filters shrank. A rail is a fixed height whatever the team files their work into. The
+300-group cap notice moved to the FOOT of the list for the same reason, cut to one line.
+
+*`ThreadScroller` opens a conversation at its newest message.* The thread rendered oldest-first in
+a plain scroll container, so opening a busy group landed you on a message from days ago. It jumps
+instantly rather than smoothly (this is where the content starts, not a transition), and new
+messages only pull you down **if you were already near the bottom** — the layout refreshes every
+four seconds, so following the reader down while they read history would make old messages
+unreadable. The parent keys it by group id, which is what resets its state; setting that state in
+an effect instead is the cascading render the lint rule exists to catch.
+
+*Density is `useSyncExternalStore`, not state seeded from an effect.* `localStorage` cannot be read
+while rendering on the server, and the obvious default-then-correct version renders every row at
+the wrong height for a frame and costs a second pass on every mount.
+
+*Motion is capped by frequency, not by taste.* This inbox is opened hundreds of times a day, so
+there are no entrance animations on rows, chips or panes — only feedback (a 1px `active` settle, a
+hover shadow on a bubble) and state. The one movement, "Jump to latest", is smooth precisely
+because it is rare and because you asked for it. Reduced motion needs no per-component handling
+here: `globals.css` already kills every transition globally.
+
+Keyboard: `/` focuses search from anywhere (never while typing in a field), arrows walk the list,
+Enter opens, Escape clears. The hint is printed in the field because a shortcut nobody knows about
+is the same as no shortcut.
+
 **Saved replies** (`SavedReply`, `server/actions/savedReplies.ts`, `SavedReplyPicker.tsx`) are the
 sentences operators retype all day. Deliberately **not** `AiKnowledgeItem`: that table is what the
 assistant answers customers from and carries a human-verification gate for exactly that reason,
