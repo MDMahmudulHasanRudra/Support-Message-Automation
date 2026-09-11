@@ -730,6 +730,22 @@ model WhatsAppGroup {
   /// customer conversation as a side effect of tidying up.
   chatArchivedAt DateTime?
 
+  /// When somebody last opened this conversation in the chat inbox. Drives the "waiting" filter:
+  /// a customer message newer than this is still waiting, one older than it has been looked at.
+  ///
+  /// A timestamp rather than a boolean, and that is the whole design. "Reviewed" cannot be a flag
+  /// somebody clears by hand, because the next customer message has to put the conversation back
+  /// in front of the team automatically — otherwise one glance would bury a conversation forever
+  /// and this becomes a way to lose customers rather than a way to find them.
+  ///
+  /// Shared, like the category and the pin, not per-user: a support team works one inbox together,
+  /// and "somebody has already looked at this" is precisely what the second person needs to know.
+  ///
+  /// Deliberately NOT read by getGroupsAwaitingReply() in the Support Activity reports. That
+  /// number answers "which customers has nobody answered", and reading this there would let a lead
+  /// clear the backlog by scrolling through it.
+  chatReviewedAt DateTime?
+
   messages             Message[]
   knowledgeItems       AiKnowledgeItem[]
   broadcastMessages    OutboundMessage[]

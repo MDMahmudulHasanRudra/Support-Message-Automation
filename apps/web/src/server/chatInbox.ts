@@ -48,6 +48,9 @@ export interface ConversationSummary {
    * The one question a support inbox exists to answer, so it is computed here rather than left
    * for the reader to infer from a timestamp.
    */
+  /** The newest message is a customer's and nobody has answered it. */
+  isUnanswered: boolean;
+  /** Unanswered AND not opened since it arrived — what the "waiting" filter and the dot show. */
   awaitingReply: boolean;
   /** Inbox organisation. See `chatOrganisation.ts` — none of this affects automation. */
   categoryId: string | null;
@@ -157,6 +160,7 @@ export async function getChatConversations(search?: string): Promise<Conversatio
       chatCategoryId: true,
       chatPinnedAt: true,
       chatArchivedAt: true,
+      chatReviewedAt: true,
       account: { select: { label: true } },
     },
   });
@@ -199,6 +203,7 @@ export async function getChatConversations(search?: string): Promise<Conversatio
   return groups
     .map((group) => {
       const last = latestByGroup.get(group.id);
+      const unanswered = Boolean(last) && last!.direction === "INCOMING" && !last!.isFromTeamMember;
       return {
         id: group.id,
         name: group.name,
@@ -219,7 +224,16 @@ export async function getChatConversations(search?: string): Promise<Conversatio
         // A team member's own message arrives as INCOMING too (it is inbound to this account),
         // so direction alone is not enough — isFromTeamMember is what separates "a customer is
         // waiting" from "we already answered".
-        awaitingReply: Boolean(last) && last!.direction === "INCOMING" && !last!.isFromTeamMember,
+        isUnanswered: unanswered,
+        // ...and opening the conversation settles it. "Waiting" in this inbox is a triage signal —
+        // what still needs somebody's attention — not a claim that the customer was answered, so
+        // reading it is a legitimate way to resolve it.
+        //
+        // Compared against the message timestamp rather than a flag, which is the part that makes
+        // this safe: a NEW customer message lands after the review mark and puts the conversation
+        // straight back in the list. Nothing can be dismissed permanently, only until they speak
+        // again — otherwise one glance would bury a customer for good.
+        awaitingReply: unanswered && (!group.chatReviewedAt || last!.timestampWa > group.chatReviewedAt),
       };
     })
     // Pinned first, then most recently active, and groups that have never spoken sink to the
@@ -290,6 +304,7 @@ export async function getArchivedChatConversations(search?: string): Promise<Con
     lastMessageOutgoing: false,
     lastMessageSender: null,
     pendingCount: 0,
+    isUnanswered: false,
     awaitingReply: false,
     categoryId: group.chatCategoryId,
     isPinned: group.chatPinnedAt !== null,

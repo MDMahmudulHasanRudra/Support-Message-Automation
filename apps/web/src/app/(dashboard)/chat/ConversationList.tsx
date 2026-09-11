@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, Check, CheckSquare, Inbox, Pin, PinOff, Search, Settings2, Tag, X } from "lucide-react";
+import { Archive, Check, CheckSquare, EyeOff, Inbox, Pin, PinOff, Search, Settings2, Tag, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
@@ -35,7 +35,13 @@ function relativeTime(value: Date | null): string {
 }
 
 /** "All", "awaiting a reply", a category id, or the archive. */
-type Filter = { kind: "all" } | { kind: "waiting" } | { kind: "category"; id: string } | { kind: "archived" };
+type Filter =
+  | { kind: "all" }
+  | { kind: "waiting" }
+  /** Opened by somebody, and the customer still has no reply. */
+  | { kind: "seen-unanswered" }
+  | { kind: "category"; id: string }
+  | { kind: "archived" };
 
 function isSameFilter(a: Filter, b: Filter): boolean {
   if (a.kind !== b.kind) return false;
@@ -73,6 +79,11 @@ export function ConversationList({
 
   const activeGroupId = pathname.startsWith("/chat/") ? pathname.slice("/chat/".length) : undefined;
 
+  const seenUnansweredCount = useMemo(
+    () => conversations.filter((c) => c.isUnanswered && !c.awaitingReply).length,
+    [conversations],
+  );
+
   const waitingCount = useMemo(
     () => conversations.filter((conversation) => conversation.awaitingReply).length,
     [conversations],
@@ -89,6 +100,9 @@ export function ConversationList({
     const needle = query.trim().toLowerCase();
     return conversations.filter((conversation) => {
       if (filter.kind === "waiting" && !conversation.awaitingReply) return false;
+      if (filter.kind === "seen-unanswered" && !(conversation.isUnanswered && !conversation.awaitingReply)) {
+        return false;
+      }
       if (filter.kind === "category" && conversation.categoryId !== filter.id) return false;
       // Archived rows never reach this component — the server excludes them — so the archive
       // filter is a link to its own view rather than a predicate here.
@@ -183,6 +197,18 @@ export function ConversationList({
             >
               <Inbox className="size-3" aria-hidden />
               {waitingCount} waiting
+            </FilterChip>
+          ) : null}
+          {/* Separate from "waiting" on purpose: these are conversations somebody has already
+              opened and the customer still has no answer. They are gone from the waiting count by
+              design — this is where they went, so they cannot quietly disappear. */}
+          {seenUnansweredCount > 0 ? (
+            <FilterChip
+              active={isSameFilter(filter, { kind: "seen-unanswered" })}
+              onClick={() => setFilter({ kind: "seen-unanswered" })}
+            >
+              <EyeOff className="size-3" aria-hidden />
+              {seenUnansweredCount} seen, unanswered
             </FilterChip>
           ) : null}
           {categories.map((category) => (
@@ -303,8 +329,10 @@ export function ConversationList({
           <p className="px-4 py-10 text-center text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
             {conversations.length === 0
               ? "No groups yet. Connect an account and run a group sync to populate this list."
-              : filter.kind === "waiting"
-                ? "Nothing is waiting on a reply."
+              : filter.kind === "seen-unanswered"
+                ? "Nothing has been seen and left unanswered."
+                : filter.kind === "waiting"
+                  ? "Nothing is waiting on a reply."
                 : filter.kind === "category"
                   ? "Nothing filed here yet. Use Select to move conversations into it."
                   : `No group matches “${query}”.`}
@@ -456,10 +484,20 @@ function Row({
             {avatar.initials}
           </span>
         )}
+        {/* Two states, not one, and the second is the important one. A solid dot means nobody
+            has even looked. A hollow ring means somebody opened it and the customer STILL has no
+            reply — which is the case this whole feature could otherwise hide, since opening a
+            conversation is what clears it from the waiting list. Without the ring, "I glanced at
+            it" and "it is handled" would look identical to the next person down the list. */}
         {conversation.awaitingReply && !selecting ? (
           <span
             title="A customer is waiting for a reply"
             className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-[var(--color-warning)] shadow-[0_0_0_2px_var(--color-surface-sunken)]"
+          />
+        ) : conversation.isUnanswered && !selecting ? (
+          <span
+            title="Seen, but the customer still has no reply"
+            className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-[1.5px] border-[var(--color-warning)] bg-[var(--color-surface)] shadow-[0_0_0_2px_var(--color-surface-sunken)]"
           />
         ) : null}
       </span>

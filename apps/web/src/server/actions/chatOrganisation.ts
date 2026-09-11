@@ -187,3 +187,49 @@ export async function setChatArchived(groupIds: string[], archived: boolean): Pr
   revalidateInbox();
   return { updated: count, unchanged: alreadyThere };
 }
+
+
+/**
+ * Records that somebody opened this conversation, which clears it from the "waiting" filter.
+ *
+ * Called from the thread page via `after()`, so it runs once the page has already been sent — the
+ * reader never waits on it, and a failed write costs a stale badge rather than a blank screen.
+ *
+ * Swallows its own errors for that reason. This is a triage convenience; nothing about answering a
+ * customer depends on it, and there is no useful way to report the failure to somebody who is
+ * already reading the conversation.
+ *
+ * Deliberately no `revalidatePath`. The list is a layout-level component, and revalidating it on
+ * every thread open would re-render the whole inbox each time somebody clicked a conversation —
+ * discarding an unsent draft in the composer, which Composer.tsx goes to some trouble to protect.
+ * The badge clears on the list's own next refresh, which is four seconds away.
+ */
+export async function markChatReviewed(groupId: string): Promise<void> {
+  try {
+    await requireSession();
+    await prisma.whatsAppGroup.update({
+      where: { id: groupId },
+      data: { chatReviewedAt: new Date() },
+    });
+  } catch {
+    /* see above */
+  }
+}
+
+/**
+ * Puts a conversation back in the "waiting" list — "I opened this but I have not dealt with it".
+ *
+ * The counterpart to opening one by accident. Clearing the mark rather than setting a flag means
+ * the ordinary rule takes over again: unanswered and unreviewed, therefore waiting.
+ */
+export async function markChatWaiting(groupId: string): Promise<ChatOrganisationResult> {
+  await requireSession();
+
+  const { count } = await prisma.whatsAppGroup.updateMany({
+    where: { id: groupId, chatReviewedAt: { not: null } },
+    data: { chatReviewedAt: null },
+  });
+
+  revalidateInbox();
+  return { updated: count, unchanged: count === 0 ? 1 : 0 };
+}

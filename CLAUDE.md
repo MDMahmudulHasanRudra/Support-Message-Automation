@@ -833,6 +833,33 @@ reorganised, and a checkbox per row turns a reading surface into a form. In that
 middle-click and ctrl-click navigate away and lose the selection. Bulk results report
 "8 moved, 3 already there" rather than "Done", matching `bulkSetMonitoring`.
 
+**Opening a conversation clears it from "waiting"** (`chatReviewedAt`, `markChatReviewed`). The
+inbox's "waiting" filter is a TRIAGE signal — what still needs somebody's attention — not a claim
+that the customer was answered, so reading a conversation is a legitimate way to resolve it.
+
+`chatReviewedAt` is a timestamp, never a boolean, and that is the whole safety property: the filter
+compares it against the newest message, so a NEW customer message lands after the mark and puts the
+conversation straight back in the list. Nothing can be dismissed permanently, only until they speak
+again — a boolean would let one glance bury a customer for good, turning the feature that finds
+unanswered people into the one that hides them.
+
+Two dots, because one would hide exactly that case. **Solid** = nobody has looked. **Hollow ring** =
+somebody opened it and the customer still has no reply, with its own "seen, unanswered" filter
+chip, because those conversations leave the waiting count by design and must not simply vanish.
+`ConversationSummary.isUnanswered` is the raw fact; `awaitingReply` is unanswered-and-unreviewed.
+`MarkWaitingButton` puts one back (by NULLing the mark, so the ordinary rule resumes) and renders
+only while the customer is genuinely unanswered, rather than sitting there doing nothing.
+
+The stamp goes through Next's `after()` in the thread page, below the `notFound()` guard — `after`
+still runs when a render throws, and a group that does not exist must not be stamped. It
+deliberately does **not** `revalidatePath`: the conversation list is layout-level, so revalidating
+on every thread open would re-render the whole inbox and discard the unsent draft Composer.tsx
+works to protect. The badge clears on the list's own 4s refresh.
+
+**`getGroupsAwaitingReply()` in the Support Activity reports does NOT read this, deliberately.**
+That number answers "which customers has nobody answered" and feeds Team Performance; letting a
+review mark clear it would let a lead empty the backlog by scrolling through it.
+
 **Saved replies** (`SavedReply`, `server/actions/savedReplies.ts`, `SavedReplyPicker.tsx`) are the
 sentences operators retype all day. Deliberately **not** `AiKnowledgeItem`: that table is what the
 assistant answers customers from and carries a human-verification gate for exactly that reason,

@@ -1,9 +1,12 @@
 import { ArrowLeft, Bot, ExternalLink, Users } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { after } from "next/server";
 import { Badge } from "@/components/ui";
 import { getChatThread, getSavedReplies } from "@/server/chatInbox";
+import { markChatReviewed } from "@/server/actions/chatOrganisation";
 import { Composer } from "../Composer";
+import { MarkWaitingButton } from "../MarkWaitingButton";
 import { AiActiveNotice, MessageThread } from "../MessageThread";
 
 export const metadata = { title: "WhatsApp Chat" };
@@ -23,6 +26,18 @@ export default async function ChatConversationPage({
   if (!thread) notFound();
 
   const { group, entries, hasMore } = thread;
+
+  // Opening the conversation is what clears it from the "waiting" list. `after()` rather than an
+  // inline await: this is a side effect nobody should wait on, and rendering a page must not block
+  // on recording that it was rendered. It is registered below the notFound() guard on purpose —
+  // `after` still runs when a render throws, and a group that does not exist must not be stamped.
+  after(() => markChatReviewed(group.id));
+
+  // Whether the customer's newest message is still unanswered. Drives the one control that would
+  // otherwise be a button doing nothing: putting an already-answered conversation "back" in the
+  // waiting list would put it nowhere.
+  const lastEntry = entries.at(-1);
+  const isUnanswered = lastEntry?.kind === "INCOMING" && !lastEntry.isTeamMember;
 
   const disabledReason = !group.isActive
     ? `This account is no longer a member of ${group.name}. Resync groups if you have been re-added.`
@@ -80,6 +95,7 @@ export default async function ChatConversationPage({
               <Badge color="gray">Not monitored</Badge>
             </span>
           ) : null}
+          {isUnanswered ? <MarkWaitingButton groupId={group.id} /> : null}
           <Link
             href="/groups"
             title="Open this group's settings"
