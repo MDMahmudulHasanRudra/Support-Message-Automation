@@ -303,6 +303,65 @@ relaunch Chromium every few minutes for a retired spare, forever. `connect()` is
 (it joins an attempt in flight rather than starting a second), because two callers can ask at once
 and it does a process-global `process.chdir()` first.
 
+### Staying up, and noticing when nothing is arriving (`lifecycle.ts`, `recovery.ts`, `pipeline/messageRecovery.ts`, `health/collectionWatchdog.ts`)
+
+**One missed `.catch()` used to kill the whole worker.** There were no `unhandledRejection` /
+`uncaughtException` handlers, and Node throws on an unhandled rejection — so a forgotten catch in
+any of the eighteen loops stopped WhatsApp collection, the outbound queue and the escalation timers
+together, with a restarted container as the only symptom. This codebase is deliberately full of
+fire-and-forget promises (the escalation hook, the support-activity hook, the AI fallback stage all
+intentionally do not gate message processing), which is exactly what produces one.
+`installProcessGuards()` splits the two cases: a **rejection** is one failed operation, so it is
+logged loudly and the worker keeps running; an **exception** unwound a stack and left unknown state,
+so it is logged and the process exits non-zero for the restart policy, where boot recovery requeues
+whatever was mid-flight.
+
+**Shutdown waits, and only runs once.** `clearInterval` cancels the next tick, never the one already
+awaiting `sendText` — so SIGTERM mid-send killed the process, left the row PROCESSING, and the next
+boot requeued and sent it again. `beginShutdown()` stops new claims (a tick scheduled before its
+interval was cleared still fires; `trackTick` makes it a no-op), then shutdown waits up to 8s for
+in-flight work — bounded, because a tick blocked on a hung provider call would otherwise hold the
+container open until SIGKILL. `trackTick` wraps only the four loops that act outward or claim a
+queue row (outbound, notifications, participant adds, commands); the learning/knowledge/Forge loops
+write their own records and their next tick starts over.
+
+**Stuck-work recovery runs every five minutes, not only at boot.** Boot-only assumed a dead process
+is the only way to strand a claimed row — a hung send on a live worker does it too, and that row
+then waits for the next restart. All four `recoverStuck*` functions only touch rows past their own
+`updatedAt` threshold, so repeating them can never reclaim live work.
+
+**`reconcileAccountStatusesOnBoot()` runs before the connect loop.** Nothing clears status on the
+way down, so a worker four seconds old holding no session reported its accounts CONNECTED for as
+long as the sequential connect loop took — minutes, during which the dashboard and the outbound
+queue's own checks both believed it. CONNECTED/RECONNECTING/OUTBOUND_PAUSED/RATE_LIMITED are claims
+about a live session and become DISCONNECTED; AUTHENTICATION_REQUIRED/SESSION_ERROR/ERROR describe
+stored credentials and survive a restart, so they are left alone. **Every QR is cleared regardless**
+— it belongs to a pairing attempt that died with the last process, so it is not stale data but a
+code that cannot work, and somebody will stand there scanning it.
+
+**`recoverStrandedMessages()` closes the pipeline's own window.** The `Message` row is written first
+on purpose (it is the dedup guard), which leaves a gap between the insert and the status settle
+where a crash strands the row `PENDING` — and because the row exists, WhatsApp's redelivery then
+hits P2002 and returns "already processed". The question sat in the database, visible in the inbox,
+with no rule ever evaluated and nothing reporting a problem. `runAutomationStage()` is split out of
+`processIncomingMessage` so exactly that row can be re-run. Re-running is safe by construction:
+`OutboundMessage.idempotencyKey` stops a second send, `createAiFallbackDecision` already answers
+P2002 with a message rather than a throw, `SupportActivity.messageId` is insert-and-catch, and
+`AutomationExecution` is **upserted rather than inserted** — a plain create made every retry fail at
+the last step, which is worse than not retrying. Picked up only between 5 minutes and 6 hours old:
+younger may still be in flight (the AI call has a retry budget), older is history rather than an
+outstanding question. A retry that throws lands FAILED, which is not picked up again — so one retry,
+then visibly failed, never a loop.
+
+**`checkCollectionHealth()` is the answer to "we look healthy, so why is nothing arriving?"** It
+never infers anything from silence, because silence is not evidence — a group can be quiet all
+night. When a CONNECTED account with monitored groups has stored nothing for 45 minutes, it asks the
+browser what IT has seen via `fetchMessagesSince`. Messages there and not here is a
+**disagreement**, which is proof rather than suspicion — and it is the exact signature of the
+listener bug, which was total and had no other symptom. Having proved it, it runs the catch-up
+sweep: an alarm that only tells somebody to go and look leaves the customers unanswered until they
+do.
+
 ### Incoming message pipeline (`apps/worker/src/pipeline/processIncomingMessage.ts`)
 
 Empty-body drop → non-`INCOMING` messages are stored but never automated (loop-prevention) →

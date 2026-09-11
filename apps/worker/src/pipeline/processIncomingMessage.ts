@@ -69,6 +69,31 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
 
   const stored = await persistIncomingMessage(raw, "PENDING", traceId);
   if (!stored) return; // duplicate WhatsApp event — already processed
+
+  await runAutomationStage(raw, stored, traceId, aiClientOverride);
+}
+
+/**
+ * Everything that happens to a message AFTER its row exists: escalation, support activity, rule
+ * evaluation, the AI fallback, the resulting actions, and the status settle.
+ *
+ * Split out so it can be run a second time. A message stranded `PENDING` — the row written, the
+ * process then killed before this finished — could not previously be retried at all: re-delivering
+ * it hits `persistIncomingMessage`'s P2002 and returns "already processed", so the customer was
+ * never answered and nothing anywhere said so. `messageRecovery.ts` calls this directly for exactly
+ * those rows.
+ *
+ * Re-running is safe because every write in here is keyed: `OutboundMessage.idempotencyKey` stops a
+ * second send, `AutomationExecution.idempotencyKey` is upserted rather than inserted,
+ * `createAiFallbackDecision` already answers P2002 with a message instead of a throw, and
+ * `SupportActivity.messageId` is insert-and-catch.
+ */
+export async function runAutomationStage(
+  raw: RawIncomingMessage,
+  stored: StoredIncomingMessage,
+  traceId: string,
+  aiClientOverride?: AiClient,
+): Promise<void> {
   const { message, group, isFromTeamMember, quotedMessage, previous } = stored;
 
   // Everything from here to the processingStatus settle below runs AFTER the Message row exists,
@@ -246,18 +271,26 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
       );
     }
 
-    await prisma.automationExecution.create({
-      data: {
-        messageId: message.id,
-        ruleId: result.matchedRule?.id ?? null,
-        actionsExecuted: executedActions as unknown as Prisma.InputJsonValue,
-        decision: result.finalDecision,
-        reasonTrace: result.trace as unknown as Prisma.InputJsonValue,
-        idempotencyKey: buildExecutionIdempotencyKey({
-          messageId: message.id,
-          ruleId: result.matchedRule?.id ?? null,
-        }),
-      },
+    const executionIdempotencyKey = buildExecutionIdempotencyKey({
+      messageId: message.id,
+      ruleId: result.matchedRule?.id ?? null,
+    });
+    const executionRecord = {
+      messageId: message.id,
+      ruleId: result.matchedRule?.id ?? null,
+      actionsExecuted: executedActions as unknown as Prisma.InputJsonValue,
+      decision: result.finalDecision,
+      reasonTrace: result.trace as unknown as Prisma.InputJsonValue,
+      idempotencyKey: executionIdempotencyKey,
+    };
+    // Upsert, not create. A retry of a message stranded mid-pipeline reaches this a second time,
+    // and a plain create would throw P2002 on the unique key — making every retry fail at the last
+    // step, which is worse than not retrying at all. The record describes the decision just taken,
+    // so the later one is the accurate one.
+    await prisma.automationExecution.upsert({
+      where: { idempotencyKey: executionIdempotencyKey },
+      create: executionRecord,
+      update: executionRecord,
     });
 
     traceStage(traceId, "ACTION_DECISION", {
@@ -296,7 +329,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
   });
 }
 
-interface StoredIncomingMessage {
+export interface StoredIncomingMessage {
   message: { id: string };
   group: Awaited<ReturnType<typeof resolveGroup>>;
   isFromTeamMember: boolean;
@@ -445,6 +478,84 @@ export async function storeMissedMessage(raw: RawIncomingMessage): Promise<boole
   }
 
   return true;
+}
+
+/**
+ * Rebuilds, from a stored row, exactly what `processIncomingMessage` had in hand when it first saw
+ * the message — so `runAutomationStage` can be re-run against it.
+ *
+ * Reconstructed rather than kept: a message stranded mid-pipeline was stranded because the process
+ * that held that context went away, so there is nothing left to keep. Everything needed is on the
+ * row or reachable from it, which is why this is possible at all.
+ *
+ * `previous` deliberately re-reads the chat's newest message OTHER than this one, exactly as the
+ * live path does, rather than the newest overall — matching itself is the bug that lookup was
+ * written to avoid.
+ */
+export async function loadStoredMessageContext(
+  messageId: string,
+): Promise<{ raw: RawIncomingMessage; stored: StoredIncomingMessage } | null> {
+  const row = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: {
+      id: true,
+      accountId: true,
+      chatId: true,
+      senderPhone: true,
+      senderName: true,
+      isFromTeamMember: true,
+      body: true,
+      timestampWa: true,
+      mentionedPhones: true,
+      quotedMessage: { select: { id: true, senderPhone: true, isFromTeamMember: true, whatsappMessageId: true } },
+      whatsappMessageId: true,
+    },
+  });
+  if (!row) return null;
+
+  // A group chat id is the group's own JID; that suffix is WhatsApp's own convention and is what
+  // the provider used to decide `isGroupMsg` in the first place.
+  const whatsappGroupId = row.chatId.endsWith("@g.us") ? row.chatId : null;
+
+  const raw: RawIncomingMessage = {
+    accountId: row.accountId,
+    whatsappMessageId: row.whatsappMessageId,
+    chatId: row.chatId,
+    whatsappGroupId,
+    senderPhone: row.senderPhone,
+    senderName: row.senderName,
+    direction: "INCOMING",
+    body: row.body,
+    timestampWa: row.timestampWa,
+    quotedWhatsappMessageId: row.quotedMessage?.whatsappMessageId ?? null,
+    mentionedPhones: row.mentionedPhones,
+  };
+
+  const [group, previous] = await Promise.all([
+    resolveGroup(raw),
+    prisma.message.findFirst({
+      where: { accountId: row.accountId, chatId: row.chatId, id: { not: row.id } },
+      orderBy: { timestampWa: "desc" },
+      select: { senderPhone: true, isFromTeamMember: true },
+    }),
+  ]);
+
+  return {
+    raw,
+    stored: {
+      message: { id: row.id },
+      group,
+      isFromTeamMember: row.isFromTeamMember,
+      quotedMessage: row.quotedMessage
+        ? {
+            id: row.quotedMessage.id,
+            senderPhone: row.quotedMessage.senderPhone,
+            isFromTeamMember: row.quotedMessage.isFromTeamMember,
+          }
+        : null,
+      previous,
+    },
+  };
 }
 
 /**

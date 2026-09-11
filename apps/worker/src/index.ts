@@ -14,7 +14,9 @@ import {
   runStuckWorkRecovery,
   startStuckWorkRecoveryProcessor,
 } from "./recovery.js";
-import { awaitQuiescence, beginShutdown, installProcessGuards, trackTick } from "./lifecycle.js";
+import { awaitQuiescence, beginShutdown, installProcessGuards } from "./lifecycle.js";
+import { startMessageRecoveryProcessor } from "./pipeline/messageRecovery.js";
+import { startCollectionWatchdog } from "./health/collectionWatchdog.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
@@ -134,6 +136,11 @@ async function main() {
     // assumed only a dead process can strand one; a hung send on a live worker does it too, and
     // that row then waits for the next restart.
     startStuckWorkRecoveryProcessor(),
+    // Finishes messages stored but never processed — the window between the dedup-guard insert and
+    // the status settle, which every crash and every mid-pipeline rejection lands in.
+    startMessageRecoveryProcessor(),
+    // Detects the failure with no symptom: CONNECTED, heartbeating, and collecting nothing.
+    startCollectionWatchdog(registry),
     startHeartbeat(state),
   ];
 
