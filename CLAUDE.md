@@ -663,7 +663,38 @@ as the Teams resolution notifier); the worker sends it. `MANUAL_REPLY` is the on
 queue treats differently: **the automation kill switch does not cancel it** (the switch stops the
 robot, not the operator) and an account rate limit **defers** it rather than discarding it, since
 silently dropping something a person typed is not acceptable. It still gets the same live
-group-membership check the broadcast path does. Not-yet-confirmed sends render as dashed "queued"
+group-membership check the broadcast path does. **Which groups make the list is decided by recent activity, not by name.** It used to take the
+first 300 groups alphabetically and then sort those by recency — which reads as an ordering choice
+and is really a selection one: with 1,848 groups a conversation that arrived five minutes ago was
+invisible if its name sorted past the 300th. A `LATERAL` join picks the newest message per group so
+the cap falls on the quietest rows rather than the alphabetically unlucky ones.
+
+**Inbox organisation is `chatCategoryId` / `chatPinnedAt` / `chatArchivedAt` on `WhatsAppGroup`,
+plus `ChatCategory`** (`server/actions/chatOrganisation.ts`). All three govern what an operator
+SEES and nothing else — that file never writes `isMonitored` or `aiAutomationEnabled`. Archiving is
+explicitly not unmonitoring: a group can be out of somebody's inbox while AI keeps answering in it,
+and conflating them would stop automation in a live customer conversation as a side effect of
+tidying up. The archived view says so on screen, and shows each row's "AI on" badge as the proof.
+
+Categories are **shared, not per-user**: a support team looks at one inbox together, and
+per-operator folders would mean everyone curating 1,848 groups alone and nobody able to say "it's
+in Billing" and be understood. `name` is unique so two people cannot create "Billing" twice and
+split the same groups across both; the FK is `SetNull` so deleting a category empties it rather
+than deleting conversations. `chatPinnedAt` is a timestamp rather than a boolean so pin order is
+expressible, and one `new Date()` covers a whole bulk pin so forty groups keep their relative order.
+
+Selection is a **mode**, not always-on checkboxes — the list is read far more often than it is
+reorganised, and a checkbox per row turns a reading surface into a form. In that mode a row is a
+`button`, not a `Link` with an intercepted click: leaving a real `href` under the cursor means
+middle-click and ctrl-click navigate away and lose the selection. Bulk results report
+"8 moved, 3 already there" rather than "Done", matching `bulkSetMonitoring`.
+
+**There is no mute**, deliberately. WhatsApp's mute silences notifications; this app has no
+per-group notification concept to silence, so the control would be a switch that does nothing —
+the dead-setting problem this project keeps removing. Archive is the real version of what people
+reach for mute to do here.
+
+Not-yet-confirmed sends render as dashed "queued"
 bubbles; a `SENT` row whose `providerMessageId` already exists as a stored `Message` is skipped as
 a duplicate, because WhatsApp echoes our own sends back through `onAnyMessage`. Polls via
 `AutoRefresh` (4s) — there is no websocket.

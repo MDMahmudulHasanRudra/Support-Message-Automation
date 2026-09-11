@@ -563,6 +563,33 @@ model WhatsAppServiceRoute {
   updatedAt      DateTime               @updatedAt
 }
 
+/// A folder in the chat inbox — "Billing", "VIP clients", "Escalated", whatever the team needs.
+///
+/// Shared rather than per-user, deliberately. A support team looks at one inbox together, and
+/// per-operator folders would mean every person curating 1,848 groups from scratch and nobody
+/// able to say "it's in Billing" and be understood. The cost is that one person's reorganisation
+/// is everyone's, which is the same trade the Groups page already makes.
+model ChatCategory {
+  id   String @id @default(cuid())
+  /// Unique so two people cannot create "Billing" twice and split the same groups across both.
+  name String @unique
+
+  /// One of a fixed palette (see packages/shared/src/chatCategories.ts). A colour rather than an
+  /// icon because the list is scanned down the left edge, where a 10px dot reads and a glyph does not.
+  color String @default("gray")
+
+  /// Sidebar order, lowest first. Explicit rather than alphabetical: the categories a team uses
+  /// hourly should sit above the ones they use monthly, and alphabetical cannot express that.
+  position Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  groups WhatsAppGroup[]
+
+  @@index([position])
+}
+
 model WhatsAppGroup {
   id                          String              @id @default(cuid())
   accountId                   String
@@ -626,6 +653,24 @@ model WhatsAppGroup {
   createdAt                   DateTime            @default(now())
   updatedAt                   DateTime            @updatedAt
 
+
+  /// Chat-inbox organisation. All three are about what an operator SEES; none of them changes what
+  /// automation does. That separation is the whole point: `isMonitored` and `aiAutomationEnabled`
+  /// decide whether the robot works here, and somebody tidying their inbox must never be able to
+  /// silently switch the robot off in a customer's group.
+  chatCategoryId String?
+  chatCategory   ChatCategory? @relation(fields: [chatCategoryId], references: [id], onDelete: SetNull)
+
+  /// Pinned to the top of the chat inbox. A timestamp rather than a boolean so the pin order is
+  /// stable and expressible — most recently pinned first, rather than whatever the name sort gives.
+  chatPinnedAt DateTime?
+
+  /// Hidden from the chat inbox. Explicitly NOT unmonitoring: a group can be archived out of
+  /// somebody's view while AI keeps answering in it, which is exactly what an operator means by
+  /// "I don't need to watch this one". Conflating the two would stop automation in a live
+  /// customer conversation as a side effect of tidying up.
+  chatArchivedAt DateTime?
+
   messages             Message[]
   knowledgeItems       AiKnowledgeItem[]
   broadcastMessages    OutboundMessage[]
@@ -639,6 +684,7 @@ model WhatsAppGroup {
   supportIssues        SupportIssue[]
 
   @@unique([accountId, whatsappGroupId])
+  @@index([chatCategoryId])
   @@index([accountId, isActive])
   @@index([accountId, isMonitored])
 }

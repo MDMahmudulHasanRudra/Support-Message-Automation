@@ -1,6 +1,6 @@
 import { requireSession } from "@/server/auth";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { getChatConversations } from "@/server/chatInbox";
+import { getChatCategories, getChatConversations } from "@/server/chatInbox";
 import { ConversationList } from "./ConversationList";
 
 /**
@@ -18,7 +18,7 @@ import { ConversationList } from "./ConversationList";
  */
 export default async function ChatLayout({ children }: { children: React.ReactNode }) {
   await requireSession();
-  const conversations = await getChatConversations();
+  const [conversations, categories] = await Promise.all([getChatConversations(), getChatCategories()]);
 
   return (
     <div className="flex h-[calc(100dvh-6.75rem)] min-h-[30rem] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] sm:h-[calc(100dvh-8.25rem)]">
@@ -31,7 +31,7 @@ export default async function ChatLayout({ children }: { children: React.ReactNo
         aria-label="Conversations"
         className="hidden w-[19rem] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] md:flex"
       >
-        <ConversationList conversations={conversations} />
+        <ConversationList conversations={conversations} categories={categories} />
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">{children}</div>

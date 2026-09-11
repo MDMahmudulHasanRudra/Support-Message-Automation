@@ -49,6 +49,40 @@ export interface ConversationSummary {
    * for the reader to infer from a timestamp.
    */
   awaitingReply: boolean;
+  /** Inbox organisation. See `chatOrganisation.ts` — none of this affects automation. */
+  categoryId: string | null;
+  isPinned: boolean;
+  isArchived: boolean;
+}
+
+export interface ChatCategorySummary {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  /** Unarchived conversations filed here, so a category can show its own weight. */
+  count: number;
+}
+
+/** Categories with their live counts, for the inbox filter bar. */
+export async function getChatCategories(): Promise<ChatCategorySummary[]> {
+  const rows = await prisma.chatCategory.findMany({
+    orderBy: [{ position: "asc" }, { name: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      color: true,
+      position: true,
+      _count: { select: { groups: { where: { isActive: true, chatArchivedAt: null } } } },
+    },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    position: row.position,
+    count: row._count.groups,
+  }));
 }
 
 /**
@@ -63,11 +97,40 @@ export interface ConversationSummary {
 export async function getChatConversations(search?: string): Promise<ConversationSummary[]> {
   const trimmed = search?.trim();
 
+  // Which groups make the list is decided by RECENT ACTIVITY, not by name.
+  //
+  // This used to take the first 300 groups alphabetically and then sort those by recency, which
+  // reads as an ordering choice and is really a selection one: with 1,848 groups, a conversation
+  // that arrived five minutes ago was invisible if its name sorted past the 300th. An inbox
+  // silently omitting the newest message is the one thing an inbox cannot do.
+  //
+  // Pinned first regardless — a pin means "always keep this where I can see it", and a pinned
+  // group dropping off because it went quiet would defeat the point of pinning it. Archived rows
+  // are excluded here and fetched separately by the archived view.
+  const ranked = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT g."id"
+    FROM "WhatsAppGroup" g
+    LEFT JOIN LATERAL (
+      SELECT m."timestampWa"
+      FROM "Message" m
+      WHERE m."groupId" = g."id"
+      ORDER BY m."timestampWa" DESC
+      LIMIT 1
+    ) last ON true
+    WHERE g."isActive" = true
+      AND g."chatArchivedAt" IS NULL
+      ${trimmed ? Prisma.sql`AND g."name" ILIKE ${`%${trimmed}%`}` : Prisma.empty}
+    ORDER BY
+      (g."chatPinnedAt" IS NOT NULL) DESC,
+      g."chatPinnedAt" DESC NULLS LAST,
+      last."timestampWa" DESC NULLS LAST,
+      g."name" ASC
+    LIMIT ${CONVERSATION_LIST_LIMIT}
+  `;
+  if (ranked.length === 0) return [];
+
   const groups = await prisma.whatsAppGroup.findMany({
-    where: {
-      isActive: true,
-      ...(trimmed ? { name: { contains: trimmed, mode: "insensitive" } } : {}),
-    },
+    where: { id: { in: ranked.map((row) => row.id) } },
     select: {
       id: true,
       name: true,
@@ -77,10 +140,11 @@ export async function getChatConversations(search?: string): Promise<Conversatio
       aiAutomationEnabled: true,
       aiSuppressedUntil: true,
       whatsappGroupId: true,
+      chatCategoryId: true,
+      chatPinnedAt: true,
+      chatArchivedAt: true,
       account: { select: { label: true } },
     },
-    orderBy: { name: "asc" },
-    take: CONVERSATION_LIST_LIMIT,
   });
 
   if (groups.length === 0) return [];
@@ -115,6 +179,7 @@ export async function getChatConversations(search?: string): Promise<Conversatio
   ]);
 
   const latestByGroup = new Map(latest.map((row) => [row.groupId, row]));
+  const pinnedAtById = new Map(groups.map((group) => [group.id, group.chatPinnedAt]));
   const pendingByChat = new Map(pending.map((row) => [row.chatId, row._count.chatId]));
 
   return groups
@@ -134,20 +199,88 @@ export async function getChatConversations(search?: string): Promise<Conversatio
         lastMessageOutgoing: last?.direction === "OUTGOING",
         lastMessageSender: last ? (last.senderName ?? last.senderPhone) : null,
         pendingCount: pendingByChat.get(group.whatsappGroupId) ?? 0,
+        categoryId: group.chatCategoryId,
+        isPinned: group.chatPinnedAt !== null,
+        isArchived: group.chatArchivedAt !== null,
         // A team member's own message arrives as INCOMING too (it is inbound to this account),
         // so direction alone is not enough — isFromTeamMember is what separates "a customer is
         // waiting" from "we already answered".
         awaitingReply: Boolean(last) && last!.direction === "INCOMING" && !last!.isFromTeamMember,
       };
     })
-    // Most recently active first, and groups that have never spoken sink to the bottom
-    // rather than disappearing — a silent group is still one you may need to open.
+    // Pinned first, then most recently active, and groups that have never spoken sink to the
+    // bottom rather than disappearing — a silent group is still one you may need to open.
     .sort((a, b) => {
+      if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+      if (a.isPinned && b.isPinned) {
+        // Pin order comes from a lookup rather than a field on the row: the client has no use for
+        // the timestamp, and carrying it only to delete it again needs a discarded binding.
+        const pinDelta = (pinnedAtById.get(b.id)?.getTime() ?? 0) - (pinnedAtById.get(a.id)?.getTime() ?? 0);
+        if (pinDelta !== 0) return pinDelta;
+      }
       if (!a.lastMessageAt && !b.lastMessageAt) return a.name.localeCompare(b.name);
       if (!a.lastMessageAt) return 1;
       if (!b.lastMessageAt) return -1;
       return b.lastMessageAt.getTime() - a.lastMessageAt.getTime();
     });
+}
+
+/**
+ * The archived view, which is its own query rather than a flag on the one above.
+ *
+ * Archived conversations are excluded from the main list entirely — that is what archiving means —
+ * so folding them in behind a filter would mean the expensive ranking query fetched rows it almost
+ * always discards. This runs only when somebody opens the archive.
+ */
+export async function getArchivedChatConversations(search?: string): Promise<ConversationSummary[]> {
+  const trimmed = search?.trim();
+
+  const groups = await prisma.whatsAppGroup.findMany({
+    where: {
+      isActive: true,
+      chatArchivedAt: { not: null },
+      ...(trimmed ? { name: { contains: trimmed, mode: "insensitive" } } : {}),
+    },
+    select: {
+      id: true,
+      name: true,
+      accountId: true,
+      isMonitored: true,
+      isActive: true,
+      aiAutomationEnabled: true,
+      aiSuppressedUntil: true,
+      whatsappGroupId: true,
+      chatCategoryId: true,
+      chatPinnedAt: true,
+      chatArchivedAt: true,
+      account: { select: { label: true } },
+    },
+    orderBy: { chatArchivedAt: "desc" },
+    take: CONVERSATION_LIST_LIMIT,
+  });
+
+  // No last-message lookup: the archive is a list you go to in order to un-archive something, not
+  // one you read conversations from, and the preview would cost the same DISTINCT ON for rows
+  // nobody is triaging.
+  return groups.map((group) => ({
+    id: group.id,
+    name: group.name,
+    accountId: group.accountId,
+    accountLabel: group.account.label,
+    isMonitored: group.isMonitored,
+    isActive: group.isActive,
+    aiAutomationEnabled: group.aiAutomationEnabled,
+    aiSuppressedUntil: group.aiSuppressedUntil,
+    lastMessageAt: null,
+    lastMessagePreview: null,
+    lastMessageOutgoing: false,
+    lastMessageSender: null,
+    pendingCount: 0,
+    awaitingReply: false,
+    categoryId: group.chatCategoryId,
+    isPinned: group.chatPinnedAt !== null,
+    isArchived: true,
+  }));
 }
 
 export type ThreadEntryKind = "INCOMING" | "OUTGOING" | "SYSTEM" | "QUEUED";

@@ -1,6 +1,6 @@
 import { MessagesSquare } from "lucide-react";
 import { requireSession } from "@/server/auth";
-import { getChatConversations } from "@/server/chatInbox";
+import { getChatCategories, getChatConversations } from "@/server/chatInbox";
 import { ConversationList } from "./ConversationList";
 
 export const metadata = { title: "WhatsApp Chat" };
@@ -12,12 +12,12 @@ export const metadata = { title: "WhatsApp Chat" };
  */
 export default async function ChatIndexPage() {
   await requireSession();
-  const conversations = await getChatConversations();
+  const [conversations, categories] = await Promise.all([getChatConversations(), getChatCategories()]);
 
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col md:hidden">
-        <ConversationList conversations={conversations} />
+        <ConversationList conversations={conversations} categories={categories} />
       </div>
 
       <div className="hidden flex-1 items-center justify-center p-10 md:flex">

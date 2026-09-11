@@ -9,3 +9,4 @@ export * from "./excelSafety.js";
 export * from "./permissions.js";
 export * from "./replyLanguage.js";
 export * from "./notificationTemplates.js";
+export * from "./chatCategories.js";
