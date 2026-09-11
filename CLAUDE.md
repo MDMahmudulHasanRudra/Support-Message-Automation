@@ -843,6 +843,16 @@ conversation straight back in the list. Nothing can be dismissed permanently, on
 again — a boolean would let one glance bury a customer for good, turning the feature that finds
 unanswered people into the one that hides them.
 
+A queued reply already counts as an answer. A reply — yours from this inbox, or the AI fallback'''s —
+only becomes a `Message` when WhatsApp echoes it back, which is seconds later and much longer when
+the queue defers for a rate limit; for that whole window the newest stored message was still the
+customer'''s question, so an answered conversation kept showing as waiting. Both paths write an
+`OutboundMessage`, so one lookup covers both. `ANSWERING_OUTBOUND` is pointedly NOT
+`UNSETTLED_OUTBOUND`: that set exists to render queued bubbles and includes FAILED, CANCELLED and
+SKIPPED, which mean the customer received nothing — reading those as an answer would hide the
+conversations that most need somebody. It is floored at the oldest message the page is asking about,
+because SENT rows accumulate forever and `OutboundMessage.chatId` carries no index of its own.
+
 Two dots, because one would hide exactly that case. **Solid** = nobody has looked. **Hollow ring** =
 somebody opened it and the customer still has no reply, with its own "seen, unanswered" filter
 chip, because those conversations leave the waiting count by design and must not simply vanish.

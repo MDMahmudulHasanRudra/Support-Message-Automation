@@ -29,6 +29,21 @@ const UNSETTLED_OUTBOUND: Prisma.OutboundMessageWhereInput["status"] = {
   in: ["PENDING", "PROCESSING", "RATE_LIMITED", "FAILED", "CANCELLED", "SKIPPED"],
 };
 
+/**
+ * Statuses that mean the customer has been answered, or is about to be.
+ *
+ * Pointedly NOT the same set as UNSETTLED_OUTBOUND above, which exists to render "queued" bubbles
+ * and therefore includes FAILED, CANCELLED and SKIPPED. Those three mean the customer received
+ * nothing at all, so a conversation holding one is still waiting — reading them as an answer would
+ * hide exactly the conversations that most need somebody.
+ *
+ * SENT belongs here because a reply only becomes a `Message` row when WhatsApp echoes it back, and
+ * until that echo lands the newest stored message is still the customer's question.
+ */
+const ANSWERING_OUTBOUND: Prisma.OutboundMessageWhereInput["status"] = {
+  in: ["PENDING", "PROCESSING", "RATE_LIMITED", "SENT"],
+};
+
 export interface ConversationSummary {
   id: string;
   name: string;
@@ -196,6 +211,28 @@ export async function getChatConversations(search?: string): Promise<Conversatio
     }),
   ]);
 
+  // When a reply is queued — by a person in this inbox, or by the AI fallback — it does not
+  // become a `Message` until WhatsApp echoes it back, which is seconds later and can be much
+  // longer when the queue defers for a rate limit. For that whole window the newest stored message
+  // is still the customer's question, so the conversation kept showing as waiting after it had
+  // actually been answered. Both paths write an `OutboundMessage`, so one lookup covers both.
+  //
+  // Floored at the oldest message this page is even asking about, rather than querying every
+  // outbound row ever written: SENT rows accumulate forever and `chatId` carries no index of its
+  // own, so an unbounded scan here would grow without limit as the deployment ages.
+  const oldestRelevant = latest.reduce<Date | null>(
+    (oldest, row) => (!oldest || row.timestampWa < oldest ? row.timestampWa : oldest),
+    null,
+  );
+  const answering = oldestRelevant
+    ? await prisma.outboundMessage.groupBy({
+        by: ["chatId"],
+        where: { chatId: { in: chatIds }, status: ANSWERING_OUTBOUND, createdAt: { gte: oldestRelevant } },
+        _max: { createdAt: true },
+      })
+    : [];
+  const answeredAtByChat = new Map(answering.map((row) => [row.chatId, row._max.createdAt]));
+
   const latestByGroup = new Map(latest.map((row) => [row.groupId, row]));
   const pinnedAtById = new Map(groups.map((group) => [group.id, group.chatPinnedAt]));
   const pendingByChat = new Map(pending.map((row) => [row.chatId, row._count.chatId]));
@@ -203,7 +240,15 @@ export async function getChatConversations(search?: string): Promise<Conversatio
   return groups
     .map((group) => {
       const last = latestByGroup.get(group.id);
-      const unanswered = Boolean(last) && last!.direction === "INCOMING" && !last!.isFromTeamMember;
+      // A reply already on its way counts as an answer. `createdAt` is our own clock while
+      // `timestampWa` is WhatsApp's, which is close enough at this granularity — a reply queued in
+      // response to a message is always at least seconds later than it.
+      const answeredAt = answeredAtByChat.get(group.whatsappGroupId) ?? null;
+      const unanswered =
+        Boolean(last) &&
+        last!.direction === "INCOMING" &&
+        !last!.isFromTeamMember &&
+        !(answeredAt && answeredAt > last!.timestampWa);
       return {
         id: group.id,
         name: group.name,
