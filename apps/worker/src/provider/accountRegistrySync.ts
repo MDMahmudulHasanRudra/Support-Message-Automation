@@ -120,10 +120,20 @@ async function recoverIfDropped(registry: ProviderRegistry, account: WhatsAppAcc
  * other loop in this worker — connecting a real WhatsApp session can take well over intervalMs
  * (QR scan wait, slow auth), so this must never let a second tick start a second connect() while
  * the first is still in flight.
+ *
+ * That guard is also what makes this the right owner of the INITIAL connect, which used to be a
+ * blocking loop in `main()` ahead of every interval — see the comment there. `immediate` fires one
+ * pass straight away so nothing waits for the first tick; it is deliberately not awaited by the
+ * caller, because the entire fix is that booting no longer waits on a QR scan.
  */
-export function startAccountRegistrySync(registry: ProviderRegistry, intervalMs = 20_000): NodeJS.Timeout {
+export function startAccountRegistrySync(
+  registry: ProviderRegistry,
+  intervalMs = 20_000,
+  options: { immediate?: boolean } = {},
+): NodeJS.Timeout {
   let processing = false;
-  return setInterval(() => {
+
+  const tick = () => {
     if (processing) return;
     processing = true;
     syncOnce(registry)
@@ -133,5 +143,8 @@ export function startAccountRegistrySync(registry: ProviderRegistry, intervalMs 
       .finally(() => {
         processing = false;
       });
-  }, intervalMs);
+  };
+
+  if (options.immediate) tick();
+  return setInterval(tick, intervalMs);
 }

@@ -86,21 +86,30 @@ async function main() {
 
   const registry = new ProviderRegistry();
 
-  // Every known, already-session-provisioned account is connected SEQUENTIALLY at startup —
-  // never concurrently (see ProviderRegistry's class doc comment on why connect() calls must
-  // never race each other). On a worker restart this reconnects every account that was live
-  // before the process died, not just the legacy one.
+  // Connecting accounts is NOT on the startup path, and that is the whole point.
+  //
+  // It used to be: a sequential `await registry.connectAccount()` loop right here, before a single
+  // interval below existed. `connect()` waits up to ten minutes for a QR scan, and gets three
+  // attempts with backoff — so one account nobody scans held the ENTIRE worker for about half an
+  // hour. No heartbeat, so the dashboard said "the worker is not responding". No command
+  // processor, so Show QR / Reconnect / Logout all wrote WorkerCommand rows that nothing would
+  // ever read — the buttons appeared to work and did nothing. No outbound queue, so every reply
+  // and alert sat still. And with more than one account, each one's wait was added to the next.
+  //
+  // The irony is that the only thing that could rescue it — the loop that reconnects a dropped
+  // session — was itself waiting behind the account that was stuck.
+  //
+  // `startAccountRegistrySync` already does exactly this job, and its doc comment already says so:
+  // it connects every provisioned account the registry does not yet hold, one at a time, never
+  // concurrently. So it owns the initial connect too. One loop, one overlap guard, one place where
+  // the never-two-concurrent-connects rule is enforced — rather than two call sites that have to
+  // agree with each other while one of them blocks everything.
   const accountsToConnect = await findConnectableAccounts();
-  console.log(`[worker] connecting ${accountsToConnect.length} account(s): ${accountsToConnect.map((a) => a.label).join(", ")}`);
+  console.log(`[worker] ${accountsToConnect.length} account(s) will be connected in the background: ${accountsToConnect.map((a) => a.label).join(", ")}`);
   await logSystemEvent("INFO", "worker", "Worker starting up", {
     accountIds: accountsToConnect.map((a) => a.id),
     legacyAccountId: legacyAccount.id,
   });
-
-  for (const account of accountsToConnect) {
-    if (!account.sessionId || !account.sessionDataPath) continue; // defensive; findConnectableAccounts already filters this
-    await registry.connectAccount({ id: account.id, sessionId: account.sessionId, sessionDataPath: account.sessionDataPath });
-  }
 
   const intervals: NodeJS.Timeout[] = [
     startOutboundQueueProcessor(registry),
@@ -131,7 +140,9 @@ async function main() {
       TEAMS: new TeamsProvider(),
       WHATSAPP: new WhatsAppNotificationProvider(registry),
     }),
-    startAccountRegistrySync(registry),
+    // `immediate` so accounts still start connecting at once rather than on the first 20s tick —
+    // the change is that they do it beside every other loop instead of in front of them.
+    startAccountRegistrySync(registry, undefined, { immediate: true }),
     // Releases queue rows claimed by something that then went away. Boot-time recovery alone
     // assumed only a dead process can strand one; a hung send on a live worker does it too, and
     // that row then waits for the next restart.

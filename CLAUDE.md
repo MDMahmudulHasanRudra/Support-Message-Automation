@@ -305,6 +305,18 @@ and it does a process-global `process.chdir()` first.
 
 ### Staying up, and noticing when nothing is arriving (`lifecycle.ts`, `recovery.ts`, `pipeline/messageRecovery.ts`, `health/collectionWatchdog.ts`)
 
+**Accounts connect in the BACKGROUND, and nothing may put that back on the startup path.**
+`main()` used to `await registry.connectAccount()` in a loop before a single interval existed.
+`connect()` waits up to ten minutes for a QR scan and gets three attempts with backoff, so ONE
+unscanned account held the entire worker for about half an hour — no heartbeat (the dashboard said
+"the worker is not responding"), no command processor (Show QR / Reconnect / Logout wrote
+`WorkerCommand` rows nothing would read, so the buttons appeared to work and did nothing), no
+outbound queue, and with several accounts each wait added to the next. The loop that recovers a
+dropped session was itself stuck behind the account that was stuck. Observed live.
+`startAccountRegistrySync(registry, undefined, { immediate: true })` owns the initial connect now —
+it already connected every account the registry did not hold, one at a time, and being a single
+overlap-guarded loop it is also the one place the never-two-concurrent-connects rule is enforced.
+
 **One missed `.catch()` used to kill the whole worker.** There were no `unhandledRejection` /
 `uncaughtException` handlers, and Node throws on an unhandled rejection — so a forgotten catch in
 any of the eighteen loops stopped WhatsApp collection, the outbound queue and the escalation timers
