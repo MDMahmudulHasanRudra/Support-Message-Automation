@@ -27,6 +27,28 @@ const AUTHOR_LABEL = {
   PERSON: { text: null, icon: null },
 } as const;
 
+/** Longer and the next message reads as a new thought rather than the same one continued. */
+const RUN_GAP_MS = 5 * 60_000;
+
+/** Whether `next` continues `current` — same speaker, same side, close in time. */
+function continues(current: ThreadEntry, next: ThreadEntry): boolean {
+  if (current.kind === "SYSTEM" || next.kind === "SYSTEM") return false;
+
+  const currentOutbound = current.kind === "OUTGOING" || current.kind === "QUEUED";
+  const nextOutbound = next.kind === "OUTGOING" || next.kind === "QUEUED";
+  if (currentOutbound !== nextOutbound) return false;
+
+  // Inbound runs also need the same person: a group has many speakers, and merging two of them
+  // into one run would attribute somebody's message to whoever spoke above them.
+  if (!nextOutbound && (current.senderPhone ?? null) !== (next.senderPhone ?? null)) return false;
+
+  // Outbound runs need the same author, so an AI reply never merges into a person's and inherits
+  // the absence of a badge — the absence is the signal that a human wrote it.
+  if (nextOutbound && (current.authoredBy ?? null) !== (next.authoredBy ?? null)) return false;
+
+  return next.at.getTime() - current.at.getTime() <= RUN_GAP_MS;
+}
+
 function DayDivider({ label }: { label: string }) {
   return (
     <div className="my-4 flex items-center gap-3" role="separator" aria-label={label}>
@@ -63,21 +85,38 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
 
   // Derived up front rather than tracked with a variable mutated inside the map: a render
   // pass must not depend on state left behind by the previous iteration.
+  //
+  // `startsRun` / `endsRun` are what turn a column of separate cards into a conversation.
+  // Consecutive messages from one speaker are one thing said over several lines, and repeating
+  // the name and full spacing between each of them is the difference between a thread that reads
+  // and a list of receipts. A run breaks on a different speaker, a day boundary, or a gap long
+  // enough that the next message is a new thought rather than a continuation.
   const rows = entries.map((entry, index) => {
+    const previous = index === 0 ? null : entries[index - 1];
+    const next = index === entries.length - 1 ? null : entries[index + 1];
+
     const day = dayFormat.format(entry.at);
-    const previousDay = index === 0 ? null : dayFormat.format(entries[index - 1].at);
-    return { entry, day, showDivider: day !== previousDay };
+    const previousDay = previous ? dayFormat.format(previous.at) : null;
+    const showDivider = day !== previousDay;
+
+    return {
+      entry,
+      day,
+      showDivider,
+      startsRun: showDivider || !previous || !continues(previous, entry),
+      endsRun: !next || dayFormat.format(next.at) !== day || !continues(entry, next),
+    };
   });
 
   return (
     <div className="flex flex-col gap-1 px-4 py-5 sm:px-6">
-      {rows.map(({ entry, day, showDivider }) => {
+      {rows.map(({ entry, day, showDivider, startsRun, endsRun }) => {
         const isOutbound = entry.kind === "OUTGOING" || entry.kind === "QUEUED";
         const isSystem = entry.kind === "SYSTEM";
         const queued = entry.kind === "QUEUED" ? QUEUED_LABEL[entry.outboundStatus ?? ""] : undefined;
 
         return (
-          <div key={entry.id}>
+          <div key={entry.id} className={startsRun && !showDivider ? "mt-2.5" : undefined}>
             {showDivider ? <DayDivider label={day} /> : null}
 
             {isSystem ? (
@@ -87,7 +126,8 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
             ) : (
               <div className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[min(38rem,80%)] ${isOutbound ? "items-end" : "items-start"} flex flex-col`}>
-                  {!isOutbound ? (
+                  {/* Named once per run, not once per message. */}
+                  {!isOutbound && startsRun ? (
                     <span className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium text-[color:var(--color-muted-foreground)]">
                       {entry.isTeamMember ? (
                         <UserRound className="size-3" aria-hidden />
@@ -96,8 +136,16 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
                     </span>
                   ) : null}
 
+                  {/* The tail. Three corners stay soft and the one nearest the speaker tightens
+                      on the last bubble of a run — the shape every chat client uses to say "this
+                      side said this", carried by geometry rather than another label. Mid-run
+                      bubbles keep both inner corners tight so a run reads as one block. */}
                   <div
-                    className={`rounded-[var(--radius-lg)] px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words ${
+                    className={`px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] ${
+                      isOutbound
+                        ? `rounded-l-[var(--radius-lg)] ${startsRun ? "rounded-tr-[var(--radius-lg)]" : "rounded-tr-[var(--radius-xs)]"} ${endsRun ? "rounded-br-[var(--radius-xs)]" : "rounded-br-[var(--radius-xs)]"}`
+                        : `rounded-r-[var(--radius-lg)] ${startsRun ? "rounded-tl-[var(--radius-lg)]" : "rounded-tl-[var(--radius-xs)]"} rounded-bl-[var(--radius-xs)]`
+                    } ${
                       entry.kind === "QUEUED"
                         ? "border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-sunken)] text-[color:var(--color-muted-foreground)]"
                         : isOutbound
@@ -109,7 +157,11 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
                   </div>
 
                   <span
-                    className="mt-1 flex items-center gap-1 px-1 text-[10px] text-[color:var(--color-muted-foreground)]"
+                    className={`mt-1 flex items-center gap-1 px-1 text-[10px] text-[color:var(--color-muted-foreground)] ${
+                      // A timestamp under every line of a four-line run is noise; under the last
+                      // one it is the information. The rest keep theirs in the title attribute.
+                      endsRun || queued ? "" : "hidden"
+                    }`}
                     title={formatDateTime(entry.at)}
                   >
                     {/* Only automated authorship is called out. A person's own reply needs no

@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, CheckSquare, Inbox, Pin, PinOff, Search, Settings2, Tag, X } from "lucide-react";
+import { Archive, Check, CheckSquare, Inbox, Pin, PinOff, Search, Settings2, Tag, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
@@ -16,6 +16,7 @@ import {
   type ConversationSummary,
 } from "@/server/chatInbox";
 import { CategoryManager } from "./CategoryManager";
+import { conversationAvatar } from "./avatar";
 import { categoryDotClass } from "./categoryColors";
 
 function relativeTime(value: Date | null): string {
@@ -427,26 +428,32 @@ function Row({
   selected: boolean;
   onToggle: () => void;
 }) {
+  const avatar = conversationAvatar(conversation.id, conversation.name);
+
   const inner = (
     <>
       <span className="relative mt-0.5 shrink-0">
         {selecting ? (
           <span
             aria-hidden
-            className={`flex size-9 items-center justify-center rounded-[var(--radius-lg)] border text-[11px] font-semibold ${
+            className={`flex size-9 items-center justify-center rounded-[var(--radius-lg)] border text-[12px] font-semibold transition-[background-color,border-color,transform] duration-[var(--duration-fast)] ${
               selected
-                ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white"
+                ? "scale-[0.94] border-[var(--color-primary)] bg-[var(--color-primary)] text-[var(--color-on-primary)]"
                 : "border-[var(--color-border)] bg-[var(--color-surface-sunken)] text-[color:var(--color-muted-foreground)]"
             }`}
           >
-            {selected ? "✓" : conversation.name.slice(0, 2)}
+            {selected ? <Check className="size-4" /> : avatar.initials}
           </span>
         ) : (
+          // Tinted per group and stable forever — see avatar.ts. The inner highlight is the same
+          // one every raised surface in this app carries, so the monogram sits on the shared
+          // light source rather than looking pasted on.
           <span
             aria-hidden
-            className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] text-[11px] font-semibold uppercase text-[color:var(--color-muted-foreground)]"
+            style={{ background: avatar.background, color: avatar.color }}
+            className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)]"
           >
-            {conversation.name.slice(0, 2)}
+            {avatar.initials}
           </span>
         )}
         {conversation.awaitingReply && !selecting ? (
@@ -517,15 +524,31 @@ function Row({
     </>
   );
 
-  const shell = `flex w-full gap-3 border-b border-[var(--color-border)] px-3.5 py-3 text-left transition-colors duration-[var(--duration-fast)] ${
-    active ? "bg-[var(--color-neutral-bg)]" : "hover:bg-[var(--color-neutral-bg)]/60"
-  }`;
+  // A press state and a focus ring, neither of which this row had. The press is a 1px settle
+  // rather than a scale: a scaling row nudges every row below it, and in a list you are dragging
+  // your eye down that reads as the list moving under you.
+  const shell = [
+    "group/row relative flex w-full gap-3 border-b border-[var(--color-border)] px-3.5 py-3 text-left",
+    "transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)]",
+    "active:translate-y-px",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus-ring)]",
+    active ? "bg-[var(--color-neutral-bg)]" : "hover:bg-[var(--color-neutral-bg)]/60",
+  ].join(" ");
 
   // In selection mode the row is a button, not a link. Keeping it a link and intercepting the
   // click would leave a real href under the cursor — middle-click, ctrl-click and "open in new
   // tab" would all navigate away mid-selection and lose it.
   return (
-    <li>
+    <li className="relative">
+      {/* An edge marker for the open conversation. The background fill alone is the same weight as
+          the hover state, so on a list you are running the cursor down, "which one is open" and
+          "which one am I over" become the same colour. */}
+      {active ? (
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-0 w-0.5 bg-[var(--color-primary)]"
+        />
+      ) : null}
       {selecting ? (
         <button type="button" onClick={onToggle} aria-pressed={selected} className={`${shell} cursor-pointer`}>
           {inner}
