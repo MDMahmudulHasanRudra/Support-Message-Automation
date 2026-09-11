@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileSpreadsheet, Unplug } from "lucide-react";
+import { FileSpreadsheet, Pin, Unplug } from "lucide-react";
 import {
   Alert,
   Badge,
@@ -23,6 +23,7 @@ import {
   Th,
 } from "@/components/ui";
 import { createGroupBroadcastJob, previewExcelUpload } from "@/server/actions/groupBroadcast";
+import { SavedGroupSetBar, type SavedGroupSetOption } from "./SavedGroupSetBar";
 import type { GroupMatchResult } from "@support-automation/shared";
 
 export interface WizardGroup {
@@ -31,6 +32,11 @@ export interface WizardGroup {
   isMonitored: boolean;
   /** Computed server-side at page-load time — whether the last group sync is recent enough to trust as a membership signal. */
   isFresh: boolean;
+  /** Shared with the chat inbox — one taxonomy over these groups, not two. */
+  categoryId: string | null;
+  categoryName: string | null;
+  categoryColor: string | null;
+  isPinned: boolean;
 }
 
 export interface WizardAccount {
@@ -54,10 +60,12 @@ export function GroupMessageSenderWizard({
   accounts,
   maxPerJob,
   automationEnabled,
+  savedSets,
 }: {
   accounts: WizardAccount[];
   maxPerJob: number;
   automationEnabled: boolean;
+  savedSets: SavedGroupSetOption[];
 }) {
   const router = useRouter();
   const [step, setStep] = useState(1);
@@ -65,6 +73,8 @@ export function GroupMessageSenderWizard({
   const [mode, setMode] = useState<"MANUAL" | "EXCEL">("MANUAL");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Map<string, SelectedTarget>>(new Map());
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [selectionFilter, setSelectionFilter] = useState<"all" | "selected" | "unselected">("all");
   const [excelResults, setExcelResults] = useState<GroupMatchResult[]>([]);
   const [excelFileErrors, setExcelFileErrors] = useState<string[]>([]);
   const [ambiguousResolutions, setAmbiguousResolutions] = useState<Map<number, string>>(new Map());
@@ -76,12 +86,48 @@ export function GroupMessageSenderWizard({
 
   const account = accounts.find((a) => a.id === accountId) ?? accounts[0] ?? null;
 
+  /**
+   * Filters compose rather than replace each other: category AND search AND selection-state all
+   * narrow the same list at once. "Premium groups containing Dhaka that I have not picked yet" is
+   * a real question at this scale, and a single-filter control cannot ask it.
+   */
   const filteredGroups = useMemo(() => {
-    const groups = account?.groups ?? [];
+    let groups = account?.groups ?? [];
+
+    if (categoryFilter === "__pinned__") groups = groups.filter((g) => g.isPinned);
+    else if (categoryFilter === "__none__") groups = groups.filter((g) => !g.categoryId);
+    else if (categoryFilter) groups = groups.filter((g) => g.categoryId === categoryFilter);
+
+    if (selectionFilter === "selected") groups = groups.filter((g) => selected.has(g.id));
+    else if (selectionFilter === "unselected") groups = groups.filter((g) => !selected.has(g.id));
+
     const q = search.trim().toLowerCase();
-    if (!q) return groups;
-    return groups.filter((g) => g.name.toLowerCase().includes(q));
-  }, [account, search]);
+    if (q) groups = groups.filter((g) => g.name.toLowerCase().includes(q));
+
+    // Pinned first inside whatever survived, so the groups somebody marked as important stay
+    // reachable without scrolling a filtered list of four hundred.
+    return [...groups].sort((a, b) => {
+      if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+      return 0;
+    });
+  }, [account, search, categoryFilter, selectionFilter, selected]);
+
+  /** Categories present on this account's groups, with live counts. */
+  const categories = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string; color: string; count: number }>();
+    for (const g of account?.groups ?? []) {
+      if (!g.categoryId || !g.categoryName) continue;
+      const existing = byId.get(g.categoryId);
+      if (existing) existing.count += 1;
+      else byId.set(g.categoryId, { id: g.categoryId, name: g.categoryName, color: g.categoryColor ?? "gray", count: 1 });
+    }
+    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [account]);
+
+  const pinnedCount = useMemo(
+    () => (account?.groups ?? []).filter((g) => g.isPinned).length,
+    [account],
+  );
 
   const targets = useMemo(() => [...selected.values()], [selected]);
   const overLimit = targets.length > maxPerJob;
@@ -115,14 +161,53 @@ export function GroupMessageSenderWizard({
     else setTarget({ groupId: g.id, groupName: g.name, message: null, source: "MANUAL" });
   }
 
-  function selectAllFiltered() {
+  /**
+   * Every bulk selection tool funnels through here.
+   *
+   * `add` and `remove` rather than a single toggle, because at this scale they are different
+   * intentions: "add the Premium ones to what I have" and "take the Premium ones out again" are
+   * both things people mean, and a toggle over three hundred rows does neither predictably — it
+   * inverts each one separately and leaves a selection nobody can describe.
+   */
+  function applyToGroups(groups: WizardGroup[], mode: "add" | "remove") {
     setSelected((prev) => {
       const next = new Map(prev);
-      for (const g of filteredGroups) {
-        if (!next.has(g.id)) next.set(g.id, { groupId: g.id, groupName: g.name, message: null, source: "MANUAL" });
+      for (const g of groups) {
+        if (mode === "remove") next.delete(g.id);
+        else if (!next.has(g.id)) {
+          next.set(g.id, { groupId: g.id, groupName: g.name, message: null, source: "MANUAL" });
+        }
       }
       return next;
     });
+  }
+
+  function selectAllFiltered() {
+    applyToGroups(filteredGroups, "add");
+  }
+
+  /**
+   * Invert within what is currently filtered, never across the whole account.
+   *
+   * Inverting 1,944 groups because somebody searched for "Dhaka" and pressed the wrong button is
+   * not an operation anybody wants, and it is the single most expensive mistake available on this
+   * screen — the confirmation step would then be asked to approve a selection the operator never
+   * conceived of.
+   */
+  function invertFiltered() {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      for (const g of filteredGroups) {
+        if (next.has(g.id)) next.delete(g.id);
+        else next.set(g.id, { groupId: g.id, groupName: g.name, message: null, source: "MANUAL" });
+      }
+      return next;
+    });
+  }
+
+  /** Clears everything, Excel-sourced rows included — it is "start again", not "clear the list". */
+  function clearSelection() {
+    setSelected(new Map());
   }
 
   async function handleExcelFile(file: File) {
@@ -253,18 +338,103 @@ export function GroupMessageSenderWizard({
 
           {mode === "MANUAL" ? (
             <div>
+              {/* Filters first, then the actions that operate on what they left. Reading the
+                  row top to bottom is the order the work happens in: narrow, then act. */}
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <Input
                   placeholder="Search groups by name…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="max-w-sm"
+                  className="max-w-xs"
                 />
-                <Button variant="secondary" size="sm" onClick={selectAllFiltered}>
-                  Select all filtered ({filteredGroups.length})
-                </Button>
-                <span className="text-xs text-[color:var(--color-muted-foreground)]">{selected.size} selected</span>
+
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  aria-label="Filter by category"
+                  className="h-8 rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-[12px] text-[color:var(--color-foreground)] outline-none focus-visible:border-[var(--color-primary)]"
+                >
+                  <option value="">All categories</option>
+                  {pinnedCount > 0 ? <option value="__pinned__">Pinned ({pinnedCount})</option> : null}
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name} ({category.count})
+                    </option>
+                  ))}
+                  <option value="__none__">Uncategorised</option>
+                </select>
+
+                <select
+                  value={selectionFilter}
+                  onChange={(e) => setSelectionFilter(e.target.value as "all" | "selected" | "unselected")}
+                  aria-label="Filter by selection state"
+                  className="h-8 rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-[12px] text-[color:var(--color-foreground)] outline-none focus-visible:border-[var(--color-primary)]"
+                >
+                  <option value="all">Selected or not</option>
+                  <option value="selected">Selected only</option>
+                  <option value="unselected">Not selected</option>
+                </select>
+
+                {search || categoryFilter || selectionFilter !== "all" ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSearch("");
+                      setCategoryFilter("");
+                      setSelectionFilter("all");
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                ) : null}
               </div>
+
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={selectAllFiltered}>
+                  Select all {filteredGroups.length}
+                </Button>
+                {/* Removes only what the filters currently show, so "take the Premium ones back
+                    out" does not also discard an unrelated selection made five minutes ago. */}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => applyToGroups(filteredGroups, "remove")}
+                  disabled={filteredGroups.length === 0}
+                >
+                  Deselect these
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={invertFiltered}
+                  disabled={filteredGroups.length === 0}
+                >
+                  Invert
+                </Button>
+                {selected.size > 0 ? (
+                  <Button variant="ghost" size="sm" onClick={clearSelection}>
+                    Clear all ({selected.size})
+                  </Button>
+                ) : null}
+
+                <span className="ml-auto text-xs tabular text-[color:var(--color-muted-foreground)]">
+                  {selected.size} selected
+                </span>
+              </div>
+
+              <SavedGroupSetBar
+                accountId={accountId}
+                selectedIds={targets.map((t) => t.groupId)}
+                savedSets={savedSets}
+                onLoad={(ids) => {
+                  const byId = new Map((account?.groups ?? []).map((g) => [g.id, g]));
+                  applyToGroups(
+                    ids.map((id) => byId.get(id)).filter((g): g is WizardGroup => Boolean(g)),
+                    "add",
+                  );
+                }}
+              />
               <div className="max-h-80 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--color-border)]">
                 {filteredGroups.length === 0 ? (
                   <p className="p-4 text-sm text-[color:var(--color-muted-foreground)]">No groups match your search.</p>
@@ -274,11 +444,21 @@ export function GroupMessageSenderWizard({
                       key={g.id}
                       className="flex cursor-pointer items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2 text-sm last:border-0 hover:bg-[var(--color-neutral-bg)]"
                     >
-                      <span className="flex items-center gap-2">
+                      <span className="flex min-w-0 items-center gap-2">
                         <Checkbox checked={selected.has(g.id)} onChange={() => toggleManualGroup(g)} />
-                        {g.name}
+                        {g.isPinned ? (
+                          <Pin className="size-3 shrink-0 text-[color:var(--color-muted-foreground)]" aria-label="Pinned" />
+                        ) : null}
+                        <span className="truncate">{g.name}</span>
                       </span>
-                      {g.isFresh ? <Badge color="green">Verified</Badge> : <Badge color="yellow">Stale sync</Badge>}
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {g.categoryName ? (
+                          <span className="rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px text-[10px] text-[color:var(--color-neutral-fg)]">
+                            {g.categoryName}
+                          </span>
+                        ) : null}
+                        {g.isFresh ? <Badge color="green">Verified</Badge> : <Badge color="yellow">Stale sync</Badge>}
+                      </span>
                     </label>
                   ))
                 )}

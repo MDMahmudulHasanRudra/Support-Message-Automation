@@ -16,15 +16,30 @@ function isGroupSyncFresh(lastSyncedAt: Date | null): boolean {
 export default async function GroupMessageSenderPage() {
   await requireSession();
 
-  const [accounts, settings, automationSettings] = await Promise.all([
+  const [accounts, settings, automationSettings, savedGroupSets] = await Promise.all([
     prisma.whatsAppAccount.findMany({
       where: { status: "CONNECTED" },
-      include: { groups: { orderBy: { name: "asc" } } },
+      include: {
+        groups: {
+          orderBy: { name: "asc" },
+          include: { chatCategory: { select: { id: true, name: true, color: true } } },
+        },
+      },
       orderBy: { createdAt: "asc" },
     }),
     prisma.groupBroadcastSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
     prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+    prisma.savedGroupSet.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, groupIds: true } }),
   ]);
+
+  const savedSets = savedGroupSets.map((set) => ({
+    id: set.id,
+    name: set.name,
+    // The saved size, not the resolvable one. Resolving every set on page load would be a query
+    // per set for a number that only matters once somebody loads one — and the load itself
+    // reports what no longer resolves.
+    count: set.groupIds.length,
+  }));
 
   const wizardAccounts: WizardAccount[] = accounts.map((a) => ({
     id: a.id,
@@ -35,6 +50,14 @@ export default async function GroupMessageSenderPage() {
       name: g.name,
       isMonitored: g.isMonitored,
       isFresh: isGroupSyncFresh(g.lastSyncedAt),
+      // The categories and pins set in the chat inbox are reused here rather than given a second
+      // parallel system. A group filed under "Premium" is Premium everywhere, which is the whole
+      // point of having filed it — two independent taxonomies over the same 1,944 groups would be
+      // two things to keep in step and one of them would always be wrong.
+      categoryId: g.chatCategoryId,
+      categoryName: g.chatCategory?.name ?? null,
+      categoryColor: g.chatCategory?.color ?? null,
+      isPinned: g.chatPinnedAt !== null,
     })),
   }));
 
@@ -100,6 +123,7 @@ export default async function GroupMessageSenderPage() {
         accounts={wizardAccounts}
         maxPerJob={settings.maxPerJob}
         automationEnabled={automationSettings.automationEnabled}
+        savedSets={savedSets}
       />
     </div>
   );

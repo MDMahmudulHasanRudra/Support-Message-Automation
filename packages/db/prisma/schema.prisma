@@ -416,6 +416,7 @@ model User {
   approvedStyleProfiles      CommunicationStyleProfile[]
   editedNotificationTemplates NotificationTemplate[]
   savedReplies                SavedReply[]
+  savedGroupSets              SavedGroupSet[]
   resolvedEscalationCases    SupportEscalationCase[]
   triggeredEscalationEvents  SupportEscalationEvent[]
   triggeredLearningBatchJobs LearningBatchJob[]
@@ -577,6 +578,31 @@ model WhatsAppServiceRoute {
 /// from and carries a human-verification gate for exactly that reason; this is shorthand a person
 /// picks and sends themselves. Feeding one into the other would put unreviewed operator shorthand
 /// into the assistant's mouth, and put a customer-facing claim into a list people edit casually.
+/// A saved selection of groups — "All Premium Clients", "Night Shift", the hundred you pick every
+/// time there is maintenance.
+///
+/// A SNAPSHOT of ids, not a live rule, and the distinction matters because both are useful and
+/// this app now has each. A ChatCategory is the living version: put a group in "Premium" and it is
+/// in every future Premium send automatically. A saved set is the frozen version: exactly the
+/// groups you chose that day, which is what you want when the selection was a judgement rather
+/// than a property — "the ones affected by the Dhaka outage" is not a category anybody maintains.
+///
+/// The cost of a snapshot is that it goes stale, so loading one reports what no longer resolves
+/// rather than silently sending to fewer groups than the name implies.
+model SavedGroupSet {
+  id   String @id @default(cuid())
+  name String @unique
+
+  /// WhatsAppGroup ids. Not a relation: a set survives a group being deleted or resynced away,
+  /// and reports the gap at load time instead of quietly shrinking through a cascade.
+  groupIds String[]
+
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model SavedReply {
   id    String @id @default(cuid())
   /// What it is called in the picker — short, since it is scanned rather than read.

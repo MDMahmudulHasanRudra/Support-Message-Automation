@@ -513,8 +513,21 @@ Sidebar group: **Bulk Messaging**
 
 A 5-step wizard: **Select Account → Select Groups → Review Selection → Compose Message → Preview**.
 
-- **Select Groups**: Manual (search + "select all filtered" + checkbox list showing Verified/Stale
-  sync badges) or Excel Import (`.xlsx`, required "Group Name" column, optional "Message" column —
+- **Select Groups**: Manual or Excel Import.
+  - Filters **compose**: search AND category AND selection-state narrow the same list at once, so
+    "Premium groups containing Dhaka that I have not picked yet" is one question rather than three
+    passes. Categories and pins are the **same ones** as the chat inbox — a group filed under
+    Premium is Premium everywhere, rather than two taxonomies over the same 1,944 groups.
+  - Bulk tools: **Select all**, **Deselect these**, **Invert**, **Clear all**. Every one except
+    Clear all operates on what the filters currently show — inverting 1,944 groups because somebody
+    searched for "Dhaka" and pressed the wrong button is the most expensive mistake available here.
+  - **Saved sets** — save the current selection under a name and load it next time. Loading *adds*
+    rather than replaces, so "Premium plus Night Shift" is one broadcast. A set is a snapshot of
+    ids, so it can go stale: loading reports how many of its groups no longer resolve on this
+    account rather than quietly sending to eighty under the name of a set that meant a hundred.
+    Categories are the living alternative — use a category when membership is a property, a saved
+    set when the selection was a judgement ("the ones affected by the Dhaka outage").
+  - The checkbox list shows Verified/Stale sync badges (`.xlsx`, required "Group Name" column, optional "Message" column —
   matched exactly or by whitespace-normalized name, never fuzzily; results bucket into Matched,
   Ambiguous (pick one), Unmatched, and Duplicate rows).
 - **Compose Message**: up to 4096 chars, shows how many selected groups have their own per-row
