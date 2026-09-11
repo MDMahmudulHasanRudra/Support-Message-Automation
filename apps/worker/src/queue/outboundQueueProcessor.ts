@@ -1,3 +1,4 @@
+import { trackTick } from "../lifecycle.js";
 import { prisma } from "@support-automation/db";
 import type { OutboundMessage } from "@prisma/client";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
@@ -380,7 +381,10 @@ export function startOutboundQueueProcessor(
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOneViaRegistry(registry)
+    // Wrapped so shutdown can wait for a claim already in flight and refuse to start a new one.
+    // Without it, SIGTERM during this tick killed the process mid-work and left the claimed row
+    // PROCESSING until the next boot requeued and re-ran it — see lifecycle.ts.
+    void trackTick(() => processOneViaRegistry(registry))
       .catch((err) => {
         console.error("[queue] unexpected error processing outbound message", err);
       })

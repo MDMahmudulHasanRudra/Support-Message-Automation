@@ -1,3 +1,4 @@
+import { trackTick } from "../lifecycle.js";
 import { prisma } from "@support-automation/db";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
@@ -583,7 +584,10 @@ export function startCommandProcessor(
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOneCommandViaRegistry(registry)
+    // Wrapped so shutdown can wait for a claim already in flight and refuse to start a new one.
+    // Without it, SIGTERM during this tick killed the process mid-work and left the claimed row
+    // PROCESSING until the next boot requeued and re-ran it — see lifecycle.ts.
+    void trackTick(() => processOneCommandViaRegistry(registry))
       .catch((err) => {
         console.error("[commands] unexpected error processing worker command", err);
       })

@@ -3,15 +3,18 @@ import { startHealthServer, type WorkerHealthState } from "./health/server.js";
 import { ProviderRegistry } from "./provider/ProviderRegistry.js";
 import { ensureLegacyAccountExists, ensurePrimaryAccountExists, findConnectableAccounts } from "./provider/accountProvisioning.js";
 import { startAccountRegistrySync } from "./provider/accountRegistrySync.js";
-import { recoverStuckOutboundMessages, startOutboundQueueProcessor } from "./queue/outboundQueueProcessor.js";
-import {
-  recoverStuckParticipantAddItems,
-  startGroupParticipantAddProcessor,
-} from "./queue/groupParticipantAddProcessor.js";
-import { recoverStuckNotifications, startNotificationDispatcher } from "./notifications/dispatcher.js";
+import { startOutboundQueueProcessor } from "./queue/outboundQueueProcessor.js";
+import { startGroupParticipantAddProcessor } from "./queue/groupParticipantAddProcessor.js";
+import { startNotificationDispatcher } from "./notifications/dispatcher.js";
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
-import { recoverStuckCommands, startCommandProcessor } from "./commands/commandProcessor.js";
+import { startCommandProcessor } from "./commands/commandProcessor.js";
+import {
+  reconcileAccountStatusesOnBoot,
+  runStuckWorkRecovery,
+  startStuckWorkRecoveryProcessor,
+} from "./recovery.js";
+import { awaitQuiescence, beginShutdown, installProcessGuards, trackTick } from "./lifecycle.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
@@ -31,7 +34,19 @@ import { provisionAiProviderFromEnv } from "./bootstrap/provisionAiProviderFromE
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
+/**
+ * How long shutdown waits for work already in flight. Long enough for a send or a webhook to
+ * finish, short enough to stay well inside the ten seconds Docker allows between SIGTERM and
+ * SIGKILL — being killed halfway through the wait is the outcome this exists to avoid.
+ */
+const SHUTDOWN_GRACE_MS = 8_000;
+
 async function main() {
+  // Before anything else: one forgotten `.catch()` in any of the eighteen loops must not be able to
+  // take the whole worker down. See lifecycle.ts for why a rejection and an exception get
+  // different treatment.
+  installProcessGuards();
+
   const state: WorkerHealthState = { startedAt: Date.now(), lastHeartbeatAt: Date.now() };
   const healthServer = startHealthServer(state, HEALTH_PORT);
   console.log(`[worker] health server listening on 127.0.0.1:${HEALTH_PORT}`);
@@ -42,15 +57,18 @@ async function main() {
     throw new Error("Cannot start without a database connection.");
   }
 
-  const recoveredOutbound = await recoverStuckOutboundMessages();
-  const recoveredNotifications = await recoverStuckNotifications();
-  const recoveredParticipantAdds = await recoverStuckParticipantAddItems();
-  const recoveredCommands = await recoverStuckCommands();
-  if (recoveredOutbound > 0 || recoveredNotifications > 0 || recoveredParticipantAdds > 0 || recoveredCommands > 0) {
+  const recovered = await runStuckWorkRecovery();
+  if (recovered.outbound + recovered.notifications + recovered.participantAdds + recovered.commands > 0) {
     console.log(
-      `[worker] crash recovery: requeued ${recoveredOutbound} outbound message(s), ${recoveredNotifications} notification(s), ${recoveredParticipantAdds} group-participant-add item(s); failed ${recoveredCommands} interrupted worker command(s)`,
+      `[worker] crash recovery: requeued ${recovered.outbound} outbound message(s), ${recovered.notifications} notification(s), ${recovered.participantAdds} group-participant-add item(s); failed ${recovered.commands} interrupted worker command(s)`,
     );
   }
+
+  // Nothing clears connection status on the way down, so every account is still reporting whatever
+  // it said before this process existed. Correct that before the connect loop below, which takes
+  // minutes across several accounts — minutes during which the dashboard would otherwise show
+  // sessions this process does not have.
+  await reconcileAccountStatusesOnBoot();
 
   // Backward compatibility, load-bearing: this is the exact account (same sessionDataPath,
   // same sessionId) every pre-multi-account install already has — see ensureLegacyAccountExists's
@@ -112,7 +130,32 @@ async function main() {
       WHATSAPP: new WhatsAppNotificationProvider(registry),
     }),
     startAccountRegistrySync(registry),
-    setInterval(async () => {
+    // Releases queue rows claimed by something that then went away. Boot-time recovery alone
+    // assumed only a dead process can strand one; a hung send on a live worker does it too, and
+    // that row then waits for the next restart.
+    startStuckWorkRecoveryProcessor(),
+    startHeartbeat(state),
+  ];
+
+  const shutdown = makeShutdownHandler(intervals, registry, healthServer);
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
+
+/**
+ * Liveness of this process, stamped onto every account.
+ *
+ * Overlap-guarded like every other loop: the callback awaits a database round trip, and
+ * `setInterval` does not wait for it, so a database that has become slow would otherwise stack one
+ * connectivity check on top of another every fifteen seconds — turning a slow database into a
+ * connection-exhausted one.
+ */
+function startHeartbeat(state: WorkerHealthState): NodeJS.Timeout {
+  let beating = false;
+  return setInterval(() => {
+    if (beating) return;
+    beating = true;
+    void (async () => {
       state.lastHeartbeatAt = Date.now();
       const connected = await checkDatabaseConnection();
       console.log(`[worker] heartbeat db=${connected ? "connected" : "unreachable"}`);
@@ -130,23 +173,57 @@ async function main() {
           .updateMany({ data: { lastHeartbeatAt: new Date() } })
           .catch((err) => console.error("[worker] heartbeat stamp failed", err));
       }
-    }, HEARTBEAT_INTERVAL_MS),
-  ];
-
-  const shutdown = (signal: string) => {
-    console.log(`[worker] received ${signal}, shutting down`);
-    intervals.forEach(clearInterval);
-    registry
-      .disconnectAll()
-      .catch(() => undefined)
+    })()
+      .catch((err) => console.error("[worker] heartbeat failed", err))
       .finally(() => {
-        healthServer.close(() => process.exit(0));
-        setTimeout(() => process.exit(0), 5_000).unref();
+        beating = false;
       });
-  };
+  }, HEARTBEAT_INTERVAL_MS);
+}
 
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+/**
+ * Stops taking new work, lets what is already running finish, then goes.
+ *
+ * Two things were missing and both produce the same visible symptom — a customer receiving the
+ * same reply twice. `clearInterval` only cancels the NEXT tick, so the one already awaiting
+ * `sendText` was previously killed with the process: WhatsApp may or may not have received it, and
+ * the row stayed PROCESSING until the next boot pushed it back to PENDING and sent it again. And
+ * the handler was not re-entrant, so a second SIGTERM (an impatient `docker stop`, or SIGINT after
+ * SIGTERM) ran the whole teardown a second time on top of the first.
+ *
+ * `beginShutdown()` is what actually stops new claims — a tick already scheduled still fires after
+ * its interval is cleared, and `trackTick` turns it into a no-op.
+ */
+function makeShutdownHandler(
+  intervals: NodeJS.Timeout[],
+  registry: ProviderRegistry,
+  healthServer: { close: (cb: () => void) => void },
+): (signal: string) => void {
+  let started = false;
+  return (signal: string) => {
+    if (started) {
+      console.log(`[worker] received ${signal} while already shutting down — ignoring`);
+      return;
+    }
+    started = true;
+    console.log(`[worker] received ${signal}, shutting down`);
+
+    beginShutdown();
+    intervals.forEach(clearInterval);
+
+    void (async () => {
+      const settled = await awaitQuiescence(SHUTDOWN_GRACE_MS);
+      console.log(
+        settled
+          ? "[worker] in-flight work finished — closing sessions"
+          : `[worker] in-flight work did not finish within ${SHUTDOWN_GRACE_MS}ms — closing sessions anyway`,
+      );
+      await registry.disconnectAll().catch(() => undefined);
+      healthServer.close(() => process.exit(0));
+      // A socket the health check happens to be holding open must not keep the container alive.
+      setTimeout(() => process.exit(0), 5_000).unref();
+    })();
+  };
 }
 
 main().catch((err) => {

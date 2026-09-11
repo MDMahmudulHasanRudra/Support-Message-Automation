@@ -1,3 +1,4 @@
+import { trackTick } from "../lifecycle.js";
 import { prisma } from "@support-automation/db";
 import type { NotificationProvider } from "./NotificationProvider.js";
 
@@ -95,7 +96,10 @@ export function startNotificationDispatcher(
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOneNotification(providers)
+    // Wrapped so shutdown can wait for a claim already in flight and refuse to start a new one.
+    // Without it, SIGTERM during this tick killed the process mid-work and left the claimed row
+    // PROCESSING until the next boot requeued and re-ran it — see lifecycle.ts.
+    void trackTick(() => processOneNotification(providers))
       .catch((err) => {
         console.error("[notifications] unexpected error dispatching notification", err);
       })
