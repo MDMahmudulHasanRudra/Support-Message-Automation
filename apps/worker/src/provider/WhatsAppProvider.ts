@@ -43,7 +43,26 @@ export interface WhatsAppProvider {
   disconnect(): Promise<void>;
   getConnectionStatus(): ConnectionStatus;
   getGroups(): Promise<GroupInfo[]>;
+  /**
+   * Registers the one handler every incoming message is delivered to.
+   *
+   * The implementation must keep the handler wired across its own reconnects — a provider that
+   * attaches it once, to whatever session happened to be live at registration, goes quiet forever
+   * the first time that session is rebuilt, and reports itself perfectly healthy while doing so.
+   * Safe to call before connect().
+   */
   subscribeToMessages(handler: (message: RawIncomingMessage) => void): void;
+  /**
+   * Messages the provider can still see for chats touched since `since`, oldest first, capped at
+   * `limit`.
+   *
+   * This is how a gap in collection gets closed. Live delivery is a push: anything that arrives
+   * while the process is down, restarting, or between sessions is simply never delivered, and no
+   * amount of reconnect logic recovers it — the event has already been and gone. Implementations
+   * return an empty array rather than throwing; a provider with no history to offer is a weaker
+   * guarantee, not a broken one.
+   */
+  fetchMessagesSince(since: Date, limit: number): Promise<RawIncomingMessage[]>;
   /**
    * `mentions` are contact ids ("<digits>@c.us") to tag. WhatsApp only notifies a mentioned person
    * if they are a participant of that chat; tagging someone who is not simply renders as text.

@@ -1,4 +1,5 @@
 import type { ConnectionStatus, GroupInfo, GroupParticipant, SendResult, WhatsAppProvider } from "../provider/WhatsAppProvider.js";
+import type { RawIncomingMessage } from "../pipeline/types.js";
 
 /**
  * A mocked WhatsAppProvider for integration tests — the outbound queue
@@ -28,7 +29,14 @@ export class MockProvider implements WhatsAppProvider {
   async getGroups(): Promise<GroupInfo[]> {
     return [];
   }
+  /** Set by a test that exercises the catch-up sweep; nothing to replay otherwise. */
+  public missedMessages: RawIncomingMessage[] = [];
+
   subscribeToMessages(): void {}
+
+  async fetchMessagesSince(since: Date, limit: number): Promise<RawIncomingMessage[]> {
+    return this.missedMessages.filter((message) => message.timestampWa > since).slice(0, limit);
+  }
   async getAccountInfo() {
     return { phoneNumber: "+8801000000000", pushName: "Mock Account" };
   }

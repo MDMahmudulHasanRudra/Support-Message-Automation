@@ -190,13 +190,41 @@ export class OpenWAProvider implements WhatsAppProvider {
   // the state changes actually occurred, no matter how their individual DB round-trips interleave.
   private pendingStateWrite: Promise<void> = Promise.resolve();
 
+  // The message listener is held on the INSTANCE, not on the client, because `connect()` builds a
+  // brand-new `Client` every time and a listener attached to the previous one dies with it. This
+  // was a real silent failure: RECONNECT (disconnect + connect) left the account CONNECTED, green
+  // on the dashboard, sends working — and `onAnyMessage` wired to a killed browser, so not one
+  // further message was ever stored. Nothing reported it, because nothing arriving is
+  // indistinguishable from a quiet afternoon.
+  private messageHandler: ((message: RawIncomingMessage) => void) | null = null;
+  // Which client the listener is currently attached to. Identity, not a boolean: it answers "is
+  // THIS client wired up", so a re-attach after a reconnect happens and a second attach to the
+  // same client (which would process every message twice) cannot.
+  private listenerClient: Client | null = null;
+  // The in-flight connect, if there is one. `connect()` launches Chromium and does a
+  // process-global `process.chdir()` first; two overlapping attempts for the same account would
+  // race each other exactly as two accounts connecting concurrently would. Now that a dropped
+  // session is recovered automatically, there are two callers that can ask at once — the recovery
+  // loop and an operator pressing Reconnect — so the guard belongs here rather than in an
+  // agreement between them.
+  private connecting: Promise<void> | null = null;
+
   constructor(
     private readonly accountId: string,
     private readonly sessionId: string,
     private readonly sessionDataPath: string,
   ) {}
 
+  /** Joins an attempt already in progress rather than starting a second one. */
   async connect(): Promise<void> {
+    if (this.connecting) return this.connecting;
+    this.connecting = this.openSession().finally(() => {
+      this.connecting = null;
+    });
+    return this.connecting;
+  }
+
+  private async openSession(): Promise<void> {
     // The directory has to exist before chdir, and nothing else guarantees it does.
     // accountProvisioning assigns every non-legacy account a path of `${SESSION_ROOT}/${id}`
     // but only records it — the folder itself was never created, so `process.chdir()` threw
@@ -330,6 +358,13 @@ export class OpenWAProvider implements WhatsAppProvider {
         console.error("[openwa] failed to record state change", err),
       );
     });
+
+    // Re-wire the message listener to the client we just built. This must live INSIDE connect()
+    // rather than at the call site: every path that reconnects — the RECONNECT command, the
+    // registry's automatic recovery, anything added later — goes through here, so none of them can
+    // forget it. A no-op on the very first connect, where subscribeToMessages has not run yet and
+    // attaches itself the moment it does.
+    this.attachMessageListener();
   }
 
   async disconnect(): Promise<void> {
@@ -373,11 +408,74 @@ export class OpenWAProvider implements WhatsAppProvider {
     }));
   }
 
+  /**
+   * Records the handler and wires it to the live session, now and after every future reconnect.
+   *
+   * Deliberately does NOT require a connected client: a handler registered before connect() is
+   * attached by connect() itself. Refusing early registration would push the ordering back onto
+   * every caller, which is how the listener came to be attached exactly once in the first place.
+   */
   subscribeToMessages(handler: (message: RawIncomingMessage) => void): void {
-    if (!this.client) throw new Error("OpenWAProvider: cannot subscribe before connect().");
-    this.client.onAnyMessage((message) => {
+    this.messageHandler = handler;
+    this.attachMessageListener();
+  }
+
+  private attachMessageListener(): void {
+    const handler = this.messageHandler;
+    const client = this.client;
+    if (!handler || !client) return;
+    if (this.listenerClient === client) return; // already wired — a second onAnyMessage would double-process every message
+    this.listenerClient = client;
+    client.onAnyMessage((message) => {
       handler(toRawIncomingMessage(this.accountId, message));
     });
+  }
+
+  /**
+   * Everything the browser still holds for chats touched since `since` — how a gap gets filled
+   * after the worker was down, restarted, or reconnecting.
+   *
+   * Bounded by chat activity, not by the roster: `getAllGroups()` reports each chat's last
+   * interaction, so a fifteen-minute gap reads the handful of groups that actually received
+   * something rather than scanning all 1,848. `getAllMessagesInChat` returns what WhatsApp Web has
+   * loaded rather than full history, which is the right amount — a gap this is any use for is
+   * hours, not months.
+   *
+   * Never throws. This runs immediately after a session comes up, and a failure to fill a gap must
+   * not take down the connection that is otherwise working.
+   */
+  async fetchMessagesSince(since: Date, limit: number): Promise<RawIncomingMessage[]> {
+    if (!this.client) return [];
+    const sinceMs = since.getTime();
+    const collected: RawIncomingMessage[] = [];
+
+    try {
+      const chats = await this.client.getAllGroups();
+      // `t` is seconds since the epoch of the chat's last interaction. A chat that has not been
+      // touched since the gap began cannot be hiding a message from inside it.
+      const active = chats.filter((chat) => typeof chat.t === "number" && chat.t * 1000 > sinceMs);
+
+      for (const chat of active) {
+        if (collected.length >= limit) break;
+        try {
+          // includeMe: our own replies are half of every conversation and the chat inbox reads
+          // them. includeNotifications: false — "X joined the group" is not a customer message.
+          const messages = await this.client.getAllMessagesInChat(chat.id as ChatId, true, false);
+          for (const message of messages) {
+            if (typeof message.timestamp !== "number" || message.timestamp * 1000 <= sinceMs) continue;
+            collected.push(toRawIncomingMessage(this.accountId, message));
+            if (collected.length >= limit) break;
+          }
+        } catch (err) {
+          console.warn(`[openwa] could not read history for chat ${chat.id} — skipping it`, err);
+        }
+      }
+    } catch (err) {
+      console.warn("[openwa] could not enumerate chats for catch-up — skipping this sweep", err);
+      return collected;
+    }
+
+    return collected.sort((a, b) => a.timestampWa.getTime() - b.timestampWa.getTime());
   }
 
   async sendMessage(chatId: string, body: string, mentions?: string[]): Promise<SendResult> {

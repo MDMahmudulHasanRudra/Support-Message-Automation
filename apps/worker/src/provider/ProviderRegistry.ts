@@ -2,6 +2,7 @@ import { OpenWAProvider } from "./openwa/OpenWAProvider.js";
 import type { WhatsAppProvider } from "./WhatsAppProvider.js";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
 import { syncGroupsWithTimeoutAndRetry } from "../commands/commandProcessor.js";
+import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 
 const CONNECT_RETRY_DELAYS_MS = [15_000, 45_000]; // bounded, matching the spec's "safe retry policy" spirit — not unlimited
@@ -92,7 +93,11 @@ export class ProviderRegistry {
       })
       .catch((err) => {
         console.error(`[worker] group sync failed after retries for account ${account.id} — connection remains active`, err);
-      });
+      })
+      // Then fill whatever arrived while this account was not listening. After the group sync
+      // rather than beside it: a recovered message resolves to a WhatsAppGroup row, and racing the
+      // sync would file messages from a newly-joined group under no group at all.
+      .then(() => catchUpMissedMessages(account.id, provider));
 
     return true;
   }

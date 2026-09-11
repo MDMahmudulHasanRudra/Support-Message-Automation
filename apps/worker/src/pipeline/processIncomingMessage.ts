@@ -67,71 +67,16 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
     bodyPreview: raw.body.slice(0, 80),
   });
 
-  const isFromTeamMember = await isActiveTeamMember(raw.senderPhone);
-  traceStage(traceId, "TEAM_MEMBER_CHECK", { isFromTeamMember });
-
-  const group = await resolveGroup(raw);
-  if (raw.whatsappGroupId) {
-    traceStage(traceId, "GROUP_RESOLVED", { whatsappGroupId: raw.whatsappGroupId, resolvedGroupId: group?.id ?? null });
-  }
-
-  // Fetch the previous message in this chat BEFORE inserting the current
-  // one, so it can never match itself.
-  const previous = await prisma.message.findFirst({
-    where: { accountId: raw.accountId, chatId: raw.chatId },
-    orderBy: { timestampWa: "desc" },
-    select: { senderPhone: true, isFromTeamMember: true },
-  });
-
-  // Resolve the WhatsApp "quoted reply" reference to our own Message row, if we have it tracked —
-  // null if the quoted message predates tracking or this message isn't a reply at all. Feeds
-  // Support Activity Tracking's REPLY_TO_CUSTOMER trigger below.
-  const quotedMessage = raw.quotedWhatsappMessageId
-    ? await prisma.message.findUnique({
-        where: { accountId_whatsappMessageId: { accountId: raw.accountId, whatsappMessageId: raw.quotedWhatsappMessageId } },
-        select: { id: true, senderPhone: true, isFromTeamMember: true },
-      })
-    : null;
-
-  const normalizedBody = raw.body.trim();
-
-  let message;
-  try {
-    message = await prisma.message.create({
-      data: {
-        accountId: raw.accountId,
-        groupId: group?.id ?? null,
-        whatsappMessageId: raw.whatsappMessageId,
-        chatId: raw.chatId,
-        senderPhone: raw.senderPhone,
-        senderName: raw.senderName,
-        isFromTeamMember,
-        direction: "INCOMING",
-        body: raw.body,
-        normalizedBody,
-        timestampWa: raw.timestampWa,
-        processingStatus: "PENDING",
-        quotedMessageId: quotedMessage?.id ?? null,
-        mentionedPhones: raw.mentionedPhones ?? [],
-      },
-    });
-  } catch (err: any) {
-    if (err?.code === "P2002") {
-      // Duplicate WhatsApp event (retry, redelivery, worker restart) — already processed.
-      traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: true, result: "skipped — already processed" });
-      return;
-    }
-    throw err;
-  }
-  traceStage(traceId, "MESSAGE_PERSISTED", { messageId: message.id });
-  traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: false, result: "unique — proceeding" });
+  const stored = await persistIncomingMessage(raw, "PENDING", traceId);
+  if (!stored) return; // duplicate WhatsApp event — already processed
+  const { message, group, isFromTeamMember, quotedMessage, previous } = stored;
 
   // Everything from here to the processingStatus settle below runs AFTER the Message row exists,
   // because that row is this pipeline's dedupe guard and has to be written before any work that
   // could fire twice. That ordering has a cost: an unexpected throw in between (a rule regex the
   // engine chokes on, a transient failure in the action loop or the AutomationExecution insert)
-  // used to leave the row PENDING forever — and WhatsApp's redelivery then hits the P2002 path
-  // above and returns "already processed", so it was never retried and the customer never answered.
+  // used to leave the row PENDING forever — and WhatsApp's redelivery then hits persistIncomingMessage's
+  // P2002 path and returns "already processed", so it was never retried and the customer never answered.
   // Marking it FAILED makes it visibly unprocessed instead of silently stuck.
   try {
     // Priority-Based Support Monitoring & Escalation runs alongside the rule engine, never gated
@@ -349,6 +294,157 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
       lastProcessedTimestampWa: raw.timestampWa,
     },
   });
+}
+
+interface StoredIncomingMessage {
+  message: { id: string };
+  group: Awaited<ReturnType<typeof resolveGroup>>;
+  isFromTeamMember: boolean;
+  quotedMessage: { id: string; senderPhone: string; isFromTeamMember: boolean } | null;
+  previous: { senderPhone: string; isFromTeamMember: boolean } | null;
+}
+
+/**
+ * Writes one incoming message and everything that has to be resolved alongside it. Returns null
+ * when the row already exists — the P2002 here IS this pipeline's dedup guard, which is what makes
+ * replaying a message safe rather than merely tolerable.
+ *
+ * Shared by the live path and the catch-up sweep on purpose. A message recovered after a gap has to
+ * land in the database byte-identically to one seen live, or every reader downstream — the inbox,
+ * support activity, escalation, learning — quietly sees two classes of message. That drift is not
+ * hypothetical: `storeNonAutomatedMessage` below is a second copy of this write that fell behind,
+ * and still stores `isFromTeamMember: false` with no quote and no mentions.
+ */
+async function persistIncomingMessage(
+  raw: RawIncomingMessage,
+  processingStatus: "PENDING" | "IGNORED",
+  /** Null for a bulk replay: one trace line per message is useful live and is noise a thousand at a time. */
+  traceId: string | null,
+): Promise<StoredIncomingMessage | null> {
+  const isFromTeamMember = await isActiveTeamMember(raw.senderPhone);
+  if (traceId) traceStage(traceId, "TEAM_MEMBER_CHECK", { isFromTeamMember });
+
+  const group = await resolveGroup(raw);
+  if (traceId && raw.whatsappGroupId) {
+    traceStage(traceId, "GROUP_RESOLVED", { whatsappGroupId: raw.whatsappGroupId, resolvedGroupId: group?.id ?? null });
+  }
+
+  // Fetch the previous message in this chat BEFORE inserting the current
+  // one, so it can never match itself.
+  const previous = await prisma.message.findFirst({
+    where: { accountId: raw.accountId, chatId: raw.chatId },
+    orderBy: { timestampWa: "desc" },
+    select: { senderPhone: true, isFromTeamMember: true },
+  });
+
+  // Resolve the WhatsApp "quoted reply" reference to our own Message row, if we have it tracked —
+  // null if the quoted message predates tracking or this message isn't a reply at all. Feeds
+  // Support Activity Tracking's REPLY_TO_CUSTOMER trigger.
+  const quotedMessage = raw.quotedWhatsappMessageId
+    ? await prisma.message.findUnique({
+        where: { accountId_whatsappMessageId: { accountId: raw.accountId, whatsappMessageId: raw.quotedWhatsappMessageId } },
+        select: { id: true, senderPhone: true, isFromTeamMember: true },
+      })
+    : null;
+
+  let message;
+  try {
+    message = await prisma.message.create({
+      data: {
+        accountId: raw.accountId,
+        groupId: group?.id ?? null,
+        whatsappMessageId: raw.whatsappMessageId,
+        chatId: raw.chatId,
+        senderPhone: raw.senderPhone,
+        senderName: raw.senderName,
+        isFromTeamMember,
+        direction: "INCOMING",
+        body: raw.body,
+        normalizedBody: raw.body.trim(),
+        timestampWa: raw.timestampWa,
+        processingStatus,
+        quotedMessageId: quotedMessage?.id ?? null,
+        mentionedPhones: raw.mentionedPhones ?? [],
+      },
+    });
+  } catch (err: any) {
+    if (err?.code === "P2002") {
+      if (traceId) traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: true, result: "skipped — already processed" });
+      return null;
+    }
+    throw err;
+  }
+
+  if (traceId) {
+    traceStage(traceId, "MESSAGE_PERSISTED", { messageId: message.id });
+    traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: false, result: "unique — proceeding" });
+  }
+
+  return { message, group, isFromTeamMember, quotedMessage, previous };
+}
+
+/**
+ * Stores a message recovered from a gap that is too old to answer, and records the support work
+ * visible in it — without evaluating a single rule.
+ *
+ * The distinction this draws is the one a person would: a question from four minutes ago, missed
+ * because the worker restarted, still deserves its answer and goes through the ordinary pipeline.
+ * A question from this morning does not get an automated reply at lunchtime as though it had just
+ * arrived — the customer has moved on, a colleague has very likely already answered in the group,
+ * and a burst of them on every restart is exactly the unprompted bulk sending this product refuses
+ * to do. Silence there is not data loss: the message is stored, so it appears in the inbox, counts
+ * in Team Performance, and shows up under "waiting for a reply" if nobody ever answered it.
+ *
+ * Support activity IS recorded, because that is a record of work a colleague really did. Escalation
+ * is deliberately not opened: a backdated case would immediately be overdue and fire its whole
+ * alert ladder for a conversation that has since ended. `markHumanReplied` is the exception — it
+ * only ever CLOSES a case, and a reply that really happened should close one whenever we learn of it.
+ */
+export async function storeMissedMessage(raw: RawIncomingMessage): Promise<boolean> {
+  if (!raw.body || raw.body.trim().length === 0) return false;
+
+  if (raw.direction !== "INCOMING") {
+    await storeNonAutomatedMessage(raw);
+    return true;
+  }
+
+  const stored = await persistIncomingMessage(raw, "IGNORED", null);
+  if (!stored) return false;
+
+  const { message, group, isFromTeamMember, quotedMessage } = stored;
+
+  try {
+    if (isFromTeamMember) {
+      await markHumanReplied(raw.chatId);
+    }
+  } catch (err) {
+    console.error("[catch-up] failed to close escalation state for a recovered message", err);
+  }
+
+  try {
+    const activityResult = await detectSupportActivity({
+      accountId: raw.accountId,
+      groupId: group?.id ?? null,
+      isFromTeamMember,
+      senderPhone: raw.senderPhone,
+      messageId: message.id,
+      body: raw.body,
+      timestampWa: raw.timestampWa,
+      quotedMessage: quotedMessage
+        ? { senderPhone: quotedMessage.senderPhone, isFromTeamMember: quotedMessage.isFromTeamMember }
+        : null,
+      mentionedPhones: raw.mentionedPhones ?? [],
+    });
+    if (activityResult) {
+      await updateSupportSessionForActivity(activityResult).catch((err) =>
+        console.error("[catch-up] failed to update support session for a recovered message", err),
+      );
+    }
+  } catch (err) {
+    console.error("[catch-up] failed to record support activity for a recovered message", err);
+  }
+
+  return true;
 }
 
 /**

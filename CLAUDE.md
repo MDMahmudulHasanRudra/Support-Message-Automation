@@ -243,6 +243,66 @@ verifyGroupMembership/getGroupParticipantCount/addGroupParticipant/logout). `Ope
 the pipeline, engine, and queue depend only on the interface. `ProviderRegistry` owns one
 `OpenWAProvider` (one Chromium) per `accountId`.
 
+### Collecting every message (`OpenWAProvider`, `catchUpMissedMessages.ts`, `accountRegistrySync.ts`)
+
+Message collection is a **push**, and that is the whole difficulty: anything that arrives while
+this process is not listening is not delayed, it is gone. Three separate holes let that happen, and
+all three are closed here. Read this before touching the connect/subscribe path.
+
+**The listener lives on the provider instance, never on a client object.** `connect()` builds a
+brand-new OpenWA `Client` every time, and `onAnyMessage` attached to the previous one dies with it.
+`subscribeToMessages()` therefore only *records* the handler; `connect()` re-attaches it at the end
+of every successful connection, and `attachMessageListener()` compares client identity so a second
+call cannot double-wire the same client and process every message twice. The gate is inside
+`connect()` rather than at the call site precisely so no reconnect path — the RECONNECT command,
+automatic recovery, anything added later — can forget it.
+
+This was a real, silent, total failure. The listener used to be attached exactly once, by
+`ProviderRegistry.connectAccount()`, to whatever client existed then. The dashboard's RECONNECT
+(`provider.disconnect()` + `provider.connect()`) left the account **CONNECTED, green, sends still
+working, and collecting nothing at all, permanently** — until the worker process was restarted.
+Nothing reported it, because "no messages arriving" and "a quiet afternoon" are the same thing from
+the outside.
+
+**`catchUpMissedMessages()` fills the gap after every connect** — the registry's initial connect (
+chained after the group sync, so a recovered message can resolve to a `WhatsAppGroup` row), the
+RECONNECT command, and automatic recovery. `ProcessingCheckpoint` is what makes a gap knowable: it
+has been written on every message since the pipeline was built and read by **nothing**, and this is
+the reader it was always for. The provider answers with `fetchMessagesSince()`, bounded by chat
+activity rather than by roster size — `getAllGroups()` reports each chat's last interaction, so a
+fifteen-minute gap reads the handful of groups that actually received something, not all 1,848.
+Groups only; that is where this product's conversations live.
+
+**Replay is safe because `Message @@unique([accountId, whatsappMessageId])` already is the dedup
+guard** — `persistIncomingMessage()` returns null on `P2002` and both paths share it, so a message
+recovered after a gap lands byte-identically to one seen live. Sharing that write is not tidiness:
+`storeNonAutomatedMessage` is the older second copy of it and has already drifted, still storing
+`isFromTeamMember: false` with no quote and no mentions.
+
+**Two numbers decide what a replay actually does, and `catchUpWindow.test.ts` pins both.**
+`CATCHUP_AUTOMATION_WINDOW_MINUTES` (15) is the consequential one: inside it a recovered message
+goes through the ordinary pipeline, replies and all, because a restart must not cost a customer
+their answer. Outside it `storeMissedMessage()` records the message and the support activity in it
+but evaluates **no rules** — a reply to this morning's question arriving at lunchtime is worse than
+silence (a colleague has very likely answered in the group already), and a burst of them on every
+restart is the unprompted bulk sending this product refuses to do. Nothing is lost either way: the
+message is stored, so it shows in the inbox, counts in Team Performance, and appears under "waiting
+for a reply" if it really was never answered. Escalation is deliberately **not opened** for an old
+message — a backdated case is instantly overdue and fires its whole alert ladder — but
+`markHumanReplied` still runs, because that only ever closes one. `CATCHUP_MAX_LOOKBACK_HOURS` (12)
+stops a worker that was off for a week dragging a week back in.
+
+**A dropped session now reconnects itself.** `accountRegistrySync` skipped any account already in
+the registry (`has()` was true forever, since the provider outlives the session), so a number whose
+session died sat collecting nothing until a human happened to press Reconnect. `recoverIfDropped()`
+retries `DISCONNECTED`/`ERROR` only — never `AUTHENTICATION_REQUIRED`/`SESSION_ERROR`, which need a
+person with the phone and would otherwise spin forever — behind a 5-minute cooldown, skipped
+entirely while an operator's own RECONNECT/LOGOUT/GET_QR command is pending. It requires
+`lastConnectedAt` **and** `phoneNumber`: LOGOUT clears the number, and without that check this would
+relaunch Chromium every few minutes for a retired spare, forever. `connect()` is also re-entrant now
+(it joins an attempt in flight rather than starting a second), because two callers can ask at once
+and it does a process-global `process.chdir()` first.
+
 ### Incoming message pipeline (`apps/worker/src/pipeline/processIncomingMessage.ts`)
 
 Empty-body drop → non-`INCOMING` messages are stored but never automated (loop-prevention) →

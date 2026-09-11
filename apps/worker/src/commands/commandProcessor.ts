@@ -7,6 +7,7 @@ import { processOneAiAnalysisBatch } from "../learning/aiAnalysisJob.js";
 import { runTeamsSync } from "../teams/graphSync.js";
 import { runForgeKnowledgeSync } from "../forge/forgeKnowledgeJob.js";
 import { buildCommunicationStyleProfile } from "../knowledge/communicationStyleJob.js";
+import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 
 const GROUP_SYNC_PROGRESS_INTERVAL = 250;
 
@@ -432,9 +433,13 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         }
         await provider.disconnect();
         await provider.connect();
+        // connect() re-attaches the message listener itself, so this no longer ends with a session
+        // that looks connected and silently collects nothing. What it cannot undo is the gap: fill
+        // that before reporting the command done.
+        const recovered = await catchUpMissedMessages(accountId, provider);
         await prisma.workerCommand.update({
           where: { id: command.id },
-          data: { status: "DONE", processedAt: new Date(), result: { reconnected: true } },
+          data: { status: "DONE", processedAt: new Date(), result: { reconnected: true, ...recovered } },
         });
         break;
       }
