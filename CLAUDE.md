@@ -877,6 +877,19 @@ works to protect. The badge clears on the list's own 4s refresh.
 That number answers "which customers has nobody answered" and feeds Team Performance; letting a
 review mark clear it would let a lead empty the backlog by scrolling through it.
 
+**The 300-group list cap bounds what is RENDERED, never what is reachable.**
+`getChatConversations` has always accepted a search term and, until `searchConversations`
+(`server/actions/chatSearch.ts`) existed, nothing passed one — so the browser could only filter the
+loaded 300. On an account in 1,856 groups that made a quiet group literally unfindable by name, and
+the cap read as a wall rather than a window. The inbox now runs both: the instant local filter over
+what is on screen, plus a debounced server query across every group, whose extra matches appear
+under "Elsewhere in your groups". Results are stored WITH the query they answered, so staleness is
+derived rather than tracked and a slow response cannot land under a newer query.
+
+Do NOT fix this by raising the cap. The layout re-queries the whole list every four seconds and
+each row costs a LATERAL lookup for its last message, so rendering the full roster would multiply
+that cost for a list nobody scrolls.
+
 **The inbox is a tool somebody drives all day, and the UI is built for that rather than for a
 screenshot.** Four rules worth not undoing:
 

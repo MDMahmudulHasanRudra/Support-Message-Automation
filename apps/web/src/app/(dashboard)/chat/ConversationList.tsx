@@ -15,6 +15,7 @@ import {
   Search,
   Settings2,
   Tag,
+  TextSearch,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -27,6 +28,7 @@ import {
   setChatPinned,
   setChatReviewed,
 } from "@/server/actions/chatOrganisation";
+import { searchConversations } from "@/server/actions/chatSearch";
 import {
   CONVERSATION_LIST_LIMIT,
   type ChatCategorySummary,
@@ -147,6 +149,18 @@ export function ConversationList({
   const [managingCategories, setManagingCategories] = useState(false);
   const compact = useSyncExternalStore(subscribeDensity, densitySnapshot, densityServerSnapshot);
   const [cursor, setCursor] = useState(-1);
+  /**
+   * The last completed remote search, stored WITH the query it answered.
+   *
+   * Keeping the query alongside the results is what makes "are these results current?" a
+   * derivable fact rather than a second piece of state to keep in sync. A stale response can then
+   * never be displayed under a newer query, and there is no "searching" flag to set, clear, and
+   * eventually forget to clear on some path.
+   */
+  const [remote, setRemote] = useState<{ query: string; matches: ConversationSummary[] }>({
+    query: "",
+    matches: [],
+  });
   const [pending, startTransition] = useTransition();
   const { showToast } = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -195,13 +209,24 @@ export function ConversationList({
   // Computed in ONE memo rather than three statements: `navigable` is what the keyboard walks, and
   // deriving it from two separately-recreated arrays would rebuild it on every render, defeating
   // the memo and re-running the cursor clamp for nothing.
+  const needle = query.trim();
+  /** Long enough to search, and the stored answer is for a different query. Derived, never set. */
+  const searching = needle.length >= 2 && remote.query !== needle;
+
+  const elsewhere = useMemo(() => {
+    // Results belonging to an older query are simply not shown; there is no state to clear.
+    if (remote.query !== needle || remote.matches.length === 0) return [];
+    const onScreen = new Set(conversations.map((c) => c.id));
+    return remote.matches.filter((match) => !onScreen.has(match.id));
+  }, [remote, needle, conversations]);
+
   const { pinnedRows, otherRows, navigable } = useMemo(() => {
     const split = filter.kind === "all" && !query.trim() && pinnedCount > 0;
     const pinned = split ? filtered.filter((c) => c.isPinned) : [];
     const rest = split ? filtered.filter((c) => !c.isPinned) : filtered;
     // The keyboard walks what is on screen, in the order it is on screen.
-    return { pinnedRows: pinned, otherRows: rest, navigable: [...pinned, ...rest] };
-  }, [filtered, filter, query, pinnedCount]);
+    return { pinnedRows: pinned, otherRows: rest, navigable: [...pinned, ...rest, ...elsewhere] };
+  }, [filtered, filter, query, pinnedCount, elsewhere]);
 
   // Clamped at read time rather than reset in an effect: typing shrinks the list under a cursor
   // that was valid a keystroke ago, and setting state from an effect to correct that costs a
@@ -226,6 +251,40 @@ export function ConversationList({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  // Reaching past the loaded 300. The local filter above stays exactly as it was and answers
+  // instantly for everything on screen; this runs alongside it and fills in the rest of the
+  // roster, so a quiet group is findable by name without the list itself getting heavier.
+  //
+  // Debounced rather than fired per keystroke: this is a real query over every group on the
+  // account, and "sof" should cost one of them rather than three.
+  //
+  // Nothing is set synchronously here, which is deliberate. The only write happens in the timer's
+  // callback, once an answer actually exists; "no results yet" is derived from the stored query
+  // not matching the typed one, rather than being a state somebody has to remember to reset.
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) return;
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      searchConversations(trimmed)
+        .then((matches) => {
+          // A slow response for a query the reader has already moved past must not land: the
+          // cancel flag covers an unmounted timer, and storing the query covers the rest.
+          if (!cancelled) setRemote({ query: trimmed, matches });
+        })
+        .catch(() => {
+          if (!cancelled) setRemote({ query: trimmed, matches: [] });
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query]);
+
 
   function onSearchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
@@ -524,7 +583,7 @@ export function ConversationList({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && elsewhere.length === 0 && !searching ? (
           <EmptyList
             conversations={conversations.length}
             filter={filter}
@@ -554,13 +613,39 @@ export function ConversationList({
               ))}
             </ul>
 
+            {/* Matches from the rest of the roster, kept in their own section rather than mixed in.
+                These are groups that have been quiet long enough to fall outside the loaded list,
+                and saying so is more useful than silently padding the results. */}
+            {elsewhere.length > 0 ? (
+              <>
+                <SectionLabel icon={<TextSearch className="size-3" aria-hidden />}>
+                  Elsewhere in your groups
+                </SectionLabel>
+                <ul>
+                  {elsewhere.map((conversation, index) => (
+                    <Row
+                      key={conversation.id}
+                      {...rowProps(conversation, pinnedRows.length + otherRows.length + index)}
+                    />
+                  ))}
+                </ul>
+              </>
+            ) : null}
+
+            {searching ? (
+              <p className="px-3.5 py-2.5 text-[11px] text-[color:var(--color-subtle-foreground)]" aria-live="polite">
+                Searching the rest of your groups…
+              </p>
+            ) : null}
+
             {capped ? (
-              // Moved to the foot of the list and cut to one line. Three lines of caveat above the
-              // first conversation is a caption on a tool somebody opens fifty times a day; at the
-              // bottom it is exactly where the question "is that everything?" gets asked.
+              // At the foot of the list and one line, because a caveat above the first conversation
+              // is a caption on a tool somebody opens fifty times a day. It says what search covers
+              // now rather than what it cannot reach — which, since searchConversations exists, is
+              // no longer a limitation worth leading with.
               <p className="border-t border-[var(--color-border)] px-3.5 py-3 text-[11px] leading-relaxed text-[color:var(--color-subtle-foreground)]">
-                Showing the {CONVERSATION_LIST_LIMIT} most recently active groups, and search covers
-                only these. Archive what you do not need here.
+                The list holds the {CONVERSATION_LIST_LIMIT} most recently active groups. Search
+                reaches every group on the account.
               </p>
             ) : null}
           </>

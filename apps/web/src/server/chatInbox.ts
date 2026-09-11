@@ -16,11 +16,12 @@ import { Prisma } from "@prisma/client";
  * and page two of a chat list is where conversations go to be lost. It exists so the raw `IN (...)`
  * below can never be handed an unbounded id list on an account that belongs to thousands of groups,
  * and it is set well above the number of groups a support account realistically monitors, so in
- * practice it is a guardrail rather than a filter. This function accepts a search term that narrows
- * server-side, but neither caller passes one today — the inbox filters the loaded list in the
- * browser — so the cap is genuinely the ceiling on what the inbox can reach. ConversationList
- * renders a "showing the first N" line when the list comes back full, so the bound is never
- * invisible once it starts biting.
+ * practice it is a guardrail rather than a filter. It is a bound on what is RENDERED, not on what
+ * is reachable: `searchConversations` (server/actions/chatSearch.ts) passes a term through to the
+ * query below, so typing a name searches every group on the account and the matches beyond this
+ * limit come back in their own section. That distinction is the whole point — before that caller
+ * existed the browser could only filter what had been loaded, which made a quiet group on a
+ * 1,856-group account literally unfindable.
  */
 export const CONVERSATION_LIST_LIMIT = 300;
 
