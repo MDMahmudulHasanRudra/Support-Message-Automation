@@ -415,6 +415,7 @@ model User {
   createdKnowledgeVersions   AiKnowledgeVersion[]
   approvedStyleProfiles      CommunicationStyleProfile[]
   editedNotificationTemplates NotificationTemplate[]
+  savedReplies                SavedReply[]
   resolvedEscalationCases    SupportEscalationCase[]
   triggeredEscalationEvents  SupportEscalationEvent[]
   triggeredLearningBatchJobs LearningBatchJob[]
@@ -569,6 +570,38 @@ model WhatsAppServiceRoute {
 /// per-operator folders would mean every person curating 1,848 groups from scratch and nobody
 /// able to say "it's in Billing" and be understood. The cost is that one person's reorganisation
 /// is everyone's, which is the same trade the Groups page already makes.
+/// A reply an operator sends often enough to be worth keeping — "payment confirmed", "checking
+/// with the team", the four sentences everybody retypes twenty times a day.
+///
+/// Deliberately NOT the knowledge base. AiKnowledgeItem is what the assistant answers customers
+/// from and carries a human-verification gate for exactly that reason; this is shorthand a person
+/// picks and sends themselves. Feeding one into the other would put unreviewed operator shorthand
+/// into the assistant's mouth, and put a customer-facing claim into a list people edit casually.
+model SavedReply {
+  id    String @id @default(cuid())
+  /// What it is called in the picker — short, since it is scanned rather than read.
+  title String
+
+  /// The text inserted into the composer. Never sent on its own: it lands in the box for the
+  /// operator to adjust and send, because a saved reply is a starting point and the last word on
+  /// whether it fits this customer belongs to the person looking at the conversation.
+  body  String
+
+  /// Sort order in the picker, lowest first.
+  position Int @default(0)
+
+  /// How many times it has been inserted. Sorting by this beats alphabetical after a week — the
+  /// four everybody uses rise to the top on their own rather than needing to be dragged there.
+  usageCount Int @default(0)
+
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([position])
+}
+
 model ChatCategory {
   id   String @id @default(cuid())
   /// Unique so two people cannot create "Billing" twice and split the same groups across both.

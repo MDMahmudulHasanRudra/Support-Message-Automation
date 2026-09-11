@@ -1,6 +1,7 @@
 import type {
   InputHTMLAttributes,
   ReactNode,
+  Ref,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
@@ -8,18 +9,31 @@ import type {
 const fieldBase =
   "w-full rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-sm text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,background-color] duration-[var(--duration-fast)] ease-[var(--ease-out)] placeholder:text-[color:var(--color-muted-foreground)] hover:border-[var(--color-muted-foreground)]/60 focus-visible:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12 disabled:cursor-not-allowed disabled:bg-[var(--color-neutral-bg)] disabled:opacity-60 disabled:hover:border-[var(--color-border-strong)]";
 
+/**
+ * `ref` is declared explicitly on both of these.
+ *
+ * React 19 passes it to a function component as an ordinary prop, so it already reached the
+ * element through the spread — but `InputHTMLAttributes` does not include it, so every caller
+ * that needed one failed to compile against a component that would have worked. Declaring it is
+ * the fix; wrapping these in `forwardRef` would be the React 18 answer to a problem React 19
+ * no longer has.
+ */
 export function Input({
   className = "",
+  ref,
   ...props
-}: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={`h-9.5 ${fieldBase} ${className}`} {...props} />;
+}: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
+  return <input ref={ref} className={`h-9.5 ${fieldBase} ${className}`} {...props} />;
 }
 
 export function Textarea({
   className = "",
+  ref,
   ...props
-}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={`min-h-24 py-2.5 leading-relaxed ${fieldBase} ${className}`} {...props} />;
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> }) {
+  return (
+    <textarea ref={ref} className={`min-h-24 py-2.5 leading-relaxed ${fieldBase} ${className}`} {...props} />
+  );
 }
 
 export function Select({

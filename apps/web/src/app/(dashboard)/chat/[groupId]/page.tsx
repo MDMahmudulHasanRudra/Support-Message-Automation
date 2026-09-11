@@ -2,7 +2,7 @@ import { ArrowLeft, Bot, ExternalLink, Users } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui";
-import { getChatThread } from "@/server/chatInbox";
+import { getChatThread, getSavedReplies } from "@/server/chatInbox";
 import { Composer } from "../Composer";
 import { AiActiveNotice, MessageThread } from "../MessageThread";
 
@@ -19,7 +19,7 @@ export default async function ChatConversationPage({
   params: Promise<{ groupId: string }>;
 }) {
   const { groupId } = await params;
-  const thread = await getChatThread(groupId);
+  const [thread, savedReplies] = await Promise.all([getChatThread(groupId), getSavedReplies()]);
   if (!thread) notFound();
 
   const { group, entries, hasMore } = thread;
@@ -105,7 +105,7 @@ export default async function ChatConversationPage({
       </div>
 
       {group.aiAutomationEnabled ? <AiActiveNotice suppressedUntil={group.aiSuppressedUntil} /> : null}
-      <Composer groupId={group.id} disabledReason={disabledReason} />
+      <Composer groupId={group.id} disabledReason={disabledReason} savedReplies={savedReplies} />
     </>
   );
 }

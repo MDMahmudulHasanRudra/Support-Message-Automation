@@ -689,6 +689,32 @@ reorganised, and a checkbox per row turns a reading surface into a form. In that
 middle-click and ctrl-click navigate away and lose the selection. Bulk results report
 "8 moved, 3 already there" rather than "Done", matching `bulkSetMonitoring`.
 
+**Saved replies** (`SavedReply`, `server/actions/savedReplies.ts`, `SavedReplyPicker.tsx`) are the
+sentences operators retype all day. Deliberately **not** `AiKnowledgeItem`: that table is what the
+assistant answers customers from and carries a human-verification gate for exactly that reason,
+while this is shorthand a person picks and sends themselves. Feeding one into the other would put
+unreviewed operator shorthand into the assistant's mouth, and customer-facing claims into a list
+people edit casually.
+
+The picker **inserts, never sends** — at the cursor, not replacing the box, since somebody who
+typed a greeting first means to keep it. A picker that sent on click is a one-tap path to putting
+the wrong canned message in front of a customer. It is a panel anchored above the composer rather
+than a modal, so the conversation stays visible while you choose. Ordered by `usageCount` so the
+few everybody sends float up on their own; `recordSavedReplyUse` deliberately does **not**
+revalidate, because re-rendering the chat layout to reorder a picker would discard a half-typed
+draft.
+
+**Drafts survive leaving a conversation**, keyed per group in `localStorage`. Triage means moving
+between conversations constantly, and losing a half-written reply teaches people not to trust the
+box. Not the database: a draft is one person's unfinished thought on one machine, and a shared
+table would show a colleague words nobody chose to send. Every access is wrapped — private mode
+throwing must not stop the composer rendering.
+
+**`Input` and `Textarea` declare `ref` explicitly.** React 19 already passed it through the spread
+as an ordinary prop, but `InputHTMLAttributes` does not include it, so a caller needing one failed
+to compile against a component that would have worked. `forwardRef` is the React 18 answer to a
+problem React 19 does not have.
+
 **There is no mute**, deliberately. WhatsApp's mute silences notifications; this app has no
 per-group notification concept to silence, so the control would be a switch that does nothing —
 the dead-setting problem this project keeps removing. Archive is the real version of what people

@@ -64,6 +64,20 @@ export interface ChatCategorySummary {
   count: number;
 }
 
+/**
+ * Saved replies for the composer picker, most-used first.
+ *
+ * Usage order rather than alphabetical: the four everybody sends rise to the top on their own
+ * after a week, which is the ordering somebody scanning mid-conversation actually wants.
+ */
+export async function getSavedReplies(): Promise<Array<{ id: string; title: string; body: string }>> {
+  return prisma.savedReply.findMany({
+    orderBy: [{ usageCount: "desc" }, { position: "asc" }],
+    select: { id: true, title: true, body: true },
+    take: 100,
+  });
+}
+
 /** Categories with their live counts, for the inbox filter bar. */
 export async function getChatCategories(): Promise<ChatCategorySummary[]> {
   const rows = await prisma.chatCategory.findMany({
