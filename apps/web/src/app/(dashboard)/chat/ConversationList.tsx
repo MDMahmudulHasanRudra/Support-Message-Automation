@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, Check, CheckSquare, EyeOff, Inbox, Pin, PinOff, Search, Settings2, Tag, X } from "lucide-react";
+import { Archive, BellRing, Check, CheckSquare, EyeOff, Inbox, MailOpen, Pin, PinOff, Search, Settings2, Tag, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
@@ -9,6 +9,7 @@ import {
   setChatArchived,
   setChatCategory,
   setChatPinned,
+  setChatReviewed,
 } from "@/server/actions/chatOrganisation";
 import {
   CONVERSATION_LIST_LIMIT,
@@ -263,6 +264,27 @@ export function ConversationList({
             </button>
           ) : null}
 
+          {/* Scoped to the waiting filter on purpose. "Mark everything read" from the All tab
+              would be a single click that silences the entire inbox, and the one place that
+              gesture is genuinely wanted is the list of things you have just read. */}
+          {!selecting && filter.kind === "waiting" && filtered.length > 0 ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                runBulk("marked as read", () => setChatReviewed(filtered.map((c) => c.id), true));
+                // Back to All afterwards: the waiting chip only renders while something is
+                // waiting, so staying here would leave the reader on a filter whose own control
+                // has just disappeared, looking at an empty list.
+                setFilter({ kind: "all" });
+              }}
+              className="flex cursor-pointer items-center gap-1 text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] disabled:opacity-50"
+            >
+              <MailOpen className="size-3.5" aria-hidden />
+              Mark all {filtered.length} read
+            </button>
+          ) : null}
+
           <Link
             href="/chat/archived"
             className="ml-auto flex items-center gap-1 text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
@@ -314,6 +336,20 @@ export function ConversationList({
             <BulkButton disabled={pending} onClick={() => runBulk("uncategorised", () => setChatCategory(selectedIds, null))}>
               <Tag className="size-3" aria-hidden />
               Remove category
+            </BulkButton>
+
+            {/* Clearing "waiting" in bulk is the point of selection mode for most people: you have
+                already dealt with these on your phone and telling the inbox so one conversation at
+                a time is worse than useless. Safe in bulk because the mark is a timestamp — every
+                one of these returns the moment its customer writes again. */}
+            <BulkButton disabled={pending} onClick={() => runBulk("marked as read", () => setChatReviewed(selectedIds, true))}>
+              <MailOpen className="size-3" aria-hidden />
+              Mark as read
+            </BulkButton>
+
+            <BulkButton disabled={pending} onClick={() => runBulk("marked as waiting", () => setChatReviewed(selectedIds, false))}>
+              <BellRing className="size-3" aria-hidden />
+              Mark as waiting
             </BulkButton>
 
             <BulkButton disabled={pending} onClick={() => runBulk("archived", () => setChatArchived(selectedIds, true))}>

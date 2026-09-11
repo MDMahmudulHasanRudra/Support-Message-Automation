@@ -853,6 +853,13 @@ SKIPPED, which mean the customer received nothing — reading those as an answer
 conversations that most need somebody. It is floored at the oldest message the page is asking about,
 because SENT rows accumulate forever and `OutboundMessage.chatId` carries no index of its own.
 
+`setChatReviewed(ids, reviewed)` is the bulk form, in the selection bar beside pin/categorise/
+archive, plus a one-click "Mark all N read" that appears ONLY while the waiting filter is active —
+that gesture from the All tab would silence the whole inbox in a click, and the one list where it
+is genuinely wanted is the things you have just read. Marking read deliberately does NOT narrow the
+write by `chatReviewedAt: null`: a row already carrying a mark can still be waiting (its customer
+wrote since), so skipping those would leave behind exactly the conversations being cleared.
+
 Two dots, because one would hide exactly that case. **Solid** = nobody has looked. **Hollow ring** =
 somebody opened it and the customer still has no reply, with its own "seen, unanswered" filter
 chip, because those conversations leave the waiting count by design and must not simply vanish.

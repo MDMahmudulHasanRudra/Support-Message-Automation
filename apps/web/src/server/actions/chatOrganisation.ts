@@ -234,19 +234,51 @@ export async function markChatReviewed(groupId: string): Promise<void> {
 }
 
 /**
- * Puts a conversation back in the "waiting" list — "I opened this but I have not dealt with it".
+ * Marks conversations read, or puts them back in the waiting list — the bulk form of what opening
+ * one does on its own.
  *
- * The counterpart to opening one by accident. Clearing the mark rather than setting a flag means
- * the ordinary rule takes over again: unanswered and unreviewed, therefore waiting.
+ * Reading a whole morning's messages on a phone and then clearing them here one at a time is the
+ * workflow this exists for: the inbox says nine are waiting, you know you have dealt with them,
+ * and clicking into nine conversations to tell it so is worse than useless.
+ *
+ * Safe to do in bulk precisely because the mark is a timestamp rather than a flag. Every one of
+ * these conversations comes straight back the moment its customer sends anything else, and any
+ * that are still genuinely unanswered keep their hollow ring and stay in the "seen, unanswered"
+ * filter. Nothing here can make a customer disappear — it can only stop asking about the ones you
+ * have already seen.
  */
-export async function markChatWaiting(groupId: string): Promise<ChatOrganisationResult> {
+export async function setChatReviewed(groupIds: string[], reviewed: boolean): Promise<ChatOrganisationResult> {
   await requireSession();
+  const ids = normaliseIds(groupIds);
+  if (ids.length === 0) return { error: "Select at least one conversation." };
 
+  if (!reviewed) {
+    // Clearing the mark rather than setting a flag, so the ordinary rule simply resumes:
+    // unanswered and unreviewed, therefore waiting.
+    const alreadyWaiting = await prisma.whatsAppGroup.count({ where: { id: { in: ids }, chatReviewedAt: null } });
+    const { count } = await prisma.whatsAppGroup.updateMany({
+      where: { id: { in: ids }, chatReviewedAt: { not: null } },
+      data: { chatReviewedAt: null },
+    });
+    revalidateInbox();
+    return { updated: count, unchanged: alreadyWaiting };
+  }
+
+  // No `chatReviewedAt: null` narrowing on the write. A row already carrying a mark can still be
+  // waiting — its customer has written since — so skipping those would leave exactly the
+  // conversations the operator was trying to clear. (It would also hit the NULL-comparison trap
+  // documented in CLAUDE.md.) Re-stamping a row that was already settled changes nothing anybody
+  // can see.
   const { count } = await prisma.whatsAppGroup.updateMany({
-    where: { id: groupId, chatReviewedAt: { not: null } },
-    data: { chatReviewedAt: null },
+    where: { id: { in: ids } },
+    data: { chatReviewedAt: new Date() },
   });
 
   revalidateInbox();
-  return { updated: count, unchanged: count === 0 ? 1 : 0 };
+  return { updated: count };
+}
+
+/** Single-conversation form, for the thread header's undo. */
+export async function markChatWaiting(groupId: string): Promise<ChatOrganisationResult> {
+  return setChatReviewed([groupId], false);
 }
