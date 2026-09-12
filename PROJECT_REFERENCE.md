@@ -19,17 +19,18 @@ matching section here in the same change.
 3. [Messages](#messages)
 4. [Escalations](#escalations)
 5. [Support Activity](#support-activity)
-6. [Teams Integration](#teams-integration)
-7. [WhatsApp](#whatsapp)
-8. [Automation](#automation)
-9. [Bulk Messaging](#bulk-messaging)
-10. [AI Learning](#ai-learning)
-11. [Conversation Learning](#conversation-learning)
-12. [System](#system)
-13. [Users & Permissions](#users--permissions)
-14. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
-15. [Background jobs (apps/worker)](#background-jobs-appsworker)
-16. [Safety & anti-spam features, end to end](#safety--anti-spam-features-end-to-end)
+6. [Team Management](#team-management)
+7. [Teams Integration](#teams-integration)
+8. [WhatsApp](#whatsapp)
+9. [Automation](#automation)
+10. [Bulk Messaging](#bulk-messaging)
+11. [AI Learning](#ai-learning)
+12. [Conversation Learning](#conversation-learning)
+13. [System](#system)
+14. [Users & Permissions](#users--permissions)
+15. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
+16. [Background jobs (apps/worker)](#background-jobs-appsworker)
+17. [Safety & anti-spam features, end to end](#safety--anti-spam-features-end-to-end)
 
 ---
 
@@ -284,6 +285,92 @@ fire once.
 
 Simple CRUD: Value, Match Mode (Contains/Exact), Case Sensitive toggle, Active/Disabled. Contains
 matches at a whole-word boundary; case-insensitive is the default.
+
+---
+
+## Team Management
+
+Sidebar group: **Team Management**. Who is scheduled, who is on leave, where the roster is short —
+and what the messages actually show. Permission-gated on `team_management.view` / `.manage`.
+
+It does **not** duplicate Support Activity's Team Performance page, which owns who is online now,
+engaged time and first-response stats. This group owns **schedule versus reality**. Internal Team
+Members stays under WhatsApp; this group links to it rather than keeping a second roster.
+
+The whole module rests on one distinction worth reading before changing anything here: **the plan,
+the evidence and the approval are three separate records, and every "what actually happened"
+reading is derived by joining them at read time.** Nothing stores a fourth "actual status".
+
+### Today — `/team-management`
+
+Eight tiles: active in messages, no activity recorded, coverage gaps, leave awaiting a decision, on
+approved leave, off or holiday, working an off day, not scheduled. Then coverage per shift, a
+"worth a look" list of only the rows somebody must decide something about, and today's roster —
+plan, evidence, and the reading of the two, per person.
+
+Deliberately **not** a Present/Absent dashboard. The app knows who sent messages; it does not know
+who is at their desk. "No activity recorded" is grey, not red: somebody on the phone or out at a
+customer site produces the same silence as somebody who did not come in. Red is reserved for the
+two states needing a human — a manager's explicit ABSENT, and activity recorded during approved
+leave.
+
+### Roster — `/team-management/schedule`
+
+A date's assignments (date chosen by a plain GET form, so it can be bookmarked and shared), the
+coverage chips for that date, the change history for it, and the weekly pattern below.
+
+- **Set duty** — status (on duty / covering / extra duty / day off / holiday / not decided) and
+  which shift. Leave is absent from this list on purpose: it is written by approving a leave
+  request, and setting it here would put a day on leave with no approval behind it.
+- **Change shift** — preview then apply. The preview says what the vacated shift would be left
+  with *before* anything is written; if it drops below its required headcount you are offered a
+  replacement in the same step, and both halves are recorded as one decision. Anyone on approved
+  leave is listed but not selectable. Anyone already holding that date is blocked, with their
+  current shift named — the workflow never overwrites somebody's shift or moves a third person.
+- **Fill from weekly schedule** — safe to press twice. Skips every date already assigned, and
+  leaves a member with no pattern alone rather than writing them off.
+- **Weekly pattern** — three values per cell, and the third is the point: *Not set* (nobody has
+  decided) is not *Off* (somebody decided). Changing the pattern never touches a date that already
+  has a roster row.
+
+### Leave — `/team-management/leave`
+
+Record, approve, reject, cancel. Approving **keeps** the duty rows that existed and marks them
+LEAVE with their shift snapshot intact — which is what lets coverage report "Morning needs 2, has 2
+assigned, 1 on leave, short by 1" instead of a shift that merely looks empty. Overlapping requests
+are refused rather than merged. Cancelling approved leave does not restore the duty rows: cover was
+very likely arranged, so putting somebody back on is a deliberate edit.
+
+### Duty History — `/team-management/attendance`
+
+Date, person, scheduled shift, messages, groups, and the reading. Filters (from/to/person) are a
+GET form. Rows come from `DutyAssignment`, so this lists dates somebody actually scheduled — a day
+nobody rostered has nothing to compare against.
+
+**Correct** opens the override: *no correction* / *worked* / *did not work* / *excused*. Marking
+somebody absent requires a reason. The message counts are kept exactly as observed and the verdict
+is stored beside them, so "marked absent, and there were forty messages" stays readable.
+
+### Shifts — `/team-management/shifts`
+
+Create, edit, enable, disable. Name, start and end (an end at or before the start means it runs
+past midnight), people needed, colour, order, description. Editing the hours changes what the shift
+means **from now on** — dates already assigned keep the hours they were assigned with, and the
+dialog says so when any exist. Disabling rather than deleting: a template anybody has been assigned
+to cannot be deleted, and coverage groups by it.
+
+Below, each active member's **default shift** — a starting point for building their weekly pattern,
+never a rule about a date.
+
+Nothing hardcodes 10:00–19:00, 12:00–21:00 or 13:00–22:00. Those three are seed rows only.
+
+### Settings — `/team-management/settings`
+
+**Leave types** (name, annual allowance, paid, active — a blank allowance means "not tracked",
+which is a different answer from zero) and **holidays** (date, name, note). Both ship **empty**:
+entitlement and public holidays differ by country and company, and a seeded guess quietly becomes
+policy because nobody checked it. Declaring a holiday affects days filled from the weekly schedule
+after that point; dates already rostered keep what somebody assigned them.
 
 ---
 

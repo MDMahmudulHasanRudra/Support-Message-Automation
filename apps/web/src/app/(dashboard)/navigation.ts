@@ -5,8 +5,10 @@ import {
   Bell,
   BellRing,
   BookOpen,
+  CalendarDays,
   ClipboardCheck,
   ClipboardList,
+  Clock,
   Cpu,
   EyeOff,
   FileUp,
@@ -88,6 +90,20 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/support-activity", label: "Activity Feed", icon: Activity },
       { href: "/support-activity/reports", label: "Reports", icon: BarChart3 },
       { href: "/support-activity/settings", label: "Setup", icon: SettingsIcon },
+    ],
+  },
+  {
+    // After Support Activity, before Teams Integration: this group is checked daily (who is on,
+    // who is short) which is what `navigation.ts` orders by. Internal Team Members deliberately
+    // stays under WhatsApp — one roster, linked to from here, never a second copy of it.
+    label: "Team Management",
+    links: [
+      { href: "/team-management", label: "Today", icon: Users },
+      { href: "/team-management/schedule", label: "Roster", icon: CalendarDays },
+      { href: "/team-management/leave", label: "Leave", icon: ClipboardList },
+      { href: "/team-management/attendance", label: "Duty History", icon: BarChart3 },
+      { href: "/team-management/shifts", label: "Shifts", icon: Clock },
+      { href: "/team-management/settings", label: "Settings", icon: SettingsIcon },
     ],
   },
   {

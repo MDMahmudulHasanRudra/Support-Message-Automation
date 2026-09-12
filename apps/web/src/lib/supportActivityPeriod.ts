@@ -1,37 +1,32 @@
 import type { SupportActivityCountingPeriod } from "@prisma/client";
+import { getDhakaDayRange, getDhakaMonthRange, getDhakaWeekRange } from "@support-automation/shared";
 
-// Asia/Dhaka is a fixed UTC+6 offset with no DST — safe to hardcode a constant offset for day-
-// boundary math, unlike display formatting (see lib/date.ts's own comment on why display
-// formatting must go through Intl.DateTimeFormat instead: the server process's own timezone can't
-// be trusted). Kept as its own file rather than added to date.ts since date.ts is display-only.
-const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
+/**
+ * Dhaka calendar-period helpers for the dashboard.
+ *
+ * The day/week/month arithmetic itself moved to `packages/shared/src/dhakaDay.ts` once Team
+ * Management's worker-side attendance hook needed the same maths: the worker decides which
+ * calendar day a message belongs to and this app decides which day it is displaying, and two
+ * implementations of "what day is it in Dhaka" would disagree for six hours out of every
+ * twenty-four. They are re-exported here so every existing caller keeps importing from the same
+ * place — this was a move, not a rewrite.
+ *
+ * `getSupportActivityPeriodRange` stays here rather than moving with them because it takes a Prisma
+ * enum, and `packages/shared` deliberately cannot depend on `@prisma/client` (the engine could not
+ * import it, which is why the shared package exists at all).
+ */
 
-/** [start, end) UTC instants bounding the Dhaka calendar day that contains `when`. */
-export function getDhakaDayRange(when: Date): { start: Date; end: Date } {
-  const dhakaMidnightMs = Math.floor((when.getTime() + DHAKA_OFFSET_MS) / DAY_MS) * DAY_MS;
-  const start = new Date(dhakaMidnightMs - DHAKA_OFFSET_MS);
-  return { start, end: new Date(start.getTime() + DAY_MS) };
-}
-
-/** [start, end) UTC instants bounding the Dhaka calendar week (Sunday-start) containing `when`. */
-export function getDhakaWeekRange(when: Date): { start: Date; end: Date } {
-  const dhakaMidnightMs = Math.floor((when.getTime() + DHAKA_OFFSET_MS) / DAY_MS) * DAY_MS;
-  const dayOfWeek = new Date(dhakaMidnightMs).getUTCDay(); // 0 = Sunday, treating the shifted instant as UTC
-  const weekStartShiftedMs = dhakaMidnightMs - dayOfWeek * DAY_MS;
-  const start = new Date(weekStartShiftedMs - DHAKA_OFFSET_MS);
-  return { start, end: new Date(start.getTime() + 7 * DAY_MS) };
-}
-
-/** [start, end) UTC instants bounding the Dhaka calendar month containing `when`. */
-export function getDhakaMonthRange(when: Date): { start: Date; end: Date } {
-  const shifted = new Date(when.getTime() + DHAKA_OFFSET_MS);
-  const year = shifted.getUTCFullYear();
-  const month = shifted.getUTCMonth();
-  const start = new Date(Date.UTC(year, month, 1) - DHAKA_OFFSET_MS);
-  const end = new Date(Date.UTC(year, month + 1, 1) - DHAKA_OFFSET_MS);
-  return { start, end };
-}
+export {
+  DHAKA_OFFSET_MS,
+  formatDhakaDateKey,
+  getDhakaDayRange,
+  getDhakaMonthRange,
+  getDhakaWeekday,
+  getDhakaWeekRange,
+  parseDhakaDayFromInput,
+  parseDhakaDayRangeFromInput,
+  toDhakaDateOnly,
+} from "@support-automation/shared";
 
 /** Dispatches on SupportActivitySettings.countingPeriod for the report pages/detector to share. */
 export function getSupportActivityPeriodRange(
@@ -46,50 +41,4 @@ export function getSupportActivityPeriodRange(
     case "DAILY":
       return getDhakaDayRange(when);
   }
-}
-
-/**
- * A `YYYY-MM-DD` value from an `<input type="date">` (or a URL query param) resolved to the Dhaka
- * calendar day it names — `null` when it is absent or is not a real date, so a caller can ignore a
- * malformed filter instead of handing Prisma an Invalid Date and getting a validation crash.
- *
- * The browser's date input always submits UTC-shaped `YYYY-MM-DD`, but the day it names is the
- * user's day, which here is Dhaka's — parsing it as a UTC instant shifts the window six hours.
- */
-export function parseDhakaDayFromInput(value: string | null | undefined): { start: Date; end: Date } | null {
-  if (!value) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-
-  const year = Number(match[1]);
-  const month = Number(match[2]) - 1;
-  const day = Number(match[3]);
-  const utcMidnightMs = Date.UTC(year, month, day);
-  if (Number.isNaN(utcMidnightMs)) return null;
-
-  // Date.UTC rolls an impossible component over rather than rejecting it (2026-02-31 becomes
-  // March 3), so round-trip and refuse anything that did not come back as it was typed.
-  const roundTrip = new Date(utcMidnightMs);
-  if (roundTrip.getUTCFullYear() !== year || roundTrip.getUTCMonth() !== month || roundTrip.getUTCDate() !== day) {
-    return null;
-  }
-
-  const start = new Date(utcMidnightMs - DHAKA_OFFSET_MS);
-  return { start, end: new Date(start.getTime() + DAY_MS) };
-}
-
-/**
- * [start, end) spanning the Dhaka days named by two date-input values, inclusive of both — the
- * shape a "from / to" filter pair means. Null unless both parse, so a half-filled or malformed
- * pair falls back to the caller's default window rather than silently filtering on garbage.
- */
-export function parseDhakaDayRangeFromInput(
-  from: string | null | undefined,
-  to: string | null | undefined,
-): { start: Date; end: Date } | null {
-  const fromDay = parseDhakaDayFromInput(from);
-  const toDay = parseDhakaDayFromInput(to);
-  if (!fromDay || !toDay) return null;
-  if (toDay.end <= fromDay.start) return null;
-  return { start: fromDay.start, end: toDay.end };
 }

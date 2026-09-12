@@ -13,6 +13,12 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Team Management.** Shifts, a weekly pattern, a daily roster, leave, and coverage that counts
+  who can *actually* work — approving leave keeps the duty row and subtracts the person, so a
+  shift reads as "short by 1" rather than quietly looking empty. Attendance is derived from the
+  messages people really sent, and is treated as evidence rather than a verdict: a scheduled day
+  with no messages reads "no activity recorded", never "absent". Only a manager can mark somebody
+  absent, and that correction is stored *beside* the evidence, never over it.
 - **Product knowledge from the ISPDIGITAL repository.** The assistant reads the product's own user
   guides and module source through Softify Forge, so it can answer "how do I void an invoice" on a
   fresh install. A mechanical disclosure gate re-checks every generated entry and drops anything

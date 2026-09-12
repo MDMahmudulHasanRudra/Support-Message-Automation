@@ -1,0 +1,595 @@
+import { prisma } from "@support-automation/db";
+import type { AttendanceOverride, DutyStatus, LeaveStatus, Prisma } from "@prisma/client";
+import { getDhakaDayRange, getDhakaWeekday, toDhakaDateOnly } from "@support-automation/shared";
+
+/**
+ * Server-component-only read helpers for Team Management. No `"use server"` directive — these are
+ * never invoked from a client event handler, matching `supportActivityReports.ts` next door.
+ *
+ * THE ONE IDEA THIS FILE EXISTS TO EXPRESS: the roster, the attendance evidence and approved leave
+ * are three separate records, and every "what actually happened" reading is DERIVED by joining
+ * them here rather than stored anywhere. A stored derivation drifts from its own inputs the moment
+ * one of them is corrected, and then two screens disagree about the same day with nothing to say
+ * which is right.
+ *
+ * Deliberately does NOT duplicate `/support-activity/team`. That page owns who is online, engaged
+ * time, groups covered and first-response stats. This owns SCHEDULE VERSUS REALITY.
+ */
+
+/**
+ * What a person's day actually amounts to, once the plan, the evidence and any approved leave are
+ * read together.
+ *
+ * `NO_ACTIVITY` is not `ABSENT` and must never be renamed to it. Somebody on the phone all day, or
+ * working in a group this account cannot see, produces no messages and has still worked — the
+ * system reports what it observed and a human decides what it meant. `ABSENT` exists only as a
+ * manager's explicit override.
+ */
+export type DerivedDutyState =
+  | "WORKING"
+  | "NO_ACTIVITY"
+  | "OFF"
+  | "OFF_DAY_DUTY"
+  | "ON_LEAVE"
+  | "LEAVE_CONFLICT"
+  | "HOLIDAY"
+  | "UNASSIGNED"
+  | "ABSENT"
+  | "EXCUSED";
+
+/** The label and tone each state is rendered with. One definition, so no page invents its own. */
+export const DUTY_STATE_LABEL: Record<DerivedDutyState, string> = {
+  WORKING: "Working",
+  NO_ACTIVITY: "No activity recorded",
+  OFF: "Off",
+  OFF_DAY_DUTY: "Off-day duty",
+  ON_LEAVE: "On leave",
+  LEAVE_CONFLICT: "Active while on leave",
+  HOLIDAY: "Holiday",
+  UNASSIGNED: "Not scheduled",
+  ABSENT: "Marked absent",
+  EXCUSED: "Excused",
+};
+
+export interface RosterRow {
+  teamMemberId: string;
+  name: string;
+  role: string;
+  /** Null when nobody has assigned this date yet. */
+  status: DutyStatus | null;
+  shiftName: string | null;
+  shiftStartMinute: number | null;
+  shiftEndMinute: number | null;
+  shiftTemplateId: string | null;
+  /** Evidence, independent of the plan. */
+  messageCount: number;
+  uniqueGroupCount: number;
+  firstActivityAt: Date | null;
+  lastActivityAt: Date | null;
+  override: AttendanceOverride | null;
+  overrideReason: string | null;
+  onApprovedLeave: boolean;
+  leaveTypeName: string | null;
+  derived: DerivedDutyState;
+}
+
+/** Formats minutes-from-midnight as `HH:MM`. The storage format is deliberately not displayable. */
+export function formatShiftMinute(minute: number): string {
+  const hours = Math.floor(minute / 60) % 24;
+  const mins = minute % 60;
+  return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+}
+
+/** `10:00 – 19:00`, with a marker when the shift runs past midnight. */
+export function formatShiftRange(startMinute: number | null, endMinute: number | null): string | null {
+  if (startMinute === null || endMinute === null) return null;
+  const crossesMidnight = endMinute <= startMinute;
+  return `${formatShiftMinute(startMinute)} – ${formatShiftMinute(endMinute)}${crossesMidnight ? " +1" : ""}`;
+}
+
+/**
+ * The single place the three records are combined. Everything on every screen goes through this, so
+ * the rule cannot be stated two different ways in two places.
+ */
+function deriveDutyState(input: {
+  status: DutyStatus | null;
+  hasActivity: boolean;
+  onApprovedLeave: boolean;
+  override: AttendanceOverride | null;
+}): DerivedDutyState {
+  // A manager's verdict outranks both the plan and the evidence — that is what an override is for.
+  // ABSENT is reachable ONLY from here. Nothing derived from silence may ever produce it — that is
+  // the whole reason the override column exists.
+  if (input.override === "ABSENT") return "ABSENT";
+  if (input.override === "EXCUSED") return "EXCUSED";
+  if (input.override === "WORKED") return input.status === "OFF" ? "OFF_DAY_DUTY" : "WORKING";
+
+  // Leave first: an approved absence is a fact about the day, and activity during it is a conflict
+  // to be looked at rather than a reason to quietly cancel the leave.
+  if (input.onApprovedLeave || input.status === "LEAVE") {
+    return input.hasActivity ? "LEAVE_CONFLICT" : "ON_LEAVE";
+  }
+
+  if (input.status === "HOLIDAY") return input.hasActivity ? "OFF_DAY_DUTY" : "HOLIDAY";
+  if (input.status === "OFF") return input.hasActivity ? "OFF_DAY_DUTY" : "OFF";
+  if (input.status === null || input.status === "UNASSIGNED") {
+    return input.hasActivity ? "WORKING" : "UNASSIGNED";
+  }
+
+  // DUTY, COVERAGE or EXTRA_DUTY — all mean "expected to be working".
+  return input.hasActivity ? "WORKING" : "NO_ACTIVITY";
+}
+
+/** Approved leave overlapping a date, by member. The set that reduces effective coverage. */
+async function getApprovedLeaveOn(date: Date): Promise<Map<string, string>> {
+  const rows = await prisma.leaveRequest.findMany({
+    where: { status: "APPROVED", startDate: { lte: date }, endDate: { gte: date } },
+    select: { teamMemberId: true, leaveType: { select: { name: true } } },
+  });
+  return new Map(rows.map((row) => [row.teamMemberId, row.leaveType.name]));
+}
+
+/**
+ * Every active member's day: what was planned, what the messages show, and what that adds up to.
+ *
+ * Reads three small tables — one row per member per day at most — rather than scanning `Message`,
+ * which is what keeps this usable on a deployment with millions of them.
+ */
+export async function getRosterForDate(date: Date): Promise<RosterRow[]> {
+  const dutyDate = toDhakaDateOnly(date);
+
+  const [members, assignments, attendance, leave] = await Promise.all([
+    prisma.internalTeamMember.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, name: true, role: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.dutyAssignment.findMany({ where: { dutyDate } }),
+    prisma.teamAttendanceDay.findMany({ where: { activityDate: dutyDate } }),
+    getApprovedLeaveOn(dutyDate),
+  ]);
+
+  const assignmentByMember = new Map(assignments.map((row) => [row.teamMemberId, row]));
+  const attendanceByMember = new Map(attendance.map((row) => [row.teamMemberId, row]));
+
+  return members.map((member) => {
+    const assignment = assignmentByMember.get(member.id) ?? null;
+    const evidence = attendanceByMember.get(member.id) ?? null;
+    const leaveTypeName = leave.get(member.id) ?? null;
+    const hasActivity = (evidence?.messageCount ?? 0) > 0;
+
+    return {
+      teamMemberId: member.id,
+      name: member.name,
+      role: member.role,
+      status: assignment?.status ?? null,
+      shiftName: assignment?.shiftName ?? null,
+      shiftStartMinute: assignment?.shiftStartMinute ?? null,
+      shiftEndMinute: assignment?.shiftEndMinute ?? null,
+      shiftTemplateId: assignment?.shiftTemplateId ?? null,
+      messageCount: evidence?.messageCount ?? 0,
+      uniqueGroupCount: evidence?.uniqueGroupCount ?? 0,
+      firstActivityAt: evidence?.firstActivityAt ?? null,
+      lastActivityAt: evidence?.lastActivityAt ?? null,
+      override: evidence?.override ?? null,
+      overrideReason: evidence?.overrideReason ?? null,
+      onApprovedLeave: leaveTypeName !== null,
+      leaveTypeName,
+      derived: deriveDutyState({
+        status: assignment?.status ?? null,
+        hasActivity,
+        onApprovedLeave: leaveTypeName !== null,
+        override: evidence?.override ?? null,
+      }),
+    };
+  });
+}
+
+export interface CoverageRow {
+  shiftTemplateId: string;
+  shiftName: string;
+  startMinute: number;
+  endMinute: number;
+  requiredHeadcount: number;
+  /** Rows on the roster for this shift, whatever has happened to the people on them. */
+  assigned: number;
+  /** Assigned people who cannot actually work it — approved leave today. */
+  unavailable: number;
+  /** What the shift really has. */
+  effective: number;
+  /** Never negative: being over-staffed is not a gap. */
+  gap: number;
+}
+
+/**
+ * Coverage per shift for one date.
+ *
+ * Measured against EFFECTIVE availability, never a raw count of assignment rows. Two people on
+ * Morning with one of them on approved leave is one person available, and reporting that as
+ * covered is exactly how a shift silently runs a man short. The assignment row is deliberately
+ * preserved when leave is approved — it is the historical plan — so the subtraction happens here:
+ *
+ *   effective = assigned - unavailable
+ *   gap       = max(0, requiredHeadcount - effective)
+ */
+export async function getCoverageForDate(date: Date): Promise<CoverageRow[]> {
+  const dutyDate = toDhakaDateOnly(date);
+
+  const [shifts, assignments, leave] = await Promise.all([
+    prisma.shiftTemplate.findMany({
+      where: { isActive: true },
+      orderBy: [{ position: "asc" }, { name: "asc" }],
+    }),
+    prisma.dutyAssignment.findMany({
+      where: { dutyDate, shiftTemplateId: { not: null }, status: { in: ["DUTY", "COVERAGE", "EXTRA_DUTY"] } },
+      select: { teamMemberId: true, shiftTemplateId: true },
+    }),
+    getApprovedLeaveOn(dutyDate),
+  ]);
+
+  return shifts.map((shift) => {
+    const onShift = assignments.filter((row) => row.shiftTemplateId === shift.id);
+    const unavailable = onShift.filter((row) => leave.has(row.teamMemberId)).length;
+    const effective = onShift.length - unavailable;
+    return {
+      shiftTemplateId: shift.id,
+      shiftName: shift.name,
+      startMinute: shift.startMinute,
+      endMinute: shift.endMinute,
+      requiredHeadcount: shift.requiredHeadcount,
+      assigned: onShift.length,
+      unavailable,
+      effective,
+      gap: Math.max(0, shift.requiredHeadcount - effective),
+    };
+  });
+}
+
+export interface TeamOverview {
+  date: Date;
+  activeMembers: number;
+  working: number;
+  noActivity: number;
+  off: number;
+  offDayDuty: number;
+  onLeave: number;
+  leaveConflicts: number;
+  unassigned: number;
+  coverageGaps: number;
+  pendingLeaveRequests: number;
+  changesToday: number;
+}
+
+/** The Today figures, each one a question somebody acts on rather than a number for its own sake. */
+export async function getTeamOverview(now: Date = new Date()): Promise<TeamOverview> {
+  const dutyDate = toDhakaDateOnly(now);
+  const { start, end } = getDhakaDayRange(now);
+
+  const [roster, coverage, pendingLeaveRequests, changesToday] = await Promise.all([
+    getRosterForDate(now),
+    getCoverageForDate(now),
+    prisma.leaveRequest.count({ where: { status: "REQUESTED" } }),
+    prisma.dutyAssignmentChange.count({ where: { createdAt: { gte: start, lt: end } } }),
+  ]);
+
+  const count = (state: DerivedDutyState) => roster.filter((row) => row.derived === state).length;
+
+  return {
+    date: dutyDate,
+    activeMembers: roster.length,
+    working: count("WORKING"),
+    noActivity: count("NO_ACTIVITY"),
+    off: count("OFF") + count("HOLIDAY"),
+    offDayDuty: count("OFF_DAY_DUTY"),
+    onLeave: count("ON_LEAVE"),
+    leaveConflicts: count("LEAVE_CONFLICT"),
+    unassigned: count("UNASSIGNED"),
+    coverageGaps: coverage.filter((row) => row.gap > 0).length,
+    pendingLeaveRequests,
+    changesToday,
+  };
+}
+
+export interface WeeklyScheduleCell {
+  weekday: number;
+  shiftTemplateId: string | null;
+  /** No row at all: nobody has decided this day yet, which is not the same as an assigned day off. */
+  decided: boolean;
+}
+
+export interface WeeklyScheduleRow {
+  teamMemberId: string;
+  name: string;
+  role: string;
+  defaultShiftTemplateId: string | null;
+  days: WeeklyScheduleCell[];
+}
+
+/** The recurring pattern grid. Sunday-first, matching the regional week the rest of the app uses. */
+export async function getWeeklySchedule(): Promise<WeeklyScheduleRow[]> {
+  const [members, entries] = await Promise.all([
+    prisma.internalTeamMember.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, name: true, role: true, defaultShiftTemplateId: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.weeklyScheduleEntry.findMany(),
+  ]);
+
+  const byMember = new Map<string, Map<number, { shiftTemplateId: string | null }>>();
+  for (const entry of entries) {
+    if (!byMember.has(entry.teamMemberId)) byMember.set(entry.teamMemberId, new Map());
+    byMember.get(entry.teamMemberId)!.set(entry.weekday, { shiftTemplateId: entry.shiftTemplateId });
+  }
+
+  return members.map((member) => {
+    const days = byMember.get(member.id) ?? new Map();
+    return {
+      teamMemberId: member.id,
+      name: member.name,
+      role: member.role,
+      defaultShiftTemplateId: member.defaultShiftTemplateId,
+      days: Array.from({ length: 7 }, (_, weekday) => {
+        const cell = days.get(weekday);
+        return {
+          weekday,
+          shiftTemplateId: cell?.shiftTemplateId ?? null,
+          decided: cell !== undefined,
+        };
+      }),
+    };
+  });
+}
+
+export type CandidateAvailability = "AVAILABLE" | "ON_LEAVE" | "ALREADY_ASSIGNED" | "OFF";
+
+export interface ReplacementCandidate {
+  teamMemberId: string;
+  name: string;
+  role: string;
+  availability: CandidateAvailability;
+  /** Why they cannot take it, in the manager's terms. Null when they can. */
+  blockedReason: string | null;
+  /** Duties in the last 30 days — the fairness signal. */
+  recentDuties: number;
+  /** Off-day duties in the last 30 days, so the same person is not volunteered every time. */
+  recentOffDayDuties: number;
+}
+
+/**
+ * Who could take a shift on a date, and who could not, with the reason.
+ *
+ * Somebody on approved leave is listed as blocked rather than hidden: a manager who cannot find a
+ * colleague they expected to see will assume the list is broken, and the useful answer is "she is
+ * on leave until Thursday" rather than silence.
+ *
+ * Anyone already holding that date is blocked too, and that is not a UI nicety — one assignment per
+ * member per date is a database constraint, so assigning them anyway would fail. The workflow has
+ * to surface the clash and let the manager choose, never silently overwrite the shift they already
+ * have or move a third person to make room.
+ */
+export async function getReplacementCandidates(date: Date): Promise<ReplacementCandidate[]> {
+  const dutyDate = toDhakaDateOnly(date);
+  const windowStart = new Date(dutyDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const [members, assignments, leave, recent] = await Promise.all([
+    prisma.internalTeamMember.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, name: true, role: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.dutyAssignment.findMany({ where: { dutyDate }, select: { teamMemberId: true, status: true, shiftName: true } }),
+    getApprovedLeaveOn(dutyDate),
+    prisma.dutyAssignment.groupBy({
+      by: ["teamMemberId", "status"],
+      where: { dutyDate: { gte: windowStart, lt: dutyDate } },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const assignmentByMember = new Map(assignments.map((row) => [row.teamMemberId, row]));
+  const dutyCounts = new Map<string, number>();
+  const offDayCounts = new Map<string, number>();
+  for (const row of recent) {
+    const add = (map: Map<string, number>) =>
+      map.set(row.teamMemberId, (map.get(row.teamMemberId) ?? 0) + row._count._all);
+    if (row.status === "DUTY" || row.status === "COVERAGE" || row.status === "EXTRA_DUTY") add(dutyCounts);
+    if (row.status === "COVERAGE" || row.status === "EXTRA_DUTY") add(offDayCounts);
+  }
+
+  const candidates = members.map((member) => {
+    const leaveType = leave.get(member.id);
+    const assignment = assignmentByMember.get(member.id);
+
+    let availability: CandidateAvailability = "AVAILABLE";
+    let blockedReason: string | null = null;
+
+    if (leaveType) {
+      availability = "ON_LEAVE";
+      blockedReason = `On approved ${leaveType.toLowerCase()} leave this day.`;
+    } else if (assignment && assignment.status !== "OFF" && assignment.status !== "UNASSIGNED") {
+      availability = "ALREADY_ASSIGNED";
+      blockedReason = assignment.shiftName
+        ? `Already on ${assignment.shiftName} this day.`
+        : "Already assigned this day.";
+    } else if (assignment?.status === "OFF") {
+      availability = "OFF";
+      blockedReason = null; // a day off can be given up, but the manager should see that it is one
+    }
+
+    return {
+      teamMemberId: member.id,
+      name: member.name,
+      role: member.role,
+      availability,
+      blockedReason,
+      recentDuties: dutyCounts.get(member.id) ?? 0,
+      recentOffDayDuties: offDayCounts.get(member.id) ?? 0,
+    };
+  });
+
+  // Available first, then whoever has carried the least extra duty recently — the list is a
+  // suggestion about fairness, not just a filter.
+  const rank = (c: ReplacementCandidate) =>
+    c.availability === "AVAILABLE" ? 0 : c.availability === "OFF" ? 1 : 2;
+  return candidates.sort(
+    (a, b) => rank(a) - rank(b) || a.recentOffDayDuties - b.recentOffDayDuties || a.name.localeCompare(b.name),
+  );
+}
+
+export interface DutyHistoryRow {
+  id: string;
+  dutyDate: Date;
+  teamMemberId: string;
+  memberName: string;
+  status: DutyStatus | null;
+  shiftName: string | null;
+  shiftStartMinute: number | null;
+  shiftEndMinute: number | null;
+  messageCount: number;
+  uniqueGroupCount: number;
+  override: AttendanceOverride | null;
+  derived: DerivedDutyState;
+}
+
+/** Duty history over a range: plan, evidence and the reading, per member per day. */
+export async function getDutyHistory(
+  range: { start: Date; end: Date },
+  teamMemberId?: string,
+): Promise<DutyHistoryRow[]> {
+  const startDate = toDhakaDateOnly(range.start);
+  const endDate = toDhakaDateOnly(new Date(range.end.getTime() - 1));
+  const where: Prisma.DutyAssignmentWhereInput = {
+    dutyDate: { gte: startDate, lte: endDate },
+    ...(teamMemberId ? { teamMemberId } : {}),
+  };
+
+  const [assignments, attendance, leave] = await Promise.all([
+    prisma.dutyAssignment.findMany({
+      where,
+      include: { teamMember: { select: { name: true } } },
+      orderBy: [{ dutyDate: "desc" }, { teamMember: { name: "asc" } }],
+      take: 500,
+    }),
+    prisma.teamAttendanceDay.findMany({
+      where: { activityDate: { gte: startDate, lte: endDate }, ...(teamMemberId ? { teamMemberId } : {}) },
+    }),
+    prisma.leaveRequest.findMany({
+      where: {
+        status: "APPROVED",
+        startDate: { lte: endDate },
+        endDate: { gte: startDate },
+        ...(teamMemberId ? { teamMemberId } : {}),
+      },
+      select: { teamMemberId: true, startDate: true, endDate: true },
+    }),
+  ]);
+
+  const key = (memberId: string, date: Date) => `${memberId}:${date.toISOString().slice(0, 10)}`;
+  const evidenceByKey = new Map(attendance.map((row) => [key(row.teamMemberId, row.activityDate), row]));
+
+  const onLeave = (memberId: string, date: Date) =>
+    leave.some((row) => row.teamMemberId === memberId && row.startDate <= date && row.endDate >= date);
+
+  return assignments.map((assignment) => {
+    const evidence = evidenceByKey.get(key(assignment.teamMemberId, assignment.dutyDate)) ?? null;
+    return {
+      id: assignment.id,
+      dutyDate: assignment.dutyDate,
+      teamMemberId: assignment.teamMemberId,
+      memberName: assignment.teamMember.name,
+      status: assignment.status,
+      shiftName: assignment.shiftName,
+      shiftStartMinute: assignment.shiftStartMinute,
+      shiftEndMinute: assignment.shiftEndMinute,
+      messageCount: evidence?.messageCount ?? 0,
+      uniqueGroupCount: evidence?.uniqueGroupCount ?? 0,
+      override: evidence?.override ?? null,
+      derived: deriveDutyState({
+        status: assignment.status,
+        hasActivity: (evidence?.messageCount ?? 0) > 0,
+        onApprovedLeave: onLeave(assignment.teamMemberId, assignment.dutyDate),
+        override: evidence?.override ?? null,
+      }),
+    };
+  });
+}
+
+export interface LeaveRequestRow {
+  id: string;
+  teamMemberId: string;
+  memberName: string;
+  leaveTypeName: string;
+  startDate: Date;
+  endDate: Date;
+  dayCount: number;
+  reason: string | null;
+  status: LeaveStatus;
+  managerNote: string | null;
+  decidedAt: Date | null;
+}
+
+export async function getLeaveRequests(status?: LeaveStatus): Promise<LeaveRequestRow[]> {
+  const rows = await prisma.leaveRequest.findMany({
+    where: status ? { status } : {},
+    include: { teamMember: { select: { name: true } }, leaveType: { select: { name: true } } },
+    orderBy: [{ status: "asc" }, { startDate: "desc" }],
+    take: 200,
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    teamMemberId: row.teamMemberId,
+    memberName: row.teamMember.name,
+    leaveTypeName: row.leaveType.name,
+    startDate: row.startDate,
+    endDate: row.endDate,
+    dayCount: row.dayCount,
+    reason: row.reason,
+    status: row.status,
+    managerNote: row.managerNote,
+    decidedAt: row.decidedAt,
+  }));
+}
+
+export interface ChangeHistoryRow {
+  id: string;
+  dutyDate: Date;
+  memberName: string;
+  previousStatus: DutyStatus | null;
+  previousShiftName: string | null;
+  newStatus: DutyStatus;
+  newShiftName: string | null;
+  reason: string | null;
+  changedBy: string | null;
+  changeGroupId: string | null;
+  createdAt: Date;
+}
+
+/** The audit trail, newest first. Immutable rows — nothing here is ever edited. */
+export async function getRecentChanges(take = 50): Promise<ChangeHistoryRow[]> {
+  const rows = await prisma.dutyAssignmentChange.findMany({
+    include: { teamMember: { select: { name: true } }, changedBy: { select: { name: true, username: true } } },
+    orderBy: { createdAt: "desc" },
+    take,
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    dutyDate: row.dutyDate,
+    memberName: row.teamMember.name,
+    previousStatus: row.previousStatus,
+    previousShiftName: row.previousShiftName,
+    newStatus: row.newStatus,
+    newShiftName: row.newShiftName,
+    reason: row.reason,
+    changedBy: row.changedBy?.name ?? row.changedBy?.username ?? null,
+    changeGroupId: row.changeGroupId,
+    createdAt: row.createdAt,
+  }));
+}
+
+/** Today's weekday in Dhaka, for pre-selecting the weekly grid. */
+export function todayWeekday(now: Date = new Date()): number {
+  return getDhakaWeekday(now);
+}

@@ -573,6 +573,96 @@ deployment does not have**, so the trigger would appear configured in the UI and
 (`sendTextWithMentions`, used by the handover mention, is *not* licence-gated — the two are often
 assumed to go together.)
 
+### Team Management (`apps/web/src/server/teamManagementReports.ts`, `server/actions/teamManagement.ts`, `apps/worker/src/teamManagement/attendance.ts`)
+
+Shifts, roster, leave and coverage, built on `InternalTeamMember` — **there is no second identity
+model**. The spec this was built from named a `TeamMemberIdentity` and a `TEAM_MESSAGE`; neither
+exists in this codebase and neither was created, because `InternalTeamMember` and
+`Message.isFromTeamMember` already are those things.
+
+**Three records, and the reading of them is DERIVED at read time, never stored.** `DutyAssignment`
+is the plan, `TeamAttendanceDay` is the evidence, `LeaveRequest` is the approval; `deriveDutyState`
+in `teamManagementReports.ts` joins them. Nothing writes a fourth "actual status" row — a stored
+derivation drifts from its own inputs the moment one is corrected, and then two screens disagree
+with nothing to say which is right. It also means no daily reconciliation job, which this worker
+has no cron to run anyway (every scheduled thing here is a `setInterval`).
+
+**`NO_ACTIVITY` is not `ABSENT`, and must never be renamed to it.** No message is evidence of no
+message and nothing more: somebody on the phone, out at a customer site, or working in a group this
+account cannot see produces the same silence as somebody who did not come in. `ABSENT` is reachable
+only from `AttendanceOverride`, a manager's explicit verdict, which is stored in its own columns
+**beside** the evidence rather than over it — so "marked absent, and there were forty messages"
+stays readable as exactly that. The counts are recomputed on every later message and deliberately
+do not clear the override.
+
+**Attendance reads `Message`, not `SupportActivity`.** `SupportActivitySettings.enabled` defaults to
+false and its detector returns early when off, so anything built on that table is empty on a fresh
+install and would silently empty if tracking were ever switched off — which for an attendance record
+is a lie. `getGroupsAwaitingReply` reads `Message` directly for the same reason.
+
+**`recordTeamAttendance()` recomputes a member-day rather than incrementing, under a Postgres
+advisory lock, and both halves are load-bearing.** Incrementing double-counts on a replayed message,
+a worker retry or a reconnect. Recomputing converges — but only SEQUENTIALLY: two messages arriving
+at once give two recomputes, and A reading nine while B reads ten and writes ten, then A writing its
+stale nine, is a lost update that leaves the count quietly wrong.
+`pg_advisory_xact_lock(hashtext(key)::bigint)` on `(teamMemberId, activityDate)` serialises the read
+and the write. It is held in POSTGRES, not worker memory — two worker processes share no memory to
+lock in, and the whole point is that this holds across them.
+
+This is **measured, not assumed**. `teamAttendance.integration.test.ts`'s concurrency test was
+written twice before it could detect a deliberately removed lock: writing all ten messages up front
+and then racing the recomputes proves nothing (every racer reads the same settled ten), and so does
+an unstaggered `Promise.all` (the ten creates all finish before the first SELECT). Staggered
+arrivals over fourteen rounds is what works — with the lock deleted, probe rounds returned 10, 8, 9,
+9, 10, 10, 10, 10, 10, 8. Do not simplify that test; each simplification was tried and each passed
+against broken code.
+
+The recompute is deliberately **not** filtered on `Message.isFromTeamMember`. That column is stamped
+at insert time, so it is false for everything somebody sent before they joined the roster — filtering
+on it would mean adding a colleague at noon silently discarded their morning. `senderPhone` is the
+identity, and `resolveActiveTeamMember` (the existing resolver, not a second detector) has already
+established it. `senderIdentifiers()` looks for every form that resolver matches — exact
+`whatsappId`, then digits-normalised `phoneNumber` — or the recompute would count a different pile
+of messages than the one that triggered it.
+
+**Coverage is EFFECTIVE, never a raw count of assignment rows.** Two people on Morning with one on
+approved leave is one person available, and reporting that as covered is how a shift silently runs a
+man short. `effective = assigned - unavailable`, `gap = max(0, required - effective)`. Approving
+leave therefore **updates the `DutyAssignment` to LEAVE and keeps its shift snapshot** rather than
+deleting it: delete the row and the shift just looks understaffed with no explanation, and the audit
+trail loses the fact that somebody was supposed to be there.
+
+**`DutyAssignment` snapshots the shift's name and times** alongside the template FK, so editing
+"Late" from 13:00–22:00 changes what Late means from now on and never what somebody worked last
+Tuesday. Same reasoning as `SupportPriorityPolicy` snapshotting SLA minutes onto each case. Nothing
+hardcodes 10–19 / 12–21 / 13–22 anywhere in business logic; those three exist only as seed rows.
+
+**One assignment per member per date is a database constraint, and the coverage path CREATES rather
+than upserts on purpose.** A manager editing somebody's Tuesday means to replace it, so
+`setDutyAssignment` upserts. A manager filling a vacancy means to *add* somebody, so
+`applyShiftChange` lets the unique violation surface as "they are already on Late that day" — never
+silently overwriting the candidate's existing shift, and never silently moving a third person to make
+room. `previewShiftChange` shows what the vacated shift would be left with **before** anything is
+written; leaving a gap is a legitimate decision that must not be an invisible one. Both halves of a
+change share a `changeGroupId`, because moving Rakib and putting Bipul on the shift he vacated is one
+decision and two unrelated rows would not say so.
+
+**`WeeklyScheduleEntry` has three states, not two.** No row = nobody has decided; a row with a null
+template = decided, they are off. Collapsing those makes an unfilled rota look fully scheduled, which
+is the single most dangerous thing a rota can do. `materialiseRosterForDate` skips every date that
+already has an assignment (so it is safe to press twice) and leaves a member with no pattern entirely
+alone rather than writing them OFF.
+
+`LeaveType` and `Holiday` ship **empty**, deliberately — entitlement and public holidays differ by
+country and company, and a seeded guess quietly becomes policy because nobody checked it.
+`LeaveRequest.dayCount` is counted once at creation so a holiday declared later cannot resize a
+decided request. Cancelling approved leave does **not** restore the duty rows: cover was very likely
+arranged, and silently un-cancelling would double-staff the day.
+
+Nav group **Team Management** sits after Support Activity. `/team-members` stays under WhatsApp and
+is linked to, never duplicated. This module does **not** duplicate `/support-activity/team`, which
+owns who is online, engaged time and first-response stats; this one owns **schedule versus reality**.
+
 ### Hybrid AI Automation / AI Fallback (`apps/worker/src/aiFallback/`)
 
 Fires only when `packages/engine`'s `evaluate()` genuinely misses on a real customer message

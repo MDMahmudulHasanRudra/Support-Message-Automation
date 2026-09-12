@@ -18,6 +18,7 @@ import { detectSupportActivity } from "../supportActivity/detector.js";
 import { updateSupportSessionForActivity } from "../supportActivity/sessionTracker.js";
 import { runAiFallback } from "../aiFallback/runAiFallback.js";
 import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
+import { recordTeamAttendance } from "../teamManagement/attendance.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 
 interface ActionExecutionRecord {
@@ -170,6 +171,23 @@ export async function runAutomationStage(
       }
     } catch (err) {
       console.error("[support-activity] failed to record support activity", err);
+    }
+
+    // Team Management's attendance evidence. Same fire-and-forget shape as the two hooks above: a
+    // failure to record that somebody worked must never stop a customer's message being processed.
+    //
+    // Idempotent per member-day rather than per message, which is what lets it sit on all three
+    // paths — the live one, the catch-up sweep, and a stranded-message re-run — without any of them
+    // double-counting. It recomputes rather than increments; see attendance.ts.
+    try {
+      await recordTeamAttendance({
+        groupId: group?.id ?? null,
+        isFromTeamMember,
+        senderPhone: raw.senderPhone,
+        timestampWa: raw.timestampWa,
+      });
+    } catch (err) {
+      console.error("[team-attendance] failed to record attendance evidence", err);
     }
 
     const activeRuleRows = await prisma.automationRule.findMany({ where: { status: "ACTIVE" } });
@@ -478,6 +496,20 @@ export async function storeMissedMessage(raw: RawIncomingMessage): Promise<boole
     }
   } catch (err) {
     console.error("[catch-up] failed to record support activity for a recovered message", err);
+  }
+
+  // A message recovered from a gap is still evidence somebody worked that day, even when it is too
+  // old to answer. Recording it is how a restart does not quietly cost an executive their
+  // attendance for the morning it happened in.
+  try {
+    await recordTeamAttendance({
+      groupId: group?.id ?? null,
+      isFromTeamMember,
+      senderPhone: raw.senderPhone,
+      timestampWa: raw.timestampWa,
+    });
+  } catch (err) {
+    console.error("[team-attendance] failed to record attendance for a recovered message", err);
   }
 
   return true;
