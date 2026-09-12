@@ -137,6 +137,27 @@ async function main() {
   });
   console.log("Seeded default Security Settings (24h session lifetime)");
 
+  // The shifts this office runs today. SEED DATA, never a business rule: nothing in the codebase
+  // may branch on the name "Morning" or on 10:00-19:00, because the whole point of ShiftTemplate
+  // is that an operator can add a night shift or a 09:00-18:00 from the UI without a code change.
+  //
+  // `update: {}` so re-seeding never overwrites times somebody has since corrected — the same
+  // create-once discipline the default Permission Modules below use for `isSystem`. Minutes are
+  // measured from local midnight.
+  const DEFAULT_SHIFTS = [
+    { name: "Morning", startMinute: 10 * 60, endMinute: 19 * 60, requiredHeadcount: 2, colourSlot: 1, position: 1 },
+    { name: "Mid", startMinute: 12 * 60, endMinute: 21 * 60, requiredHeadcount: 2, colourSlot: 2, position: 2 },
+    { name: "Late", startMinute: 13 * 60, endMinute: 22 * 60, requiredHeadcount: 1, colourSlot: 3, position: 3 },
+  ];
+  for (const shift of DEFAULT_SHIFTS) {
+    await prisma.shiftTemplate.upsert({
+      where: { name: shift.name },
+      update: {},
+      create: shift,
+    });
+  }
+  console.log(`Seeded ${DEFAULT_SHIFTS.length} default shift templates`);
+
   // Permission catalogue is code-defined at packages/shared/src/permissions.ts — synced here
   // (never created ad hoc from the UI), so a key's label/category can be corrected in code and
   // will update on the next seed run without touching PermissionModule assignments.

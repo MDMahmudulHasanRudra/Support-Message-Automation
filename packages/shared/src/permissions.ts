@@ -39,6 +39,12 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "support_activity.view", label: "View Support Activity", category: "Support Activity" },
   { key: "support_activity.manage", label: "Manage Support Activity", category: "Support Activity" },
 
+  // Team Management owns the roster, leave and coverage. Separate from support_activity.* on
+  // purpose: reading who was active is a reporting concern, while approving somebody leave or
+  // moving them off a shift changes what the team is contracted to do that day.
+  { key: "team_management.view", label: "View Schedule, Leave & Attendance", category: "Team Management" },
+  { key: "team_management.manage", label: "Manage Schedule, Leave & Coverage", category: "Team Management" },
+
   { key: "teams_integration.view", label: "View Teams Integration", category: "Teams Integration" },
   { key: "teams_integration.manage", label: "Manage Teams Integration", category: "Teams Integration" },
 

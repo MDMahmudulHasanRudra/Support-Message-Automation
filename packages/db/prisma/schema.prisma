@@ -379,54 +379,60 @@ enum LogLevel {
 // ---------------------------------------------------------------------------
 
 model User {
-  id           String   @id @default(cuid())
-  username     String   @unique
-  email        String?  @unique // optional: login is by username, not email; every existing
+  id           String  @id @default(cuid())
+  username     String  @unique
+  email        String? @unique // optional: login is by username, not email; every existing
   // display site already does `createdBy?.email ?? "—"`, so a missing email was already a
   // normal, handled case before this field was ever made nullable.
   passwordHash String
   name         String
 
-  isActive            Boolean   @default(true) // inactive users are rejected at login and every
+  isActive            Boolean           @default(true) // inactive users are rejected at login and every
   // already-issued session is rejected too (see UserSession/getSession) — never deleted, so
   // audit history (createdRules etc. below) stays intact. Matches this app's existing
   // soft-delete-over-hard-delete standard.
   permissionModuleId  String?
   permissionModule    PermissionModule? @relation(fields: [permissionModuleId], references: [id], onDelete: Restrict)
   lastLoginAt         DateTime?
-  failedLoginAttempts Int       @default(0) // reset to 0 on every successful login
+  failedLoginAttempts Int               @default(0) // reset to 0 on every successful login
   lastFailedLoginAt   DateTime? // dedicated timestamp for the lockout window check — deliberately
   // separate from updatedAt, which changes for unrelated reasons (e.g. an admin editing the user)
   // and would otherwise make the rolling-window check unreliable
   lockedUntil         DateTime? // set once failedLoginAttempts crosses SecuritySettings'
   // loginLockoutThreshold within loginLockoutWindowMinutes; checked before the password itself
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   sessions UserSession[]
 
-  createdRules               AutomationRule[]
-  createdBroadcastJobs       GroupBroadcastJob[]
-  createdOutboundSends       OutboundMessage[]
-  createdParticipantAddJobs  GroupParticipantAddJob[]
-  createdKnowledgeItems      AiKnowledgeItem[]
-  createdKnowledgeImports    KnowledgeImport[]
-  createdKnowledgeVersions   AiKnowledgeVersion[]
-  approvedStyleProfiles      CommunicationStyleProfile[]
+  createdRules                AutomationRule[]
+  createdBroadcastJobs        GroupBroadcastJob[]
+  createdOutboundSends        OutboundMessage[]
+  createdParticipantAddJobs   GroupParticipantAddJob[]
+  createdKnowledgeItems       AiKnowledgeItem[]
+  createdKnowledgeImports     KnowledgeImport[]
+  createdKnowledgeVersions    AiKnowledgeVersion[]
+  approvedStyleProfiles       CommunicationStyleProfile[]
   editedNotificationTemplates NotificationTemplate[]
   savedReplies                SavedReply[]
   savedGroupSets              SavedGroupSet[]
-  resolvedEscalationCases    SupportEscalationCase[]
-  triggeredEscalationEvents  SupportEscalationEvent[]
-  triggeredLearningBatchJobs LearningBatchJob[]
-  reviewedPatternCandidates  PatternCandidate[]
-  reviewedRuleProposals      RuleProposal[]
-  createdSupportIssues       SupportIssue[]
+  resolvedEscalationCases     SupportEscalationCase[]
+  triggeredEscalationEvents   SupportEscalationEvent[]
+  triggeredLearningBatchJobs  LearningBatchJob[]
+  reviewedPatternCandidates   PatternCandidate[]
+  reviewedRuleProposals       RuleProposal[]
+  createdSupportIssues        SupportIssue[]
   /// Set only when an admin manually closes a SupportSession that never received a completion
   /// keyword (apps/web/src/server/actions/supportSessions.ts) — mirrors resolvedEscalationCases'
   /// existing "which logged-in admin resolved this" pattern above.
-  closedSupportSessions      SupportSession[]
+  closedSupportSessions       SupportSession[]
+
+  assignedDuties      DutyAssignment[]
+  dutyChanges         DutyAssignmentChange[]
+  requestedLeave      LeaveRequest[]         @relation("LeaveRequestedBy")
+  decidedLeave        LeaveRequest[]         @relation("LeaveDecidedBy")
+  attendanceOverrides TeamAttendanceDay[]
 }
 
 // ---------------------------------------------------------------------------
@@ -473,9 +479,9 @@ model Permission {
 
 model PermissionModulePermission {
   permissionModuleId String
-  permissionModule    PermissionModule @relation(fields: [permissionModuleId], references: [id], onDelete: Cascade)
-  permissionId        String
-  permission          Permission       @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  permissionModule   PermissionModule @relation(fields: [permissionModuleId], references: [id], onDelete: Cascade)
+  permissionId       String
+  permission         Permission       @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@id([permissionModuleId, permissionId])
 }
@@ -550,6 +556,7 @@ model WhatsAppAccount {
   supportSessions      SupportSession[]
   aiFallbackDecisions  AiFallbackDecision[]
   supportIssues        SupportIssue[]
+  attendanceEvidence   TeamAttendanceGroup[]
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -611,7 +618,7 @@ model SavedReply {
   /// The text inserted into the composer. Never sent on its own: it lands in the box for the
   /// operator to adjust and send, because a saved reply is a starting point and the last word on
   /// whether it fits this customer belongs to the person looking at the conversation.
-  body  String
+  body String
 
   /// Sort order in the picker, lowest first.
   position Int @default(0)
@@ -692,26 +699,25 @@ model WhatsAppGroup {
   ///
   /// Meant only for the approved test groups. Rate limits are what keep the WhatsApp number from
   /// being banned, and the number serving these test groups also serves every real customer.
-  testModeEnabled             Boolean             @default(false)
+  testModeEnabled         Boolean   @default(false)
   /// A hard "never let AI answer here", honoured under every scope. For the groups where a
   /// wrong answer costs more than a slow one — a key account, a billing dispute, anywhere a
   /// human must always speak. Beats every other AI gate.
-  aiAutomationExcluded        Boolean             @default(false)
+  aiAutomationExcluded    Boolean   @default(false)
   /// Hybrid AI Automation (Slice 3) human-takeover: set to now + AiSettings.
   /// humanTakeoverCooldownMinutes whenever a team member sends a message in this group (see
   /// processIncomingMessage.ts); the AI fallback layer treats a future value here as a silent
   /// ineligibility gate (apps/worker/src/aiFallback/eligibility.ts) — "AI must not immediately
   /// interfere" once a human is actively handling the conversation. Null means not suppressed.
-  aiSuppressedUntil           DateTime?
+  aiSuppressedUntil       DateTime?
   /// Knowledge builder: when this group's conversation was last distilled into knowledge
   /// entries, and the timestamp of the newest message that run covered. The pair is the
   /// incremental watermark — a later run only reads what arrived after it, so re-running
   /// is cheap and never re-reads the same conversation twice.
-  knowledgeBuiltAt            DateTime?
-  knowledgeBuiltThroughAt     DateTime?
-  createdAt                   DateTime            @default(now())
-  updatedAt                   DateTime            @updatedAt
-
+  knowledgeBuiltAt        DateTime?
+  knowledgeBuiltThroughAt DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   /// Chat-inbox organisation. All three are about what an operator SEES; none of them changes what
   /// automation does. That separation is the whole point: `isMonitored` and `aiAutomationEnabled`
@@ -757,6 +763,7 @@ model WhatsAppGroup {
   supportRuleScopes    SupportRuleGroup[]
   aiFallbackDecisions  AiFallbackDecision[]
   supportIssues        SupportIssue[]
+  attendanceEvidence   TeamAttendanceGroup[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([chatCategoryId])
@@ -765,9 +772,9 @@ model WhatsAppGroup {
 }
 
 model InternalTeamMember {
-  id          String           @id @default(cuid())
-  name        String
-  phoneNumber String           @unique
+  id             String           @id @default(cuid())
+  name           String
+  phoneNumber    String           @unique
   /// The opaque identifier WhatsApp actually puts on this person's messages.
   ///
   /// WhatsApp migrated group participants to "LID" (linked id) — a 14-15 digit number that is
@@ -779,10 +786,10 @@ model InternalTeamMember {
   /// Nullable and additive: a member added by phone number still matches by phone number, and one
   /// picked out of message history matches by this. Editing the phone number to the person's real
   /// one never breaks matching, because this keeps working.
-  whatsappId  String?          @unique
-  role        String
-  department  String?
-  status      TeamMemberStatus @default(ACTIVE)
+  whatsappId     String?          @unique
+  role           String
+  department     String?
+  status         TeamMemberStatus @default(ACTIVE)
   /// Maps this team member to their Microsoft Teams sender identity (Graph API messages carry an
   /// email/UPN, not a phone number) — nullable/additive since most team members won't have a
   /// Teams account, or won't be mapped yet. Used only for Issue "handled by" attribution
@@ -795,11 +802,28 @@ model InternalTeamMember {
   assignedEscalationCases   SupportEscalationCase[]
   SupportEscalationSettings SupportEscalationSettings[]
   supportActivities         SupportActivity[]
-  startedSupportSessions    SupportSession[]        @relation("SupportSessionStarted")
-  completedSupportSessions  SupportSession[]        @relation("SupportSessionCompleted")
+  startedSupportSessions    SupportSession[]                   @relation("SupportSessionStarted")
+  completedSupportSessions  SupportSession[]                   @relation("SupportSessionCompleted")
   supportRuleScopes         SupportRuleTeamMember[]
   supportIssues             SupportIssue[]
-  notificationPreferences TeamMemberNotificationPreference[]
+  notificationPreferences   TeamMemberNotificationPreference[]
+
+  /// The shift this person normally works, used to pre-fill a weekly pattern and nothing else.
+  ///
+  /// Deliberately NOT authoritative for any date: `DutyAssignment` is. Changing somebody's default
+  /// must never reach back and rewrite what they already worked, which is why history is
+  /// snapshotted onto the assignment rather than read back through this.
+  ///
+  /// One nullable column here rather than a separate profile table — a second table keyed on the
+  /// same person, holding one field, would be a second identity concept for no benefit.
+  defaultShiftTemplateId String?
+  defaultShiftTemplate   ShiftTemplate? @relation(fields: [defaultShiftTemplateId], references: [id], onDelete: SetNull)
+
+  weeklySchedule        WeeklyScheduleEntry[]
+  dutyAssignments       DutyAssignment[]
+  dutyAssignmentChanges DutyAssignmentChange[]
+  leaveRequests         LeaveRequest[]
+  attendanceDays        TeamAttendanceDay[]
 }
 
 model Message {
@@ -863,6 +887,11 @@ model Message {
   @@index([timestampWa])
   /// Dashboard message-volume counts filter direction + a createdAt window.
   @@index([direction, createdAt])
+  /// Team Management recomputes one member's attendance for one local day on every group message
+  /// they send: "this sender, between these two instants". The bare [senderPhone] index made that
+  /// walk every message that sender has ever sent and filter by date afterwards, which grows
+  /// without limit; this stops at the day.
+  @@index([senderPhone, timestampWa])
 }
 
 model AutomationRule {
@@ -1116,7 +1145,7 @@ model GroupParticipantAddSettings {
 model Notification {
   /// Why this was sent. Nullable because rows written before the Notification Center existed have
   /// no event to attribute, and guessing one from the payload would be a fabrication.
-  event NotificationEvent?
+  event                     NotificationEvent?
   id                        String             @id @default(cuid())
   type                      NotificationType
   /// Which WhatsApp account this was (or will be) sent through — only meaningful for
@@ -1148,7 +1177,6 @@ model Notification {
   @@index([status])
   @@index([relatedMessageId])
   @@index([relatedPatternCandidateId])
-
   @@index([event, createdAt])
 }
 
@@ -1360,33 +1388,33 @@ enum KnowledgeImportSourceType {
 }
 
 model KnowledgeImport {
-  id         String                    @id @default(cuid())
+  id             String                    @id @default(cuid())
   /// What this came from, in the operator's words — a file name, or a title they typed.
   /// Copied onto every entry it produces so a reviewer can see the origin without a join.
-  label      String
-  sourceType KnowledgeImportSourceType @default(PASTED_TEXT)
+  label          String
+  sourceType     KnowledgeImportSourceType @default(PASTED_TEXT)
   /// The extracted plain text. Kept after processing so a failed or disappointing import can be
   /// re-run against a better prompt without asking anyone to find the original file again.
-  rawText    String
+  rawText        String
   /// Optional module hint applied to every entry produced, e.g. "MikroTik Integration".
-  module     String?
+  module         String?
   /// For a URL import: the page this text was fetched from. Retained so an operator can re-run
   /// the import when they know the page changed — deliberately manual, there is no crawler.
-  sourceUrl  String?
+  sourceUrl      String?
   /// Original upload file name, kept for provenance once rawText has replaced the bytes.
-  fileName   String?
-  status     KnowledgeImportStatus     @default(PENDING)
-  chunksTotal    Int                   @default(0)
-  chunksDone     Int                   @default(0)
-  entriesCreated Int                   @default(0)
+  fileName       String?
+  status         KnowledgeImportStatus     @default(PENDING)
+  chunksTotal    Int                       @default(0)
+  chunksDone     Int                       @default(0)
+  entriesCreated Int                       @default(0)
   /// Operator-facing failure text; never a stack trace.
-  error       String?
-  createdById String?
-  createdBy   User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  startedAt   DateTime?
-  completedAt DateTime?
-  createdAt   DateTime                 @default(now())
-  updatedAt   DateTime                 @updatedAt
+  error          String?
+  createdById    String?
+  createdBy      User?                     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
 
   items AiKnowledgeItem[]
 
@@ -1404,58 +1432,58 @@ enum AiKnowledgeStatus {
 /// none of these actually gate anything yet since the learning/response
 /// pipelines they're meant to control don't exist until a later phase.
 model AiSettings {
-  id                              String   @id @default("global")
-  aiEngineEnabled                 Boolean  @default(false)
-  learningEnabled                 Boolean  @default(false)
-  autoResponseEnabled             Boolean  @default(false)
+  id                              String            @id @default("global")
+  aiEngineEnabled                 Boolean           @default(false)
+  learningEnabled                 Boolean           @default(false)
+  autoResponseEnabled             Boolean           @default(false)
   /// The Hybrid AI Automation fallback layer's own confidence gate (spec default 90%) — deliberately
   /// separate from learningConfidenceThreshold/autoApprovalThreshold above, which are reserved for
   /// the not-yet-built AI Learning/Knowledge phases and would be an ambiguous field to overload here.
-  autoResponseConfidenceThreshold Int      @default(90)
+  autoResponseConfidenceThreshold Int               @default(90)
   /// Hybrid AI Automation (Slice 3): reuses the same cooldown mechanism as per-rule AUTO_REPLY
   /// cooldowns (apps/worker/src/queue/cooldown.ts's isCooldownActive(), generalized to accept a
   /// null ruleId) — prevents AI from replying to the same client again too soon. 0 disables it.
-  aiReplyCooldownSeconds          Int      @default(300)
+  aiReplyCooldownSeconds          Int               @default(300)
   /// Hybrid AI Automation (Slice 3): how long a team-member message suppresses the AI fallback
   /// layer for that group (see WhatsAppGroup.aiSuppressedUntil) — "AI must not immediately
   /// interfere" once a human is actively handling a conversation.
-  humanTakeoverCooldownMinutes    Int      @default(30)
+  humanTakeoverCooldownMinutes    Int               @default(30)
   /// Which groups the AI fallback may answer in. Default PER_GROUP preserves the exact
   /// behaviour that shipped before this field existed.
   aiAutomationScope               AiAutomationScope @default(PER_GROUP)
   /// After AI answers a message, draft a reusable AutomationRule from it so the same
   /// question is handled deterministically (and for free) next time. The draft always
   /// lands as a PENDING_REVIEW RuleProposal — never an active rule.
-  aiRuleGenerationEnabled         Boolean  @default(false)
+  aiRuleGenerationEnabled         Boolean           @default(false)
   /// Minimum AI confidence before a reply is worth turning into a rule draft. Above the
   /// reply threshold on purpose: answering once at 90% is fine, but codifying that answer
   /// into a standing rule deserves a higher bar.
-  aiRuleGenerationMinConfidence   Int      @default(95)
+  aiRuleGenerationMinConfidence   Int               @default(95)
 
   /// When AI hands a conversation to a person, also post in the customer's own group tagging a
   /// team member, so the request for help appears where the conversation is rather than only in a
   /// separate alerts group. Off by default — it puts an extra message in front of the customer.
-  mentionTeamOnHandover           Boolean  @default(false)
+  mentionTeamOnHandover        Boolean        @default(false)
   /// WhatsApp group ids that receive "AI could not handle this, a human is needed" alerts.
   /// Empty falls back to AutomationSettings.whatsappNotificationGroupIds, so existing
   /// deployments keep alerting exactly where they already did.
-  takeoverNotifyGroupIds          String[] @default([])
+  takeoverNotifyGroupIds       String[]       @default([])
   /// Read whole group conversations and distil them into knowledge base entries.
-  knowledgeFromChatEnabled        Boolean  @default(false)
+  knowledgeFromChatEnabled     Boolean        @default(false)
   /// A group with fewer stored messages than this is skipped by the knowledge builder —
   /// there is not enough conversation there to draw a reliable conclusion from.
-  knowledgeMinMessagesPerGroup    Int      @default(25)
+  knowledgeMinMessagesPerGroup Int            @default(25)
   /// What the AI may answer from. STRICT_KNOWLEDGE_ONLY is the default and the safe choice.
   ///
   /// Note what is deliberately NOT configurable: under either mode, a question about this
   /// company's own product, policies or accounts is answered only from verified knowledge, and
   /// otherwise goes to a person. Relaxing the mode widens what counts as answerable *general*
   /// conversation; it never lets the model invent this business's behaviour.
-  aiResponseMode                  AiResponseMode @default(STRICT_KNOWLEDGE_ONLY)
+  aiResponseMode               AiResponseMode @default(STRICT_KNOWLEDGE_ONLY)
   /// The bar for an answer given from the model's own knowledge with nothing verified behind it.
   /// Deliberately separate from, and normally higher than, autoResponseConfidenceThreshold:
   /// an ungrounded answer carries more risk than one backed by the team's own material.
-  generalAnswerMinConfidence      Int      @default(90)
+  generalAnswerMinConfidence   Int            @default(90)
 
   /// The language the AI answers in unless the customer clearly wrote in another one.
   ///
@@ -1463,7 +1491,7 @@ model AiSettings {
   /// one-word message carries almost no signal: "Hello" was answered in Portuguese and a short
   /// question in transliterated Hindi, to Bengali-speaking customers. A default plus an explicit
   /// "do not switch on weak evidence" rule is what stops that.
-  defaultReplyLanguage            String   @default("Bengali (Bangla)")
+  defaultReplyLanguage String @default("Bengali (Bangla)")
 
   /// Learn HOW the support team writes — tone, greetings, how a problem is acknowledged — from
   /// the replies executives actually send, and apply that to AI answers.
@@ -1471,18 +1499,18 @@ model AiSettings {
   /// Distinct from knowledgeFromChatEnabled, which learns WHAT the team knows. This learns manner,
   /// not fact, and produces no knowledge entries at all. Off by default, and even when on the
   /// learned guidance does nothing until a person approves it — see CommunicationStyleProfile.
-  communicationStyleLearningEnabled Boolean @default(false)
-  screenshotResponseEnabled       Boolean  @default(false)
-  chatLearningEnabled             Boolean  @default(false)
-  softwareLearningEnabled         Boolean  @default(false)
-  requirementLearningEnabled      Boolean  @default(false)
-  announcementAiEnabled           Boolean  @default(false)
+  communicationStyleLearningEnabled Boolean  @default(false)
+  screenshotResponseEnabled         Boolean  @default(false)
+  chatLearningEnabled               Boolean  @default(false)
+  softwareLearningEnabled           Boolean  @default(false)
+  requirementLearningEnabled        Boolean  @default(false)
+  announcementAiEnabled             Boolean  @default(false)
   /// Percentage (0-100). Two pieces of knowledge at/above this similarity are treated as duplicates.
-  duplicateSimilarityThreshold    Int      @default(95)
-  learningConfidenceThreshold     Int      @default(90)
-  autoApprovalThreshold           Int      @default(95)
-  humanReviewThreshold            Int      @default(70)
-  updatedAt                       DateTime @updatedAt
+  duplicateSimilarityThreshold      Int      @default(95)
+  learningConfidenceThreshold       Int      @default(90)
+  autoApprovalThreshold             Int      @default(95)
+  humanReviewThreshold              Int      @default(70)
+  updatedAt                         DateTime @updatedAt
 }
 
 /// A configured AI provider account (e.g. one Anthropic API key). apiKeyCiphertext
@@ -2064,13 +2092,13 @@ model RuleProposal {
   patternCandidateId String?           @unique
   patternCandidate   PatternCandidate? @relation(fields: [patternCandidateId], references: [id], onDelete: Cascade)
 
-  source RuleProposalSource @default(CONVERSATION_LEARNING)
+  source          RuleProposalSource @default(CONVERSATION_LEARNING)
   /// The message that prompted an AI_REPLY proposal, kept for review context.
-  sourceMessageId String?  @db.Text
+  sourceMessageId String?            @db.Text
   /// Deterministic keyword signature of the message this was drafted from
   /// (packages/engine's derivePatternSignature). Unique, so a question the AI answers
   /// fifty times produces one draft rather than fifty identical ones.
-  sourceSignature String?  @unique
+  sourceSignature String?            @unique
 
   // Fully-formed AutomationRule draft — same shape as the real row, so approval is a pure copy.
   name            String
@@ -2177,10 +2205,10 @@ enum SupportSessionStatus {
 /// feature is off until an admin opts in; while off, apps/worker/src/supportActivity/detector.ts
 /// countingPeriod are global, not per-rule, by explicit requirement.
 model SupportActivitySettings {
-  id             String                        @id @default("global")
-  enabled        Boolean                       @default(false)
-  countingPeriod SupportActivityCountingPeriod @default(DAILY)
-  updatedAt      DateTime                      @updatedAt
+  id                  String                        @id @default("global")
+  enabled             Boolean                       @default(false)
+  countingPeriod      SupportActivityCountingPeriod @default(DAILY)
+  updatedAt           DateTime                      @updatedAt
   /// How long an executive can go without messaging any group before they count as offline, and
   /// the gap that splits one stretch of work from the next.
   ///
@@ -2189,29 +2217,28 @@ model SupportActivitySettings {
   /// which is what happened when availability used a hardcoded 30 minutes while work time was
   /// measured per group per day — produces a page where somebody shows as offline inside a stretch
   /// of work the same page is counting.
-  offlineAfterMinutes Int @default(120)
-
+  offlineAfterMinutes Int                           @default(120)
 }
 
 /// Admin-managed keyword/phrase. Referenced by zero or more SupportRules via SupportRuleKeyword —
 /// not a free-text array on the rule itself, unlike AutomationRule.keywords, because keywords here
 /// are independently CRUD-able (add/edit/delete/enable-disable) and reused across rules.
 model SupportKeyword {
-  id            String                  @id @default(cuid())
-  value         String
-  matchMode     SupportKeywordMatchMode @default(CONTAINS)
+  id              String                  @id @default(cuid())
+  value           String
+  matchMode       SupportKeywordMatchMode @default(CONTAINS)
   /// Default false (case-insensitive) — matches every existing text-matching convention in this
   /// app (see packages/engine/src/normalize.ts's normalizeText()).
-  caseSensitive Boolean                 @default(false)
-  isActive      Boolean                 @default(true)
+  caseSensitive   Boolean                 @default(false)
+  isActive        Boolean                 @default(true)
   /// Flags this keyword as a support-session completion signal (apps/worker/src/supportActivity/
   /// sessionTracker.ts). Still completely inert on its own — it must be attached to an active
   /// KEYWORD_MATCH SupportRule scoped to the relevant group/members to ever actually fire, exactly
   /// like every other SupportKeyword. Read off the already-matched keyword returned by detector.ts;
   /// never a second, parallel matching pass.
-  marksCompletion Boolean               @default(false)
-  createdAt     DateTime                @default(now())
-  updatedAt     DateTime                @updatedAt
+  marksCompletion Boolean                 @default(false)
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
 
   rules      SupportRuleKeyword[]
   activities SupportActivity[]
@@ -2278,34 +2305,34 @@ model SupportRuleTeamMember {
 /// are always computed from this table at query time (see apps/web/src/server/
 /// countingPeriod retroactively reinterprets all existing history correctly.
 model SupportActivity {
-  id           String              @id @default(cuid())
+  id           String               @id @default(cuid())
   accountId    String
-  account      WhatsAppAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account      WhatsAppAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
   groupId      String
-  group        WhatsAppGroup       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group        WhatsAppGroup        @relation(fields: [groupId], references: [id], onDelete: Cascade)
   /// Nullable + SetNull (not Cascade) so a later-deleted InternalTeamMember never destroys already-
   /// recorded history — only its per-member attribution on that one row degrades to "unassigned."
   teamMemberId String?
-  teamMember   InternalTeamMember? @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  teamMember   InternalTeamMember?  @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
   /// Who delivered this support. TEAM_MEMBER rows always carry a teamMemberId; AI rows never do.
   /// Defaulted so every row written before this column existed keeps its original meaning.
   actor        SupportActivityActor @default(TEAM_MEMBER)
   /// Nullable + SetNull, same reasoning: a deleted SupportRule/SupportKeyword must never delete
   /// history (mirrors AutomationExecution.ruleId's exact pattern).
   ruleId       String?
-  rule         SupportRule?        @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  rule         SupportRule?         @relation(fields: [ruleId], references: [id], onDelete: SetNull)
   keywordId    String?
-  keyword      SupportKeyword?     @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  keyword      SupportKeyword?      @relation(fields: [keywordId], references: [id], onDelete: SetNull)
   /// The idempotency guard: at most one SupportActivity row can ever exist per Message. Enforced
   /// here as a real DB constraint (insert-and-catch-P2002), not an application-level check-then-
   /// insert race — mirrors how Message's own @@unique([accountId, whatsappMessageId]) is the real
   /// dedup guard, and AutomationExecution.idempotencyKey's @unique column.
-  messageId    String              @unique
-  message      Message             @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId    String               @unique
+  message      Message              @relation(fields: [messageId], references: [id], onDelete: Cascade)
   /// = Message.timestampWa (WhatsApp's own send time), not receivedAt/createdAt — this is what
   /// every DAILY (and future WEEKLY/MONTHLY) period boundary buckets against.
   occurredAt   DateTime
-  createdAt    DateTime            @default(now())
+  createdAt    DateTime             @default(now())
 
   /// Back-relations for SupportSession's two possible references to this exact activity row (the
   /// session it opened, and/or — on a different row — the session it closed via a completion
@@ -2357,10 +2384,10 @@ model SupportSession {
   /// Nullable + SetNull, same "already-recorded history must outlive a later-deleted row" reasoning
   /// as SupportActivity.ruleId/keywordId — a purged SupportActivity row must never destroy this
   /// session's own startedAt/duration facts.
-  firstActivityId String?          @unique
-  firstActivity   SupportActivity? @relation("SupportSessionFirstActivity", fields: [firstActivityId], references: [id], onDelete: SetNull)
+  firstActivityId       String?             @unique
+  firstActivity         SupportActivity?    @relation("SupportSessionFirstActivity", fields: [firstActivityId], references: [id], onDelete: SetNull)
 
-  completedAt DateTime?
+  completedAt             DateTime?
   /// Whoever's completion-keyword activity closed the session (automatic path only). Left null for
   /// a manual admin close, since InternalTeamMember and the admin's own User login are two
   /// unrelated identities in this schema with no reliable mapping between them — see
@@ -2369,15 +2396,15 @@ model SupportSession {
   completedByTeamMember   InternalTeamMember? @relation("SupportSessionCompleted", fields: [completedByTeamMemberId], references: [id], onDelete: SetNull)
   /// Set only for the automatic (completion-keyword) close path; null for a manual admin close,
   /// which has no backing SupportActivity row at all.
-  completionActivityId String?          @unique
-  completionActivity   SupportActivity? @relation("SupportSessionCompletionActivity", fields: [completionActivityId], references: [id], onDelete: SetNull)
+  completionActivityId    String?             @unique
+  completionActivity      SupportActivity?    @relation("SupportSessionCompletionActivity", fields: [completionActivityId], references: [id], onDelete: SetNull)
   /// Set only for the manual admin-close path (apps/web/src/server/actions/supportSessions.ts),
   /// mirroring SupportEscalationCase.resolvedById's existing "which logged-in admin resolved this"
   /// pattern — reusing that convention rather than inventing a new audit mechanism. Mutually
   /// exclusive with completedByTeamMemberId in practice (automatic close never sets this; manual
   /// close never sets completedByTeamMemberId).
-  completedByUserId String?
-  completedByUser   User?     @relation(fields: [completedByUserId], references: [id], onDelete: SetNull)
+  completedByUserId       String?
+  completedByUser         User?               @relation(fields: [completedByUserId], references: [id], onDelete: SetNull)
 
   /// Computed once at completion time (completedAt - startedAt, in whole seconds) and persisted —
   /// an immutable historical fact once closed, same "snapshot at terminal state" convention
@@ -2457,9 +2484,9 @@ model TeamsAccount {
 /// graphSync.ts's listJoinedTeams() call, upserted on every sync tick (insert-and-catch-P2002 /
 /// upsert-by-unique-key, same idempotency shape as WhatsAppGroup's own sync).
 model TeamsTeam {
-  id             String   @id @default(cuid())
-  externalTeamId String   @unique
-  name           String
+  id                     String   @id @default(cuid())
+  externalTeamId         String   @unique
+  name                   String
   /// Default true ("discover everything, let the admin narrow it down later" — see the Manage
   /// Teams/Channels page) — an admin can exclude a team (e.g. "Management", "General") from ever
   /// being message-synced without disconnecting the whole integration. graphSync.ts always still
@@ -2473,20 +2500,20 @@ model TeamsTeam {
 }
 
 model TeamsChannel {
-  id                String    @id @default(cuid())
-  teamId            String
-  team              TeamsTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  externalChannelId String
-  name              String
-  channelType       String?
+  id                     String    @id @default(cuid())
+  teamId                 String
+  team                   TeamsTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  externalChannelId      String
+  name                   String
+  channelType            String?
   /// Same purpose as TeamsTeam.isEnabledForAutomation, at channel granularity — a team can be
   /// enabled overall while an admin still excludes one noisy channel (e.g. "General") from sync.
   /// Message-body sync in graphSync.ts requires both the parent team AND this channel enabled,
   /// OR an open SupportIssue explicitly linked to this exact channel (an Issue link always wins,
   /// so linking a channel to an Issue never silently no-ops because of this coarser toggle).
-  isEnabledForAutomation Boolean  @default(true)
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  isEnabledForAutomation Boolean   @default(true)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   messages      TeamsMessage[]
   supportIssues SupportIssue[]
@@ -2507,11 +2534,11 @@ model TeamsMessage {
   body              String
   /// Root message of the thread this reply belongs to — null for a top-level channel message.
   /// SetNull (not Cascade): a deleted parent must never cascade-delete its already-recorded replies.
-  parentMessageId String?
-  parentMessage   TeamsMessage?  @relation("TeamsMessageThread", fields: [parentMessageId], references: [id], onDelete: SetNull)
-  replies         TeamsMessage[] @relation("TeamsMessageThread")
-  sentAt          DateTime
-  createdAt       DateTime       @default(now())
+  parentMessageId   String?
+  parentMessage     TeamsMessage?  @relation("TeamsMessageThread", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies           TeamsMessage[] @relation("TeamsMessageThread")
+  sentAt            DateTime
+  createdAt         DateTime       @default(now())
 
   resolutionEvents IssueResolutionEvent[]
 
@@ -2585,11 +2612,11 @@ enum SupportIssueStatus {
 /// requirement is linking a conversation an admin has already identified as needing developer
 /// help, not guessing which conversations qualify.
 model SupportIssue {
-  id          String              @id @default(cuid())
+  id          String          @id @default(cuid())
   accountId   String
-  account     WhatsAppAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account     WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   groupId     String
-  group       WhatsAppGroup       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group       WhatsAppGroup   @relation(fields: [groupId], references: [id], onDelete: Cascade)
   chatId      String
   clientPhone String
   title       String?
@@ -2652,18 +2679,18 @@ enum IssueResolutionOutcome {
 /// the EXISTING outbound queue — the same "one outbound mechanism" every other feature uses — not
 /// an internal admin alert (which is what the Notification model is for).
 model IssueResolutionEvent {
-  id                String                  @id @default(cuid())
+  id                String                 @id @default(cuid())
   issueId           String
-  issue             SupportIssue            @relation(fields: [issueId], references: [id], onDelete: Cascade)
-  teamsMessageId     String
-  teamsMessage       TeamsMessage            @relation(fields: [teamsMessageId], references: [id], onDelete: Cascade)
-  matchedRuleId      String?
-  matchedRule        TeamsResolutionRule?    @relation(fields: [matchedRuleId], references: [id], onDelete: SetNull)
-  matchedKeyword     String?
-  outcome            IssueResolutionOutcome
-  outboundMessageId  String?                 @unique
-  outboundMessage    OutboundMessage?        @relation(fields: [outboundMessageId], references: [id], onDelete: SetNull)
-  detectedAt         DateTime                @default(now())
+  issue             SupportIssue           @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  teamsMessageId    String
+  teamsMessage      TeamsMessage           @relation(fields: [teamsMessageId], references: [id], onDelete: Cascade)
+  matchedRuleId     String?
+  matchedRule       TeamsResolutionRule?   @relation(fields: [matchedRuleId], references: [id], onDelete: SetNull)
+  matchedKeyword    String?
+  outcome           IssueResolutionOutcome
+  outboundMessageId String?                @unique
+  outboundMessage   OutboundMessage?       @relation(fields: [outboundMessageId], references: [id], onDelete: SetNull)
+  detectedAt        DateTime               @default(now())
 
   @@unique([issueId, teamsMessageId])
   @@index([issueId])
@@ -2681,7 +2708,6 @@ model TeamsIntegrationSettings {
   pollingIntervalMinutes     Int      @default(3)
   updatedAt                  DateTime @updatedAt
 }
-
 
 // ---------------------------------------------------------------------------
 // Softify Forge — product knowledge sourced from the ISPDIGITAL repository
@@ -2790,7 +2816,6 @@ enum ForgeResearchStatus {
   FAILED
 }
 
-
 /// Singleton row (id is always the literal string "global").
 ///
 /// How this support team talks, distilled from the replies its executives actually wrote, and
@@ -2825,4 +2850,385 @@ model CommunicationStyleProfile {
   approvedBy    User?     @relation(fields: [approvedById], references: [id], onDelete: SetNull)
 
   updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Team Management / Workforce Operations
+// ---------------------------------------------------------------------------
+//
+// Three records, never one boolean. `DutyAssignment` is what was PLANNED, `TeamAttendanceDay` is
+// what actually HAPPENED, and `LeaveRequest` is what was APPROVED. Off-day duty, no-activity and
+// the leave-plus-activity conflict are all DERIVED by joining those three at read time. There is
+// deliberately no fourth "actual status" column anywhere: a stored derivation drifts away from its
+// own inputs the first time one of them is corrected, and then two screens disagree about the same
+// day with no way to tell which is right.
+
+enum DutyStatus {
+  /// Scheduled to work.
+  DUTY
+  /// Scheduled day off.
+  OFF
+  /// Covered by approved leave.
+  LEAVE
+  /// An organisation holiday.
+  HOLIDAY
+  /// Filling in for somebody else. Counted separately so the same person is not volunteered twice.
+  COVERAGE
+  /// Working beyond their normal schedule at the manager's request.
+  EXTRA_DUTY
+  /// Nobody has decided yet. Deliberately distinct from OFF — "not decided" and "decided to be
+  /// off" look identical on a rota and mean opposite things to whoever has to fill the gap.
+  UNASSIGNED
+}
+
+enum DutyAssignmentSource {
+  /// Materialised from the member's recurring weekly pattern.
+  WEEKLY_SCHEDULE
+  /// A manager set this date directly.
+  MANUAL
+  /// Created to fill a vacancy somebody else left.
+  COVERAGE
+  /// Written when leave was approved.
+  LEAVE
+  /// Written when a holiday was declared.
+  HOLIDAY
+  /// The other half of a shift change.
+  SHIFT_CHANGE
+}
+
+enum LeaveStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AttendanceSource {
+  /// Derived from real group messages. The default, and the only automatic source.
+  WHATSAPP_ACTIVITY
+  /// A manager recorded this by hand.
+  MANUAL
+}
+
+/// A manager's explicit verdict, which is the ONLY way a day becomes ABSENT.
+///
+/// Silence is never evidence of absence — somebody on the phone all day, or working in a group
+/// this account cannot see, produces no messages and has still worked. The system reports
+/// "no activity" and stops there; a person decides what that meant.
+enum AttendanceOverride {
+  /// Worked, despite no message evidence — field duty, phone support, a call-heavy day.
+  WORKED
+  /// Did not work. Only ever set by a human.
+  ABSENT
+  /// Away with the manager's knowledge, outside the leave workflow.
+  EXCUSED
+}
+
+/// A named shift somebody can be put on.
+///
+/// Times are minutes from LOCAL midnight rather than a timestamp or a "13:00" string: that makes
+/// them timezone-free, sortable, comparable for overlap, and able to cross midnight without a
+/// second column saying so — `endMinute <= startMinute` means the shift ends the following day.
+///
+/// The three shifts this ships with are SEED DATA, not business rules. Nothing anywhere may branch
+/// on the name "Morning" or on 10:00-19:00; the entire point is that an operator can add a night
+/// shift, a weekend shift or a 09:00-18:00 from the UI without a code change.
+model ShiftTemplate {
+  id          String @id @default(cuid())
+  name        String @unique
+  /// Minutes from local midnight, 0-1439.
+  startMinute Int
+  /// Minutes from local midnight. Less than or equal to `startMinute` means it ends the next day.
+  endMinute   Int
+
+  /// How many people this shift needs before it counts as covered. A floor, never a cap — a
+  /// manager may always assign more, and the gap report only ever complains about fewer.
+  ///
+  /// Measured against EFFECTIVE availability, never against a raw count of `DutyAssignment` rows.
+  /// Two people assigned to Morning with one of them on approved leave is one person available,
+  /// not two, and reporting it as covered is how a shift silently runs a man short. The assignment
+  /// row is deliberately preserved when leave is approved (it is the historical plan), so the
+  /// subtraction happens in the coverage query:
+  ///
+  ///   effectiveCoverage = assignments - unavailable (approved leave, and any other explicit
+  ///                                                  unavailable state)
+  ///   coverageGap       = max(0, requiredHeadcount - effectiveCoverage)
+  requiredHeadcount Int @default(1)
+
+  /// A `--chart-N` palette slot (1-6) so a shift is recognisable at a glance on the calendar
+  /// without reading its name. Identity, not state: status colours stay reserved for status.
+  colourSlot  Int?
+  description String?
+  isActive    Boolean @default(true)
+  /// Display order in the roster grid; ties broken by name.
+  position    Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  defaultForMembers InternalTeamMember[]
+  weeklyEntries     WeeklyScheduleEntry[]
+  dutyAssignments   DutyAssignment[]
+
+  @@index([isActive, position])
+}
+
+/// One member's recurring pattern for one weekday.
+///
+/// The ABSENCE of a row means "nobody has decided yet"; a row whose `shiftTemplateId` is null means
+/// "decided: this person is off that day". Collapsing those two would make an unfilled rota look
+/// like a fully-scheduled one, which is the single most dangerous thing a rota can do.
+///
+/// Weekday is 0=Sunday..6=Saturday, matching `getDhakaWeekRange`'s Sunday start — the regional
+/// Fri/Sat weekend convention already encoded in `SupportActivityCountingPeriod`.
+///
+/// This is a template for FUTURE dates only. It never rewrites a `DutyAssignment` that already
+/// exists; see that model's own comment.
+model WeeklyScheduleEntry {
+  id           String             @id @default(cuid())
+  teamMemberId String
+  teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  /// 0 = Sunday .. 6 = Saturday.
+  weekday      Int
+
+  /// Null means an explicit day off.
+  shiftTemplateId String?
+  shiftTemplate   ShiftTemplate? @relation(fields: [shiftTemplateId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamMemberId, weekday])
+  @@index([shiftTemplateId])
+}
+
+/// What one person is actually doing on one specific date. THE AUTHORITY for that date.
+///
+/// A default shift is not an actual daily shift. The weekly pattern and the member's default are
+/// both only starting points; once a row exists here it wins, and changing either of those later
+/// must never reach back and alter it.
+///
+/// That is why the shift's NAME and TIMES are snapshotted onto this row alongside the template FK.
+/// Editing "Late" from 13:00-22:00 to 14:00-23:00 changes what Late means from now on; it must not
+/// silently rewrite what somebody worked last Tuesday. The FK stays for grouping and coverage
+/// counting; the snapshot is what is displayed and reasoned about. Same reasoning as
+/// `SupportPriorityPolicy` snapshotting SLA minutes onto each case at creation.
+///
+/// One row per member per date, enforced by the unique constraint — which is also how "the same
+/// person must not hold two overlapping shifts" is prevented at the database, rather than by an
+/// application check somebody can forget to call.
+///
+/// That constraint is load-bearing for the coverage flow, not incidental. A replacement candidate
+/// who already holds that date cannot be given a second row, so the workflow has to surface the
+/// clash and let the manager choose — never silently write over the candidate's existing shift,
+/// and never silently move a third person to make room. An upsert here would do exactly that, so
+/// the coverage path creates rather than upserts and lets the unique violation be the guard.
+model DutyAssignment {
+  id           String             @id @default(cuid())
+  teamMemberId String
+  teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  /// The Dhaka calendar day. A cross-midnight shift belongs to the day it STARTS.
+  dutyDate     DateTime           @db.Date
+  status       DutyStatus         @default(UNASSIGNED)
+
+  shiftTemplateId  String?
+  shiftTemplate    ShiftTemplate? @relation(fields: [shiftTemplateId], references: [id], onDelete: Restrict)
+  /// Snapshotted at assignment time so history survives a template edit. Null when off or on leave.
+  shiftName        String?
+  shiftStartMinute Int?
+  shiftEndMinute   Int?
+
+  source DutyAssignmentSource @default(MANUAL)
+  /// Why, in the manager's own words — "covering Bipul's leave", "operational requirement".
+  reason String?
+
+  assignedByUserId String?
+  assignedBy       User?   @relation(fields: [assignedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamMemberId, dutyDate])
+  /// "Who is on today", the most-run query in the module.
+  @@index([dutyDate, status])
+  /// Counting assigned headcount per shift per date, for the coverage-gap check.
+  @@index([shiftTemplateId, dutyDate])
+}
+
+/// Every meaningful roster change, kept forever.
+///
+/// An immutable record rather than an edit in place, so "Rakib moved from Late to Morning on the
+/// 12th, by Rudra, because of a staff shortage" survives every later change to that date. Modelled
+/// on `AiKnowledgeVersion`, this schema's only other true history table.
+///
+/// `changeGroupId` is what makes a shift change readable afterwards: moving Rakib and putting Bipul
+/// on the shift he vacated is ONE manager decision, and two unrelated rows would not say so.
+model DutyAssignmentChange {
+  id           String             @id @default(cuid())
+  teamMemberId String
+  teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  dutyDate     DateTime           @db.Date
+
+  previousStatus    DutyStatus?
+  previousShiftName String?
+  newStatus         DutyStatus
+  newShiftName      String?
+
+  reason        String?
+  /// Ties the halves of one operation together.
+  changeGroupId String?
+
+  changedByUserId String?
+  changedBy       User?   @relation(fields: [changedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([teamMemberId, dutyDate])
+  @@index([createdAt])
+  @@index([changeGroupId])
+}
+
+/// A kind of leave the organisation offers.
+///
+/// Entirely configurable. This schema states no legal policy of its own, because entitlement is a
+/// decision for the business and differs by country — inventing one here would be a claim the
+/// software is not entitled to make.
+model LeaveType {
+  id                  String  @id @default(cuid())
+  name                String  @unique
+  /// Null means no allowance is tracked for this type, which is different from an allowance of 0.
+  annualAllowanceDays Int?
+  isPaid              Boolean @default(true)
+  isActive            Boolean @default(true)
+  position            Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requests LeaveRequest[]
+
+  @@index([isActive, position])
+}
+
+/// One leave request, from asking to decided.
+///
+/// `requestedByUserId` exists from the first migration even though employees cannot submit one
+/// yet. The manager-entered path and a future self-service path are the same record; adding the
+/// column later would leave every existing row silently claiming the wrong person asked.
+model LeaveRequest {
+  id           String             @id @default(cuid())
+  teamMemberId String
+  teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  leaveTypeId  String
+  leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+
+  /// Inclusive Dhaka calendar dates.
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  /// Counted once when the request is created, so a holiday declared later cannot retroactively
+  /// change the size of an already-approved request.
+  dayCount  Int
+
+  reason String?
+  status LeaveStatus @default(REQUESTED)
+
+  requestedByUserId String?
+  requestedBy       User?   @relation("LeaveRequestedBy", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+
+  decidedByUserId String?
+  decidedBy       User?     @relation("LeaveDecidedBy", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+  decidedAt       DateTime?
+  managerNote     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teamMemberId, startDate])
+  @@index([status, startDate])
+}
+
+/// An organisation holiday. Never hardcoded — no national or religious calendar is assumed.
+model Holiday {
+  id          String   @id @default(cuid())
+  name        String
+  date        DateTime @unique @db.Date
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Evidence that somebody worked on a given local day, derived from the messages they really sent.
+///
+/// The rule: a genuine message from an active team member in ANY group demonstrates work activity
+/// for that Dhaka calendar day. Evidence, not a verdict — this table records what was observed and
+/// never on its own declares somebody present or absent.
+///
+/// Counts are RECOMPUTED from `Message` on every hook run, never incremented. Incrementing looks
+/// cheaper and is wrong: a replayed message, a worker retry or a reconnect would each add one
+/// again. Recomputing converges on the same answer however many times it runs SEQUENTIALLY.
+///
+/// Sequentially is not enough on its own, and this is the subtle part. Two messages arriving at
+/// once give two concurrent recomputes: A reads nine messages, B reads ten and writes ten, then A
+/// writes its stale nine. A lost update, and the count is quietly wrong with nothing to show for
+/// it. So the recompute takes a Postgres transaction-scoped advisory lock keyed on
+/// (teamMemberId, activityDate) and does the read and the write inside one transaction. The lock
+/// is held in the DATABASE, not in worker memory — two worker processes have no shared memory to
+/// lock in, and the whole point is that this stays correct across them.
+///
+/// A manual correction sits BESIDE the evidence in its own columns rather than overwriting it, so
+/// "the manager says he worked, and there were no messages" stays readable as exactly that.
+model TeamAttendanceDay {
+  id           String             @id @default(cuid())
+  teamMemberId String
+  teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  /// Dhaka calendar day.
+  activityDate DateTime           @db.Date
+
+  messageCount     Int       @default(0)
+  uniqueGroupCount Int       @default(0)
+  firstActivityAt  DateTime?
+  lastActivityAt   DateTime?
+
+  source AttendanceSource @default(WHATSAPP_ACTIVITY)
+
+  /// Set only when a manager overrides the evidence. Null means the evidence stands on its own.
+  override           AttendanceOverride?
+  overrideReason     String?
+  overriddenByUserId String?
+  overriddenBy       User?               @relation(fields: [overriddenByUserId], references: [id], onDelete: SetNull)
+  overriddenAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  groups TeamAttendanceGroup[]
+
+  @@unique([teamMemberId, activityDate])
+  @@index([activityDate])
+}
+
+/// Which groups a day's activity happened in, and how much in each.
+///
+/// One row per group per day rather than one per message: seven messages across two groups is two
+/// rows, not seven. The composite primary key is the upsert target, so a recompute rewrites these
+/// in place instead of accumulating duplicates.
+///
+/// `accountId` is kept because the same WhatsApp group is a separate row per account and that
+/// attribution has to survive — even though the attendance itself belongs to the person rather
+/// than to whichever number happened to receive them.
+model TeamAttendanceGroup {
+  attendanceDayId String
+  attendanceDay   TeamAttendanceDay @relation(fields: [attendanceDayId], references: [id], onDelete: Cascade)
+  groupId         String
+  group           WhatsAppGroup     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         WhatsAppAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  messageCount Int      @default(0)
+  firstAt      DateTime
+  lastAt       DateTime
+
+  @@id([attendanceDayId, groupId])
+  @@index([groupId])
 }
