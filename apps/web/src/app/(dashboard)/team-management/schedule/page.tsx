@@ -36,15 +36,19 @@ export default async function SchedulePage({
   const when = parsed ? parsed.start : new Date();
   const date = formatDhakaDateKey(when);
 
-  const [roster, coverage, candidates, weekly, templates, recentChanges] = await Promise.all([
+  const [roster, coverage, candidates, weekly, allTemplates, recentChanges] = await Promise.all([
     getRosterForDate(when),
     getCoverageForDate(when),
     getReplacementCandidates(when),
     getWeeklySchedule(),
+    // Active shifts PLUS any disabled one still referenced by this date's roster or the weekly
+    // pattern. Listing only the active ones looked tidier and quietly corrupted data: a `<select>`
+    // whose stored value matches no option falls back to its FIRST option, so a person on a
+    // since-disabled shift rendered as "No shift" — and saving that form, even to correct the
+    // reason, wrote the blank back and erased the shift they were actually on.
     prisma.shiftTemplate.findMany({
-      where: { isActive: true },
       orderBy: [{ position: "asc" }, { name: "asc" }],
-      select: { id: true, name: true },
+      select: { id: true, name: true, isActive: true },
     }),
     prisma.dutyAssignmentChange.findMany({
       where: { dutyDate: toDhakaDateOnly(when) },
@@ -53,6 +57,20 @@ export default async function SchedulePage({
       take: 20,
     }),
   ]);
+
+  // A disabled shift is offered only where it is already in use, and labelled so nobody picks it
+  // thinking it is current. `setDutyAssignment` is the real gate — it refuses a disabled template
+  // unless that assignment already carried it.
+  const referenced = new Set<string>([
+    ...roster.map((row) => row.shiftTemplateId).filter((id): id is string => Boolean(id)),
+    ...weekly.flatMap((row) => row.days.map((day) => day.shiftTemplateId)).filter((id): id is string => Boolean(id)),
+  ]);
+  const templates = allTemplates
+    .filter((template) => template.isActive || referenced.has(template.id))
+    .map((template) => ({
+      id: template.id,
+      name: template.isActive ? template.name : `${template.name} (disabled)`,
+    }));
 
   return (
     <div>

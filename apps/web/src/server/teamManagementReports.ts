@@ -1,6 +1,13 @@
 import { prisma } from "@support-automation/db";
 import type { AttendanceOverride, DutyStatus, LeaveStatus, Prisma } from "@prisma/client";
-import { getDhakaDayRange, getDhakaWeekday, toDhakaDateOnly } from "@support-automation/shared";
+import { getDhakaDayRange, toDhakaDateOnly } from "@support-automation/shared";
+import type { DerivedDutyState } from "@/lib/dutyState";
+
+// `DerivedDutyState` and its labels live in `lib/dutyState.ts` rather than here, because the badge
+// that renders them is reachable from a Client Component and importing a value out of this file
+// would pull Prisma into the client bundle. Re-exported as a type only, so existing importers are
+// unchanged and nothing can pick up a runtime value by mistake.
+export type { DerivedDutyState };
 
 /**
  * Server-component-only read helpers for Team Management. No `"use server"` directive — these are
@@ -15,41 +22,6 @@ import { getDhakaDayRange, getDhakaWeekday, toDhakaDateOnly } from "@support-aut
  * Deliberately does NOT duplicate `/support-activity/team`. That page owns who is online, engaged
  * time, groups covered and first-response stats. This owns SCHEDULE VERSUS REALITY.
  */
-
-/**
- * What a person's day actually amounts to, once the plan, the evidence and any approved leave are
- * read together.
- *
- * `NO_ACTIVITY` is not `ABSENT` and must never be renamed to it. Somebody on the phone all day, or
- * working in a group this account cannot see, produces no messages and has still worked — the
- * system reports what it observed and a human decides what it meant. `ABSENT` exists only as a
- * manager's explicit override.
- */
-export type DerivedDutyState =
-  | "WORKING"
-  | "NO_ACTIVITY"
-  | "OFF"
-  | "OFF_DAY_DUTY"
-  | "ON_LEAVE"
-  | "LEAVE_CONFLICT"
-  | "HOLIDAY"
-  | "UNASSIGNED"
-  | "ABSENT"
-  | "EXCUSED";
-
-/** The label and tone each state is rendered with. One definition, so no page invents its own. */
-export const DUTY_STATE_LABEL: Record<DerivedDutyState, string> = {
-  WORKING: "Working",
-  NO_ACTIVITY: "No activity recorded",
-  OFF: "Off",
-  OFF_DAY_DUTY: "Off-day duty",
-  ON_LEAVE: "On leave",
-  LEAVE_CONFLICT: "Active while on leave",
-  HOLIDAY: "Holiday",
-  UNASSIGNED: "Not scheduled",
-  ABSENT: "Marked absent",
-  EXCUSED: "Excused",
-};
 
 export interface RosterRow {
   teamMemberId: string;
@@ -260,14 +232,24 @@ export interface TeamOverview {
   changesToday: number;
 }
 
-/** The Today figures, each one a question somebody acts on rather than a number for its own sake. */
-export async function getTeamOverview(now: Date = new Date()): Promise<TeamOverview> {
+/**
+ * The Today figures, each one a question somebody acts on rather than a number for its own sake.
+ *
+ * `precomputed` exists because the one page that shows these also renders the roster and the
+ * coverage table underneath them. Fetching them here as well ran both multi-query readers twice —
+ * and `getApprovedLeaveOn` four times — for a single page load. The parameter is optional so the
+ * function still stands alone.
+ */
+export async function getTeamOverview(
+  now: Date = new Date(),
+  precomputed?: { roster: RosterRow[]; coverage: CoverageRow[] },
+): Promise<TeamOverview> {
   const dutyDate = toDhakaDateOnly(now);
   const { start, end } = getDhakaDayRange(now);
 
   const [roster, coverage, pendingLeaveRequests, changesToday] = await Promise.all([
-    getRosterForDate(now),
-    getCoverageForDate(now),
+    precomputed?.roster ?? getRosterForDate(now),
+    precomputed?.coverage ?? getCoverageForDate(now),
     prisma.leaveRequest.count({ where: { status: "REQUESTED" } }),
     prisma.dutyAssignmentChange.count({ where: { createdAt: { gte: start, lt: end } } }),
   ]);
@@ -449,6 +431,7 @@ export interface DutyHistoryRow {
   messageCount: number;
   uniqueGroupCount: number;
   override: AttendanceOverride | null;
+  overrideReason: string | null;
   derived: DerivedDutyState;
 }
 
@@ -505,6 +488,7 @@ export async function getDutyHistory(
       messageCount: evidence?.messageCount ?? 0,
       uniqueGroupCount: evidence?.uniqueGroupCount ?? 0,
       override: evidence?.override ?? null,
+      overrideReason: evidence?.overrideReason ?? null,
       derived: deriveDutyState({
         status: assignment.status,
         hasActivity: (evidence?.messageCount ?? 0) > 0,
@@ -587,9 +571,4 @@ export async function getRecentChanges(take = 50): Promise<ChangeHistoryRow[]> {
     changeGroupId: row.changeGroupId,
     createdAt: row.createdAt,
   }));
-}
-
-/** Today's weekday in Dhaka, for pre-selecting the weekly grid. */
-export function todayWeekday(now: Date = new Date()): number {
-  return getDhakaWeekday(now);
 }

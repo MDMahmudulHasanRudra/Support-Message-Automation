@@ -40,11 +40,10 @@ export default async function TeamManagementPage() {
   await requirePermission(session, "team_management.view");
 
   const now = new Date();
-  const [overview, roster, coverage] = await Promise.all([
-    getTeamOverview(now),
-    getRosterForDate(now),
-    getCoverageForDate(now),
-  ]);
+  // Roster and coverage are read once and handed to the summary, which would otherwise re-run both
+  // of them — the tiles and the tables below are two views of the same fetch, not two questions.
+  const [roster, coverage] = await Promise.all([getRosterForDate(now), getCoverageForDate(now)]);
+  const overview = await getTeamOverview(now, { roster, coverage });
 
   const today = formatDhakaDateKey(now);
   const gaps = coverage.filter((row) => row.gap > 0);

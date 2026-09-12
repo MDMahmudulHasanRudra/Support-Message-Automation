@@ -173,12 +173,17 @@ export async function runAutomationStage(
       console.error("[support-activity] failed to record support activity", err);
     }
 
-    // Team Management's attendance evidence. Same fire-and-forget shape as the two hooks above: a
-    // failure to record that somebody worked must never stop a customer's message being processed.
+    // Team Management's attendance evidence. Same shape as the two hooks above — awaited, with its
+    // own try/catch, and swallowed: a failure to record that somebody worked must never stop a
+    // customer's message being processed.
     //
     // Idempotent per member-day rather than per message, which is what lets it sit on all three
-    // paths — the live one, the catch-up sweep, and a stranded-message re-run — without any of them
-    // double-counting. It recomputes rather than increments; see attendance.ts.
+    // ingestion paths — the live one, the catch-up sweep, and a stranded-message re-run — without
+    // any of them double-counting. It recomputes rather than increments; see attendance.ts.
+    //
+    // It differs from its neighbours in one way worth knowing: it takes a Postgres advisory lock, so
+    // it genuinely serialises. The key is (member, Dhaka day), so only the SAME person's messages on
+    // the SAME day ever wait on each other — two people messaging at once never contend.
     try {
       await recordTeamAttendance({
         groupId: group?.id ?? null,

@@ -119,6 +119,15 @@ export async function saveShiftTemplate(formData: FormData): Promise<TeamManagem
       // Only the template is updated. Existing `DutyAssignment` rows keep their snapshot, which is
       // the entire point of snapshotting — see the model comment.
       await prisma.shiftTemplate.update({ where: { id }, data });
+      await logSystemEvent("INFO", "team-management", "SHIFT_TEMPLATE_UPDATED", {
+        userId: auth.userId,
+        shiftTemplateId: id,
+        name,
+        startMinute,
+        endMinute,
+        requiredHeadcount,
+        isActive,
+      });
     } else {
       const created = await prisma.shiftTemplate.create({ data, select: { id: true } });
       await logSystemEvent("INFO", "team-management", "SHIFT_TEMPLATE_CREATED", {
@@ -154,6 +163,10 @@ export async function setShiftTemplateActive(id: string, isActive: boolean): Pro
   if (existing.isActive === isActive) return { unchanged: 1 };
 
   await prisma.shiftTemplate.update({ where: { id }, data: { isActive } });
+  await logSystemEvent("INFO", "team-management", isActive ? "SHIFT_TEMPLATE_ENABLED" : "SHIFT_TEMPLATE_DISABLED", {
+    userId: auth.userId,
+    shiftTemplateId: id,
+  });
   revalidateModule();
   return { updated: 1 };
 }
@@ -224,11 +237,32 @@ export async function setWeeklyScheduleEntry(
 
 // ---------------------------------------------------------------------- daily roster (phase 3)
 
-/** The snapshot a `DutyAssignment` carries, resolved from a template id. */
-async function resolveShiftSnapshot(shiftTemplateId: string | null) {
-  if (!shiftTemplateId) return { shiftTemplateId: null, shiftName: null, shiftStartMinute: null, shiftEndMinute: null };
+const EMPTY_SHIFT = { shiftTemplateId: null, shiftName: null, shiftStartMinute: null, shiftEndMinute: null };
+
+type ShiftSnapshot = typeof EMPTY_SHIFT | {
+  shiftTemplateId: string;
+  shiftName: string;
+  shiftStartMinute: number;
+  shiftEndMinute: number;
+};
+
+/**
+ * The snapshot a `DutyAssignment` carries, resolved from a template id.
+ *
+ * `null` means "refuse this" and the caller turns it into a message. A DISABLED template is refused
+ * unless it is the one already on this assignment: keeping it is how a historical row survives
+ * somebody retiring a shift, while newly assigning one would put people on a shift the business has
+ * withdrawn. Both halves matter — refusing outright would make a disabled shift impossible to edit
+ * the reason on, and allowing it outright would let a stale tab roster somebody onto it tomorrow.
+ */
+async function resolveShiftSnapshot(
+  shiftTemplateId: string | null,
+  allowInactiveId: string | null = null,
+): Promise<ShiftSnapshot | null> {
+  if (!shiftTemplateId) return EMPTY_SHIFT;
   const template = await prisma.shiftTemplate.findUnique({ where: { id: shiftTemplateId } });
   if (!template) return null;
+  if (!template.isActive && template.id !== allowInactiveId) return null;
   return {
     shiftTemplateId: template.id,
     shiftName: template.name,
@@ -236,6 +270,9 @@ async function resolveShiftSnapshot(shiftTemplateId: string | null) {
     shiftEndMinute: template.endMinute,
   };
 }
+
+/** One message for both refusal reasons, since the operator's next move is the same either way. */
+const SHIFT_UNAVAILABLE = "That shift is no longer available. Enable it on the Shifts page, or pick another.";
 
 /** Writes the immutable before/after row. Every roster write goes through this — no exceptions. */
 async function recordChange(
@@ -295,10 +332,21 @@ export async function setDutyAssignment(formData: FormData): Promise<TeamManagem
   }
   const status = statusValue as DutyStatus;
 
+  // Read what they hold first: it decides both the history row and whether a now-disabled shift
+  // they are ALREADY on may be kept. Read outside the transaction only to resolve the snapshot; the
+  // write below re-reads it inside, so the history row can never describe a stale "before".
+  const held = await prisma.dutyAssignment.findUnique({
+    where: { teamMemberId_dutyDate: { teamMemberId, dutyDate } },
+    select: { shiftTemplateId: true },
+  });
+
   // Only a working status carries a shift. OFF with a shift attached would read as both.
   const wantsShift = status === "DUTY" || status === "COVERAGE" || status === "EXTRA_DUTY";
-  const snapshot = await resolveShiftSnapshot(wantsShift ? text(formData, "shiftTemplateId") : null);
-  if (!snapshot) return { error: "That shift no longer exists." };
+  const snapshot = await resolveShiftSnapshot(
+    wantsShift ? text(formData, "shiftTemplateId") : null,
+    held?.shiftTemplateId ?? null,
+  );
+  if (!snapshot) return { error: SHIFT_UNAVAILABLE };
   if (wantsShift && !snapshot.shiftTemplateId) return { error: "Pick which shift they are working." };
 
   const reason = text(formData, "reason");
@@ -355,62 +403,87 @@ export async function materialiseRosterForDate(dateValue: string): Promise<TeamM
   const dutyDate = toDhakaDateOnly(day.start);
   const weekday = dutyDate.getUTCDay(); // toDhakaDateOnly already shifted; this is the Dhaka weekday
 
-  const [members, entries, existing, holiday] = await Promise.all([
+  const [members, entries, existing, holiday, templates] = await Promise.all([
     prisma.internalTeamMember.findMany({ where: { status: "ACTIVE" }, select: { id: true } }),
     prisma.weeklyScheduleEntry.findMany({ where: { weekday } }),
     prisma.dutyAssignment.findMany({ where: { dutyDate }, select: { teamMemberId: true } }),
     prisma.holiday.findUnique({ where: { date: dutyDate }, select: { name: true } }),
+    // Fetched once rather than per member. This used to resolve the snapshot inside the loop, which
+    // was one extra round trip for every person on the roster to re-read the same handful of rows.
+    prisma.shiftTemplate.findMany({ where: { isActive: true } }),
   ]);
 
   const entryByMember = new Map(entries.map((entry) => [entry.teamMemberId, entry]));
   const alreadyAssigned = new Set(existing.map((row) => row.teamMemberId));
+  const templateById = new Map(templates.map((template) => [template.id, template]));
 
   let updated = 0;
   let unchanged = 0;
 
   for (const member of members) {
     if (alreadyAssigned.has(member.id)) {
-      unchanged += 1;
+      unchanged += 1; // a date that already has a row is that row's business, not this button's
       continue;
     }
     const entry = entryByMember.get(member.id);
     if (!entry) {
-      unchanged += 1; // no pattern — deliberately left undecided
+      unchanged += 1; // no pattern — deliberately left undecided rather than written as OFF
       continue;
     }
 
     // A declared holiday outranks the pattern, and says so on the row rather than looking like an
     // ordinary day off somebody chose.
-    const status: DutyStatus = holiday ? "HOLIDAY" : entry.shiftTemplateId ? "DUTY" : "OFF";
-    const snapshot = holiday || !entry.shiftTemplateId ? null : await resolveShiftSnapshot(entry.shiftTemplateId);
-    if (snapshot === null && !holiday && entry.shiftTemplateId) continue; // template vanished mid-loop
+    const holidayName = holiday?.name ?? null;
+    const template = entry.shiftTemplateId ? templateById.get(entry.shiftTemplateId) : undefined;
 
-    await prisma.$transaction(async (tx) => {
-      await tx.dutyAssignment.create({
-        data: {
+    // Their pattern names a shift that has since been disabled. Skipped rather than assigned: this
+    // is a NEW row, and rostering somebody onto a shift the business has withdrawn is worse than
+    // leaving the day visibly undecided for a human to settle.
+    if (entry.shiftTemplateId && !template && !holidayName) {
+      unchanged += 1;
+      continue;
+    }
+
+    const status: DutyStatus = holidayName ? "HOLIDAY" : template ? "DUTY" : "OFF";
+    const snapshot = holidayName || !template ? null : template;
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.dutyAssignment.create({
+          data: {
+            teamMemberId: member.id,
+            dutyDate,
+            status,
+            shiftTemplateId: snapshot?.id ?? null,
+            shiftName: snapshot?.name ?? null,
+            shiftStartMinute: snapshot?.startMinute ?? null,
+            shiftEndMinute: snapshot?.endMinute ?? null,
+            source: "WEEKLY_SCHEDULE",
+            reason: holidayName,
+            assignedByUserId: auth.userId,
+          },
+        });
+        await recordChange(tx, {
           teamMemberId: member.id,
           dutyDate,
-          status,
-          shiftTemplateId: snapshot?.shiftTemplateId ?? null,
-          shiftName: snapshot?.shiftName ?? null,
-          shiftStartMinute: snapshot?.shiftStartMinute ?? null,
-          shiftEndMinute: snapshot?.shiftEndMinute ?? null,
-          source: "WEEKLY_SCHEDULE",
-          reason: holiday ? holiday.name : null,
-          assignedByUserId: auth.userId,
-        },
+          previous: null,
+          newStatus: status,
+          newShiftName: snapshot?.name ?? null,
+          reason: holidayName ?? "From the weekly schedule",
+          changedByUserId: auth.userId,
+        });
       });
-      await recordChange(tx, {
-        teamMemberId: member.id,
-        dutyDate,
-        previous: null,
-        newStatus: status,
-        newShiftName: snapshot?.shiftName ?? null,
-        reason: holiday ? holiday.name : "From the weekly schedule",
-        changedByUserId: auth.userId,
-      });
-    });
-    updated += 1;
+      updated += 1;
+    } catch (err) {
+      // Somebody else assigned this person between the read above and this write. The unique
+      // constraint is the guard, and their row wins — this button only ever fills blanks, so a
+      // collision is "already done", not a failure worth abandoning the rest of the roster for.
+      if (typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002") {
+        unchanged += 1;
+        continue;
+      }
+      throw err;
+    }
   }
 
   revalidateModule();
@@ -547,17 +620,33 @@ export async function cancelLeaveRequest(requestId: string): Promise<TeamManagem
   const auth = await requireManage();
   if ("error" in auth) return auth;
 
-  const request = await prisma.leaveRequest.findUnique({ where: { id: requestId }, select: { status: true } });
+  const request = await prisma.leaveRequest.findUnique({
+    where: { id: requestId },
+    select: { status: true, managerNote: true },
+  });
   if (!request) return { error: "That request no longer exists." };
   if (request.status === "CANCELLED") return { unchanged: 1 };
+  if (request.status === "REJECTED") return { error: "That request was already rejected." };
 
   // Cancelling does NOT put the duty rows back. Once leave was approved a manager very likely
   // arranged cover, and silently restoring the original shift would double-staff the day and
   // contradict the coverage row somebody else is now holding. The roster is edited deliberately.
+  //
+  // `decidedByUserId` / `decidedAt` are deliberately NOT overwritten. They record who APPROVED the
+  // leave, which is the decision the roster was changed on the strength of; overwriting them with
+  // the canceller would erase that and leave a cancelled request claiming it was decided by
+  // somebody who only undid it. The cancellation is appended to the note instead, so both are
+  // readable without a schema change.
+  const note = [request.managerNote, `Cancelled by ${auth.userId} on ${new Date().toISOString().slice(0, 10)}.`]
+    .filter(Boolean)
+    .join(" ");
+
   await prisma.leaveRequest.update({
     where: { id: requestId },
-    data: { status: "CANCELLED", decidedByUserId: auth.userId, decidedAt: new Date() },
+    data: { status: "CANCELLED", managerNote: note },
   });
+
+  await logSystemEvent("INFO", "team-management", "LEAVE_CANCELLED", { userId: auth.userId, requestId });
 
   revalidateModule();
   return {
@@ -683,8 +772,10 @@ export async function applyShiftChange(input: {
   if (!day) return { error: "That is not a valid date." };
   const dutyDate = toDhakaDateOnly(day.start);
 
+  // No `allowInactiveId`: moving somebody ONTO a shift is a new assignment, so a withdrawn shift is
+  // refused here even though the same helper preserves one already held.
   const snapshot = await resolveShiftSnapshot(input.newShiftTemplateId);
-  if (!snapshot?.shiftTemplateId) return { error: "That shift no longer exists." };
+  if (!snapshot?.shiftTemplateId) return { error: SHIFT_UNAVAILABLE };
 
   const changeGroupId = randomUUID();
 
@@ -737,8 +828,11 @@ export async function applyShiftChange(input: {
 
       if (!input.replacementTeamMemberId || !previous?.shiftTemplateId) return;
 
-      const vacated = await resolveShiftSnapshot(previous.shiftTemplateId);
-      if (!vacated) return;
+      // The vacated shift is passed as its own `allowInactiveId`. Without that, covering a shift
+      // that has since been disabled resolved to null and the replacement was SILENTLY not
+      // assigned — the manager would see "shift change recorded" with nobody actually covering.
+      const vacated = await resolveShiftSnapshot(previous.shiftTemplateId, previous.shiftTemplateId);
+      if (!vacated?.shiftTemplateId) return;
 
       await tx.dutyAssignment.create({
         data: {
@@ -764,10 +858,15 @@ export async function applyShiftChange(input: {
       });
     });
   } catch (err) {
-    if (typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002") {
+    // The only create in that transaction is the replacement's, so a unique violation can only mean
+    // the person chosen to cover already holds that date. Guarded on `replacementTeamMemberId`
+    // anyway: without it, a P2002 from anywhere else would be reported as a candidate clash and
+    // send the operator looking for a conflict that does not exist.
+    const code = typeof err === "object" && err !== null ? (err as { code?: string }).code : undefined;
+    if (code === "P2002" && input.replacementTeamMemberId) {
       const held = await prisma.dutyAssignment.findUnique({
-        where: { teamMemberId_dutyDate: { teamMemberId: input.replacementTeamMemberId ?? "", dutyDate } },
-        select: { shiftName: true, status: true },
+        where: { teamMemberId_dutyDate: { teamMemberId: input.replacementTeamMemberId, dutyDate } },
+        select: { shiftName: true },
       });
       return {
         error: held?.shiftName
@@ -896,7 +995,8 @@ export async function deleteHoliday(id: string): Promise<TeamManagementResult> {
   const auth = await requireManage();
   if ("error" in auth) return auth;
 
-  await prisma.holiday.delete({ where: { id } });
+  // Deleted by somebody else already is the expected outcome, not an error worth an error boundary.
+  const removed = await prisma.holiday.deleteMany({ where: { id } });
   revalidateModule();
-  return { updated: 1 };
+  return removed.count > 0 ? { updated: 1 } : { unchanged: 1 };
 }

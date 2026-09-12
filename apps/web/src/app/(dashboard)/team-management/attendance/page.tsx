@@ -134,7 +134,7 @@ export default async function AttendancePage({
                           memberName={row.memberName}
                           date={formatDhakaDateKey(row.dutyDate)}
                           current={row.override}
-                          currentReason={null}
+                          currentReason={row.overrideReason}
                         />
                       </div>
                     </Td>

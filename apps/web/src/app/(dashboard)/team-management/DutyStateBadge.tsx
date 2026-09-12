@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui";
 import type { BadgeColor } from "@/components/ui";
-import { DUTY_STATE_LABEL, type DerivedDutyState } from "@/server/teamManagementReports";
+import { DUTY_STATE_LABEL, type DerivedDutyState } from "@/lib/dutyState";
 
 /**
  * One derived state, rendered the same way on every page in this module.
