@@ -1544,11 +1544,16 @@ from DRAFT and never cleared by a later unpublish/archive/re-publish, the same w
 `AiFallbackDecision.aiProviderId` is a snapshot rather than a live link: they are a record of who
 published it and when, and taking it down again must not erase that fact.
 
-**No historical release records were seeded.** Audited before writing anything: zero git tags,
-every `package.json` still at the scaffolded `0.1.0`, no `CHANGELOG.md`, and no commit in this
-repo's history uses a version-like marker. Inventing "v1.x" entries with guessed dates would have
-been fabricating the one thing this feature exists to record accurately — the table ships empty,
-for an admin to fill in from what they actually know shipped when.
+**No historical release/version scheme exists in this repository** — zero git tags, every
+`package.json` still at the scaffolded `0.1.0`, no `CHANGELOG.md`, no commit anywhere in this
+repo's history uses a version-like marker. `prisma/seedReleaseNotes.ts` is a one-time, hand-run
+backfill (never wired into the routine `pnpm db:seed`) that reconstructs 14 historical releases
+(v0.1.0 → v0.14.0, Aug 11 – Sep 13) from real, dated commits — every release date and every bullet
+traces to an actual commit; only the version NUMBERS themselves are invented, since nothing real
+to derive them from exists. Purely operational commits (merges, the GitLab history-join, deploy
+status updates, planning-only commits describing no shipped change) are deliberately excluded.
+Idempotent by `version` and safe to re-run — it only creates a release that doesn't already exist,
+never overwrites one an admin has since edited.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

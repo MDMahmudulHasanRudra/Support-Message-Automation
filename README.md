@@ -14,9 +14,10 @@ module, field, and behavior in the app.
 **Most recent additions:**
 
 - **Release Notes.** A permanent, publishable changelog — draft, publish, unpublish, archive, with
-  a full edit history kept for anything already public. No historical entries were invented; the
-  table ships empty because nothing in this repo's git history or `package.json` reliably names a
-  real past release.
+  a full edit history kept for anything already public. Backfilled with 14 historical releases
+  (`packages/db/prisma/seedReleaseNotes.ts`, run once by hand) reconstructed from real, dated
+  commits — no version scheme exists in this repo, so only the version numbers are invented; every
+  date and every change described traces to an actual commit.
 - **Team Management.** Shifts, a weekly pattern, a daily roster, leave, and coverage that counts
   who can *actually* work — approving leave keeps the duty row and subtracts the person, so a
   shift reads as "short by 1" rather than quietly looking empty. Attendance is derived from the
