@@ -1,28 +1,39 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   Design tokens — Precision Enterprise Console palette
+   Design tokens — "Midnight Indigo", the product's enterprise visual identity
    ----------------------------------------------------------------------------
-   Redesigned onto a fixed four-role palette (Primary #0F172A navy-ink,
-   Secondary #4F46E5 indigo, Tertiary #0EA5E9 sky, Neutral #64748B slate),
-   Inter for headline/body, JetBrains Mono for labels and tabular data.
+   A fixed budget, not a vibe: 80% neutral surfaces, 15% Indigo (the brand /
+   interaction hue), 5% Cyan (a restrained secondary accent), with status color
+   (success/warning/danger) kept fully independent of both. Every token below
+   is labelled with which of those four buckets it spends.
 
-   The mapping is deliberate, not literal: the palette names a BRAND system,
-   this app's tokens name a JOB each color does, and those are not the same
-   axis. Primary navy anchors ink/text/solid actions — the same "ink, not a
-   brand hue, in ordinary chrome" discipline this console already had, just
-   re-tinted from zinc to slate-navy. Secondary indigo is reserved for the one
-   thing that should read as unmistakably THIS product's accent — the active
-   nav rail, focus rings, links, and one chart identity slot — never diluted
-   into routine buttons or status color. Tertiary sky becomes the "info"
-   status hue outright, since the two were already semantically adjacent.
-   Neutral slate replaces the old zinc family wholesale — the single biggest
-   lever, since almost every surface in the app is neutral chrome.
+   NEUTRAL (80%) — ink, borders, surfaces. Slate family, unchanged in spirit
+   from the console's original "ink, not a brand hue, in ordinary chrome"
+   discipline. Almost every pixel in the app is one of these tokens.
 
-   Status colors (success/warning/danger) and the six-slot chart palette are
-   UNCHANGED: both were already validated (accessible contrast, CVD-safe
-   chart pairs) and neither is a "brand" decision — status color's whole job
-   is to mean the same thing everywhere, on any theme.
+   INDIGO — brand/interaction (15%): the active-nav rail, focus rings, links,
+   primary buttons' hover/active states, and one chart identity slot. This is
+   the hue that should read as unmistakably THIS product whenever it appears —
+   which is why it is spent on interaction and identity, never on routine
+   chrome or status.
+
+   CYAN — secondary accent (5%, `--color-secondary*`): a deliberately smaller,
+   cooler accent for the handful of places that want a second, quieter signal
+   distinct from Indigo's "this is the brand/primary action" role — a
+   secondary badge tone, a secondary button variant, one highlighted "notable
+   but not urgent" metric. It is a genuinely separate token family from
+   `--color-info` (below): info is a STATUS color (something the system is
+   telling you), Cyan-secondary is a BRAND color (a second accent voice) — the
+   two happen to sit in a similar hue family, which is exactly why they must
+   stay distinct tokens rather than one color asked to mean two things.
+
+   STATUS (success/warning/danger/info) — UNCHANGED in role and, other than a
+   documentation pass, in value: already validated for accessible contrast,
+   and a status color's whole job is to mean the same thing everywhere,
+   regardless of brand palette. The six-slot chart palette is likewise
+   unchanged — already validated for CVD-safe separation, and a rebrand is not
+   grounds to re-risk that pass.
    ========================================================================== */
 
 :root {
@@ -59,6 +70,16 @@
   --color-accent-bg: #eef2ff;
   --color-accent-border: #c7d2fe;
   --color-accent-fg: #4338ca;
+
+  /* Secondary accent — Cyan, the deliberately smaller 5% voice. A distinct
+     token family from `--color-info` just below even though both sit in a
+     blue-green family: this one is a BRAND accent (secondary buttons, a
+     secondary badge tone, one "notable metric" highlight), not a status. */
+  --color-secondary: #0891b2;
+  --color-secondary-hover: #0e7490;
+  --color-secondary-bg: #ecfeff;
+  --color-secondary-border: #a5f3fc;
+  --color-secondary-fg: #0e7490;
 
   /* Semantic status scale — used identically everywhere, unchanged by the
      rebrand: a status color's job is to mean the same thing on every theme. */
@@ -188,6 +209,13 @@
     --color-accent-border: #3730a3;
     --color-accent-fg: #a5b4fc;
 
+    /* Secondary Cyan, lifted the same way as Accent for the same reason. */
+    --color-secondary: #22d3ee;
+    --color-secondary-hover: #67e8f9;
+    --color-secondary-bg: #083344;
+    --color-secondary-border: #155e75;
+    --color-secondary-fg: #67e8f9;
+
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.45), 0 1px 6px -2px rgb(0 0 0 / 0.4);
     --shadow-md: 0 2px 4px -2px rgb(0 0 0 / 0.5), 0 8px 20px -6px rgb(0 0 0 / 0.55);
@@ -260,6 +288,12 @@
   --color-accent-bg: #1e1b4b;
   --color-accent-border: #3730a3;
   --color-accent-fg: #a5b4fc;
+
+  --color-secondary: #22d3ee;
+  --color-secondary-hover: #67e8f9;
+  --color-secondary-bg: #083344;
+  --color-secondary-border: #155e75;
+  --color-secondary-fg: #67e8f9;
 
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.45), 0 1px 6px -2px rgb(0 0 0 / 0.4);

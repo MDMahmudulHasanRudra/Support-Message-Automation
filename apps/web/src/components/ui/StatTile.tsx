@@ -2,13 +2,16 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 
-type StatTone = "neutral" | "success" | "warning" | "danger";
+type StatTone = "neutral" | "success" | "warning" | "danger" | "accent";
 
 const VALUE_STYLES: Record<StatTone, string> = {
   neutral: "text-[color:var(--color-foreground)]",
   success: "text-[color:var(--color-success-fg)]",
   warning: "text-[color:var(--color-warning-fg)]",
   danger: "text-[color:var(--color-danger-fg)]",
+  // The brand's Cyan secondary, not a status — for a number worth noticing without implying
+  // something is wrong or resolved (e.g. active rule count). Spent sparingly, by design.
+  accent: "text-[color:var(--color-secondary-fg)]",
 };
 
 // A tone is a signal, so it gets a visible edge marker rather than only a colored
@@ -18,6 +21,7 @@ const RAIL_STYLES: Record<StatTone, string> = {
   success: "bg-[var(--color-success)]",
   warning: "bg-[var(--color-warning)]",
   danger: "bg-[var(--color-danger)]",
+  accent: "bg-[var(--color-secondary)]",
 };
 
 /**

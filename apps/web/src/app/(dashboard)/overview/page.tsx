@@ -308,7 +308,7 @@ export default async function OverviewPage() {
       />
 
       {issues.length > 0 ? (
-        <div className="mb-7">
+        <div className="mb-5">
           <Alert
             tone={systemStatus === "DOWN" ? "danger" : "warning"}
             title={issues.length === 1 ? "1 thing needs attention" : `${issues.length} things need attention`}
@@ -327,7 +327,7 @@ export default async function OverviewPage() {
         </div>
       ) : null}
 
-      <div className="stagger-children mb-7 grid grid-cols-2 gap-3.5 sm:grid-cols-4 xl:grid-cols-8">
+      <div className="stagger-children mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
         {/* Each href lands on the rows this number counted, already filtered. Where no page
             lists those rows, the tile stays inert — see the outbound queue below. */}
         <StatTile
@@ -359,7 +359,12 @@ export default async function OverviewPage() {
           value={automationOutbound.supportRequiredLast24h}
           tone={automationOutbound.supportRequiredLast24h > 0 ? "warning" : "neutral"}
         />
-        <StatTile href="/rules?status=ACTIVE" label="Active rules" value={automationOutbound.activeRuleCount} />
+        <StatTile
+          href="/rules?status=ACTIVE"
+          label="Active rules"
+          value={automationOutbound.activeRuleCount}
+          tone="accent"
+        />
         {/* Deliberately not a link. This counts every unsettled outbound row — auto-replies,
             manual sends and broadcast rows alike — and no page lists that queue in full. The
             closest candidate, /messages?autoReplyStatus=PENDING, covers only the auto-reply
@@ -391,12 +396,12 @@ export default async function OverviewPage() {
         />
       </div>
 
-      <section className="mb-7" aria-label="Metrics">
+      <section className="mb-5" aria-label="Metrics">
         <SectionHeader
           title="Metrics"
           description="Live aggregates computed per request — every figure links back to a page where you can act on it."
         />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-3 lg:grid-flow-row-dense">
           <ChartCard
             className="lg:col-span-2"
             href="/messages?within=14d"
@@ -540,7 +545,7 @@ export default async function OverviewPage() {
             />
           </ChartCard>
 
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3.5">
             <ChartCard
               href="/support-activity/team"
               title="Busiest executives"
@@ -585,7 +590,7 @@ export default async function OverviewPage() {
         </div>
       </section>
 
-      <div className="stagger-children mb-7 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      <div className="stagger-children mb-5 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         <DashboardModuleCard
           title="Accounts & Routing"
           icon={Smartphone}
