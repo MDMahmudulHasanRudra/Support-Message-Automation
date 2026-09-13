@@ -59,6 +59,14 @@ export interface NavLink {
 export interface NavGroup {
   label: string;
   links: NavLink[];
+  /**
+   * The coarser section this group sits under in the sidebar — an added VISUAL tier, not a
+   * restructure. Every existing group keeps its own label, its own links, and its own position;
+   * this only draws a section header above a run of adjacent groups so the ~75 routes read as a
+   * handful of departments rather than one long undifferentiated list. `resolveNavLocation` and
+   * the command palette ignore it entirely -- they already work at the group/link level.
+   */
+  section: "Support Operations" | "Automation & AI" | "Channels & Integrations" | "System";
 }
 
 // The one always-visible landing page — pinned above the scrollable groups below rather than
@@ -70,6 +78,7 @@ export const OVERVIEW_LINK: NavLink = { href: "/overview", label: "Overview", ic
 // analytical modules and system admin — checked rarely — last.
 export const NAV_GROUPS: NavGroup[] = [
   {
+    section: "Support Operations",
     label: "Messages",
     links: [
       { href: "/chat", label: "WhatsApp Chat", icon: MessageCircleMore },
@@ -79,6 +88,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "Support Operations",
     label: "Escalations",
     links: [
       { href: "/support-escalation", label: "Active Cases", icon: ShieldAlert },
@@ -86,6 +96,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "Support Operations",
     label: "Support Activity",
     links: [
       { href: "/support-activity/team", label: "Team Performance", icon: Users },
@@ -98,6 +109,7 @@ export const NAV_GROUPS: NavGroup[] = [
     // After Support Activity, before Teams Integration: this group is checked daily (who is on,
     // who is short) which is what `navigation.ts` orders by. Internal Team Members deliberately
     // stays under WhatsApp — one roster, linked to from here, never a second copy of it.
+    section: "Support Operations",
     label: "Team Management",
     links: [
       { href: "/team-management", label: "Today", icon: Users },
@@ -109,6 +121,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "Support Operations",
     label: "Teams Integration",
     links: [
       { href: "/issues", label: "Issues", icon: Link2 },
@@ -120,6 +133,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "Channels & Integrations",
     label: "WhatsApp",
     links: [
       { href: "/accounts", label: "WhatsApp Accounts", icon: Smartphone },
@@ -129,6 +143,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "Automation & AI",
     label: "Automation",
     links: [
       { href: "/rules", label: "Automation Rules", icon: ListChecks },
@@ -137,6 +152,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "Channels & Integrations",
     label: "Bulk Messaging",
     links: [
       { href: "/group-message-sender", label: "Group Message Sender", icon: Send },
@@ -147,6 +163,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "Automation & AI",
     label: "AI Learning",
     links: [
       { href: "/ai-learning", label: "Overview", icon: Sparkles },
@@ -162,6 +179,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "Automation & AI",
     label: "Conversation Learning",
     links: [
       { href: "/conversation-learning", label: "Overview", icon: Waypoints },
@@ -172,6 +190,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "System",
     label: "System",
     links: [
       { href: "/notifications", label: "Notifications", icon: Bell },
@@ -182,6 +201,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    section: "System",
     label: "Users & Permissions",
     links: [
       { href: "/users", label: "App Users", icon: UserCog },
@@ -193,6 +213,7 @@ export const NAV_GROUPS: NavGroup[] = [
     // Last, deliberately: this is a changelog, not an operational surface — nobody needs it in
     // front of them daily the way Messages or Team Management are, so it sits after every group
     // that is checked routinely rather than displacing one of them.
+    section: "System",
     label: "Release Notes",
     links: [
       { href: "/release-notes", label: "Release Notes", icon: Megaphone },

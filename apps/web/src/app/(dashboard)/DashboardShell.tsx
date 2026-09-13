@@ -1,12 +1,84 @@
 "use client";
 
-import { ChevronRight, Menu, Search } from "lucide-react";
+import { ChevronRight, LogOut, Menu, Search } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { CommandPalette } from "./CommandPalette";
 import { FloatingAiChat } from "./FloatingAiChat";
 import { resolveNavLocation } from "./navigation";
 import { Sidebar } from "./Sidebar";
+
+/** First one or two letters of a username, for the header identity chip — "rudra" → "RU". */
+function userInitials(username: string): string {
+  const letters = username.replace(/[^\p{L}\p{N}]/gu, "");
+  return (letters.slice(0, 2) || "?").toUpperCase();
+}
+
+/**
+ * The header's user/profile menu. Every capability here already exists in the sidebar footer
+ * (identity, sign out) — this is the ERP-conventional PLACE for it, not a second implementation:
+ * it calls the same `onLogout` action DashboardShell already holds, rather than a new one.
+ */
+function UserMenu({ username, onLogout }: { username: string; onLogout: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-[var(--color-accent-bg)] text-[11px] font-semibold text-[color:var(--color-accent-fg)] ring-1 ring-inset ring-[var(--color-accent-border)] transition-[box-shadow] duration-[var(--duration-fast)] hover:shadow-[var(--shadow-sm)]"
+      >
+        {userInitials(username)}
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="animate-scale-in absolute top-full right-0 z-[var(--z-floating)] mt-2 w-52 origin-top-right rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-1.5 shadow-[var(--shadow-lg)]"
+        >
+          <div className="truncate px-2.5 py-2 text-[13px] font-medium text-[color:var(--color-foreground)]">
+            {username}
+          </div>
+          <div className="my-1 border-t border-[var(--color-border)]" />
+          <form
+            action={async () => {
+              setOpen(false);
+              await onLogout();
+            }}
+          >
+            <button
+              type="submit"
+              role="menuitem"
+              className="flex w-full cursor-pointer items-center gap-2 rounded-[var(--radius-md)] px-2.5 py-1.5 text-[13px] text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-danger-bg)] hover:text-[color:var(--color-danger-fg)]"
+            >
+              <LogOut className="size-3.5" aria-hidden />
+              Sign out
+            </button>
+          </form>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * Owns the client state layout.tsx can't hold itself (it's an async Server
@@ -112,6 +184,8 @@ export function DashboardShell({
               ⌘K
             </kbd>
           </button>
+
+          <UserMenu username={username} onLogout={onLogout} />
         </header>
 
         <main id="main-content" className="min-h-0 flex-1 overflow-y-auto">
