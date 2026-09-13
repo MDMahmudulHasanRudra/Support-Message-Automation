@@ -10,7 +10,8 @@ const prisma = new PrismaClient();
  * every deploy. This is different in kind: it is historical content, reconstructed once from real
  * commit dates and real commit messages (`git log --reverse --date=short`), not something a fresh
  * install should ever recreate. Run it by hand, once, against a database that has never had it run
- * before: `pnpm --filter @support-automation/db exec tsx prisma/seedReleaseNotes.ts`.
+ * before: `pnpm db:seed:release-notes` (from the repo root; needs `DATABASE_URL` pointed at the
+ * target database, same as `pnpm db:seed` itself).
  *
  * **Every version below is invented by this script — there is no real version history in this
  * repository to reconstruct** (zero git tags, every `package.json` still at the scaffolded

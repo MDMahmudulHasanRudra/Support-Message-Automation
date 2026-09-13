@@ -17,6 +17,7 @@
     "db:generate": "pnpm --filter @support-automation/db generate",
     "db:migrate": "pnpm --filter @support-automation/db migrate:dev",
     "db:migrate:deploy": "pnpm --filter @support-automation/db migrate:deploy",
-    "db:seed": "pnpm --filter @support-automation/db seed"
+    "db:seed": "pnpm --filter @support-automation/db seed",
+    "db:seed:release-notes": "pnpm --filter @support-automation/db seed:release-notes"
   }
 }
