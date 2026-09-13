@@ -433,6 +433,10 @@ model User {
   requestedLeave      LeaveRequest[]         @relation("LeaveRequestedBy")
   decidedLeave        LeaveRequest[]         @relation("LeaveDecidedBy")
   attendanceOverrides TeamAttendanceDay[]
+
+  createdReleaseNotes   ReleaseNote[]         @relation("ReleaseNoteCreatedBy")
+  publishedReleaseNotes ReleaseNote[]         @relation("ReleaseNotePublishedBy")
+  releaseNoteRevisions  ReleaseNoteRevision[]
 }
 
 // ---------------------------------------------------------------------------
@@ -3231,4 +3235,159 @@ model TeamAttendanceGroup {
 
   @@id([attendanceDayId, groupId])
   @@index([groupId])
+}
+
+
+// ---------------------------------------------------------------------------
+// Release Notes -- a permanent, publishable record of what shipped.
+//
+// Deliberately its own small module rather than reusing an existing entity: audited first, and
+// nothing already in this schema is this. `SystemLog` records what the SOFTWARE did technically;
+// this records what was DELIVERED to the people using it, in their language, and is meant to be
+// read by every user, not just an admin debugging something. `NotificationTemplate` is wording for
+// an alert this app sends automatically; a release note is authored content about the product
+// itself. Neither is a version history, so this is additive, not a duplicate.
+
+/// What kind of change a release mostly consists of -- for the badge next to its version, not a
+/// state. Named with the model prefix (`ReleaseNoteType`, not `ReleaseType`) to match every other
+/// enum in this schema (`RuleStatus`, `DutyStatus`, `LeaveStatus`, ...).
+enum ReleaseNoteType {
+  MAJOR
+  FEATURE
+  IMPROVEMENT
+  BUG_FIX
+  SECURITY
+  MAINTENANCE
+}
+
+/// DRAFT -> PUBLISHED -> ARCHIVED, mirroring `RuleStatus`'s own three-and-a-half-state shape
+/// (DRAFT/ACTIVE/DISABLED/ARCHIVED) rather than inventing a different vocabulary for what is
+/// structurally the same lifecycle: authored-but-not-live, live, and retired-but-kept.
+///
+/// PUBLISHED and ARCHIVED are BOTH publicly visible -- "every release should remain available
+/// historically" is a stated requirement, and archiving a release is retiring it from being the
+/// *current* one, not erasing that it happened. Only DRAFT is hidden from every user-facing read;
+/// see `getPublishedReleaseNotes()`.
+enum ReleaseNoteStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// One entry in the product's changelog.
+///
+/// Content is seven plain `String[]` sections (one bullet per array element) rather than a single
+/// markdown/rich-text body: this codebase has no markdown renderer or rich-text editor anywhere
+/// (audited before adding one), and `String[] @default([])` is already this schema's established
+/// way to store a short list of lines (`Message.mentionedPhones`, `AutomationRule.keywords`,
+/// `AiSettings.takeoverNotifyGroupIds`, ...). A real array is also what lets the public page render
+/// each bullet as its own list item with zero parsing -- a markdown blob would need a renderer this
+/// app doesn't have, for content that was always going to be authored as bullets in the first place.
+///
+/// `affectedModules` is likewise a plain `String[]`, not a Prisma enum of module names. The set of
+/// modules this product ships grows continuously (Team Management shipped this week), and an enum
+/// would need a schema migration every time a new one is added just to tag a release with it. The
+/// admin editor offers a fixed suggested list from `packages/shared` for consistency, but the
+/// column itself accepts anything, so a module added after this ships is never a migration blocker.
+///
+/// `version` is `@unique` -- one row per version, the same way `ShiftTemplate.name` or
+/// `LeaveType.name` are the natural identity for their own small admin-managed catalogs.
+///
+/// Editing a PUBLISHED row is allowed (a typo fix, a late correction) and the previous content is
+/// preserved first as a `ReleaseNoteRevision` -- see that model. A DRAFT can be freely edited and
+/// deleted with no history kept, since nothing public was ever built on it; a PUBLISHED or ARCHIVED
+/// row can never be deleted at all, only unpublished/archived, matching this app's existing
+/// soft-delete-over-hard-delete standard and Phase 10's explicit "must never accidentally
+/// disappear" requirement -- there is deliberately no code path that hard-deletes one.
+model ReleaseNote {
+  id          String            @id @default(cuid())
+  version     String            @unique
+  title       String
+  summary     String?
+  /// The Dhaka calendar day being announced, not a timestamp -- matches `DutyAssignment.dutyDate`'s
+  /// own `@db.Date` for the same reason: a release date is a day, not a moment.
+  releaseDate DateTime          @db.Date
+  releaseType ReleaseNoteType   @default(FEATURE)
+  status      ReleaseNoteStatus @default(DRAFT)
+
+  whatsNew        String[] @default([])
+  improvements    String[] @default([])
+  bugFixes        String[] @default([])
+  security        String[] @default([])
+  breakingChanges String[] @default([])
+  knownIssues     String[] @default([])
+  technicalNotes  String[] @default([])
+
+  affectedModules String[] @default([])
+
+  createdByUserId String?
+  createdBy       User?   @relation("ReleaseNoteCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  /// Set once, on the FIRST publish, and never cleared by a later unpublish/archive/re-publish --
+  /// same reasoning as `AiFallbackDecision.aiProviderId` being a snapshot rather than a live link:
+  /// this is a record of who published it and when, and un-publishing must not make that fact
+  /// disappear.
+  publishedByUserId String?
+  publishedBy       User?     @relation("ReleaseNotePublishedBy", fields: [publishedByUserId], references: [id], onDelete: SetNull)
+  publishedAt       DateTime?
+
+  /// 0 while this has never been published. Becomes 1 the moment it is first published (that
+  /// publish itself writes revision v1, a snapshot of exactly what went live), and increments by
+  /// one on every later edit made while PUBLISHED or ARCHIVED, or on every later re-publish — each
+  /// bump pairs with a new `ReleaseNoteRevision` row of the same number. A pure status transition
+  /// with no content change (archive, unpublish) never touches this. Mirrors
+  /// `AiKnowledgeItem.currentVersion` exactly, the one other place this schema keeps a running
+  /// edit counter beside its own history table.
+  currentVersion Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  revisions ReleaseNoteRevision[]
+
+  // Serves the admin list, which is almost always filtered to one status and sorted newest-first.
+  @@index([status, releaseDate])
+  // Serves the public feed, which reads PUBLISHED *and* ARCHIVED together (an IN-list, not an
+  // equality match the composite index above serves as well) sorted newest-first.
+  @@index([releaseDate])
+}
+
+/// An after-image snapshot of one `ReleaseNote`'s content — version 1 is exactly what was true the
+/// moment it was first published, version 2 is what it became after the first post-publish edit,
+/// and so on — so "what did v1.8.0 actually say the day it shipped" stays answerable even after a
+/// later correction. Modelled directly on `AiKnowledgeVersion`, this schema's other content-history
+/// table, and the same reasoning: an incrementing `version` int unique per parent, the full set of
+/// editable columns duplicated onto the snapshot row, an optional actor, `createdAt` only — nothing
+/// here is ever updated once written, and the parent's own `currentVersion` says which number its
+/// live row currently matches.
+///
+/// Nothing is snapshotted for a DRAFT edit, or for a pure status change (archive/unpublish/
+/// re-publish) with no content change: a draft was never public, and a status flip did not alter
+/// what the words say, so there is nothing new here worth a row.
+model ReleaseNoteRevision {
+  id            String      @id @default(cuid())
+  releaseNoteId String
+  releaseNote   ReleaseNote @relation(fields: [releaseNoteId], references: [id], onDelete: Cascade)
+  /// 1, 2, 3, ... per releaseNoteId -- which edit this was, not a foreign version number.
+  version       Int
+
+  title           String
+  summary         String?
+  releaseDate     DateTime @db.Date
+  releaseType     ReleaseNoteType
+  status          ReleaseNoteStatus
+  whatsNew        String[]
+  improvements    String[]
+  bugFixes        String[]
+  security        String[]
+  breakingChanges String[]
+  knownIssues     String[]
+  technicalNotes  String[]
+  affectedModules String[]
+
+  changedByUserId String?
+  changedBy       User?    @relation(fields: [changedByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+
+  @@unique([releaseNoteId, version])
 }

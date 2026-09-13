@@ -13,6 +13,10 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Release Notes.** A permanent, publishable changelog — draft, publish, unpublish, archive, with
+  a full edit history kept for anything already public. No historical entries were invented; the
+  table ships empty because nothing in this repo's git history or `package.json` reliably names a
+  real past release.
 - **Team Management.** Shifts, a weekly pattern, a daily roster, leave, and coverage that counts
   who can *actually* work — approving leave keeps the duty row and subtracts the person, so a
   shift reads as "short by 1" rather than quietly looking empty. Attendance is derived from the

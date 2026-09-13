@@ -1494,6 +1494,62 @@ because an operator who selected a group and saw nothing happen needs to know wh
 dialog describes the action it is actually confirming; a confirmation that misdescribes what it is
 about to do is worse than no confirmation.
 
+### Release Notes (`apps/web/src/server/actions/releaseNotes.ts`, `server/releaseNotesReports.ts`, `apps/web/src/lib/releaseNotes.ts`)
+
+A permanent changelog, entirely apps/web-only — nothing in the worker ever reads or writes a
+`ReleaseNote`. Its small catalogs (module tags, type/status labels, bullet-line parsing) live in
+`apps/web/src/lib/releaseNotes.ts`, not `packages/shared`: unlike `aiResponseModes`/`replyLanguage`,
+which the worker's own prompts must render identically, nothing here crosses the app boundary,
+so putting it in the shared package would couple two packages for no reason — matches
+`lib/aiResponseModes.ts`'s own reasoning, applied to a feature with the same one-app shape.
+
+**DRAFT is hidden from everyone without `release_notes.manage`; PUBLISHED and ARCHIVED are both
+public.** Archiving retires a release from being the *current* one, it does not erase that it
+happened — "every release should remain available historically" is a stated requirement, not a
+suggestion. `getPublishedReleaseNotes()` and `getReleaseNoteForViewer()` hard-code that status
+filter with no parameter that can widen it; the admin list is a separate function reached only from
+a page already gated on `.manage`.
+
+**The detail page (`/release-notes/[id]`) doubles as the admin's publish preview**, on purpose.
+`getReleaseNoteForViewer(id, canManage)` only returns a DRAFT when `canManage` is true — so an admin
+previewing an unpublished release sees the exact render a reader will eventually get, with a banner
+on top saying it isn't public yet, rather than a second preview implementation that could drift
+from the real one.
+
+**Content is seven plain `String[]` sections, one bullet per array element — never a markdown or
+rich-text body.** This app has no markdown renderer or rich-text editor anywhere (checked before
+adding one), and `String[] @default([])` is already this schema's established way to store a short
+list of lines. `affectedModules` is likewise a plain `String[]`, not an enum: the set of modules
+this product ships grows continuously, and an enum would need a migration every time a new one
+existed just to tag a release with it — the editor offers a suggested list, the column accepts
+anything.
+
+**Editing already-public content, or publishing, writes an after-image revision and bumps
+`ReleaseNote.currentVersion`** — mirrors `AiKnowledgeItem.currentVersion` /
+`AiKnowledgeVersion` exactly: version 1 is what was true the moment it was first published, version
+2 is after the first post-publish correction, and so on, so "what did v1.8.0 actually say the day
+it shipped" stays answerable. A pure status flip with no content change (archive/unpublish/
+re-publish) never writes one — a revision exists exactly when public-facing content changes, not
+when its visibility does. Nothing is snapshotted for a DRAFT edit either: it was never public, so
+there is no prior public state to lose.
+
+**A PUBLISHED or ARCHIVED release can never be deleted, by any path** — only unpublished or
+archived. There is no override and no confirmation-gated escape hatch; the safest version of
+"must never accidentally disappear" is a design with no code path that can do it at all. Only a
+DRAFT, which never had readers, can be deleted.
+
+**Publishing requires at least one change recorded in any section** — a blank draft cannot go
+live by accident. `publishedAt`/`publishedByUserId` are set once on the transition INTO published
+from DRAFT and never cleared by a later unpublish/archive/re-publish, the same way
+`AiFallbackDecision.aiProviderId` is a snapshot rather than a live link: they are a record of who
+published it and when, and taking it down again must not erase that fact.
+
+**No historical release records were seeded.** Audited before writing anything: zero git tags,
+every `package.json` still at the scaffolded `0.1.0`, no `CHANGELOG.md`, and no commit in this
+repo's history uses a version-like marker. Inventing "v1.x" entries with guessed dates would have
+been fabricating the one thing this feature exists to record accurately — the table ships empty,
+for an admin to fill in from what they actually know shipped when.
+
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)
 

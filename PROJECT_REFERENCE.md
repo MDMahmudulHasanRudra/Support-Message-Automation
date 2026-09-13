@@ -28,8 +28,9 @@ matching section here in the same change.
 12. [Conversation Learning](#conversation-learning)
 13. [System](#system)
 14. [Users & Permissions](#users--permissions)
-15. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
-16. [Background jobs (apps/worker)](#background-jobs-appsworker)
+15. [Release Notes](#release-notes)
+16. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
+17. [Background jobs (apps/worker)](#background-jobs-appsworker)
 17. [Safety & anti-spam features, end to end](#safety--anti-spam-features-end-to-end)
 
 ---
@@ -902,6 +903,41 @@ Sidebar group: **Users & Permissions**
 - **Security Settings** (`/settings/security`): Session Lifetime (hours, 1-720), Failed Attempts
   Before Lockout, Attempt Window (minutes) and Lockout Duration (minutes). The lockout check runs
   **before** the password is verified.
+
+---
+
+## Release Notes
+
+Sidebar group: **Release Notes** (last in the sidebar — a changelog, not a daily operational
+surface). Permission-gated on `release_notes.view` / `release_notes.manage`.
+
+- **Release Notes** (`/release-notes`): the public changelog every user with view access can read.
+  The newest published (or archived) release renders in full — every section it actually has
+  content in, in a fixed order: What's New, Improvements, Bug Fixes, Security, Breaking Changes,
+  Known Issues, Technical Notes. Everything older collapses to one line each under **Older
+  Releases**, linking to its own permanent detail page. A DRAFT never appears here, for anyone,
+  under any permission.
+- **Release detail** (`/release-notes/[id]`): one release's complete record — version, title,
+  date, type badge, summary, every populated section, affected-module tags, who created it and who
+  published it and when. Doubles as the admin's preview-before-publishing screen: a viewer with
+  `release_notes.manage` can open a DRAFT's own detail page and sees the exact render a reader will
+  eventually get, with a banner on top saying it isn't published yet — not a second preview
+  implementation that could drift from the real one.
+- **Manage Releases** (`/release-notes/manage` + **New**/**Edit**): every release regardless of
+  status, searchable by version/title, filterable by status and type. Editing a **published or
+  archived** release keeps a full history of what it said before the edit — nothing is lost, only
+  added to. A **draft** can be freely edited and deleted; a published or archived release can
+  **never** be deleted, only unpublished or archived, and there is no override.
+  - **Publish** (draft → published): requires at least one change recorded in any section.
+    Records who published it and when — permanently, even if it is later unpublished.
+  - **Unpublish** (published → draft) and **Archive** (published → archived) are pure visibility
+    changes; the content is untouched.
+  - **Re-publish** (archived → published) restores an archived release to the current changelog
+    view without altering its recorded content or original publish record.
+
+Content is seven plain one-bullet-per-line text fields, not a markdown or rich-text body — this app
+has no markdown renderer or rich-text editor anywhere, and a real per-line list is what lets the
+public page render each bullet as its own list item with no parsing involved.
 
 ---
 

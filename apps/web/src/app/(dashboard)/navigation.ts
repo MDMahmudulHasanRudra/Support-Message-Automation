@@ -11,6 +11,7 @@ import {
   Clock,
   Cpu,
   EyeOff,
+  FileEdit,
   FileUp,
   Fingerprint,
   FlaskConical,
@@ -22,6 +23,7 @@ import {
   ListChecks,
   MessageCircleMore,
   MessageSquareQuote,
+  Megaphone,
   MessagesSquare,
   PackageSearch,
   Power,
@@ -185,6 +187,16 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/users", label: "App Users", icon: UserCog },
       { href: "/permissions", label: "Permission Modules", icon: ShieldCheck },
       { href: "/settings/security", label: "Security Settings", icon: SlidersHorizontal },
+    ],
+  },
+  {
+    // Last, deliberately: this is a changelog, not an operational surface — nobody needs it in
+    // front of them daily the way Messages or Team Management are, so it sits after every group
+    // that is checked routinely rather than displacing one of them.
+    label: "Release Notes",
+    links: [
+      { href: "/release-notes", label: "Release Notes", icon: Megaphone },
+      { href: "/release-notes/manage", label: "Manage Releases", icon: FileEdit },
     ],
   },
 ];
