@@ -57,3 +57,76 @@ export async function closeSupportSessionManually(sessionId: string): Promise<Cl
   revalidatePath("/support-activity/team");
   return { ok: true };
 }
+
+export interface BulkCloseSupportSessionsResult {
+  requested: number;
+  closed: number;
+  /** Already COMPLETED by the time this ran — the automatic keyword path, or included twice. */
+  alreadyClosed: number;
+  notFound: number;
+  error?: string;
+}
+
+/**
+ * The same manual close as `closeSupportSessionManually`, applied to a batch — Reports' Support
+ * Sessions table can show dozens of stale OPEN sessions at once (a team member who never sent the
+ * completion keyword), and closing each with its own confirm dialog does not scale.
+ *
+ * Deliberately N individual claim-style updates rather than one `updateMany`: each session needs
+ * its OWN `durationSeconds` computed from its own `startedAt`, which `updateMany` cannot express
+ * per-row. Every write still keeps the single-close guard (`status: "OPEN"` in the `where`), so a
+ * session the automatic keyword path completes mid-batch is reported as already-closed rather than
+ * overwritten — same safety property as the one-at-a-time button, just looped.
+ */
+export async function closeSupportSessionsBulk(sessionIds: string[]): Promise<BulkCloseSupportSessionsResult> {
+  const session = await requireSession();
+
+  const dedupedIds = [...new Set(sessionIds.filter((id) => typeof id === "string" && id.length > 0))];
+  if (dedupedIds.length === 0) {
+    return { requested: 0, closed: 0, alreadyClosed: 0, notFound: 0, error: "No sessions selected." };
+  }
+
+  const existing = await prisma.supportSession.findMany({
+    where: { id: { in: dedupedIds } },
+    select: { id: true, status: true, startedAt: true },
+  });
+  const existingById = new Map(existing.map((s) => [s.id, s]));
+  const notFound = dedupedIds.filter((id) => !existingById.has(id)).length;
+
+  let closed = 0;
+  let alreadyClosed = 0;
+  const now = new Date();
+
+  for (const id of dedupedIds) {
+    const openSession = existingById.get(id);
+    if (!openSession) continue;
+    if (openSession.status !== "OPEN") {
+      alreadyClosed += 1;
+      continue;
+    }
+
+    const durationSeconds = Math.max(0, Math.round((now.getTime() - openSession.startedAt.getTime()) / 1000));
+    const result = await prisma.supportSession.updateMany({
+      where: { id, status: "OPEN" },
+      data: {
+        status: "COMPLETED",
+        openGroupId: null,
+        completedAt: now,
+        completedByTeamMemberId: null,
+        completedByUserId: session.userId,
+        durationSeconds,
+      },
+    });
+
+    if (result.count > 0) closed += 1;
+    else alreadyClosed += 1; // lost the race to the automatic completion-keyword path
+  }
+
+  if (closed > 0) {
+    revalidatePath("/support-activity/reports");
+    revalidatePath("/support-activity");
+    revalidatePath("/support-activity/team");
+  }
+
+  return { requested: dedupedIds.length, closed, alreadyClosed, notFound };
+}

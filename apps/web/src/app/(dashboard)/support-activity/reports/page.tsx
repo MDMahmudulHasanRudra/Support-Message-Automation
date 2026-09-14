@@ -20,11 +20,8 @@ import {
   Select,
   StatTile,
   SectionHeader,
-  Table,
-  Td,
-  Th,
 } from "@/components/ui";
-import { CloseSessionButton } from "./CloseSessionButton";
+import { SupportSessionsTable } from "./SupportSessionsTable";
 
 interface SearchParams {
   groupId?: string;
@@ -184,52 +181,21 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
 
         <Card>
           {sessions.length > 0 ? (
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Group</Th>
-                  <Th>Started By</Th>
-                  <Th>Started</Th>
-                  <Th>Duration</Th>
-                  <Th>Status</Th>
-                  <Th>Completed By</Th>
-                  <Th>Actions</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.map((s) => (
-                  <tr key={s.id}>
-                    <Td className="font-medium">{s.groupName}</Td>
-                    <Td>{s.startedByName ?? "—"}</Td>
-                    <Td className="whitespace-nowrap">{formatDateTime(s.startedAt)}</Td>
-                    <Td className="tabular-nums whitespace-nowrap">
-                      {s.status === "OPEN"
-                        ? `${s.isStale ? "Needs attention" : "In progress"} · ${formatElapsedShort(s.startedAt)}`
-                        : formatDurationShort(s.durationSeconds ?? 0)}
-                    </Td>
-                    <Td>
-                      {s.status === "OPEN" ? (
-                        <Badge color={s.isStale ? "yellow" : "blue"} dot pulse={!s.isStale}>
-                          {s.isStale ? "Needs attention" : "Open"}
-                        </Badge>
-                      ) : (
-                        <Badge color="green">Completed</Badge>
-                      )}
-                    </Td>
-                    <Td>{s.completedByLabel ?? "—"}</Td>
-                    <Td>
-                      {s.status === "OPEN" ? (
-                        <CloseSessionButton
-                          sessionId={s.id}
-                          groupName={s.groupName}
-                          startedAtIso={s.startedAt.toISOString()}
-                        />
-                      ) : null}
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            <SupportSessionsTable
+              sessions={sessions.map((s) => ({
+                id: s.id,
+                groupName: s.groupName,
+                startedByName: s.startedByName,
+                startedAtIso: s.startedAt.toISOString(),
+                status: s.status,
+                isStale: s.isStale,
+                durationLabel:
+                  s.status === "OPEN"
+                    ? `${s.isStale ? "Needs attention" : "In progress"} · ${formatElapsedShort(s.startedAt)}`
+                    : formatDurationShort(s.durationSeconds ?? 0),
+                completedByLabel: s.completedByLabel,
+              }))}
+            />
           ) : (
             <EmptyState>
               No support sessions yet — they'll appear here once a team member starts handling a
