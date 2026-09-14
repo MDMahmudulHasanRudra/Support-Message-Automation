@@ -63,6 +63,14 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "conversation_learning.view", label: "View Conversation Learning", category: "Conversation Learning" },
   { key: "conversation_learning.manage", label: "Manage Conversation Learning", category: "Conversation Learning" },
 
+  // Release Notes: .view reads published/archived releases (the changelog every user sees);
+  // .manage covers the full authoring lifecycle — draft, edit, publish, unpublish, archive. There
+  // is deliberately no separate delete key: deletion is only ever possible on a DRAFT (a published
+  // or archived release can never be deleted at all, only unpublished/archived — see the model's
+  // own doc comment), so it is not a distinct privilege worth its own permission row.
+  { key: "release_notes.view", label: "View Release Notes", category: "Release Notes" },
+  { key: "release_notes.manage", label: "Manage Release Notes", category: "Release Notes" },
+
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },
   { key: "settings.edit", label: "Edit Settings", category: "System" },

@@ -1,15 +1,18 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import { ToastProvider } from "@/components/ui";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Inter (headline/body) + JetBrains Mono (labels, tabular data) — the console's
+// enterprise typography system. Both load through next/font/google exactly like
+// the fonts they replace, so this is a font swap, not a new dependency.
+const sansFace = Inter({
+  variable: "--font-sans-face",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const monoFace = JetBrains_Mono({
+  variable: "--font-mono-face",
   subsets: ["latin"],
 });
 
@@ -26,10 +29,10 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   // Both entries so the browser paints its own chrome to match whichever theme
-  // the console is actually showing.
+  // the console is actually showing. Matches --color-background in globals.css.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f5f5f6" },
-    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
+    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b1220" },
   ],
 };
 
@@ -46,7 +49,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${sansFace.variable} ${monoFace.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <head>

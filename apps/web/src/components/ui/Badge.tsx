@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type BadgeColor = "green" | "red" | "yellow" | "gray" | "blue";
+export type BadgeColor = "green" | "red" | "yellow" | "gray" | "blue" | "cyan";
 
 const BADGE_STYLES: Record<BadgeColor, string> = {
   green:
@@ -10,6 +10,9 @@ const BADGE_STYLES: Record<BadgeColor, string> = {
     "bg-[var(--color-warning-bg)] text-[color:var(--color-warning-fg)] ring-1 ring-inset ring-[var(--color-warning-border)]",
   gray: "bg-[var(--color-neutral-bg)] text-[color:var(--color-neutral-fg)] ring-1 ring-inset ring-[var(--color-neutral-border)]",
   blue: "bg-[var(--color-info-bg)] text-[color:var(--color-info-fg)] ring-1 ring-inset ring-[var(--color-info-border)]",
+  // The brand's Cyan secondary accent, not a status — for a badge that wants a second, quieter
+  // brand voice distinct from the indigo primary accent (e.g. an "AI" tag), never for state.
+  cyan: "bg-[var(--color-secondary-bg)] text-[color:var(--color-secondary-fg)] ring-1 ring-inset ring-[var(--color-secondary-border)]",
 };
 
 const DOT_STYLES: Record<BadgeColor, string> = {
@@ -18,6 +21,7 @@ const DOT_STYLES: Record<BadgeColor, string> = {
   yellow: "bg-[var(--color-warning)]",
   gray: "bg-[color:var(--color-muted-foreground)]",
   blue: "bg-[var(--color-info)]",
+  cyan: "bg-[var(--color-secondary)]",
 };
 
 export function Badge({

@@ -115,7 +115,7 @@ export async function getMessageLoadSeries(nowMs: number) {
 // Fixed order, so a slot follows the decision rather than its current rank — a
 // quiet day must not repaint AUTO_REPLY in SUPPORT_REQUIRED's color. Mirrors
 // packages/engine's FinalDecision union.
-const DECISION_SLOTS: Array<{ key: string; label: string; color: string }> = [
+export const DECISION_SLOTS: Array<{ key: string; label: string; color: string }> = [
   { key: "AUTO_REPLY", label: "Auto-replied", color: "var(--chart-1)" },
   { key: "SUPPORT_REQUIRED", label: "Support required", color: "var(--chart-2)" },
   { key: "ACTIONED", label: "Side-effect only", color: "var(--chart-3)" },
@@ -154,6 +154,17 @@ export async function getDecisionMix(nowMs: number) {
   }
 
   return { slices, total: slices.reduce((sum, s) => sum + s.value, 0) };
+}
+
+/**
+ * Plain-language wording for a raw `AutomationExecution.decision` string, reusing the exact same
+ * labels the donut chart above renders — so the trace column on the Live Traffic table and the
+ * "Automation decisions" chart never describe the same outcome two different ways. Falls back to
+ * the raw value for anything the engine emits that this list doesn't yet know about, rather than
+ * hiding it.
+ */
+export function decisionLabel(decision: string): string {
+  return DECISION_SLOTS.find((slot) => slot.key === decision)?.label ?? decision;
 }
 
 // These segments mean good/bad, so they wear the app's status tokens rather than

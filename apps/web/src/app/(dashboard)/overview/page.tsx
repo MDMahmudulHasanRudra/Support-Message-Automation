@@ -1,10 +1,24 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
-import { Activity, Bell, Link2, ListChecks, Send, ShieldAlert, Smartphone, Sparkles, Terminal as ConsoleIcon, Waypoints } from "lucide-react";
+import Link from "next/link";
+import {
+  Activity,
+  Bell,
+  Link2,
+  ListChecks,
+  Power,
+  Send,
+  ShieldAlert,
+  Smartphone,
+  Sparkles,
+  Terminal as ConsoleIcon,
+  Waypoints,
+} from "lucide-react";
 import { requireSession } from "@/server/auth";
 import { formatDateTime } from "@/lib/date";
 import {
   Alert,
   Badge,
+  ButtonLink,
   Card,
   DashboardModuleCard,
   EmptyState,
@@ -18,6 +32,7 @@ import {
   Td,
   Th,
 } from "@/components/ui";
+import type { ModuleHealthStatus } from "@/components/ui/DashboardModuleCard";
 import { getGroupsAwaitingReply } from "@/server/supportActivityReports";
 import {
   AreaChart,
@@ -41,6 +56,7 @@ import {
   getSupportActivityDashboardSummary,
   getSystemLogsSummary,
   getTeamsIntegrationSummary,
+  getWorkerLivenessSummary,
 } from "@/server/actions/dashboardSummary";
 import {
   getAiOutcomeSeries,
@@ -52,6 +68,19 @@ import {
   getResponseTimeSeries,
   getSupportActorMix,
 } from "@/server/actions/dashboardMetrics";
+
+const SYSTEM_STATUS_LABEL: Record<ModuleHealthStatus, string> = {
+  OPERATIONAL: "Operational",
+  ATTENTION: "Needs attention",
+  DOWN: "Action required",
+  OFF: "Not enabled",
+};
+const SYSTEM_STATUS_BADGE: Record<ModuleHealthStatus, "green" | "yellow" | "red" | "gray"> = {
+  OPERATIONAL: "green",
+  ATTENTION: "yellow",
+  DOWN: "red",
+  OFF: "gray",
+};
 
 function formatAgeShort(ms: number): string {
   const totalMinutes = Math.max(0, Math.floor(ms / 60_000));
@@ -90,6 +119,7 @@ export default async function OverviewPage() {
     actorMix,
     executiveLoad,
     awaiting,
+    workerLiveness,
   ] = await Promise.all([
     getAccountsRoutingSummary(),
     getAutomationOutboundSummary(nowMs),
@@ -111,17 +141,124 @@ export default async function OverviewPage() {
     getSupportActorMix(nowMs),
     getExecutiveLoad(nowMs),
     getGroupsAwaitingReply(new Date(nowMs)),
+    getWorkerLivenessSummary(nowMs),
   ]);
 
   const disconnectedAccounts = accountsRouting.accounts.filter((a) => a.status !== "CONNECTED");
 
+  /**
+   * One status per module card, derived entirely from the summaries already fetched above — no
+   * new query reads this. `"OFF"` is deliberately not a problem: most of these modules are
+   * optional and disabled by default, and painting that red would misreport the normal resting
+   * state of a fresh install as broken. Every rule here mirrors a badge already rendered inside
+   * that same card below, so the corner pill can never disagree with the numbers underneath it.
+   */
+  const moduleStatus: Record<string, ModuleHealthStatus> = {
+    accounts: accountsRouting.hasRoutingError
+      ? "DOWN" // a routed service has no healthy account to send through at all
+      : accountsRouting.connectedCount < accountsRouting.accounts.length
+        ? "ATTENTION"
+        : "OPERATIONAL",
+    automation: !automationOutbound.automationEnabled || automationOutbound.failed24h > 0 ? "ATTENTION" : "OPERATIONAL",
+    escalations: escalation.openCaseCount > 0 ? "ATTENTION" : "OPERATIONAL",
+    conversationLearning: !conversationLearning.conversationLearningEnabled
+      ? "OFF"
+      : conversationLearning.unknownPatternCount > 0
+        ? "ATTENTION"
+        : "OPERATIONAL",
+    aiLearning: !aiLearning.aiEngineEnabled ? "OFF" : aiLearning.activeProviderCount === 0 ? "ATTENTION" : "OPERATIONAL",
+    // No failure signal is tracked at this summary level — a broadcast job's own errors surface on
+    // its own detail page, not here — so this card has nothing honest to flag as attention.
+    bulkMessaging: "OPERATIONAL",
+    notifications: notifications.failed24h > 0 ? "ATTENTION" : "OPERATIONAL",
+    supportActivity: supportActivity.enabled ? "OPERATIONAL" : "OFF",
+    teamsIntegration:
+      teamsIntegration.status === "DISCONNECTED"
+        ? "OFF"
+        : teamsIntegration.status === "REAUTH_REQUIRED" || teamsIntegration.status === "ERROR"
+          ? "ATTENTION"
+          : "OPERATIONAL",
+    systemLogs: systemLogs.errors24h > 0 || systemLogs.warnings24h > 0 ? "ATTENTION" : "OPERATIONAL",
+  };
+  const modulesNeedingAttention = Object.values(moduleStatus).filter(
+    (status) => status === "ATTENTION" || status === "DOWN",
+  ).length;
+  const totalModules = Object.keys(moduleStatus).length;
+
+  /**
+   * The handful of things worth interrupting for, most severe first. This is deliberately a short,
+   * concrete list rather than one line per module card above — the grid already shows every card's
+   * own status, and repeating all ten here would bury the two or three that actually need a human.
+   */
+  const issues: Array<{ text: string; href: string; linkLabel: string }> = [];
+  if (workerLiveness.workerOffline) {
+    issues.push({
+      text:
+        workerLiveness.lastHeartbeatAt === null
+          ? "The worker has never checked in — nothing on this dashboard can change until it starts."
+          : `The worker has been silent for ${workerLiveness.silentForMinutes} minute(s) — reconnects, sends and every background job are stopped.`,
+      href: "/accounts",
+      linkLabel: "Check accounts",
+    });
+  }
+  if (accountsRouting.hasRoutingError) {
+    issues.push({
+      text: "A routed WhatsApp service has no healthy connected account to send through.",
+      href: "/accounts/routing",
+      linkLabel: "Fix routing",
+    });
+  }
+  if (disconnectedAccounts.length > 0) {
+    issues.push({
+      text: `${disconnectedAccounts.length} account(s) not connected: ${disconnectedAccounts.map((a) => a.label).join(", ")}.`,
+      href: "/accounts",
+      linkLabel: "Reconnect",
+    });
+  }
+  if (!automationOutbound.automationEnabled) {
+    issues.push({
+      text: "Automation is paused — no rule or AI reply will be sent until it is turned back on.",
+      href: "/automation-control",
+      linkLabel: "Review",
+    });
+  }
+  if (systemLogs.errors24h > 0) {
+    issues.push({
+      text: `${systemLogs.errors24h} error(s) logged in the last 24 hours.`,
+      href: "/logs?level=ERROR",
+      linkLabel: "View logs",
+    });
+  }
+
+  // Same three-tier read as each module pill: DOWN beats ATTENTION beats a quiet OPERATIONAL.
+  const systemStatus: ModuleHealthStatus =
+    workerLiveness.workerOffline || accountsRouting.hasRoutingError
+      ? "DOWN"
+      : issues.length > 0
+        ? "ATTENTION"
+        : "OPERATIONAL";
+
   return (
     <div>
       <PageHeader
-        title="Overview"
-        description="Live snapshot of the automation system."
+        title={
+          <span className="inline-flex items-center gap-2.5">
+            Overview
+            <Badge color={SYSTEM_STATUS_BADGE[systemStatus]} dot pulse={systemStatus !== "OPERATIONAL"}>
+              {SYSTEM_STATUS_LABEL[systemStatus]}
+            </Badge>
+          </span>
+        }
+        description={`Live snapshot of the automation system — ${totalModules - modulesNeedingAttention} of ${totalModules} modules operational.`}
         actions={
-          <HelpButton moduleTitle="Overview">
+          <>
+            {/* A real destination, never a mutating action — Overview stays entirely read-only,
+                every control here only navigates to a page where the actual change is made. */}
+            <ButtonLink href="/automation-control" variant="secondary">
+              <Power className="size-3.5" aria-hidden />
+              Automation Control
+            </ButtonLink>
+            <HelpButton moduleTitle="Overview">
             <HelpSection title="What this page is for">
               <p>
                 The landing page after login — a glanceable, entirely read-only summary of every
@@ -166,18 +303,31 @@ export default async function OverviewPage() {
               </p>
             </HelpSection>
           </HelpButton>
+          </>
         }
       />
 
-      {disconnectedAccounts.length > 0 ? (
-        <div className="mb-7">
-          <Alert tone="warning" title={`${disconnectedAccounts.length} account(s) not connected`}>
-            {disconnectedAccounts.map((a) => a.label).join(", ")} — check WhatsApp Accounts for details.
+      {issues.length > 0 ? (
+        <div className="mb-5">
+          <Alert
+            tone={systemStatus === "DOWN" ? "danger" : "warning"}
+            title={issues.length === 1 ? "1 thing needs attention" : `${issues.length} things need attention`}
+          >
+            <ul className="space-y-1.5">
+              {issues.map((issue) => (
+                <li key={issue.text} className="flex flex-wrap items-baseline gap-x-2">
+                  <span>{issue.text}</span>
+                  <Link href={issue.href} className="font-medium underline underline-offset-2">
+                    {issue.linkLabel}
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </Alert>
         </div>
       ) : null}
 
-      <div className="stagger-children mb-7 grid grid-cols-2 gap-3.5 sm:grid-cols-4">
+      <div className="stagger-children mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
         {/* Each href lands on the rows this number counted, already filtered. Where no page
             lists those rows, the tile stays inert — see the outbound queue below. */}
         <StatTile
@@ -209,7 +359,12 @@ export default async function OverviewPage() {
           value={automationOutbound.supportRequiredLast24h}
           tone={automationOutbound.supportRequiredLast24h > 0 ? "warning" : "neutral"}
         />
-        <StatTile href="/rules?status=ACTIVE" label="Active rules" value={automationOutbound.activeRuleCount} />
+        <StatTile
+          href="/rules?status=ACTIVE"
+          label="Active rules"
+          value={automationOutbound.activeRuleCount}
+          tone="accent"
+        />
         {/* Deliberately not a link. This counts every unsettled outbound row — auto-replies,
             manual sends and broadcast rows alike — and no page lists that queue in full. The
             closest candidate, /messages?autoReplyStatus=PENDING, covers only the auto-reply
@@ -241,12 +396,12 @@ export default async function OverviewPage() {
         />
       </div>
 
-      <section className="mb-7" aria-label="Metrics">
+      <section className="mb-5" aria-label="Metrics">
         <SectionHeader
           title="Metrics"
           description="Live aggregates computed per request — every figure links back to a page where you can act on it."
         />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-3 lg:grid-flow-row-dense">
           <ChartCard
             className="lg:col-span-2"
             href="/messages?within=14d"
@@ -390,7 +545,7 @@ export default async function OverviewPage() {
             />
           </ChartCard>
 
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3.5">
             <ChartCard
               href="/support-activity/team"
               title="Busiest executives"
@@ -435,11 +590,12 @@ export default async function OverviewPage() {
         </div>
       </section>
 
-      <div className="stagger-children mb-7 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      <div className="stagger-children mb-5 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         <DashboardModuleCard
           title="Accounts & Routing"
           icon={Smartphone}
           href="/accounts"
+          status={moduleStatus.accounts}
           secondaryLink={accountsRouting.hasRoutingError ? { href: "/accounts/routing", label: "Fix routing" } : undefined}
         >
           <ModuleCardRow label="Connected">
@@ -464,7 +620,7 @@ export default async function OverviewPage() {
           ) : null}
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Automation Rules & Outbound" icon={ListChecks} href="/rules">
+        <DashboardModuleCard title="Automation Rules & Outbound" icon={ListChecks} href="/rules" status={moduleStatus.automation}>
           <ModuleCardRow label="Automation">
             <Badge color={automationOutbound.automationEnabled ? "green" : "red"} dot>
               {automationOutbound.automationEnabled ? "ENABLED" : "PAUSED"}
@@ -478,7 +634,7 @@ export default async function OverviewPage() {
           </ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Escalations" icon={ShieldAlert} href="/support-escalation">
+        <DashboardModuleCard title="Escalations" icon={ShieldAlert} href="/support-escalation" status={moduleStatus.escalations}>
           <ModuleCardRow label="Open cases">
             <Badge color={escalation.openCaseCount > 0 ? "yellow" : "green"} dot>
               {escalation.openCaseCount}
@@ -496,7 +652,7 @@ export default async function OverviewPage() {
           </ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Conversation Learning" icon={Waypoints} href="/conversation-learning">
+        <DashboardModuleCard title="Conversation Learning" icon={Waypoints} href="/conversation-learning" status={moduleStatus.conversationLearning}>
           <ModuleCardRow label="Status">
             <Badge color={conversationLearning.conversationLearningEnabled ? "green" : "gray"} dot>
               {conversationLearning.conversationLearningEnabled ? "ENABLED" : "DISABLED"}
@@ -511,7 +667,7 @@ export default async function OverviewPage() {
           <ModuleCardRow label="Proposals pending">{conversationLearning.pendingProposalCount}</ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="AI Learning" icon={Sparkles} href="/ai-learning">
+        <DashboardModuleCard title="AI Learning" icon={Sparkles} href="/ai-learning" status={moduleStatus.aiLearning}>
           <ModuleCardRow label="Status">
             <Badge color={aiLearning.aiEngineEnabled ? "green" : "gray"} dot>
               {aiLearning.aiEngineEnabled ? "ENABLED" : "DISABLED"}
@@ -529,13 +685,14 @@ export default async function OverviewPage() {
           title="Bulk Messaging"
           icon={Send}
           href="/group-message-sender"
+          status={moduleStatus.bulkMessaging}
           secondaryLink={{ href: "/group-member-adder", label: "Add to groups" }}
         >
           <ModuleCardRow label="Broadcast jobs">{bulkMessaging.broadcastRunning} running/queued</ModuleCardRow>
           <ModuleCardRow label="Add-to-group jobs">{bulkMessaging.addRunning} running/queued</ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Notifications" icon={Bell} href="/notifications">
+        <DashboardModuleCard title="Notifications" icon={Bell} href="/notifications" status={moduleStatus.notifications}>
           <ModuleCardRow label="Sent (24h)">{notifications.sent24h}</ModuleCardRow>
           <ModuleCardRow label="Failed (24h)">
             <Badge color={notifications.failed24h > 0 ? "red" : "gray"} dot>
@@ -545,7 +702,7 @@ export default async function OverviewPage() {
           <ModuleCardRow label="Pending/retrying (24h)">{notifications.pendingRetrying24h}</ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Support Activity" icon={Activity} href="/support-activity">
+        <DashboardModuleCard title="Support Activity" icon={Activity} href="/support-activity" status={moduleStatus.supportActivity}>
           <ModuleCardRow label="Status">
             <Badge color={supportActivity.enabled ? "green" : "gray"} dot>
               {supportActivity.enabled ? "ENABLED" : "DISABLED"}
@@ -555,7 +712,13 @@ export default async function OverviewPage() {
           <ModuleCardRow label="Today's supported groups">{supportActivity.todaySupportedGroups}</ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Teams Integration" icon={Link2} href="/integrations/teams" secondaryLink={{ href: "/issues", label: "View issues" }}>
+        <DashboardModuleCard
+          title="Teams Integration"
+          icon={Link2}
+          href="/integrations/teams"
+          status={moduleStatus.teamsIntegration}
+          secondaryLink={{ href: "/issues", label: "View issues" }}
+        >
           <ModuleCardRow label="Connection">
             <Badge
               color={
@@ -580,7 +743,7 @@ export default async function OverviewPage() {
           <ModuleCardRow label="Resolved today">{teamsIntegration.resolvedTodayCount}</ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="System Logs" icon={ConsoleIcon} href="/logs">
+        <DashboardModuleCard title="System Logs" icon={ConsoleIcon} href="/logs" status={moduleStatus.systemLogs}>
           <ModuleCardRow label="Errors (24h)">
             <Badge color={systemLogs.errors24h > 0 ? "red" : "gray"} dot>
               {systemLogs.errors24h}
@@ -596,38 +759,69 @@ export default async function OverviewPage() {
 
       <Card>
         <SectionHeader
-          title="Latest messages"
-          description="The last 10 messages across every account — volume over time is charted in Metrics above."
+          title="Live Traffic & Automation Stream"
+          description="The last 10 messages across every account, and what the automation layer actually did with each one — volume over time is charted in Metrics above."
         />
         {recentActivity.recentMessages.length === 0 ? (
           <EmptyState>No messages yet.</EmptyState>
         ) : (
-          <Table>
-            <thead>
-              <tr>
-                <Th>Time</Th>
-                <Th>Sender</Th>
-                <Th>Direction</Th>
-                <Th>Body</Th>
-                <Th>Status</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentActivity.recentMessages.map((m) => (
-                <tr key={m.id}>
-                  <Td className="font-[family-name:var(--font-mono)] text-xs whitespace-nowrap">
-                    {formatDateTime(m.timestampWa)}
-                  </Td>
-                  <Td className="font-[family-name:var(--font-mono)] text-xs">{m.senderName ?? m.senderPhone}</Td>
-                  <Td>{m.direction}</Td>
-                  <Td className="max-w-md truncate">{m.body}</Td>
-                  <Td>
-                    <Badge color={m.processingStatus === "IGNORED" ? "gray" : "blue"}>{m.processingStatus}</Badge>
-                  </Td>
+          <>
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Time</Th>
+                  <Th>Account · Group</Th>
+                  <Th>Sender</Th>
+                  <Th>Message</Th>
+                  <Th>Automation Trace</Th>
+                  <Th>Confidence</Th>
+                  <Th> </Th>
                 </tr>
-              ))}
-            </tbody>
-          </Table>
+              </thead>
+              <tbody>
+                {recentActivity.recentMessages.map((m) => (
+                  <tr key={m.id}>
+                    <Td className="font-[family-name:var(--font-mono)] text-xs whitespace-nowrap">
+                      {formatDateTime(m.timestampWa)}
+                    </Td>
+                    <Td className="text-xs">
+                      <div className="font-medium text-[color:var(--color-foreground)]">{m.accountLabel}</div>
+                      {m.groupName ? (
+                        <div className="text-[color:var(--color-muted-foreground)]">{m.groupName}</div>
+                      ) : null}
+                    </Td>
+                    <Td className="font-[family-name:var(--font-mono)] text-xs">{m.senderName ?? m.senderPhone}</Td>
+                    <Td className="max-w-md truncate">{m.body}</Td>
+                    <Td>
+                      <Badge color={m.trace.tone} dot>
+                        {m.trace.label}
+                      </Badge>
+                    </Td>
+                    <Td className="tabular-nums text-xs">
+                      {m.trace.confidencePercent === null ? "—" : `${m.trace.confidencePercent}%`}
+                    </Td>
+                    <Td>
+                      <Link
+                        href={`/messages/${m.id}`}
+                        className="text-xs font-medium text-[color:var(--color-foreground)] underline-offset-2 hover:underline"
+                      >
+                        View
+                      </Link>
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            <div className="mt-4 flex items-center justify-between border-t border-[var(--color-border)] pt-3.5 text-xs text-[color:var(--color-muted-foreground)]">
+              <span>
+                Showing the latest {recentActivity.recentMessages.length} of {formatCount(recentActivity.messagesLast24h)} incoming
+                messages today.
+              </span>
+              <Link href="/messages" className="font-medium text-[color:var(--color-foreground)] underline-offset-2 hover:underline">
+                View full message history
+              </Link>
+            </div>
+          </>
         )}
       </Card>
     </div>

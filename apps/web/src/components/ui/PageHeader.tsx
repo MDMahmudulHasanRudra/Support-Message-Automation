@@ -5,7 +5,8 @@ export function PageHeader({
   description,
   actions,
 }: {
-  title: string;
+  /** Almost always a plain string; a page may compose in a status badge, same as any other node. */
+  title: ReactNode;
   description?: string;
   actions?: ReactNode;
 }) {
