@@ -1600,7 +1600,18 @@ model AiKnowledgeItem {
   sourceUrl       String?
   confidence      Int?
   aiGenerated     Boolean             @default(false)
-  humanVerified   Boolean             @default(true)
+  /// Whether a person has confirmed this is true and may be said to a customer. It is the ONLY
+  /// gate on retrieval (`knowledgeContext.ts` selects `humanVerified: true` + `ACTIVE`), so it is
+  /// the single line between the knowledge base and what a customer is told.
+  ///
+  /// Defaults to FALSE, and the direction is the whole point. It used to default to true, which
+  /// meant the one safety invariant of this system was opt-out: every machine writer had to
+  /// remember to set it, and the tenth one to be added would have been customer-facing on its
+  /// first write, silently. All current writers set it explicitly — the two that legitimately
+  /// write `true` (the manual form, where a person is typing the entry themselves, and an
+  /// approved conversation candidate) still do — so this flip changes no behaviour today. It
+  /// changes what happens when somebody forgets.
+  humanVerified   Boolean             @default(false)
   status          AiKnowledgeStatus   @default(ACTIVE)
   currentVersion  Int                 @default(1)
   createdById     String?

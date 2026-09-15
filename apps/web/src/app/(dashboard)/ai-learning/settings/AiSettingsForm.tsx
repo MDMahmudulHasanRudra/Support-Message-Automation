@@ -6,15 +6,26 @@ import { ReplyLanguageField } from "./ReplyLanguageField";
 import { updateAiSettings, type AiSettingsFormState } from "@/server/actions/aiSettings";
 import type { AiSettings } from "@prisma/client";
 
-const ENGINE_TOGGLES: Array<{ key: keyof AiSettings; label: string }> = [
+/**
+ * `notImplemented` marks a switch that is saved and read by NOTHING at runtime — verified by
+ * grepping every worker/engine/ai-client reader for each column. They are shown, and shown as
+ * inert, rather than quietly removed: the columns exist, an operator may already have toggled
+ * one, and a switch that silently does nothing is the failure this project keeps deleting.
+ *
+ * "Screenshot Response" is the one with a real consequence if believed. There is no image
+ * understanding anywhere in this pipeline — a photo arrives as the literal text "[Image]". The
+ * AI now hands those to a person instead of answering them (see isMediaOnlyBody), so this switch
+ * genuinely does nothing in either position.
+ */
+const ENGINE_TOGGLES: Array<{ key: keyof AiSettings; label: string; notImplemented?: true }> = [
   { key: "aiEngineEnabled", label: "AI Engine" },
   { key: "learningEnabled", label: "Learning" },
   { key: "autoResponseEnabled", label: "Auto Response" },
-  { key: "screenshotResponseEnabled", label: "Screenshot Response" },
-  { key: "chatLearningEnabled", label: "Chat Learning" },
-  { key: "softwareLearningEnabled", label: "Software Learning" },
-  { key: "requirementLearningEnabled", label: "Requirement Learning" },
-  { key: "announcementAiEnabled", label: "Announcement AI" },
+  { key: "screenshotResponseEnabled", label: "Screenshot Response", notImplemented: true },
+  { key: "chatLearningEnabled", label: "Chat Learning", notImplemented: true },
+  { key: "softwareLearningEnabled", label: "Software Learning", notImplemented: true },
+  { key: "requirementLearningEnabled", label: "Requirement Learning", notImplemented: true },
+  { key: "announcementAiEnabled", label: "Announcement AI", notImplemented: true },
 ];
 
 const MODE_COPY: Record<string, { title: string; detail: string }> = {
@@ -62,28 +73,33 @@ export function AiSettingsForm({
       <Card>
         <SectionHeader
           title="Master Controls"
-          description="Every switch defaults OFF. AI Engine and Auto Response together gate the live Hybrid AI Automation fallback layer — the rest are reserved for later phases."
+          description="AI Engine and Auto Response together gate the live AI reply layer. The switches marked “not implemented yet” are saved but read by nothing at runtime — changing them has no effect in either position."
         />
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {ENGINE_TOGGLES.map((t) => (
-            <SwitchField key={t.key} name={t.key} label={t.label} defaultChecked={Boolean(settings[t.key])} />
+            <SwitchField
+              key={t.key}
+              name={t.key}
+              label={t.notImplemented ? `${t.label} — not implemented yet` : t.label}
+              defaultChecked={Boolean(settings[t.key])}
+            />
           ))}
         </div>
       </Card>
 
       <Card>
-        <SectionHeader title="Learning Thresholds" description="Percentages (0-100) — used by later phases' duplicate/confidence checks." />
+        <SectionHeader title="Learning Thresholds" description="Percentages (0-100). Only Human Review is live today — it decides whether a Conversation Learning pattern is surfaced for review. The other three are saved but read by nothing." />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <Field label="Duplicate Similarity" hint="At/above this, treat as duplicate.">
+          <Field label="Duplicate Similarity — not implemented yet" hint="Saved, but no code reads it. Duplicate knowledge is currently detected by exact title match only.">
             <Input name="duplicateSimilarityThreshold" type="number" min={0} max={100} defaultValue={settings.duplicateSimilarityThreshold} />
           </Field>
-          <Field label="Learning Confidence" hint="Below this, needs human review.">
+          <Field label="Learning Confidence — not implemented yet" hint="Saved, but no code reads it.">
             <Input name="learningConfidenceThreshold" type="number" min={0} max={100} defaultValue={settings.learningConfidenceThreshold} />
           </Field>
-          <Field label="Auto Approval" hint="At/above this, can skip human approval (if enabled).">
+          <Field label="Auto Approval — not implemented yet" hint="Saved, but no code reads it. The live auto-approval bar is on Conversation Learning → Settings.">
             <Input name="autoApprovalThreshold" type="number" min={0} max={100} defaultValue={settings.autoApprovalThreshold} />
           </Field>
-          <Field label="Human Review" hint="Below this, reject/manual review only.">
+          <Field label="Human Review" hint="LIVE. A Conversation Learning pattern scoring below this is not surfaced for review.">
             <Input name="humanReviewThreshold" type="number" min={0} max={100} defaultValue={settings.humanReviewThreshold} />
           </Field>
         </div>

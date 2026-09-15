@@ -132,6 +132,13 @@ function parseRow(raw: Record<string, unknown>, rowNumber: number, keys: Resolve
   // A trailing blank row is what Excel leaves behind, not an operator mistake — say so plainly
   // rather than reporting two missing-field errors for a row nobody ever filled in.
   if (!question && !answer) return fail("Blank row — skipped.");
+  // The template's own sample row, uploaded unedited. Refused rather than imported: it asserts
+  // nothing about the product, but an entry reading "EXAMPLE ROW — DELETE BEFORE IMPORTING"
+  // sitting in the review queue is noise, and the point of the marker is that it never becomes
+  // knowledge by accident.
+  if (isTemplateExampleRow(question, answer)) {
+    return fail("Template example row — replace it with your own question and answer, or delete it.");
+  }
   if (!question) return fail(`Missing required field: ${KNOWLEDGE_ROW_COLUMN_LABELS.question}.`);
   if (!answer) return fail(`Missing required field: ${KNOWLEDGE_ROW_COLUMN_LABELS.answer}.`);
   if (question.length > MAX_KNOWLEDGE_QUESTION_LENGTH) {
@@ -222,24 +229,36 @@ export function parseKnowledgeImportRows(rawRows: Array<Record<string, unknown>>
  * buildRuleImportTemplateRows() documents. XLSX.utils.json_to_sheet derives the header row from
  * these objects' own keys, so no separate header row is built here.
  */
+/**
+ * Prefix on every cell of the downloadable template's sample row.
+ *
+ * The template used to ship two fully-formed, plausible entries — a PPPoE password-reset
+ * procedure and "support is staffed 9am to 10pm, seven days a week". Both were invented, and the
+ * second contradicted this deployment's own seeded shift times. Nothing marked them as examples,
+ * they parsed as perfectly valid rows, and the documented workflow is "download the template, add
+ * your rows, upload it" — so the straightforward path put two fabricated product facts into the
+ * review queue looking exactly like well-written entries, one Verify click away from being quoted
+ * to a customer as this company's policy.
+ *
+ * The row now says what it is, asserts nothing about the product, and `isTemplateExampleRow`
+ * below refuses to import it even if somebody uploads the file untouched.
+ */
+export const TEMPLATE_EXAMPLE_MARKER = "EXAMPLE ROW — DELETE BEFORE IMPORTING.";
+
+/** True for a template sample row nobody edited. Such a row is skipped rather than imported. */
+export function isTemplateExampleRow(question: string, answer: string): boolean {
+  return question.startsWith(TEMPLATE_EXAMPLE_MARKER) || answer.startsWith(TEMPLATE_EXAMPLE_MARKER);
+}
+
 export function buildKnowledgeImportTemplateRows(): Array<Record<string, string>> {
   const label = KNOWLEDGE_ROW_COLUMN_LABELS;
   return [
     {
-      [label.question]: "How do I reset a customer's PPPoE password?",
-      [label.answer]:
-        "Open the customer in Subscriber Management, choose Credentials, then Reset Password. The new password is shown once and is also sent to the registered number.",
-      [label.title]: "Reset a PPPoE password",
-      [label.category]: "SOP",
-      [label.module]: "Subscriber Management",
-    },
-    {
-      [label.question]: "What are the support office hours?",
-      [label.answer]:
-        "Support is staffed 9am to 10pm, seven days a week. Outside those hours only P1 outages are handled.",
-      [label.title]: "",
+      [label.question]: `${TEMPLATE_EXAMPLE_MARKER} Replace this with the question a customer would actually ask.`,
+      [label.answer]: `${TEMPLATE_EXAMPLE_MARKER} Replace this with the answer, written so it can be reused with any customer.`,
+      [label.title]: "Optional — left blank, a title is derived from the question",
       [label.category]: "FAQ",
-      [label.module]: "",
+      [label.module]: "Optional — the product area this belongs to",
     },
   ];
 }

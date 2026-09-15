@@ -43,6 +43,8 @@ const REASON_HELP: Record<string, string> = {
   AI_DECLINED: "The AI judged that this needs a person, and chose not to answer.",
   EMPTY_RESPONSE: "The AI said it would reply but returned nothing usable.",
   MALFORMED_RESPONSE: "The AI's answer did not follow the requested format and could not be trusted.",
+  MEDIA_ONLY_MESSAGE:
+    "The customer sent only an image, voice note or sticker. This system cannot read media, so it was handed to a person rather than answered blindly.",
   TRUNCATED_RESPONSE:
     "The AI's answer was cut off by the length limit, so it was handed over rather than sent half-finished.",
 };

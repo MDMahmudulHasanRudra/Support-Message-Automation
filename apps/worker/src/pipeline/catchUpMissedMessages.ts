@@ -41,7 +41,7 @@ const MAX_LOOKBACK_MS = Number(process.env.CATCHUP_MAX_LOOKBACK_HOURS || 12) * 6
  * customer has moved on, and a burst of such replies on every restart is precisely the unprompted
  * bulk sending this product refuses to do.
  */
-const AUTOMATION_WINDOW_MS = Number(process.env.CATCHUP_AUTOMATION_WINDOW_MINUTES || 15) * 60 * 1000;
+export const AUTOMATION_WINDOW_MS = Number(process.env.CATCHUP_AUTOMATION_WINDOW_MINUTES || 15) * 60 * 1000;
 
 /**
  * Gaps shorter than this are not worth a sweep. A reconnect that takes twelve seconds has missed

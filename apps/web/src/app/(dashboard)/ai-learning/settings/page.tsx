@@ -33,15 +33,22 @@ export default async function AiSettingsPage() {
                 instead, and nothing is ever sent without passing the existing kill switch, automation
                 mode, cooldown, and rate-limit checks. Once a recurring pattern becomes an approved,
                 activated rule, the deterministic engine handles it and AI is never called again for
-                that pattern. Every other toggle here (Learning, Screenshot Response, Chat Learning,
-                Software Learning, Requirement Learning, Announcement AI) is still reserved for later
-                phases and has no effect on real message handling yet.
+                that pattern. Learning is live — it gates the optional AI
+                re-scoring step in Conversation Learning. Screenshot Response, Chat Learning,
+                Software Learning, Requirement Learning and Announcement AI are saved but read by
+                nothing at runtime, so changing them has no effect in either position. In
+                particular there is no image understanding anywhere in this system: a photo
+                arrives as the text "[Image]", and the AI now hands those to a person rather than
+                answering a screenshot it cannot see.
               </p>
             </HelpSection>
             <HelpSection title="Thresholds">
               <p>
-                Duplicate Similarity, Learning Confidence, Auto Approval, and Human Review are
-                percentages (0–100) reserved for future AI Learning/Knowledge phases. Auto-Response
+                Human Review is live: a Conversation Learning pattern scoring below
+                it is never surfaced for review, so setting it high quietly stops patterns
+                appearing. Duplicate Similarity, Learning Confidence and Auto Approval are saved
+                but read by nothing — the live auto-approval bar is on Conversation Learning →
+                Settings, not here. Auto-Response
                 Confidence Threshold (below, in its own section) is live today — it's the AI fallback
                 layer's own reply-vs-human-fallback decision point, default 90%.
               </p>

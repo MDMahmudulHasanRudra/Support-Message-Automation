@@ -86,6 +86,41 @@ export async function getForgeSettings() {
  * Recursively lists every readable file under a directory, bounded so a mistaken path cannot walk
  * an entire repository. Returns paths only; contents are fetched one at a time later.
  */
+
+/**
+ * Whether a repository path is non-authoritative — a test, mock, fixture, seed, sample, demo,
+ * draft, deprecated or template file — and must not become customer-facing knowledge.
+ *
+ * Forge reads the product's real repository, and a repository contains far more than the truth
+ * about how the shipped product behaves. Before this the ONLY path filters were an image-folder
+ * exclusion and a file-extension check, so a `SeedData.cs`, a `*Tests.cs`, a
+ * `sample-billing-walkthrough.md` or a `draft-*.md` was read and summarised into a "user guide"
+ * exactly like a live one. That matters most on the two paths that do not land in the review
+ * queue: tier 1 auto-verifies when `autoVerifyUserGuides` is on, and the live deep-answer research
+ * writes verified entries and grounds the reply going out in the same second.
+ *
+ * Whole path segments and filename stems only, so a legitimate guide is not caught by an
+ * unlucky substring — "latest-features.md" contains "test" and must survive.
+ */
+const NON_AUTHORITATIVE_SEGMENT =
+  /(^|[\/_.-])(tests?|specs?|mocks?|stubs?|fixtures?|seeds?|samples?|demos?|examples?|drafts?|deprecated|obsolete|templates?|sandbox|playground)([\/_.-]|$)/i;
+
+/**
+ * The CamelCase compounds the segment rule cannot see: `SeedData.cs`, `MockRepository.cs`,
+ * `DemoDataGenerator.cs`, `TestHelper.cs` — a keyword glued to the next word with no separator.
+ *
+ * Deliberately case-SENSITIVE, and that is the whole reason it is a second pattern rather than
+ * another branch of the first. Matching case-insensitively here would blocklist `specification.md`
+ * ("spec" + "i") and `testimonials.md`, which are ordinary documentation. Requiring a capital
+ * immediately after a capitalised keyword matches the compound and nothing else.
+ */
+const NON_AUTHORITATIVE_COMPOUND =
+  /(^|[\/_.-])(Test|Tests|Spec|Mock|Stub|Fixture|Seed|Sample|Demo|Example|Draft|Template|Dummy|Fake)[A-Z]/;
+
+export function isNonAuthoritativePath(path: string): boolean {
+  return NON_AUTHORITATIVE_SEGMENT.test(path) || NON_AUTHORITATIVE_COMPOUND.test(path);
+}
+
 async function listFilesUnder(
   client: ForgeClient,
   projectId: string,
@@ -110,8 +145,10 @@ async function listFilesUnder(
     }
     for (const entry of tree.entries) {
       if (entry.type === "tree") {
-        if (!/^(images|img|assets|screenshots)$/i.test(entry.name)) queue.push(entry.path);
-      } else if (/\.(md|markdown|txt)$/i.test(entry.name)) {
+        if (!/^(images|img|assets|screenshots)$/i.test(entry.name) && !isNonAuthoritativePath(entry.path)) {
+          queue.push(entry.path);
+        }
+      } else if (/\.(md|markdown|txt)$/i.test(entry.name) && !isNonAuthoritativePath(entry.path)) {
         found.push(entry.path);
       }
     }
@@ -423,7 +460,10 @@ export async function readModuleSources(
     return true;
   };
 
-  for (const path of module.sourcePaths ?? []) await read(path);
+  for (const path of module.sourcePaths ?? []) {
+    if (isNonAuthoritativePath(path)) continue;
+    await read(path);
+  }
   if (sources.length > 0) return sources;
 
   // Nothing in the map resolved. Measured against the real repository, that is 8 of 22 modules —

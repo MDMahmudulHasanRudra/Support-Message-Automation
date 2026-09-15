@@ -6,6 +6,7 @@ import {
   isResolutionError,
 } from "@support-automation/db";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
+import { isMediaOnlyBody } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
@@ -157,6 +158,20 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       }
     }
   };
+
+  // The customer sent media and nothing else — a screenshot, a voice note, a sticker. The body is
+  // a placeholder the provider substituted so the message exists in the inbox; it is a record that
+  // something arrived, not a description of it, and nothing in this pipeline can see inside the
+  // media. Answering "[Image]" produces a confident generic reply to a screenshot nobody looked
+  // at, which is worse than silence because it looks like help.
+  //
+  // Checked before the safety pre-check and before any API call: there is nothing here to spend a
+  // completion on. A CAPTIONED image is not caught by this — the caption is the customer's own
+  // question and is answered on its own terms.
+  if (isMediaOnlyBody(params.message.body)) {
+    await recordHumanFallback("MEDIA_ONLY_MESSAGE");
+    return;
+  }
 
   // A cheap pre-check, before spending a real AI API call: if this exact (account, client) pair is
   // already cooling down from a recent AI reply, there's no point asking AI again — it would just
