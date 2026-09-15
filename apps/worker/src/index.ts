@@ -25,6 +25,8 @@ import { startAiAnalysisProcessor } from "./learning/aiAnalysisProcessor.js";
 import { startGroupKnowledgeProcessor } from "./knowledge/groupKnowledgeProcessor.js";
 import { startKnowledgeImportProcessor } from "./knowledge/knowledgeImportProcessor.js";
 import { startCommunicationStyleProcessor } from "./knowledge/communicationStyleProcessor.js";
+import { startSandboxProcessor } from "./sandbox/sandboxProcessor.js";
+import { startConversationAnalysisProcessor } from "./knowledge/conversationAnalysisProcessor.js";
 import { startTeamsSyncProcessor, resolveTeamsSyncIntervalMs } from "./teams/teamsSyncProcessor.js";
 import {
   ensureForgeSettings,
@@ -125,6 +127,14 @@ async function main() {
     startKnowledgeImportProcessor(),
     // Learns how the team writes. No-ops every tick until an admin turns it on.
     startCommunicationStyleProcessor(),
+    // AI Sandbox — answers test messages an admin typed in the dashboard. Entirely isolated:
+    // it sends nothing, notifies nobody, and writes no production record (see sandboxJob.ts).
+    // No-ops every tick unless somebody is actually using the sandbox.
+    startSandboxProcessor(),
+    // Knowledge Builder's on-demand "Learn from Conversations". Reads the groups an admin
+    // selected and proposes candidates; never writes the scheduled builder's watermark and never
+    // creates a knowledge entry on its own. No-ops every tick unless a run is queued.
+    startConversationAnalysisProcessor(),
     // Microsoft Teams Integration — polling sync, always registered but a no-op every tick until
     // MICROSOFT_CLIENT_ID/SECRET/TENANT_ID/REDIRECT_URI are configured AND an admin completes the
     // OAuth connect flow (see getValidTeamsAccessToken()'s doc comment), same zero-effect-until-
