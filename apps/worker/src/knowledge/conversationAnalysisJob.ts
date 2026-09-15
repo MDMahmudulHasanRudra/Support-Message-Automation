@@ -248,6 +248,7 @@ async function analyseOneGroup(params: {
       category: entry.category,
       question: entry.question,
       answer: entry.answer,
+      procedure: entry.procedure,
       module: entry.module,
       confidence: entry.confidence,
     })),

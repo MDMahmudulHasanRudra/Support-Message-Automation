@@ -119,6 +119,7 @@ export async function researchForCustomerQuestion(params: {
           category: entry.category,
           question: entry.question ?? params.question,
           answer: entry.answer,
+          procedure: entry.procedure,
           module: module.name,
           software: "ISPDIGITAL",
           source: "DEEP_ANSWER",

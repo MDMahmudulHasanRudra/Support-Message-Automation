@@ -41,6 +41,7 @@ export const MAX_KNOWLEDGE_IMPORT_ROWS = 500;
 export const MAX_KNOWLEDGE_TITLE_LENGTH = 256;
 export const MAX_KNOWLEDGE_ANSWER_LENGTH = 8000;
 export const MAX_KNOWLEDGE_QUESTION_LENGTH = 1000;
+export const MAX_KNOWLEDGE_PROCEDURE_LENGTH = 4000;
 
 export const KNOWLEDGE_ROW_COLUMN_LABELS = {
   question: "Question",
@@ -48,6 +49,10 @@ export const KNOWLEDGE_ROW_COLUMN_LABELS = {
   title: "Title",
   category: "Category",
   module: "Module",
+  // The export has always written this column; the import ignored it, so the documented
+  // export -> edit in Excel -> re-import round trip silently dropped every procedure it
+  // carried. Optional, like Module: a file without the column imports exactly as before.
+  procedure: "Procedure",
 } as const;
 
 type KnowledgeRowField = keyof typeof KNOWLEDGE_ROW_COLUMN_LABELS;
@@ -61,6 +66,8 @@ export interface KnowledgeImportRow {
   question: string;
   answer: string;
   module: string | null;
+  /** Ordered steps, when the sheet supplied them. Null is the normal value. */
+  procedure: string | null;
 }
 
 export type KnowledgeImportRowOutcome = "VALID" | "DUPLICATE_IN_FILE" | "INVALID";
@@ -154,6 +161,7 @@ function parseRow(raw: Record<string, unknown>, rowNumber: number, keys: Resolve
       question,
       answer,
       module: cellString(raw, keys.module) || null,
+      procedure: cellString(raw, keys.procedure).slice(0, MAX_KNOWLEDGE_PROCEDURE_LENGTH) || null,
     },
   };
 }

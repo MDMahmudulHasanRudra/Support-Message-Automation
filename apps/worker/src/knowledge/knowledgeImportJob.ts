@@ -187,6 +187,7 @@ async function storeImportedKnowledge(
       category: entry.category,
       question: entry.question,
       answer: entry.answer,
+      procedure: entry.procedure,
       // The operator's module hint wins over the model's guess: they know their product.
       module: job.module ?? entry.module,
       source: "IMPORT",

@@ -190,6 +190,7 @@ export async function processOneResearchTask(clientOverride?: AiClient): Promise
           category: entry.category,
           question: entry.question ?? task.question,
           answer: entry.answer,
+          procedure: entry.procedure,
           module: module.name,
           software: "ISPDIGITAL",
           source: "FORGE_RESEARCH",

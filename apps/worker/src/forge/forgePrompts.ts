@@ -15,7 +15,8 @@
  * reinvented so all four knowledge sources land in one shape.
  */
 
-import { ALLOWED_KNOWLEDGE_CATEGORIES } from "../knowledge/groupKnowledgePrompt.js";
+import { normalizeText } from "@support-automation/engine";
+import { ALLOWED_KNOWLEDGE_CATEGORIES, PROCEDURE_FIELD_SPEC } from "../knowledge/groupKnowledgePrompt.js";
 
 export interface ForgePrompt {
   systemPrompt: string;
@@ -100,6 +101,7 @@ const RECORD_FORMAT = [
   "MODULE: <the product area, or NONE>",
   "QUESTION: <the question a customer would actually ask, in their words>",
   "ANSWER: <the answer, in plain language, as you would say it to a customer>",
+  PROCEDURE_FIELD_SPEC,
   "CONFIDENCE: <an integer 0-100 for how sure you are this is correct>",
   "",
   "Write nothing outside the records — no preamble, no commentary, no closing summary.",
@@ -264,11 +266,20 @@ export function selectModuleForQuestion<T extends { name: string; slug: string; 
   question: string,
   modules: T[],
 ): T | null {
+  // Unicode-aware, not `[^a-z0-9]`. That ASCII-only class treated every Bengali codepoint as a
+  // separator, so a question written entirely in Bengali — "বিল কিভাবে জেনারেট করব" — produced an
+  // EMPTY token set and returned null here. For the live path that surfaced as a handover; for
+  // the background research queue it marked the task terminally NO_ANSWER ("No product area
+  // matched this question"), so a real knowledge gap was recorded and dismissed in one step and
+  // could never be closed. `derivePatternSignature` on the other side of the same pipeline is
+  // fully Unicode-aware, so the two halves disagreed about whether Bengali is text at all.
+  //
+  // Length is counted in code points via Array.from: Bengali makes heavy use of combining marks,
+  // and `String.length` counts UTF-16 units, which mis-measures them.
   const words = new Set(
-    question
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((word) => word.length > 3),
+    normalizeText(question)
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((word) => Array.from(word).length > 3),
   );
   if (words.size === 0 || modules.length === 0) return null;
 

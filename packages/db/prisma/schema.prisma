@@ -3618,6 +3618,10 @@ model ConversationCandidate {
   category   AiKnowledgeCategory
   question   String?
   answer     String
+  /// Ordered steps the extractor found in the conversation, or null when it found none — carried
+  /// through review so an approved candidate keeps its procedure instead of arriving in the
+  /// knowledge base as an answer with the steps stripped off.
+  procedure  String?
   module     String?
   confidence Int
 

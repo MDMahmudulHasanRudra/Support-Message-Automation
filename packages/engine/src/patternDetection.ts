@@ -30,8 +30,23 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * Splits text into word tokens.
+ *
+ * `\p{M}` is in the keep-set, and for Bengali it is not optional. Bengali vowel signs — the কার
+ * marks, ি া ে ো and the rest — are Unicode category Mark, not Letter. Without them here the
+ * split treated every one as a separator, so ordinary words did not merely lose an accent, they
+ * SHATTERED: "বিল" became "ব" + "ল" and "আমার" became "আম" + "র". Both fragments then fell under
+ * MIN_TOKEN_LENGTH and were dropped, so the word disappeared from the signature entirely.
+ *
+ * The effect on this deployment, whose customers write Bengali: `derivePatternSignature("আমার বিল
+ * কত")` returned ["আম","কত"] — the actual subject, বিল, gone. Every consumer inherited it, so
+ * knowledge retrieval searched for fragments that match nothing, and Conversation Learning
+ * clustered Bengali questions on debris. Latin text is unaffected: it carries no combining marks,
+ * so the token set is identical to before for English and Banglish.
+ */
 function tokenize(normalizedBody: string): string[] {
-  return normalizedBody.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return normalizedBody.split(/[^\p{L}\p{N}\p{M}]+/u).filter(Boolean);
 }
 
 export interface PatternSignature {

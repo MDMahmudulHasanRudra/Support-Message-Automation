@@ -1,5 +1,5 @@
 import { prisma } from "@support-automation/db";
-import { derivePatternSignature } from "@support-automation/engine";
+import { containsWholeWord, derivePatternSignature, normalizeText } from "@support-automation/engine";
 
 /**
  * Finds the knowledge entries worth putting in front of the AI before it answers a customer.
@@ -88,31 +88,67 @@ export function selectRelevantKnowledge(
   limit = MAX_ENTRIES,
   extraKeywords: string[] = [],
 ): KnowledgeSnippet[] {
+  return rankRelevantKnowledge(customerMessage, candidates, groupId, limit, extraKeywords).snippets;
+}
+
+/**
+ * The ranking pass, plus the score of its best entry.
+ *
+ * Split out from `selectRelevantKnowledge` (which stays the stable, unit-tested shape callers
+ * already use) because `findRelevantKnowledge` now needs to know HOW WELL the direct search did,
+ * not merely whether it returned anything — that is what decides if the query expansion is worth
+ * running. Re-deriving the score at the call site would mean a second copy of the scoring rule.
+ */
+export function rankRelevantKnowledge(
+  customerMessage: string,
+  candidates: KnowledgeCandidate[],
+  groupId: string | null,
+  limit = MAX_ENTRIES,
+  extraKeywords: string[] = [],
+): SearchResult {
   const { keywords: derived } = derivePatternSignature(customerMessage);
   // Ranking has to score on the same vocabulary the candidates were selected with. Scoring a
   // Banglish question against entries found by their English expansion would give every one of
   // them an overlap of zero, and the filter below would discard the rows the query just went to
   // the trouble of finding.
   const keywords = [...new Set([...derived, ...extraKeywords])];
-  if (keywords.length === 0) return [];
+  if (keywords.length === 0) return { snippets: [], bestOverlap: 0 };
 
   const scored = candidates
     .map((candidate) => {
-      const haystack = `${candidate.title} ${candidate.question ?? ""} ${candidate.answer}`.toLowerCase();
-      const overlap = keywords.filter((keyword) => haystack.includes(keyword)).length;
+      // `procedure` joins the haystack because it is evidence, not decoration. It was rendered
+      // into the prompt as `Steps:` but scored against nothing, so the entry whose step list
+      // named the exact screen the customer asked about ("Billing → Payment → Pay → Submit")
+      // scored zero on "payment" and lost its slot to a vaguer entry that happened to repeat the
+      // word in its answer text.
+      const haystack = normalizeText(
+        `${candidate.title} ${candidate.question ?? ""} ${candidate.answer} ${candidate.procedure ?? ""}`,
+      );
+      // Whole-word, not substring. `containsWholeWord` already existed in the engine for exactly
+      // this ("hi" inside "this", "or" inside "worker") and retrieval was not using it, so a
+      // 3-letter token like "net" matched "internet", "network" and "cabinet" — manufacturing
+      // grounding out of unrelated entries and, because grounding suppresses the handover, doing
+      // it at the moment the system should have asked a person.
+      const overlap = keywords.filter((keyword) => containsWholeWord(haystack, keyword)).length;
       const fromSameGroup = Boolean(groupId) && candidate.sourceGroupId === groupId;
-      return { candidate, overlap, fromSameGroup };
+      return { candidate, overlap, fromSameGroup, hasProcedure: Boolean(candidate.procedure?.trim()) };
     })
     // An entry sharing no distinctive word with the question is not evidence for it.
     .filter((entry) => entry.overlap > 0)
     .sort((a, b) => {
       if (b.overlap !== a.overlap) return b.overlap - a.overlap;
+      // A TIEBREAK, deliberately not a weight. Two entries that match the question equally well
+      // are not equally useful when the question is "how do I do this" — the one carrying real
+      // steps is. Ranking it above its twin costs nothing when no procedure exists (the common
+      // case today) and cannot promote a less relevant entry over a more relevant one, because
+      // overlap is still compared first.
+      if (a.hasProcedure !== b.hasProcedure) return a.hasProcedure ? -1 : 1;
       if (a.fromSameGroup !== b.fromSameGroup) return a.fromSameGroup ? -1 : 1;
       // Stable final tiebreak so the same question always produces the same prompt.
       return a.candidate.id.localeCompare(b.candidate.id);
     });
 
-  return scored.slice(0, limit).map((entry) => ({
+  const snippets = scored.slice(0, limit).map((entry) => ({
     id: entry.candidate.id,
     title: entry.candidate.title,
     question: entry.candidate.question,
@@ -129,6 +165,8 @@ export function selectRelevantKnowledge(
         : (entry.candidate.procedure ?? null),
     fromSameGroup: entry.fromSameGroup,
   }));
+
+  return { snippets, bestOverlap: scored[0]?.overlap ?? 0 };
 }
 
 /**
@@ -155,18 +193,56 @@ export async function findRelevantKnowledge(
 ): Promise<KnowledgeSnippet[]> {
   const { keywords } = derivePatternSignature(customerMessage);
 
-  const direct = keywords.length > 0 ? await searchByTerms(customerMessage, keywords, groupId, limit, []) : [];
-  if (direct.length > 0 || !expandTerms) return direct;
+  const direct =
+    keywords.length > 0
+      ? await searchByTerms(customerMessage, keywords, groupId, limit, [])
+      : { snippets: [], bestOverlap: 0 };
 
-  // The customer's own words found nothing. Before concluding the knowledge base has no answer,
-  // search again in the language the knowledge base is actually written in — see queryExpansion.ts
-  // for why that is a different search rather than the same one repeated. Deliberately second: a
-  // question that already matched costs no extra round trip, so the expansion is only paid for
-  // where the alternative was an ungrounded answer.
+  // Strong enough to stop here, or nothing to expand with.
+  if (isStrongEnough(direct) || !expandTerms) return direct.snippets;
+
+  // Either the customer's own words found nothing, or they found something thin — a single
+  // shared keyword, which on a knowledge base this size is as often a coincidence as a match.
+  //
+  // The `direct.length > 0` short-circuit this replaces was the more damaging half of the
+  // retrieval problem on this deployment. Nearly every verified entry is written in English while
+  // most customers write Banglish, so a question like "package upgrade kivabe korbo" reliably
+  // matched *something* on its one or two Latin words, and that lone weak hit then suppressed the
+  // expansion — the mechanism built specifically to bridge that language gap — at exactly the
+  // moment it was needed. Expanding on a weak hit costs one small completion and is paid only
+  // when the alternative was answering from thin grounding.
   const expanded = await expandTerms();
-  if (expanded.length === 0) return direct;
+  if (expanded.length === 0) return direct.snippets;
 
-  return searchByTerms(customerMessage, expanded, groupId, limit, expanded);
+  const viaExpansion = await searchByTerms(customerMessage, expanded, groupId, limit, expanded);
+
+  // Keep whichever search actually understood the question better. Both scores count distinct
+  // query terms matched whole-word, so they are comparable as a strength signal even though the
+  // vocabularies differ. Ties go to the direct hit: those terms are the customer's own words.
+  return viaExpansion.bestOverlap > direct.bestOverlap ? viaExpansion.snippets : direct.snippets;
+}
+
+/**
+ * The bar a direct search must clear before the expansion is skipped.
+ *
+ * Two distinct matched keywords, or one that led to an entry carrying real steps. A single
+ * keyword is the weakest signal this ranker can produce — `derivePatternSignature` yields at most
+ * five terms, so one match can be a third of a short question or a single incidental word — and
+ * treating it as "found it" is what let a generic article stand in for a procedure nobody had
+ * looked for yet.
+ */
+const MIN_STRONG_OVERLAP = 2;
+
+function isStrongEnough(result: SearchResult): boolean {
+  if (result.snippets.length === 0) return false;
+  if (result.bestOverlap >= MIN_STRONG_OVERLAP) return true;
+  return result.snippets.some((snippet) => Boolean(snippet.procedure?.trim()));
+}
+
+interface SearchResult {
+  snippets: KnowledgeSnippet[];
+  /** Distinct query terms matched by the best-scoring entry — 0 when nothing matched. */
+  bestOverlap: number;
 }
 
 /**
@@ -183,11 +259,18 @@ async function searchByTerms(
   groupId: string | null,
   limit: number,
   rankingTerms: string[],
-): Promise<KnowledgeSnippet[]> {
+): Promise<SearchResult> {
+  // `procedure` is searched alongside the rest: it was selected and rendered to the model but
+  // excluded from the narrowing query, so an entry whose answer is one line ("you can do this
+  // from the billing screen") and whose steps carry the real vocabulary was unreachable by every
+  // word in those steps. This stays a substring `contains` — SQL cannot do a cheap word-boundary
+  // match, and it is only the coarse narrowing pass; selectRelevantKnowledge applies the precise
+  // whole-word test to whatever it returns.
   const matchesAnyKeyword = searchTerms.flatMap((keyword) => [
     { title: { contains: keyword, mode: "insensitive" as const } },
     { question: { contains: keyword, mode: "insensitive" as const } },
     { answer: { contains: keyword, mode: "insensitive" as const } },
+    { procedure: { contains: keyword, mode: "insensitive" as const } },
   ]);
   const where = {
     status: "ACTIVE" as const,
@@ -224,9 +307,9 @@ async function searchByTerms(
       if (!seen.has(entry.id)) candidates.push(entry);
     }
 
-    return selectRelevantKnowledge(customerMessage, candidates, groupId, limit, rankingTerms);
+    return rankRelevantKnowledge(customerMessage, candidates, groupId, limit, rankingTerms);
   } catch (err) {
     console.error("[aiFallback] knowledge lookup failed; answering without it", err);
-    return [];
+    return { snippets: [], bestOverlap: 0 };
   }
 }

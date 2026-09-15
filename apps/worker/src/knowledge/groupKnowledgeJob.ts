@@ -167,6 +167,7 @@ async function storeExtractedKnowledge(
       question: entry.question,
       answer: entry.answer,
       module: entry.module,
+      procedure: entry.procedure,
       source: "CHAT_LEARNING",
       sourceGroupId: groupId,
       // Denormalised so the review queue can show provenance without a join.

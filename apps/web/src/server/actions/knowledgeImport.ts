@@ -276,6 +276,7 @@ async function importKnowledgeSpreadsheet({
       category: result.row.category,
       question: result.row.question,
       answer: result.row.answer,
+      procedure: result.row.procedure,
       // The operator's module hint applies to the whole file and wins over a per-row value.
       module: moduleName ?? result.row.module,
       source: "IMPORT",

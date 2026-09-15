@@ -172,6 +172,7 @@ async function storeEntries(params: {
       category: entry.category,
       question: entry.question,
       answer: entry.answer,
+      procedure: entry.procedure,
       module: params.moduleHint ?? entry.module,
       software: "ISPDIGITAL",
       source: "FORGE",

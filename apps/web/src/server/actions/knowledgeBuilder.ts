@@ -130,6 +130,7 @@ export async function approveConversationCandidate(candidateId: string): Promise
       category: candidate.category,
       question: candidate.question,
       answer: candidate.answer,
+      procedure: candidate.procedure,
       module: candidate.module,
       source: "CONVERSATION_BUILDER",
       sourceGroupId: candidate.groupId,
