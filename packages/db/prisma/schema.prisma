@@ -437,6 +437,12 @@ model User {
   createdReleaseNotes   ReleaseNote[]         @relation("ReleaseNoteCreatedBy")
   publishedReleaseNotes ReleaseNote[]         @relation("ReleaseNotePublishedBy")
   releaseNoteRevisions  ReleaseNoteRevision[]
+
+  createdSandboxSessions SandboxSession[]
+  reviewedSandboxTurns   SandboxTurn[]
+
+  createdAnalysisRuns            ConversationAnalysisRun[]
+  reviewedConversationCandidates ConversationCandidate[]
 }
 
 // ---------------------------------------------------------------------------
@@ -756,18 +762,20 @@ model WhatsAppGroup {
   /// clear the backlog by scrolling through it.
   chatReviewedAt DateTime?
 
-  messages             Message[]
-  knowledgeItems       AiKnowledgeItem[]
-  broadcastMessages    OutboundMessage[]
-  participantAddItems  GroupParticipantAddItem[]
-  escalationCases      SupportEscalationCase[]
-  conversationSessions ConversationSession[]
-  supportActivities    SupportActivity[]
-  supportSessions      SupportSession[]
-  supportRuleScopes    SupportRuleGroup[]
-  aiFallbackDecisions  AiFallbackDecision[]
-  supportIssues        SupportIssue[]
-  attendanceEvidence   TeamAttendanceGroup[]
+  messages               Message[]
+  knowledgeItems         AiKnowledgeItem[]
+  broadcastMessages      OutboundMessage[]
+  participantAddItems    GroupParticipantAddItem[]
+  escalationCases        SupportEscalationCase[]
+  conversationSessions   ConversationSession[]
+  supportActivities      SupportActivity[]
+  supportSessions        SupportSession[]
+  supportRuleScopes      SupportRuleGroup[]
+  aiFallbackDecisions    AiFallbackDecision[]
+  supportIssues          SupportIssue[]
+  attendanceEvidence     TeamAttendanceGroup[]
+  sandboxSessions        SandboxSession[]
+  conversationCandidates ConversationCandidate[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([chatCategoryId])
@@ -3237,7 +3245,6 @@ model TeamAttendanceGroup {
   @@index([groupId])
 }
 
-
 // ---------------------------------------------------------------------------
 // Release Notes -- a permanent, publishable record of what shipped.
 //
@@ -3373,7 +3380,7 @@ model ReleaseNoteRevision {
 
   title           String
   summary         String?
-  releaseDate     DateTime @db.Date
+  releaseDate     DateTime          @db.Date
   releaseType     ReleaseNoteType
   status          ReleaseNoteStatus
   whatsNew        String[]
@@ -3390,4 +3397,243 @@ model ReleaseNoteRevision {
   createdAt       DateTime @default(now())
 
   @@unique([releaseNoteId, version])
+}
+
+// ============================================================================
+// AI Sandbox — Conversation Learning
+// ----------------------------------------------------------------------------
+// An isolated place to ask the AI a question and see exactly what production
+// WOULD have done with it, without a customer being involved at any point.
+//
+// The isolation is structural, not a promise. A sandbox turn is its own row in
+// its own table: nothing here writes a Message, an AiFallbackDecision, an
+// OutboundMessage, a SupportActivity, a SupportSession or a Notification, and
+// no production reader ever selects from these tables. That is why this is a
+// separate model rather than an `isTest` flag on AiFallbackDecision — a flag is
+// one forgotten `where` clause away from test traffic appearing in the AI
+// Activity log, in Team Performance, or in the figures on Overview.
+//
+// The other direction is gated too: an approved sandbox answer is a "validated
+// learning example" and nothing more until somebody explicitly promotes it, and
+// even then it lands in the knowledge base UNVERIFIED, in the same review queue
+// every other machine-written entry goes through. Sandbox never reaches a
+// customer in one step.
+// ============================================================================
+
+/// Where a turn is in the worker's queue. Mirrors the claim-style lifecycle every
+/// other queue in this worker uses (OutboundMessage, KnowledgeImport): the web app
+/// only ever writes PENDING, and exactly one worker tick moves it to PROCESSING.
+enum SandboxTurnStatus {
+  PENDING
+  PROCESSING
+  COMPLETE
+  FAILED
+}
+
+/// What production would have done with this message. The same two outcomes
+/// AiFallbackDecision records, deliberately named identically so a sandbox result
+/// reads the same way the AI Activity log does.
+enum SandboxOutcome {
+  AI_REPLIED
+  HUMAN_FALLBACK
+}
+
+/// The admin's verdict on an AI answer. WAITING is the default and is a real
+/// state, not an absence — "nobody has judged this yet" is exactly what the
+/// review list needs to show.
+enum SandboxReviewStatus {
+  WAITING
+  APPROVED
+  REJECTED
+}
+
+model SandboxSession {
+  id    String  @id @default(cuid())
+  /// Optional name for the scenario being tested ("billing question, no client id").
+  label String?
+
+  /// Optional: answer as though the message arrived in this group. Affects only the
+  /// group name in the prompt and the same-group tie-break in knowledge ranking —
+  /// it never reads that group's real messages and never writes anything to it.
+  /// SetNull rather than Cascade: a deactivated group must not delete test history.
+  groupId String?
+  group   WhatsAppGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  turns SandboxTurn[]
+
+  @@index([createdAt])
+}
+
+model SandboxTurn {
+  id        String         @id @default(cuid())
+  sessionId String
+  session   SandboxSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  /// What the admin typed, standing in for a customer message.
+  userMessage String
+  status      SandboxTurnStatus @default(PENDING)
+
+  /// --- What the AI decided, once the worker has run this turn -------------
+  outcome         SandboxOutcome?
+  /// The diagnostic code production would have recorded on a handover
+  /// (NO_BUSINESS_KNOWLEDGE, AI_DECLINED, LOW_CONFIDENCE, AI_UNAVAILABLE...).
+  /// This is the single most useful thing a sandbox can show: not just what the
+  /// AI said, but which gate would have stopped it saying it.
+  reason          String?
+  responseText    String?
+  intent          String?
+  scope           String?
+  confidenceScore Int?
+  modelId         String?
+  tokensUsed      Int?
+  /// Titles of the verified knowledge entries that grounded this answer, so the
+  /// reviewer can see WHY it answered the way it did rather than guessing.
+  knowledgeTitles String[]
+  /// Set only when the turn itself failed (provider unreachable, etc.) — distinct
+  /// from a HUMAN_FALLBACK outcome, which is the system working correctly.
+  error           String?
+
+  /// --- The admin's review -------------------------------------------------
+  review       SandboxReviewStatus @default(WAITING)
+  reviewedById String?
+  reviewedBy   User?               @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  /// Set once an approved example has been explicitly promoted into the knowledge
+  /// base, so it can never be promoted twice. Deliberately NOT a relation: the
+  /// knowledge item is free to be archived or deleted without taking the test
+  /// history with it, and a dangling id here is readable as "was promoted".
+  promotedKnowledgeItemId String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  @@index([sessionId, createdAt])
+  /// The worker's claim query.
+  @@index([status, createdAt])
+  /// The review list's own query shape, mirroring AiKnowledgeItem's review index.
+  @@index([review, createdAt])
+}
+
+// ============================================================================
+// Knowledge Builder — on-demand "Learn from Conversations"
+// ----------------------------------------------------------------------------
+// The admin-driven counterpart to startGroupKnowledgeProcessor. That job runs on
+// its own, hourly, one group at a time, oldest-first, and writes straight into
+// AiKnowledgeItem as unverified. This one is the opposite in every respect an
+// admin cares about: THEY pick the groups, THEY pick the time range, they press
+// a button, and they get a reviewable list back.
+//
+// Three rules keep the two from interfering with each other:
+//
+//  1. This path NEVER writes WhatsAppGroup.knowledgeBuiltAt/knowledgeBuiltThroughAt.
+//     Those are the background builder's incremental watermark; moving them here
+//     would make that job silently skip conversations nobody has learned from.
+//  2. This path NEVER writes AiKnowledgeItem directly. It produces candidates;
+//     only an explicit human approval turns one into a knowledge entry.
+//  3. It reads Message rows and nothing else. No WhatsApp traffic, no rules, no
+//     queue — the same read-only posture as the background builder.
+// ============================================================================
+
+/// How the analysed window was chosen. LATEST_MESSAGES reads the most recent N
+/// messages per group; the rest bound by time. Stored rather than resolved to
+/// dates up front so the run still reads as the intent it was created with.
+enum ConversationRangeKind {
+  LATEST_MESSAGES
+  LAST_24_HOURS
+  LAST_7_DAYS
+  CUSTOM
+}
+
+enum ConversationAnalysisStatus {
+  QUEUED
+  RUNNING
+  COMPLETE
+  /// Finished, but at least one group failed — the candidates from the groups
+  /// that succeeded are kept, matching KnowledgeImport's own PARTIAL semantics.
+  PARTIAL
+  FAILED
+}
+
+enum ConversationCandidateStatus {
+  WAITING
+  APPROVED
+  REJECTED
+}
+
+model ConversationAnalysisRun {
+  id    String  @id @default(cuid())
+  label String?
+
+  /// Snapshot of the selection, in the order it will be worked through. A plain
+  /// array rather than a join table: it is an immutable record of what was asked
+  /// for, and a group later deactivated must not silently drop out of the history.
+  groupIds     String[]
+  rangeKind    ConversationRangeKind
+  rangeStart   DateTime?
+  rangeEnd     DateTime?
+  /// Only for LATEST_MESSAGES.
+  messageLimit Int?
+
+  status            ConversationAnalysisStatus @default(QUEUED)
+  groupsTotal       Int                        @default(0)
+  /// Doubles as the cursor: groupIds[groupsDone] is the next group to process.
+  groupsDone        Int                        @default(0)
+  candidatesCreated Int                        @default(0)
+  /// The last group-level failure, kept so a PARTIAL run can say what went wrong.
+  error             String?
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  candidates ConversationCandidate[]
+
+  @@index([status, createdAt])
+  @@index([createdAt])
+}
+
+model ConversationCandidate {
+  id    String                  @id @default(cuid())
+  runId String
+  run   ConversationAnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  groupId   String?
+  group     WhatsAppGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  /// Snapshot, so a renamed or deactivated group still reads correctly on an old run.
+  groupName String
+
+  title      String
+  category   AiKnowledgeCategory
+  question   String?
+  answer     String
+  module     String?
+  confidence Int
+
+  status       ConversationCandidateStatus @default(WAITING)
+  reviewedById String?
+  reviewedBy   User?                       @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+
+  /// Set once approval has created the knowledge entry, so one candidate can never
+  /// be published twice. Not a relation, for the same reason SandboxTurn's is not:
+  /// archiving the knowledge entry must not delete the record that it came from here.
+  promotedKnowledgeItemId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([runId, createdAt])
+  @@index([status, createdAt])
 }

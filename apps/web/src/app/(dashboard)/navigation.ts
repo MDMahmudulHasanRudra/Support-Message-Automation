@@ -16,6 +16,7 @@ import {
   Fingerprint,
   FlaskConical,
   Gauge,
+  GraduationCap,
   History,
   KeyRound,
   LayoutDashboard,
@@ -183,6 +184,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Conversation Learning",
     links: [
       { href: "/conversation-learning", label: "Overview", icon: Waypoints },
+      { href: "/conversation-learning/sandbox", label: "AI Sandbox", icon: FlaskConical },
+      { href: "/conversation-learning/knowledge-builder", label: "Knowledge Builder", icon: GraduationCap },
       { href: "/conversation-learning/pattern-candidates", label: "Pattern Candidates", icon: Fingerprint },
       { href: "/conversation-learning/unknown-patterns", label: "Unknown Patterns", icon: EyeOff },
       { href: "/conversation-learning/rule-proposals", label: "Rule Proposals", icon: ClipboardCheck },
