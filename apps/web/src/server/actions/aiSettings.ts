@@ -23,13 +23,25 @@ export async function updateAiSettings(
   await requireSession();
 
   const flag = (key: string) => formData.get(key) === "on";
+  // An EMPTY box keeps the current value rather than writing 0. `Number("")` is 0 and
+  // `Number.isFinite(0)` is true, so the previous form of this helper made the `fallback`
+  // argument unreachable dead code and turned "I cleared the field to retype it, then got
+  // distracted and saved" into a silent write of the most permissive possible setting — a
+  // confidence threshold of 0 means the AI sends whatever it drafts, including an answer it
+  // rated 5%. A deliberately typed 0 is still honoured; only a blank is treated as "unchanged".
+  const readNumber = (key: string): number | null => {
+    const raw = formData.get(key);
+    if (raw === null || String(raw).trim() === "") return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
   const percent = (key: string, fallback: number) => {
-    const raw = Number(formData.get(key));
-    return Number.isFinite(raw) ? clampPercent(raw) : fallback;
+    const raw = readNumber(key);
+    return raw === null ? fallback : clampPercent(raw);
   };
   const nonNegativeInt = (key: string, fallback: number) => {
-    const raw = Number(formData.get(key));
-    return Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : fallback;
+    const raw = readNumber(key);
+    return raw === null ? fallback : Math.max(0, Math.round(raw));
   };
   // Only the two scopes the enum defines — anything else falls back to the conservative one
   // rather than being written through to the database unchecked.

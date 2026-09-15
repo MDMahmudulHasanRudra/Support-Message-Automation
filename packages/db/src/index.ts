@@ -386,8 +386,12 @@ export async function createAiFallbackDecision(
         responseText: input.responseText ?? null,
         outcome: input.outcome,
         reason: input.reason ?? null,
-        outboundMessageId: input.outboundMessageId ?? null,
-        notificationId: input.notificationId ?? null,
+        // `|| null`, not `?? null`: these are foreign keys, and an empty string is not a valid id.
+        // A caller that hands one over (a suppressed notification used to return "" here) would
+        // otherwise produce a P2003 that this function does not catch, losing the whole decision
+        // row rather than just the link.
+        outboundMessageId: input.outboundMessageId || null,
+        notificationId: input.notificationId || null,
         tokensUsed: input.tokensUsed ?? null,
       },
     });

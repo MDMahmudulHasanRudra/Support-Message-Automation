@@ -69,20 +69,30 @@ export async function updateSafetySettings(_prevState: SettingsFormState, formDa
   await requireSession();
   const current = await getOrCreateSettings();
 
-  const num = (key: string) => Number(formData.get(key) ?? 0);
+  // Deliberately NOT clamped to a minimum: a limit of 0 means "no limit" (see exceedsLimit() in
+  // the worker's rateLimiter), and forcing a floor here would impose a ceiling the operator did
+  // not ask for. The only thing guarded against is input that is not a number at all — an empty
+  // or malformed box keeps the current value rather than writing NaN, which Prisma rejects with a
+  // raw error the operator cannot act on.
+  const num = (key: string, current: number) => {
+    const raw = formData.get(key);
+    if (raw === null || String(raw).trim() === "") return current;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : current;
+  };
 
   await prisma.automationSettings.update({
     where: { id: "global" },
     data: {
-      maxRepliesPerClientPerHour: num("maxRepliesPerClientPerHour"),
-      maxRepliesPerClientPerDay: num("maxRepliesPerClientPerDay"),
-      globalMaxPerMinute: num("globalMaxPerMinute"),
-      globalMaxPerHour: num("globalMaxPerHour"),
-      globalMaxPerDay: num("globalMaxPerDay"),
+      maxRepliesPerClientPerHour: num("maxRepliesPerClientPerHour", current.maxRepliesPerClientPerHour),
+      maxRepliesPerClientPerDay: num("maxRepliesPerClientPerDay", current.maxRepliesPerClientPerDay),
+      globalMaxPerMinute: num("globalMaxPerMinute", current.globalMaxPerMinute),
+      globalMaxPerHour: num("globalMaxPerHour", current.globalMaxPerHour),
+      globalMaxPerDay: num("globalMaxPerDay", current.globalMaxPerDay),
       rateLimitingEnabled: formData.get("rateLimitingEnabled") === "on",
-      defaultReplyDelayMinMs: num("defaultReplyDelayMinMs"),
-      defaultReplyDelayMaxMs: num("defaultReplyDelayMaxMs"),
-      retryMaxAttempts: num("retryMaxAttempts"),
+      defaultReplyDelayMinMs: num("defaultReplyDelayMinMs", current.defaultReplyDelayMinMs),
+      defaultReplyDelayMaxMs: num("defaultReplyDelayMaxMs", current.defaultReplyDelayMaxMs),
+      retryMaxAttempts: num("retryMaxAttempts", current.retryMaxAttempts),
       // Entered as seconds, stored as milliseconds — same reasoning as the broadcast delays: a
       // backoff list typed in thousandths invites a digit slip nobody notices until retries are
       // hammering a rate-limited number. An empty or unparseable list keeps the current schedule

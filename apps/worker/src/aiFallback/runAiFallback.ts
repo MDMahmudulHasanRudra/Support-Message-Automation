@@ -141,7 +141,12 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       });
     }
 
-    if (reason === "NO_BUSINESS_KNOWLEDGE" || reason === "NO_KNOWLEDGE") {
+    // `startsWith`, not `===`: under the two Forge response modes a failed live research attempt
+    // makes the recorded reason the composite "NO_KNOWLEDGE: <why>" (see the deepAnswerReason
+    // path above), which never equals the bare string. So on exactly the two configurations where
+    // the offline research queue is useful, nothing was ever queued into it — the 2-minute
+    // processor had nothing to do precisely when it mattered.
+    if (reason.startsWith("NO_BUSINESS_KNOWLEDGE") || reason.startsWith("NO_KNOWLEDGE")) {
       try {
         await recordUnansweredQuestion({
           question: params.message.body,
@@ -265,6 +270,18 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     modelId: completion.modelId,
     tokensUsed: completion.tokensUsed,
   };
+
+  // The token ceiling cut the answer off. Because RESPONSE is the last line of the required
+  // format, truncation always lands in the reply text and never in the metadata above it — so
+  // every gate below would pass on a confident, well-formed, half-finished answer, and the
+  // customer would receive a procedure that stops mid-step. That is the exact outcome the
+  // prompt's own NEVER INVENT A STEP rule exists to prevent, arriving by a different route.
+  // `truncated` has been on the completion result since it was written, for this, and nothing
+  // read it.
+  if (completion.truncated) {
+    await recordHumanFallback("TRUNCATED_RESPONSE", commonFields);
+    return;
+  }
 
   if (parsed.confidence === null) {
     await recordHumanFallback("MALFORMED_RESPONSE", commonFields);
@@ -459,7 +476,7 @@ async function sendHumanFallbackAlert(params: {
   if (takeoverDestinations.length > 0) {
     const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP");
     if (!isResolutionError(resolution)) {
-      const { id } = await enqueueNotification({
+      const sent = await enqueueNotification({
         type: "WHATSAPP",
         event: "AI_HUMAN_FALLBACK",
         destination: takeoverDestinations[0]!,
@@ -467,19 +484,26 @@ async function sendHumanFallbackAlert(params: {
         relatedMessageId: params.messageId,
         payload,
       });
-      return id;
+      // `suppressed` means the admin muted this event's WhatsApp channel, so NOTHING was written
+      // and `id` is the empty string rather than a real Notification id. Returning it would write
+      // "" into AiFallbackDecision.notificationId — a foreign key — which fails with P2003, and
+      // createAiFallbackDecision only swallows P2002. That rethrow used to destroy the decision
+      // row, the in-group mention and the Forge research task together, so muting one alert
+      // channel silently blinded the entire handover path. Fall through to Teams instead: a muted
+      // WhatsApp channel is a statement about WhatsApp, not about whether the team is told at all.
+      if (!sent.suppressed) return sent.id;
     }
   }
 
   if (params.automationSettings.teamsWebhookUrl) {
-    const { id } = await enqueueNotification({
+    const sent = await enqueueNotification({
       type: "TEAMS",
       event: "AI_HUMAN_FALLBACK",
       destination: params.automationSettings.teamsWebhookUrl,
       relatedMessageId: params.messageId,
       payload,
     });
-    return id;
+    if (!sent.suppressed) return sent.id;
   }
 
   return null;

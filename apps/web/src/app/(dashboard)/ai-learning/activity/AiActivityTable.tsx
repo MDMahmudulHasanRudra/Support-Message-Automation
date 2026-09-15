@@ -43,6 +43,8 @@ const REASON_HELP: Record<string, string> = {
   AI_DECLINED: "The AI judged that this needs a person, and chose not to answer.",
   EMPTY_RESPONSE: "The AI said it would reply but returned nothing usable.",
   MALFORMED_RESPONSE: "The AI's answer did not follow the requested format and could not be trusted.",
+  TRUNCATED_RESPONSE:
+    "The AI's answer was cut off by the length limit, so it was handed over rather than sent half-finished.",
 };
 
 function explainReason(reason: string | null): string | null {
@@ -53,6 +55,15 @@ function explainReason(reason: string | null): string | null {
   }
   if (reason.startsWith("AI_ERROR:")) {
     return `The provider call failed — ${reason.slice("AI_ERROR:".length).trim()}`;
+  }
+  // "NO_KNOWLEDGE: <why the live research failed>" — the composite form the Forge response modes
+  // produce. The exact-match lookup above never sees it, so these rendered as a bare code while
+  // the plain NO_KNOWLEDGE beside them was fully explained — and the detail after the colon is
+  // usually the actionable half (FORGE_NOT_CONFIGURED, NO_MATCHING_MODULE, and so on).
+  if (reason.startsWith("NO_KNOWLEDGE:")) {
+    return `${REASON_HELP.NO_KNOWLEDGE} Looking it up in the product source also failed — ${reason
+      .slice("NO_KNOWLEDGE:".length)
+      .trim()}`;
   }
   return null;
 }

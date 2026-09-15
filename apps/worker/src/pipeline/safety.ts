@@ -1,7 +1,7 @@
 import { prisma } from "@support-automation/db";
 import type { AutomationSettings } from "@prisma/client";
 import { isCooldownActive } from "../queue/cooldown.js";
-import { getGlobalRateLimitUsage, getPerClientLimitUsage } from "../queue/rateLimiter.js";
+import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from "../queue/rateLimiter.js";
 import type { EngineRule } from "@support-automation/engine";
 
 export interface SafetyCheckResult {
@@ -95,6 +95,13 @@ export async function checkAutoReplySafety(params: {
 
   // Rate limits protect the WhatsApp number itself, so they are lifted only for a group an
   // admin has explicitly marked as a test group — never globally.
+  //
+  // A limit of 0 (or any non-positive value) means NO LIMIT, not "block everything". Read the
+  // other way — which is what a bare `used >= limit` does, since `0 >= 0` is true — a single
+  // cleared box on the Settings form silently and permanently stopped every outbound message on
+  // the system, rule replies and AI replies alike, with each one reporting the self-refuting
+  // "Global per-minute rate limit reached (0/0)". `rateLimitingEnabled` is the switch for turning
+  // the whole mechanism off; an individual 0 is how you turn off one of the five.
   if (settings.rateLimitingEnabled && !testMode) {
     // Five independent COUNTs — fetched together, as the send-time re-check in
     // outboundQueueProcessor.ts already does, rather than in two serial round trips. The
@@ -104,32 +111,32 @@ export async function checkAutoReplySafety(params: {
       getGlobalRateLimitUsage(accountId),
     ]);
 
-    if (perClient.perHour >= settings.maxRepliesPerClientPerHour) {
+    if (exceedsLimit(perClient.perHour, settings.maxRepliesPerClientPerHour)) {
       return {
         allowed: false,
         reason: `Per-client hourly reply limit reached (${perClient.perHour}/${settings.maxRepliesPerClientPerHour}).`,
       };
     }
-    if (perClient.perDay >= settings.maxRepliesPerClientPerDay) {
+    if (exceedsLimit(perClient.perDay, settings.maxRepliesPerClientPerDay)) {
       return {
         allowed: false,
         reason: `Per-client daily reply limit reached (${perClient.perDay}/${settings.maxRepliesPerClientPerDay}).`,
       };
     }
 
-    if (global.perMinute >= settings.globalMaxPerMinute) {
+    if (exceedsLimit(global.perMinute, settings.globalMaxPerMinute)) {
       return {
         allowed: false,
         reason: `Global per-minute rate limit reached (${global.perMinute}/${settings.globalMaxPerMinute}).`,
       };
     }
-    if (global.perHour >= settings.globalMaxPerHour) {
+    if (exceedsLimit(global.perHour, settings.globalMaxPerHour)) {
       return {
         allowed: false,
         reason: `Global per-hour rate limit reached (${global.perHour}/${settings.globalMaxPerHour}).`,
       };
     }
-    if (global.perDay >= settings.globalMaxPerDay) {
+    if (exceedsLimit(global.perDay, settings.globalMaxPerDay)) {
       return {
         allowed: false,
         reason: `Global per-day rate limit reached (${global.perDay}/${settings.globalMaxPerDay}).`,

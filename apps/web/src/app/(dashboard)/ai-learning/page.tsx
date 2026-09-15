@@ -33,7 +33,16 @@ export default async function AiLearningDashboardPage() {
     prisma.aiKnowledgeItem.findMany({ orderBy: { updatedAt: "desc" }, take: 8 }),
     // "AI Requests" excludes AI_UNAVAILABLE specifically — the one outcome where no API call was
     // actually attempted (resolveAiClient() returned null before any completion request went out).
-    prisma.aiFallbackDecision.count({ where: { NOT: { reason: "AI_UNAVAILABLE" } } }),
+    //
+    // The null branch is load-bearing, not defensive. `reason` is nullable and is null on EVERY
+    // AI_REPLIED row, and Prisma compiles `NOT: { reason: "..." }` to `reason <> '...'`, which is
+    // NULL rather than TRUE for a null column — so the previous form silently excluded every
+    // successful reply and this tile read *lower* than the "AI Replies" tile beside it. Same
+    // documented trap as `{ not: value }` on a nullable column; the block form compiles
+    // identically and is not a workaround for it.
+    prisma.aiFallbackDecision.count({
+      where: { OR: [{ reason: null }, { reason: { not: "AI_UNAVAILABLE" } }] },
+    }),
     prisma.aiFallbackDecision.count({ where: { outcome: "AI_REPLIED" } }),
     prisma.aiFallbackDecision.count({ where: { outcome: "HUMAN_FALLBACK" } }),
     prisma.aiFallbackDecision.aggregate({ _avg: { confidenceScore: true } }),

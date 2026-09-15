@@ -257,6 +257,12 @@ export async function runAutomationStage(
                 aiAutomationEnabled: group.aiAutomationEnabled,
                 aiAutomationExcluded: group.aiAutomationExcluded,
                 aiSuppressedUntil: group.aiSuppressedUntil,
+                // Was omitted, so `params.group?.testModeEnabled ?? false` inside runAiFallback
+                // was always false and an approved test group still paid the full randomised
+                // 3-15s reply delay on every AI answer and every handover mention. The throttle
+                // exemptions were unaffected (safety.ts and the queue both re-read the flag from
+                // the database themselves), which is why this stayed invisible.
+                testModeEnabled: group.testModeEnabled,
               }
             : null,
           automationSettings: settings,
@@ -629,6 +635,7 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
   // the customer's side and its awaiting-reply signal could never clear. An unknown group still
   // stores the message, with groupId null, exactly as the incoming path does.
   const group = await resolveGroup(raw);
+  let stored = true;
   try {
     await prisma.message.create({
       data: {
@@ -648,6 +655,40 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
     });
   } catch (err: any) {
     if (err?.code !== "P2002") throw err;
+    // Already stored — this is a replayed echo, so the side effect below has already run.
+    stored = false;
+  }
+
+  if (!stored || raw.direction !== "OUTGOING") return;
+
+  /**
+   * An outgoing message means this customer HAS been answered, so any open escalation case for
+   * the chat is closed here.
+   *
+   * This path used to do nothing but store the row, and that left the escalation ladder blind to
+   * the single most common way a customer actually gets answered: an executive typing in WhatsApp
+   * on the business handset. Those messages arrive `fromMe: true` → OUTGOING → here, never
+   * touching the `isFromTeamMember` branch that `markHumanReplied` lived in. So a question
+   * answered by a colleague in thirty seconds kept escalating on schedule — second alert, member
+   * DM, admin DM — about a conversation that was already handled.
+   *
+   * "OUTGOING counts as a reply" is not a new definition invented here: it is the one the chat
+   * inbox already uses to decide whether a conversation is still waiting ("a reply is
+   * `direction = OUTGOING` (ours, including AI) **or** `isFromTeamMember`"). Escalation honoured
+   * only the second half. Counting our own automated replies too is deliberate and correct for
+   * *this* signal — the case exists to detect an unanswered customer, and an answer is an answer
+   * whoever sent it.
+   *
+   * Deliberately NOT paired with `recordHumanTakeover` here. That one means "a person is handling
+   * this, so the AI must stay quiet", and the AI's own replies come back through this exact path
+   * — suppressing AI on its own echo would silence it for the rest of every conversation it took
+   * part in. Telling a human reply apart from our own needs a lookup this path cannot afford
+   * today; it is tracked separately.
+   */
+  try {
+    await markHumanReplied(raw.chatId);
+  } catch (err) {
+    console.error("[escalation] failed to close a case on an outgoing reply", err);
   }
 }
 

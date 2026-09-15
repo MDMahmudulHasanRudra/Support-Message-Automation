@@ -4,7 +4,7 @@ import { prisma } from "@support-automation/db";
 import type { OutboundMessage } from "@prisma/client";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { isCooldownActive } from "./cooldown.js";
-import { getGlobalRateLimitUsage, getPerClientLimitUsage } from "./rateLimiter.js";
+import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from "./rateLimiter.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import {
   countJobSentLastMinute,
@@ -211,12 +211,14 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
       getGlobalRateLimitUsage(message.accountId),
       getPerClientLimitUsage(message.accountId, message.toPhone),
     ]);
+    // A limit of 0 means no limit — see exceedsLimit() in rateLimiter.ts. Shared with the
+    // enqueue-time gate in pipeline/safety.ts so the two cannot disagree.
     const limitExceeded =
-      global.perMinute >= settings.globalMaxPerMinute ||
-      global.perHour >= settings.globalMaxPerHour ||
-      global.perDay >= settings.globalMaxPerDay ||
-      perClient.perHour >= settings.maxRepliesPerClientPerHour ||
-      perClient.perDay >= settings.maxRepliesPerClientPerDay;
+      exceedsLimit(global.perMinute, settings.globalMaxPerMinute) ||
+      exceedsLimit(global.perHour, settings.globalMaxPerHour) ||
+      exceedsLimit(global.perDay, settings.globalMaxPerDay) ||
+      exceedsLimit(perClient.perHour, settings.maxRepliesPerClientPerHour) ||
+      exceedsLimit(perClient.perDay, settings.maxRepliesPerClientPerDay);
 
     if (limitExceeded) {
       if (isManualReply) {

@@ -15,6 +15,25 @@ async function countSent(accountId: string, sinceMs: number, toPhone?: string): 
   });
 }
 
+/**
+ * Whether a usage count has reached its configured ceiling — with 0 (or any non-positive value)
+ * meaning NO LIMIT rather than "block everything".
+ *
+ * The distinction is the whole reason this helper exists. Written inline as `used >= limit`, a
+ * limit of 0 makes `0 >= 0` true and blocks every outbound message forever, reporting the
+ * self-refuting "limit reached (0/0)". That is reachable from the Settings form with one cleared
+ * box, and it silences rule replies and AI replies together.
+ *
+ * Both the enqueue-time gate (pipeline/safety.ts) and the send-time re-check
+ * (queue/outboundQueueProcessor.ts) import this rather than restating the comparison, so the two
+ * cannot disagree about what a limit of 0 means — this codebase has been bitten before by a
+ * second copy of a rule drifting from the first.
+ */
+export function exceedsLimit(used: number, limit: number): boolean {
+  if (!Number.isFinite(limit) || limit <= 0) return false;
+  return used >= limit;
+}
+
 export interface GlobalRateLimitUsage {
   perMinute: number;
   perHour: number;
