@@ -19,6 +19,7 @@ function candidate(over: Partial<Parameters<typeof selectRelevantKnowledge>[1][n
     question: null,
     answer: "Some answer.",
     procedure: null,
+    module: null,
     sourceGroupId: null,
     ...over,
   };

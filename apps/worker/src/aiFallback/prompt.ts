@@ -46,6 +46,16 @@ export interface FallbackPromptInput {
    * knowledge may justify the answer, and the prompt says so in as many words.
    */
   conversation?: ConversationTurn[];
+  /**
+   * Structural instructions derived from the retrieved evidence by `answerPlan.ts` — how many
+   * documented procedures were found, and whether a how-to question has none at all.
+   *
+   * Already-rendered text rather than the plan object, so this module keeps its single job of
+   * assembling a prompt and stays testable without importing the planner. Empty string in the
+   * ordinary case (one workflow, or a factual question), in which case the prompt is byte-identical
+   * to what it was before the planner existed.
+   */
+  planGuidance?: string;
 }
 
 export interface FallbackPrompt {
@@ -185,6 +195,15 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
           "The language rules above read the LATEST customer message only. Decide the language from",
           "that message, never from the transcript — detection is per message and does not latch,",
           "so a conversation held in one language does not decide the language of the next reply.",
+        ]
+      : []),
+    ...(input.planGuidance?.trim()
+      ? [
+          "",
+          "HOW THIS ANSWER MUST BE STRUCTURED. Derived from the reference material below, not from",
+          "a guess about it — treat it as describing what the material actually contains.",
+          input.planGuidance.trim(),
+          "",
         ]
       : []),
     ...(knowledge.length > 0

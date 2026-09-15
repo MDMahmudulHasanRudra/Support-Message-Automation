@@ -1,3 +1,4 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma, encryptSecret } from "@support-automation/db";
 import { TeamsOAuthError } from "@support-automation/teams-client";

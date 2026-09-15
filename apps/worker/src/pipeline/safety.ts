@@ -95,13 +95,6 @@ export async function checkAutoReplySafety(params: {
 
   // Rate limits protect the WhatsApp number itself, so they are lifted only for a group an
   // admin has explicitly marked as a test group — never globally.
-  //
-  // A limit of 0 (or any non-positive value) means NO LIMIT, not "block everything". Read the
-  // other way — which is what a bare `used >= limit` does, since `0 >= 0` is true — a single
-  // cleared box on the Settings form silently and permanently stopped every outbound message on
-  // the system, rule replies and AI replies alike, with each one reporting the self-refuting
-  // "Global per-minute rate limit reached (0/0)". `rateLimitingEnabled` is the switch for turning
-  // the whole mechanism off; an individual 0 is how you turn off one of the five.
   if (settings.rateLimitingEnabled && !testMode) {
     // Five independent COUNTs — fetched together, as the send-time re-check in
     // outboundQueueProcessor.ts already does, rather than in two serial round trips. The

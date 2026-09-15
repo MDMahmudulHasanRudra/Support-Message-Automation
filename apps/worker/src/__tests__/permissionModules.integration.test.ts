@@ -1,3 +1,4 @@
+import "./helpers/requireTestDatabase.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@support-automation/db";

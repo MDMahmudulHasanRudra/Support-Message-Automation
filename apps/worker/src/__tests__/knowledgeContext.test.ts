@@ -148,7 +148,7 @@ describe("buildFallbackPrompt with knowledge", () => {
           title: "Receipt printer offline",
           question: "Why is it offline?",
           answer: "Reinstall the driver.",
-          fromSameGroup: true,
+          module: null, fromSameGroup: true,
           procedure: null,
         },
       ],
@@ -165,7 +165,7 @@ describe("buildFallbackPrompt with knowledge", () => {
     const prompt = buildFallbackPrompt({
       customerMessage: "printer offline",
       groupName: null,
-      knowledge: [{ id: "k1", title: "T", question: null, answer: "A", fromSameGroup: false, procedure: null }],
+      knowledge: [{ id: "k1", title: "T", question: null, answer: "A", fromSameGroup: false, procedure: null, module: null }],
     });
 
     expect(prompt.systemPrompt).toContain("SHOULD_REPLY");
@@ -176,7 +176,7 @@ describe("buildFallbackPrompt with knowledge", () => {
     const prompt = buildFallbackPrompt({
       customerMessage: "printer offline",
       groupName: null,
-      knowledge: [{ id: "k1", title: "T", question: null, answer: "A", fromSameGroup: false, procedure: null }],
+      knowledge: [{ id: "k1", title: "T", question: null, answer: "A", fromSameGroup: false, procedure: null, module: null }],
     });
 
     for (const field of ["INTENT:", "CONFIDENCE:", "SHOULD_REPLY:", "RESPONSE:"]) {

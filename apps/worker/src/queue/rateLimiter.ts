@@ -16,21 +16,26 @@ async function countSent(accountId: string, sinceMs: number, toPhone?: string): 
 }
 
 /**
- * Whether a usage count has reached its configured ceiling — with 0 (or any non-positive value)
- * meaning NO LIMIT rather than "block everything".
+ * Whether a usage count has reached its configured ceiling.
  *
- * The distinction is the whole reason this helper exists. Written inline as `used >= limit`, a
- * limit of 0 makes `0 >= 0` true and blocks every outbound message forever, reporting the
- * self-refuting "limit reached (0/0)". That is reachable from the Settings form with one cleared
- * box, and it silences rule replies and AI replies together.
+ * A limit of 0 means ZERO SENDS ALLOWED, not "unlimited". That is the literal reading, and it is
+ * the meaning the integration suite has encoded in three separate files for as long as they have
+ * existed (`pipeline.integration.test.ts`'s "limit is already zero", `testModeGroup`'s throttled
+ * fixture, `aiFallback`'s rate-limit-exhausted case all set a limit to 0 to mean blocked).
  *
- * Both the enqueue-time gate (pipeline/safety.ts) and the send-time re-check
- * (queue/outboundQueueProcessor.ts) import this rather than restating the comparison, so the two
- * cannot disagree about what a limit of 0 means — this codebase has been bitten before by a
- * second copy of a rule drifting from the first.
+ * This was briefly changed to treat 0 as "no limit", to stop a cleared Settings box silently
+ * halting every outbound message with the self-refuting "limit reached (0/0)". That accident is
+ * real, but it is now prevented at its actual source — `updateSafetySettings` keeps the current
+ * value for an empty field rather than writing 0 — so redefining a deliberately typed 0 is not
+ * needed to fix it, and redefining a rate limit that protects a bannable WhatsApp number is not a
+ * change to make against a suite that says otherwise.
+ *
+ * The helper stays, even though it is now one comparison, because both the enqueue-time gate
+ * (pipeline/safety.ts) and the send-time re-check (queue/outboundQueueProcessor.ts) call it. Two
+ * hand-written copies of this rule is exactly the drift this codebase keeps getting bitten by.
  */
 export function exceedsLimit(used: number, limit: number): boolean {
-  if (!Number.isFinite(limit) || limit <= 0) return false;
+  if (!Number.isFinite(limit)) return false;
   return used >= limit;
 }
 

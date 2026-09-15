@@ -1,3 +1,4 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
 import { prisma, createRuleProposalFromCandidate, approveRuleProposalById } from "@support-automation/db";

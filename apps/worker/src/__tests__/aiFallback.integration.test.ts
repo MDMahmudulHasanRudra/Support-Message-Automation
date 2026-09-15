@@ -1,3 +1,4 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
 import { prisma, createAiFallbackDecision } from "@support-automation/db";

@@ -51,6 +51,8 @@ export interface KnowledgeSnippet {
    * actual order, so it goes in front of the answer text rather than instead of it.
    */
   procedure: string | null;
+  /** The product area this entry belongs to, when the source established one. */
+  module: string | null;
   /** True when this came from the same group the customer is writing in. */
   fromSameGroup: boolean;
 }
@@ -68,6 +70,9 @@ interface KnowledgeCandidate {
   question: string | null;
   answer: string;
   procedure: string | null;
+  /** Optional on the INPUT type so a caller (and a test fixture) need not supply it; the snippet
+   *  this produces always carries it, normalised to null. */
+  module?: string | null;
   sourceGroupId: string | null;
 }
 
@@ -163,6 +168,7 @@ export function rankRelevantKnowledge(
       entry.candidate.procedure && entry.candidate.procedure.length > MAX_ANSWER_CHARS
         ? `${entry.candidate.procedure.slice(0, MAX_ANSWER_CHARS)}…`
         : (entry.candidate.procedure ?? null),
+    module: entry.candidate.module ?? null,
     fromSameGroup: entry.fromSameGroup,
   }));
 
@@ -284,6 +290,7 @@ async function searchByTerms(
     question: true,
     answer: true,
     procedure: true,
+    module: true,
     sourceGroupId: true,
   };
   const orderBy = [{ updatedAt: "desc" as const }, { id: "asc" as const }];

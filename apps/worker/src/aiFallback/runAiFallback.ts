@@ -10,6 +10,7 @@ import { isMediaOnlyBody } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
+import { buildAnswerPlan, renderAnswerPlan, validateGrounding } from "./answerPlan.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
 import { expandQueryTerms } from "./queryExpansion.js";
 import { loadConversationContext } from "./conversationContext.js";
@@ -260,6 +261,12 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     return;
   }
 
+  // What the evidence actually supports, worked out from the retrieved rows themselves rather
+  // than asked of a model: how many documented procedures there are, and whether a how-to
+  // question has none. Built AFTER any deep-answer research, so it plans over the final evidence
+  // set. See answerPlan.ts for why this is deterministic and why there is no second AI call.
+  const plan = buildAnswerPlan(params.message.body, knowledge);
+
   let completion;
   try {
     completion = await client.complete(
@@ -270,6 +277,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
         styleGuidance: await getApprovedStyleGuidance(),
         knowledge,
         conversation,
+        planGuidance: renderAnswerPlan(plan),
       }),
     );
   } catch (err) {
@@ -336,6 +344,17 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       groundedInVerifiedKnowledge ? "LOW_CONFIDENCE" : "LOW_CONFIDENCE_GENERAL",
       commonFields,
     );
+    return;
+  }
+
+  // The draft is confident, in scope and above threshold — and may still have invented the one
+  // thing the prompt most forbids. `NEVER INVENT A STEP` is a request, and a request is not a
+  // guarantee, so this checks mechanically: a how-to question, no documented steps anywhere in
+  // the evidence, and a numbered list in the reply anyway. Deliberately narrow — see
+  // validateGrounding for why a broad hallucination test would block good answers and get ignored.
+  const grounding = validateGrounding(parsed.responseText, plan);
+  if (!grounding.ok) {
+    await recordHumanFallback(grounding.reason ?? "UNGROUNDED_RESPONSE", commonFields);
     return;
   }
 
