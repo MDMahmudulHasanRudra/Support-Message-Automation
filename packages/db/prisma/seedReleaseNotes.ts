@@ -335,7 +335,7 @@ const RELEASES: HistoricalRelease[] = [
   },
   {
     version: "0.15.0",
-    title: "AI that answers with your steps, and the audit that hardened it",
+    title: "Procedure-aware AI, real duty hours, and a second way to link WhatsApp",
     releaseDate: "2026-09-16",
     releaseType: "FEATURE",
     // DRAFT: this describes work that landed today. Somebody reads it and presses Publish.
@@ -344,6 +344,9 @@ const RELEASES: HistoricalRelease[] = [
       "AI Learning",
       "Conversation Learning",
       "Support Activity",
+      "Team Management",
+      "WhatsApp Accounts & Groups",
+      "Messages",
       "Notifications",
       "System & Settings",
     ],
@@ -354,6 +357,13 @@ const RELEASES: HistoricalRelease[] = [
       "Support Sessions in Reports can be closed in bulk. Select the open rows and close them together instead of one at a time.",
       "The sidebar collapses to icons and remembers your choice.",
       "A named visual theme, Midnight Indigo, applied consistently across the dashboard in light and dark mode.",
+      "Link a WhatsApp account by phone number. WhatsApp offers two official ways to link a device, and this software only used one: alongside scanning a QR code, you can now enter the account's number, get a code back, and type that code into Linked devices on the phone. Useful when nobody can hold a phone up to the screen - a remote server, a number in another office. The QR remains the default and is unchanged.",
+      "Duty History shows the hours actually worked, not only the shift that was planned. Each day now carries the first and last message stored from that person and the span between them, beside the shift they were rostered onto.",
+      "Duty History flags a late start or an early finish against that day's own shift times, past a grace period you set. A smaller overrun is still shown - it is simply not called late.",
+      "A By person view of Duty History folds a date range into one row per colleague, so \"who was late most often this fortnight\" is a glance rather than a scroll.",
+      "Summary tiles above Duty History: days scheduled, days with activity, late starts, and the typical day for the range on screen.",
+      "Expand any Duty History row to see which groups that person worked in that day, with the message count and the first and last time for each.",
+      "Export Duty History to CSV or Excel, honouring the filters and the view currently on screen - for timesheet and payroll conversations.",
     ],
     improvements: [
       "Before writing an answer, the system now works out what your knowledge actually supports. If two different documented procedures apply, it offers them as separate labelled options instead of merging them into a sequence that exists nowhere. If a how-to question has no documented steps at all, it says so plainly and hands over, rather than assembling something plausible.",
@@ -364,6 +374,9 @@ const RELEASES: HistoricalRelease[] = [
       "Longer replies are allowed, so a step-by-step answer in Bengali is no longer cut off and handed over when it was very nearly finished.",
       "Every handover reason in the AI Activity log is explained in plain language beside its code, so nobody has to guess what stopped a reply.",
       "The Overview dashboard no longer leaves blank gaps in its chart grid, and its spacing is tighter.",
+      "A manual attendance correction now shows who made it, when, and why, beside the evidence it was laid over - so \"marked absent, and there were forty messages\" stays readable as exactly that.",
+      "The punctuality grace periods live in Team Management then Settings rather than in the software's source, so what counts as late is your decision and can be changed.",
+      "Logging an account out now also forgets the number it was set to pair with, so the next attempt asks for the new one instead of quietly reusing the number that just left.",
     ],
     bugFixes: [
       "Muting the WhatsApp channel for AI handover alerts silently destroyed the whole handover — no record, no tag in the group, no research queued — while making the dashboard look healthier. Muting one channel now only mutes that channel.",
@@ -379,6 +392,10 @@ const RELEASES: HistoricalRelease[] = [
       "An answer cut short by the length limit is handed over instead of being sent half-finished.",
       "Step-by-step instructions typed into a knowledge entry reached no customer: the field was shown to the AI but never searched, so the entry whose steps named the exact screen lost its place to a vaguer one.",
       "Exporting the knowledge base to a spreadsheet, editing it and importing it back silently dropped every set of steps it carried.",
+      "The missed-message catch-up dropped every reply that quoted another message - 29 of the 706 messages recovered on the first production run. The history WhatsApp returns carries a quoted message's id in a different shape to the live listener, and only one of the two was understood.",
+      "Two example team members reappeared in the live roster after being deleted, because the start-up seed recreated them on every redeploy. They would have sat in schedules, attendance and duty planning as though they were staff. Examples now seed only into an empty roster.",
+      "Choosing a different linking method while a connection attempt was already running did nothing at all. The new attempt silently rejoined the old one, so the method picked was never used and the dialog waited for a code that could not arrive.",
+      "The linking dialog contradicted itself: selecting the phone-number option left the QR instructions on screen, and showed a spinner claiming to wait for a code before any number had been entered.",
     ],
     security: [
       "The downloadable knowledge import template contained two invented product facts — a reset procedure and a claim about staffed support hours that contradicted this deployment's own shift times. Nothing marked them as examples, and the normal workflow is to download the template, add rows and upload it, so they landed in the review queue looking like well-written entries, one click from being quoted to a customer as fact. The sample row now asserts nothing and is refused if uploaded unedited.",
@@ -391,10 +408,11 @@ const RELEASES: HistoricalRelease[] = [
       "Images, voice notes and stickers cannot be read. A message containing only media is handed to a person rather than answered.",
       "The token figure in the AI Activity log counts the answer itself, not the extra searches or live research a message may also have paid for. Treat it as the cost of the answer, not of the message.",
       "Answering from the product's own source while the customer waits requires the Softify Forge integration to be configured, enabled and pointed at a project.",
+      "A link code is issued once per attempt and is not refreshed, unlike the QR code which rotates until it is scanned. If it expires, ask for a new one.",
     ],
     technicalNotes: [
-      "Four database migrations are committed but not yet deployed. Run the migration deploy before this release goes live, or queries touching the newly added columns will fail.",
-      "742 automated tests pass across the rule engine, shared, AI client and worker suites, 535 of them in the worker. Integration tests must be run against the isolated throwaway database, never the live one.",
+      "Six database migrations are committed and NOT yet deployed. Run the migration deploy BEFORE the application, or the WhatsApp Accounts and Duty History pages will fail on columns that do not exist yet.",
+      "776 automated tests pass across the rule engine, shared, AI client and worker suites, 550 of them in the worker. Integration tests must be run against the isolated throwaway database, never the live one.",
     ],
   },
 ];
