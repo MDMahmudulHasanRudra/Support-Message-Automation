@@ -21,7 +21,12 @@ import type {
   SendResult,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
-import { recordAccountMetadata, recordConnectionState, type OpenWAConnectionState } from "./connectionState.js";
+import {
+  readPairingPreference,
+  recordAccountMetadata,
+  recordConnectionState,
+  type OpenWAConnectionState,
+} from "./connectionState.js";
 
 /** Post-connection state transitions (STATE enum) mapped onto our fine-grained lifecycle. */
 function mapLibraryState(state: STATE): OpenWAConnectionState {
@@ -236,12 +241,20 @@ export class OpenWAProvider implements WhatsAppProvider {
     await this.clearStaleChromiumLock();
     await this.setState("STARTING");
 
+    // Both linking methods arrive HERE, on one event, and that is the library's design rather
+    // than a coincidence worth defending against: `grabAndEmit` in its auth controller emits
+    // `isLinkCode ? qrData : await page.evaluate('window.getQrPng()')`, so this callback receives a
+    // `data:image/png` URL when a QR was rendered and a bare nine-character code ("ABCD-EFGH")
+    // when one was requested by phone number. `pairingMethod` on the account row is what tells the
+    // dashboard which of the two it is holding — length-sniffing the value would work today and
+    // would be a guess about somebody else's format tomorrow.
     ev.on("qr.**", (qrCode: string, sessionId: string) => {
       if (sessionId !== this.sessionId) return;
       this.setState("QR_AVAILABLE", { qrLength: qrCode.length }, qrCode).catch(() => undefined);
     });
 
     const useStealth = process.env.WHATSAPP_USE_STEALTH !== "false";
+    const pairing = await readPairingPreference(this.accountId);
 
     await this.setState("WAITING_FOR_QR");
 
@@ -322,6 +335,16 @@ export class OpenWAProvider implements WhatsAppProvider {
           authTimeout: 120,
           popup: false,
           cacheEnabled: false,
+          // Selects WhatsApp's "Link with phone number" flow instead of the QR. The library's
+          // initializer races one or the other and never both —
+          // `if (config?.linkCode) race.push(qrManager.linkCode(...)) else race.push(smartQr(...))`
+          // — so this key is the whole switch between the two methods.
+          //
+          // The check is truthiness, so `linkCode: undefined` would in fact still take the QR
+          // branch. Spread conditionally anyway: a key that must be absent-or-valid is worth
+          // making absent, rather than relying on every future reader of this config treating an
+          // undefined value the same way this one version of the library happens to.
+          ...(pairing.method === "PHONE_CODE" ? { linkCode: pairing.linkCodeNumber } : {}),
         }),
         watchdog,
       ]);

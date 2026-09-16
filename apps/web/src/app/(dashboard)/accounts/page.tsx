@@ -119,6 +119,8 @@ export default async function AccountsPage() {
       qrCode: account.qrCode,
       qrUpdatedAt,
       qrStale: isQrStale(qrUpdatedAt, nowMs),
+      pairingMethod: account.pairingMethod,
+      pairingPhoneNumber: account.pairingPhoneNumber,
     };
   });
 

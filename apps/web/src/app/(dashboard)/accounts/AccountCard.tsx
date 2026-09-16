@@ -10,12 +10,12 @@ import {
   ConfirmDialog,
   useToast,
 } from "@/components/ui";
-import { QrConnectDialog } from "./QrConnectDialog";
+import { QrConnectDialog, type PairingMethod } from "./QrConnectDialog";
 
 /** What the operator should do next, per status — the card's job is to answer that, not just report state. */
 const STATUS_HINT: Record<string, string> = {
   CONNECTED: "Sending and receiving normally.",
-  DISCONNECTED: "Not linked to a phone. Connect to scan a QR code.",
+  DISCONNECTED: "Not linked to a phone. Connect to scan a QR code, or link by phone number.",
   RECONNECTING: "The worker is bringing this session back up.",
   AUTHENTICATION_REQUIRED: "Waiting for a QR scan on the phone.",
   SESSION_ERROR: "The session broke. Reconnect, and log out first if that does not clear it.",
@@ -46,9 +46,12 @@ export interface AccountCardData {
   lastConnectedAt: string | null;
   lastHeartbeatAt: string | null;
   sessionDataPath: string | null;
+  /** A QR data URL or a nine-character link code, depending on `pairingMethod`. */
   qrCode: string | null;
   qrUpdatedAt: string | null;
   qrStale: boolean;
+  pairingMethod: PairingMethod;
+  pairingPhoneNumber: string | null;
 }
 
 type DialogKind = "reconnect" | "resync" | "logout" | "setPrimary" | "removePrimary" | "delete" | null;
@@ -256,7 +259,13 @@ export function AccountCard({
             }}
           >
             <QrCode className="size-3.5" aria-hidden />
-            {needsScan ? "Show QR code" : account.status === "RECONNECTING" ? "Watch for QR" : "Connect"}
+            {needsScan
+              ? account.pairingMethod === "PHONE_CODE"
+                ? "Show link code"
+                : "Show QR code"
+              : account.status === "RECONNECTING"
+                ? "Watch for a code"
+                : "Connect"}
           </Button>
         ) : null}
         <Button variant="secondary" onClick={() => setDialog("reconnect")}>

@@ -336,3 +336,73 @@ export async function adoptGroupSetupFromAccount(
   revalidatePath("/chat");
   return { updated, notShared };
 }
+
+export interface PairingMethodResult {
+  error?: string;
+}
+
+/**
+ * Choose how this account links to WhatsApp, then start the attempt.
+ *
+ * Both methods are official WhatsApp Web flows and the worker's library supports both; this only
+ * records which one the operator wants and kicks off a connection so the code — QR image or
+ * nine-character link code — is produced under it.
+ *
+ * Writing the preference and queuing the RECONNECT together is deliberate. They are one intention
+ * ("link this account by phone number"), and a saved preference that needed a second, separate
+ * button press to take effect is the shape that leaves somebody staring at a QR code wondering why
+ * their choice did nothing.
+ *
+ * The number is stored DIGITS ONLY, into `pairingPhoneNumber` and never into `phoneNumber`. The
+ * latter is what WhatsApp reports once a session is live, and overwriting it here would put an
+ * unverified, typed-in value where every other screen reads a confirmed one.
+ */
+export async function setPairingMethod(
+  accountId: string,
+  method: "QR_CODE" | "PHONE_CODE",
+  phoneNumber?: string,
+): Promise<PairingMethodResult> {
+  await requireSession();
+
+  let pairingPhoneNumber: string | null = null;
+  if (method === "PHONE_CODE") {
+    const digits = (phoneNumber ?? "").replace(/\D/g, "");
+    // Checked here rather than only in the worker so the operator finds out now, on the form they
+    // are looking at, instead of by watching a connection attempt quietly fall back to a QR.
+    if (digits.length < 8) {
+      return { error: "Enter the full number including its country code, digits only." };
+    }
+    if (digits.length > 15) {
+      // E.164's ceiling. Longer than this is a paste of something that is not a phone number.
+      return { error: "That is longer than any phone number — check for extra digits." };
+    }
+    pairingPhoneNumber = digits;
+  }
+
+  const account = await prisma.whatsAppAccount.update({
+    where: { id: accountId },
+    data: {
+      pairingMethod: method,
+      pairingPhoneNumber,
+      // The previous attempt's code belongs to the previous method and cannot be used to link
+      // under this one. Clearing it stops the dialog rendering a stale QR for a moment while the
+      // worker starts a link-code attempt, which reads as the choice having been ignored.
+      qrCode: null,
+      qrUpdatedAt: null,
+    },
+    select: { label: true },
+  });
+
+  await logSystemEvent("INFO", "accounts", "Pairing method changed", {
+    accountId,
+    label: account.label,
+    method,
+    // The number itself is not logged. It identifies a person, the log is readable by anyone with
+    // dashboard access, and knowing WHICH method was chosen is the whole diagnostic value here.
+    hasNumber: pairingPhoneNumber !== null,
+  });
+
+  await enqueueCommand("RECONNECT", accountId);
+  revalidatePath("/accounts");
+  return {};
+}

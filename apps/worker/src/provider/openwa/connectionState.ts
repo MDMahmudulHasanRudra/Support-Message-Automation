@@ -135,3 +135,45 @@ export async function recordConnectionState(
     console.error("[openwa] failed to record connection state", state, err);
   }
 }
+
+/**
+ * How this account should ask WhatsApp to link it, read fresh at every connection attempt.
+ *
+ * Read here rather than passed in because `connect()` has four callers — the registry sync's
+ * initial pass, the dashboard's RECONNECT command, automatic drop recovery, and the re-entrant
+ * join — and only one of them is an operator pressing a button. Reading the stored preference
+ * means a worker restart in the middle of a pairing resumes the method the operator chose instead
+ * of silently reverting to a QR code nobody is standing in front of.
+ *
+ * FAILS OVER TO QR, deliberately and loudly. `PHONE_CODE` without a usable number would make the
+ * library request a link code for nothing, and an account that cannot produce any way to link is
+ * worse than one that produces the method the operator did not pick — a QR on screen can still be
+ * scanned. The log line is what turns that into something fixable rather than confusing.
+ */
+export async function readPairingPreference(
+  accountId: string,
+): Promise<{ method: "QR_CODE" | "PHONE_CODE"; linkCodeNumber?: string }> {
+  try {
+    const account = await prisma.whatsAppAccount.findUnique({
+      where: { id: accountId },
+      select: { pairingMethod: true, pairingPhoneNumber: true },
+    });
+    if (account?.pairingMethod !== "PHONE_CODE") return { method: "QR_CODE" };
+
+    // Digits only, which is the shape `ConfigObject.linkCode` documents ("1234567890"). A stored
+    // "+8801…" would otherwise be handed to WhatsApp verbatim.
+    const digits = (account.pairingPhoneNumber ?? "").replace(/\D/g, "");
+    // Eight is the shortest national number in real use; a shorter value is a typo, and asking
+    // WhatsApp to pair with a typo burns the attempt.
+    if (digits.length < 8) {
+      console.warn(
+        `[openwa] account ${accountId} is set to pair by phone code but has no usable number — falling back to a QR code`,
+      );
+      return { method: "QR_CODE" };
+    }
+    return { method: "PHONE_CODE", linkCodeNumber: digits };
+  } catch (err) {
+    console.error(`[openwa] could not read the pairing preference for ${accountId}; using a QR code`, err);
+    return { method: "QR_CODE" };
+  }
+}

@@ -450,7 +450,23 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         // remotely, we still want to land on DISCONNECTED locally and clear the stale phone number
         // so the dashboard doesn't keep showing an account that's no longer actually connected.
         await provider.logout();
-        await prisma.whatsAppAccount.update({ where: { id: accountId }, data: { phoneNumber: null } });
+        await prisma.whatsAppAccount.update({
+          where: { id: accountId },
+          data: {
+            phoneNumber: null,
+            // `pairingPhoneNumber` goes with it, and for a sharper reason than tidiness. Logging
+            // out exists so a DIFFERENT number can be linked here; leaving the old one behind
+            // means the next connection attempt silently requests a link code for the number that
+            // just left, and shows it as though it were for the new one. Clearing it makes the
+            // dialog ask for the number that has to change.
+            //
+            // `pairingMethod` is deliberately KEPT. That is a preference about how this operator
+            // likes to link — a screen with no phone camera, a number in another office — and it
+            // stays true of the next number too. With no number saved, `readPairingPreference`
+            // falls back to a QR and says so, so keeping it can never strand the account.
+            pairingPhoneNumber: null,
+          },
+        });
 
         // Logging out is "this account left every group" as far as this app can tell, and it is
         // the one case syncGroups' own deactivation sweep can never cover: that sweep runs from a
