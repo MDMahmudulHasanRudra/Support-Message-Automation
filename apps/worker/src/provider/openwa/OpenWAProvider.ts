@@ -182,6 +182,14 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
  * detection issue, with the tradeoff (per the same docs) that it can
  * occasionally cause an unrelated `browser.setMaxListeners` issue.
  */
+/**
+ * Thrown to unwind a connection attempt that an operator has replaced with a differently
+ * configured one. Matched by message rather than by class because it only ever travels from
+ * `disconnect()` to the `catch` inside `openSession()` a few lines away, and a dedicated Error
+ * subclass for a two-call-site signal is more machinery than the signal is worth.
+ */
+const ABANDONED = "OPENWA_ATTEMPT_ABANDONED";
+
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
   private state: OpenWAConnectionState = "DISCONNECTED";
@@ -213,6 +221,29 @@ export class OpenWAProvider implements WhatsAppProvider {
   // loop and an operator pressing Reconnect — so the guard belongs here rather than in an
   // agreement between them.
   private connecting: Promise<void> | null = null;
+
+  /**
+   * Releases the attempt above when it is waiting for a human who is never coming.
+   *
+   * `connect()` joining an attempt in flight is right for two callers wanting the SAME thing, and
+   * wrong the moment somebody wants a different one. Switching an account from a QR to a phone
+   * code is exactly that: the running attempt is parked inside `create()` waiting for a scan —
+   * indefinitely, since `qrTimeout` is 0 — and `disconnect()` could not release it either, because
+   * it only tears down `this.client`, which stays null until `create()` resolves. So the new
+   * attempt joined the old one, the new config was never read, no link code was ever requested,
+   * and the dialog waited for a code that could not arrive.
+   *
+   * Set for the life of one attempt and cleared with it, so an attempt that has already settled
+   * cannot be abandoned retroactively.
+   *
+   * ONE HONEST COST. The browser an abandoned attempt launched cannot be killed: OpenWA hands back
+   * a client only when `create()` RESOLVES, and the whole point here is that it has not. That
+   * Chromium is orphaned until the worker restarts. Survivable, because `clearStaleChromiumLock()`
+   * removes the profile's Singleton files at the start of every attempt — which is exactly what
+   * lets the next one launch over it — and bounded, because this is reached by a person changing
+   * how they want to link, never by a loop.
+   */
+  private abandonAttempt: ((reason: Error) => void) | null = null;
 
   constructor(
     private readonly accountId: string,
@@ -275,6 +306,13 @@ export class OpenWAProvider implements WhatsAppProvider {
         () => reject(new Error(`OpenWA connection attempt did not settle within ${watchdogMs}ms — treating as stalled.`)),
         watchdogMs,
       );
+    });
+
+    // The third racer: an operator deciding, mid-wait, that they want to link a different way.
+    // Rejecting here is what lets `openSession` unwind and `connect()` clear `this.connecting`, so
+    // the next attempt is a genuinely new one that re-reads the pairing preference.
+    const abandoned = new Promise<never>((_, reject) => {
+      this.abandonAttempt = reject;
     });
 
     try {
@@ -347,14 +385,25 @@ export class OpenWAProvider implements WhatsAppProvider {
           ...(pairing.method === "PHONE_CODE" ? { linkCode: pairing.linkCodeNumber } : {}),
         }),
         watchdog,
+        abandoned,
       ]);
     } catch (err) {
+      // An abandoned attempt is not a failure to report as one. It means an operator chose a
+      // different way to link while this one was still waiting, and the attempt that replaces it
+      // is already on its way — recording ERROR here would put a red badge on the account for the
+      // few seconds until the new attempt sets its own state, and a SystemLog entry describing a
+      // problem that nobody has.
+      if ((err as Error).message === ABANDONED) {
+        await this.setState("DISCONNECTED", { reason: "Superseded by a new connection attempt." });
+        throw err;
+      }
       // Do not silently swallow: full error, with stack, goes to both the
       // console (docker logs) and SystemLog (dashboard).
       await this.setState("ERROR", { error: (err as Error).message, stack: (err as Error).stack });
       throw err;
     } finally {
       clearTimeout(watchdogTimer);
+      this.abandonAttempt = null;
     }
 
     // create() only resolves after a successful scan+auth — OpenWA's public
@@ -391,6 +440,21 @@ export class OpenWAProvider implements WhatsAppProvider {
   }
 
   async disconnect(): Promise<void> {
+    // Release an attempt that is still WAITING before touching the client, because in that state
+    // there is no client to touch: `create()` has not resolved, so `this.client` is null and the
+    // old body of this method did nothing at all. The attempt stayed parked in `this.connecting`,
+    // and the `connect()` that every caller pairs with `disconnect()` quietly joined it instead of
+    // starting a new one — which is why changing an account's pairing method mid-QR never took.
+    //
+    // Awaited rather than fired and forgotten: `connect()` clears `this.connecting` in a `finally`,
+    // so waiting for this to settle is what guarantees the caller's next `connect()` sees null and
+    // genuinely starts over.
+    const inFlight = this.connecting;
+    if (inFlight) {
+      this.abandonAttempt?.(new Error(ABANDONED));
+      await inFlight.catch(() => undefined);
+    }
+
     if (this.client) {
       await this.client.kill();
       this.client = null;

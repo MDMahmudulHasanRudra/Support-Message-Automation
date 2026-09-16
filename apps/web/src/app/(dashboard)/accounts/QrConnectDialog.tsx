@@ -57,7 +57,6 @@ export function QrConnectDialog({
   reconnectPending: boolean;
 }) {
   const connected = account.status === "CONNECTED";
-  const byPhone = account.pairingMethod === "PHONE_CODE";
 
   return (
     <Dialog
@@ -65,13 +64,12 @@ export function QrConnectDialog({
       onClose={onClose}
       size="lg"
       title={connected ? "Connected" : `Link ${account.label}`}
-      description={
-        connected
-          ? undefined
-          : byPhone
-            ? "Enter the code below into WhatsApp on the phone that owns this number."
-            : "Scan this code with the phone that owns this WhatsApp number. It refreshes on its own until it is scanned."
-      }
+      // Deliberately no description here while linking. It used to carry one derived from the
+      // SAVED method, which contradicted itself the moment somebody clicked the other tab: the
+      // Phone number tab sat under "Scan this code… it refreshes on its own until it is scanned".
+      // The line belongs to whichever method is on screen, so the panel that owns that state
+      // renders it.
+      description={undefined}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
@@ -136,6 +134,17 @@ function PairingPanel({ account }: { account: QrDialogAccount }) {
   const codeMatchesView = view === account.pairingMethod;
   const hasUsableCode = Boolean(account.qrCode) && !account.qrStale && codeMatchesView;
 
+  /**
+   * Nothing has been ASKED for yet — the phone tab is showing, but no number has been submitted,
+   * so no connection attempt is running and no code is coming.
+   *
+   * This distinction is the whole reason the dialog looked broken: the panel showed a spinner and
+   * "Waiting for the worker to produce a code…" in exactly this state, which says work is under way
+   * when none is, and leaves somebody watching a spinner that will never resolve instead of filling
+   * in the field six inches above it.
+   */
+  const awaitingNumber = byPhone && account.pairingMethod !== "PHONE_CODE";
+
   function commit(method: PairingMethod, phoneNumber?: string) {
     setError(null);
     startTransition(async () => {
@@ -148,6 +157,14 @@ function PairingPanel({ account }: { account: QrDialogAccount }) {
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Follows the SELECTED tab, not the saved method — see the Dialog above for why it is not a
+          `description` prop. */}
+      <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+        {byPhone
+          ? "Enter the number this account uses, ask WhatsApp for a code, then type that code into the phone."
+          : "Scan this code with the phone that owns this WhatsApp number. It refreshes on its own until it is scanned."}
+      </p>
+
       {/* Above both panels rather than inside one: it governs them both, and a control that lives
           inside the thing it replaces is easy to miss. */}
       <div
@@ -212,7 +229,11 @@ function PairingPanel({ account }: { account: QrDialogAccount }) {
       <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
         <div className="flex flex-col items-center gap-3">
           {byPhone ? (
-            <LinkCodePanel code={hasUsableCode ? account.qrCode : null} stale={account.qrStale} />
+            <LinkCodePanel
+              code={hasUsableCode ? account.qrCode : null}
+              stale={account.qrStale}
+              awaitingNumber={awaitingNumber}
+            />
           ) : (
             <QrPanel
               code={hasUsableCode ? account.qrCode : null}
@@ -222,10 +243,14 @@ function PairingPanel({ account }: { account: QrDialogAccount }) {
           )}
 
           <p className="flex items-center gap-1.5 text-[11px] text-[color:var(--color-muted-foreground)]">
-            <StatusDot color="blue" pulse />
-            {hasUsableCode && account.qrUpdatedAt
-              ? `Code issued at ${new Date(account.qrUpdatedAt).toLocaleTimeString()}`
-              : "Watching for a new code"}
+            {/* No pulsing dot while nothing has been requested — a live indicator next to an idle
+                form is the same lie the spinner was telling. */}
+            {awaitingNumber ? null : <StatusDot color="blue" pulse />}
+            {awaitingNumber
+              ? "Nothing requested yet"
+              : hasUsableCode && account.qrUpdatedAt
+                ? `Code issued at ${new Date(account.qrUpdatedAt).toLocaleTimeString()}`
+                : "Watching for a new code"}
           </p>
         </div>
 
@@ -325,7 +350,15 @@ function QrPanel({ code, stale, label }: { code: string | null; stale: boolean; 
  * Unlike the QR beside it this keeps the theme's own surface: nothing here is read by a camera, and
  * forcing white would be contrast for its own sake.
  */
-function LinkCodePanel({ code, stale }: { code: string | null; stale: boolean }) {
+function LinkCodePanel({
+  code,
+  stale,
+  awaitingNumber,
+}: {
+  code: string | null;
+  stale: boolean;
+  awaitingNumber: boolean;
+}) {
   return (
     <div className="flex min-h-[292px] w-[292px] items-center justify-center rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4 shadow-[var(--shadow-sm)] sm:min-h-[332px] sm:w-[332px]">
       {code ? (
@@ -340,27 +373,56 @@ function LinkCodePanel({ code, stale }: { code: string | null; stale: boolean })
             Type it into Linked devices on the phone that owns this number.
           </p>
         </div>
+      ) : awaitingNumber ? (
+        <div className="flex size-[260px] flex-col items-center justify-center gap-3 px-2 text-center sm:size-[300px]">
+          <Hash className="size-6 text-[color:var(--color-muted-foreground)]" aria-hidden />
+          <p className="text-[13px] font-medium text-[color:var(--color-foreground)]">
+            Enter the number above
+          </p>
+          <p className="max-w-[17rem] text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+            Type the full number this account uses, including its country code, then press{" "}
+            <span className="font-medium text-[color:var(--color-foreground)]">Get a code</span>.
+            WhatsApp issues the code to that number.
+          </p>
+        </div>
       ) : (
-        <Waiting stale={stale} />
+        <Waiting stale={stale} requestingCode />
       )}
     </div>
   );
 }
 
-/** `onWhite` because the QR's panel is forced white in both themes; a token colour vanishes on it. */
-function Waiting({ stale, onWhite = false }: { stale: boolean; onWhite?: boolean }) {
+/**
+ * `onWhite` because the QR's panel is forced white in both themes; a token colour vanishes on it.
+ *
+ * `requestingCode` sets the expectation that this takes a while. Asking for a link code restarts
+ * the session — a fresh Chromium, WhatsApp Web loaded again — so the gap between pressing the
+ * button and seeing a code is tens of seconds, not the instant refresh the QR path conditions
+ * people to expect. Unexplained, that reads as broken at about the twenty-second mark.
+ */
+function Waiting({
+  stale,
+  onWhite = false,
+  requestingCode = false,
+}: {
+  stale: boolean;
+  onWhite?: boolean;
+  requestingCode?: boolean;
+}) {
   return (
-    <div className="flex size-[260px] flex-col items-center justify-center gap-3 text-center sm:size-[300px]">
+    <div className="flex size-[260px] flex-col items-center justify-center gap-3 px-2 text-center sm:size-[300px]">
       <Loader2
         className={`size-6 animate-spin ${onWhite ? "text-[color:#71717a]" : "text-[color:var(--color-muted-foreground)]"}`}
         aria-hidden
       />
       <p
-        className={`max-w-[16rem] text-[13px] leading-relaxed ${onWhite ? "text-[color:#52525b]" : "text-[color:var(--color-muted-foreground)]"}`}
+        className={`max-w-[17rem] text-[13px] leading-relaxed ${onWhite ? "text-[color:#52525b]" : "text-[color:var(--color-muted-foreground)]"}`}
       >
         {stale
           ? "That code expired. Waiting for the worker to produce a fresh one…"
-          : "Waiting for the worker to produce a code…"}
+          : requestingCode
+            ? "Asking WhatsApp for a code. This restarts the session, so it usually takes under a minute."
+            : "Waiting for the worker to produce a code…"}
       </p>
     </div>
   );
