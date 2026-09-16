@@ -50,14 +50,24 @@ async function main() {
     },
   ] as const;
 
-  for (const member of exampleTeamMembers) {
-    await prisma.internalTeamMember.upsert({
-      where: { phoneNumber: member.phoneNumber },
-      update: {},
-      create: { ...member, status: "ACTIVE" },
-    });
+  // Examples exist so a fresh install has something to look at, and only then. Upserting them by
+  // phone number meant any admin who deleted them got them back on the next redeploy, because
+  // every `docker compose up` re-runs this script: two fake "Support Executive" rows reappeared in
+  // a live roster the day Team Management shipped, where they would sit in schedules, attendance
+  // and duty planning as if they were staff. An empty roster is the only one that gets them.
+  const existingTeamMembers = await prisma.internalTeamMember.count();
+  if (existingTeamMembers === 0) {
+    for (const member of exampleTeamMembers) {
+      await prisma.internalTeamMember.upsert({
+        where: { phoneNumber: member.phoneNumber },
+        update: {},
+        create: { ...member, status: "ACTIVE" },
+      });
+    }
+    console.log(`Seeded ${exampleTeamMembers.length} example internal team members`);
+  } else {
+    console.log(`Skipped example team members: the roster already has ${existingTeamMembers}`);
   }
-  console.log(`Seeded ${exampleTeamMembers.length} example internal team members`);
 
   const defaultIgnoreRules: Array<{
     name: string;

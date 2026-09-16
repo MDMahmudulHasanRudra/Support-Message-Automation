@@ -27,6 +27,7 @@ import {
   recordConnectionState,
   type OpenWAConnectionState,
 } from "./connectionState.js";
+import { serializeMessageId } from "./messageId.js";
 
 /** Post-connection state transitions (STATE enum) mapped onto our fine-grained lifecycle. */
 function mapLibraryState(state: STATE): OpenWAConnectionState {
@@ -139,7 +140,9 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
     timestampWa: new Date(message.timestamp * 1000),
     // Support Activity Tracking's REPLY_TO_CUSTOMER/MENTION triggers — both ride on this same
     // onAnyMessage payload, no separate subscription needed.
-    quotedWhatsappMessageId: message.isQuotedMsgAvailable ? (message.quotedMsg?.id ?? null) : null,
+    // Normalised rather than read raw: the history API behind the missed-message catch-up returns
+    // this as WhatsApp's key object, not the string the live listener gets — see messageId.ts.
+    quotedWhatsappMessageId: message.isQuotedMsgAvailable ? serializeMessageId(message.quotedMsg?.id) : null,
     mentionedPhones: (message.mentionedJidList ?? []).map((jid) => String(jid).split("@")[0] ?? "").filter(Boolean),
   };
 }
