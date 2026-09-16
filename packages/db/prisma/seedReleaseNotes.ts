@@ -3,8 +3,17 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 /**
- * A one-time historical backfill for Release Notes, derived from this repository's own git
- * history — never invoked by the routine `pnpm db:seed`.
+ * Release Notes seeded from this repository's own git history — never invoked by the routine
+ * `pnpm db:seed`.
+ *
+ * It began as a one-time historical backfill and still is one for v0.1.0–v0.14.0. It now also
+ * carries the current release, because `DATABASE_URL` points at a host only reachable from inside
+ * the Compose network, so a release note cannot be typed in from a developer's shell — and this
+ * script is already idempotent by version, already wired to `pnpm db:seed:release-notes`, and
+ * already the established way rows reach this table without the admin UI. A second script would
+ * be a second answer to a question this one answers.
+ *
+ * A current release is entered as a DRAFT (see `status` below). Only a person publishes.
  *
  * `prisma/seed.ts` creates baseline/config data every fresh install needs and is safe to re-run on
  * every deploy. This is different in kind: it is historical content, reconstructed once from real
@@ -38,6 +47,16 @@ interface HistoricalRelease {
   title: string;
   releaseDate: string; // YYYY-MM-DD
   releaseType: "MAJOR" | "FEATURE" | "IMPROVEMENT" | "BUG_FIX" | "SECURITY" | "MAINTENANCE";
+  /**
+   * Defaults to PUBLISHED, which is right for the fourteen backfilled releases: they describe work
+   * that shipped months ago, and recording them as drafts would be a fiction.
+   *
+   * A release for work that has only just landed is a DRAFT instead. Publishing is outward-facing
+   * — it appears for every user of the dashboard — and a PUBLISHED release can never be deleted by
+   * any path, so that decision belongs to whoever reviews the wording, one click away on the
+   * release's own detail page (which doubles as the publish preview).
+   */
+  status?: "DRAFT" | "PUBLISHED";
   affectedModules: string[];
   whatsNew?: string[];
   improvements?: string[];
@@ -314,6 +333,70 @@ const RELEASES: HistoricalRelease[] = [
     whatsNew: ["Release Notes: this changelog"],
     improvements: ["The Overview dashboard now shows real system status, worker liveness, and a consolidated list of what needs attention"],
   },
+  {
+    version: "0.15.0",
+    title: "AI that answers with your steps, and the audit that hardened it",
+    releaseDate: "2026-09-16",
+    releaseType: "FEATURE",
+    // DRAFT: this describes work that landed today. Somebody reads it and presses Publish.
+    status: "DRAFT",
+    affectedModules: [
+      "AI Learning",
+      "Conversation Learning",
+      "Support Activity",
+      "Notifications",
+      "System & Settings",
+    ],
+    whatsNew: [
+      "AI Sandbox: ask a question the way a customer would and see exactly what the live system would have done — the answer it would have drafted, how confident it was, and which gate would have stopped it. Nothing is sent, no customer is involved, and no rate limit is spent.",
+      "Knowledge Builder: pick the groups and the date range you want, and the AI proposes question-and-answer entries from those conversations for you to edit, approve or reject — instead of waiting for the hourly job to reach them.",
+      "Knowledge entries can now carry step-by-step instructions, and the AI actually uses them. Ask \"how do I record a payment\" and the reply names the real screens in the real order, taken from what your team wrote down.",
+      "Support Sessions in Reports can be closed in bulk. Select the open rows and close them together instead of one at a time.",
+      "The sidebar collapses to icons and remembers your choice.",
+      "A named visual theme, Midnight Indigo, applied consistently across the dashboard in light and dark mode.",
+    ],
+    improvements: [
+      "Before writing an answer, the system now works out what your knowledge actually supports. If two different documented procedures apply, it offers them as separate labelled options instead of merging them into a sequence that exists nowhere. If a how-to question has no documented steps at all, it says so plainly and hands over, rather than assembling something plausible.",
+      "Questions written in Banglish or Bengali now find knowledge written in English. Most customers do not write in the language most entries are stored in, and the search now bridges that instead of coming back empty.",
+      "A single weak keyword match no longer stops that wider search from running — which is what used to happen most often to exactly the questions that needed it.",
+      "Knowledge matching is whole-word now, so \"net\" no longer matches \"internet\", \"network\" or \"cabinet\" and invents a connection between unrelated entries.",
+      "A follow-up question is understood as a follow-up. \"Does the same apply for this client?\" used to be answered as though it were the first thing anyone had said.",
+      "Longer replies are allowed, so a step-by-step answer in Bengali is no longer cut off and handed over when it was very nearly finished.",
+      "Every handover reason in the AI Activity log is explained in plain language beside its code, so nobody has to guess what stopped a reply.",
+      "The Overview dashboard no longer leaves blank gaps in its chart grid, and its spacing is tighter.",
+    ],
+    bugFixes: [
+      "Muting the WhatsApp channel for AI handover alerts silently destroyed the whole handover — no record, no tag in the group, no research queued — while making the dashboard look healthier. Muting one channel now only mutes that channel.",
+      "When the AI tagged a colleague for help in a customer's group, that tag was counted as though the AI had answered. The next message was blocked, the block raised another tag, and the cycle sustained itself: a customer writing every few minutes could never be answered again, and watched your team be tagged over and over. The tag is no longer mistaken for an answer, and a conversation is tagged once rather than once per message.",
+      "The same customer could receive two AI answers to two questions sent seconds apart.",
+      "A message the system retried after an interruption alerted the team twice, tagged the group twice, and queued the same question for research twice.",
+      "A retried message could have its finished reply silently discarded — the customer saw the request for help and never the answer, with nothing recorded as failed.",
+      "A reply limit of 0 blocked every outbound message, including replies typed by hand in the chat inbox, while reporting the self-contradicting \"limit reached (0/0)\". Zero can no longer be saved; the switch for turning limits off is Rate limiting enabled.",
+      "Clearing a number field on a settings form and saving wrote 0 rather than keeping the current value. On the confidence threshold that meant the AI sent whatever it drafted.",
+      "A reply typed on the business handset did not close an open escalation case, so the alert ladder kept escalating a conversation a colleague had already answered.",
+      "Bengali words were being broken apart by the recurring-pattern detector, so Bengali conversations barely registered as patterns at all.",
+      "A customer sending only a screenshot, voice note or sticker used to receive a confident generic reply to something nobody had looked at. Those are handed to a person now.",
+      "An answer cut short by the length limit is handed over instead of being sent half-finished.",
+      "Step-by-step instructions typed into a knowledge entry reached no customer: the field was shown to the AI but never searched, so the entry whose steps named the exact screen lost its place to a vaguer one.",
+      "Exporting the knowledge base to a spreadsheet, editing it and importing it back silently dropped every set of steps it carried.",
+    ],
+    security: [
+      "The downloadable knowledge import template contained two invented product facts — a reset procedure and a claim about staffed support hours that contradicted this deployment's own shift times. Nothing marked them as examples, and the normal workflow is to download the template, add rows and upload it, so they landed in the review queue looking like well-written entries, one click from being quoted to a customer as fact. The sample row now asserts nothing and is refused if uploaded unedited.",
+      "Knowledge entries now start unverified. Human verification is the only thing standing between a draft entry and a customer, and it used to be something a writer had to opt out of rather than into.",
+      "Product knowledge read from the source repository now skips test data, seed files, samples and drafts, which were previously summarised into guides exactly as though they were real documentation.",
+      "A mechanical check now blocks a reply that gives numbered instructions when nothing in the reference material documented any. Asked for confident navigation, a model will invent a screen; being told not to is a request, and this is the check.",
+      "The automated test suite now refuses to run against anything but a throwaway database. One of these tests deliberately writes a verified knowledge entry stating a refund policy that does not exist.",
+    ],
+    knownIssues: [
+      "Images, voice notes and stickers cannot be read. A message containing only media is handed to a person rather than answered.",
+      "The token figure in the AI Activity log counts the answer itself, not the extra searches or live research a message may also have paid for. Treat it as the cost of the answer, not of the message.",
+      "Answering from the product's own source while the customer waits requires the Softify Forge integration to be configured, enabled and pointed at a project.",
+    ],
+    technicalNotes: [
+      "Four database migrations are committed but not yet deployed. Run the migration deploy before this release goes live, or queries touching the newly added columns will fail.",
+      "742 automated tests pass across the rule engine, shared, AI client and worker suites, 535 of them in the worker. Integration tests must be run against the isolated throwaway database, never the live one.",
+    ],
+  },
 ];
 
 async function main() {
@@ -328,15 +411,16 @@ async function main() {
     }
 
     const releaseDate = new Date(`${release.releaseDate}T00:00:00.000Z`);
+    const status = release.status ?? "PUBLISHED";
     const content = {
       title: release.title,
       summary: null,
       releaseDate,
       releaseType: release.releaseType,
       // Shared with the revision snapshot below — ReleaseNoteRevision.status is required, and
-      // this is genuinely what status the content was AT (published), matching the pattern
+      // this is genuinely what status the content was AT, matching the pattern
       // `transitionReleaseNoteStatus("PUBLISH")` itself uses.
-      status: "PUBLISHED" as const,
+      status,
       whatsNew: release.whatsNew ?? [],
       improvements: release.improvements ?? [],
       bugFixes: release.bugFixes ?? [],
@@ -354,17 +438,25 @@ async function main() {
       const row = await tx.releaseNote.create({
         data: {
           version: release.version,
-          currentVersion: 1,
-          publishedAt: releaseDate,
+          // A DRAFT has never been public, so there is no prior public state to snapshot and
+          // nothing to number: `currentVersion` stays 0 and revision v1 is written by the publish
+          // itself, exactly as `transitionReleaseNoteStatus("PUBLISH")` does it. Writing a
+          // revision here would make the real publish start numbering at 2 and claim an edit
+          // history that never happened.
+          currentVersion: status === "PUBLISHED" ? 1 : 0,
+          publishedAt: status === "PUBLISHED" ? releaseDate : null,
           ...content,
         },
         select: { id: true },
       });
-      await tx.releaseNoteRevision.create({ data: { releaseNoteId: row.id, version: 1, ...content } });
+      if (status === "PUBLISHED") {
+        await tx.releaseNoteRevision.create({ data: { releaseNoteId: row.id, version: 1, ...content } });
+      }
     });
 
     created += 1;
-    console.log(`Created v${release.version} — ${release.title} (${release.releaseDate})`);
+    const label = status === "PUBLISHED" ? "" : " [DRAFT — review and publish from the dashboard]";
+    console.log(`Created v${release.version} — ${release.title} (${release.releaseDate})${label}`);
   }
 
   console.log(`\nDone. ${created} release note(s) created, ${skipped} already existed and were left untouched.`);
