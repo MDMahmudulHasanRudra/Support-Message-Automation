@@ -8,6 +8,7 @@ import { parseDhakaDayFromInput, toDhakaDateOnly } from "@support-automation/sha
 import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { getDutyGroupEvidence } from "@/server/teamManagementReports";
 
 /**
  * Every write in Team Management: shift templates, the weekly pattern, the daily roster, leave, and
@@ -999,4 +1000,87 @@ export async function deleteHoliday(id: string): Promise<TeamManagementResult> {
   const removed = await prisma.holiday.deleteMany({ where: { id } });
   revalidateModule();
   return removed.count > 0 ? { updated: 1 } : { unchanged: 1 };
+}
+
+/**
+ * The grace periods Duty History judges lateness against.
+ *
+ * Clamped to a day rather than validated with an error: a tolerance longer than a shift is
+ * meaningless but it is not dangerous, and refusing the save would be a dialog about a number
+ * somebody can simply retype. Zero is honoured — it means "the shift start is the shift start" —
+ * so the empty-field case has to be handled separately from it, which is the bug this app has
+ * already shipped once on the AI confidence threshold: `Number("")` is 0 and `Number.isFinite(0)`
+ * is true, so an unguarded parse turns a cleared box into a deliberate zero.
+ */
+export async function saveTeamManagementSettings(formData: FormData): Promise<TeamManagementResult> {
+  const auth = await requireManage();
+  if ("error" in auth) return auth;
+
+  const current = await prisma.teamManagementSettings.upsert({
+    where: { id: "global" },
+    update: {},
+    create: { id: "global" },
+  });
+
+  const minutes = (key: string, fallback: number) => {
+    const raw = formData.get(key);
+    if (raw === null || String(raw).trim() === "") return fallback;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(MINUTES_IN_DAY, Math.max(0, Math.round(parsed)));
+  };
+
+  const latenessGraceMinutes = minutes("latenessGraceMinutes", current.latenessGraceMinutes);
+  const earlyDepartureGraceMinutes = minutes("earlyDepartureGraceMinutes", current.earlyDepartureGraceMinutes);
+
+  if (
+    latenessGraceMinutes === current.latenessGraceMinutes &&
+    earlyDepartureGraceMinutes === current.earlyDepartureGraceMinutes
+  ) {
+    return { unchanged: 1 };
+  }
+
+  await prisma.teamManagementSettings.update({
+    where: { id: "global" },
+    data: { latenessGraceMinutes, earlyDepartureGraceMinutes },
+  });
+  revalidateModule();
+  return { updated: 1 };
+}
+
+/**
+ * The per-group evidence behind one person's day, fetched when somebody expands the row.
+ *
+ * A thin authorised wrapper over the report function — the read itself belongs with the other
+ * reports, and this exists only because `teamManagementReports.ts` carries no `"use server"`
+ * directive (it is read by server components, never by a client event handler) and a row that
+ * expands on click is exactly that handler.
+ *
+ * `.view`, not `.manage`: this is the same evidence the row above it already summarises, shown in
+ * more detail. Nothing here changes anything.
+ */
+export async function loadDutyGroupEvidence(
+  teamMemberId: string,
+  dutyDateIso: string,
+): Promise<{ error?: string; rows?: Array<{ groupId: string; groupName: string; messageCount: number; firstAt: string; lastAt: string }> }> {
+  const session = await requireSession();
+  if (!(await hasPermission(session, "team_management.view"))) {
+    return { error: "You do not have permission to view duty history." };
+  }
+
+  const dutyDate = new Date(dutyDateIso);
+  if (Number.isNaN(dutyDate.getTime())) return { error: "That date could not be read." };
+
+  const rows = await getDutyGroupEvidence(teamMemberId, dutyDate);
+  return {
+    // Serialised, because a Server Action's return value crosses to the client and a Date arrives
+    // there as whatever the serialiser made of it. The caller formats; this states the instant.
+    rows: rows.map((row) => ({
+      groupId: row.groupId,
+      groupName: row.groupName,
+      messageCount: row.messageCount,
+      firstAt: row.firstAt.toISOString(),
+      lastAt: row.lastAt.toISOString(),
+    })),
+  };
 }

@@ -2,23 +2,30 @@ import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 import { requirePermission } from "@/server/permissions";
 import { PageHeader } from "@/components/ui";
+import { getTeamManagementSettings } from "@/server/teamManagementReports";
 import { LeaveTypesAndHolidays } from "./LeaveTypesAndHolidays";
+import { PunctualitySettings } from "./PunctualitySettings";
 
-/** Leave types and holidays — the two things this module deliberately refuses to assume. */
+/** Leave types, holidays and the punctuality policy — the things this module refuses to assume. */
 export default async function TeamManagementSettingsPage() {
   const session = await requireSession();
   await requirePermission(session, "team_management.manage");
 
-  const [leaveTypes, holidays] = await Promise.all([
+  const [leaveTypes, holidays, settings] = await Promise.all([
     prisma.leaveType.findMany({ orderBy: [{ position: "asc" }, { name: "asc" }] }),
     prisma.holiday.findMany({ orderBy: { date: "desc" }, take: 100 }),
+    getTeamManagementSettings(),
   ]);
 
   return (
     <div>
       <PageHeader
         title="Team Management settings"
-        description="Your leave types and your holiday calendar. Nothing here ships with a default — entitlement and public holidays are decisions for the business, not for this software."
+        description="Your leave types, your holiday calendar, and how much lateness counts as on time. Entitlement and public holidays ship empty on purpose — they are decisions for the business, not for this software."
+      />
+      <PunctualitySettings
+        latenessGraceMinutes={settings.latenessGraceMinutes}
+        earlyDepartureGraceMinutes={settings.earlyDepartureGraceMinutes}
       />
       <LeaveTypesAndHolidays
         leaveTypes={leaveTypes.map((row) => ({

@@ -20,9 +20,19 @@ export function Th({ children }: { children: ReactNode }) {
   );
 }
 
-export function Td({ children, className = "" }: { children: ReactNode; className?: string }) {
+export function Td({
+  children,
+  className = "",
+  colSpan,
+}: {
+  children: ReactNode;
+  className?: string;
+  /** For a full-width row beneath its own row — an expanded detail panel, an inline empty state. */
+  colSpan?: number;
+}) {
   return (
     <td
+      colSpan={colSpan}
       className={`border-b border-[var(--color-border)] px-4 py-3 align-middle text-[color:var(--color-foreground)] ${className}`}
     >
       {children}

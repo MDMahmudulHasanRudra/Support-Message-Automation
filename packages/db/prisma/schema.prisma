@@ -3181,6 +3181,37 @@ model Holiday {
   updatedAt DateTime @updatedAt
 }
 
+/// How much lateness this organisation is willing to call on time.
+///
+/// Duty History compares each day's snapshotted shift times against the first and last message
+/// actually stored from that person. That comparison is arithmetic and needs no setting; deciding
+/// how far past the shift start counts as LATE is a policy, and this module's design rule is that
+/// a business rule is never hardcoded — the three shift templates exist as seed rows precisely so
+/// that 10:00–19:00 is a decision somebody made rather than a constant in the source.
+///
+/// Two numbers rather than one, unlike `SupportActivitySettings.offlineAfterMinutes` which is
+/// deliberately shared. These are not the same question asked at different moments: arriving late
+/// and leaving early are judged differently by most teams, and a single tolerance would force one
+/// of them to be wrong. Both are tolerances, so both are clamped at zero when read — a negative
+/// grace would quietly become a requirement to arrive early.
+///
+/// A singleton, `id = "global"`, like every other settings row in this schema.
+model TeamManagementSettings {
+  id String @id @default("global")
+
+  /// Minutes past the scheduled start before a first message counts as a late start. A smaller
+  /// overrun is still SHOWN — "+8m" is visible on the row — it is simply not called late, which is
+  /// the whole distinction a grace period exists to draw.
+  latenessGraceMinutes Int @default(15)
+
+  /// Minutes before the scheduled end that a last message may fall without counting as an early
+  /// finish. Worth remembering when reading it: the last message is the last message, not the
+  /// moment somebody stopped working.
+  earlyDepartureGraceMinutes Int @default(15)
+
+  updatedAt DateTime @updatedAt
+}
+
 /// Evidence that somebody worked on a given local day, derived from the messages they really sent.
 ///
 /// The rule: a genuine message from an active team member in ANY group demonstrates work activity

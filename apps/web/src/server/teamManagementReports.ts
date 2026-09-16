@@ -1,6 +1,6 @@
 import { prisma } from "@support-automation/db";
 import type { AttendanceOverride, DutyStatus, LeaveStatus, Prisma } from "@prisma/client";
-import { getDhakaDayRange, toDhakaDateOnly } from "@support-automation/shared";
+import { computePunctuality, getDhakaDayRange, toDhakaDateOnly, type Punctuality } from "@support-automation/shared";
 import type { DerivedDutyState } from "@/lib/dutyState";
 
 // `DerivedDutyState` and its labels live in `lib/dutyState.ts` rather than here, because the badge
@@ -430,9 +430,37 @@ export interface DutyHistoryRow {
   shiftEndMinute: number | null;
   messageCount: number;
   uniqueGroupCount: number;
+  /** When the first and last stored message of that day landed. The observed half of this page. */
+  firstActivityAt: Date | null;
+  lastActivityAt: Date | null;
+  /** Scheduled against observed, worked out by `packages/shared`'s pure, unit-tested arithmetic. */
+  punctuality: Punctuality;
   override: AttendanceOverride | null;
   overrideReason: string | null;
+  /** Who made the correction and when — a verdict about a person should say whose verdict it is. */
+  overriddenByName: string | null;
+  overriddenAt: Date | null;
   derived: DerivedDutyState;
+}
+
+/**
+ * The grace periods, with the schema defaults standing in when nobody has opened the settings page.
+ *
+ * Upserted rather than read-or-null, matching every other settings row in this app: the row is
+ * created on first read so the form has something to edit, and a fresh install behaves identically
+ * to a configured one until somebody decides otherwise.
+ */
+export async function getTeamManagementSettings(): Promise<{
+  latenessGraceMinutes: number;
+  earlyDepartureGraceMinutes: number;
+}> {
+  const row = await prisma.teamManagementSettings.upsert({
+    where: { id: "global" },
+    update: {},
+    create: { id: "global" },
+    select: { latenessGraceMinutes: true, earlyDepartureGraceMinutes: true },
+  });
+  return row;
 }
 
 /** Duty history over a range: plan, evidence and the reading, per member per day. */
@@ -447,7 +475,7 @@ export async function getDutyHistory(
     ...(teamMemberId ? { teamMemberId } : {}),
   };
 
-  const [assignments, attendance, leave] = await Promise.all([
+  const [assignments, attendance, leave, settings] = await Promise.all([
     prisma.dutyAssignment.findMany({
       where,
       include: { teamMember: { select: { name: true } } },
@@ -456,6 +484,7 @@ export async function getDutyHistory(
     }),
     prisma.teamAttendanceDay.findMany({
       where: { activityDate: { gte: startDate, lte: endDate }, ...(teamMemberId ? { teamMemberId } : {}) },
+      include: { overriddenBy: { select: { name: true, username: true } } },
     }),
     prisma.leaveRequest.findMany({
       where: {
@@ -466,6 +495,7 @@ export async function getDutyHistory(
       },
       select: { teamMemberId: true, startDate: true, endDate: true },
     }),
+    getTeamManagementSettings(),
   ]);
 
   const key = (memberId: string, date: Date) => `${memberId}:${date.toISOString().slice(0, 10)}`;
@@ -487,8 +517,21 @@ export async function getDutyHistory(
       shiftEndMinute: assignment.shiftEndMinute,
       messageCount: evidence?.messageCount ?? 0,
       uniqueGroupCount: evidence?.uniqueGroupCount ?? 0,
+      firstActivityAt: evidence?.firstActivityAt ?? null,
+      lastActivityAt: evidence?.lastActivityAt ?? null,
+      punctuality: computePunctuality({
+        dutyDate: assignment.dutyDate,
+        shiftStartMinute: assignment.shiftStartMinute,
+        shiftEndMinute: assignment.shiftEndMinute,
+        firstActivityAt: evidence?.firstActivityAt ?? null,
+        lastActivityAt: evidence?.lastActivityAt ?? null,
+        latenessGraceMinutes: settings.latenessGraceMinutes,
+        earlyDepartureGraceMinutes: settings.earlyDepartureGraceMinutes,
+      }),
       override: evidence?.override ?? null,
       overrideReason: evidence?.overrideReason ?? null,
+      overriddenByName: evidence?.overriddenBy?.name ?? evidence?.overriddenBy?.username ?? null,
+      overriddenAt: evidence?.overriddenAt ?? null,
       derived: deriveDutyState({
         status: assignment.status,
         hasActivity: (evidence?.messageCount ?? 0) > 0,
@@ -497,6 +540,161 @@ export async function getDutyHistory(
       }),
     };
   });
+}
+
+export interface DutyHistorySummary {
+  daysScheduled: number;
+  daysWorked: number;
+  noActivityDays: number;
+  offDayDuties: number;
+  leaveDays: number;
+  lateStarts: number;
+  earlyFinishes: number;
+  totalMessages: number;
+  /** Null when no day in the range had both a first and a last message to measure between. */
+  medianEngagedMinutes: number | null;
+}
+
+/**
+ * The filtered range in one line, so the table does not have to be counted by eye.
+ *
+ * Derived from the SAME rows the table renders, deliberately — not a second set of queries. Two
+ * independent paths to the same figure is how a summary comes to disagree with the list beneath it,
+ * and a page that contradicts itself is worse than one with no summary at all.
+ *
+ * The MEDIAN engaged span, not the mean: one day somebody answered a single message at 9am and
+ * another at 8pm drags a mean past every honest reading of the fortnight. Same reasoning as
+ * `getFirstResponseStats` choosing a median for response time.
+ */
+export function summariseDutyHistory(rows: DutyHistoryRow[]): DutyHistorySummary {
+  const spans = rows
+    .map((row) => row.punctuality.engagedMinutes)
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b);
+
+  const median =
+    spans.length === 0
+      ? null
+      : spans.length % 2 === 1
+        ? spans[(spans.length - 1) / 2]!
+        : Math.round((spans[spans.length / 2 - 1]! + spans[spans.length / 2]!) / 2);
+
+  return {
+    daysScheduled: rows.length,
+    daysWorked: rows.filter((row) => row.messageCount > 0).length,
+    // NO_ACTIVITY only — never "absent". The badge and this count mean the same careful thing.
+    noActivityDays: rows.filter((row) => row.derived === "NO_ACTIVITY").length,
+    offDayDuties: rows.filter((row) => row.derived === "OFF_DAY_DUTY").length,
+    leaveDays: rows.filter((row) => row.derived === "ON_LEAVE" || row.derived === "LEAVE_CONFLICT").length,
+    lateStarts: rows.filter((row) => row.punctuality.isLate).length,
+    earlyFinishes: rows.filter((row) => row.punctuality.isEarlyFinish).length,
+    totalMessages: rows.reduce((sum, row) => sum + row.messageCount, 0),
+    medianEngagedMinutes: median,
+  };
+}
+
+export interface DutyHistoryMemberRow {
+  teamMemberId: string;
+  memberName: string;
+  daysScheduled: number;
+  daysWorked: number;
+  noActivityDays: number;
+  offDayDuties: number;
+  lateStarts: number;
+  earlyFinishes: number;
+  totalMessages: number;
+  totalGroups: number;
+  medianEngagedMinutes: number | null;
+}
+
+/**
+ * The same range folded by person instead of by day — "who was late most often this fortnight",
+ * which the per-day list can only answer by scrolling and counting.
+ *
+ * Folded from the rows already fetched, for the reason above. Ordered by late starts, then by
+ * days with no activity recorded: the two things somebody opens this view to find. Never ordered
+ * by message count, which would read as a productivity league table this module does not claim to
+ * be — `/support-activity/team` owns volume, this owns schedule versus reality.
+ */
+export function groupDutyHistoryByMember(rows: DutyHistoryRow[]): DutyHistoryMemberRow[] {
+  const byMember = new Map<string, DutyHistoryRow[]>();
+  for (const row of rows) {
+    const existing = byMember.get(row.teamMemberId);
+    if (existing) existing.push(row);
+    else byMember.set(row.teamMemberId, [row]);
+  }
+
+  return [...byMember.entries()]
+    .map(([teamMemberId, memberRows]) => {
+      const summary = summariseDutyHistory(memberRows);
+      return {
+        teamMemberId,
+        memberName: memberRows[0]!.memberName,
+        daysScheduled: summary.daysScheduled,
+        daysWorked: summary.daysWorked,
+        noActivityDays: summary.noActivityDays,
+        offDayDuties: summary.offDayDuties,
+        lateStarts: summary.lateStarts,
+        earlyFinishes: summary.earlyFinishes,
+        totalMessages: summary.totalMessages,
+        totalGroups: memberRows.reduce((sum, row) => sum + row.uniqueGroupCount, 0),
+        medianEngagedMinutes: summary.medianEngagedMinutes,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.lateStarts - a.lateStarts ||
+        b.noActivityDays - a.noActivityDays ||
+        a.memberName.localeCompare(b.memberName),
+    );
+}
+
+export interface DutyGroupEvidenceRow {
+  groupId: string;
+  groupName: string;
+  messageCount: number;
+  firstAt: Date;
+  lastAt: Date;
+}
+
+/**
+ * Which groups one person worked in on one day, and when.
+ *
+ * `TeamAttendanceGroup` has been written on every message since the attendance hook shipped and
+ * read by NOTHING — the whole per-group half of the evidence existed only in the database. It is
+ * the answer to the question the day-level row always raises next: 93 messages across 23 groups
+ * says somebody was busy; this says what they were busy WITH.
+ *
+ * Loaded per row on demand rather than joined into the list. One day for one person is a handful
+ * of rows, while every day for everybody is the same fan-out the list deliberately avoids.
+ */
+export async function getDutyGroupEvidence(
+  teamMemberId: string,
+  dutyDate: Date,
+): Promise<DutyGroupEvidenceRow[]> {
+  const day = await prisma.teamAttendanceDay.findUnique({
+    where: { teamMemberId_activityDate: { teamMemberId, activityDate: toDhakaDateOnly(dutyDate) } },
+    select: {
+      groups: {
+        select: {
+          groupId: true,
+          messageCount: true,
+          firstAt: true,
+          lastAt: true,
+          group: { select: { name: true } },
+        },
+        orderBy: { messageCount: "desc" },
+      },
+    },
+  });
+
+  return (day?.groups ?? []).map((row) => ({
+    groupId: row.groupId,
+    groupName: row.group.name,
+    messageCount: row.messageCount,
+    firstAt: row.firstAt,
+    lastAt: row.lastAt,
+  }));
 }
 
 export interface LeaveRequestRow {

@@ -1,12 +1,27 @@
 import { prisma } from "@support-automation/db";
+import { formatMinutesShort } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
 import { hasPermission, requirePermission } from "@/server/permissions";
 import { formatDhakaDateKey, getDhakaDayRange, parseDhakaDayRangeFromInput } from "@/lib/supportActivityPeriod";
-import { formatDate } from "@/lib/date";
-import { formatShiftRange, getDutyHistory } from "@/server/teamManagementReports";
-import { Alert, Button, Card, EmptyState, Input, PageHeader, Select, Table, Td, Th } from "@/components/ui";
-import { DutyStateBadge } from "../DutyStateBadge";
-import { AttendanceOverride } from "./AttendanceOverride";
+import { formatDate, formatDateTime } from "@/lib/date";
+import {
+  formatShiftRange,
+  getDutyHistory,
+  groupDutyHistoryByMember,
+  summariseDutyHistory,
+} from "@/server/teamManagementReports";
+import {
+  Alert,
+  Button,
+  ButtonLink,
+  Card,
+  EmptyState,
+  Input,
+  PageHeader,
+  Select,
+  StatTile,
+} from "@/components/ui";
+import { DutyHistoryByMemberTable, DutyHistoryTable } from "./DutyHistoryTable";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -17,12 +32,18 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * rostered has nothing to compare against and would be a row of dashes claiming to mean something.
  *
  * The filters are a GET form, like every other filter in this app — a range can be bookmarked and
- * shared, and survives a refresh.
+ * shared, and survives a refresh. The view toggle is part of that same form so switching between
+ * by-day and by-person keeps the range you were looking at.
+ *
+ * The summary and the per-person fold are computed from the SAME rows the table renders, never
+ * from a second set of queries. Two independent paths to one figure is how a summary comes to
+ * disagree with the list beneath it, and a page that contradicts itself is worse than one with no
+ * summary at all.
  */
 export default async function AttendancePage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; member?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; member?: string; view?: string }>;
 }) {
   const session = await requireSession();
   await requirePermission(session, "team_management.view");
@@ -34,6 +55,7 @@ export default async function AttendancePage({
   // Default: the last two weeks, which is the window somebody checking a timesheet is usually in.
   const range = parsed ?? { start: new Date(getDhakaDayRange(now).start.getTime() - 13 * DAY_MS), end: getDhakaDayRange(now).end };
   const teamMemberId = params.member && params.member !== "" ? params.member : undefined;
+  const byMember = params.view === "member";
 
   const [rows, members] = await Promise.all([
     getDutyHistory(range, teamMemberId),
@@ -44,6 +66,19 @@ export default async function AttendancePage({
     }),
   ]);
 
+  const summary = summariseDutyHistory(rows);
+  // Folded once, not once per use. Pure over at most 500 rows either way, but the count in the
+  // caption and the table beneath it must be the same fold or they can disagree about the page.
+  const memberRows = byMember ? groupDutyHistoryByMember(rows) : [];
+  const fromKey = formatDhakaDateKey(range.start);
+  const toKey = formatDhakaDateKey(new Date(range.end.getTime() - 1));
+  const exportQuery = new URLSearchParams({
+    from: range.start.toISOString(),
+    to: range.end.toISOString(),
+    ...(teamMemberId ? { member: teamMemberId } : {}),
+    ...(byMember ? { view: "member" } : {}),
+  });
+
   return (
     <div>
       <PageHeader
@@ -51,20 +86,8 @@ export default async function AttendancePage({
         description="Scheduled against observed. “No activity recorded” means no message was stored from that person that day — it is never a claim that they did not work."
         actions={
           <form method="GET" className="flex flex-wrap items-end gap-2">
-            <Input
-              type="date"
-              name="from"
-              defaultValue={formatDhakaDateKey(range.start)}
-              aria-label="From"
-              className="w-40"
-            />
-            <Input
-              type="date"
-              name="to"
-              defaultValue={formatDhakaDateKey(new Date(range.end.getTime() - 1))}
-              aria-label="To"
-              className="w-40"
-            />
+            <Input type="date" name="from" defaultValue={fromKey} aria-label="From" className="w-40" />
+            <Input type="date" name="to" defaultValue={toKey} aria-label="To" className="w-40" />
             <Select name="member" defaultValue={teamMemberId ?? ""} aria-label="Team member" className="w-48">
               <option value="">Everyone</option>
               {members.map((member) => (
@@ -73,12 +96,38 @@ export default async function AttendancePage({
                 </option>
               ))}
             </Select>
+            <Select name="view" defaultValue={byMember ? "member" : "day"} aria-label="View" className="w-36">
+              <option value="day">By day</option>
+              <option value="member">By person</option>
+            </Select>
             <Button type="submit" variant="secondary">
               Apply
             </Button>
           </form>
         }
       />
+
+      {rows.length > 0 ? (
+        <div className="mb-5 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+          <StatTile label="Days scheduled" value={summary.daysScheduled} hint={`${fromKey} → ${toKey}`} />
+          <StatTile
+            label="Days with activity"
+            value={summary.daysWorked}
+            hint={summary.noActivityDays > 0 ? `${summary.noActivityDays} with none recorded` : "every scheduled day"}
+          />
+          <StatTile
+            label="Late starts"
+            value={summary.lateStarts}
+            tone={summary.lateStarts > 0 ? "warning" : "neutral"}
+            hint={summary.earlyFinishes > 0 ? `${summary.earlyFinishes} early finishes` : "past the configured grace"}
+          />
+          <StatTile
+            label="Typical day"
+            value={formatMinutesShort(summary.medianEngagedMinutes)}
+            hint={`median span · ${summary.totalMessages.toLocaleString()} messages`}
+          />
+        </div>
+      ) : null}
 
       {rows.length >= 500 ? (
         <Alert tone="info">Showing the most recent 500 rows. Narrow the dates or pick one person to see the rest.</Alert>
@@ -90,59 +139,57 @@ export default async function AttendancePage({
             No roster entries in this range. Attendance is compared against a scheduled day — build the roster first.
           </EmptyState>
         ) : (
-          <Table>
-            <thead>
-              <tr>
-                <Th>Date</Th>
-                <Th>Team member</Th>
-                <Th>Scheduled</Th>
-                <Th>Messages</Th>
-                <Th>Groups</Th>
-                <Th>Reading</Th>
-                {canManage ? <Th> </Th> : null}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <Td className="whitespace-nowrap">{formatDate(row.dutyDate)}</Td>
-                  <Td className="font-medium">{row.memberName}</Td>
-                  <Td>
-                    {row.shiftName ? (
-                      <>
-                        <div>{row.shiftName}</div>
-                        <div className="text-xs tabular-nums text-[color:var(--color-muted-foreground)]">
-                          {formatShiftRange(row.shiftStartMinute, row.shiftEndMinute)}
-                        </div>
-                      </>
-                    ) : (
-                      <span className="text-[color:var(--color-muted-foreground)]">
-                        {row.status?.toLowerCase().replace("_", " ") ?? "—"}
-                      </span>
-                    )}
-                  </Td>
-                  <Td className="tabular-nums">{row.messageCount || "—"}</Td>
-                  <Td className="tabular-nums">{row.uniqueGroupCount || "—"}</Td>
-                  <Td>
-                    <DutyStateBadge state={row.derived} />
-                  </Td>
-                  {canManage ? (
-                    <Td>
-                      <div className="flex justify-end">
-                        <AttendanceOverride
-                          teamMemberId={row.teamMemberId}
-                          memberName={row.memberName}
-                          date={formatDhakaDateKey(row.dutyDate)}
-                          current={row.override}
-                          currentReason={row.overrideReason}
-                        />
-                      </div>
-                    </Td>
-                  ) : null}
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+          <>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-[color:var(--color-muted-foreground)]">
+                {byMember
+                  ? `${memberRows.length} people · ${summary.daysScheduled} scheduled days`
+                  : `${summary.daysScheduled} scheduled days · expand a row for the groups behind it`}
+              </p>
+              <div className="flex gap-2">
+                {/* Real anchors, not client handlers: a file download cannot come from a Server
+                    Action, which is why this module's siblings use a Route Handler too. */}
+                <ButtonLink href={`/api/team-management/export?format=csv&${exportQuery}`} variant="secondary">
+                  CSV
+                </ButtonLink>
+                <ButtonLink href={`/api/team-management/export?format=xlsx&${exportQuery}`} variant="secondary">
+                  Excel
+                </ButtonLink>
+              </div>
+            </div>
+
+            {byMember ? (
+              <DutyHistoryByMemberTable rows={memberRows} />
+            ) : (
+              <DutyHistoryTable
+                canManage={canManage}
+                rows={rows.map((row) => ({
+                  id: row.id,
+                  dutyDateIso: formatDhakaDateKey(row.dutyDate),
+                  dutyDateLabel: formatDate(row.dutyDate),
+                  teamMemberId: row.teamMemberId,
+                  memberName: row.memberName,
+                  statusLabel: row.status?.toLowerCase().replace("_", " ") ?? null,
+                  shiftName: row.shiftName,
+                  shiftRange: formatShiftRange(row.shiftStartMinute, row.shiftEndMinute),
+                  messageCount: row.messageCount,
+                  uniqueGroupCount: row.uniqueGroupCount,
+                  startedMinute: row.punctuality.startedMinute,
+                  endedMinute: row.punctuality.endedMinute,
+                  engagedMinutes: row.punctuality.engagedMinutes,
+                  lateByMinutes: row.punctuality.lateByMinutes,
+                  leftEarlyByMinutes: row.punctuality.leftEarlyByMinutes,
+                  isLate: row.punctuality.isLate,
+                  isEarlyFinish: row.punctuality.isEarlyFinish,
+                  derived: row.derived,
+                  override: row.override,
+                  overrideReason: row.overrideReason,
+                  overriddenByName: row.overriddenByName,
+                  overriddenAtLabel: row.overriddenAt ? formatDateTime(row.overriddenAt) : null,
+                }))}
+              />
+            )}
+          </>
         )}
       </Card>
     </div>
