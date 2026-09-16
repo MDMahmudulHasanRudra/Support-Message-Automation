@@ -19,6 +19,23 @@ import { renderNotification } from "../notifications/templates.js";
  * idempotency all apply. It is not a second send path.
  */
 
+/**
+ * How long a request for help stands before it is worth making again in the same conversation.
+ *
+ * Every handover reason posts a mention, and a customer who keeps writing produces a handover per
+ * message — an unanswered question, a throttled reply, a screenshot this system cannot read are
+ * all handovers. Without this, four messages in five minutes tagged the same person four times in
+ * front of the customer. That is not escalation; it is the unprompted repeat sending this product
+ * refuses to do, and it makes the tag easy to start ignoring.
+ *
+ * Fifteen minutes, and deliberately not configurable: it is not a throttle an operator should be
+ * tuning, and the separate alert to the notifications group is raised every single time regardless
+ * — so nothing is lost, only the repetition the customer can see. When a colleague does arrive,
+ * `recordHumanTakeover` suppresses the AI for this group outright and no further mention is
+ * reached at all.
+ */
+const MENTION_REPEAT_WINDOW_MS = 15 * 60_000;
+
 /** Who to tag, in preference order, plus the group's own name for the message template. */
 async function resolveMentionTargets(
   groupId: string,
@@ -57,6 +74,36 @@ async function resolveMentionTargets(
   return { targets, groupName: group?.name ?? "" };
 }
 
+/**
+ * Whether somebody was already tagged in this conversation inside the repeat window.
+ *
+ * Counts queued rows as well as sent ones: the whole point is a burst, and a burst arrives faster
+ * than the 2-second queue drains. A non-empty `mentions` array is what identifies these rows — no
+ * ordinary reply on this path ever carries one.
+ *
+ * Fails OPEN. If the lookup throws, the mention is still posted: a duplicate tag is noise, while
+ * silently swallowing a request for help leaves a customer waiting with nobody told, and those two
+ * are not the same size of mistake.
+ */
+async function mentionedRecently(accountId: string, chatId: string): Promise<boolean> {
+  try {
+    const recent = await prisma.outboundMessage.findFirst({
+      where: {
+        accountId,
+        chatId,
+        mentions: { isEmpty: false },
+        status: { in: ["PENDING", "PROCESSING", "SENT"] },
+        createdAt: { gte: new Date(Date.now() - MENTION_REPEAT_WINDOW_MS) },
+      },
+      select: { id: true },
+    });
+    return recent !== null;
+  } catch (err) {
+    console.error("[aiFallback] could not check for a recent handover mention; posting it", err);
+    return false;
+  }
+}
+
 export interface MentionHandoverParams {
   accountId: string;
   groupId: string;
@@ -73,6 +120,8 @@ export interface MentionHandoverParams {
  */
 export async function mentionTeamForHandover(params: MentionHandoverParams): Promise<boolean> {
   try {
+    if (await mentionedRecently(params.accountId, params.chatId)) return false;
+
     const { targets, groupName } = await resolveMentionTargets(params.groupId);
     if (targets.length === 0) {
       await logSystemEvent("INFO", "ai-fallback", "Handover mention skipped — nobody taggable for this group", {
@@ -108,6 +157,10 @@ export async function mentionTeamForHandover(params: MentionHandoverParams): Pro
       settings: params.settings,
       testMode: params.testMode,
       mentions: targets.map((target) => target.chatId),
+      // Its own bucket, so a retry that finally produces a real answer is not mistaken for this
+      // mention and discarded. Still idempotent: a second mention for the SAME customer message
+      // collapses onto this same key, as it always did.
+      idempotencyVariant: "handover-mention",
     });
     return queued;
   } catch (err) {

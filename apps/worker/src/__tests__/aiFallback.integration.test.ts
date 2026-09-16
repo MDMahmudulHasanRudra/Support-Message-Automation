@@ -3,7 +3,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { randomInt, randomUUID } from "node:crypto";
 import { prisma, createAiFallbackDecision } from "@support-automation/db";
 import type { AiSettings, AutomationSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
-import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
+import {
+  loadStoredMessageContext,
+  processIncomingMessage,
+  runAutomationStage,
+} from "../pipeline/processIncomingMessage.js";
+import { buildOutboundIdempotencyKey } from "../pipeline/idempotency.js";
 import { checkAiFallbackEligibility } from "../aiFallback/eligibility.js";
 import { parseFallbackResponse } from "../aiFallback/prompt.js";
 import { MockAiClient } from "./mockAiClient.js";
@@ -823,5 +828,162 @@ describe("Hybrid AI Automation — knowledge authority gate", () => {
     } finally {
       await prisma.aiKnowledgeItem.delete({ where: { id: knowledge.id } });
     }
+  });
+});
+
+/**
+ * The handover side of the fallback: what happens in the customer's own group, and how many times.
+ *
+ * Every one of these pins a defect that shipped. The mention is enqueued as a rule-less AUTO_REPLY,
+ * exactly like an AI answer, and that shape is what three separate mechanisms keyed on — the reply
+ * cooldown, the idempotency key, and nothing at all for repetition.
+ */
+describe("Hybrid AI Automation — handover side effects", () => {
+  /** A taggable colleague owning the group. `whatsappId` stays null so the number is reachable. */
+  async function assignTaggableMember() {
+    const member = await prisma.internalTeamMember.create({
+      data: { name: "Handover Target", phoneNumber: uniquePhone(), role: "Support", status: "ACTIVE" },
+    });
+    createdTeamMemberIds.push(member.id);
+    await resetGroup({ assignedTeamMemberId: member.id });
+    return member;
+  }
+
+  /** Queued sends carrying @-tags. Only the handover mention ever produces one on this path. */
+  async function mentionRows() {
+    const rows = await prisma.outboundMessage.findMany({ where: { accountId: account.id } });
+    return rows.filter((row) => row.mentions.length > 0);
+  }
+
+  async function askUnanswerable(body: string, senderPhone: string) {
+    await processIncomingMessage(
+      {
+        accountId: account.id,
+        whatsappMessageId: randomUUID(),
+        whatsappGroupId: group.whatsappGroupId,
+        chatId: group.whatsappGroupId,
+        senderPhone,
+        direction: "INCOMING",
+        body,
+        timestampWa: new Date(),
+      },
+      new MockAiClient(),
+    );
+  }
+
+  it("does not let a handover mention stand in for an AI reply in the cooldown", async () => {
+    // The mention is a request for a person, raised BECAUSE nothing was answered — so counting it
+    // as a recent reply was self-sustaining: it blocked the next message, and that block posted
+    // another mention which re-armed the window from its own timestamp. A customer writing every
+    // few minutes could never be answered again.
+    await resetAiSettings({
+      aiResponseMode: "STRICT_KNOWLEDGE_ONLY",
+      mentionTeamOnHandover: true,
+      aiReplyCooldownSeconds: 3600,
+    });
+    await assignTaggableMember();
+    const senderPhone = uniquePhone();
+
+    await askUnanswerable("first unanswerable question", senderPhone);
+    const first = await prisma.message.findFirstOrThrow({ where: { accountId: account.id, senderPhone } });
+    expect((await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: first.id } })).reason).toBe(
+      "NO_KNOWLEDGE",
+    );
+    // The mention really was queued — otherwise the rest of this proves nothing.
+    expect(await mentionRows()).toHaveLength(1);
+
+    await askUnanswerable("second unanswerable question", senderPhone);
+    const second = await prisma.message.findFirstOrThrow({
+      where: { accountId: account.id, senderPhone, id: { not: first.id } },
+    });
+    const decision = await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: second.id } });
+
+    // Reached the knowledge gate on its own merits rather than being turned away at the cooldown.
+    expect(decision.reason).toBe("NO_KNOWLEDGE");
+    expect(decision.reason).not.toMatch(/SAFETY_BLOCKED/);
+  });
+
+  it("tags the team once per conversation, not once per message", async () => {
+    await resetAiSettings({
+      aiResponseMode: "STRICT_KNOWLEDGE_ONLY",
+      mentionTeamOnHandover: true,
+      aiReplyCooldownSeconds: 0,
+    });
+    await assignTaggableMember();
+    const senderPhone = uniquePhone();
+
+    for (const body of ["question one", "question two", "question three", "question four"]) {
+      await askUnanswerable(body, senderPhone);
+    }
+
+    // Four handovers, four alerts to the notifications group — but one tag in front of the
+    // customer. Repeating it is the unprompted bulk sending this product refuses to do, and it
+    // teaches the team to ignore the tag.
+    expect(await prisma.aiFallbackDecision.count({ where: { accountId: account.id } })).toBe(4);
+    expect(await mentionRows()).toHaveLength(1);
+  });
+
+  it("re-running a stranded message does not alert, tag or research a second time", async () => {
+    // recoverStrandedMessages re-runs runAutomationStage wholesale for a row left PENDING. The
+    // alert used to be sent BEFORE the decision row was claimed, and createAiFallbackDecision
+    // answers a duplicate with a returned error rather than a throw — so the second pass sent a
+    // second "AI Assistance Required", posted a second mention, and discarded the decision that
+    // would have revealed it. Notification has no idempotency key of its own to catch that.
+    await resetAiSettings({
+      aiResponseMode: "STRICT_KNOWLEDGE_ONLY",
+      mentionTeamOnHandover: true,
+      aiReplyCooldownSeconds: 0,
+    });
+    await resetAutomationSettings({ whatsappNotificationGroupIds: [group.whatsappGroupId] });
+    await assignTaggableMember();
+    const senderPhone = uniquePhone();
+
+    await askUnanswerable("a question nobody wrote down", senderPhone);
+    const message = await prisma.message.findFirstOrThrow({ where: { accountId: account.id, senderPhone } });
+
+    const countAlerts = () => prisma.notification.count({ where: { relatedMessageId: message.id } });
+    const alertsAfterFirstPass = await countAlerts();
+    const mentionsAfterFirstPass = (await mentionRows()).length;
+    expect(alertsAfterFirstPass).toBeGreaterThan(0);
+
+    const context = await loadStoredMessageContext(message.id);
+    expect(context).not.toBeNull();
+    await runAutomationStage(context!.raw, context!.stored, `recovery:${message.id}`, new MockAiClient());
+
+    expect(await countAlerts()).toBe(alertsAfterFirstPass);
+    expect(await mentionRows()).toHaveLength(mentionsAfterFirstPass);
+    expect(await prisma.aiFallbackDecision.count({ where: { messageId: message.id } })).toBe(1);
+  });
+});
+
+describe("outbound idempotency key — reply vs handover mention", () => {
+  const base = {
+    accountId: "acc-1",
+    chatId: "123-456@g.us",
+    incomingMessageId: "msg-1",
+    ruleId: null,
+    actionType: "AUTO_REPLY" as const,
+  };
+
+  it("separates the two rule-less AUTO_REPLYs one message can produce", () => {
+    // Identical keys meant a retry that finally drafted a real answer was swallowed as "already
+    // queued" by the mention the first pass had left behind — the customer got the tag and never
+    // got the reply, with no failure recorded anywhere.
+    expect(buildOutboundIdempotencyKey({ ...base, variant: "handover-mention" })).not.toBe(
+      buildOutboundIdempotencyKey(base),
+    );
+  });
+
+  it("leaves every ordinary send's key byte-identical", () => {
+    expect(buildOutboundIdempotencyKey(base)).toBe("acc-1:123-456@g.us:msg-1:system:AUTO_REPLY");
+    expect(buildOutboundIdempotencyKey({ ...base, ruleId: "rule-9" })).toBe(
+      "acc-1:123-456@g.us:msg-1:rule-9:AUTO_REPLY",
+    );
+  });
+
+  it("is still idempotent for a repeat of the same mention", () => {
+    expect(buildOutboundIdempotencyKey({ ...base, variant: "handover-mention" })).toBe(
+      buildOutboundIdempotencyKey({ ...base, variant: "handover-mention" }),
+    );
   });
 });

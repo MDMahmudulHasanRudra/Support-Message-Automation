@@ -18,7 +18,7 @@ import type { KnowledgeSnippet } from "./knowledgeContext.js";
  *
  * When a customer asks something the verified knowledge base does not cover, the ordinary path
  * hands the conversation to a person and — separately, in the background — queues the question to
- * be researched so the NEXT customer gets an answer. With `AiSettings.deepAnswerEnabled` on, that
+ * be researched so the NEXT customer gets an answer. Under the two Forge response modes that
  * research runs immediately instead, and its result answers the customer who is waiting.
  *
  * The important design decision is what this returns. It does NOT produce a reply. It produces
@@ -33,7 +33,13 @@ import type { KnowledgeSnippet } from "./knowledgeContext.js";
  *  - What was learned is stored, so the same question is answered instantly next time without
  *    reading anything.
  *
- * Nothing here runs unless the setting is on. Off, this module is never called.
+ * WHAT ACTUALLY GATES THIS. `AiSettings.aiResponseMode` being `KNOWLEDGE_PLUS_FORGE` or
+ * `KNOWLEDGE_FORGE_GENERAL` — the check lives in `runAiFallback.ts`, and this module is not
+ * called under the other two modes. There is no `deepAnswerEnabled` column; this comment named
+ * one for a long time and no such setting has ever existed, which would send anyone looking for
+ * the switch to a screen that does not have it. Two further gates are enforced here rather than
+ * by the caller: the Forge integration must be configured, and an admin must have enabled it and
+ * pointed it at a project.
  */
 
 /** Below this the model is guessing from code it did not really understand. */

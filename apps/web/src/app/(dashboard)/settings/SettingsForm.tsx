@@ -59,11 +59,14 @@ export function SettingsForm({
       <Card>
         <SectionHeader title="Per-Client Reply Limits" />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* min={1} because a saved 0 blocks every reply rather than lifting the limit — the
+              switch for "no limits" is Rate limiting enabled, below. The server action floors
+              these too; this only refuses the value before it is sent. */}
           <Field label="Max replies per client per hour">
-            <Input name="maxRepliesPerClientPerHour" type="number" defaultValue={settings.maxRepliesPerClientPerHour} />
+            <Input name="maxRepliesPerClientPerHour" type="number" min={1} defaultValue={settings.maxRepliesPerClientPerHour} />
           </Field>
           <Field label="Max replies per client per day">
-            <Input name="maxRepliesPerClientPerDay" type="number" defaultValue={settings.maxRepliesPerClientPerDay} />
+            <Input name="maxRepliesPerClientPerDay" type="number" min={1} defaultValue={settings.maxRepliesPerClientPerDay} />
           </Field>
         </div>
       </Card>
@@ -78,13 +81,13 @@ export function SettingsForm({
         />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Field label="Max per minute">
-            <Input name="globalMaxPerMinute" type="number" defaultValue={settings.globalMaxPerMinute} />
+            <Input name="globalMaxPerMinute" type="number" min={1} defaultValue={settings.globalMaxPerMinute} />
           </Field>
           <Field label="Max per hour">
-            <Input name="globalMaxPerHour" type="number" defaultValue={settings.globalMaxPerHour} />
+            <Input name="globalMaxPerHour" type="number" min={1} defaultValue={settings.globalMaxPerHour} />
           </Field>
           <Field label="Max per day">
-            <Input name="globalMaxPerDay" type="number" defaultValue={settings.globalMaxPerDay} />
+            <Input name="globalMaxPerDay" type="number" min={1} defaultValue={settings.globalMaxPerDay} />
           </Field>
         </div>
       </Card>

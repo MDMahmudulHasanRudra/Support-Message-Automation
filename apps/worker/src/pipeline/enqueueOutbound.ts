@@ -38,6 +38,11 @@ export async function enqueueOutboundMessage(params: {
   testMode?: boolean;
   /** Contact ids to @mention. Only the AI handover mention sets this. */
   mentions?: string[];
+  /**
+   * Set only when one incoming message can produce two genuinely different sends of the same
+   * action type — see `buildOutboundIdempotencyKey`. Left unset, keys are unchanged.
+   */
+  idempotencyVariant?: string;
 }): Promise<{ queued: boolean; outboundMessageId?: string }> {
   const idempotencyKey = buildOutboundIdempotencyKey({
     accountId: params.accountId,
@@ -45,6 +50,7 @@ export async function enqueueOutboundMessage(params: {
     incomingMessageId: params.incomingMessageId,
     ruleId: params.ruleId,
     actionType: params.actionType,
+    variant: params.idempotencyVariant,
   });
 
   const delayMs = params.testMode

@@ -78,8 +78,6 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   });
   if (!eligibility.eligible) return;
 
-  const client = params.clientOverride ?? (await resolveAiClient("RESPONSE"));
-
   // Resolved independently of the (possibly mocked, in tests) completion result — mirrors
   // aiAnalysisJob.ts's own pattern, and matters for correctness: AiFallbackDecision.aiProviderId
   // is a real foreign key, so it must come from a genuine AiModelConfig row, never from whatever
@@ -91,6 +89,34 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     reason: string,
     fields: { intent?: string | null; confidenceScore?: number | null; responseText?: string | null; modelId?: string | null; tokensUsed?: number | null } = {},
   ): Promise<void> => {
+    // The decision row is claimed BEFORE anything is sent, and that ordering is the idempotency
+    // guard for the entire handover.
+    //
+    // It used to be the other way round: the alert went out, then the decision was written, and
+    // `createAiFallbackDecision` answers a duplicate with a returned error rather than a throw. So
+    // a re-run of this message — `recoverStrandedMessages` re-runs `runAutomationStage` wholesale
+    // for a row stranded between 5 minutes and 6 hours — sent a SECOND "AI Assistance Required"
+    // alert, posted a second mention, and queued the question for research again, while the
+    // duplicate decision was quietly discarded. `Notification` has no idempotency key of its own
+    // to catch it, so nothing else could.
+    //
+    // `AiFallbackDecision.messageId` is @unique, so claiming first makes exactly one pass per
+    // message perform the side effects, however many times this runs.
+    const decision = await createAiFallbackDecision({
+      messageId: params.message.id,
+      accountId: params.accountId,
+      groupId: params.group?.id ?? null,
+      aiProviderId,
+      modelId: fields.modelId ?? null,
+      intent: fields.intent ?? null,
+      confidenceScore: fields.confidenceScore ?? null,
+      responseText: fields.responseText ?? null,
+      outcome: "HUMAN_FALLBACK",
+      reason,
+      tokensUsed: fields.tokensUsed ?? null,
+    });
+    if (!("id" in decision)) return;
+
     const notificationId = await sendHumanFallbackAlert({
       messageId: params.message.id,
       accountId: params.accountId,
@@ -104,20 +130,19 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       automationSettings: params.automationSettings,
       aiSettings,
     });
-    const decision = await createAiFallbackDecision({
-      messageId: params.message.id,
-      accountId: params.accountId,
-      groupId: params.group?.id ?? null,
-      aiProviderId,
-      modelId: fields.modelId ?? null,
-      intent: fields.intent ?? null,
-      confidenceScore: fields.confidenceScore ?? null,
-      responseText: fields.responseText ?? null,
-      outcome: "HUMAN_FALLBACK",
-      reason,
-      notificationId,
-      tokensUsed: fields.tokensUsed ?? null,
-    });
+    // Linked after the fact rather than at creation, since the row now exists first. Its own
+    // try/catch: the team has already been told, and failing to record WHICH alert told them must
+    // not turn a completed handover into an error.
+    if (notificationId) {
+      try {
+        await prisma.aiFallbackDecision.update({
+          where: { id: decision.id },
+          data: { notificationId },
+        });
+      } catch (err) {
+        console.error("[aiFallback] could not link the handover alert to its decision", err);
+      }
+    }
 
     // The customer has already been handed to a human above; this only queues the question to be
     // researched against the product's own source later, so the NEXT person to ask gets an
@@ -152,7 +177,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       try {
         await recordUnansweredQuestion({
           question: params.message.body,
-          fallbackDecisionId: "id" in decision ? decision.id : null,
+          fallbackDecisionId: decision.id,
         });
       } catch (err) {
         console.error("[forge] failed to queue an unanswered question for research", err);
@@ -192,6 +217,11 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     return;
   }
 
+  // Resolved HERE, not at the top of the function: it reads the provider row and decrypts a
+  // stored credential, and the two gates above — a media-only message, an active cooldown or an
+  // exhausted rate limit — end the turn without ever reaching a model. Doing that work first meant
+  // paying for it on every sticker and every throttled message.
+  const client = params.clientOverride ?? (await resolveAiClient("RESPONSE"));
   if (!client) {
     await recordHumanFallback("AI_UNAVAILABLE");
     return;
@@ -286,6 +316,12 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   }
 
   const parsed = parseFallbackResponse(completion.text);
+  // NOTE ON `tokensUsed`: this is the REPLY completion only. A message can also pay for a query
+  // expansion (queryExpansion.ts) and, under the Forge modes, a live research call
+  // (deepAnswer.ts), and neither is counted here — those functions return terms and grounding
+  // rather than a completion result, so the figure is not available at this point without
+  // threading it back through both. Read this column as "what the answer cost", not "what the
+  // message cost"; the provider's own dashboard is the authority on total spend.
   const commonFields = {
     intent: parsed.intent,
     confidenceScore: parsed.confidence,

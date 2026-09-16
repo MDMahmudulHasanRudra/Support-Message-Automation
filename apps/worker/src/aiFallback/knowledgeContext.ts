@@ -237,9 +237,20 @@ export async function findRelevantKnowledge(
 
   const viaExpansion = await searchByTerms(customerMessage, expanded, groupId, limit, expanded);
 
-  // Keep whichever search actually understood the question better. Both scores count distinct
-  // query terms matched whole-word, so they are comparable as a strength signal even though the
-  // vocabularies differ. Ties go to the direct hit: those terms are the customer's own words.
+  // Keep whichever search actually understood the question better. Ties go to the direct hit:
+  // those terms are the customer's own words.
+  //
+  // The two scores are NOT symmetric, and that is worth knowing before trusting this line too far.
+  // `rankRelevantKnowledge` always unions the message's own derived keywords into whatever the
+  // caller passes (it has to — scoring a Banglish question purely on English terms would give
+  // every row zero), so the expansion side is scored on `derived ∪ expanded` while the direct side
+  // is scored on `derived` alone. The larger vocabulary has more chances to match, so expansion is
+  // structurally favoured here.
+  //
+  // Left as it is deliberately. Expansion only runs when the direct search was empty or thin, so
+  // being favoured at that point is the behaviour wanted; normalising by vocabulary size would
+  // change which entries ground real answers, which is a retrieval-quality decision to make
+  // against measurements rather than a correction to slip into a comparison.
   return viaExpansion.bestOverlap > direct.bestOverlap ? viaExpansion.snippets : direct.snippets;
 }
 

@@ -215,7 +215,18 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
           "confidently is worse for this team than no answer at all.",
         ]
       : []),
-  ].join(" ");
+  ]
+    // Joined on NEWLINES, not spaces.
+    //
+    // Every block above is authored as discrete lines — most of all `buildLanguageRules`, which
+    // returns a numbered checklist and instructs the model to "work down this list and stop at
+    // the first line that matches". Joined with a space there were no lines: the seven rules, the
+    // scope rules and the style notes all ran together into one paragraph, and the blank-string
+    // separators meant to break sections became double spaces in the middle of a sentence. The
+    // ordering those blocks are so careful about was still there and much harder to follow.
+    //
+    // The words are unchanged; only the separator is.
+    .join("\n");
 
   const referenceBlock =
     knowledge.length > 0
@@ -257,7 +268,18 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
     "RESPONSE: <the drafted reply, or NONE if SHOULD_REPLY is NO>",
   ].join("\n");
 
-  return { systemPrompt, userPrompt, maxTokens: 400, temperature: 0 };
+  // 400 was the budget when this prompt asked for a short acknowledgement. It now asks for a
+  // procedure — "the steps in the order they are actually done, naming what the person opens or
+  // clicks" — and it has to fit five metadata lines in front of the reply, in a deployment whose
+  // default reply language is Bengali, which costs several tokens per character in every
+  // tokenizer this talks to. A numbered Bengali procedure did not fit, and since `truncated` is
+  // now honoured the overflow became a TRUNCATED_RESPONSE handover rather than a half-sent
+  // answer: safe, but it meant the better the knowledge base got at procedures, the more often
+  // the AI handed over instead of answering.
+  //
+  // Still a ceiling, not a target — the prompt's own "no closing paragraph that adds nothing" is
+  // what keeps replies short, and a runaway answer is still cut off and still handed over.
+  return { systemPrompt, userPrompt, maxTokens: 900, temperature: 0 };
 }
 
 /**

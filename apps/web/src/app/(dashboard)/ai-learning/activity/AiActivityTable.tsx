@@ -49,6 +49,12 @@ const REASON_HELP: Record<string, string> = {
     "The customer sent only an image, voice note or sticker. This system cannot read media, so it was handed to a person rather than answered blindly.",
   TRUNCATED_RESPONSE:
     "The AI's answer was cut off by the length limit, so it was handed over rather than sent half-finished.",
+  // The defensive fallback behind INVENTED_PROCEDURE: the grounding check failed without naming
+  // which rule caught it. Unreachable while validateGrounding has exactly one verdict, and listed
+  // anyway — a code with no explanation beside it is the one somebody has to read source to
+  // understand, and that is the whole reason this map exists.
+  UNGROUNDED_RESPONSE:
+    "The reply was not supported by the reference material behind it, so it was handed over instead of sent.",
 };
 
 function explainReason(reason: string | null): string | null {

@@ -211,8 +211,10 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
       getGlobalRateLimitUsage(message.accountId),
       getPerClientLimitUsage(message.accountId, message.toPhone),
     ]);
-    // A limit of 0 means no limit — see exceedsLimit() in rateLimiter.ts. Shared with the
-    // enqueue-time gate in pipeline/safety.ts so the two cannot disagree.
+    // A limit of 0 means ZERO SENDS ALLOWED, not "unlimited" — see exceedsLimit() in
+    // rateLimiter.ts, which spells out why that literal reading is the one kept. Shared with the
+    // enqueue-time gate in pipeline/safety.ts so the two cannot disagree. Turning limits off is
+    // `rateLimitingEnabled` above; it is never a zero.
     const limitExceeded =
       exceedsLimit(global.perMinute, settings.globalMaxPerMinute) ||
       exceedsLimit(global.perHour, settings.globalMaxPerHour) ||

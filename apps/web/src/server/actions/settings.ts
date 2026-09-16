@@ -69,11 +69,9 @@ export async function updateSafetySettings(_prevState: SettingsFormState, formDa
   await requireSession();
   const current = await getOrCreateSettings();
 
-  // Deliberately NOT clamped to a minimum: a limit of 0 means "no limit" (see exceedsLimit() in
-  // the worker's rateLimiter), and forcing a floor here would impose a ceiling the operator did
-  // not ask for. The only thing guarded against is input that is not a number at all — an empty
-  // or malformed box keeps the current value rather than writing NaN, which Prisma rejects with a
-  // raw error the operator cannot act on.
+  // An empty or malformed box keeps the current value rather than writing NaN, which Prisma
+  // rejects with a raw error the operator cannot act on. Zero is allowed here because it is
+  // meaningful for the fields this serves: no reply delay, no retries.
   const num = (key: string, current: number) => {
     const raw = formData.get(key);
     if (raw === null || String(raw).trim() === "") return current;
@@ -81,14 +79,30 @@ export async function updateSafetySettings(_prevState: SettingsFormState, formDa
     return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : current;
   };
 
+  /**
+   * A rate limit, floored at 1.
+   *
+   * This comment used to say a limit of 0 meant "no limit". It does not, and never did:
+   * `exceedsLimit` in the worker is `used >= limit`, so a saved 0 blocks EVERY outbound message —
+   * auto-replies, AI replies, and the manual replies an operator types in the chat inbox, which
+   * then defer indefinitely. A self-refuting "limit reached (0/0)" in the logs is the only
+   * symptom, and the comment sent whoever read it looking in the wrong place.
+   *
+   * Only the empty box was ever guarded. A deliberately typed 0 — exactly what somebody does
+   * after reading "0 means no limit" — went straight through. The floor removes the footgun
+   * outright: there is no legitimate use for a rate limit of zero, because the switch that turns
+   * limits off is `rateLimitingEnabled`, sitting on this same form.
+   */
+  const limit = (key: string, current: number) => Math.max(1, num(key, current));
+
   await prisma.automationSettings.update({
     where: { id: "global" },
     data: {
-      maxRepliesPerClientPerHour: num("maxRepliesPerClientPerHour", current.maxRepliesPerClientPerHour),
-      maxRepliesPerClientPerDay: num("maxRepliesPerClientPerDay", current.maxRepliesPerClientPerDay),
-      globalMaxPerMinute: num("globalMaxPerMinute", current.globalMaxPerMinute),
-      globalMaxPerHour: num("globalMaxPerHour", current.globalMaxPerHour),
-      globalMaxPerDay: num("globalMaxPerDay", current.globalMaxPerDay),
+      maxRepliesPerClientPerHour: limit("maxRepliesPerClientPerHour", current.maxRepliesPerClientPerHour),
+      maxRepliesPerClientPerDay: limit("maxRepliesPerClientPerDay", current.maxRepliesPerClientPerDay),
+      globalMaxPerMinute: limit("globalMaxPerMinute", current.globalMaxPerMinute),
+      globalMaxPerHour: limit("globalMaxPerHour", current.globalMaxPerHour),
+      globalMaxPerDay: limit("globalMaxPerDay", current.globalMaxPerDay),
       rateLimitingEnabled: formData.get("rateLimitingEnabled") === "on",
       defaultReplyDelayMinMs: num("defaultReplyDelayMinMs", current.defaultReplyDelayMinMs),
       defaultReplyDelayMaxMs: num("defaultReplyDelayMaxMs", current.defaultReplyDelayMaxMs),

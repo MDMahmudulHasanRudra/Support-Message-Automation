@@ -38,6 +38,20 @@ export async function isCooldownActive(params: {
       // null-ruleId FORWARD/GROUP_BROADCAST row (a different action entirely) can never be
       // mistaken for AI-cooldown activity against the same (accountId, toPhone) pair.
       actionType: "AUTO_REPLY",
+      // A cooldown asks "have we already ANSWERED this client recently". The AI handover mention
+      // ("@Rakib, please help") is enqueued as a rule-less AUTO_REPLY too, so it landed in this
+      // bucket and stood in for an answer it is the opposite of — a request for a person, raised
+      // precisely BECAUSE nothing was answered.
+      //
+      // That was self-sustaining. The mention itself never passes checkAutoReplySafety, so every
+      // further customer message inside the window was blocked by the previous mention, and each
+      // block posted another mention that re-armed the window from its own createdAt. A customer
+      // writing every few minutes could never be answered again, and watched the team be tagged
+      // over and over in their own group.
+      //
+      // Mentions are the only rows this path ever gives a non-empty `mentions` array, so this is
+      // an exact identification of them and touches no ordinary reply.
+      mentions: { isEmpty: true },
       status: { in: ["PENDING", "PROCESSING", "SENT"] },
       createdAt: { gte: since },
       ...(params.excludeOutboundMessageId ? { id: { not: params.excludeOutboundMessageId } } : {}),
