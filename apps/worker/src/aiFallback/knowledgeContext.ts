@@ -207,6 +207,21 @@ export async function findRelevantKnowledge(
   // Strong enough to stop here, or nothing to expand with.
   if (isStrongEnough(direct) || !expandTerms) return direct.snippets;
 
+  // Expansion re-searches in a different vocabulary. If there is NOTHING retrievable to re-search,
+  // it cannot succeed — no choice of keywords finds a row in an empty set — so the completion it
+  // costs is spent to learn something already known.
+  //
+  // Not a micro-optimisation: on a fresh install, or any deployment whose knowledge base is still
+  // unverified, EVERY unmatched customer message paid for an expansion before concluding it had
+  // no knowledge. Under STRICT_KNOWLEDGE_ONLY that is the whole of the work done for that message
+  // — the reply completion never happens — so the system spent an API call purely to arrive at a
+  // conclusion the empty table had already determined.
+  //
+  // One indexed existence check against `@@index([humanVerified, createdAt])`, and only on the
+  // path that was about to spend a completion anyway. It narrows nothing when knowledge exists:
+  // the moment there is a single retrievable entry, expansion behaves exactly as before.
+  if (!(await hasRetrievableKnowledge())) return direct.snippets;
+
   // Either the customer's own words found nothing, or they found something thin — a single
   // shared keyword, which on a knowledge base this size is as often a coincidence as a match.
   //
@@ -249,6 +264,31 @@ interface SearchResult {
   snippets: KnowledgeSnippet[];
   /** Distinct query terms matched by the best-scoring entry — 0 when nothing matched. */
   bestOverlap: number;
+}
+
+/**
+ * Whether the knowledge base holds anything the customer-facing path is allowed to retrieve.
+ *
+ * Exactly the gate `searchByTerms` applies — ACTIVE and human-verified — so this answers the only
+ * question that matters before paying for an expansion: is there any row a different set of
+ * keywords could possibly reach? `findFirst` selecting one id, riding the existing
+ * [humanVerified, createdAt] index; it stops at the first hit rather than counting the table.
+ *
+ * Returns false if the query throws, matching this module's existing posture: a failed lookup and
+ * an empty result are treated identically, because answering without grounding is better than not
+ * answering, and spending a completion on a database that is not responding is worse than both.
+ */
+async function hasRetrievableKnowledge(): Promise<boolean> {
+  try {
+    const any = await prisma.aiKnowledgeItem.findFirst({
+      where: { status: "ACTIVE", humanVerified: true },
+      select: { id: true },
+    });
+    return any !== null;
+  } catch (err) {
+    console.error("[aiFallback] could not check for retrievable knowledge; skipping expansion", err);
+    return false;
+  }
 }
 
 /**

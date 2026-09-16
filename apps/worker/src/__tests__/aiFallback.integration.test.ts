@@ -691,6 +691,51 @@ describe("Hybrid AI Automation — knowledge authority gate", () => {
     expect(client.requests).toHaveLength(0);
   });
 
+  it("skips the expansion call entirely when the knowledge base holds nothing retrievable", async () => {
+    // Expansion re-searches in a different vocabulary. Against an empty knowledge base no choice
+    // of keywords can match, so the completion it costs buys a conclusion the empty table already
+    // determined. Under Strict that expansion WAS the only API call the message made.
+    await resetAiSettings({ aiResponseMode: "KNOWLEDGE_PLUS_GENERAL" });
+    const client = new MockAiClient();
+    client.nextText = CANNED_GENERAL;
+
+    await ask(client, "kisher jonno eta kaj korche na");
+
+    // Exactly one: the reply itself. No expansion.
+    expect(client.requests).toHaveLength(1);
+    expect(String(client.requests[0]!.systemPrompt)).toContain("WhatsApp-based customer support");
+  });
+
+  it("still expands when knowledge EXISTS but the customer's own words miss it", async () => {
+    // The guard must not over-apply. The moment there is a single retrievable entry, expansion is
+    // worth paying for again — this is the Banglish-question-against-an-English-knowledge-base
+    // case the expansion was built for, and it must keep working.
+    await resetAiSettings({ aiResponseMode: "KNOWLEDGE_PLUS_GENERAL" });
+    const knowledge = await prisma.aiKnowledgeItem.create({
+      data: {
+        title: "Generating a monthly invoice",
+        category: "WORKFLOW",
+        question: "How is a monthly invoice generated?",
+        answer: "Monthly invoices are generated from the billing screen.",
+        status: "ACTIVE",
+        humanVerified: true,
+      },
+    });
+
+    try {
+      const client = new MockAiClient();
+      // First response is consumed by the expansion call, second by the reply.
+      client.queuedTexts = ["invoice, billing, generate", CANNED_GENERAL];
+
+      await ask(client, "bill ta kemne banabo");
+
+      expect(client.requests).toHaveLength(2);
+      expect(String(client.requests[0]!.systemPrompt)).toContain("search keywords");
+    } finally {
+      await prisma.aiKnowledgeItem.delete({ where: { id: knowledge.id } });
+    }
+  });
+
   it("under Knowledge + General, answers a general question with no knowledge behind it", async () => {
     await resetAiSettings({ aiResponseMode: "KNOWLEDGE_PLUS_GENERAL" });
     const client = new MockAiClient();

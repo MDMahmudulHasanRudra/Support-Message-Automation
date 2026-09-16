@@ -56,35 +56,6 @@ async function claimNextOutboundMessage() {
 }
 
 /**
- * The AI reply cooldown that applies to this queued row, or null when the AI cooldown is not the
- * right rule for it.
- *
- * Returns a value only for a rule-less AUTO_REPLY carrying no mentions — which is precisely the
- * shape the AI fallback enqueues. Two exclusions are load-bearing:
- *
- *  - A row with a `ruleId` is governed by its own rule's cooldown, handled by the caller.
- *  - A row with `mentions` is the handover mention ("@Rakib, please help"), which the AI fallback
- *    also enqueues as a rule-less AUTO_REPLY and therefore shares this cooldown bucket with. It
- *    must NOT be cancelled by a preceding AI answer: it is a request for a human, not a second
- *    attempt to answer, and silently dropping it would leave a customer waiting with nobody told.
- */
-async function resolveAiCooldownForMessage(message: {
-  ruleId: string | null;
-  actionType: string;
-  mentions: string[];
-}): Promise<number | null> {
-  if (message.ruleId !== null) return null;
-  if (message.actionType !== "AUTO_REPLY") return null;
-  if (message.mentions.length > 0) return null;
-
-  const aiSettings = await prisma.aiSettings.findUnique({
-    where: { id: "global" },
-    select: { aiReplyCooldownSeconds: true },
-  });
-  return aiSettings?.aiReplyCooldownSeconds ?? null;
-}
-
-/**
  * Whether this queued send belongs to a group an admin marked as a test group.
  *
  * Resolved through `relatedMessage.groupId` — the conversation this is a reply to — with
@@ -294,38 +265,17 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
     }
   }
 
-  // The send-time cooldown re-check, for rule replies AND for AI replies.
-  //
-  // It used to be gated on `message.ruleId`, which every AI reply leaves null — so the AI path
-  // had the enqueue-time check and no re-check at all, while the rule path had both. That gap is
-  // what let a customer receive two AI answers inside one cooldown window: message processing is
-  // fire-and-forget and unserialised, so two questions arriving seconds apart produce two
-  // pipelines that both read the cooldown as clear before either has enqueued anything. Their
-  // idempotency keys differ (different incomingMessageId), so the unique constraint does not
-  // apply — the same QUESTION answered twice is already impossible, two questions in the window
-  // was not.
-  //
-  // The queue is the serialisation point that closes it: it claims one row per tick, strictly
-  // serially, so by the time the second row is claimed the first is already PENDING/SENT and
-  // visible to isCooldownActive.
-  const aiReplyCooldownSeconds = inTestMode ? null : await resolveAiCooldownForMessage(message);
-  if (message.ruleId || aiReplyCooldownSeconds !== null) {
-    const cooldownSeconds =
-      message.ruleId === null
-        ? aiReplyCooldownSeconds
-        : (
-            await prisma.automationRule.findUnique({
-              where: { id: message.ruleId },
-              select: { cooldownSeconds: true },
-            })
-          )?.cooldownSeconds ?? null;
-
-    if (cooldownSeconds) {
+  if (message.ruleId) {
+    const rule = await prisma.automationRule.findUnique({
+      where: { id: message.ruleId },
+      select: { cooldownSeconds: true },
+    });
+    if (rule?.cooldownSeconds) {
       const cooling = await isCooldownActive({
         accountId: message.accountId,
         toPhone: message.toPhone,
         ruleId: message.ruleId,
-        cooldownSeconds,
+        cooldownSeconds: rule.cooldownSeconds,
         excludeOutboundMessageId: message.id,
       });
       if (cooling) {
