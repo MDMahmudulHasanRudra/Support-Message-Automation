@@ -15,30 +15,76 @@ import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 /** Name this loop reports itself under in the per-loop liveness view. */
 const LOOP_NAME = "command-processor";
 
-const GROUP_SYNC_PROGRESS_INTERVAL = 250;
 
 /**
- * PHASE 5.2: discovers/updates the account's monitored groups from the live
- * provider. Upsert-based on purpose — safe to call repeatedly (retries,
- * manual RESYNC_GROUPS, a future scheduled resync) without ever duplicating
- * a row or losing groups synced by an earlier, since-failed attempt.
+ * PHASE 5.2: discovers/updates the account's monitored groups from the live provider.
+ *
+ * Still idempotent, which is the property that matters — safe to call repeatedly (retries, a
+ * manual RESYNC_GROUPS, a future scheduled resync) without ever duplicating a row or losing groups
+ * synced by an earlier, since-failed attempt. `@@unique([accountId, whatsappGroupId])` remains the
+ * real guarantee of that, exactly as it was when this was written as a per-group upsert.
  */
 export async function syncGroups(accountId: string, provider: WhatsAppProvider): Promise<number> {
   const groups = await provider.getGroups();
-  for (const [i, group] of groups.entries()) {
-    await prisma.whatsAppGroup.upsert({
-      where: { accountId_whatsappGroupId: { accountId, whatsappGroupId: group.whatsappGroupId } },
-      update: { name: group.name, lastSyncedAt: new Date(), isActive: true },
-      create: {
+  const syncedAt = new Date();
+
+  // Four statements, not 1,848.
+  //
+  // This was a sequential `upsert` per group. On this deployment's roster that is 1,848 round
+  // trips, every one of them a real UPDATE — `lastSyncedAt: new Date()` moves on every pass, so
+  // the "nothing changed" case, which is nearly all of them, still rewrote the row, its indexes
+  // and a dead tuple for the vacuum. And it runs inside the STRICTLY SERIAL command processor, so
+  // for however long that took, no other dashboard action could be processed at all. It is also
+  // the most likely reason this sync has been timing out in production (GROUP_SYNC_TIMEOUT on 7,
+  // 11 and 18 Sep 2026) — at 150s for 1,848 upserts the write half alone needs ~80ms per group to
+  // blow the budget, before `getGroups()` has cost anything.
+  //
+  // Identical results, by construction: every group the provider returned ends up present, named,
+  // active and stamped, exactly as before.
+  const existing = await prisma.whatsAppGroup.findMany({
+    where: { accountId },
+    select: { whatsappGroupId: true, name: true },
+  });
+  const nameById = new Map(existing.map((row) => [row.whatsappGroupId, row.name]));
+
+  const fresh = groups.filter((group) => !nameById.has(group.whatsappGroupId));
+  // A rename is rare and has to be per-row, because the value differs per group. Reading the
+  // current names first is what turns "1,848 updates" into "however many were actually renamed",
+  // which in a steady state is none.
+  const renamed = groups.filter(
+    (group) => nameById.has(group.whatsappGroupId) && nameById.get(group.whatsappGroupId) !== group.name,
+  );
+
+  if (fresh.length > 0) {
+    // skipDuplicates because a concurrent sync for the same account is guarded against but a
+    // partially-applied earlier attempt is not — the unique constraint stays the real authority.
+    await prisma.whatsAppGroup.createMany({
+      data: fresh.map((group) => ({
         accountId,
         whatsappGroupId: group.whatsappGroupId,
         name: group.name,
-        lastSyncedAt: new Date(),
-      },
+        lastSyncedAt: syncedAt,
+      })),
+      skipDuplicates: true,
     });
-    if ((i + 1) % GROUP_SYNC_PROGRESS_INTERVAL === 0) {
-      console.log(`[groupsync] GROUP_SYNC_PROGRESS ${i + 1}/${groups.length}`);
-    }
+    console.log(`[groupsync] GROUP_SYNC_NEW ${fresh.length} group(s)`);
+  }
+
+  for (const group of renamed) {
+    await prisma.whatsAppGroup.update({
+      where: { accountId_whatsappGroupId: { accountId, whatsappGroupId: group.whatsappGroupId } },
+      data: { name: group.name },
+    });
+  }
+  if (renamed.length > 0) console.log(`[groupsync] GROUP_SYNC_RENAMED ${renamed.length} group(s)`);
+
+  if (groups.length > 0) {
+    // The stamp and the reactivation, for every group in one statement. `isActive: true` matters
+    // here: a group the account rejoined must come back, and the sweep below is what took it away.
+    await prisma.whatsAppGroup.updateMany({
+      where: { accountId, whatsappGroupId: { in: groups.map((g) => g.whatsappGroupId) } },
+      data: { lastSyncedAt: syncedAt, isActive: true },
+    });
   }
 
   // A group the account has since left/been removed from no longer appears in getAllGroups() —

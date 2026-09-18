@@ -22,6 +22,7 @@ import { recordAiSupportActivity } from "../supportActivity/recordAiSupport.js";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
 import { checkAutoReplySafety } from "../pipeline/safety.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
+import { getAiSettings } from "../ai/settings.js";
 
 export interface RunAiFallbackParams {
   message: { id: string; body: string; timestampWa?: Date };
@@ -58,7 +59,7 @@ export interface RunAiFallbackParams {
  * already handled as a HUMAN_FALLBACK outcome, not an exception.
  */
 export async function runAiFallback(params: RunAiFallbackParams): Promise<void> {
-  const aiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+  const aiSettings = await getAiSettings();
 
   const eligibility = checkAiFallbackEligibility({
     automationEnabled: params.automationSettings.automationEnabled,

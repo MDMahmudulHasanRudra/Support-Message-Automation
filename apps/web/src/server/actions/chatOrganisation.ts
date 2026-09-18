@@ -220,12 +220,43 @@ export async function setChatArchived(groupIds: string[], archived: boolean): Pr
  * every thread open would re-render the whole inbox each time somebody clicked a conversation —
  * discarding an unsent draft in the composer, which Composer.tsx goes to some trouble to protect.
  * The badge clears on the list's own next refresh, which is four seconds away.
+ *
+ * **Writes only when the mark would actually change something.** `after()` runs on every render of
+ * the thread page, and the inbox's own `router.refresh()` re-renders it every four seconds — so an
+ * open conversation was issuing about nine hundred UPDATEs an hour against one row, every one of
+ * them moving the timestamp forward past a newest message that had not moved at all. Each is a row
+ * rewrite, an index update and dead-tuple churn for a value nothing reads differently.
+ *
+ * The guard is the filter's own definition: a conversation is waiting when its newest message is
+ * newer than the mark, so re-stamping is only meaningful when that is true. Nothing is lost by
+ * skipping the rest — the mark is already past the newest message, which is exactly what "seen"
+ * means. And when a new customer message does arrive, the next render writes again, which is the
+ * one case that matters.
  */
 export async function markChatReviewed(groupId: string): Promise<void> {
   try {
     await requireSession();
-    await prisma.whatsAppGroup.update({
-      where: { id: groupId },
+
+    const newest = await prisma.message.findFirst({
+      where: { groupId },
+      orderBy: { timestampWa: "desc" },
+      select: { timestampWa: true },
+    });
+    // No messages at all: nothing can be waiting, so nothing needs marking.
+    if (!newest) return;
+
+    // One narrow UPDATE rather than a read-then-write race: `updateMany` with the condition in the
+    // WHERE means two tabs opening the same conversation cannot both decide to write.
+    await prisma.whatsAppGroup.updateMany({
+      where: {
+        id: groupId,
+        // Spelled out rather than `{ not: ... }` — `chatReviewedAt` is nullable, and Prisma
+        // compiles `not` to `<>`, which in SQL is NULL rather than TRUE for a NULL column. A
+        // never-reviewed conversation would match zero rows and never be marked at all. This is
+        // the exact bug that made `setChatCategory` report "0 moved" for every uncategorised
+        // conversation; see CLAUDE.md.
+        OR: [{ chatReviewedAt: null }, { chatReviewedAt: { lt: newest.timestampWa } }],
+      },
       data: { chatReviewedAt: new Date() },
     });
   } catch {

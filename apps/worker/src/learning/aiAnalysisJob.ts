@@ -4,6 +4,7 @@ import type { LearningBatchJobTrigger } from "@prisma/client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { getLearningSettings } from "./sessionSegmentation.js";
 import { rescoreCandidate } from "./patternDetectionJob.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * Conversation Learning — Phase 5 (AI-assisted batch analysis, fully optional). The only file in
@@ -28,7 +29,7 @@ export async function processOneAiAnalysisBatch(
   trigger: LearningBatchJobTrigger = "SCHEDULED",
   clientOverride?: AiClient,
 ): Promise<boolean> {
-  const aiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+  const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled || !aiSettings.learningEnabled) return false;
 
   const client = clientOverride ?? (await resolveAiClient("LEARNING"));

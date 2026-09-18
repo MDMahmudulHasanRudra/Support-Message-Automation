@@ -1,4 +1,5 @@
 import { prisma } from "@support-automation/db";
+import { getAiSettings } from "../ai/settings.js";
 
 export interface HumanTakeoverGroup {
   id: string;
@@ -22,7 +23,7 @@ export interface HumanTakeoverGroup {
  * human replying would not have paused the AI at all.
  */
 export async function recordHumanTakeover(group: HumanTakeoverGroup): Promise<void> {
-  const settings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+  const settings = await getAiSettings();
 
   // Skip the write for a group AI could never answer in anyway — suppressing a group that has
   // no AI to suppress is a pointless row update on every team-member message.

@@ -13,6 +13,7 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { parseKnowledgeRecords, type ExtractedKnowledge } from "../knowledge/groupKnowledgePrompt.js";
 import { chunkDocument } from "../knowledge/importPrompt.js";
 import { buildModuleGuidePrompt, buildUserGuidePrompt } from "./forgePrompts.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * Teaches this support system about ISPDIGITAL by reading its repository through Softify Forge.
@@ -264,7 +265,7 @@ export async function runForgeKnowledgeSync(clientOverride?: AiClient): Promise<
   if (!settings.enabled) return { ran: false, skipped: "FORGE_DISABLED" };
   if (!settings.projectId) return { ran: false, skipped: "NO_PROJECT_SELECTED" };
 
-  const aiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+  const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
 
   const ai = clientOverride ?? (await resolveAiClient("LEARNING"));

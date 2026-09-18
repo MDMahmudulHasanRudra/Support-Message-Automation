@@ -121,11 +121,21 @@ export async function getChatCategories(): Promise<ChatCategorySummary[]> {
 /**
  * The left-hand conversation list.
  *
- * The last-message preview is one `DISTINCT ON` rather than a query per group: `Message`
- * is indexed on `[groupId, timestampWa]`, so Postgres walks that index once and stops at
- * the newest row per group. Prisma's own `distinct` is applied after rows are fetched,
- * which on a large message table would mean reading the whole history to render a list —
- * this is the one place in the app where dropping to SQL genuinely earns it.
+ * Raw SQL rather than Prisma, because Prisma's own `distinct` is applied after rows are fetched —
+ * which on a large message table would mean reading the whole history to render a list. This is
+ * one of the few places in the app where dropping to SQL genuinely earns it.
+ *
+ * The last-message preview used to be a `DISTINCT ON`, described here as something that "walks
+ * that index once and stops at the newest row per group". That was not true, and the claim was
+ * load-bearing enough to be worth correcting rather than deleting: **Postgres has no index
+ * skip-scan.** The `ORDER BY m."groupId" ASC, m."timestampWa" DESC` a DISTINCT ON requires is
+ * also mixed-direction, which a single all-ascending index cannot satisfy from either end. So it
+ * planned as a Sort + Unique over every message belonging to all 300 listed groups — re-run every
+ * four seconds, by every open tab.
+ *
+ * A LATERAL expresses what the comment claimed: one backward index probe per group, stopping at
+ * the first row. Same rows out; the cost now scales with the 300 groups on screen rather than with
+ * their entire history.
  */
 export async function getChatConversations(search?: string): Promise<ConversationSummary[]> {
   const trimmed = search?.trim();
@@ -198,12 +208,18 @@ export async function getChatConversations(search?: string): Promise<Conversatio
         isFromTeamMember: boolean;
       }>
     >`
-      SELECT DISTINCT ON (m."groupId")
-        m."groupId", m."body", m."timestampWa", m."direction"::text AS direction,
-        m."senderName", m."senderPhone", m."isFromTeamMember"
-      FROM "Message" m
-      WHERE m."groupId" IN (${Prisma.join(groupIds)})
-      ORDER BY m."groupId", m."timestampWa" DESC
+      SELECT
+        g."id" AS "groupId", l."body", l."timestampWa", l."direction"::text AS direction,
+        l."senderName", l."senderPhone", l."isFromTeamMember"
+      FROM "WhatsAppGroup" g
+      CROSS JOIN LATERAL (
+        SELECT m."body", m."timestampWa", m."direction", m."senderName", m."senderPhone", m."isFromTeamMember"
+        FROM "Message" m
+        WHERE m."groupId" = g."id"
+        ORDER BY m."timestampWa" DESC
+        LIMIT 1
+      ) l
+      WHERE g."id" IN (${Prisma.join(groupIds)})
     `,
     prisma.outboundMessage.groupBy({
       by: ["chatId"],

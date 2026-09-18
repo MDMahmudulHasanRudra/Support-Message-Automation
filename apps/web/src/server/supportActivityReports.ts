@@ -148,18 +148,67 @@ export async function getRecentActivities(take = 10): Promise<RecentActivityRow[
   }));
 }
 
-/** Daily incoming-activity counts for the last N Dhaka calendar days, oldest first — feeds the
- *  Activity page's trend Sparkline. Follows dashboardSummary.ts's getRecentMessageActivity() day-
- *  bucketing pattern, but Dhaka-correct (via getDhakaDayRange) since this is a dedicated feature
- *  page, not the general dashboard. */
+/**
+ * Daily incoming-activity counts for the last N Dhaka calendar days, oldest first — feeds the
+ * Activity page's trend Sparkline.
+ *
+ * ONE query. This used to be `Promise.all` over N separate `COUNT(*)`s — thirty of them for a
+ * thirty-day sparkline, each a full pass over `SupportActivity`, every time the page was opened.
+ * Collapsed to a single `date_trunc` + `GROUP BY`, which is the shape `getMessageLoadSeries`
+ * already uses for the same job on the dashboard.
+ *
+ * Bucketed by Dhaka calendar day, not UTC: UTC midnight falls at 06:00 local, so a UTC-bucketed
+ * day would split every Dhaka morning across two columns. The values are identical to what
+ * `getDhakaDayRange` produced per day, which is the point — this changes how the number is
+ * fetched, never what it is.
+ *
+ * **`AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka'`, and the first half is not redundant.** Prisma
+ * maps `DateTime` to `timestamp WITHOUT time zone` here, so `occurredAt` is a bare wall-clock value
+ * that happens to hold UTC. Postgres's two `AT TIME ZONE` overloads do opposite things: applied to
+ * a `timestamptz` it CONVERTS to that zone, but applied to a plain `timestamp` it INTERPRETS the
+ * value as already being in that zone. So the single-argument form reads a UTC instant as though it
+ * were Dhaka local and shifts it six hours the wrong way — verified against the database:
+ * `2026-09-18 02:00` (08:00 Dhaka, plainly the 18th) buckets as the 17th. The first cast makes it a
+ * `timestamptz`; only then does the second convert.
+ *
+ * Bucketed as text rather than as a timestamp on purpose. `date_trunc` here returns a
+ * `timestamp without time zone` holding a Dhaka wall clock, and node-postgres parses that through
+ * the JS `Date` constructor in the SERVER's local timezone — so the key would silently depend on
+ * the container's `TZ`. A `YYYY-MM-DD` string has no such ambiguity.
+ */
 export async function getActivityTrend(days = 30): Promise<number[]> {
   const now = new Date();
-  const dayRanges: DateRange[] = [];
-  for (let i = days - 1; i >= 0; i--) {
-    dayRanges.push(getDhakaDayRange(new Date(now.getTime() - i * 24 * 60 * 60 * 1000)));
-  }
-  return Promise.all(dayRanges.map((range) => getEveryActivityCount(range)));
+  // The window still comes from getDhakaDayRange, so the first and last buckets line up exactly
+  // with the per-day version this replaces.
+  const oldest = getDhakaDayRange(new Date(now.getTime() - (days - 1) * 24 * 60 * 60 * 1000));
+  const newest = getDhakaDayRange(now);
+
+  const rows = await prisma.$queryRaw<Array<{ day: string; total: bigint }>>`
+    SELECT
+      to_char(
+        date_trunc('day', a."occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka'),
+        'YYYY-MM-DD'
+      ) AS day,
+      COUNT(*) AS total
+    FROM "SupportActivity" a
+    WHERE a."occurredAt" >= ${oldest.start} AND a."occurredAt" < ${newest.end}
+    GROUP BY 1
+  `;
+
+  const totalByDay = new Map(rows.map((row) => [row.day, Number(row.total)]));
+
+  return Array.from({ length: days }, (_, index) => {
+    // The same instants getDhakaDayRange produced per day before, so the buckets line up exactly
+    // with the thirty separate counts this replaces.
+    const dayStart = getDhakaDayRange(
+      new Date(now.getTime() - (days - 1 - index) * 24 * 60 * 60 * 1000),
+    ).start;
+    return totalByDay.get(new Date(dayStart.getTime() + DHAKA_OFFSET_MS).toISOString().slice(0, 10)) ?? 0;
+  });
 }
+
+/** Dhaka is UTC+6 with no daylight saving, so one constant is enough — see `toDhakaDateOnly`. */
+const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
 
 export interface ExportActivityRow {
   occurredAt: Date;
@@ -590,20 +639,6 @@ export async function getGroupsAwaitingReply(now: Date = new Date()): Promise<Aw
       priority: string | null;
     }>
   >`
-    WITH latest AS (
-      -- One row per group: its newest message, whoever sent it.
-      SELECT DISTINCT ON (m."groupId")
-        m."groupId"        AS group_id,
-        m."timestampWa"    AS ts,
-        m."direction"      AS direction,
-        m."isFromTeamMember" AS from_team,
-        m."body"           AS body,
-        m."senderName"     AS sender_name,
-        m."senderPhone"    AS sender_phone
-      FROM "Message" m
-      WHERE m."groupId" IS NOT NULL
-      ORDER BY m."groupId", m."timestampWa" DESC
-    )
     SELECT
       g."id"                  AS "groupId",
       g."name"                AS "groupName",
@@ -613,9 +648,38 @@ export async function getGroupsAwaitingReply(now: Date = new Date()): Promise<Aw
       l.ts                    AS "waitingSince",
       t."name"                AS "assignedTo",
       g."priority"::text      AS "priority"
-    FROM latest l
-    JOIN "WhatsAppGroup" g ON g."id" = l.group_id
+    -- Driven from the GROUPS, not from every message ever stored.
+    --
+    -- This was a DISTINCT ON over the whole "Message" table — no time bound, no account bound —
+    -- which Postgres answers by sorting every message in the database to pick one row per group,
+    -- and only THEN discarding the groups that are not monitored. It runs on Overview and on Team
+    -- Performance, and it was the heaviest query on the landing page: heavier than
+    -- getResponseTimeSeries, which is at least bounded to fourteen days.
+    --
+    -- The LATERAL asks the same question the other way round: for each of the ~1,848 monitored
+    -- groups, one backward index probe on [groupId, timestampWa] for its newest row. Same rows
+    -- out, and the cost now scales with the roster rather than with the message history.
+    --
+    -- Ties (two messages in the same group sharing a second — WhatsApp timestamps are
+    -- second-resolution, so this is not hypothetical) are resolved arbitrarily here, exactly as
+    -- DISTINCT ON resolved them before. Which of two simultaneous messages is "newest" is not a
+    -- question this report has an opinion about; what matters is that both forms agree on the
+    -- direction and sender, which for two messages one second apart they do.
+    FROM "WhatsAppGroup" g
     LEFT JOIN "InternalTeamMember" t ON t."id" = g."assignedTeamMemberId"
+    CROSS JOIN LATERAL (
+      SELECT
+        m."timestampWa"      AS ts,
+        m."direction"        AS direction,
+        m."isFromTeamMember" AS from_team,
+        m."body"             AS body,
+        m."senderName"       AS sender_name,
+        m."senderPhone"      AS sender_phone
+      FROM "Message" m
+      WHERE m."groupId" = g."id"
+      ORDER BY m."timestampWa" DESC
+      LIMIT 1
+    ) l
     WHERE g."isMonitored" = true
       AND g."isActive" = true
       -- The newest message being an inbound non-team one IS the definition of unanswered: any

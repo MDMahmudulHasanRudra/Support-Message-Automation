@@ -5,6 +5,7 @@ import { findRelevantKnowledge } from "../aiFallback/knowledgeContext.js";
 import { expandQueryTerms } from "../aiFallback/queryExpansion.js";
 import type { ConversationTurn } from "../aiFallback/conversationContext.js";
 import { getApprovedStyleGuidance } from "../knowledge/communicationStyleJob.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * The AI Sandbox's worker side: answers one queued sandbox turn.
@@ -78,11 +79,7 @@ async function answerTurn(turnId: string): Promise<void> {
   });
   if (!turn) return;
 
-  const aiSettings = await prisma.aiSettings.upsert({
-    where: { id: "global" },
-    update: {},
-    create: { id: "global" },
-  });
+  const aiSettings = await getAiSettings();
 
   /** Records the outcome and ends the turn. Mirrors runAiFallback's own `reason` vocabulary. */
   const finish = async (fields: {

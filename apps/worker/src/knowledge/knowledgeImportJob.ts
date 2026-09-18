@@ -3,6 +3,7 @@ import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { parseKnowledgeRecords, type ExtractedKnowledge } from "./groupKnowledgePrompt.js";
 import { buildImportPrompt, chunkDocument } from "./importPrompt.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * Turns one queued KnowledgeImport — pasted documentation or an uploaded file — into structured
@@ -57,11 +58,7 @@ async function claimNextImport() {
 
 /** `clientOverride` is a test-only seam, mirroring the other AI jobs — production never passes it. */
 export async function processOneKnowledgeImport(clientOverride?: AiClient): Promise<KnowledgeImportRunResult> {
-  const aiSettings = await prisma.aiSettings.upsert({
-    where: { id: "global" },
-    update: {},
-    create: { id: "global" },
-  });
+  const aiSettings = await getAiSettings();
   // Only the master switch. Unlike the conversation builder this is not gated on
   // knowledgeFromChatEnabled: importing your own documentation is an explicit, human-initiated
   // act, not the automatic observation of customer chats that flag governs.

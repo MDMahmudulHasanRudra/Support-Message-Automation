@@ -164,7 +164,7 @@ async function main() {
     startMessageRecoveryProcessor(),
     // Detects the failure with no symptom: CONNECTED, heartbeating, and collecting nothing.
     startCollectionWatchdog(registry),
-    startHeartbeat(state),
+    startHeartbeat(state, registry),
   ];
 
   const shutdown = makeShutdownHandler(intervals, registry, healthServer);
@@ -180,7 +180,7 @@ async function main() {
  * connectivity check on top of another every fifteen seconds — turning a slow database into a
  * connection-exhausted one.
  */
-function startHeartbeat(state: WorkerHealthState): NodeJS.Timeout {
+function startHeartbeat(state: WorkerHealthState, registry: ProviderRegistry): NodeJS.Timeout {
   registerLoop("heartbeat", HEARTBEAT_INTERVAL_MS);
   let beating = false;
   return setInterval(() => {
@@ -200,8 +200,29 @@ function startHeartbeat(state: WorkerHealthState): NodeJS.Timeout {
       // look silent for hours. Whether a given session is alive is what `status` is for; this
       // is liveness of the process that manages them.
       if (connected) {
+        // Narrowed to the accounts this process actually holds, plus any whose stamp is genuinely
+        // stale. A bare `updateMany({ data })` has no WHERE at all, so it rewrote EVERY account row
+        // — including retired spares and numbers nobody has linked — 5,760 times a day. Each rewrite
+        // is a new tuple, an index update and a dead row for the vacuum to collect, to express one
+        // fact: this process is alive.
+        //
+        // It stays an updateMany rather than a per-account loop because the stamp has to land on
+        // every account the dashboard might be looking at, and one statement is one round trip.
+        const heldAccountIds = registry.allAccountIds();
         await prisma.whatsAppAccount
-          .updateMany({ data: { lastHeartbeatAt: new Date() } })
+          .updateMany({
+            where: {
+              OR: [
+                { id: { in: heldAccountIds } },
+                // An account this process does NOT hold still needs its stamp kept fresh, or the
+                // dashboard reads "the worker is down" from a number that is merely not connected.
+                // Once a minute is enough for a 60-second staleness threshold.
+                { lastHeartbeatAt: null },
+                { lastHeartbeatAt: { lt: new Date(Date.now() - 45_000) } },
+              ],
+            },
+            data: { lastHeartbeatAt: new Date() },
+          })
           .catch((err) => console.error("[worker] heartbeat stamp failed", err));
 
         // Publish what every OTHER loop was last seen doing, so "the worker is alive" stops

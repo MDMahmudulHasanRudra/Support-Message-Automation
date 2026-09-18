@@ -11,6 +11,7 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { getLearningSettings } from "./sessionSegmentation.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /** A candidate in any of these states has already been resolved one way or another (a real rule
  * exists, or a human dismissed it) — further Unknown Pattern alerts about it would be noise. */
@@ -62,7 +63,7 @@ export async function processOnePatternDetectionBatch(): Promise<boolean> {
   try {
     const { sessionsLinked, dirtyCandidateIds } = await linkClosedSessionsToCandidates();
     const humanReviewThreshold = (
-      await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } })
+      await getAiSettings()
     ).humanReviewThreshold;
 
     for (const candidateId of dirtyCandidateIds) {

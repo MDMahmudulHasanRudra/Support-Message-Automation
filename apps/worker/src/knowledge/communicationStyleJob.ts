@@ -7,6 +7,7 @@ import {
   buildStyleProfilePrompt,
   parseStyleGuidance,
 } from "./communicationStylePrompt.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * Builds the team's communication-style profile from the replies its executives actually sent.
@@ -54,7 +55,7 @@ export async function getStyleProfile() {
 async function collectSupportReplies(builtThroughAt: Date | null) {
   const [automationSettings, aiSettings] = await Promise.all([
     prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
-    prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+    getAiSettings(),
   ]);
 
   const notifyGroupIds = [
@@ -135,11 +136,7 @@ function isSystemNotification(body: string): boolean {
 
 /** `clientOverride` is the test-only seam every AI job in this worker uses. */
 export async function buildCommunicationStyleProfile(clientOverride?: AiClient): Promise<StyleBuildResult> {
-  const aiSettings = await prisma.aiSettings.upsert({
-    where: { id: "global" },
-    update: {},
-    create: { id: "global" },
-  });
+  const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
   if (!aiSettings.communicationStyleLearningEnabled) return { ran: false, skipped: "STYLE_LEARNING_DISABLED" };
 

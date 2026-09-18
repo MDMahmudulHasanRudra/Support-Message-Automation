@@ -6,6 +6,7 @@ import {
   parseKnowledgeRecords,
   type ExtractedKnowledge,
 } from "./groupKnowledgePrompt.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * Reads one monitored group's conversation and distils it into knowledge base entries: what this
@@ -44,11 +45,7 @@ export async function processOneGroupKnowledgeBuild(
   clientOverride?: AiClient,
   groupIdOverride?: string,
 ): Promise<GroupKnowledgeRunResult> {
-  const aiSettings = await prisma.aiSettings.upsert({
-    where: { id: "global" },
-    update: {},
-    create: { id: "global" },
-  });
+  const aiSettings = await getAiSettings();
   // Both gates checked explicitly here as well as inside resolveAiClient, so injecting a test
   // client still exercises the real rule rather than bypassing it.
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };

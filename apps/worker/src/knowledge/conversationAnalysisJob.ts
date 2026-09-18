@@ -2,6 +2,7 @@ import { prisma } from "@support-automation/db";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { buildGroupKnowledgePrompt, parseKnowledgeRecords } from "./groupKnowledgePrompt.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * "Learn from Conversations" — the admin-driven half of the knowledge builder.
@@ -75,11 +76,7 @@ export async function processOneConversationAnalysisStep(
   // ask. `knowledgeFromChatEnabled` deliberately is NOT checked — that setting governs whether the
   // scheduled builder may go off and read conversations unprompted, which is a different question
   // from whether an admin may analyse groups they have just selected by hand.
-  const aiSettings = await prisma.aiSettings.upsert({
-    where: { id: "global" },
-    update: {},
-    create: { id: "global" },
-  });
+  const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled) {
     await failRun(run.id, "The AI Engine master switch is off.");
     return { ran: false, runId: run.id, skipped: "AI_ENGINE_DISABLED" };

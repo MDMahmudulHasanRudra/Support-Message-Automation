@@ -12,6 +12,7 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { parseKnowledgeRecords } from "../knowledge/groupKnowledgePrompt.js";
 import { buildResearchPrompt, selectModuleForQuestion } from "./forgePrompts.js";
 import { getForgeSettings, readModuleSources } from "./forgeKnowledgeJob.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * The "if the guides do not have the answer, go and read the code" path.
@@ -118,7 +119,7 @@ export async function processOneResearchTask(clientOverride?: AiClient): Promise
     return { ran: false, skipped: "RESEARCH_DISABLED" };
   }
 
-  const aiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+  const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
 
   const task = await claimNextTask();

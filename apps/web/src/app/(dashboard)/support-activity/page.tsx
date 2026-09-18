@@ -66,7 +66,12 @@ export default async function SupportActivityPage() {
     getUniqueGroupCount(period),
     getEveryActivityCount(period),
     prisma.internalTeamMember.count({ where: { status: "ACTIVE" } }),
-    prisma.supportActivity.groupBy({ by: ["groupId"] }).then((rows) => rows.length),
+    // COUNT(DISTINCT "groupId") rather than groupBy-then-count-in-Node. The groupBy had no
+    // `where` at all, so it returned one row per group across the ENTIRE activity history and
+    // then discarded every one of them except the length — all the transfer, none of the answer.
+    prisma.$queryRaw<Array<{ total: bigint }>>`
+      SELECT COUNT(DISTINCT "groupId") AS total FROM "SupportActivity"
+    `.then((rows) => Number(rows[0]?.total ?? 0)),
     getRecentActivities(10),
     getActivityTrend(30),
     getAverageResolutionTime(period),
