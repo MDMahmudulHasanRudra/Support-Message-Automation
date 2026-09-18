@@ -106,6 +106,14 @@ Three harness details worth knowing before you chase an intermittent red:
   its digits, so a UUID slice like `+8809a3f2b1c4` collapsed to `88093214` — and roughly one in
   seven fell under the 8-digit minimum, making the seeded member unresolvable.
 
+**A new test must be confirmed to FAIL against the code it is protecting, before it is kept.** Not
+a formality: `collectionWatchdog.integration.test.ts` initially passed 16 of 17 against the exact
+pre-incident selection it exists to prevent, because the fixture set the provider's status without
+setting the account's DATABASE status — and the old watchdog selected on the column. Setting only
+one of two things that production always sets together is how a suite ends up guarding nothing. The
+same check is why `queryRewrites.integration.test.ts` spells the OLD query out inline: it no longer
+exists in the codebase, and comparing a rewrite against itself proves nothing.
+
 The files most sensitive to this (`sessionSegmentation.integration.test.ts`,
 `patternDetectionJob.integration.test.ts`, `unknownPatternDetection.integration.test.ts`,
 `aiAnalysisJob.integration.test.ts`) must never be run against the live/shared DB. `vitest.config.ts`
@@ -131,6 +139,16 @@ pnpm workspace (`pnpm-workspace.yaml`); Node >= 22.13. `packages/db`/`packages/s
 as raw TypeScript by both apps via Next's `transpilePackages` (web) / `tsx` (worker dev) — `engine`
 and `shared` do have a `build` step to `dist/`, but web still transpiles their source directly; only
 worker's production `start` (compiled) actually depends on `dist/`.
+
+**Every process gets a BOUNDED Prisma pool** (`withPoolBounds` in `packages/db/src/index.ts`).
+Prisma defaults to `num_cpus * 2 + 1` PER PROCESS and nothing ever set one, so `app` and `worker`
+each sized themselves off the host's core count against a stock `postgres:16-alpine` whose
+`max_connections` is 100 — now stated explicitly in `docker-compose.yml` so both sides are sized
+against one number. A URL that already names `connection_limit`/`pool_timeout`/`connect_timeout`
+keeps its own value, which is what leaves `test:isolated`'s deliberately tighter pool untouched and
+lets a deployment override any of the three without a code change. The test harness has carried
+exactly these three parameters since an unbounded pool started failing suites at random; this is
+that lesson applied to production.
 
 **`packages/db/src/` has zero relative imports between its own files, by hard rule** — Node's
 runtime (worker) and Turbopack (web) have resolved a relative import differently between two files
@@ -380,12 +398,97 @@ losing every healthy session with it.
 
 **`checkCollectionHealth()` is the answer to "we look healthy, so why is nothing arriving?"** It
 never infers anything from silence, because silence is not evidence — a group can be quiet all
-night. When a CONNECTED account with monitored groups has stored nothing for 45 minutes, it asks the
-browser what IT has seen via `fetchMessagesSince`. Messages there and not here is a
-**disagreement**, which is proof rather than suspicion — and it is the exact signature of the
-listener bug, which was total and had no other symptom. Having proved it, it runs the catch-up
-sweep: an alarm that only tells somebody to go and look leaves the customers unanswered until they
-do.
+night. When an account that ought to be collecting has stored nothing for 45 minutes, it asks the
+browser what IT has seen. Messages there and not here is a **disagreement**, which is proof rather
+than suspicion — and it is the exact signature of the listener bug, which was total and had no
+other symptom. Having proved it, it runs the catch-up sweep: an alarm that only tells somebody to
+go and look leaves the customers unanswered until they do.
+
+**It selects on OBLIGATION, never on status, and that distinction is what the 18 Sep 2026 outage
+cost three hours to establish.** Messages stopped being stored at 07:06 and nobody noticed until
+10:22. Every health mechanism here was pull-based and status-gated — each asked the database which
+accounts were `CONNECTED` — so an account that was neither CONNECTED nor DISCONNECTED fell through
+all of them. `RECONNECTING` is that state: excluded from `recoverIfDropped`, excluded from the
+watchdog, and printed on the Accounts page as "the worker is bringing this session back up" while
+nothing was. The selection is now "has connected before, has monitored active groups", and the
+status is something this *reads and reacts to* rather than something it trusts. Five findings, five
+different things to do: `NOT_COLLECTING`, `UNREADABLE`, `STUCK_RECONNECTING`, `NEEDS_HUMAN`, `DOWN`.
+The status checks run every tick — they are claims about state, not inferences from silence — and
+only the probe waits for the quiet threshold. `collectionWatchdog.integration.test.ts` pins this:
+re-narrowing the selection back to `where: { status: "CONNECTED" }` fails six of its tests.
+
+**`probeCollection()` exists because `fetchMessagesSince()` cannot fail.** It catches its own
+enumeration error and returns `[]`, which is right for catch-up (a sweep that read nothing has
+recovered nothing, and must not take down the connection it just established) and exactly wrong for
+a watchdog, which read the same empty array as "WhatsApp holds nothing newer". A dead browser
+logged *"quiet for 195m and WhatsApp agrees"*; the watchdog's own try/catch could never fire,
+because nothing ever threw. The probe returns `{ ok: false, reason }`, treats a **zero-chat roster
+as unknown too** (an account already known to be in monitored groups cannot truly be in none — an
+empty roster is a fact about the page, not the account), and bounds its own enumeration, because
+`getAllGroups()` on this deployment's ~1,848 groups has been exceeding the 150s group-sync ceiling
+in production. A timeout is worded apart from a hard failure: "the session is dead" and "this
+roster is enormous" need opposite responses.
+
+**`NotificationEvent.COLLECTION_BROKEN` was missing vocabulary, not a missing call site.** Every
+other member describes something a customer said, so nothing could express "nothing a customer says
+is arriving". It raises through `enqueueNotification` like every other alert, so Notification Center
+routing, muting and per-member DM opt-in apply unchanged — and it goes out over Teams and WhatsApp
+**independently**, because the obvious flaw in alerting about WhatsApp over WhatsApp is that the
+alert travels through the registry being reported on. `pickSendingAccount()` prefers any account
+that is not the broken one, and falls back to the affected number **only while it is still
+CONNECTED** — a dead listener does not stop `sendText`, and on a single-account deployment a
+possible alert beats a guaranteed silence. When no channel is reachable at all, that is itself
+recorded, because the absence of an alert otherwise reads as the absence of a problem.
+
+**`MessageDropCounter` makes a dropped message leave a trace.** The empty-body return stored
+nothing, logged nothing and counted nothing durable, so the incident's own first question — did
+messages arrive and get discarded, or never arrive? — had no answer anywhere, and `metrics.received`
+lives in memory, which the restart that is always tried first erases. A counter per account per day
+per reason, not a row per message: the failure worth catching is a change in SHAPE (a WhatsApp
+update that starts delivering ordinary text in a form this code reads as empty), which shows as a
+spike. It also makes `received` derivable at last — stored plus dropped.
+
+**Per-loop liveness (`health/loopLiveness.ts`).** The heartbeat proves that ONE `setInterval` fires
+and shares nothing with the other twenty, so a wedged outbound queue or command processor leaves
+every health field looking perfect. Each loop stamps when its tick **finishes** — the only moment
+that proves it is not wedged, since a guard that never clears is exactly how one dies silently —
+served on `/health` and `/metrics`, and published to the singleton `WorkerHealthSnapshot` so
+Overview can name the stalest one. Written once per heartbeat, never once per tick: the command
+processor runs every 1.5s. Reported, never acted on: a stalled loop is usually stuck on a call into
+a browser, and restarting the container to clear it would destroy every healthy session with it.
+
+**`recoverStuckCommands` needs `atBoot`, and its absence was a live bug.** It had no age cutoff,
+justified in its own comment by "this runs once at boot" — true until it was also wired into the
+five-minute sweep, at which point it began marking commands FAILED *while they were still running*:
+a RECONNECT waiting up to ten minutes for a QR scan, an eight-minute RESYNC_GROUPS, each telling the
+operator to run it again so they ran a second on top of the first. `WorkerCommand.startedAt` is
+stamped in the same write that claims the row. At boot no cutoff is still correct, because nothing
+can be running yet. Relatedly, `STUCK_PROCESSING_TIMEOUT_MS` is 5 minutes rather than 2: two was
+shorter than Puppeteer's 180s `protocolTimeout`, so a send still in flight could be requeued
+underneath itself and sent twice.
+
+**Every await into Chromium is bounded** (`util/withTimeout.ts`). `client.kill()` had no timeout at
+all, against a browser that may itself be what has gone wrong, and every caller is an
+overlap-guarded loop holding a boolean across the call — so one unanswering `kill()` silenced the
+registry sync or the command processor for the process lifetime, green heartbeat, no log line.
+`logout()` had the same shape plus OpenWA's own warning that it "can exit the whole process".
+
+**`accountRegistrySync` connects ONE account per pass and returns.** `connectWithRetry`'s worst case
+is about 31 minutes, and it previously blocked discovery, connection *and* drop recovery for every
+other account — `recoverIfDropped` runs in the same loop, so the one thing that could rescue a
+healthy number that had dropped was queued behind the number that was never coming back. `index.ts`
+documents this hazard as fixed; it had been relocated out of `main()`, not removed.
+`recoverIfDropped` now also logs its OUTCOME, not just the attempt: a recovery can move an account
+from DISCONNECTED (retried) to AUTHENTICATION_REQUIRED (never retried), so trying to fix it is one
+of the ways it stops being fixable.
+
+**`OUTBOUND_PAUSED` and `RATE_LIMITED` are gone from `WhatsAppAccountStatus`.** Nothing ever wrote
+either, yet both were rendered on the Accounts page with their own colours and hints describing a
+per-account throttling mechanism that does not exist. Throttling here is per outbound MESSAGE —
+`OutboundMessageStatus.RATE_LIMITED`, which is real and untouched.
+
+`INCIDENT_RUNBOOK.md` is the operator-facing version of all of this: what to read, in what order,
+and what to capture before restarting anything.
 
 ### Incoming message pipeline (`apps/worker/src/pipeline/processIncomingMessage.ts`)
 
@@ -1479,6 +1582,27 @@ rows already in the target category — which meant assigning a category to unca
 conversations matched **zero** rows and reported "0 moved". That is every conversation on a fresh
 install, so the category feature appeared completely dead while removing a category worked fine
 (`{ not: null }` compiles to `IS NOT NULL`, and NULL-safety only bites when comparing to a value).
+
+**`AT TIME ZONE` means opposite things depending on the column's type, and Prisma gives you the
+one that bites.** `DateTime` maps to `timestamp WITHOUT time zone` here, holding UTC. Applied to a
+`timestamptz`, `AT TIME ZONE 'Asia/Dhaka'` CONVERTS to that zone; applied to a plain `timestamp` it
+INTERPRETS the value as already being in it — so the single-argument form shifts a UTC instant six
+hours the wrong way, moving every message sent before noon Dhaka onto the previous day. Verified
+against the database: `2026-09-18 02:00` (08:00 Dhaka, plainly the 18th) buckets as the 17th. The
+correct form is `AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka'`, pinned by a test in
+`queryRewrites.integration.test.ts`. `getActivityTrend` uses it. **Two charts in
+`dashboardMetrics.ts` (lines ~258 and ~353) still use the single-argument form and are wrong by a
+day for any morning activity** — left alone deliberately, because fixing them changes numbers
+already on screen and that is a decision, not a refactor.
+
+**Postgres has no index skip-scan, so `DISTINCT ON` is a sort, not a walk.** A comment in
+`chatInbox.ts` claimed the opposite for years. `DISTINCT ON (x) … ORDER BY x ASC, y DESC` is also
+mixed-direction, which an all-ascending compound index cannot serve from either end. Where the
+driving set is small and known — the monitored groups, the 300 listed conversations — a
+`CROSS JOIN LATERAL (… ORDER BY … LIMIT 1)` expresses what was meant: one index probe per row.
+`getGroupsAwaitingReply` and the chat inbox both use it now, and both are pinned against their old
+form in `queryRewrites.integration.test.ts`. Note `CROSS JOIN` rather than `LEFT JOIN`: it drops a
+group with no messages, which is what the old inner JOIN did.
 
 Spell the null case out — `OR: [{ col: null }, { col: { not: value } }]`. The intuitive rewrites do
 not work: Prisma 5.22 compiles the `NOT: { col: value }` block form to the same NULL-excluding
