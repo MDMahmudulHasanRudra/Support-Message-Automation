@@ -1387,6 +1387,56 @@ the same question got a worse-written answer under a stricter setting, which is 
 the effect is most visible in the two Forge modes, since those are the ones that can produce a
 procedure from the product's own source.
 
+**Ranking is BM25F (`aiFallback/bm25.ts`), not a count of matching keywords.** What it replaced
+is worth knowing, because the failure was invisible: the score was the NUMBER of matched keywords,
+and `derivePatternSignature` yields at most five, so up to three hundred candidates were sorted
+into at most five buckets. Ties were the normal case, and they fell through `hasProcedure`, then
+`fromSameGroup`, then `id.localeCompare` — a cuid. Which three entries grounded an answer came
+down to alphabetical order over a random identifier. Counting also made every term equally
+valuable (matching "bill", in nearly every billing entry, counted as much as "prorated", in one),
+let repetition accumulate without limit, and rewarded long entries for containing more words by
+accident.
+
+**BM25F rather than plain BM25, and the procedure-retrieval test is what forced it.** Flattening
+title/question/answer/procedure into one haystack fixes the length problem and creates a worse one:
+an entry carrying a real step list is LONGER, so length normalisation demotes it for holding
+exactly the content that makes it the best answer to a "how do I" question. That test went red the
+moment flat BM25 landed. BM25F normalises each field against the average length of its own kind and
+weights them — question 3.0, title 2.5, procedure 2.0, answer 1.0 — so a match in the
+customer-phrased question outweighs one buried in a paragraph. Saturation is applied AFTER summing
+the fields, which is what makes it BM25F rather than four BM25 scores added together.
+
+The `1 +` inside the IDF logarithm is load-bearing: Robertson's original form goes NEGATIVE once a
+term appears in more than half the corpus, so a common word would actively subtract from a score —
+pushing an entry below one that never mentions the subject, for mentioning it too popularly.
+
+**The change is confined to ORDERING, and the seam is two vocabularies.** `matchVocabulary` (the
+pattern signature) still decides which entries are relevant and still produces `bestOverlap`,
+because both feed decisions *outside* the function: the relevance filter is recall, and
+`bestOverlap` is the integer `isStrongEnough` compares against 2 to decide whether to spend a
+completion on query expansion. `bestOverlap` is now the MAXIMUM matched count rather than the
+top-ranked entry's — identical to the old value in every case, where reading it off the new first
+entry would have moved that threshold as a side effect of reordering. Only `rankVocabulary` is
+wider.
+
+**`derivePatternSignature` is a cluster KEY and must not be repurposed as a query.** It is stored
+as `patternKey` on every `PatternCandidate`, so changing it re-buckets the entire Conversation
+Learning history — which is why `deriveQueryTerms` exists alongside it instead. A key wants to be
+short, stable and order-independent; a query wants every content word. Conflating them is what
+capped the ranker at six possible scores, and "longest token first" is a corpus-free guess at
+specificity that prefers "internet" to "otp".
+
+Same-group and has-steps remain **tiebreaks**, as their original comment insisted, via relevance
+bands (`bandByRelevance`): a continuous score makes exact ties vanish, which would have quietly
+retired both signals. Banding rather than a fuzzy comparator because "within 2%" is not transitive,
+and a non-transitive comparator handed to `Array.sort` gives an implementation-defined order — the
+opposite of what a reproducible ranking needs.
+
+`countWholeWord` shares one scan with `containsWholeWord`, and `tokenizeWords` lives in
+`normalize.ts`, so pattern signatures, query extraction and BM25's length measure cannot disagree
+about what a word is. That has mattered once already — the `\p{M}` fix, without which Bengali words
+shattered into fragments.
+
 **Only `humanVerified: true` + `ACTIVE` entries are ever retrieved, and that is load-bearing.**
 Knowledge-builder output is unverified by design; feeding an unverified model-distilled claim
 back into a customer-facing answer would launder a hallucination into a citation and re-cite it
