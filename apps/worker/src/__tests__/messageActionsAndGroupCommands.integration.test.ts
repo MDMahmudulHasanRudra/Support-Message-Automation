@@ -8,7 +8,7 @@ import { MockProvider } from "./mockProvider.js";
 
 /**
  * REACT_TO_MESSAGE, EDIT_MESSAGE, CREATE_GROUP, JOIN_GROUP, UPDATE_PROFILE — the five live-browser
- * commands added alongside the existing GET_QR/RECONNECT/SEND_LIVE_TEST family. Each is exercised
+ * commands added alongside the existing RECONNECT/SEND_LIVE_TEST family. Each is exercised
  * for: the happy path, missing-payload rejection, and provider-reported failure landing as FAILED
  * with the reason preserved rather than swallowed.
  */

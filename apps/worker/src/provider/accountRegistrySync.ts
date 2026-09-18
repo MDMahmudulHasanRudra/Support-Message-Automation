@@ -106,13 +106,13 @@ async function recoverIfDropped(registry: ProviderRegistry, account: WhatsAppAcc
   if (Date.now() - lastAttempt < RECOVERY_COOLDOWN_MS) return;
 
   // Leave it alone if somebody is already dealing with it from the dashboard. A queued RECONNECT
-  // is about to do this anyway, and LOGOUT/GET_QR mean a person is deliberately taking the session
+  // is about to do this anyway, and LOGOUT means a person is deliberately taking the session
   // somewhere — quietly reconnecting underneath them would undo it.
   const operatorAction = await prisma.workerCommand.findFirst({
     where: {
       accountId,
       status: { in: ["PENDING", "PROCESSING"] },
-      type: { in: ["RECONNECT", "LOGOUT", "GET_QR"] },
+      type: { in: ["RECONNECT", "LOGOUT"] },
     },
     select: { id: true },
   });

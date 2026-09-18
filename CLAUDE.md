@@ -315,7 +315,7 @@ the registry (`has()` was true forever, since the provider outlives the session)
 session died sat collecting nothing until a human happened to press Reconnect. `recoverIfDropped()`
 retries `DISCONNECTED`/`ERROR` only — never `AUTHENTICATION_REQUIRED`/`SESSION_ERROR`, which need a
 person with the phone and would otherwise spin forever — behind a 5-minute cooldown, skipped
-entirely while an operator's own RECONNECT/LOGOUT/GET_QR command is pending. It requires
+entirely while an operator's own RECONNECT/LOGOUT command is pending. It requires
 `lastConnectedAt` **and** `phoneNumber`: LOGOUT clears the number, and without that check this would
 relaunch Chromium every few minutes for a retired spare, forever. `connect()` is also re-entrant now
 (it joins an attempt in flight rather than starting a second), because two callers can ask at once

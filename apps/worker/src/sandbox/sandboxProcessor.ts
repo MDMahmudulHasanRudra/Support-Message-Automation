@@ -9,7 +9,7 @@ import { processOneSandboxTurn } from "./sandboxJob.js";
  * step further because this is a conversation rather than a job.
  *
  * Deliberately its OWN loop rather than a WorkerCommand. The command processor is strictly
- * serial and shared with RECONNECT/GET_QR/LOGOUT, so routing sandbox turns through it would
+ * serial and shared with RECONNECT/LOGOUT, so routing sandbox turns through it would
  * put an operator's WhatsApp reconnect behind however many test messages somebody is typing —
  * a testing surface must not be able to delay a real recovery.
  *

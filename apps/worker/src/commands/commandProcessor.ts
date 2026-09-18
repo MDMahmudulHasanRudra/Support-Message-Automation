@@ -226,7 +226,7 @@ const COMMAND_STUCK_TIMEOUT_MS = Number(process.env.COMMAND_STUCK_TIMEOUT_MINUTE
  * A row with a null `startedAt` predates that column, so it was claimed by a process that is now
  * gone — released at boot, never by the periodic sweep, which cannot know that.
  *
- * FAILED rather than back to PENDING: re-running is harmless for GET_QR or RECONNECT, but not for
+ * FAILED rather than back to PENDING: re-running is harmless for RECONNECT, but not for
  * every type — a re-run SEND_LIVE_TEST would put a second real message into a chat, and a re-run
  * LOGOUT would tear down a session that may have come up healthy since. Silently repeating a
  * side-effectful command is not the house default, so the operator gets an actionable reason and
@@ -464,18 +464,6 @@ async function executeBuildCommunicationStyleCommand(command: ClaimedCommand): P
 async function executeClaimedCommand(command: ClaimedCommand, accountId: string, provider: WhatsAppProvider): Promise<void> {
   try {
     switch (command.type) {
-      case "GET_QR": {
-        const account = await prisma.whatsAppAccount.findUnique({
-          where: { id: accountId },
-          select: { qrCode: true, qrUpdatedAt: true },
-        });
-        await prisma.workerCommand.update({
-          where: { id: command.id },
-          data: { status: "DONE", processedAt: new Date(), result: { qrCode: account?.qrCode ?? null } },
-        });
-        break;
-      }
-
       case "RECONNECT": {
         // ENGINEERING_STANDARDS.md §9: "a command that is already running should not be started
         // again unnecessarily" -- a queued RECONNECT that only reaches the front of the queue

@@ -281,7 +281,6 @@ enum NotificationStatus {
 }
 
 enum WorkerCommandType {
-  GET_QR
   RECONNECT
   SEND_LIVE_TEST
   RESYNC_GROUPS

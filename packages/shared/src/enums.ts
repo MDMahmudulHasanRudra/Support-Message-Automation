@@ -95,7 +95,6 @@ export const NOTIFICATION_STATUS = [
 export type NotificationStatus = (typeof NOTIFICATION_STATUS)[number];
 
 export const WORKER_COMMAND_TYPE = [
-  "GET_QR",
   "RECONNECT",
   "SEND_LIVE_TEST",
   "RESYNC_GROUPS",

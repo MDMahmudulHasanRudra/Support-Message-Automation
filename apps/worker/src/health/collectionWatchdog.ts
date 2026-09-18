@@ -435,7 +435,7 @@ async function operatorIsHandlingIt(accountId: string): Promise<boolean> {
       where: {
         accountId,
         status: { in: ["PENDING", "PROCESSING"] },
-        type: { in: ["RECONNECT", "LOGOUT", "GET_QR"] },
+        type: { in: ["RECONNECT", "LOGOUT"] },
       },
       select: { id: true },
     });

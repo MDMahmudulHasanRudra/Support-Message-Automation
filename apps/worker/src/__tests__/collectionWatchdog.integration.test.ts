@@ -167,10 +167,15 @@ describe("a session that needs a person", () => {
     // Somebody deliberately linking a new number produces exactly this state. Telling them their
     // number needs attention while they are the one giving it to it is how an alert channel
     // teaches people to ignore it.
+    //
+    // RECONNECT is what linking actually enqueues — `setPairingMethod()` queues one on every
+    // method change, and the Accounts page's Connect button opens the reconnect dialog. It is the
+    // only command that starts a connection attempt, and a connection attempt is the only thing
+    // that produces a QR or a link code.
     await storeMessage(LONG_AGO());
     await setStatus("AUTHENTICATION_REQUIRED");
     await prisma.workerCommand.create({
-      data: { accountId: account.id, type: "GET_QR", status: "PENDING" },
+      data: { accountId: account.id, type: "RECONNECT", status: "PENDING" },
     });
 
     expect(findingsForAccount(await checkCollectionHealth(registry))).toHaveLength(0);
