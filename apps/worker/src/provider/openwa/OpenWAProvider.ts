@@ -1,4 +1,5 @@
 import { mkdir, rm } from "node:fs/promises";
+import { toDataURL as renderQrDataUrl } from "qrcode";
 import { join } from "node:path";
 import {
   create,
@@ -278,6 +279,24 @@ export class OpenWAProvider implements WhatsAppProvider {
    */
   private abandonAttempt: ((reason: Error) => void) | null = null;
 
+  /**
+   * The QR listeners are attached ONCE per provider, not once per attempt.
+   *
+   * They used to be registered inside `openSession()`, which runs on every connect — and `ev` is
+   * the library's process-global emitter with no removal anywhere here, so a number that had
+   * reconnected twenty times held twenty live handlers, each writing the same code to the same row
+   * on every rotation. WhatsApp reissues roughly every twenty seconds, so that is twenty redundant
+   * writes a minute, growing for the lifetime of the process, plus EventEmitter2's own
+   * max-listener warning once it passes ten.
+   */
+  private qrListenersAttached = false;
+
+  /** Which linking method THIS attempt asked for — the two events mean different things per mode. */
+  private pairingMode: "QR_CODE" | "PHONE_CODE" = "QR_CODE";
+
+  /** The raw payload we last rendered ourselves, so the library's own image stays a fallback. */
+  private renderedQrPayload: string | null = null;
+
   constructor(
     private readonly accountId: string,
     private readonly sessionId: string,
@@ -293,6 +312,69 @@ export class OpenWAProvider implements WhatsAppProvider {
     return this.connecting;
   }
 
+  /**
+   * Publishes whatever this attempt needs the operator to see, from the two events the library
+   * raises for it.
+   *
+   * The library emits the SAME code twice under different namespaces (`grabAndEmit` in its auth
+   * controller): the raw payload on `qrData.<session>` first, then, for a QR attempt, a rendered
+   * `data:image/png` on `qr.<session>` — which it obtains by calling `window.getQrPng()` inside
+   * the WhatsApp Web page. That image is WhatsApp's own canvas, and it is not black: it comes back
+   * brand-coloured, which is what reached operators on screen. Red modules on white clear far less
+   * contrast than a scanner expects, and the failure mode is the worst kind — it reads as a broken
+   * camera or a dead session rather than a rendering problem.
+   *
+   * So a QR attempt is rendered HERE from the raw payload, black on white with a real quiet zone,
+   * and the library's own image is kept only as a fallback for the case where our renderer throws.
+   * A link-code attempt takes the other branch untouched: for it both events carry the bare
+   * nine-character code rather than an image, and there is nothing to draw.
+   *
+   * Attached once per provider. See `qrListenersAttached`.
+   */
+  private attachQrListeners(): void {
+    if (this.qrListenersAttached) return;
+    this.qrListenersAttached = true;
+
+    ev.on("qrData.**", (payload: string, sessionId: string) => {
+      if (sessionId !== this.sessionId) return;
+      if (this.pairingMode === "PHONE_CODE") return; // the code itself, handled below
+      if (typeof payload !== "string" || !payload) return;
+      void this.publishRenderedQr(payload);
+    });
+
+    ev.on("qr.**", (value: string, sessionId: string) => {
+      if (sessionId !== this.sessionId) return;
+      if (typeof value !== "string" || !value) return;
+      // A link code is not an image — pass it through exactly as before.
+      if (this.pairingMode === "PHONE_CODE") {
+        this.setState("QR_AVAILABLE", { qrLength: value.length }, value).catch(() => undefined);
+        return;
+      }
+      // Fallback only. If our own render already published this attempt's code, showing the
+      // library's coloured image on top of it would undo the fix a moment later.
+      if (this.renderedQrPayload) return;
+      this.setState("QR_AVAILABLE", { qrLength: value.length, rendered: false }, value).catch(() => undefined);
+    });
+  }
+
+  /** Never throws: a failure here must leave the library's own image free to arrive instead. */
+  private async publishRenderedQr(payload: string): Promise<void> {
+    try {
+      const dataUrl = await renderQrDataUrl(payload, {
+        errorCorrectionLevel: "M",
+        // Four modules is the spec's quiet zone. Without it a scanner has no margin to lock onto
+        // against whatever the dialog puts behind the image.
+        margin: 4,
+        scale: 8,
+        color: { dark: "#000000ff", light: "#ffffffff" },
+      });
+      this.renderedQrPayload = payload;
+      await this.setState("QR_AVAILABLE", { qrLength: dataUrl.length, rendered: true }, dataUrl);
+    } catch (err) {
+      console.error("[provider] could not render a QR code; falling back to the library's own image", err);
+    }
+  }
+
   private async openSession(): Promise<void> {
     // The directory has to exist before chdir, and nothing else guarantees it does.
     // accountProvisioning assigns every non-legacy account a path of `${SESSION_ROOT}/${id}`
@@ -305,20 +387,11 @@ export class OpenWAProvider implements WhatsAppProvider {
     await this.clearStaleChromiumLock();
     await this.setState("STARTING");
 
-    // Both linking methods arrive HERE, on one event, and that is the library's design rather
-    // than a coincidence worth defending against: `grabAndEmit` in its auth controller emits
-    // `isLinkCode ? qrData : await page.evaluate('window.getQrPng()')`, so this callback receives a
-    // `data:image/png` URL when a QR was rendered and a bare nine-character code ("ABCD-EFGH")
-    // when one was requested by phone number. `pairingMethod` on the account row is what tells the
-    // dashboard which of the two it is holding — length-sniffing the value would work today and
-    // would be a guess about somebody else's format tomorrow.
-    ev.on("qr.**", (qrCode: string, sessionId: string) => {
-      if (sessionId !== this.sessionId) return;
-      this.setState("QR_AVAILABLE", { qrLength: qrCode.length }, qrCode).catch(() => undefined);
-    });
-
     const useStealth = process.env.WHATSAPP_USE_STEALTH !== "false";
     const pairing = await readPairingPreference(this.accountId);
+    this.pairingMode = pairing.method;
+    this.renderedQrPayload = null;
+    this.attachQrListeners();
     const proxy = await readProxyConfig(this.accountId);
 
     await this.setState("WAITING_FOR_QR");
