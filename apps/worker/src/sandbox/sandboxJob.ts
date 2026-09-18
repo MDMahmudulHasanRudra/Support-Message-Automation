@@ -140,7 +140,7 @@ async function answerTurn(turnId: string): Promise<void> {
   const conversation = await loadSandboxConversation(turn.sessionId, turn.createdAt);
 
   const groupId = turn.session.group?.id ?? null;
-  const knowledge = await findRelevantKnowledge(turn.userMessage, groupId, undefined, () =>
+  const knowledge = await findRelevantKnowledge(turn.userMessage, { groupId }, undefined, () =>
     expandQueryTerms(client!, turn.userMessage, conversation),
   );
   const knowledgeTitles = knowledge.map((entry) => entry.title);

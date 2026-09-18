@@ -20,6 +20,8 @@ function snippet(over: Partial<KnowledgeSnippet> = {}): KnowledgeSnippet {
     title: "Untitled",
     question: null,
     answer: "Some answer.",
+    version: 1,
+    scope: "GLOBAL",
     procedure: null,
     module: null,
     fromSameGroup: false,

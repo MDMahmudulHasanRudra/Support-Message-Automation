@@ -477,6 +477,8 @@ model User {
 
   createdAnalysisRuns            ConversationAnalysisRun[]
   reviewedConversationCandidates ConversationCandidate[]
+  knowledgeVerified      AiKnowledgeItem[]        @relation("AiKnowledgeVerifier")
+  systemLogs             SystemLog[]
 }
 
 // ---------------------------------------------------------------------------
@@ -621,6 +623,7 @@ model WhatsAppAccount {
   supportIssues        SupportIssue[]
   attendanceEvidence   TeamAttendanceGroup[]
   droppedMessages      MessageDropCounter[]
+  scopedKnowledge      AiKnowledgeItem[]      @relation("AiKnowledgeScopeAccount")
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -1405,10 +1408,29 @@ model SystemLog {
   scope     String
   message   String
   metadata  Json?
+
+  /// WHO did it, TO WHAT, and as part of which request.
+  ///
+  /// Without these this table records that something happened and nothing about who caused it — so
+  /// "who verified this knowledge entry, and when" was unanswerable even though the whole
+  /// customer-facing safety gate rests on that approval. Null for the worker's own background
+  /// events, which have no actor by definition.
+  actorUserId String?
+  actorUser   User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  /// Free strings rather than enums: the set of auditable things grows with the product, and an
+  /// enum would mean a migration to record a new kind of action.
+  targetType String?
+  targetId   String?
+  /// The pipeline's own trace id, so every line belonging to one incoming message groups together.
+  correlationId String?
+
   createdAt DateTime @default(now())
 
   @@index([createdAt])
   @@index([level])
+  @@index([targetType, targetId])
+  @@index([correlationId])
+  @@index([actorUserId, createdAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -1718,6 +1740,25 @@ model AiModelConfig {
 /// learning, chat learning, document learning) can populate the same table
 /// without a breaking migration. Always reflects the LATEST version; full
 /// history lives in AiKnowledgeVersion.
+/// WHO a knowledge item is true for — the data-isolation boundary.
+///
+/// Retrieval filters on this, so it is not a label: it decides whether one group's information can
+/// ground an answer in another group's conversation. Before it existed, `findRelevantKnowledge`
+/// selected on `humanVerified` + `ACTIVE` and nothing else, so an entry distilled from Group A's
+/// conversation — or researched live for Group A by the deep-answer path, which stores
+/// `humanVerified: true` — was immediately retrievable in every other group. `sourceGroupId`
+/// recorded where it came from and was used only as a ranking tiebreak.
+enum AiKnowledgeScope {
+  /// True for the product itself, so usable everywhere: "how a package upgrade is done".
+  GLOBAL
+  /// True for one group only: a particular customer's configuration, a one-off arrangement. Never
+  /// retrievable outside `sourceGroupId`.
+  GROUP
+  /// True for one WhatsApp account's customers. Present so a second ISP on this backend is a
+  /// setting rather than a migration; enforced in retrieval exactly as GROUP is.
+  ACCOUNT
+}
+
 model AiKnowledgeItem {
   id              String              @id @default(cuid())
   title           String
@@ -1762,12 +1803,36 @@ model AiKnowledgeItem {
   humanVerified   Boolean             @default(false)
   status          AiKnowledgeStatus   @default(ACTIVE)
   currentVersion  Int                 @default(1)
+
+  /// Who this is true for. GLOBAL is the default so a manually written entry, a document import
+  /// and the Forge repository sync — none of which belong to a group — behave exactly as they
+  /// always have. Anything carrying a `sourceGroupId` is written as GROUP by the code that creates
+  /// it, and a person promotes it to GLOBAL deliberately.
+  scope           AiKnowledgeScope    @default(GLOBAL)
+  /// Only meaningful for `scope = ACCOUNT`. Null otherwise.
+  scopeAccountId  String?
+  scopeAccount    WhatsAppAccount?    @relation("AiKnowledgeScopeAccount", fields: [scopeAccountId], references: [id], onDelete: SetNull)
+
+  /// SHA-256 over the canonicalised factual content (title, question, answer, procedure, module).
+  /// For detecting an unchanged re-import and an unexpected modification — NOT for confidentiality,
+  /// and never a merge trigger on its own. Deliberately excludes timestamps and status, so the
+  /// hash describes the content rather than the row.
+  contentHash     String?
+
+  /// Who actually approved this, and when. `humanVerified` is the gate every customer-facing
+  /// answer passes through, and it recorded only THAT somebody approved — never who or when, which
+  /// leaves the safety chain unauditable at exactly the point it matters most.
+  verifiedById    String?
+  verifiedBy      User?               @relation("AiKnowledgeVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt      DateTime?
+
   createdById     String?
   createdBy       User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
 
-  versions AiKnowledgeVersion[]
+  versions     AiKnowledgeVersion[]
+  evidenceUses AiEvidenceItem[]
 
   @@index([category])
   @@index([status])
@@ -1777,6 +1842,12 @@ model AiKnowledgeItem {
   @@index([humanVerified, createdAt])
   /// Browsing/filtering the knowledge base by module, which the list page now supports.
   @@index([module])
+  /// The exact predicate retrieval narrows on, now that scope is part of it.
+  @@index([humanVerified, status, scope])
+  /// Duplicate-import detection. Deliberately NOT unique: two entries may legitimately share
+  /// content while differing in scope or provenance, and refusing the second outright would
+  /// destroy a distinct procedure rather than merely flagging it for a person to look at.
+  @@index([contentHash])
 }
 
 /// One immutable snapshot per edit (spec section 10 — "never simply
@@ -1860,14 +1931,110 @@ model AiFallbackDecision {
   notification      Notification?    @relation(fields: [notificationId], references: [id], onDelete: SetNull)
 
   tokensUsed Int?
+
+  /// What it cost and how it ended, in the provider's own terms. `finishReason` is the raw string
+  /// ("stop", "length", "max_tokens") rather than an enum, because it belongs to whichever provider
+  /// answered and a new one must not need a migration to be recorded.
+  latencyMs    Int?
+  finishReason String?
+
+  /// WHICH VERSION OF THIS SYSTEM produced the answer. Without these, comparing two models over the
+  /// same question proves nothing — a difference could be the model, or a prompt edit, or a
+  /// retrieval change shipped in between.
+  promptVersion    String?
+  retrievalVersion String?
+
+  /// The fingerprint of the evidence this answer was built on, denormalised from the snapshot so
+  /// "did these two replies see the same evidence?" is answerable without a join.
+  evidenceFingerprint String?
+
+  /// Ties every log line, retrieval, generation and send for one incoming message together. Reuses
+  /// the pipeline's existing trace id (`<accountId>:<whatsappMessageId>`) rather than minting a
+  /// second identifier for the same thing.
+  correlationId String?
+
   createdAt  DateTime @default(now())
 
   /// Set when this decision's unanswered question was queued for research against the ISPDIGITAL
   /// repository — see ForgeResearchTask.
   forgeResearchTask ForgeResearchTask?
+  evidenceSnapshot  AiEvidenceSnapshot?
 
   @@index([accountId, createdAt])
   @@index([outcome, createdAt])
+  @@index([correlationId])
+  /// Model comparison: every generation built on one evidence set, whatever produced it.
+  @@index([evidenceFingerprint])
+}
+
+/// WHAT THE AI WAS LOOKING AT when it answered — the persisted form of the runtime EvidenceBundle.
+///
+/// The two are deliberately different things. The bundle is assembled per request and handed to the
+/// model; this is the record of it, kept so a reply can still be explained after the knowledge
+/// behind it has been edited. Six months on, "which version of entry #31 did the AI read?" has an
+/// answer, because the snapshot stores the version NUMBER and `AiKnowledgeVersion` stores what that
+/// version said.
+///
+/// It stores references, never copies: the question is reachable through `decision.message`, and the
+/// evidence text through `AiKnowledgeVersion`. Only a title is denormalised, so a snapshot whose
+/// knowledge item was later deleted still says what it was.
+///
+/// Explicitly NOT stored: any reasoning, any prompt text, anything resembling chain-of-thought.
+/// Only the operational structure that makes an answer traceable.
+model AiEvidenceSnapshot {
+  id         String             @id @default(cuid())
+  decisionId String             @unique
+  decision   AiFallbackDecision @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 over the canonicalised bundle — the ordered (item, version) pairs plus the plan's
+  /// structural conclusions. Deterministic for the same evidence, so two runs that saw the same
+  /// thing are provably comparable and one that did not is provably different.
+  fingerprint String
+
+  /// The answer plan's conclusions, which are derived from the evidence rather than from a model.
+  /// Kept here rather than in a table of their own: it is one row's worth of structure, and a
+  /// second table would be a join for four columns.
+  questionShape    String
+  intent           String?
+  knowledgeCount   Int     @default(0)
+  workflowCount    Int     @default(0)
+  missingProcedure Boolean @default(false)
+  /// Reserved for the conflict-detection stage, which is deliberately not built yet. Always 0
+  /// today, and honest about it: nothing writes a conflict, so nothing may claim one was checked.
+  conflictCount    Int     @default(0)
+
+  items     AiEvidenceItem[]
+  createdAt DateTime         @default(now())
+
+  @@index([fingerprint])
+}
+
+/// One piece of evidence, as it was at the moment it was used.
+model AiEvidenceItem {
+  snapshotId String
+  snapshot   AiEvidenceSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  /// SetNull rather than Cascade: deleting a knowledge item must not erase the record that it once
+  /// grounded an answer, which is the whole purpose of this table.
+  knowledgeItemId String?
+  knowledgeItem   AiKnowledgeItem? @relation(fields: [knowledgeItemId], references: [id], onDelete: SetNull)
+  /// The version that was live WHEN THE ANSWER WAS GENERATED — join to AiKnowledgeVersion for the
+  /// exact text. This is what survives a later edit.
+  knowledgeVersion Int
+
+  /// Position in the bundle, and the primary key's second half, so ordering is stable and one
+  /// snapshot cannot record the same rank twice.
+  rank Int
+
+  /// Denormalised so a snapshot whose item was later deleted is still readable. The title only —
+  /// copying the answer would duplicate content `AiKnowledgeVersion` already holds exactly.
+  title         String
+  scope         AiKnowledgeScope
+  hadProcedure  Boolean          @default(false)
+  fromSameGroup Boolean          @default(false)
+
+  @@id([snapshotId, rank])
+  @@index([knowledgeItemId])
 }
 
 // ---------------------------------------------------------------------------

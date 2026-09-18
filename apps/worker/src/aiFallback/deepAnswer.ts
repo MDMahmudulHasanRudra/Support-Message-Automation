@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { createKnowledgeItem } from "@support-automation/db";
 import type { AiClient } from "@support-automation/ai-client";
 import {
   ForgeClient,
@@ -119,31 +119,38 @@ export async function researchForCustomerQuestion(params: {
       // while sending it would be incoherent, and would also mean it could never be reused, which
       // defeats the point. The safety gate above is what earns that, and the setting's own
       // description says plainly that this is the trade being made.
-      const stored = await prisma.aiKnowledgeItem.create({
-        data: {
-          title: entry.title,
-          category: entry.category,
-          question: entry.question ?? params.question,
-          answer: entry.answer,
-          procedure: entry.procedure,
-          module: module.name,
-          software: "ISPDIGITAL",
-          source: "DEEP_ANSWER",
-          sourceLabel: `Researched live — ${module.name}`,
-          sourceGroupId: params.groupId,
-          confidence: entry.confidence,
-          aiGenerated: true,
-          humanVerified: true,
-        },
+      const stored = await createKnowledgeItem({
+        title: entry.title,
+        category: entry.category,
+        question: entry.question ?? params.question,
+        answer: entry.answer,
+        procedure: entry.procedure,
+        module: module.name,
+        software: "ISPDIGITAL",
+        source: "DEEP_ANSWER",
+        sourceLabel: `Researched live — ${module.name}`,
+        // Carries a group, so `createKnowledgeItem` derives GROUP scope from it — and that is the
+        // behaviour that matters here. This was written with `humanVerified: true` and no scope at
+        // all, so a fact researched to answer ONE group's question became retrievable in every
+        // other group the instant it was stored. It answers the customer who asked, and a person
+        // promotes it to GLOBAL if it turns out to be true of the product rather than of them.
+        sourceGroupId: params.groupId,
+        confidence: entry.confidence,
+        aiGenerated: true,
+        humanVerified: true,
       });
 
       snippets.push({
         id: stored.id,
-        title: stored.title,
-        question: stored.question,
-        answer: stored.answer,
-        procedure: stored.procedure,
-        module: stored.module ?? null,
+        title: entry.title,
+        question: entry.question ?? params.question,
+        answer: entry.answer,
+        procedure: entry.procedure,
+        module: module.name,
+        // Version 1, because `createKnowledgeItem` has just written it — carried into the evidence
+        // snapshot so a reply grounded on live research is as explainable as any other.
+        version: 1,
+        scope: "GROUP",
         fromSameGroup: true,
       });
     }

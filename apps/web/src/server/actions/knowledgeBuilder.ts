@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+import { createKnowledgeItem, prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
 
 /**
@@ -124,25 +124,33 @@ export async function approveConversationCandidate(candidateId: string): Promise
     return { ok: false, error: "This candidate is already in the knowledge base." };
   }
 
-  const item = await prisma.aiKnowledgeItem.create({
-    data: {
-      title: candidate.title,
-      category: candidate.category,
-      question: candidate.question,
-      answer: candidate.answer,
-      procedure: candidate.procedure,
-      module: candidate.module,
-      source: "CONVERSATION_BUILDER",
-      sourceGroupId: candidate.groupId,
-      sourceLabel: `Conversation in ${candidate.groupName}`,
-      confidence: candidate.confidence,
-      // Machine-extracted, so this stays true — but a person has read it and approved it here,
-      // which is exactly what humanVerified records.
-      aiGenerated: true,
-      humanVerified: true,
-      createdById: session.userId,
-    },
-    select: { id: true },
+  // Through the shared writer, which is what gives this entry a version row, a content hash and a
+  // scope. It wrote none of the three before: an entry promoted from a conversation claimed
+  // `currentVersion: 1` with no version behind it, so an evidence snapshot pointing at version 1
+  // would resolve to nothing.
+  const item = await createKnowledgeItem({
+    title: candidate.title,
+    category: candidate.category,
+    question: candidate.question,
+    answer: candidate.answer,
+    procedure: candidate.procedure,
+    module: candidate.module,
+    source: "CONVERSATION_BUILDER",
+    // Distilled from ONE group's conversation, so `createKnowledgeItem` derives GROUP scope from
+    // it — and that is the important part. Approving this used to make one group's information
+    // retrievable in every other group, which is the isolation boundary this whole change exists
+    // to draw. A person who judges it true of the product rather than of that customer promotes it
+    // to GLOBAL deliberately.
+    sourceGroupId: candidate.groupId,
+    sourceLabel: `Conversation in ${candidate.groupName}`,
+    confidence: candidate.confidence,
+    // Machine-extracted, so this stays true — but a person has read it and approved it here,
+    // which is exactly what humanVerified records.
+    aiGenerated: true,
+    humanVerified: true,
+    createdById: session.userId,
+    verifiedById: session.userId,
+    changeSummary: "Approved from a conversation candidate.",
   });
 
   await prisma.conversationCandidate.update({

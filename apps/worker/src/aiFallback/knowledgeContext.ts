@@ -17,6 +17,30 @@ import { bandByRelevance, rankByBm25 } from "./bm25.js";
  * nothing skips it.
  */
 
+/**
+ * WHERE this answer is allowed to draw evidence from — the data-isolation boundary, in one place.
+ *
+ * Retrieval used to filter on `humanVerified` + `ACTIVE` and nothing else. `sourceGroupId` recorded
+ * which group an entry came from and was used only as a ranking tiebreak, so an entry distilled
+ * from Group A's conversation — or researched live for Group A by the deep-answer path, which
+ * stores `humanVerified: true` — was retrievable in every other group from the moment it was
+ * written. One customer's configuration could ground an answer to a different customer.
+ *
+ * GLOBAL is everything that is true of the product itself: manual entries, document imports, the
+ * Forge repository sync. GROUP and ACCOUNT are narrowed to the conversation actually being served.
+ * A GROUP entry with a null `sourceGroupId` is unreachable by construction, which is the safe
+ * direction — it cannot leak, it can only fail to be found.
+ */
+function scopeFilter(groupId: string | null, accountId: string | null) {
+  return {
+    OR: [
+      { scope: "GLOBAL" as const },
+      ...(groupId ? [{ scope: "GROUP" as const, sourceGroupId: groupId }] : []),
+      ...(accountId ? [{ scope: "ACCOUNT" as const, scopeAccountId: accountId }] : []),
+    ],
+  };
+}
+
 /** Enough to ground an answer; more than this crowds the prompt and dilutes every entry in it. */
 const MAX_ENTRIES = 3;
 /** A long answer is truncated rather than dropped — the opening usually carries the substance. */
@@ -54,6 +78,17 @@ export interface KnowledgeSnippet {
   procedure: string | null;
   /** The product area this entry belongs to, when the source established one. */
   module: string | null;
+  /**
+   * The version that was live when this was retrieved.
+   *
+   * Carried through the whole pipeline rather than re-read when the evidence snapshot is written:
+   * re-reading would fetch whatever the entry had become by then, which for an entry edited
+   * between retrieval and persistence is precisely the wrong answer. The snapshot has to record
+   * what the model actually saw.
+   */
+  version: number;
+  /** Who this entry is true for — recorded on the snapshot so an isolation question is answerable. */
+  scope: "GLOBAL" | "GROUP" | "ACCOUNT";
   /** True when this came from the same group the customer is writing in. */
   fromSameGroup: boolean;
 }
@@ -71,6 +106,9 @@ interface KnowledgeCandidate {
   question: string | null;
   answer: string;
   procedure: string | null;
+  /** Optional on the INPUT type so a pure ranking test need not supply them; defaulted below. */
+  currentVersion?: number;
+  scope?: "GLOBAL" | "GROUP" | "ACCOUNT";
   /** Optional on the INPUT type so a caller (and a test fixture) need not supply it; the snippet
    *  this produces always carries it, normalised to null. */
   module?: string | null;
@@ -212,6 +250,8 @@ export function rankRelevantKnowledge(
         ? `${entry.candidate.procedure.slice(0, MAX_ANSWER_CHARS)}…`
         : (entry.candidate.procedure ?? null),
     module: entry.candidate.module ?? null,
+    version: entry.candidate.currentVersion ?? 1,
+    scope: entry.candidate.scope ?? "GLOBAL",
     fromSameGroup: entry.fromSameGroup,
   }));
 
@@ -244,9 +284,16 @@ export function rankRelevantKnowledge(
  * behaves today. `id` breaks the remaining ties so the same question always builds the same
  * prompt, which is what makes an unexpected AI answer reproducible.
  */
+export interface KnowledgeSearchScope {
+  /** The conversation being served. Null for a context with no group, which then sees GLOBAL only. */
+  groupId: string | null;
+  /** The WhatsApp account serving it, for ACCOUNT-scoped entries. */
+  accountId?: string | null;
+}
+
 export async function findRelevantKnowledge(
   customerMessage: string,
-  groupId: string | null,
+  scope: KnowledgeSearchScope,
   limit = MAX_ENTRIES,
   expandTerms?: QueryExpander,
 ): Promise<KnowledgeSnippet[]> {
@@ -254,7 +301,7 @@ export async function findRelevantKnowledge(
 
   const direct =
     keywords.length > 0
-      ? await searchByTerms(customerMessage, keywords, groupId, limit, [])
+      ? await searchByTerms(customerMessage, keywords, scope, limit, [])
       : { snippets: [], bestOverlap: 0 };
 
   // Strong enough to stop here, or nothing to expand with.
@@ -273,7 +320,7 @@ export async function findRelevantKnowledge(
   // One indexed existence check against `@@index([humanVerified, createdAt])`, and only on the
   // path that was about to spend a completion anyway. It narrows nothing when knowledge exists:
   // the moment there is a single retrievable entry, expansion behaves exactly as before.
-  if (!(await hasRetrievableKnowledge())) return direct.snippets;
+  if (!(await hasRetrievableKnowledge(scope))) return direct.snippets;
 
   // Either the customer's own words found nothing, or they found something thin — a single
   // shared keyword, which on a knowledge base this size is as often a coincidence as a match.
@@ -288,7 +335,7 @@ export async function findRelevantKnowledge(
   const expanded = await expandTerms();
   if (expanded.length === 0) return direct.snippets;
 
-  const viaExpansion = await searchByTerms(customerMessage, expanded, groupId, limit, expanded);
+  const viaExpansion = await searchByTerms(customerMessage, expanded, scope, limit, expanded);
 
   // Keep whichever search actually understood the question better. Ties go to the direct hit:
   // those terms are the customer's own words.
@@ -342,10 +389,13 @@ interface SearchResult {
  * an empty result are treated identically, because answering without grounding is better than not
  * answering, and spending a completion on a database that is not responding is worse than both.
  */
-async function hasRetrievableKnowledge(): Promise<boolean> {
+async function hasRetrievableKnowledge(scope: KnowledgeSearchScope): Promise<boolean> {
   try {
     const any = await prisma.aiKnowledgeItem.findFirst({
-      where: { status: "ACTIVE", humanVerified: true },
+      // Scoped exactly as the search is. Asking "is there anything at all" globally would send a
+      // group with no reachable knowledge into an expansion that cannot possibly succeed, which is
+      // the specific waste this check exists to prevent.
+      where: { status: "ACTIVE", humanVerified: true, ...scopeFilter(scope.groupId, scope.accountId ?? null) },
       select: { id: true },
     });
     return any !== null;
@@ -366,10 +416,11 @@ async function hasRetrievableKnowledge(): Promise<boolean> {
 async function searchByTerms(
   customerMessage: string,
   searchTerms: string[],
-  groupId: string | null,
+  scope: KnowledgeSearchScope,
   limit: number,
   rankingTerms: string[],
 ): Promise<SearchResult> {
+  const groupId = scope.groupId;
   // `procedure` is searched alongside the rest: it was selected and rendered to the model but
   // excluded from the narrowing query, so an entry whose answer is one line ("you can do this
   // from the billing screen") and whose steps carry the real vocabulary was unreachable by every
@@ -386,7 +437,10 @@ async function searchByTerms(
     status: "ACTIVE" as const,
     // The safety gate. See this file's header for why it is not negotiable.
     humanVerified: true,
-    OR: matchesAnyKeyword,
+    // The ISOLATION gate, and it is an AND with the keyword match rather than part of the same OR
+    // — nesting it into `matchesAnyKeyword` would make a scope match on its own sufficient to
+    // retrieve an entry, which is the opposite of narrowing.
+    AND: [{ OR: matchesAnyKeyword }, scopeFilter(groupId, scope.accountId ?? null)],
   };
   const select = {
     id: true,
@@ -396,6 +450,11 @@ async function searchByTerms(
     procedure: true,
     module: true,
     sourceGroupId: true,
+    // Both are carried through to the evidence snapshot rather than re-read later: the version is
+    // what makes a past answer explainable after the entry is edited, and re-reading it afterwards
+    // would fetch whatever it had become rather than what the model actually saw.
+    scope: true,
+    currentVersion: true,
   };
   const orderBy = [{ updatedAt: "desc" as const }, { id: "asc" as const }];
 

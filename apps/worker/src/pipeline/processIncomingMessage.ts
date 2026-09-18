@@ -274,6 +274,10 @@ export async function runAutomationStage(
               }
             : null,
           automationSettings: settings,
+          // The pipeline's own trace id, which already identifies this message in every log line
+          // above. Threaded through so the decision, its evidence snapshot and those log lines all
+          // carry the same correlation value rather than three ways of naming one message.
+          correlationId: traceId,
           clientOverride: aiClientOverride,
         });
       } catch (err) {

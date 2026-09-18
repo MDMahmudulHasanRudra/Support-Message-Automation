@@ -107,7 +107,7 @@ describe("buildFallbackPrompt — scope instruction", () => {
     const withKnowledge = buildFallbackPrompt({
       customerMessage: "q",
       groupName: null,
-      knowledge: [{ id: "k", title: "t", question: null, answer: "a", module: null, fromSameGroup: false, procedure: null }],
+      knowledge: [{ id: "k", title: "t", question: null, answer: "a", module: null, fromSameGroup: false, version: 1, scope: "GLOBAL" as const, procedure: null }],
     });
     const without = buildFallbackPrompt({ customerMessage: "q", groupName: null });
     expect(withKnowledge.userPrompt).toContain("SCOPE:");
@@ -357,7 +357,7 @@ describe("buildFallbackPrompt — answering with steps", () => {
           question: null,
           answer: "Payments are recorded against the customer's bill.",
           procedure: "Billing list → Payment → Pay → enter amount → choose account → Submit",
-          module: null, fromSameGroup: false,
+          module: null, fromSameGroup: false, version: 1, scope: "GLOBAL" as const
         },
       ],
     });
@@ -369,7 +369,7 @@ describe("buildFallbackPrompt — answering with steps", () => {
   it("omits the steps line entirely when no procedure was written", () => {
     const built = prompt({
       knowledge: [
-        { id: "k1", title: "T", question: null, answer: "A", procedure: null, module: null, fromSameGroup: false },
+        { id: "k1", title: "T", question: null, answer: "A", procedure: null, module: null, fromSameGroup: false, version: 1, scope: "GLOBAL" as const },
       ],
     });
     expect(built.userPrompt).not.toContain("Steps:");

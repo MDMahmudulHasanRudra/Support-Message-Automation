@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { createKnowledgeItem, prisma } from "@support-automation/db";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import {
   ForgeClient,
@@ -209,8 +209,13 @@ async function storeEntries(params: {
   const fresh = safe.filter((entry) => !known.has(entry.title));
   if (fresh.length === 0) return { created: 0, blocked };
 
-  await prisma.aiKnowledgeItem.createMany({
-    data: fresh.map((entry) => ({
+  // One at a time through `createKnowledgeItem` rather than `createMany`, and the round trips buy
+  // something: createMany cannot write the related `AiKnowledgeVersion` row, and this path silently
+  // did not — so every entry the repository sync produced claimed `currentVersion: 1` with no
+  // version behind it, which an evidence snapshot pointing at version 1 would resolve to nothing.
+  // A few hundred inserts on a six-hourly job is not a cost worth trading that for.
+  for (const entry of fresh) {
+    await createKnowledgeItem({
       title: entry.title,
       category: entry.category,
       question: entry.question,
@@ -223,14 +228,19 @@ async function storeEntries(params: {
       sourceLabel: params.sourceLabel,
       confidence: entry.confidence,
       aiGenerated: true,
+      // GLOBAL, explicitly. This reads the PRODUCT's own repository, not a conversation — it is a
+      // statement about how the software behaves, true for every group, and it carries no
+      // `sourceGroupId` for the provenance rule to infer anything else from. Stated rather than
+      // left to the default so the reasoning is visible at the place it applies.
+      scope: "GLOBAL",
       // Auto-verification is per entry, not per batch. A tier-1 document is authoritative, but a
       // model summarising one still produces the occasional "refresh the page, contact your IT
       // support" — and auto-verifying that puts it straight in front of customers, where it does
       // more harm than the gap it fills. It still gets stored; it just has to be read by a person
       // first, which is what the admin's setting was always promising for the ones worth trusting.
       humanVerified: params.humanVerified && checkKnowledgeEntrySubstance(entry).substantive,
-    })),
-  });
+    });
+  }
 
   const withheld = params.humanVerified
     ? fresh.filter((entry) => !checkKnowledgeEntrySubstance(entry).substantive)

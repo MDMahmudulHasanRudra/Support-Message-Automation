@@ -12,6 +12,7 @@ import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { buildAnswerPlan, renderAnswerPlan, validateGrounding } from "./answerPlan.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
+import { buildEvidenceBundle, fingerprintOf, recordEvidenceSnapshot } from "./evidenceSnapshot.js";
 import { expandQueryTerms } from "./queryExpansion.js";
 import { loadConversationContext } from "./conversationContext.js";
 import { recordUnansweredQuestion } from "../forge/forgeResearchJob.js";
@@ -23,6 +24,17 @@ import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
 import { checkAutoReplySafety } from "../pipeline/safety.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
 import { getAiSettings } from "../ai/settings.js";
+
+/**
+ * Which version of THIS SYSTEM produced an answer.
+ *
+ * Recorded on every interaction so that comparing two models over the same question means
+ * something. Without it a difference in output could be the model, or a prompt edit, or a change
+ * to retrieval shipped in between — and there would be no way to tell which. Bumped by hand when
+ * the prompt or the retrieval contract changes in a way that could move an answer.
+ */
+const PROMPT_VERSION = "2026-09-18.1";
+const RETRIEVAL_VERSION = "bm25f.2026-09-18.1";
 
 export interface RunAiFallbackParams {
   message: { id: string; body: string; timestampWa?: Date };
@@ -41,6 +53,14 @@ export interface RunAiFallbackParams {
     testModeEnabled?: boolean;
   } | null;
   automationSettings: AutomationSettings;
+  /**
+   * Ties every record for one incoming message together — logs, the decision, the snapshot.
+   *
+   * The pipeline's own trace id (`<accountId>:<whatsappMessageId>`), passed in rather than minted
+   * here: it already identifies this message everywhere else, and a second identifier for the same
+   * thing would mean joining two correlation schemes to follow one reply.
+   */
+  correlationId?: string;
   /** Test-only seam (mirrors aiAnalysisJob.ts's clientOverride) — production call sites never pass it. */
   clientOverride?: AiClient;
 }
@@ -88,7 +108,15 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
 
   const recordHumanFallback = async (
     reason: string,
-    fields: { intent?: string | null; confidenceScore?: number | null; responseText?: string | null; modelId?: string | null; tokensUsed?: number | null } = {},
+    fields: {
+      intent?: string | null;
+      confidenceScore?: number | null;
+      responseText?: string | null;
+      modelId?: string | null;
+      tokensUsed?: number | null;
+      /** Timing, finish reason and evidence fingerprint, once a model has actually been called. */
+      interaction?: { latencyMs?: number | null; finishReason?: string | null; evidenceFingerprint?: string | null };
+    } = {},
   ): Promise<void> => {
     // The decision row is claimed BEFORE anything is sent, and that ordering is the idempotency
     // guard for the entire handover.
@@ -115,6 +143,10 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       outcome: "HUMAN_FALLBACK",
       reason,
       tokensUsed: fields.tokensUsed ?? null,
+      correlationId: params.correlationId ?? null,
+      promptVersion: PROMPT_VERSION,
+      retrievalVersion: RETRIEVAL_VERSION,
+      ...fields.interaction,
     });
     if (!("id" in decision)) return;
 
@@ -249,8 +281,11 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     currentMessageAt: params.message.timestampWa ?? new Date(),
   });
 
-  let knowledge = await findRelevantKnowledge(params.message.body, params.group?.id ?? null, undefined, () =>
-    expandQueryTerms(client, params.message.body, conversation),
+  let knowledge = await findRelevantKnowledge(
+    params.message.body,
+    { groupId: params.group?.id ?? null, accountId: params.accountId },
+    undefined,
+    () => expandQueryTerms(client, params.message.body, conversation),
   );
 
   // Nothing written down covers this. With deep answers on, go and find out now rather than
@@ -298,6 +333,18 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // set. See answerPlan.ts for why this is deterministic and why there is no second AI call.
   const plan = buildAnswerPlan(params.message.body, knowledge);
 
+  // The evidence, as one object, fingerprinted before the model sees it. Assembling it here rather
+  // than reconstructing it afterwards is what makes the fingerprint describe what was actually
+  // sent: anything derived after the call could differ from what the prompt was built from.
+  const bundle = buildEvidenceBundle({
+    question: params.message.body,
+    intent: null,
+    knowledge,
+    plan,
+  });
+  const evidenceFingerprint = fingerprintOf(bundle);
+
+  const startedAt = Date.now();
   let completion;
   try {
     completion = await client.complete(
@@ -312,9 +359,12 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       }),
     );
   } catch (err) {
-    await recordHumanFallback(`AI_ERROR: ${(err as Error).message}`);
+    await recordHumanFallback(`AI_ERROR: ${(err as Error).message}`, {
+      interaction: { latencyMs: Date.now() - startedAt, evidenceFingerprint },
+    });
     return;
   }
+  const latencyMs = Date.now() - startedAt;
 
   const parsed = parseFallbackResponse(completion.text);
   // NOTE ON `tokensUsed`: this is the REPLY completion only. A message can also pay for a query
@@ -329,6 +379,14 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     responseText: parsed.responseText,
     modelId: completion.modelId,
     tokensUsed: completion.tokensUsed,
+    interaction: {
+      latencyMs,
+      // The provider's own word for how the generation ended. `truncated` is this system's reading
+      // of it; keeping the raw form means a future provider's vocabulary is recorded rather than
+      // flattened into a boolean this code happened to define first.
+      finishReason: completion.truncated ? "length" : "stop",
+      evidenceFingerprint,
+    },
   };
 
   // The token ceiling cut the answer off. Because RESPONSE is the last line of the required
@@ -423,7 +481,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       testMode: params.group?.testModeEnabled ?? false,
   });
 
-  await createAiFallbackDecision({
+  const replied = await createAiFallbackDecision({
     messageId: params.message.id,
     accountId: params.accountId,
     groupId: params.group?.id ?? null,
@@ -435,7 +493,21 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     outcome: "AI_REPLIED",
     outboundMessageId: outboundMessageId ?? null,
     tokensUsed: completion.tokensUsed,
+    latencyMs,
+    finishReason: completion.truncated ? "length" : "stop",
+    promptVersion: PROMPT_VERSION,
+    retrievalVersion: RETRIEVAL_VERSION,
+    evidenceFingerprint,
+    correlationId: params.correlationId ?? null,
   });
+
+  // What the answer was built on, recorded against the decision that produced it. Written after the
+  // decision because it hangs off it, and never allowed to fail the interaction: the customer has
+  // already been answered by this point, and losing a reply because its audit record could not be
+  // filed would trade the outcome for the paperwork.
+  if ("id" in replied) {
+    await recordEvidenceSnapshot({ decisionId: replied.id, bundle, fingerprint: evidenceFingerprint });
+  }
 
   // The AI resolved this one without a person, and that is still support delivered to the
   // group — counted as an AI actor so it never inflates anyone's personal numbers. Its own

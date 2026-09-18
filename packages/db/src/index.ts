@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import type { AiFallbackOutcome, Prisma, WhatsAppServiceKey } from "@prisma/client";
 import { derivePatternSignature, validateRegexSafety } from "@support-automation/engine";
+import { knowledgeContentHash } from "@support-automation/shared";
 import type { RuleAction } from "@support-automation/shared";
 
 // Standard Next.js/Node singleton pattern: avoids exhausting Postgres
@@ -160,14 +161,80 @@ export async function resolveWhatsAppAccount(serviceKey: WhatsAppServiceKey): Pr
 const AI_SECRET_ALGORITHM = "aes-256-gcm";
 const AI_SECRET_IV_LENGTH = 12;
 
-function getAiSecretKey(): Buffer {
-  const secret = process.env.AI_CREDENTIALS_ENCRYPTION_KEY;
-  if (!secret) throw new Error("AI_CREDENTIALS_ENCRYPTION_KEY is not configured.");
-  const key = Buffer.from(secret, "base64");
+/**
+ * Which key encrypted a given secret, so the key can ever be changed.
+ *
+ * The stored envelope used to be `iv.tag.ciphertext` and named no key at all. With one key in one
+ * environment variable that reads as simplicity, and it is not: it makes rotation IMPOSSIBLE.
+ * Replace `AI_CREDENTIALS_ENCRYPTION_KEY` and every stored credential becomes permanently
+ * undecryptable, with no way to tell which rows were written under which key and therefore no
+ * migration to write. "We can rotate the key" was not true, and nothing in the system said so.
+ *
+ * The envelope is now `v2.<keyId>.<iv>.<tag>.<ciphertext>`. Rotation becomes an ordinary
+ * operation:
+ *
+ *   1. Generate a new key. Move the current one into `AI_CREDENTIALS_ENCRYPTION_KEYS_OLD` as
+ *      `{"<oldKeyId>":"<base64>"}`, keeping it available for DECRYPT only.
+ *   2. Set `AI_CREDENTIALS_ENCRYPTION_KEY` to the new key and `AI_CREDENTIALS_ENCRYPTION_KEY_ID`
+ *      to a new id.
+ *   3. Everything written from then on uses the new key; everything already stored still reads.
+ *   4. Re-encrypt at leisure with `reencryptSecret`, then — and only then — retire the old key.
+ *
+ * Step 4 is the one that must not be rushed: a key is not safe to destroy until every backup that
+ * might be restored has been migrated too, not merely the live rows.
+ */
+const LEGACY_KEY_ID = "v1";
+const ENVELOPE_PREFIX = "v2";
+
+function parseKey(raw: string, label: string): Buffer {
+  const key = Buffer.from(raw, "base64");
   if (key.length !== 32) {
-    throw new Error("AI_CREDENTIALS_ENCRYPTION_KEY must decode to 32 bytes (generate with: openssl rand -base64 32).");
+    throw new Error(`${label} must decode to 32 bytes (generate with: openssl rand -base64 32).`);
   }
   return key;
+}
+
+/** The key new secrets are encrypted with. */
+function getActiveKey(): { keyId: string; key: Buffer } {
+  const secret = process.env.AI_CREDENTIALS_ENCRYPTION_KEY;
+  if (!secret) throw new Error("AI_CREDENTIALS_ENCRYPTION_KEY is not configured.");
+  return {
+    // Defaults to the legacy id, so a deployment that has never rotated writes envelopes naming
+    // the key it has always used rather than inventing a new identity for it.
+    keyId: process.env.AI_CREDENTIALS_ENCRYPTION_KEY_ID?.trim() || LEGACY_KEY_ID,
+    key: parseKey(secret, "AI_CREDENTIALS_ENCRYPTION_KEY"),
+  };
+}
+
+/**
+ * Retired keys, kept only so old ciphertext still reads. A JSON object of id → base64 key.
+ *
+ * Deliberately separate from the active key: a key that can still decrypt is not the same as a key
+ * anything is allowed to encrypt with, and conflating the two is how a "rotation" silently keeps
+ * writing under the key it was supposed to retire.
+ */
+function getRetiredKeys(): Map<string, Buffer> {
+  const raw = process.env.AI_CREDENTIALS_ENCRYPTION_KEYS_OLD?.trim();
+  if (!raw) return new Map();
+  let parsed: Record<string, string>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, string>;
+  } catch {
+    throw new Error('AI_CREDENTIALS_ENCRYPTION_KEYS_OLD must be JSON, e.g. {"v1":"<base64 key>"}.');
+  }
+  return new Map(
+    Object.entries(parsed).map(([keyId, value]) => [keyId, parseKey(value, `AI_CREDENTIALS_ENCRYPTION_KEYS_OLD["${keyId}"]`)]),
+  );
+}
+
+function keyForDecryption(keyId: string): Buffer {
+  const active = getActiveKey();
+  if (keyId === active.keyId) return active.key;
+  const retired = getRetiredKeys().get(keyId);
+  if (retired) return retired;
+  throw new Error(
+    `No key available for encryption key id "${keyId}". Add it to AI_CREDENTIALS_ENCRYPTION_KEYS_OLD to read secrets written under it.`,
+  );
 }
 
 /**
@@ -181,21 +248,93 @@ function getAiSecretKey(): Buffer {
  * unaffected by that constraint.
  */
 export function encryptSecret(plaintext: string): string {
+  const { keyId, key } = getActiveKey();
   const iv = randomBytes(AI_SECRET_IV_LENGTH);
-  const cipher = createCipheriv(AI_SECRET_ALGORITHM, getAiSecretKey(), iv);
+  const cipher = createCipheriv(AI_SECRET_ALGORITHM, key, iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
-  return [iv, authTag, ciphertext].map((buf) => buf.toString("base64")).join(".");
+  return [ENVELOPE_PREFIX, keyId, ...[iv, authTag, ciphertext].map((buf) => buf.toString("base64"))].join(".");
 }
 
-/** Reverses encryptSecret — only ever called server-side, right before an outbound API call. */
+/**
+ * Reverses encryptSecret — only ever called server-side, right before an outbound API call.
+ *
+ * Reads BOTH envelopes. The legacy three-part form names no key, so it is decrypted with whatever
+ * the active key is, which is exactly what it was encrypted with: it predates rotation being
+ * possible at all. Keeping that path is not tidiness — every credential stored before this change
+ * is in that form, and dropping it would lock the deployment out of its own providers on deploy.
+ *
+ * AES-256-GCM throughout, so a wrong key does not silently return rubbish: the authentication tag
+ * fails and this throws. That property is what makes `reencryptSecret` safe to run in bulk.
+ */
 export function decryptSecret(stored: string): string {
-  const [ivB64, tagB64, ciphertextB64] = stored.split(".");
-  if (!ivB64 || !tagB64 || !ciphertextB64) throw new Error("Malformed encrypted secret.");
-  const decipher = createDecipheriv(AI_SECRET_ALGORITHM, getAiSecretKey(), Buffer.from(ivB64, "base64"));
-  decipher.setAuthTag(Buffer.from(tagB64, "base64"));
-  const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertextB64, "base64")), decipher.final()]);
+  const parts = stored.split(".");
+
+  const { keyId, iv, tag, ciphertext } =
+    parts.length === 5
+      ? { keyId: parts[1]!, iv: parts[2]!, tag: parts[3]!, ciphertext: parts[4]! }
+      : { keyId: LEGACY_KEY_ID, iv: parts[0]!, tag: parts[1]!, ciphertext: parts[2]! };
+
+  if (parts.length === 5 && parts[0] !== ENVELOPE_PREFIX) {
+    throw new Error(`Unknown encrypted secret format "${parts[0]}".`);
+  }
+  if (parts.length !== 3 && parts.length !== 5) throw new Error("Malformed encrypted secret.");
+  if (!iv || !tag || !ciphertext) throw new Error("Malformed encrypted secret.");
+
+  if (parts.length === 5) {
+    return openEnvelope(keyForDecryption(keyId), iv, tag, ciphertext);
+  }
+
+  // A LEGACY envelope names no key, so the only way to read it is to try the keys we hold — and
+  // that is sound rather than a guess, because AES-256-GCM authenticates: a wrong key fails the
+  // tag check and throws, it never returns plausible rubbish.
+  //
+  // Trying them matters on the FIRST rotation, which is the one a real deployment performs. Reading
+  // a legacy secret with the active key alone works right up until the key is rotated, at which
+  // point every credential written before key ids existed becomes unreadable — precisely the
+  // failure this whole change exists to prevent, reintroduced at the one moment it would bite.
+  const active = getActiveKey();
+  const candidates = [active.key, ...getRetiredKeys().values()];
+  for (const candidate of candidates) {
+    try {
+      return openEnvelope(candidate, iv, tag, ciphertext);
+    } catch {
+      // Wrong key for this secret. Keep going; the loop below reports it if none fit.
+    }
+  }
+  throw new Error(
+    "Could not decrypt a secret stored in the pre-key-id format with any configured key. Add the key it was written under to AI_CREDENTIALS_ENCRYPTION_KEYS_OLD.",
+  );
+}
+
+function openEnvelope(key: Buffer, iv: string, tag: string, ciphertext: string): string {
+  const decipher = createDecipheriv(AI_SECRET_ALGORITHM, key, Buffer.from(iv, "base64"));
+  decipher.setAuthTag(Buffer.from(tag, "base64"));
+  const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertext, "base64")), decipher.final()]);
   return plaintext.toString("utf8");
+}
+
+/** Which key a stored secret was written under, without decrypting it. */
+export function encryptionKeyIdOf(stored: string): string {
+  const parts = stored.split(".");
+  return parts.length === 5 && parts[0] === ENVELOPE_PREFIX ? parts[1]! : LEGACY_KEY_ID;
+}
+
+/**
+ * Moves one stored secret onto the active key: decrypt with whichever key wrote it, re-encrypt with
+ * the current one.
+ *
+ * The migration step of a rotation, and the reason rotation is now a real operation rather than a
+ * claim. Returns the value unchanged when it is already on the active key, so running it across
+ * every row repeatedly is safe and converges.
+ *
+ * Throws rather than returning the original if decryption fails — a secret that cannot be read is
+ * something an operator must see, not something to quietly carry forward under a key that cannot
+ * open it.
+ */
+export function reencryptSecret(stored: string): string {
+  if (encryptionKeyIdOf(stored) === getActiveKey().keyId && stored.split(".").length === 5) return stored;
+  return encryptSecret(decryptSecret(stored));
 }
 
 /** Never send the real key to the browser — show only enough to recognize which one it is. */
@@ -411,6 +550,17 @@ export interface CreateAiFallbackDecisionInput {
   outboundMessageId?: string | null;
   notificationId?: string | null;
   tokensUsed?: number | null;
+  /**
+   * How the generation went, in the provider's own terms, plus which version of THIS SYSTEM
+   * produced it. All optional: a decision recorded before a model was ever called — a media-only
+   * message, an exhausted cooldown — legitimately has none of them.
+   */
+  latencyMs?: number | null;
+  finishReason?: string | null;
+  promptVersion?: string | null;
+  retrievalVersion?: string | null;
+  evidenceFingerprint?: string | null;
+  correlationId?: string | null;
 }
 
 export type CreateAiFallbackDecisionResult = { id: string } | { error: string };
@@ -445,6 +595,12 @@ export async function createAiFallbackDecision(
         outboundMessageId: input.outboundMessageId || null,
         notificationId: input.notificationId || null,
         tokensUsed: input.tokensUsed ?? null,
+        latencyMs: input.latencyMs ?? null,
+        finishReason: input.finishReason ?? null,
+        promptVersion: input.promptVersion ?? null,
+        retrievalVersion: input.retrievalVersion ?? null,
+        evidenceFingerprint: input.evidenceFingerprint ?? null,
+        correlationId: input.correlationId ?? null,
       },
     });
     return { id: created.id };
@@ -454,4 +610,138 @@ export async function createAiFallbackDecision(
     }
     throw err;
   }
+}
+
+/**
+ * The one way a knowledge entry is created — used by every writer there is.
+ *
+ * Four places create knowledge: the dashboard form, an approved conversation candidate, the Forge
+ * repository sync, and live deep-answer research. They agreed on almost nothing. Two of them wrote
+ * no `AiKnowledgeVersion` row at all, so machine-written entries claimed `currentVersion: 1` with
+ * no version behind it — versioning existed and half the system ignored it, which is worse than not
+ * having it, because a snapshot pointing at version 1 of such an entry resolves to nothing.
+ *
+ * Centralising it also puts SCOPE in one place, and scope is the data-isolation boundary. Derived
+ * from provenance rather than asked of each caller: an entry carrying a `sourceGroupId` was learned
+ * from, or researched for, one particular group, so GROUP is what it is until a person decides
+ * otherwise. Entries with no group — a manual entry, a document import, the repository sync — are
+ * statements about the product and stay GLOBAL. "Unknown or ambiguous" resolves to the narrow
+ * answer, which is the only safe direction for a rule that decides whose information can be told
+ * to whom.
+ *
+ * Lives in this file rather than a sibling module for the reason the whole package does: zero
+ * relative imports between files in packages/db (see resolveWhatsAppAccount's own note).
+ */
+export interface CreateKnowledgeItemInput {
+  title: string;
+  category: Prisma.AiKnowledgeItemCreateInput["category"];
+  question?: string | null;
+  answer: string;
+  procedure?: string | null;
+  module?: string | null;
+  software?: string | null;
+  softwareVersion?: string | null;
+  source: string;
+  sourceGroupId?: string | null;
+  sourceLabel?: string | null;
+  sourceUrl?: string | null;
+  importId?: string | null;
+  confidence?: number | null;
+  aiGenerated: boolean;
+  humanVerified: boolean;
+  createdById?: string | null;
+  /** The person who approved it, when one did. Null for a machine-verified entry. */
+  verifiedById?: string | null;
+  /**
+   * Overrides the provenance-derived scope. Only pass this where the caller genuinely knows
+   * better than "it came from a group" — a person promoting an entry, or a source that is
+   * definitionally product-wide.
+   */
+  scope?: "GLOBAL" | "GROUP" | "ACCOUNT";
+  scopeAccountId?: string | null;
+  changeSummary?: string | null;
+}
+
+/** Provenance decides scope unless a caller states otherwise. See the doc comment above. */
+export function deriveKnowledgeScope(input: {
+  scope?: "GLOBAL" | "GROUP" | "ACCOUNT";
+  sourceGroupId?: string | null;
+}): "GLOBAL" | "GROUP" | "ACCOUNT" {
+  if (input.scope) return input.scope;
+  return input.sourceGroupId ? "GROUP" : "GLOBAL";
+}
+
+export async function createKnowledgeItem(input: CreateKnowledgeItemInput): Promise<{ id: string }> {
+  const scope = deriveKnowledgeScope(input);
+  const contentHash = knowledgeContentHash({
+    title: input.title,
+    question: input.question ?? null,
+    answer: input.answer,
+    procedure: input.procedure ?? null,
+    module: input.module ?? null,
+  });
+
+  const content = {
+    title: input.title,
+    category: input.category,
+    question: input.question ?? null,
+    answer: input.answer,
+    procedure: input.procedure ?? null,
+    software: input.software ?? null,
+    module: input.module ?? null,
+    softwareVersion: input.softwareVersion ?? null,
+  };
+
+  const created = await prisma.aiKnowledgeItem.create({
+    data: {
+      ...content,
+      source: input.source,
+      sourceGroupId: input.sourceGroupId ?? null,
+      sourceLabel: input.sourceLabel ?? null,
+      sourceUrl: input.sourceUrl ?? null,
+      importId: input.importId ?? null,
+      confidence: input.confidence ?? null,
+      aiGenerated: input.aiGenerated,
+      humanVerified: input.humanVerified,
+      scope,
+      scopeAccountId: scope === "ACCOUNT" ? (input.scopeAccountId ?? null) : null,
+      contentHash,
+      verifiedById: input.verifiedById ?? null,
+      // Stamped only when it is actually verified. A machine-verified entry has a time and no
+      // person, which is the truth about it rather than a gap.
+      verifiedAt: input.humanVerified ? new Date() : null,
+      currentVersion: 1,
+      createdById: input.createdById ?? null,
+      // ALWAYS written, by every path. An evidence snapshot records the version number it read,
+      // and that only resolves to content if the version row exists.
+      versions: {
+        create: {
+          version: 1,
+          ...content,
+          changeSummary: input.changeSummary ?? null,
+          createdById: input.createdById ?? null,
+        },
+      },
+    },
+    select: { id: true },
+  });
+
+  return created;
+}
+
+/**
+ * Entries whose content is byte-identical to this one, for a reviewer to look at.
+ *
+ * Reports, never merges. Two entries sharing a fingerprint may be a re-import of the same document
+ * — or the same wording arrived at independently for two different groups, where merging would
+ * destroy a distinct procedure and silently widen its scope. Similarity is a reason for a person
+ * to look, not an instruction to the database.
+ */
+export async function findKnowledgeDuplicates(contentHash: string, excludeId?: string) {
+  return prisma.aiKnowledgeItem.findMany({
+    where: { contentHash, ...(excludeId ? { id: { not: excludeId } } : {}) },
+    select: { id: true, title: true, scope: true, sourceGroupId: true, humanVerified: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+    take: 10,
+  });
 }
