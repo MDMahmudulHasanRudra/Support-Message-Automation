@@ -1,4 +1,4 @@
-import { normalizeText } from "./normalize.js";
+import { normalizeText, tokenizeWords } from "./normalize.js";
 
 /**
  * Pure, side-effect-free deterministic pattern-detection logic for Conversation Learning / Pattern
@@ -30,24 +30,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/**
- * Splits text into word tokens.
- *
- * `\p{M}` is in the keep-set, and for Bengali it is not optional. Bengali vowel signs — the কার
- * marks, ি া ে ো and the rest — are Unicode category Mark, not Letter. Without them here the
- * split treated every one as a separator, so ordinary words did not merely lose an accent, they
- * SHATTERED: "বিল" became "ব" + "ল" and "আমার" became "আম" + "র". Both fragments then fell under
- * MIN_TOKEN_LENGTH and were dropped, so the word disappeared from the signature entirely.
- *
- * The effect on this deployment, whose customers write Bengali: `derivePatternSignature("আমার বিল
- * কত")` returned ["আম","কত"] — the actual subject, বিল, gone. Every consumer inherited it, so
- * knowledge retrieval searched for fragments that match nothing, and Conversation Learning
- * clustered Bengali questions on debris. Latin text is unaffected: it carries no combining marks,
- * so the token set is identical to before for English and Banglish.
- */
-function tokenize(normalizedBody: string): string[] {
-  return normalizedBody.split(/[^\p{L}\p{N}\p{M}]+/u).filter(Boolean);
-}
 
 export interface PatternSignature {
   /** Deterministic, order-independent signature — the same recurring intent always produces the same key. */
@@ -64,7 +46,7 @@ export interface PatternSignature {
  */
 export function derivePatternSignature(rawBody: string): PatternSignature {
   const normalized = normalizeText(rawBody);
-  const distinctive = [...new Set(tokenize(normalized))].filter(
+  const distinctive = [...new Set(tokenizeWords(normalized))].filter(
     (token) => token.length >= MIN_TOKEN_LENGTH && !STOPWORDS.has(token),
   );
 
@@ -74,6 +56,48 @@ export function derivePatternSignature(rawBody: string): PatternSignature {
     .sort();
 
   return { patternKey: top.join("|"), keywords: top };
+}
+
+/**
+ * The most terms a single question contributes to ranking. Generous, because this is in-memory
+ * scoring rather than a database predicate, and bounded so that a customer pasting an essay
+ * cannot turn one reply into a long scan over every candidate.
+ */
+const MAX_QUERY_TERMS = 20;
+
+/**
+ * The content words of a message, for SEARCHING with — as opposed to
+ * `derivePatternSignature`, which produces a cluster KEY.
+ *
+ * These two jobs were being done by one function, and the costs landed on retrieval. A cluster key
+ * wants to be short, stable and order-independent, so that the same recurring intent always hashes
+ * to the same bucket — hence at most five tokens, longest-first, sorted. Every one of those
+ * properties is wrong for a query:
+ *
+ * - **Five terms is a ceiling on how much the ranker can know.** Scoring by how many of at most
+ *   five terms appear gives six possible scores, so hundreds of candidates collapse into a handful
+ *   of ties, and which three reach the customer is then settled by an arbitrary tiebreak.
+ * - **Longest-first is not specificity.** It is a corpus-free guess at it, and a poor one: it
+ *   prefers "internet" to "otp" in a question about one-time passwords. Rarity is the real signal,
+ *   and the ranker can measure it directly (see the BM25 scorer) — but only over terms it was
+ *   given, so a term dropped here can never be weighed there.
+ * - **Alphabetical sorting** is exactly right for a hash key and meaningless for a query.
+ *
+ * So this keeps every content word, in the order it was written, deduplicated. It deliberately
+ * does NOT change `derivePatternSignature`: that key is stored on every `PatternCandidate`, and
+ * altering it would re-bucket the entire Conversation Learning history.
+ */
+export function deriveQueryTerms(rawBody: string, limit = MAX_QUERY_TERMS): string[] {
+  const normalized = normalizeText(rawBody);
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const token of tokenizeWords(normalized)) {
+    if (token.length < MIN_TOKEN_LENGTH || STOPWORDS.has(token) || seen.has(token)) continue;
+    seen.add(token);
+    terms.push(token);
+    if (terms.length >= limit) break;
+  }
+  return terms;
 }
 
 export interface CandidateFloorInputs {

@@ -1,5 +1,6 @@
 import { prisma } from "@support-automation/db";
-import { containsWholeWord, derivePatternSignature, normalizeText } from "@support-automation/engine";
+import { containsWholeWord, derivePatternSignature, deriveQueryTerms, normalizeText } from "@support-automation/engine";
+import { bandByRelevance, rankByBm25 } from "./bm25.js";
 
 /**
  * Finds the knowledge entries worth putting in front of the AI before it answers a customer.
@@ -80,11 +81,15 @@ interface KnowledgeCandidate {
  * Ranks candidates against the customer's message. Pure and exported for direct unit testing —
  * no database, no IO.
  *
- * Scoring is deliberately simple keyword overlap rather than embeddings: this app has no vector
- * store, and one extra dependency plus an embedding call per message is a large price for a
- * knowledge base that will hold hundreds of entries, not millions. An entry drawn from the same
- * group wins ties, because the group a question is asked in is a real signal about which answer
- * applies.
+ * Scoring is BM25 (see `bm25.ts`) rather than embeddings, and that trade-off is unchanged: this
+ * app has no vector store, and one extra dependency plus an embedding call per message is a large
+ * price for a knowledge base that will hold hundreds of entries, not millions. What changed is the
+ * other side of it — the alternative to embeddings is no longer "count the matching keywords",
+ * which gave six possible scores for three hundred candidates and settled the rest with a cuid
+ * comparison. BM25 is the strongest ranking obtainable from the text alone and costs one pass.
+ *
+ * An entry drawn from the same group still wins ties, because the group a question is asked in is
+ * a real signal about which answer applies.
  */
 export function selectRelevantKnowledge(
   customerMessage: string,
@@ -111,42 +116,80 @@ export function rankRelevantKnowledge(
   limit = MAX_ENTRIES,
   extraKeywords: string[] = [],
 ): SearchResult {
-  const { keywords: derived } = derivePatternSignature(customerMessage);
-  // Ranking has to score on the same vocabulary the candidates were selected with. Scoring a
-  // Banglish question against entries found by their English expansion would give every one of
-  // them an overlap of zero, and the filter below would discard the rows the query just went to
-  // the trouble of finding.
-  const keywords = [...new Set([...derived, ...extraKeywords])];
-  if (keywords.length === 0) return { snippets: [], bestOverlap: 0 };
+  // TWO vocabularies, doing two different jobs, and keeping them apart is what confines this
+  // change to ordering.
+  //
+  // `matchVocabulary` is exactly what this function has always used: the pattern signature plus
+  // any expansion terms. It still decides WHICH entries are relevant (`overlap > 0`) and still
+  // produces `bestOverlap`. Both of those feed decisions outside this function — the relevance
+  // filter is recall, and `bestOverlap` is the integer `isStrongEnough` compares against 2 to
+  // decide whether to spend a completion on query expansion. Neither may move as a side effect of
+  // ranking better, so neither does.
+  //
+  // `rankVocabulary` adds every content word of the question. It is used ONLY to order the entries
+  // already selected above. This is where the old ranker was starved: scoring by how many of at
+  // most five signature terms matched gave six possible scores for up to three hundred candidates,
+  // so ties were the normal case and a cuid comparison settled them.
+  const { keywords: signature } = derivePatternSignature(customerMessage);
+  const matchVocabulary = [...new Set([...signature, ...extraKeywords])];
+  if (matchVocabulary.length === 0) return { snippets: [], bestOverlap: 0 };
+  const rankVocabulary = [...new Set([...matchVocabulary, ...deriveQueryTerms(customerMessage)])];
 
-  const scored = candidates
-    .map((candidate) => {
-      // `procedure` joins the haystack because it is evidence, not decoration. It was rendered
-      // into the prompt as `Steps:` but scored against nothing, so the entry whose step list
-      // named the exact screen the customer asked about ("Billing → Payment → Pay → Submit")
-      // scored zero on "payment" and lost its slot to a vaguer entry that happened to repeat the
-      // word in its answer text.
-      const haystack = normalizeText(
-        `${candidate.title} ${candidate.question ?? ""} ${candidate.answer} ${candidate.procedure ?? ""}`,
-      );
-      // Whole-word, not substring. `containsWholeWord` already existed in the engine for exactly
-      // this ("hi" inside "this", "or" inside "worker") and retrieval was not using it, so a
-      // 3-letter token like "net" matched "internet", "network" and "cabinet" — manufacturing
-      // grounding out of unrelated entries and, because grounding suppresses the handover, doing
-      // it at the moment the system should have asked a person.
-      const overlap = keywords.filter((keyword) => containsWholeWord(haystack, keyword)).length;
-      const fromSameGroup = Boolean(groupId) && candidate.sourceGroupId === groupId;
-      return { candidate, overlap, fromSameGroup, hasProcedure: Boolean(candidate.procedure?.trim()) };
+  const prepared = candidates.map((candidate) => ({
+    candidate,
+    // Kept as SEPARATE fields rather than concatenated into one haystack, which is the whole point
+    // of ranking with BM25F. `procedure` is scored because it is evidence, not decoration — it was
+    // rendered into the prompt as `Steps:` and scored against nothing, so the entry whose step list
+    // named the exact screen the customer asked about ("Billing → Payment → Pay → Submit") scored
+    // zero on "payment" and lost its slot to a vaguer entry that happened to repeat the word in its
+    // answer text. Flattening it into one blob fixes that and creates the opposite fault: the step
+    // list makes the document longer, and length normalisation then penalises the entry for
+    // carrying exactly the content that makes it the right answer.
+    fields: {
+      title: normalizeText(candidate.title),
+      question: normalizeText(candidate.question ?? ""),
+      answer: normalizeText(candidate.answer),
+      procedure: normalizeText(candidate.procedure ?? ""),
+    },
+    fromSameGroup: Boolean(groupId) && candidate.sourceGroupId === groupId,
+    hasProcedure: Boolean(candidate.procedure?.trim()),
+  }));
+
+  // RELEVANCE, unchanged. Whole-word over the match vocabulary, against the fields joined back
+  // together — the identical test this function has always applied. `containsWholeWord` is the
+  // engine's own primitive and matters here for the reason it always did: a 3-letter token like
+  // "net" must not match "internet", "network" and "cabinet", manufacturing grounding out of
+  // unrelated entries at the moment the system should have handed over to a person.
+  const relevant = prepared
+    .map((entry) => {
+      const joined = `${entry.fields.title} ${entry.fields.question} ${entry.fields.answer} ${entry.fields.procedure}`;
+      const overlap = matchVocabulary.filter((keyword) => containsWholeWord(joined, keyword)).length;
+      return { ...entry, overlap };
     })
     // An entry sharing no distinctive word with the question is not evidence for it.
-    .filter((entry) => entry.overlap > 0)
+    .filter((entry) => entry.overlap > 0);
+
+  // ORDER, and only order. BM25F over the entries already found relevant: rare terms outweigh
+  // common ones, repetition saturates rather than accumulating, a match in the title or the
+  // customer-phrased question counts for more than one buried in a paragraph, and each field's
+  // length is judged against other instances of that same field.
+  const ranked = rankByBm25(
+    relevant.map((entry) => ({ id: entry.candidate.id, fields: entry.fields })),
+    rankVocabulary,
+  );
+  const byId = new Map(relevant.map((entry) => [entry.candidate.id, entry]));
+  // Equally-relevant bands, so the two signals that were tiebreaks stay tiebreaks. A continuous
+  // score makes exact ties vanish, which would have silently retired both of them.
+  const bands = bandByRelevance(ranked);
+
+  const scored = ranked
+    .map((entry) => ({ ...byId.get(entry.id)!, band: bands.get(entry.id) ?? 0 }))
     .sort((a, b) => {
-      if (b.overlap !== a.overlap) return b.overlap - a.overlap;
-      // A TIEBREAK, deliberately not a weight. Two entries that match the question equally well
-      // are not equally useful when the question is "how do I do this" — the one carrying real
-      // steps is. Ranking it above its twin costs nothing when no procedure exists (the common
-      // case today) and cannot promote a less relevant entry over a more relevant one, because
-      // overlap is still compared first.
+      if (a.band !== b.band) return a.band - b.band;
+      // TIEBREAKS, deliberately not weights — the original reasoning, preserved. Two entries that
+      // match the question equally well are not equally useful when the question is "how do I do
+      // this": the one carrying real steps is. Because they only ever reorder within a band, they
+      // still cannot promote a meaningfully less relevant entry over a more relevant one.
       if (a.hasProcedure !== b.hasProcedure) return a.hasProcedure ? -1 : 1;
       if (a.fromSameGroup !== b.fromSameGroup) return a.fromSameGroup ? -1 : 1;
       // Stable final tiebreak so the same question always produces the same prompt.
@@ -172,7 +215,17 @@ export function rankRelevantKnowledge(
     fromSameGroup: entry.fromSameGroup,
   }));
 
-  return { snippets, bestOverlap: scored[0]?.overlap ?? 0 };
+  // The MAXIMUM matched-term count, not the top-ranked entry's.
+  //
+  // Those were the same number before and are not any more, which is the one place this change
+  // could have leaked out of ranking and into behaviour. Sorting was by overlap descending, so the
+  // first entry necessarily held the highest count; BM25 can now put a better-scoring entry with
+  // two matched terms above a worse one with three. Reading the count off the new first entry
+  // would therefore have moved `isStrongEnough`'s threshold — quietly changing when the system
+  // spends a completion on query expansion — as a side effect of reordering. Taking the maximum
+  // reproduces the old value exactly, in every case.
+  const bestOverlap = scored.reduce((best, entry) => Math.max(best, entry.overlap), 0);
+  return { snippets, bestOverlap };
 }
 
 /**
