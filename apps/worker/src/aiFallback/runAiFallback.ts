@@ -547,22 +547,39 @@ async function sendHumanFallbackAlert(params: {
   if (takeoverDestinations.length > 0) {
     const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP");
     if (!isResolutionError(resolution)) {
-      const sent = await enqueueNotification({
-        type: "WHATSAPP",
-        event: "AI_HUMAN_FALLBACK",
-        destination: takeoverDestinations[0]!,
-        accountId: resolution.accountId,
-        relatedMessageId: params.messageId,
-        payload,
-      });
-      // `suppressed` means the admin muted this event's WhatsApp channel, so NOTHING was written
-      // and `id` is the empty string rather than a real Notification id. Returning it would write
-      // "" into AiFallbackDecision.notificationId — a foreign key — which fails with P2003, and
-      // createAiFallbackDecision only swallows P2002. That rethrow used to destroy the decision
-      // row, the in-group mention and the Forge research task together, so muting one alert
-      // channel silently blinded the entire handover path. Fall through to Teams instead: a muted
-      // WhatsApp channel is a statement about WhatsApp, not about whether the team is told at all.
-      if (!sent.suppressed) return sent.id;
+      // EVERY configured destination, not just the first.
+      //
+      // This read `takeoverDestinations[0]` and nothing else, so an admin who listed three groups
+      // had two of them silently never told about a handover — the setting accepted the list, the
+      // page showed the list, and one group heard about it. Same loop the unknown-pattern alert
+      // in patternDetectionJob.ts already uses.
+      //
+      // The FIRST id that is actually written is what the decision links to: the handover is one
+      // event however many places it was announced in, and `AiFallbackDecision.notificationId` is
+      // a single foreign key. A muted channel writes nothing at all (`suppressed`), which is why
+      // that is tested per destination rather than assumed from the first.
+      let firstNotificationId: string | null = null;
+      for (const destination of takeoverDestinations) {
+        const queued = await enqueueNotification({
+          type: "WHATSAPP",
+          event: "AI_HUMAN_FALLBACK",
+          destination,
+          accountId: resolution.accountId,
+          relatedMessageId: params.messageId,
+          payload,
+        });
+        // `suppressed` means the admin muted this event's WhatsApp channel, so NOTHING was written
+        // and `id` is the empty string rather than a real Notification id. Recording it would write
+        // "" into AiFallbackDecision.notificationId — a foreign key — which fails with P2003, and
+        // createAiFallbackDecision only swallows P2002. That rethrow used to destroy the decision
+        // row, the in-group mention and the Forge research task together, so muting one alert
+        // channel silently blinded the entire handover path.
+        if (!queued.suppressed && !firstNotificationId) firstNotificationId = queued.id;
+      }
+      // Something was genuinely written, so this is where the handover was announced. A muted
+      // channel falls through to Teams instead: that is a statement about WhatsApp, not about
+      // whether the team is told at all.
+      if (firstNotificationId) return firstNotificationId;
     }
   }
 

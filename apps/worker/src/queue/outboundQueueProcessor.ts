@@ -6,6 +6,7 @@ import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { isCooldownActive } from "./cooldown.js";
 import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from "./rateLimiter.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
+import { getAiSettings } from "../ai/settings.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import {
   countJobSentLastMinute,
@@ -285,26 +286,45 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
     }
   }
 
-  if (message.ruleId) {
-    const rule = await prisma.automationRule.findUnique({
-      where: { id: message.ruleId },
-      select: { cooldownSeconds: true },
+  // The cooldown re-check, for BOTH kinds of cooled-down reply.
+  //
+  // This used to be `if (message.ruleId)` and nothing else — so it never ran for an AI reply,
+  // which is rule-less by construction (`ruleId: null`, see runAiFallback). The enqueue-time check
+  // in safety.ts was therefore the only one, and it is a read-then-write: two messages from one
+  // customer processed concurrently both look at the window before either has inserted, both see
+  // it empty, and both queue a reply under legitimately different idempotency keys. Nothing
+  // downstream looked at them again, so the customer got two AI answers inside a five-minute
+  // cooldown.
+  //
+  // Deliberately NOT applied to every rule-less row. MANUAL_REPLY is rule-less too, and an AI
+  // cooldown must never hold back something a person typed — the switch stops the robot, not the
+  // operator. GROUP_BROADCAST is rule-less and has its own pacing. So this is narrowed to exactly
+  // what the AI fallback produces: an AUTO_REPLY with no rule behind it.
+  const cooldownSeconds = message.ruleId
+    ? (await prisma.automationRule.findUnique({ where: { id: message.ruleId }, select: { cooldownSeconds: true } }))
+        ?.cooldownSeconds ?? null
+    : message.actionType === "AUTO_REPLY"
+      ? (await getAiSettings()).aiReplyCooldownSeconds
+      : null;
+
+  // Test mode lifts cooldowns at enqueue time (safety.ts); it has to lift them here too, or an
+  // approved test group could queue a reply and then have it cancelled on the way out.
+  if (cooldownSeconds && cooldownSeconds > 0 && !inTestMode) {
+    const cooling = await isCooldownActive({
+      accountId: message.accountId,
+      toPhone: message.toPhone,
+      ruleId: message.ruleId,
+      cooldownSeconds,
+      // Without this the claim that just flipped THIS row to PROCESSING is itself found by the
+      // lookup, and every send reports its own cooldown. See isCooldownActive's own doc comment.
+      excludeOutboundMessageId: message.id,
     });
-    if (rule?.cooldownSeconds) {
-      const cooling = await isCooldownActive({
-        accountId: message.accountId,
-        toPhone: message.toPhone,
-        ruleId: message.ruleId,
-        cooldownSeconds: rule.cooldownSeconds,
-        excludeOutboundMessageId: message.id,
+    if (cooling) {
+      await prisma.outboundMessage.update({
+        where: { id: message.id },
+        data: { status: "CANCELLED", failureReason: "Cooldown became active before this message could be sent." },
       });
-      if (cooling) {
-        await prisma.outboundMessage.update({
-          where: { id: message.id },
-          data: { status: "CANCELLED", failureReason: "Cooldown became active before this message could be sent." },
-        });
-        return;
-      }
+      return;
     }
   }
 

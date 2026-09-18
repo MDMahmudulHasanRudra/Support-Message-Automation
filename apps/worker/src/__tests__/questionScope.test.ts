@@ -375,3 +375,69 @@ describe("buildFallbackPrompt — answering with steps", () => {
     expect(built.userPrompt).not.toContain("Steps:");
   });
 });
+
+describe("parseFallbackResponse — metadata must never reach the customer", () => {
+  it("stops the reply at the first metadata line that follows it", () => {
+    // The model is asked for six lines in a fixed order, and at temperature 0 it almost always
+    // obliges. `RESPONSE:` was extracted with `[\s\S]+` — everything to the end of the string — so
+    // the one time it does not oblige, the leftover metadata is sent to the customer verbatim.
+    // Nothing else in the pipeline inspects the reply text before it is queued.
+    const parsed = parseFallbackResponse(
+      ["INTENT: greeting", "SCOPE: GENERAL", "RESPONSE: hello there", "CONFIDENCE: 95", "SHOULD_REPLY: YES"].join("\n"),
+    );
+
+    expect(parsed.responseText).toBe("hello there");
+    // The metadata is still read from wherever it appears — cutting the reply short must not cost
+    // us the fields the gates depend on.
+    expect(parsed.confidence).toBe(95);
+    expect(parsed.shouldReply).toBe(true);
+  });
+
+  it("stops at every one of the five markers", () => {
+    for (const marker of ["INTENT", "SCOPE", "LANGUAGE", "CONFIDENCE", "SHOULD_REPLY"]) {
+      const parsed = parseFallbackResponse(
+        ["CONFIDENCE: 95", "SHOULD_REPLY: YES", "RESPONSE: the real answer", `${marker}: leaked`].join("\n"),
+      );
+      expect(parsed.responseText, marker).toBe("the real answer");
+    }
+  });
+
+  it("keeps a multi-line reply intact", () => {
+    // The cut must be at a metadata LINE, never at the first colon — ordinary replies contain
+    // colons, arrows and numbered steps, and truncating one mid-procedure would be worse than the
+    // leak it is guarding against.
+    const reply = "Here is how:\n1. Open Billing\n2. Press Pay\nThat is all.";
+    const parsed = parseFallbackResponse(
+      ["CONFIDENCE: 95", "SHOULD_REPLY: YES", `RESPONSE: ${reply}`].join("\n"),
+    );
+    expect(parsed.responseText).toBe(reply);
+  });
+});
+
+describe("parseFallbackResponse — confidence must be a real percentage", () => {
+  it("accepts the whole valid range", () => {
+    for (const value of [0, 1, 50, 95, 100]) {
+      const parsed = parseFallbackResponse(
+        [`CONFIDENCE: ${value}`, "SHOULD_REPLY: YES", "RESPONSE: hi"].join("\n"),
+      );
+      expect(parsed.confidence, String(value)).toBe(value);
+    }
+  });
+
+  it("treats a value outside 0-100 as malformed rather than clamping it", () => {
+    // Clamping turned a garbled line into MAXIMUM confidence, which then cleared the 90% threshold
+    // and sent the reply. A number the model could not have meant is evidence the format broke,
+    // and a broken format is exactly what MALFORMED_RESPONSE exists to catch — null is what
+    // runAiFallback reads as that.
+    for (const value of ["900", "101", "-1", "-50"]) {
+      const parsed = parseFallbackResponse(
+        [`CONFIDENCE: ${value}`, "SHOULD_REPLY: YES", "RESPONSE: hi"].join("\n"),
+      );
+      expect(parsed.confidence, value).toBeNull();
+    }
+  });
+
+  it("still reports a missing confidence line as null", () => {
+    expect(parseFallbackResponse("SHOULD_REPLY: YES\nRESPONSE: hi").confidence).toBeNull();
+  });
+});

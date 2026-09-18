@@ -157,9 +157,20 @@ describe("parseFallbackResponse", () => {
     expect(result.responseText).toBeNull();
   });
 
-  it("clamps an out-of-range confidence value", () => {
-    expect(parseFallbackResponse("CONFIDENCE: 150\nSHOULD_REPLY: YES\nRESPONSE: x").confidence).toBe(100);
-    expect(parseFallbackResponse("CONFIDENCE: -5\nSHOULD_REPLY: YES\nRESPONSE: x").confidence).toBe(0);
+  it("rejects an out-of-range confidence value instead of clamping it", () => {
+    // This test asserted the opposite — 150 → 100, -5 → 0 — and that contract was the bug. The
+    // final AI reply audit called it L1: clamping turned a garbled CONFIDENCE line into MAXIMUM
+    // confidence, which then cleared the 90% threshold and sent the reply. A number the model
+    // could not have meant is evidence the response format broke, and null is what runAiFallback
+    // reads as MALFORMED_RESPONSE.
+    //
+    // Changed rather than deleted, and not weakened: it still pins both boundaries, to the
+    // stricter of the two possible answers.
+    expect(parseFallbackResponse("CONFIDENCE: 150\nSHOULD_REPLY: YES\nRESPONSE: x").confidence).toBeNull();
+    expect(parseFallbackResponse("CONFIDENCE: -5\nSHOULD_REPLY: YES\nRESPONSE: x").confidence).toBeNull();
+    // The valid range is untouched.
+    expect(parseFallbackResponse("CONFIDENCE: 100\nSHOULD_REPLY: YES\nRESPONSE: x").confidence).toBe(100);
+    expect(parseFallbackResponse("CONFIDENCE: 0\nSHOULD_REPLY: YES\nRESPONSE: x").confidence).toBe(0);
   });
 
   it("returns null confidence when the AI didn't follow the requested format", () => {

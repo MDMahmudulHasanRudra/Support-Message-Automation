@@ -307,14 +307,54 @@ export function parseFallbackResponse(text: string): ParsedFallbackResponse {
   const intent = intentMatch ? intentMatch[1]!.trim() : null;
   // Fail closed: only an explicit, well-formed GENERAL relaxes the gate.
   const scope: QuestionScope = scopeMatch?.[1]?.toUpperCase() === "GENERAL" ? "GENERAL" : "BUSINESS_SPECIFIC";
-  const confidence = confidenceMatch ? Math.max(0, Math.min(100, Number(confidenceMatch[1]))) : null;
+
+  // A percentage, or nothing. Clamping was the wrong instinct: `Math.min(100, 900)` turned a
+  // garbled line into MAXIMUM confidence, which then cleared the threshold and sent the reply.
+  // A number the model could not have meant is evidence that the response format broke, and a
+  // broken format is precisely what MALFORMED_RESPONSE exists to catch — null is how
+  // runAiFallback reads that.
+  const confidence = readConfidence(confidenceMatch?.[1]);
+
   const shouldReply = shouldReplyMatch ? shouldReplyMatch[1]!.toUpperCase() === "YES" : false;
 
   let responseText: string | null = null;
   if (responseMatch) {
-    const raw = responseMatch[1]!.trim();
+    const raw = stopAtNextMetadataLine(responseMatch[1]!).trim();
     responseText = raw.length === 0 || raw.toUpperCase() === "NONE" ? null : raw;
   }
 
   return { intent, scope, confidence, shouldReply, responseText };
+}
+
+function readConfidence(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 100) return null;
+  return value;
+}
+
+/**
+ * The metadata lines, as they appear at the START of a line and nowhere else.
+ *
+ * Anchored to a line beginning on purpose. An ordinary reply is full of colons — "Billing list →
+ * Payment → Pay: enter the amount" — and cutting at the first one anywhere would truncate real
+ * answers mid-procedure, which is a worse failure than the leak this prevents.
+ */
+const METADATA_LINE = /^\s*(?:INTENT|SCOPE|LANGUAGE|CONFIDENCE|SHOULD_REPLY)\s*:/im;
+
+/**
+ * Trims anything after `RESPONSE:` that is plainly the model's own metadata rather than the reply.
+ *
+ * `RESPONSE:` was extracted with `[\s\S]+` — everything to the end of the string — on the
+ * assumption that it is the last line of the required format. At temperature 0 with an explicit
+ * six-line template it nearly always is. The one time it is not, the leftover
+ * "CONFIDENCE: 95 / SHOULD_REPLY: YES" is queued and sent to the customer verbatim: nothing
+ * downstream inspects the reply text, and every gate above it has already passed.
+ *
+ * Deliberately a trim rather than a rejection. The reply itself is there and is fine; discarding
+ * it over the model's line ordering would cost a customer their answer to fix a formatting slip.
+ */
+function stopAtNextMetadataLine(afterResponseMarker: string): string {
+  const match = afterResponseMarker.match(METADATA_LINE);
+  return match?.index === undefined ? afterResponseMarker : afterResponseMarker.slice(0, match.index);
 }

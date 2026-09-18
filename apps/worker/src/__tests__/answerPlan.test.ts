@@ -46,6 +46,55 @@ describe("question shape", () => {
       expect(detectQuestionShape(q), q).toBe("FACTUAL");
     }
   });
+
+  it("reads the `X korar <noun>` construction as a how-to", () => {
+    // The gap the final audit found, reproduced against real phrasings. The token list carried
+    // `korbo`/`korte`/`koris` but not `korar` — the form used in the single most common Banglish
+    // how-to construction, "X korar niyom/upay/system/way". Every one of these read as FACTUAL, so
+    // `missingProcedure` stayed false, `renderAnswerPlan` emitted no "no documented steps"
+    // instruction, and `validateGrounding` returned ok without testing anything.
+    for (const q of [
+      "package upgrade korar system ta ki",
+      "invoice void korar upay ki",
+      "recharge korar way ki",
+      "bill generate korar poddhoti",
+      "customer add korar niyom ki",
+    ]) {
+      expect(detectQuestionShape(q), q).toBe("PROCEDURAL");
+    }
+  });
+
+  it("reads `ki vabe` written as two words", () => {
+    // `kivabe` was a token; the spaced form people actually type was not, so the most literal way
+    // of writing "how" in Banglish was the one that missed.
+    for (const q of ["ki vabe bill dibo", "ki bhabe package change korbo", "kemne korbo eta"]) {
+      expect(detectQuestionShape(q), q).toBe("PROCEDURAL");
+    }
+  });
+
+  it("still does not fire on ordinary English containing `system` or `way`", () => {
+    // `system` and `way` were deliberately NOT added as bare tokens. Both listed examples reach
+    // PROCEDURAL through `korar` already, and as standalone English words they appear constantly
+    // in ordinary support conversation — classifying those as how-to questions would demand
+    // documented steps that do not exist and hand over answers the system could have given.
+    for (const q of ["the system is down", "the engineer is on the way", "is there any way to check"]) {
+      expect(detectQuestionShape(q), q).toBe("FACTUAL");
+    }
+  });
+});
+
+describe("the invented-procedure gate actually engages for those questions", () => {
+  it("blocks an invented numbered procedure for a `korar <noun>` question", () => {
+    // End to end, and the reason H1 mattered: it is not about a label, it is about whether the
+    // last mechanical guard against an invented procedure runs at all.
+    const plan = buildAnswerPlan("recharge korar way ki", [
+      snippet({ id: "a", title: "Recharge", procedure: null }),
+    ]);
+    expect(plan.missingProcedure).toBe(true);
+
+    const invented = ["1. Open Billing", "2. Click Recharge", "3. Enter amount", "4. Submit"].join("\n");
+    expect(validateGrounding(invented, plan).ok).toBe(false);
+  });
 });
 
 describe("single documented workflow", () => {

@@ -76,7 +76,21 @@ const PROCEDURAL_TOKENS = [
   "korbo",
   "korte",
   "koris",
+  // The single most common Banglish how-to construction, and the one this list missed: "X korar
+  // niyom / upay / system / way / process". `korbo`/`korte` are the first-person and infinitive
+  // forms; `korar` is the genitive, and it is what people actually type when the sentence ends in
+  // a noun. Every "korar" phrasing read as FACTUAL, which switched off the invented-procedure
+  // gate for exactly those questions.
+  "korar",
   "niyom",
+  // Method nouns. Precise — these mean "way/method" and nothing else. Deliberately NOT their
+  // English counterparts `system` and `way` as bare tokens: both listed examples reach PROCEDURAL
+  // through `korar` already, and as standalone English words they appear constantly in ordinary
+  // support conversation ("the system is down", "the engineer is on the way"), where treating
+  // them as a how-to would demand documented steps that do not exist and hand over answers this
+  // system could have given.
+  "upay",
+  "poddhoti",
   // English
   "how",
   "steps",
@@ -87,8 +101,23 @@ const PROCEDURAL_TOKENS = [
   "configure",
 ];
 
-/** Multi-word English forms a single-token test would miss. */
-const PROCEDURAL_PHRASES = ["how do i", "how to", "how can i", "how does one", "what are the steps"];
+/**
+ * Multi-word forms a single-token test would miss.
+ *
+ * The Banglish entries matter as much as the English ones: `kivabe` was a token, but the spaced
+ * `ki vabe` — the most literal way of writing "how" — was not, so the plainest phrasing was the
+ * one that slipped through.
+ */
+const PROCEDURAL_PHRASES = [
+  "how do i",
+  "how to",
+  "how can i",
+  "how does one",
+  "what are the steps",
+  "ki vabe",
+  "ki bhabe",
+  "kemne korbo",
+];
 
 export function detectQuestionShape(customerMessage: string): QuestionShape {
   const normalized = normalizeText(customerMessage);
