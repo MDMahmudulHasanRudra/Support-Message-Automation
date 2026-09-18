@@ -16,8 +16,13 @@ import { QrConnectDialog, type PairingMethod } from "./QrConnectDialog";
 const STATUS_HINT: Record<string, string> = {
   CONNECTED: "Sending and receiving normally.",
   DISCONNECTED: "Not linked to a phone. Connect to scan a QR code, or link by phone number.",
-  RECONNECTING: "The worker is bringing this session back up.",
-  AUTHENTICATION_REQUIRED: "Waiting for a QR scan on the phone.",
+  // This line used to read "The worker is bringing this session back up." It was a promise nothing
+  // kept: RECONNECTING is not a step on the way to CONNECTED, it is every pre-connected state
+  // rolled into one, and nothing recovered an account that got stuck there. On 18 Sep 2026 a
+  // number sat in exactly this state for three hours while the dashboard said it was being fixed,
+  // which is worse than saying nothing — somebody read it and waited.
+  RECONNECTING: "Connecting. Not receiving customer messages while this lasts — if it stays here for more than a few minutes, press Reconnect.",
+  AUTHENTICATION_REQUIRED: "Waiting for a QR scan on the phone. Not receiving customer messages until it is linked.",
   SESSION_ERROR: "The session broke. Reconnect, and log out first if that does not clear it.",
   OUTBOUND_PAUSED: "Receiving, but not sending.",
   RATE_LIMITED: "Holding back sends to protect the number.",

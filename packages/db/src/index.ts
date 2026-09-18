@@ -10,10 +10,62 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
+/**
+ * Every process that opens this client gets a BOUNDED pool, whatever the deployment's
+ * `DATABASE_URL` happens to say.
+ *
+ * Prisma's default pool size is `num_cpus * 2 + 1` PER PROCESS, and nothing here ever set one:
+ * `app` and `worker` each sized themselves from the host's core count against a stock
+ * `postgres:16-alpine` whose `max_connections` is 100. On a multi-core VPS that is a large,
+ * silently self-scaling share of the server's connection budget claimed by two processes that
+ * spend most of their time idle — and the cost is not only the ceiling. Every Postgres connection
+ * is a backend process with its own memory, so an oversized pool shows up as load and RSS long
+ * before it shows up as "too many clients".
+ *
+ * The test harness has carried exactly these three parameters since the day an unbounded pool
+ * started failing suites at random with "Can't reach database server" while Postgres itself sat
+ * healthy and idle (see CLAUDE.md's testing section). That lesson was never applied to production;
+ * this is it applied.
+ *
+ * A URL that already names a parameter keeps its own value, untouched — that is what leaves
+ * `test:isolated`'s deliberately tighter pool exactly as it was, and what lets a deployment
+ * override any of the three without a code change.
+ */
+function withPoolBounds(url: string | undefined): string | null {
+  if (!url) return null;
+  const defaults: Record<string, string> = {
+    // Ten is comfortably above what either process runs concurrently — the worker's loops are
+    // overlap-guarded and serial, and the dashboard renders a page at a time — while keeping both
+    // processes together well inside a stock 100 even with migrations and a psql session open.
+    connection_limit: process.env.DATABASE_POOL_SIZE || "10",
+    // Wait for a pooled connection rather than failing instantly under a burst. The default is
+    // already 10s; naming it keeps the three values in one place.
+    pool_timeout: "20",
+    connect_timeout: "30",
+  };
+
+  try {
+    const parsed = new URL(url);
+    for (const [key, value] of Object.entries(defaults)) {
+      if (!parsed.searchParams.has(key)) parsed.searchParams.set(key, value);
+    }
+    return parsed.toString();
+  } catch {
+    // An unparseable URL is Prisma's problem to report, with its own far better message. Silently
+    // rewriting it here would only replace that with something more confusing.
+    return url;
+  }
+}
+
+const boundedUrl = withPoolBounds(process.env.DATABASE_URL);
+
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    // Omitted entirely when there is no URL to bound, so an unset DATABASE_URL still produces
+    // Prisma's own startup error rather than a confusing one from here.
+    ...(boundedUrl ? { datasources: { db: { url: boundedUrl } } } : {}),
   });
 
 if (process.env.NODE_ENV !== "production") {

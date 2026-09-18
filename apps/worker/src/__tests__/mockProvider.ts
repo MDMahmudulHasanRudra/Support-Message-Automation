@@ -1,4 +1,11 @@
-import type { ConnectionStatus, GroupInfo, GroupParticipant, SendResult, WhatsAppProvider } from "../provider/WhatsAppProvider.js";
+import type {
+  CollectionProbe,
+  ConnectionStatus,
+  GroupInfo,
+  GroupParticipant,
+  SendResult,
+  WhatsAppProvider,
+} from "../provider/WhatsAppProvider.js";
 import type { RawIncomingMessage } from "../pipeline/types.js";
 
 /**
@@ -17,14 +24,33 @@ export class MockProvider implements WhatsAppProvider {
   public loggedOut = false;
   public addedParticipants: Array<{ chatId: string; phoneNumber: string }> = [];
   public nextAddParticipantResult: SendResult = { success: true };
+  /** Overridden by a test that needs the provider to report a status it is not really in. */
+  public connectionStatus: ConnectionStatus = "CONNECTED";
+  /**
+   * Set by a watchdog test to make the probe fail. Null means "answer normally from
+   * `missedMessages`" — the only behaviour every pre-existing test knows about.
+   */
+  public probeFailureReason: string | null = null;
 
-  async connect(): Promise<void> {}
+  /**
+   * How many times anything asked this provider to connect.
+   *
+   * Asserted by the collection watchdog's tests: "never retried" is the load-bearing half of how
+   * AUTHENTICATION_REQUIRED is handled, and a test that only checks an alert was raised would not
+   * notice a change that started reconnecting in a loop behind it, rotating a QR nobody is
+   * looking at.
+   */
+  public connectAttempts = 0;
+
+  async connect(): Promise<void> {
+    this.connectAttempts += 1;
+  }
   async disconnect(): Promise<void> {}
   async logout(): Promise<void> {
     this.loggedOut = true;
   }
   getConnectionStatus(): ConnectionStatus {
-    return "CONNECTED";
+    return this.connectionStatus;
   }
   async getGroups(): Promise<GroupInfo[]> {
     return [];
@@ -35,7 +61,13 @@ export class MockProvider implements WhatsAppProvider {
   subscribeToMessages(): void {}
 
   async fetchMessagesSince(since: Date, limit: number): Promise<RawIncomingMessage[]> {
-    return this.missedMessages.filter((message) => message.timestampWa > since).slice(0, limit);
+    const probe = await this.probeCollection(since, limit);
+    return probe.ok ? probe.messages : [];
+  }
+
+  async probeCollection(since: Date, limit: number): Promise<CollectionProbe> {
+    if (this.probeFailureReason) return { ok: false, reason: this.probeFailureReason };
+    return { ok: true, messages: this.missedMessages.filter((m) => m.timestampWa > since).slice(0, limit) };
   }
   async getAccountInfo() {
     return { phoneNumber: "+8801000000000", pushName: "Mock Account" };

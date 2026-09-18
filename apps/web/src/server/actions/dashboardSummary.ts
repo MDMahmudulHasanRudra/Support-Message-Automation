@@ -274,6 +274,78 @@ export async function getWorkerLivenessSummary(nowMs: number) {
   };
 }
 
+/**
+ * How long a connected number can store nothing before it is worth a line on the Overview.
+ *
+ * Longer than the worker watchdog's own 45-minute probe threshold on purpose. The worker can ASK
+ * WhatsApp and get a real answer; this page can only read what was stored, so it is working from
+ * strictly weaker evidence and should speak strictly later. By the time this shows anything, the
+ * worker has already probed twice.
+ */
+const COLLECTION_SILENT_AFTER_MS = 90 * 60_000;
+
+/** A state a session cannot leave by itself. Each needs a person, and none of them says so anywhere. */
+const STUCK_STATUSES = ["AUTHENTICATION_REQUIRED", "SESSION_ERROR", "RECONNECTING"] as const;
+
+/**
+ * Whether any number that ought to be collecting customer messages has gone quiet, or is stuck in
+ * a state it cannot leave on its own.
+ *
+ * The 18 Sep 2026 outage ran for 3 h 15 m with a green dashboard, so this is the one reading the
+ * Overview was missing: not "is a session connected", which was TRUE throughout, but "is a number
+ * that should be receiving messages actually receiving them".
+ *
+ * **It reports an observation, never a verdict.** A quiet number is quiet — that is all this can
+ * honestly know from stored rows, and a genuinely silent night looks identical. Deciding whether
+ * silence is a fault requires asking WhatsApp, which only the worker can do, so the wording at the
+ * call site is a question rather than an accusation. What makes it worth showing anyway is that
+ * the cost of the two mistakes is wildly asymmetric: a needless glance at a quiet Friday costs a
+ * few seconds, and the alternative cost three hours of unanswered customers.
+ *
+ * Scoped to accounts that have connected before AND have monitored active groups — a number in
+ * nothing, or one never linked, is supposed to be silent and must never appear here.
+ */
+export async function getCollectionHealthSummary(nowMs: number) {
+  const accounts = await prisma.whatsAppAccount.findMany({
+    where: {
+      lastConnectedAt: { not: null },
+      groups: { some: { isActive: true, isMonitored: true } },
+    },
+    select: { id: true, label: true, status: true },
+  });
+
+  // One index probe each on Message(accountId, timestampWa), and there are only ever a handful of
+  // accounts. Deliberately not a groupBy: that aggregates across the whole table, which is the
+  // scan this is avoiding.
+  const newestPerAccount = await Promise.all(
+    accounts.map(async (account) => ({
+      account,
+      newest: await prisma.message.findFirst({
+        where: { accountId: account.id },
+        orderBy: { timestampWa: "desc" },
+        select: { timestampWa: true },
+      }),
+    })),
+  );
+
+  const silentAccounts: Array<{ label: string; quietForMinutes: number }> = [];
+  const stuckAccounts: Array<{ label: string; status: string }> = [];
+
+  for (const { account, newest } of newestPerAccount) {
+    if ((STUCK_STATUSES as readonly string[]).includes(account.status)) {
+      stuckAccounts.push({ label: account.label, status: account.status });
+      continue;
+    }
+    if (account.status !== "CONNECTED") continue; // an offline account is already its own entry
+    if (!newest) continue; // never stored anything: being set up, not gone deaf
+    const quietForMs = nowMs - newest.timestampWa.getTime();
+    if (quietForMs < COLLECTION_SILENT_AFTER_MS) continue;
+    silentAccounts.push({ label: account.label, quietForMinutes: Math.floor(quietForMs / 60_000) });
+  }
+
+  return { silentAccounts, stuckAccounts };
+}
+
 /** What the automation layer actually did with one message, in the words the charts already use. */
 export interface MessageTrace {
   label: string;

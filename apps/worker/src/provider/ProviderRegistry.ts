@@ -4,6 +4,7 @@ import type { WhatsAppProvider } from "./WhatsAppProvider.js";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
 import { syncGroupsWithTimeoutAndRetry } from "../commands/commandProcessor.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
+import { countDroppedMessage } from "../pipeline/dropCounter.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 
 const CONNECT_RETRY_DELAYS_MS = [15_000, 45_000]; // bounded, matching the spec's "safe retry policy" spirit — not unlimited
@@ -83,6 +84,11 @@ export class ProviderRegistry {
       );
       processIncomingMessage(message).catch((err) => {
         console.error("[worker] error processing incoming message", err);
+        // The message may have been stored before the throw or not at all, and from here there is
+        // no way to tell. Counting it either way is the honest choice: what this number answers is
+        // "how many messages went wrong", and an over-count that makes somebody look is far better
+        // than an under-count that lets a shape change pass as a quiet afternoon.
+        countDroppedMessage(message.accountId, "PIPELINE_ERROR");
         logSystemEvent("ERROR", "pipeline", "Error processing incoming message", {
           error: (err as Error).message,
           accountId: message.accountId,

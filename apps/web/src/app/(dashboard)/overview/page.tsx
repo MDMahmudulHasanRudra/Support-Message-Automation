@@ -52,6 +52,7 @@ import {
   getConversationLearningSummary,
   getEscalationSummary,
   getNotificationsSummary,
+  getCollectionHealthSummary,
   getRecentMessageActivity,
   getSupportActivityDashboardSummary,
   getSystemLogsSummary,
@@ -120,6 +121,7 @@ export default async function OverviewPage() {
     executiveLoad,
     awaiting,
     workerLiveness,
+    collectionHealth,
   ] = await Promise.all([
     getAccountsRoutingSummary(),
     getAutomationOutboundSummary(nowMs),
@@ -142,6 +144,7 @@ export default async function OverviewPage() {
     getExecutiveLoad(nowMs),
     getGroupsAwaitingReply(new Date(nowMs)),
     getWorkerLivenessSummary(nowMs),
+    getCollectionHealthSummary(nowMs),
   ]);
 
   const disconnectedAccounts = accountsRouting.accounts.filter((a) => a.status !== "CONNECTED");
@@ -154,11 +157,13 @@ export default async function OverviewPage() {
    * that same card below, so the corner pill can never disagree with the numbers underneath it.
    */
   const moduleStatus: Record<string, ModuleHealthStatus> = {
-    accounts: accountsRouting.hasRoutingError
-      ? "DOWN" // a routed service has no healthy account to send through at all
-      : accountsRouting.connectedCount < accountsRouting.accounts.length
-        ? "ATTENTION"
-        : "OPERATIONAL",
+    accounts:
+      accountsRouting.hasRoutingError || collectionHealth.stuckAccounts.length > 0
+        ? "DOWN" // no healthy account to send through, or a number that cannot receive at all
+        : accountsRouting.connectedCount < accountsRouting.accounts.length ||
+            collectionHealth.silentAccounts.length > 0
+          ? "ATTENTION"
+          : "OPERATIONAL",
     automation: !automationOutbound.automationEnabled || automationOutbound.failed24h > 0 ? "ATTENTION" : "OPERATIONAL",
     escalations: escalation.openCaseCount > 0 ? "ATTENTION" : "OPERATIONAL",
     conversationLearning: !conversationLearning.conversationLearningEnabled
@@ -201,6 +206,28 @@ export default async function OverviewPage() {
       linkLabel: "Check accounts",
     });
   }
+  // Directly under the worker-offline line, and above everything else, because this is the only
+  // entry that reports customers not reaching you AT ALL. On 18 Sep 2026 a number sat green and
+  // collecting nothing for 3 h 15 m with nothing on this page to suggest it.
+  for (const account of collectionHealth.stuckAccounts) {
+    issues.push({
+      text:
+        account.status === "RECONNECTING"
+          ? `"${account.label}" is stuck mid-reconnect — it is not receiving customer messages and will not clear this on its own.`
+          : `"${account.label}" needs to be linked again from the phone — it is not receiving customer messages.`,
+      href: "/accounts",
+      linkLabel: "Open accounts",
+    });
+  }
+  for (const account of collectionHealth.silentAccounts) {
+    // Worded as an observation, never a verdict. A quiet Friday looks exactly like this from
+    // stored rows alone, and only the worker can ask WhatsApp which of the two it is.
+    issues.push({
+      text: `"${account.label}" is connected but has stored no message for ${formatAgeShort(account.quietForMinutes * 60_000)} — worth confirming customers are still getting through.`,
+      href: "/accounts",
+      linkLabel: "Open accounts",
+    });
+  }
   if (accountsRouting.hasRoutingError) {
     issues.push({
       text: "A routed WhatsApp service has no healthy connected account to send through.",
@@ -231,8 +258,10 @@ export default async function OverviewPage() {
   }
 
   // Same three-tier read as each module pill: DOWN beats ATTENTION beats a quiet OPERATIONAL.
+  // A stuck session ranks with the other two: it means customer messages are not arriving, which
+  // is the most consequential thing this page can report and the one it used to miss entirely.
   const systemStatus: ModuleHealthStatus =
-    workerLiveness.workerOffline || accountsRouting.hasRoutingError
+    workerLiveness.workerOffline || accountsRouting.hasRoutingError || collectionHealth.stuckAccounts.length > 0
       ? "DOWN"
       : issues.length > 0
         ? "ATTENTION"

@@ -136,6 +136,35 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateDefinition[] =
       "No existing rule handles this yet — review it in Conversation Learning → Unknown Patterns.",
     ].join("\n"),
   },
+  {
+    key: "COLLECTION_BROKEN",
+    label: "A WhatsApp number has stopped collecting messages",
+    description:
+      "Sent when a number that should be receiving customer messages is not — a session stuck mid-reconnect, one waiting for somebody to scan a QR, or one reporting itself connected while WhatsApp says otherwise. The only alert here that is about the system rather than a customer.",
+    audience: "TEAM",
+    variables: [
+      { name: "accountLabel", description: "Which WhatsApp number this is.", sample: "Primary Support" },
+      { name: "problem", description: "What is wrong, in one line.", sample: "Stuck reconnecting for 41 minutes" },
+      { name: "detail", description: "The supporting evidence, if there is any.", sample: "WhatsApp returned no chats at all, which an account in groups cannot truly be." },
+      { name: "quietFor", description: "How long since this number last stored a message.", sample: "3 hours 15 minutes" },
+      { name: "action", description: "What somebody needs to do about it.", sample: "Open WhatsApp → Accounts and re-link this number with the phone." },
+    ],
+    // No emoji-free variant and no softening: this is the message that has to survive being
+    // glanced at on a phone among a hundred others. The number is named first because with
+    // several accounts "which one" is the first thing anybody asks.
+    defaultBody: [
+      "🛑 MESSAGES ARE NOT BEING RECEIVED",
+      "",
+      "Number: {{accountLabel}}",
+      "Problem: {{problem}}",
+      "Last message stored: {{quietFor}} ago",
+      "Detail: {{detail}}",
+      "",
+      "{{action}}",
+      "",
+      "Customer messages arriving now are not being stored and nobody is being alerted about them.",
+    ].join("\n"),
+  },
   ...escalationTemplates(),
 ];
 

@@ -186,8 +186,8 @@ enum NotificationType {
   WHATSAPP
 }
 
-/// Why a notification was sent. Derived from the five places in the worker that actually raise
-/// one, not invented — see apps/web/src/app/(dashboard)/notifications/events.
+/// Why a notification was sent. Derived from the places in the worker that actually raise one,
+/// not invented — see apps/web/src/app/(dashboard)/notifications/events.
 enum NotificationEvent {
   /// A rule with a NOTIFY_TEAMS action matched.
   RULE_NOTIFY_TEAMS
@@ -199,6 +199,13 @@ enum NotificationEvent {
   UNKNOWN_PATTERN
   /// A priority support case crossed an SLA tier.
   SUPPORT_ESCALATION
+  /// The system itself has stopped working: a WhatsApp session that should be collecting messages
+  /// is not, or is stuck in a state only a person can clear.
+  ///
+  /// The only member that is not about a conversation, and the reason the 18 Sep 2026 outage ran
+  /// for three hours unnoticed — every other event here describes something a customer said, so
+  /// there was no vocabulary for "nothing a customer says is reaching us at all".
+  COLLECTION_BROKEN
 }
 
 /// One team member's opt-in to be alerted directly about one kind of event.
@@ -604,6 +611,7 @@ model WhatsAppAccount {
   aiFallbackDecisions  AiFallbackDecision[]
   supportIssues        SupportIssue[]
   attendanceEvidence   TeamAttendanceGroup[]
+  droppedMessages      MessageDropCounter[]
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -818,6 +826,10 @@ model WhatsAppGroup {
   @@index([chatCategoryId])
   @@index([accountId, isActive])
   @@index([accountId, isMonitored])
+  /// "Every monitored, active group", with no account filter — what the rewritten awaiting-reply
+  /// query drives its LATERAL from, and what the Overview and Team Performance both read. Both
+  /// indexes above lead with accountId and cannot answer it.
+  @@index([isMonitored, isActive])
 }
 
 model InternalTeamMember {
@@ -941,6 +953,14 @@ model Message {
   /// walk every message that sender has ever sent and filter by date afterwards, which grows
   /// without limit; this stops at the day.
   @@index([senderPhone, timestampWa])
+  /// "The newest message this account stored", which is the collection watchdog's own question and
+  /// the one the Overview's collection-health entry asks per account.
+  ///
+  /// Without it that read is a backward walk of the global [timestampWa] index discarding every
+  /// row belonging to another account — pathologically slow exactly when an account has been
+  /// silent for a long time, which is the only condition it exists to detect. The check meant to
+  /// find an outage got slower the worse the outage was.
+  @@index([accountId, timestampWa])
 }
 
 model AutomationRule {
@@ -1045,6 +1065,11 @@ model OutboundMessage {
   /// The global rate-limit check's exact WHERE shape (accountId + status SENT + sentAt window),
   /// run several times per outbound send.
   @@index([accountId, status, sentAt])
+  /// The chat inbox polls every four seconds and asks two questions per poll that both start
+  /// "the newest outbound rows for these chats": which conversations have a queued reply (so an
+  /// answered one stops showing as waiting) and which queued bubbles to render. `chatId` had no
+  /// index at all, so each of those was a sequential scan of a table that only ever grows.
+  @@index([chatId, createdAt])
 }
 
 /// One row per "send this message to these groups" batch created through the
@@ -1255,6 +1280,41 @@ model ProcessingCheckpoint {
   lastProcessedTimestampWa DateTime?
   lastProcessedMessageId   String?
   updatedAt                DateTime        @updatedAt
+}
+
+/// Why a message the provider handed over produced no row at all.
+enum MessageDropReason {
+  /// Nothing to store: a sticker, an image with no caption, a system event, an unsupported type.
+  /// Ordinary and constant at a low rate — it is a CHANGE in the rate that means something.
+  EMPTY_BODY
+  /// The pipeline threw before or during the write, so the message exists nowhere.
+  PIPELINE_ERROR
+}
+
+/// How many messages this account received and did not store, per reason, per Dhaka day.
+///
+/// The 18 Sep 2026 outage could not answer its own first question: did messages arrive and get
+/// discarded, or never arrive at all? A message that is dropped leaves no row anywhere, and the
+/// in-memory `received` counter resets on the restart that is always the first thing tried — so
+/// both halves of the question were unanswerable at exactly the moment they mattered.
+///
+/// A COUNTER, deliberately, not a row per dropped message. The failure worth catching is a change
+/// in shape — a WhatsApp update that starts delivering ordinary text in a form this code reads as
+/// empty — and that shows up as a spike in a daily number. Storing each one individually would be
+/// a second, unbounded message table recording the messages this system understood least.
+///
+/// It also makes "received" derivable rather than in-memory: received = stored + dropped.
+model MessageDropCounter {
+  accountId String
+  account   WhatsAppAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// The Dhaka calendar day, matching every other daily figure in this product.
+  day       DateTime          @db.Date
+  reason    MessageDropReason
+  count     Int               @default(0)
+  updatedAt DateTime          @updatedAt
+
+  @@id([accountId, day, reason])
+  @@index([day])
 }
 
 /// Singleton row (id is always the literal string "global").
@@ -2111,6 +2171,10 @@ model PatternCandidateEvidence {
   /// The Unknown Patterns page picks the newest evidence row per candidate with a DISTINCT ON;
   /// ordering by createdAt inside each candidate is what makes that an index walk instead of a sort.
   @@index([patternCandidateId, createdAt])
+  /// linkClosedSessionsToCandidates asks "which of these sessions has no evidence row yet", which
+  /// is an anti-join on conversationSessionId. The compound unique above leads with
+  /// patternCandidateId and cannot serve it, so that ran as a scan every fifteen minutes.
+  @@index([conversationSessionId])
 }
 
 // ---------------------------------------------------------------------------
@@ -2405,6 +2469,11 @@ model SupportActivity {
   @@index([accountId, teamMemberId, occurredAt])
   @@index([accountId, actor, occurredAt])
   @@index([ruleId])
+  /// Every index above leads with accountId, and no dashboard caller filters on it — the reports
+  /// are deployment-wide, not per-number. So the whole Support Activity module fell back to
+  /// sequential scans on its own table. These two are the shapes those reports actually use.
+  @@index([occurredAt])
+  @@index([actor, occurredAt])
 }
 
 /// One open-or-completed support session per WhatsAppGroup lifecycle — group-level scope by

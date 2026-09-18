@@ -2,6 +2,15 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Stated rather than inherited. 100 is already the image's default, but the connection budget
+    # is now a number both sides are sized against — `packages/db` bounds each process's Prisma
+    # pool (see withPoolBounds) precisely so `app` + `worker` + a migration + a psql session stay
+    # comfortably inside this. Leaving it implicit meant the ceiling lived only in Postgres's
+    # documentation while the clients scaled themselves off the host's core count.
+    command:
+      - postgres
+      - -c
+      - max_connections=100
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

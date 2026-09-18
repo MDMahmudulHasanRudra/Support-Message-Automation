@@ -9,6 +9,10 @@ import type { NotificationEvent } from "@prisma/client";
  * `next build` with "A 'use server' file can only export async functions, found object".
  */
 export const NOTIFICATION_EVENTS = [
+  // First because it is the one whose absence is invisible. Every other event here reports
+  // something a customer said; this one reports that nothing a customer says is arriving at all,
+  // which is what made the 18 Sep 2026 outage run for three hours unnoticed.
+  "COLLECTION_BROKEN",
   "SUPPORT_ESCALATION",
   "AI_HUMAN_FALLBACK",
   "RULE_NOTIFY_WHATSAPP",

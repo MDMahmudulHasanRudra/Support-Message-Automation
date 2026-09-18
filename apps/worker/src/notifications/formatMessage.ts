@@ -21,6 +21,16 @@ export async function formatSupportAlert(payload: Record<string, unknown>): Prom
   const clientName = text("clientName") ?? text("clientPhone") ?? "unknown";
   const customerMessage = (payload.message as string) ?? "";
 
+  if (payload.alertKind === "COLLECTION_BROKEN") {
+    return renderNotification("COLLECTION_BROKEN", {
+      accountLabel: text("accountLabel") ?? "(unnamed account)",
+      problem: text("problem") ?? "This number is not collecting messages.",
+      detail: text("detail") ?? "",
+      quietFor: text("quietFor") ?? "unknown",
+      action: text("action") ?? "Open WhatsApp → Accounts and check this number.",
+    });
+  }
+
   if (payload.alertKind === "UNKNOWN_PATTERN") {
     return renderNotification("UNKNOWN_PATTERN", {
       keywords: (payload.patternKeywords as string[] | undefined)?.join(", ") || "(pattern)",

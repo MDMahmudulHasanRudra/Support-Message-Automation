@@ -44,6 +44,13 @@ const EVENT_COPY: Record<
     description: "The same kind of question keeps arriving and no rule handles it yet — a suggestion to write one.",
     consequence: "Safe to mute: nothing is waiting on it, and the patterns are still listed under Conversation Learning.",
   },
+  COLLECTION_BROKEN: {
+    title: "A number has stopped collecting messages",
+    description:
+      "A WhatsApp number that should be receiving customer messages is not — stuck mid-reconnect, waiting to be linked from the phone, or reporting itself connected while WhatsApp says otherwise.",
+    consequence:
+      "The one alert here you should not mute. Every other event tells you about a customer; this one tells you that no customer is reaching you at all, and it is the only thing that would.",
+  },
 };
 
 export default async function NotificationEventsPage() {

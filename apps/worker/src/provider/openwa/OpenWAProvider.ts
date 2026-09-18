@@ -15,6 +15,7 @@ import {
 import type { RawIncomingMessage } from "../../pipeline/types.js";
 import type {
   AccountInfo,
+  CollectionProbe,
   ConnectionStatus,
   GroupInfo,
   GroupParticipant,
@@ -535,37 +536,70 @@ export class OpenWAProvider implements WhatsAppProvider {
    * not take down the connection that is otherwise working.
    */
   async fetchMessagesSince(since: Date, limit: number): Promise<RawIncomingMessage[]> {
-    if (!this.client) return [];
+    const probe = await this.probeCollection(since, limit);
+    // Forgiving on purpose, and unchanged: a catch-up sweep that could not read history has
+    // recovered nothing, which is a weaker guarantee rather than a broken one. Only the watchdog
+    // needs to tell that apart from "there was nothing to recover", and it asks via probeCollection.
+    return probe.ok ? probe.messages : [];
+  }
+
+  /**
+   * The same read, with its failures reported instead of swallowed.
+   *
+   * Three distinct outcomes, and the third is the one this exists for:
+   *
+   * - no client at all — the session object is gone, so nothing can be seen, and saying "no new
+   *   messages" would be a lie in the most dangerous direction;
+   * - the chat enumeration threw — the browser is there but not answering;
+   * - the enumeration succeeded and returned **zero chats**. That looks like a successful read of
+   *   an empty account, and for a number the watchdog has already established is in monitored
+   *   groups it cannot be one. WhatsApp Web returning an empty roster is a statement about the
+   *   page's state, not about the account, so it is `unknown` too.
+   *
+   * A failure to read ONE chat's history is not a failure of the probe — the other chats still
+   * answered, which is what the question was.
+   */
+  async probeCollection(since: Date, limit: number): Promise<CollectionProbe> {
+    if (!this.client) {
+      return { ok: false, reason: "No live WhatsApp session in this process — nothing to ask." };
+    }
     const sinceMs = since.getTime();
     const collected: RawIncomingMessage[] = [];
 
+    let chats: Awaited<ReturnType<Client["getAllGroups"]>>;
     try {
-      const chats = await this.client.getAllGroups();
-      // `t` is seconds since the epoch of the chat's last interaction. A chat that has not been
-      // touched since the gap began cannot be hiding a message from inside it.
-      const active = chats.filter((chat) => typeof chat.t === "number" && chat.t * 1000 > sinceMs);
-
-      for (const chat of active) {
-        if (collected.length >= limit) break;
-        try {
-          // includeMe: our own replies are half of every conversation and the chat inbox reads
-          // them. includeNotifications: false — "X joined the group" is not a customer message.
-          const messages = await this.client.getAllMessagesInChat(chat.id as ChatId, true, false);
-          for (const message of messages) {
-            if (typeof message.timestamp !== "number" || message.timestamp * 1000 <= sinceMs) continue;
-            collected.push(toRawIncomingMessage(this.accountId, message));
-            if (collected.length >= limit) break;
-          }
-        } catch (err) {
-          console.warn(`[openwa] could not read history for chat ${chat.id} — skipping it`, err);
-        }
-      }
+      chats = await this.client.getAllGroups();
     } catch (err) {
-      console.warn("[openwa] could not enumerate chats for catch-up — skipping this sweep", err);
-      return collected;
+      const reason = (err as Error).message || "unknown error";
+      console.warn("[openwa] could not enumerate chats — the session cannot be read", err);
+      return { ok: false, reason: `Could not enumerate chats: ${reason}` };
     }
 
-    return collected.sort((a, b) => a.timestampWa.getTime() - b.timestampWa.getTime());
+    if (chats.length === 0) {
+      return { ok: false, reason: "WhatsApp returned no chats at all, which an account in groups cannot truly be." };
+    }
+
+    // `t` is seconds since the epoch of the chat's last interaction. A chat that has not been
+    // touched since the gap began cannot be hiding a message from inside it.
+    const active = chats.filter((chat) => typeof chat.t === "number" && chat.t * 1000 > sinceMs);
+
+    for (const chat of active) {
+      if (collected.length >= limit) break;
+      try {
+        // includeMe: our own replies are half of every conversation and the chat inbox reads
+        // them. includeNotifications: false — "X joined the group" is not a customer message.
+        const messages = await this.client.getAllMessagesInChat(chat.id as ChatId, true, false);
+        for (const message of messages) {
+          if (typeof message.timestamp !== "number" || message.timestamp * 1000 <= sinceMs) continue;
+          collected.push(toRawIncomingMessage(this.accountId, message));
+          if (collected.length >= limit) break;
+        }
+      } catch (err) {
+        console.warn(`[openwa] could not read history for chat ${chat.id} — skipping it`, err);
+      }
+    }
+
+    return { ok: true, messages: collected.sort((a, b) => a.timestampWa.getTime() - b.timestampWa.getTime()) };
   }
 
   async sendMessage(chatId: string, body: string, mentions?: string[]): Promise<SendResult> {

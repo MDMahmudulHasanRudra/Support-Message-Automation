@@ -20,6 +20,7 @@ import { runAiFallback } from "../aiFallback/runAiFallback.js";
 import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
 import { recordTeamAttendance } from "../teamManagement/attendance.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { countDroppedMessage } from "./dropCounter.js";
 
 interface ActionExecutionRecord {
   type: RuleAction["type"];
@@ -52,6 +53,13 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
   const traceId = `${raw.accountId}:${raw.whatsappMessageId}`;
 
   if (!raw.body || raw.body.trim().length === 0) {
+    // Counted, not merely returned from. This is the one exit where a message the provider handed
+    // over leaves no trace of any kind, and "messages are being dropped here" and "no messages are
+    // arriving" looked identical from outside during the 18 Sep 2026 outage. A steady low rate is
+    // ordinary — stickers, images without captions, system events; a SPIKE is WhatsApp having
+    // changed the shape of something this code reads as empty, which is a real and invisible way
+    // to lose customer messages. Fire-and-forget: see countDroppedMessage.
+    countDroppedMessage(raw.accountId, "EMPTY_BODY");
     return; // unsupported/empty message type — nothing to automate
   }
 

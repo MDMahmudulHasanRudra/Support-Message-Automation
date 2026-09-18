@@ -146,6 +146,16 @@ function computeOne(key: string, input: Inputs): TemplateLiveness {
     return { live: true };
   }
 
+  if (key === "COLLECTION_BROKEN") {
+    if (!input.eventEnabled("COLLECTION_BROKEN")) {
+      return { live: false, reason: "Collection-failure alerts are muted.", ...NOTIFICATION_CENTER };
+    }
+    // Deliberately no "nothing raises it yet" branch. The watchdog runs unconditionally and needs
+    // no feature switched on, so the only way this template is dead is if somebody muted it — and
+    // saying anything softer would understate what muting it costs.
+    return { live: true };
+  }
+
   if (key.startsWith("ESCALATION_")) {
     if (!input.eventEnabled("SUPPORT_ESCALATION")) {
       return { live: false, reason: "Escalation alerts are muted.", ...NOTIFICATION_CENTER };
