@@ -6,6 +6,7 @@ import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { isCooldownActive } from "./cooldown.js";
 import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from "./rateLimiter.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
+import { logSystemEvent } from "../logging/logSystemEvent.js";
 import {
   countJobSentLastMinute,
   getGroupBroadcastSettings,
@@ -13,8 +14,25 @@ import {
   markJobStoppedByKillSwitch,
   maybeCompleteBroadcastJob,
 } from "./groupBroadcastQueue.js";
+import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 
-const STUCK_PROCESSING_TIMEOUT_MS = 2 * 60_000;
+/** Name this loop reports itself under in the per-loop liveness view. */
+const LOOP_NAME = "outbound-queue";
+
+/**
+ * How long a claimed outbound row may sit PROCESSING before recovery pushes it back to PENDING.
+ *
+ * Two minutes was SHORTER than Puppeteer's own 180s `protocolTimeout`, which is the ceiling on how
+ * long a single `sendText` can hang before the browser gives up. So a send that was still
+ * genuinely in flight could be requeued underneath itself, and then sent again when the first one
+ * eventually completed — a customer receiving the same reply twice, which is precisely the outcome
+ * the shutdown handling and the idempotency key exist to prevent.
+ *
+ * Five minutes clears that ceiling with room for the surrounding safety checks and the status
+ * settle. Erring long costs a stuck row a few more minutes; erring short costs a duplicate message
+ * in a customer's conversation.
+ */
+const STUCK_PROCESSING_TIMEOUT_MS = 5 * 60_000;
 /** How long to defer a GROUP_BROADCAST row when its job's own per-minute cap is hit — not a failure, just a wait. */
 const JOB_RATE_LIMIT_DEFER_MS = 15_000;
 /** How long to defer a human's MANUAL_REPLY when an account rate limit is already exhausted. */
@@ -357,6 +375,17 @@ async function handleSendFailure(message: OutboundMessage, failureReason: string
       where: { id: message.id },
       data: { status: "FAILED", attemptCount, failureReason },
     });
+    // This file did not import logSystemEvent at all, so every message this system permanently
+    // failed to deliver was console-only — visible in `docker compose logs` if somebody thought to
+    // look, and absent from the Logs page that is the actual place people look. A customer who was
+    // never answered is exactly the event the durable log exists for.
+    await logSystemEvent("ERROR", "queue", "Gave up sending a message after every retry", {
+      outboundMessageId: message.id,
+      accountId: message.accountId,
+      actionType: message.actionType,
+      attemptCount,
+      failureReason,
+    }).catch(() => undefined);
     if (isBroadcast) await maybeCompleteBroadcastJob(message.broadcastJobId!);
     return;
   }
@@ -383,6 +412,9 @@ export function startOutboundQueueProcessor(
   registry: import("../provider/ProviderRegistry.js").ProviderRegistry,
   intervalMs = 2000,
 ): NodeJS.Timeout {
+  // Declared before the first tick, so a loop that dies on its very first run shows as
+  // "never ticked" rather than not appearing in the liveness view at all.
+  registerLoop(LOOP_NAME, intervalMs);
   let processing = false;
   return setInterval(() => {
     if (processing) return;
@@ -396,6 +428,9 @@ export function startOutboundQueueProcessor(
       })
       .finally(() => {
         processing = false;
+        // Stamped when the tick FINISHES, which is the only moment that proves the loop is not
+        // wedged — a guard that never clears is exactly how one of these dies silently.
+        recordLoopTick(LOOP_NAME, intervalMs);
       });
   }, intervalMs);
 }

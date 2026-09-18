@@ -9,6 +9,11 @@ import { runTeamsSync } from "../teams/graphSync.js";
 import { runForgeKnowledgeSync } from "../forge/forgeKnowledgeJob.js";
 import { buildCommunicationStyleProfile } from "../knowledge/communicationStyleJob.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
+import { withTimeout } from "../util/withTimeout.js";
+import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
+
+/** Name this loop reports itself under in the per-loop liveness view. */
+const LOOP_NAME = "command-processor";
 
 const GROUP_SYNC_PROGRESS_INTERVAL = 250;
 
@@ -61,22 +66,6 @@ export async function syncGroups(accountId: string, provider: WhatsAppProvider):
 const GROUP_SYNC_TIMEOUT_MS = Number(process.env.WHATSAPP_GROUP_SYNC_TIMEOUT_MS) || 150_000;
 // Bounded, same spirit as index.ts's CONNECT_RETRY_DELAYS_MS — not unlimited.
 const GROUP_SYNC_RETRY_DELAYS_MS = [10_000, 30_000];
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`group sync timed out after ${ms}ms`)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
 
 /**
  * PHASE 5.2 — root cause of the original crash: `getAllGroups()` on a large
@@ -138,7 +127,7 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const count = await withTimeout(syncGroups(accountId, provider), GROUP_SYNC_TIMEOUT_MS);
+      const count = await withTimeout(syncGroups(accountId, provider), GROUP_SYNC_TIMEOUT_MS, "group sync");
       await logSystemEvent("INFO", "provider", "GROUP_SYNC_COMPLETED", { accountId, groupCount: count, attempt });
       return count;
     } catch (err) {
@@ -162,13 +151,34 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
 }
 
 /**
- * Crash recovery for commands interrupted mid-flight. RESYNC_GROUPS can legitimately run 150s per
- * attempt plus retries, so it is the one most likely to be caught by a redeploy — and until now a
- * PROCESSING row was never reclaimed, so the dashboard button spun forever with no error.
+ * The longest a command can legitimately still be running.
  *
- * No age cutoff, unlike the queue recoveries: this runs once at boot before startCommandProcessor
- * exists, so nothing can legitimately be in flight and every PROCESSING row is orphaned by
- * definition (WorkerCommand has no updatedAt column to age one by in any case).
+ * Set by the slowest one there is: RECONNECT calls `provider.connect()`, which waits up to ten
+ * minutes for a QR scan, and then runs a catch-up sweep. RESYNC_GROUPS is next at 150s per attempt
+ * plus two retries. Twenty minutes is comfortably past both, which is the direction to err in —
+ * releasing a command too early tells an operator a lie and invites them to run a second one on
+ * top of the first, while releasing it late costs one more five-minute sweep.
+ */
+const COMMAND_STUCK_TIMEOUT_MS = Number(process.env.COMMAND_STUCK_TIMEOUT_MINUTES || 20) * 60_000;
+
+/**
+ * Crash recovery for commands interrupted mid-flight. Until this existed a PROCESSING row was
+ * never reclaimed, so the dashboard button spun forever with no error.
+ *
+ * **`atBoot` is the whole safety of this function, and its absence was a real bug.** At boot
+ * nothing can legitimately be in flight — this process has just started and `startCommandProcessor`
+ * does not exist yet — so every PROCESSING row is orphaned by definition and no cutoff is needed.
+ * That was the original justification, written into the comment here, and it was true.
+ *
+ * Then this started running every five minutes as well, and the justification silently stopped
+ * holding. On a live worker it began marking commands FAILED WHILE THEY WERE STILL RUNNING: a
+ * RECONNECT waiting for somebody to scan a QR, an eight-minute group resync — each told the
+ * operator "the worker restarted while this was running, run it again", so they ran a second one
+ * on top of the first. `recovery.ts` even asserts in its own comment that every recovery only
+ * touches rows past its own threshold; this was the one that did not.
+ *
+ * A row with a null `startedAt` predates that column, so it was claimed by a process that is now
+ * gone — released at boot, never by the periodic sweep, which cannot know that.
  *
  * FAILED rather than back to PENDING: re-running is harmless for GET_QR or RECONNECT, but not for
  * every type — a re-run SEND_LIVE_TEST would put a second real message into a chat, and a re-run
@@ -176,14 +186,18 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
  * side-effectful command is not the house default, so the operator gets an actionable reason and
  * one click to retry instead.
  */
-export async function recoverStuckCommands(): Promise<number> {
+export async function recoverStuckCommands(options: { atBoot?: boolean } = {}): Promise<number> {
   const result = await prisma.workerCommand.updateMany({
-    where: { status: "PROCESSING" },
+    where: options.atBoot
+      ? { status: "PROCESSING" }
+      : { status: "PROCESSING", startedAt: { lt: new Date(Date.now() - COMMAND_STUCK_TIMEOUT_MS) } },
     data: {
       status: "FAILED",
       processedAt: new Date(),
       result: {
-        error: "The worker restarted while this command was running, so it did not finish. Run it again.",
+        error: options.atBoot
+          ? "The worker restarted while this command was running, so it did not finish. Run it again."
+          : "This command ran for far longer than it should have and was stopped. Run it again.",
       },
     },
   });
@@ -199,7 +213,9 @@ async function claimNextCommand() {
 
   const claim = await prisma.workerCommand.updateMany({
     where: { id: candidate.id, status: "PENDING" },
-    data: { status: "PROCESSING" },
+    // Stamped in the same write that claims the row, so a command is never PROCESSING without a
+    // time to age it from. This is what lets the periodic sweep leave live work alone.
+    data: { status: "PROCESSING", startedAt: new Date() },
   });
   if (claim.count === 0) return null;
 
@@ -596,6 +612,9 @@ export function startCommandProcessor(
   // a second command (e.g. RESYNC_GROUPS) WHILE the first is still running against the same
   // provider/browser session. This flag makes the loop strictly serial -- never more than one
   // command in flight at a time.
+  // Declared before the first tick, so a loop that dies on its very first run shows as
+  // "never ticked" rather than not appearing in the liveness view at all.
+  registerLoop(LOOP_NAME, intervalMs);
   let processing = false;
   return setInterval(() => {
     if (processing) return;
@@ -609,6 +628,9 @@ export function startCommandProcessor(
       })
       .finally(() => {
         processing = false;
+        // Stamped when the tick FINISHES, which is the only moment that proves the loop is not
+        // wedged — a guard that never clears is exactly how one of these dies silently.
+        recordLoopTick(LOOP_NAME, intervalMs);
       });
   }, intervalMs);
 }

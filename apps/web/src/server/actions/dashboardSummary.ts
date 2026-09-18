@@ -261,17 +261,72 @@ export async function getTeamsIntegrationSummary(nowMs: number) {
  */
 const WORKER_STALE_AFTER_MS = 60_000;
 
+/**
+ * One entry of the worker's own per-loop liveness snapshot, as written to WorkerHealthSnapshot.
+ *
+ * Mirrored rather than imported: this is a JSON column, so nothing enforces the shape across the
+ * process boundary, and `readStalledLoop` below validates every field it reads for that reason.
+ */
+interface LoopSnapshotEntry {
+  name: string;
+  intervalMs: number;
+  lastTickAt: number | null;
+}
+
+/**
+ * A loop is stalled once it is this many times past its own interval.
+ *
+ * A multiple rather than an absolute age, because these intervals span 1.5 seconds to twelve hours
+ * and no single number describes both. Matches `OVERDUE_FACTOR` in the worker's own
+ * `health/loopLiveness.ts` — the two must agree, or the dashboard and `/health` would disagree
+ * about the same loop.
+ */
+const LOOP_OVERDUE_FACTOR = 3;
+
 export async function getWorkerLivenessSummary(nowMs: number) {
-  const newest = await prisma.whatsAppAccount.aggregate({ _max: { lastHeartbeatAt: true } });
+  const [newest, snapshot] = await Promise.all([
+    prisma.whatsAppAccount.aggregate({ _max: { lastHeartbeatAt: true } }),
+    prisma.workerHealthSnapshot.findUnique({ where: { id: "global" } }),
+  ]);
   const lastHeartbeatAt = newest._max.lastHeartbeatAt ?? null;
   const lastHeartbeatMs = lastHeartbeatAt?.getTime() ?? null;
+  const workerOffline = lastHeartbeatMs === null || nowMs - lastHeartbeatMs > WORKER_STALE_AFTER_MS;
 
   return {
     lastHeartbeatAt,
     /** True when it has never checked in at all, or has been silent past the threshold. */
-    workerOffline: lastHeartbeatMs === null || nowMs - lastHeartbeatMs > WORKER_STALE_AFTER_MS,
+    workerOffline,
     silentForMinutes: lastHeartbeatMs === null ? null : Math.floor((nowMs - lastHeartbeatMs) / 60_000),
+    /**
+     * The background loop furthest past its own schedule, if any — the reading the heartbeat
+     * above cannot give.
+     *
+     * Suppressed entirely while the worker is offline, because then every loop is stalled and
+     * naming one of them is noise on top of the only fact that matters.
+     */
+    stalledLoop: workerOffline ? null : readStalledLoop(snapshot?.loops, nowMs),
   };
+}
+
+function readStalledLoop(loops: unknown, nowMs: number): { name: string; overdueMinutes: number } | null {
+  if (!Array.isArray(loops)) return null;
+
+  let worst: { name: string; overdueMinutes: number; ratio: number } | null = null;
+  for (const raw of loops as LoopSnapshotEntry[]) {
+    // Defensive on every field: this crossed a process boundary as untyped JSON, and a snapshot
+    // written by an older worker during a rolling deploy is a normal thing to encounter.
+    if (!raw || typeof raw.name !== "string" || typeof raw.intervalMs !== "number" || raw.intervalMs <= 0) continue;
+    // Never ticked is not the same as overdue — at boot it is simply the truth, and a loop with a
+    // twelve-hour interval legitimately has not run yet.
+    if (typeof raw.lastTickAt !== "number") continue;
+    const sinceMs = nowMs - raw.lastTickAt;
+    const ratio = sinceMs / raw.intervalMs;
+    if (ratio <= LOOP_OVERDUE_FACTOR) continue;
+    if (!worst || ratio > worst.ratio) {
+      worst = { name: raw.name, overdueMinutes: Math.floor(sinceMs / 60_000), ratio };
+    }
+  }
+  return worst ? { name: worst.name, overdueMinutes: worst.overdueMinutes } : null;
 }
 
 /**

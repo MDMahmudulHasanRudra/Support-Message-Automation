@@ -1,4 +1,5 @@
 import { checkDatabaseConnection, prisma } from "@support-automation/db";
+import type { Prisma } from "@prisma/client";
 import { startHealthServer, type WorkerHealthState } from "./health/server.js";
 import { ProviderRegistry } from "./provider/ProviderRegistry.js";
 import { ensureLegacyAccountExists, ensurePrimaryAccountExists, findConnectableAccounts } from "./provider/accountProvisioning.js";
@@ -17,6 +18,7 @@ import {
 import { awaitQuiescence, beginShutdown, installProcessGuards } from "./lifecycle.js";
 import { startMessageRecoveryProcessor } from "./pipeline/messageRecovery.js";
 import { startCollectionWatchdog } from "./health/collectionWatchdog.js";
+import { readLoops, recordLoopTick, registerLoop } from "./health/loopLiveness.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
@@ -61,7 +63,7 @@ async function main() {
     throw new Error("Cannot start without a database connection.");
   }
 
-  const recovered = await runStuckWorkRecovery();
+  const recovered = await runStuckWorkRecovery({ atBoot: true });
   if (recovered.outbound + recovered.notifications + recovered.participantAdds + recovered.commands > 0) {
     console.log(
       `[worker] crash recovery: requeued ${recovered.outbound} outbound message(s), ${recovered.notifications} notification(s), ${recovered.participantAdds} group-participant-add item(s); failed ${recovered.commands} interrupted worker command(s)`,
@@ -179,6 +181,7 @@ async function main() {
  * connection-exhausted one.
  */
 function startHeartbeat(state: WorkerHealthState): NodeJS.Timeout {
+  registerLoop("heartbeat", HEARTBEAT_INTERVAL_MS);
   let beating = false;
   return setInterval(() => {
     if (beating) return;
@@ -200,11 +203,24 @@ function startHeartbeat(state: WorkerHealthState): NodeJS.Timeout {
         await prisma.whatsAppAccount
           .updateMany({ data: { lastHeartbeatAt: new Date() } })
           .catch((err) => console.error("[worker] heartbeat stamp failed", err));
+
+        // Publish what every OTHER loop was last seen doing, so "the worker is alive" stops
+        // meaning "this one timer fires". Written here rather than by each loop because the
+        // command processor ticks every 1.5s, and a write per tick would be tens of thousands of
+        // rows a day to report that nothing is wrong. One row, one upsert, fifteen seconds.
+        await prisma.workerHealthSnapshot
+          .upsert({
+            where: { id: "global" },
+            update: { loops: (readLoops() as unknown as Prisma.InputJsonValue), startedAt: new Date(state.startedAt) },
+            create: { id: "global", loops: (readLoops() as unknown as Prisma.InputJsonValue), startedAt: new Date(state.startedAt) },
+          })
+          .catch((err) => console.error("[worker] loop-liveness snapshot failed", err));
       }
     })()
       .catch((err) => console.error("[worker] heartbeat failed", err))
       .finally(() => {
         beating = false;
+        recordLoopTick("heartbeat", HEARTBEAT_INTERVAL_MS);
       });
   }, HEARTBEAT_INTERVAL_MS);
 }

@@ -1,6 +1,11 @@
 import { trackTick } from "../lifecycle.js";
+import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { prisma } from "@support-automation/db";
 import type { NotificationProvider } from "./NotificationProvider.js";
+import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
+
+/** Name this loop reports itself under in the per-loop liveness view. */
+const LOOP_NAME = "notification-dispatcher";
 
 const STUCK_PROCESSING_TIMEOUT_MS = 2 * 60_000;
 const MAX_NOTIFICATION_ATTEMPTS = 3;
@@ -79,10 +84,24 @@ async function processOneNotification(providers: Record<string, NotificationProv
 }
 
 async function handleFailure(id: string, attemptCount: number, failureReason: string): Promise<void> {
+  const givingUp = attemptCount >= MAX_NOTIFICATION_ATTEMPTS;
   await prisma.notification.update({
     where: { id },
-    data: { status: attemptCount >= MAX_NOTIFICATION_ATTEMPTS ? "FAILED" : "PENDING", failureReason },
+    data: { status: givingUp ? "FAILED" : "PENDING", failureReason },
   });
+
+  // An alert that was never delivered is the worst thing this module can do quietly, and this file
+  // did not import logSystemEvent at all — so it was console-only. The whole premise of an alert is
+  // that somebody finds out; one that failed and said so nowhere durable inverts that exactly.
+  // Retries in progress stay console-quiet, because a transient webhook failure that then succeeds
+  // is not an event.
+  if (givingUp) {
+    await logSystemEvent("ERROR", "notifications", "Gave up delivering a notification after every retry", {
+      notificationId: id,
+      attemptCount,
+      failureReason,
+    }).catch(() => undefined);
+  }
 }
 
 export function startNotificationDispatcher(
@@ -92,6 +111,9 @@ export function startNotificationDispatcher(
   // Same overlap guard every other loop in the worker uses (ENGINEERING_STANDARDS.md §9 "no
   // concurrent duplicate workers"): setInterval doesn't await its callback, so a slow Teams webhook
   // or WhatsApp send could otherwise let the next tick start dispatching alongside it.
+  // Declared before the first tick, so a loop that dies on its very first run shows as
+  // "never ticked" rather than not appearing in the liveness view at all.
+  registerLoop(LOOP_NAME, intervalMs);
   let processing = false;
   return setInterval(() => {
     if (processing) return;
@@ -105,6 +127,9 @@ export function startNotificationDispatcher(
       })
       .finally(() => {
         processing = false;
+        // Stamped when the tick FINISHES, which is the only moment that proves the loop is not
+        // wedged — a guard that never clears is exactly how one of these dies silently.
+        recordLoopTick(LOOP_NAME, intervalMs);
       });
   }, intervalMs);
 }

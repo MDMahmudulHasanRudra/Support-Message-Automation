@@ -6,6 +6,10 @@ import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { trackTick } from "../lifecycle.js";
 import { raiseCollectionAlert } from "./collectionAlert.js";
+import { recordLoopTick, registerLoop } from "./loopLiveness.js";
+
+/** Name this loop reports itself under in the per-loop liveness view. */
+const LOOP_NAME = "collection-watchdog";
 
 /**
  * Answers the question nothing else in this system could: "we look healthy, so why is nothing
@@ -446,6 +450,9 @@ export function startCollectionWatchdog(
   registry: ProviderRegistry,
   intervalMs = WATCHDOG_INTERVAL_MS,
 ): NodeJS.Timeout {
+  // Declared before the first tick, so a loop that dies on its very first run shows as
+  // "never ticked" rather than not appearing in the liveness view at all.
+  registerLoop(LOOP_NAME, intervalMs);
   let checking = false;
   return setInterval(() => {
     if (checking) return;
@@ -454,6 +461,7 @@ export function startCollectionWatchdog(
       .catch((err) => console.error("[watchdog] collection health check failed", err))
       .finally(() => {
         checking = false;
+        recordLoopTick(LOOP_NAME, intervalMs);
       });
   }, intervalMs);
 }

@@ -5,6 +5,10 @@ import { recoverStuckNotifications } from "./notifications/dispatcher.js";
 import { recoverStuckCommands } from "./commands/commandProcessor.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { trackTick } from "./lifecycle.js";
+import { recordLoopTick, registerLoop } from "./health/loopLiveness.js";
+
+/** Name this loop reports itself under in the per-loop liveness view. */
+const LOOP_NAME = "stuck-work-recovery";
 
 /**
  * Un-sticks work that was claimed and never settled, and makes the reported connection state match
@@ -25,12 +29,21 @@ export interface StuckWorkRecovered {
   commands: number;
 }
 
-export async function runStuckWorkRecovery(): Promise<StuckWorkRecovered> {
+/**
+ * `atBoot` reaches exactly one of these four, and it matters.
+ *
+ * The three queue recoveries are safe either way: each only touches rows past its own `updatedAt`
+ * threshold, so a row genuinely being worked on right now is never reclaimed. `recoverStuckCommands`
+ * had no threshold at all — see its own doc comment — so on a live worker it was failing commands
+ * mid-flight. At boot it still needs none, because nothing can be running yet, and a command
+ * claimed by the previous process would otherwise wait out a twenty-minute timer for no reason.
+ */
+export async function runStuckWorkRecovery(options: { atBoot?: boolean } = {}): Promise<StuckWorkRecovered> {
   const [outbound, notifications, participantAdds, commands] = await Promise.all([
     recoverStuckOutboundMessages(),
     recoverStuckNotifications(),
     recoverStuckParticipantAddItems(),
-    recoverStuckCommands(),
+    recoverStuckCommands({ atBoot: options.atBoot }),
   ]);
   return { outbound, notifications, participantAdds, commands };
 }
@@ -44,11 +57,16 @@ export async function runStuckWorkRecovery(): Promise<StuckWorkRecovered> {
  * carries on looking healthy, and the row then waits for the next restart. On a long-running worker
  * that can be weeks.
  *
- * Every one of these is already written to be safe to run repeatedly: each only touches rows whose
- * `updatedAt` is older than its own stuck threshold, so a row genuinely being worked on right now
- * is never reclaimed.
+ * Every one of these is safe to run repeatedly: each only touches rows older than its own stuck
+ * threshold, so a row genuinely being worked on right now is never reclaimed. That was asserted
+ * here before it was true of all four — `recoverStuckCommands` had no threshold, and this loop is
+ * what turned that from a harmless boot-time simplification into commands being failed while they
+ * were still running.
  */
 export function startStuckWorkRecoveryProcessor(intervalMs = RECOVERY_INTERVAL_MS): NodeJS.Timeout {
+  // Declared before the first tick, so a loop that dies on its very first run shows as
+  // "never ticked" rather than not appearing in the liveness view at all.
+  registerLoop(LOOP_NAME, intervalMs);
   let processing = false;
   return setInterval(() => {
     if (processing) return;
@@ -65,6 +83,9 @@ export function startStuckWorkRecoveryProcessor(intervalMs = RECOVERY_INTERVAL_M
       .catch((err) => console.error("[recovery] stuck-work sweep failed", err))
       .finally(() => {
         processing = false;
+        // Stamped when the tick FINISHES, which is the only moment that proves the loop is not
+        // wedged — a guard that never clears is exactly how one of these dies silently.
+        recordLoopTick(LOOP_NAME, intervalMs);
       });
   }, intervalMs);
 }
@@ -79,9 +100,9 @@ export function startStuckWorkRecoveryProcessor(intervalMs = RECOVERY_INTERVAL_M
  * reads status believes it: the dashboard shows green, the outbound queue's own checks see a
  * connected account, and an operator looking at a real problem sees no sign of one.
  *
- * The rule is simply that this process has not connected anything yet. CONNECTED, RECONNECTING and
- * the two throttle states are claims about a live session, so they become DISCONNECTED; the connect
- * loop that runs moments later corrects each one to whatever is actually true.
+ * The rule is simply that this process has not connected anything yet. CONNECTED and RECONNECTING
+ * are claims about a live session, so they become DISCONNECTED; the connect loop that runs moments
+ * later corrects each one to whatever is actually true.
  * AUTHENTICATION_REQUIRED, SESSION_ERROR and ERROR describe the stored credentials rather than a
  * live socket and survive a restart intact, so they are left alone.
  *
@@ -91,7 +112,10 @@ export function startStuckWorkRecoveryProcessor(intervalMs = RECOVERY_INTERVAL_M
  */
 export async function reconcileAccountStatusesOnBoot(): Promise<number> {
   const stale = await prisma.whatsAppAccount.updateMany({
-    where: { status: { in: ["CONNECTED", "RECONNECTING", "OUTBOUND_PAUSED", "RATE_LIMITED"] } },
+    // OUTBOUND_PAUSED and RATE_LIMITED used to be listed here too. They are gone from the enum
+    // entirely: nothing ever wrote them, and they described a per-account throttling mechanism
+    // that does not exist while being rendered on the Accounts page as real states.
+    where: { status: { in: ["CONNECTED", "RECONNECTING"] } },
     data: { status: "DISCONNECTED" },
   });
 

@@ -10,6 +10,10 @@ import {
   markJobStoppedByKillSwitch,
   maybeCompleteParticipantAddJob,
 } from "./groupParticipantAddQueue.js";
+import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
+
+/** Name this loop reports itself under in the per-loop liveness view. */
+const LOOP_NAME = "group-participant-add";
 
 const STUCK_PROCESSING_TIMEOUT_MS = 2 * 60_000;
 /** How long to defer an item when its job's own per-minute cap is hit — not a failure, just a wait. */
@@ -273,6 +277,9 @@ export function startGroupParticipantAddProcessor(
   registry: import("../provider/ProviderRegistry.js").ProviderRegistry,
   intervalMs = 2000,
 ): NodeJS.Timeout {
+  // Declared before the first tick, so a loop that dies on its very first run shows as
+  // "never ticked" rather than not appearing in the liveness view at all.
+  registerLoop(LOOP_NAME, intervalMs);
   let processing = false;
   return setInterval(() => {
     if (processing) return;
@@ -286,6 +293,9 @@ export function startGroupParticipantAddProcessor(
       })
       .finally(() => {
         processing = false;
+        // Stamped when the tick FINISHES, which is the only moment that proves the loop is not
+        // wedged — a guard that never clears is exactly how one of these dies silently.
+        recordLoopTick(LOOP_NAME, intervalMs);
       });
   }, intervalMs);
 }

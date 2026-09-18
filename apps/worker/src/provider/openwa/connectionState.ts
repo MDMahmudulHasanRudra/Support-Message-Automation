@@ -132,7 +132,27 @@ export async function recordConnectionState(
       },
     });
   } catch (err) {
+    // Console-only, and this one is worse than it looks. Everything that decides whether an
+    // account is healthy — the dashboard badge, the outbound queue's own checks, the Overview's
+    // collection entry — reads the `status` column this write maintains. A failure here does not
+    // lose one log line: it freezes the account's reported state at whatever it last managed to
+    // write, for the lifetime of the process, while the session goes on changing underneath. A
+    // dead session keeps reporting CONNECTED and nothing anywhere contradicts it.
+    //
+    // Best effort by necessity — the write that just failed was to the same database this is
+    // trying to write to — but the attempt costs nothing and succeeds whenever the failure was
+    // specific to that row rather than to the connection.
     console.error("[openwa] failed to record connection state", state, err);
+    await prisma.systemLog
+      .create({
+        data: {
+          level: "ERROR",
+          scope: "provider",
+          message: "Could not record a connection state change — this account's reported status is now stale",
+          metadata: { accountId, state, error: (err as Error).message } as any,
+        },
+      })
+      .catch(() => undefined);
   }
 }
 

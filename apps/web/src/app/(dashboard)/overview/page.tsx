@@ -206,6 +206,17 @@ export default async function OverviewPage() {
       linkLabel: "Check accounts",
     });
   }
+  if (workerLiveness.stalledLoop) {
+    // The reading the heartbeat cannot give. It proves one `setInterval` fires and shares nothing
+    // with the other twenty, so a wedged outbound queue or command processor leaves the worker
+    // looking perfectly healthy — replies queued and never sent, dashboard buttons that write a
+    // row nothing reads.
+    issues.push({
+      text: `The worker's "${workerLiveness.stalledLoop.name}" background job has not run for ${workerLiveness.stalledLoop.overdueMinutes} minute(s), though the worker itself is responding.`,
+      href: "/logs?level=ERROR",
+      linkLabel: "View logs",
+    });
+  }
   // Directly under the worker-offline line, and above everything else, because this is the only
   // entry that reports customers not reaching you AT ALL. On 18 Sep 2026 a number sat green and
   // collecting nothing for 3 h 15 m with nothing on this page to suggest it.

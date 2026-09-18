@@ -338,14 +338,23 @@ enum TeamMemberStatus {
   INACTIVE
 }
 
+/// Every state a WhatsApp account can actually be in — and nothing else.
+///
+/// `OUTBOUND_PAUSED` and `RATE_LIMITED` used to be members here, written by nothing anywhere in
+/// the codebase and yet rendered on the Accounts page as real states with their own colours and
+/// hint text ("Receiving, but not sending", "Holding back sends to protect the number"). They
+/// described a per-account throttling mechanism that does not exist: throttling is per OUTBOUND
+/// MESSAGE, which is what `OutboundMessageStatus.RATE_LIMITED` is for, and that one is real.
+///
+/// A vocabulary that can describe states the system cannot reach is worse than a smaller one. It
+/// invites a reader to diagnose against a mechanism that was never built, and it made the account
+/// status enum an unreliable guide to what the account statuses are.
 enum WhatsAppAccountStatus {
   CONNECTED
   DISCONNECTED
   RECONNECTING
   AUTHENTICATION_REQUIRED
   SESSION_ERROR
-  OUTBOUND_PAUSED
-  RATE_LIMITED
   ERROR
 }
 
@@ -1267,10 +1276,52 @@ model WorkerCommand {
   status      WorkerCommandStatus @default(PENDING)
   result      Json?
   createdAt   DateTime            @default(now())
+  /// When this command was claimed — set by `claimNextCommand`, null until then.
+  ///
+  /// Exists so stuck-command recovery can tell a command that has been running for eleven minutes
+  /// from one that died. Recovery used to have no age cutoff at all, justified by "this runs once
+  /// at boot" — which stopped being true when it started running every five minutes, at which
+  /// point it began marking commands FAILED WHILE THEY WERE STILL RUNNING. A RECONNECT waiting up
+  /// to ten minutes for a QR scan, or an eight-minute RESYNC_GROUPS, was reported to the operator
+  /// as "the worker restarted while this was running, run it again" — and they did, on top of the
+  /// one still going.
+  ///
+  /// `startedAt` rather than an `updatedAt`: any later write would touch the latter, so it would
+  /// answer "when was this row last modified" rather than "how long has this been running", and
+  /// only the second question bounds a timeout.
+  startedAt   DateTime?
   processedAt DateTime?
 
   @@index([status, createdAt])
   @@index([accountId, status])
+}
+
+/// What every one of the worker's polling loops was last seen doing — the one singleton row
+/// (id is always the literal string "global").
+///
+/// The heartbeat proves that ONE `setInterval` fires. It shares nothing with the other twenty
+/// loops, so "the worker is alive" has always meant exactly "the heartbeat's own timer is still
+/// scheduled" — which stays true while the outbound queue, the command processor or the registry
+/// sync sits wedged on a call into a browser that never answers. Each of those is an
+/// overlap-guarded loop whose guard, once stuck, silently turns every later tick into a no-op.
+///
+/// The worker holds this in memory (health/loopLiveness.ts); this row exists only because the
+/// dashboard cannot ask it. There is no HTTP between the two by design, so Postgres is the
+/// channel, exactly as it is for account status and WorkerCommand.
+///
+/// Written once per heartbeat rather than once per tick, deliberately: the command processor runs
+/// every 1.5 seconds, and a write per tick would be tens of thousands of rows a day to report that
+/// nothing was wrong.
+model WorkerHealthSnapshot {
+  id        String   @id @default("global")
+  /// One entry per loop: name, intervalMs, lastTickAt, ticks. A JSON column because the set of
+  /// loops is a property of the code rather than of the data, and a table with one row per loop
+  /// would need a migration every time a loop was added or renamed.
+  loops     Json     @default("[]")
+  /// The worker process this describes, so a snapshot left behind by a previous one is legible as
+  /// such rather than read as the current process's silence.
+  startedAt DateTime
+  updatedAt DateTime @updatedAt
 }
 
 model ProcessingCheckpoint {

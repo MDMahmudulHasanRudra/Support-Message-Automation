@@ -29,6 +29,28 @@ import {
   type OpenWAConnectionState,
 } from "./connectionState.js";
 import { serializeMessageId } from "./messageId.js";
+import { withTimeout } from "../../util/withTimeout.js";
+
+/**
+ * Ceilings on the two teardown calls into Chromium, neither of which had one.
+ *
+ * Both are held by an overlap-guarded loop — the registry sync and the strictly-serial command
+ * processor — so a call that never settles does not fail, it silently stops that loop forever.
+ * Generous enough that a merely slow browser still completes properly; short enough that a dead
+ * one costs one tick rather than the process lifetime.
+ */
+const KILL_TIMEOUT_MS = 30_000;
+const LOGOUT_TIMEOUT_MS = 30_000;
+
+/**
+ * Ceiling on the watchdog probe's chat enumeration.
+ *
+ * Shorter than the group sync's 150s deliberately: the sync is a job that can afford to take its
+ * time, while this is a health check that runs inside an overlap-guarded loop and is supposed to
+ * be cheap. Ninety seconds is long enough for a large roster on a good day and short enough that
+ * a bad one costs one tick rather than three minutes.
+ */
+const PROBE_ENUMERATION_TIMEOUT_MS = Number(process.env.COLLECTION_PROBE_TIMEOUT_SECONDS || 90) * 1_000;
 
 /** Post-connection state transitions (STATE enum) mapped onto our fine-grained lifecycle. */
 function mapLibraryState(state: STATE): OpenWAConnectionState {
@@ -460,7 +482,20 @@ export class OpenWAProvider implements WhatsAppProvider {
     }
 
     if (this.client) {
-      await this.client.kill();
+      // BOUNDED. `kill()` talks to a Chromium that may itself be the thing that has gone wrong,
+      // and it carried no timeout at all — so a browser that never answered left this await
+      // pending forever. Everything upstream is sequential and overlap-guarded: the registry sync
+      // and the command processor both hold their own `processing` flag across the call, so one
+      // unanswering kill() silenced that entire loop for the lifetime of the process, with a green
+      // heartbeat and no log line to say so. The group sync already proves this pattern
+      // (see `withTimeout` in commandProcessor.ts); this is the same treatment for the same shape.
+      //
+      // Giving up on the wait is safe here: the point of disconnect() is to stop USING this
+      // client, and `this.client = null` below achieves that whether or not the browser ever
+      // acknowledged. A leaked Chromium is a bounded, visible cost; a wedged loop is not.
+      await withTimeout(this.client.kill(), KILL_TIMEOUT_MS).catch((err) => {
+        console.error("[openwa] kill() did not settle in time — abandoning the browser and carrying on", err);
+      });
       this.client = null;
     }
     await this.setState("DISCONNECTED");
@@ -477,9 +512,13 @@ export class OpenWAProvider implements WhatsAppProvider {
   async logout(): Promise<void> {
     if (this.client) {
       try {
-        await this.client.logout(false); // false = do invalidate persisted session data
+        // Bounded for the same reason as kill() above, and with more cause: OpenWA's own doc
+        // comment warns this call "can exit the whole process depending on your config". It runs
+        // inside the strictly-serial command processor, so one that never returns takes every
+        // subsequent dashboard action with it.
+        await withTimeout(this.client.logout(false), LOGOUT_TIMEOUT_MS, "logout"); // false = do invalidate persisted session data
       } catch (err) {
-        console.error("[openwa] logout() call failed — still tearing down the local session", err);
+        console.error("[openwa] logout() call failed or timed out — still tearing down the local session", err);
       }
       this.client = null;
     }
@@ -568,11 +607,27 @@ export class OpenWAProvider implements WhatsAppProvider {
 
     let chats: Awaited<ReturnType<Client["getAllGroups"]>>;
     try {
-      chats = await this.client.getAllGroups();
+      // Bounded by us, not by Puppeteer. `getAllGroups()` is the single most expensive call this
+      // provider makes — on a roster of ~1,848 groups it has been observed exceeding the 150s
+      // group-sync ceiling repeatedly (GROUP_SYNC_TIMEOUT in the live logs on 7, 11 and 18 Sep
+      // 2026) — and without a bound of its own it runs until Puppeteer's 180s `protocolTimeout`
+      // gives up. That is three minutes of a watchdog tick held open for a question that was
+      // supposed to be cheap.
+      chats = await withTimeout(this.client.getAllGroups(), PROBE_ENUMERATION_TIMEOUT_MS, "chat list");
     } catch (err) {
-      const reason = (err as Error).message || "unknown error";
+      const message = (err as Error).message || "unknown error";
+      // Worded apart from a hard failure on purpose. "The session is dead" and "the chat list is
+      // enormous and slow" both arrive here, and they need completely different responses — the
+      // first is an outage, the second is this account's normal shape. An alert that confuses them
+      // sends somebody to restart a worker that is fine.
+      const timedOut = message.includes("timed out");
       console.warn("[openwa] could not enumerate chats — the session cannot be read", err);
-      return { ok: false, reason: `Could not enumerate chats: ${reason}` };
+      return {
+        ok: false,
+        reason: timedOut
+          ? `The chat list took longer than ${Math.round(PROBE_ENUMERATION_TIMEOUT_MS / 1000)}s to read, so what WhatsApp is holding could not be checked. On a very large roster this can be normal; if it is constant, the group sync is likely timing out too.`
+          : `Could not enumerate chats: ${message}`,
+      };
     }
 
     if (chats.length === 0) {

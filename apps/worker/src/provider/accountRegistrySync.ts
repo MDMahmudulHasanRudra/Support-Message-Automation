@@ -4,6 +4,10 @@ import type { ProviderRegistry } from "./ProviderRegistry.js";
 import { assignSessionForAccount, findConnectableAccounts, findUnprovisionedAccounts } from "./accountProvisioning.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
+
+/** Name this loop reports itself under in the per-loop liveness view. */
+const LOOP_NAME = "account-registry-sync";
 
 /**
  * How long to leave a dropped session alone before trying it again. Bounded retrying, in the same
@@ -50,6 +54,25 @@ async function syncOnce(registry: ProviderRegistry): Promise<void> {
 
     console.log(`[registry] connecting newly-discovered account "${account.label}" (${account.id})`);
     await registry.connectAccount({ id: account.id, sessionId: account.sessionId, sessionDataPath: account.sessionDataPath });
+
+    // ONE account per pass, and this `return` is the whole point of it.
+    //
+    // `connectAccount` awaits `connectWithRetry` — three attempts, each of which can wait ten
+    // minutes for a QR scan, plus a minute of backoff: about half an hour for a single number
+    // nobody is scanning. For that entire time this loop was inside one iteration, so no other
+    // account was discovered, no other account was connected, and — worst of all — no dropped
+    // session was recovered, because `recoverIfDropped` is called from the same loop. A healthy
+    // number that dropped at minute two waited behind the one that was never coming back.
+    //
+    // index.ts documents this hazard at length as FIXED: taking the connect loop off the startup
+    // path is what let the heartbeat, the command processor and the outbound queue keep running
+    // while an account waits. That was true and it was not the whole fix — the hazard was moved
+    // into this loop, not removed, and here it blocks the one thing that could rescue the others.
+    //
+    // Returning costs nothing: the next tick is twenty seconds away and picks up where this left
+    // off. It also keeps the never-two-concurrent-connects rule trivially true, since the overlap
+    // guard already prevents a second pass starting while this one is still inside `connect()`.
+    return;
   }
 }
 
@@ -112,6 +135,36 @@ async function recoverIfDropped(registry: ProviderRegistry, account: WhatsAppAcc
     return;
   }
 
+  // What the attempt actually achieved, which was never recorded — only that one was made.
+  //
+  // That gap hides a trapdoor. A recovery attempt can move an account from DISCONNECTED, which
+  // this loop retries, to AUTHENTICATION_REQUIRED, which it deliberately never will: WhatsApp
+  // decided the stored session is no longer valid and wants a person with the phone. So the very
+  // act of trying to fix it can take the account OUT of the recoverable set and into the one
+  // nothing here will ever touch again — and the log said only "reconnecting automatically",
+  // leaving somebody reading it later to assume recovery was still being attempted.
+  //
+  // The collection watchdog raises the alert for that state; this makes the transition itself
+  // legible in the log, so the two readings agree about when it happened and why.
+  const outcome = provider.getConnectionStatus();
+  if (outcome === "CONNECTED") {
+    await logSystemEvent("INFO", "provider", "Session recovered automatically", { accountId, status: outcome });
+  } else {
+    console.warn(`[registry] recovery attempt for account ${accountId} ended in ${outcome}`);
+    await logSystemEvent(
+      outcome === "AUTHENTICATION_REQUIRED" || outcome === "SESSION_ERROR" ? "ERROR" : "WARN",
+      "provider",
+      "Automatic reconnect did not restore the session",
+      {
+        accountId,
+        status: outcome,
+        // Named in the log rather than inferred from the status, because this is the one outcome
+        // that silently ends automatic recovery for this account.
+        needsAPerson: outcome === "AUTHENTICATION_REQUIRED" || outcome === "SESSION_ERROR",
+      },
+    );
+  }
+
   await catchUpMissedMessages(accountId, provider);
 }
 
@@ -131,6 +184,9 @@ export function startAccountRegistrySync(
   intervalMs = 20_000,
   options: { immediate?: boolean } = {},
 ): NodeJS.Timeout {
+  // Declared before the first tick, so a loop that dies on its very first run shows as
+  // "never ticked" rather than not appearing in the liveness view at all.
+  registerLoop(LOOP_NAME, intervalMs);
   let processing = false;
 
   const tick = () => {
@@ -142,6 +198,9 @@ export function startAccountRegistrySync(
       })
       .finally(() => {
         processing = false;
+        // Stamped when the tick FINISHES, which is the only moment that proves the loop is not
+        // wedged — a guard that never clears is exactly how one of these dies silently.
+        recordLoopTick(LOOP_NAME, intervalMs);
       });
   };
 

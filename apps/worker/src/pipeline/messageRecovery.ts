@@ -4,6 +4,10 @@ import { prisma } from "@support-automation/db";
 import { loadStoredMessageContext, runAutomationStage } from "./processIncomingMessage.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { trackTick } from "../lifecycle.js";
+import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
+
+/** Name this loop reports itself under in the per-loop liveness view. */
+const LOOP_NAME = "message-recovery";
 
 /**
  * Finishes messages that were stored and then never processed.
@@ -128,6 +132,9 @@ export async function recoverStrandedMessages(batchSize = BATCH_SIZE): Promise<M
  * `Message.processingStatus` when there is nothing to do — which is almost always.
  */
 export function startMessageRecoveryProcessor(intervalMs = RECOVERY_INTERVAL_MS): NodeJS.Timeout {
+  // Declared before the first tick, so a loop that dies on its very first run shows as
+  // "never ticked" rather than not appearing in the liveness view at all.
+  registerLoop(LOOP_NAME, intervalMs);
   let processing = false;
   return setInterval(() => {
     if (processing) return;
@@ -136,6 +143,9 @@ export function startMessageRecoveryProcessor(intervalMs = RECOVERY_INTERVAL_MS)
       .catch((err) => console.error("[message-recovery] sweep failed", err))
       .finally(() => {
         processing = false;
+        // Stamped when the tick FINISHES, which is the only moment that proves the loop is not
+        // wedged — a guard that never clears is exactly how one of these dies silently.
+        recordLoopTick(LOOP_NAME, intervalMs);
       });
   }, intervalMs);
 }

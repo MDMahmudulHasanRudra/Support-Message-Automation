@@ -24,8 +24,10 @@ const STATUS_HINT: Record<string, string> = {
   RECONNECTING: "Connecting. Not receiving customer messages while this lasts — if it stays here for more than a few minutes, press Reconnect.",
   AUTHENTICATION_REQUIRED: "Waiting for a QR scan on the phone. Not receiving customer messages until it is linked.",
   SESSION_ERROR: "The session broke. Reconnect, and log out first if that does not clear it.",
-  OUTBOUND_PAUSED: "Receiving, but not sending.",
-  RATE_LIMITED: "Holding back sends to protect the number.",
+  // OUTBOUND_PAUSED and RATE_LIMITED used to sit here, with hints describing a per-account
+  // throttling mechanism that has never existed — nothing in the codebase ever wrote either
+  // status. Throttling in this system is per outbound MESSAGE, and that one is real and shown in
+  // the chat inbox. Both are now gone from the enum as well.
   ERROR: "Something went wrong. Check System Logs for the reason.",
 };
 
@@ -35,8 +37,6 @@ const STATUS_COLOR: Record<string, BadgeColor> = {
   RECONNECTING: "blue",
   AUTHENTICATION_REQUIRED: "yellow",
   SESSION_ERROR: "red",
-  OUTBOUND_PAUSED: "yellow",
-  RATE_LIMITED: "yellow",
   ERROR: "red",
 };
 

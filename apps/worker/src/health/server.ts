@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { checkDatabaseConnection } from "@support-automation/db";
 import { readMetrics } from "./metrics.js";
+import { readLoops, stalestLoop } from "./loopLiveness.js";
 
 export interface WorkerHealthState {
   startedAt: number;
@@ -22,7 +23,7 @@ export interface WorkerHealthState {
 export function startHealthServer(state: WorkerHealthState, port: number) {
   const server = createServer((req, res) => {
     if (req.url === "/metrics") {
-      respond(res, 200, { uptimeMs: Date.now() - state.startedAt, ...readMetrics() });
+      respond(res, 200, { uptimeMs: Date.now() - state.startedAt, ...readMetrics(), loops: readLoops() });
       return;
     }
 
@@ -45,6 +46,17 @@ export function startHealthServer(state: WorkerHealthState, port: number) {
         // and lose every healthy session alongside it. The database is the one dependency where a
         // restart is the right response, so it alone decides the code.
         metrics: readMetrics(),
+        // Which loops are still ticking, and which one is furthest behind.
+        //
+        // The heartbeat above proves that ONE setInterval fires, and shares nothing with the other
+        // twenty — so a wedged outbound queue or command processor leaves every field above
+        // looking perfect. This is the field that distinguishes them.
+        //
+        // Reported, not acted on, for the same reason as the session state: a stalled loop is
+        // usually stuck on a call into a browser, and restarting the container to clear it would
+        // also destroy every healthy WhatsApp session in the process. A person decides that.
+        stalestLoop: stalestLoop(),
+        loops: readLoops(),
       });
     });
   });
