@@ -80,6 +80,11 @@ export interface ForgeSettingsRow {
 }
 
 export async function getForgeSettings() {
+  // Read first, upsert only when genuinely absent — pipeline/settings.ts's pattern, and for its
+  // reason: this is read at the top of a polling loop tick, and an unconditional upsert takes a
+  // row lock and writes a tuple every time to discover that nothing has changed.
+  const existing = await prisma.forgeSettings.findUnique({ where: { id: "global" } });
+  if (existing) return existing;
   return prisma.forgeSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
 }
 

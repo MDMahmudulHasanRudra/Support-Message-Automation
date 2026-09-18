@@ -8,6 +8,7 @@ import {
   parseStyleGuidance,
 } from "./communicationStylePrompt.js";
 import { getAiSettings } from "../ai/settings.js";
+import { getAutomationSettings } from "../pipeline/settings.js";
 
 /**
  * Builds the team's communication-style profile from the replies its executives actually sent.
@@ -54,7 +55,7 @@ export async function getStyleProfile() {
  */
 async function collectSupportReplies(builtThroughAt: Date | null) {
   const [automationSettings, aiSettings] = await Promise.all([
-    prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+    getAutomationSettings(),
     getAiSettings(),
   ]);
 

@@ -157,18 +157,57 @@ export async function recordTeamAttendance(input: {
       select: { id: true },
     });
 
-    for (const group of groups) {
-      await tx.teamAttendanceGroup.upsert({
-        where: { attendanceDayId_groupId: { attendanceDayId: day.id, groupId: group.groupId } },
-        create: {
+    // Write only what actually changed.
+    //
+    // This was an upsert per group, awaited in sequence, INSIDE the transaction holding the
+    // advisory lock — so an executive working forty groups paid forty round trips on every single
+    // message they sent, and the count grew through the day. Quadratic in a person's own
+    // productivity, and close enough to Prisma's 5s interactive-transaction timeout on a busy
+    // afternoon that the whole recompute would start rolling back.
+    //
+    // The recompute produces the same rows as last time for every group except the one this
+    // message arrived in, which is almost always exactly one. Reading the current rows first turns
+    // "forty writes" into "one", and on a tick where nothing moved, into none — and it shortens
+    // the window the lock is held for, which is what everything else waiting on this member-day
+    // is blocked by.
+    const current = await tx.teamAttendanceGroup.findMany({
+      where: { attendanceDayId: day.id },
+      select: { groupId: true, accountId: true, messageCount: true, firstAt: true, lastAt: true },
+    });
+    const currentByGroup = new Map(current.map((row) => [row.groupId, row]));
+
+    const missing = groups.filter((group) => !currentByGroup.has(group.groupId));
+    const changed = groups.filter((group) => {
+      const existing = currentByGroup.get(group.groupId);
+      if (!existing) return false;
+      return (
+        existing.accountId !== group.accountId ||
+        existing.messageCount !== group.messages ||
+        existing.firstAt.getTime() !== group.firstAt.getTime() ||
+        existing.lastAt.getTime() !== group.lastAt.getTime()
+      );
+    });
+
+    if (missing.length > 0) {
+      await tx.teamAttendanceGroup.createMany({
+        data: missing.map((group) => ({
           attendanceDayId: day.id,
           groupId: group.groupId,
           accountId: group.accountId,
           messageCount: group.messages,
           firstAt: group.firstAt,
           lastAt: group.lastAt,
-        },
-        update: {
+        })),
+        // The advisory lock already serialises this member-day, so a duplicate should be
+        // impossible — but the primary key stays the real authority, not this reasoning.
+        skipDuplicates: true,
+      });
+    }
+
+    for (const group of changed) {
+      await tx.teamAttendanceGroup.update({
+        where: { attendanceDayId_groupId: { attendanceDayId: day.id, groupId: group.groupId } },
+        data: {
           accountId: group.accountId,
           messageCount: group.messages,
           firstAt: group.firstAt,
@@ -178,10 +217,13 @@ export async function recordTeamAttendance(input: {
     }
 
     // A group can only ever leave this set if its messages were deleted, which the recompute would
-    // otherwise leave behind as a phantom. Cheap, and it keeps uniqueGroupCount honest against the
-    // rows that actually explain it.
-    await tx.teamAttendanceGroup.deleteMany({
-      where: { attendanceDayId: day.id, groupId: { notIn: groups.map((group) => group.groupId) } },
-    });
+    // otherwise leave behind as a phantom. Skipped entirely when nothing could have left, which is
+    // every ordinary message — it keeps uniqueGroupCount honest without a write to prove it.
+    const stale = current.filter((row) => !groups.some((group) => group.groupId === row.groupId));
+    if (stale.length > 0) {
+      await tx.teamAttendanceGroup.deleteMany({
+        where: { attendanceDayId: day.id, groupId: { in: stale.map((row) => row.groupId) } },
+      });
+    }
   });
 }

@@ -12,8 +12,13 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 
 const BATCH_SIZE = 500;
 
-/** Lazily seeds the singleton settings row, same "upsert on read" pattern as getAutomationSettings(). */
+/** Lazily seeds the singleton settings row, same read-first pattern as getAutomationSettings(). */
 export async function getLearningSettings(): Promise<LearningSettings> {
+  // Read first, upsert only when genuinely absent — pipeline/settings.ts's pattern, and for its
+  // reason: this is read at the top of a polling loop tick, and an unconditional upsert takes a
+  // row lock and writes a tuple every time to discover that nothing has changed.
+  const existing = await prisma.learningSettings.findUnique({ where: { id: "global" } });
+  if (existing) return existing;
   return prisma.learningSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
 }
 
