@@ -141,3 +141,71 @@ export async function cancelQueuedChatMessage(outboundId: string, groupId: strin
   });
   revalidatePath(`/chat/${groupId}`);
 }
+
+export interface MessageActionResult {
+  error?: string;
+}
+
+/**
+ * Reacts to a stored message with one emoji -- ours or a customer's, since WhatsApp allows
+ * reacting to either. `messageId` is our own row's id rather than the WhatsApp message id, so the
+ * account it belongs to can be resolved server-side instead of trusted from the client.
+ *
+ * This is a live browser action -- a WorkerCommand, not an OutboundMessage -- because a reaction
+ * has nothing to retry, rate-limit or queue: it either lands on the next tick or it does not.
+ */
+export async function reactToChatMessage(messageId: string, emoji: string): Promise<MessageActionResult> {
+  await requireSession();
+
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { accountId: true, whatsappMessageId: true, groupId: true },
+  });
+  if (!message) return { error: "That message could not be found." };
+
+  await prisma.workerCommand.create({
+    data: {
+      type: "REACT_TO_MESSAGE",
+      accountId: message.accountId,
+      payload: { whatsappMessageId: message.whatsappMessageId, emoji },
+    },
+  });
+  if (message.groupId) revalidatePath(`/chat/${message.groupId}`);
+  return {};
+}
+
+/**
+ * Edits the text of a message this account sent. WhatsApp's own edit feature is marked
+ * experimental by the underlying library and most accounts do not have it -- a reported failure
+ * here is the ordinary outcome on many accounts, not evidence of a defect, and is surfaced as
+ * plainly as any other "could not send" error.
+ *
+ * Deliberately does NOT rewrite `Message.body`: that column is the record of what was actually
+ * sent, and WhatsApp's own edit indicator on the customer's device is the real record that a
+ * message changed. Silently rewriting history here would make our own record disagree with what a
+ * customer scrolling back actually sees.
+ */
+export async function editChatMessage(messageId: string, newBody: string): Promise<MessageActionResult> {
+  await requireSession();
+
+  const trimmed = newBody.trim();
+  if (!trimmed) return { error: "The edited message cannot be empty." };
+  if (trimmed.length > MAX_BODY_LENGTH) return { error: `Keep it under ${MAX_BODY_LENGTH} characters.` };
+
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { accountId: true, whatsappMessageId: true, groupId: true, direction: true },
+  });
+  if (!message) return { error: "That message could not be found." };
+  if (message.direction !== "OUTGOING") return { error: "Only a message this account sent can be edited." };
+
+  await prisma.workerCommand.create({
+    data: {
+      type: "EDIT_MESSAGE",
+      accountId: message.accountId,
+      payload: { whatsappMessageId: message.whatsappMessageId, newBody: trimmed },
+    },
+  });
+  if (message.groupId) revalidatePath(`/chat/${message.groupId}`);
+  return {};
+}

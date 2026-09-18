@@ -121,6 +121,7 @@ export default async function AccountsPage() {
       qrStale: isQrStale(qrUpdatedAt, nowMs),
       pairingMethod: account.pairingMethod,
       pairingPhoneNumber: account.pairingPhoneNumber,
+      proxyAddress: account.proxyAddress,
     };
   });
 

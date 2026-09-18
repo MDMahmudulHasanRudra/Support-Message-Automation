@@ -33,6 +33,34 @@ export interface SendResult {
   error?: string;
 }
 
+/** What was created, or why not — never a bare boolean, since a group name alone tells nobody its id. */
+export type GroupCreationResult =
+  | { success: true; whatsappGroupId: string; name: string }
+  | { success: false; error: string };
+
+/** What was joined, or why not — mirrors GroupCreationResult so callers handle the two the same way. */
+export type GroupJoinResult =
+  | { success: true; whatsappGroupId: string }
+  | { success: false; error: string };
+
+export interface ProfileUpdate {
+  /** WhatsApp's own display name for this account. */
+  displayName?: string;
+  /** The "About" text shown on the account's profile. */
+  about?: string;
+  /** A data URL (`data:image/...;base64,...`) for the new profile photo. */
+  pictureDataUrl?: string;
+}
+
+export interface ProfileUpdateResult {
+  /** True per field the provider actually confirmed changing — a caller that asked for all three
+   *  and got two back knows exactly which one to retry, rather than treating the whole call as
+   *  failed or succeeded. */
+  displayName?: boolean;
+  about?: boolean;
+  pictureDataUrl?: boolean;
+}
+
 /**
  * What the browser can say about what it has seen — including that it cannot say anything.
  *
@@ -141,4 +169,38 @@ export interface WhatsAppProvider {
    * DISCONNECTED state either way (see OpenWAProvider's doc comment on why this call is risky).
    */
   logout(): Promise<void>;
+  /**
+   * Reacts to an existing message with a single emoji — ours or a customer's, since WhatsApp
+   * allows reacting to either. `whatsappMessageId` is the same id already stored on `Message`, so
+   * no separate lookup is needed to target one. Never throws; a failure (message too old,
+   * message deleted, session dropped) comes back as `{ success: false, error }`.
+   */
+  reactToMessage(whatsappMessageId: string, emoji: string): Promise<SendResult>;
+  /**
+   * Edits the text of a message THIS ACCOUNT sent. WhatsApp's own edit feature is marked
+   * experimental by the underlying library and most accounts do not have it enabled — a `false`
+   * result here is the ordinary outcome on an account without access, not evidence of a bug.
+   * Never throws.
+   */
+  editMessage(whatsappMessageId: string, newBody: string): Promise<SendResult>;
+  /**
+   * Creates a new WhatsApp group with this account as its first member, adding the given contacts.
+   * The created group is NOT written into `WhatsAppGroup` by this call — the next group sync
+   * upserts it with every flag at its default, exactly like any other newly-discovered group, so
+   * an admin still has to opt it into monitoring deliberately. Never throws.
+   */
+  createGroup(groupName: string, contactPhoneNumbers: string[]): Promise<GroupCreationResult>;
+  /**
+   * Joins a group via its invite link (`https://chat.whatsapp.com/<code>`). Same non-write
+   * behaviour as `createGroup`: the joined group is picked up by the next sync, not written here.
+   * Never throws.
+   */
+  joinGroupByInviteLink(inviteLink: string): Promise<GroupJoinResult>;
+  /**
+   * Updates this account's own WhatsApp profile — display name, About text, and/or photo. Fields
+   * left undefined in `update` are left untouched; this is a partial update, never a full
+   * overwrite of everything the caller did not think to pass. Never throws; a field the provider
+   * could not confirm changing is simply absent (or false) in the result, not an exception.
+   */
+  updateProfile(update: ProfileUpdate): Promise<ProfileUpdateResult>;
 }

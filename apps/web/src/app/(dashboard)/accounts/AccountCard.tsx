@@ -11,6 +11,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { QrConnectDialog, type PairingMethod } from "./QrConnectDialog";
+import { AccountAdvancedDialog } from "./AccountAdvancedDialog";
 
 /** What the operator should do next, per status — the card's job is to answer that, not just report state. */
 const STATUS_HINT: Record<string, string> = {
@@ -57,9 +58,11 @@ export interface AccountCardData {
   qrStale: boolean;
   pairingMethod: PairingMethod;
   pairingPhoneNumber: string | null;
+  /** `host:port`, or null when this account connects directly. Shown so a saved proxy is not an invisible setting. */
+  proxyAddress: string | null;
 }
 
-type DialogKind = "reconnect" | "resync" | "logout" | "setPrimary" | "removePrimary" | "delete" | null;
+type DialogKind = "reconnect" | "resync" | "logout" | "setPrimary" | "removePrimary" | "delete" | "advanced" | null;
 
 export function AccountCard({
   account,
@@ -288,6 +291,9 @@ export function AccountCard({
             Set as Primary
           </Button>
         )}
+        <Button variant="secondary" onClick={() => setDialog("advanced")}>
+          Advanced
+        </Button>
         <Button variant="danger" onClick={() => setDialog("logout")}>
           Logout
         </Button>
@@ -361,6 +367,14 @@ export function AccountCard({
         description="No account will be Primary afterward. Any service that isn't explicitly configured with its own account will show a clear error instead of sending, until a new Primary is set."
         confirmLabel="Remove Primary"
         tone="danger"
+      />
+
+      <AccountAdvancedDialog
+        open={dialog === "advanced"}
+        onClose={closeDialog}
+        accountId={account.id}
+        accountLabel={account.label}
+        proxyAddress={account.proxyAddress}
       />
 
       <ConfirmDialog

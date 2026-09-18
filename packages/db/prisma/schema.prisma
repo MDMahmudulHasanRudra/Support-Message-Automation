@@ -318,6 +318,25 @@ enum WorkerCommandType {
   /// for that group's turn in startGroupKnowledgeProcessor's hourly rotation. Reads the Message
   /// table only; needs no WhatsApp session, same as the two above.
   BUILD_GROUP_KNOWLEDGE
+  /// React to an existing message with one emoji (payload: { whatsappMessageId, emoji }) — a live
+  /// browser action, so it is a WorkerCommand like everything else in this enum rather than a queue
+  /// row: there is no send to retry or rate-limit, only a call to make and a result to report.
+  REACT_TO_MESSAGE
+  /// Edit the text of a message this account already sent (payload: { whatsappMessageId, newBody
+  /// }). Marked experimental by the underlying library — most accounts do not have this feature —
+  /// so a reported failure here is the ordinary outcome on many accounts, not evidence of a bug.
+  EDIT_MESSAGE
+  /// Create a new WhatsApp group (payload: { groupName, contactPhoneNumbers }). The created group
+  /// is not written into WhatsAppGroup by this command; the next RESYNC_GROUPS or scheduled sync
+  /// discovers and upserts it like any other newly-seen group, at its default (unmonitored) flags.
+  CREATE_GROUP
+  /// Join a group via its invite link (payload: { inviteLink }). Same non-write behaviour as
+  /// CREATE_GROUP — the joined group is picked up by the next sync, not written here.
+  JOIN_GROUP
+  /// Update this account's own WhatsApp profile — display name, About text and/or photo (payload:
+  /// { displayName?, about?, pictureDataUrl? }). A partial update: a field left out of the payload
+  /// is left untouched on WhatsApp.
+  UPDATE_PROFILE
 }
 
 enum WorkerCommandStatus {
@@ -589,6 +608,19 @@ model WhatsAppAccount {
   /// unverified operator-typed value would make a claim about the session that nothing has
   /// confirmed. Null under QR_CODE, and required before PHONE_CODE can be used.
   pairingPhoneNumber String?
+
+  /// Per-account proxy, read at connect time by OpenWAProvider and handed to the library as
+  /// `proxyServerCredentials`. Address is `host:port`; protocol/username/password are optional —
+  /// the library can infer the protocol from the address, and most proxies need no credentials.
+  /// Null means no proxy, which is what every existing account already does.
+  proxyAddress  String?
+  proxyProtocol String?
+  proxyUsername String?
+  /// Encrypted at rest with the same `encryptSecret`/`decryptSecret` this schema already uses for
+  /// the Teams OAuth tokens and AI provider keys — no second encryption mechanism for one more
+  /// credential. Null whenever the proxy needs no password, which most do not.
+  proxyPasswordCiphertext String?
+
   lastConnectedAt DateTime?
   lastHeartbeatAt DateTime?
   sessionDataPath String?

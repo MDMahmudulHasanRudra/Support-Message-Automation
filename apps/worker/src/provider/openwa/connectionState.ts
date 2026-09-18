@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { decryptSecret, prisma } from "@support-automation/db";
 import type { WhatsAppAccountStatus } from "@prisma/client";
 
 /**
@@ -195,5 +195,49 @@ export async function readPairingPreference(
   } catch (err) {
     console.error(`[openwa] could not read the pairing preference for ${accountId}; using a QR code`, err);
     return { method: "QR_CODE" };
+  }
+}
+
+/**
+ * The proxy this account should connect through, or null for a direct connection — read fresh at
+ * every attempt, for the same reason `readPairingPreference` is: `connect()` has several callers
+ * and none of them carry a live copy of the account row.
+ *
+ * FAILS OVER TO NO PROXY. A misconfigured or now-unreachable proxy should not permanently block an
+ * account from connecting at all — every account already connects directly today, so "no proxy" is
+ * always a safe fallback, unlike the pairing method, where the two fallbacks are not equivalent.
+ */
+export async function readProxyConfig(
+  accountId: string,
+): Promise<{ address: string; protocol?: string; username?: string; password?: string } | null> {
+  try {
+    const account = await prisma.whatsAppAccount.findUnique({
+      where: { id: accountId },
+      select: { proxyAddress: true, proxyProtocol: true, proxyUsername: true, proxyPasswordCiphertext: true },
+    });
+    if (!account?.proxyAddress) return null;
+
+    let password: string | undefined;
+    if (account.proxyPasswordCiphertext) {
+      try {
+        password = decryptSecret(account.proxyPasswordCiphertext);
+      } catch (err) {
+        // A password that fails to decrypt (a rotated encryption key, corrupted storage) is worse
+        // to send than to omit — many proxies work anonymously, and a garbled password is more
+        // likely to be REJECTED than silently accepted, which would strand every connection
+        // attempt behind a credential nobody can fix without first noticing this log line.
+        console.error(`[openwa] could not decrypt the stored proxy password for account ${accountId}`, err);
+      }
+    }
+
+    return {
+      address: account.proxyAddress,
+      protocol: account.proxyProtocol ?? undefined,
+      username: account.proxyUsername ?? undefined,
+      password,
+    };
+  } catch (err) {
+    console.error(`[openwa] could not read the proxy configuration for ${accountId}; connecting directly`, err);
+    return null;
   }
 }

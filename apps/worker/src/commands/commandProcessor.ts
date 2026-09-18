@@ -630,6 +630,106 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         break;
       }
 
+      case "REACT_TO_MESSAGE": {
+        const payload = command.payload as { whatsappMessageId?: string; emoji?: string } | null;
+        if (!payload?.whatsappMessageId || !payload?.emoji) {
+          throw new Error("REACT_TO_MESSAGE requires { whatsappMessageId, emoji } in the command payload.");
+        }
+        const result = await provider.reactToMessage(payload.whatsappMessageId, payload.emoji);
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: {
+            status: result.success ? "DONE" : "FAILED",
+            processedAt: new Date(),
+            result: { success: result.success, error: result.error ?? null },
+          },
+        });
+        break;
+      }
+
+      case "EDIT_MESSAGE": {
+        const payload = command.payload as { whatsappMessageId?: string; newBody?: string } | null;
+        if (!payload?.whatsappMessageId || !payload?.newBody) {
+          throw new Error("EDIT_MESSAGE requires { whatsappMessageId, newBody } in the command payload.");
+        }
+        const result = await provider.editMessage(payload.whatsappMessageId, payload.newBody);
+        // The stored Message row is deliberately left untouched here. It is the record of what was
+        // SENT — echoing the edit back into it would make history rewrite itself, and WhatsApp's
+        // own edit indicator on the customer's device is the actual record that a message changed.
+        // A future "edited" surface, if one is ever wanted, belongs to a real edit-history table,
+        // not to silently overwriting `Message.body`.
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: {
+            status: result.success ? "DONE" : "FAILED",
+            processedAt: new Date(),
+            result: { success: result.success, error: result.error ?? null },
+          },
+        });
+        break;
+      }
+
+      case "CREATE_GROUP": {
+        const payload = command.payload as { groupName?: string; contactPhoneNumbers?: string[] } | null;
+        if (!payload?.groupName || !payload?.contactPhoneNumbers?.length) {
+          throw new Error("CREATE_GROUP requires { groupName, contactPhoneNumbers } in the command payload.");
+        }
+        // Digits only — the caller (the server action) is expected to have already validated these,
+        // but this command can also be replayed by a retry, so the normalisation happens here too
+        // rather than trusted from whatever the payload happened to carry.
+        const digits = payload.contactPhoneNumbers.map((n) => n.replace(/\D/g, "")).filter(Boolean);
+        const result = await provider.createGroup(payload.groupName, digits);
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: {
+            status: result.success ? "DONE" : "FAILED",
+            processedAt: new Date(),
+            result: result.success
+              ? { success: true, whatsappGroupId: result.whatsappGroupId, name: result.name }
+              : { success: false, error: result.error },
+          },
+        });
+        break;
+      }
+
+      case "JOIN_GROUP": {
+        const payload = command.payload as { inviteLink?: string } | null;
+        if (!payload?.inviteLink) {
+          throw new Error("JOIN_GROUP requires { inviteLink } in the command payload.");
+        }
+        const result = await provider.joinGroupByInviteLink(payload.inviteLink);
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: {
+            status: result.success ? "DONE" : "FAILED",
+            processedAt: new Date(),
+            result: result.success
+              ? { success: true, whatsappGroupId: result.whatsappGroupId }
+              : { success: false, error: result.error },
+          },
+        });
+        break;
+      }
+
+      case "UPDATE_PROFILE": {
+        const payload = command.payload as
+          | { displayName?: string; about?: string; pictureDataUrl?: string }
+          | null;
+        if (!payload || (payload.displayName === undefined && payload.about === undefined && payload.pictureDataUrl === undefined)) {
+          throw new Error("UPDATE_PROFILE requires at least one of { displayName, about, pictureDataUrl }.");
+        }
+        const result = await provider.updateProfile(payload);
+        // A partial success — the name changed but the picture upload failed, say — is still
+        // reported as DONE with the per-field result inside it, never FAILED outright: the caller
+        // asked for up to three independent things, and one failing must not hide that the other
+        // two genuinely went through.
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: { status: "DONE", processedAt: new Date(), result: { ...result } },
+        });
+        break;
+      }
+
       default:
         await prisma.workerCommand.update({
           where: { id: command.id },

@@ -9,21 +9,28 @@ import {
   type Client,
   type ContactId,
   type Content,
+  type DataURL,
   type GroupChatId,
   type Message as WaMessage,
+  type MessageId,
 } from "@open-wa/wa-automate";
 import type { RawIncomingMessage } from "../../pipeline/types.js";
 import type {
   AccountInfo,
   CollectionProbe,
   ConnectionStatus,
+  GroupCreationResult,
   GroupInfo,
+  GroupJoinResult,
   GroupParticipant,
+  ProfileUpdate,
+  ProfileUpdateResult,
   SendResult,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
 import {
   readPairingPreference,
+  readProxyConfig,
   recordAccountMetadata,
   recordConnectionState,
   type OpenWAConnectionState,
@@ -312,6 +319,7 @@ export class OpenWAProvider implements WhatsAppProvider {
 
     const useStealth = process.env.WHATSAPP_USE_STEALTH !== "false";
     const pairing = await readPairingPreference(this.accountId);
+    const proxy = await readProxyConfig(this.accountId);
 
     await this.setState("WAITING_FOR_QR");
 
@@ -409,6 +417,25 @@ export class OpenWAProvider implements WhatsAppProvider {
           // making absent, rather than relying on every future reader of this config treating an
           // undefined value the same way this one version of the library happens to.
           ...(pairing.method === "PHONE_CODE" ? { linkCode: pairing.linkCodeNumber } : {}),
+          // Per-account proxy, read fresh above for the same reason the pairing preference is:
+          // this config is built on every connect attempt, not just the operator-initiated one.
+          // `corsFix: true` alongside it is the library's own documented mitigation for a proxy
+          // causing CORS errors, and is harmless with no proxy configured.
+          ...(proxy
+            ? {
+                // The library's own type declares `username`/`password` as required strings even
+                // though its doc comment calls them optional — most proxies genuinely need no
+                // credentials, so an unauthenticated proxy is represented here as empty strings
+                // rather than widening the library's type.
+                proxyServerCredentials: {
+                  address: proxy.address,
+                  protocol: proxy.protocol,
+                  username: proxy.username ?? "",
+                  password: proxy.password ?? "",
+                },
+                corsFix: true,
+              }
+            : {}),
         }),
         watchdog,
         abandoned,
@@ -769,6 +796,100 @@ export class OpenWAProvider implements WhatsAppProvider {
     } catch (err) {
       return { success: false, error: (err as Error).message };
     }
+  }
+
+  async reactToMessage(whatsappMessageId: string, emoji: string): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const ok = await this.client.react(whatsappMessageId as MessageId, emoji);
+      return ok ? { success: true } : { success: false, error: "The reaction was not accepted." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async editMessage(whatsappMessageId: string, newBody: string): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      // The library's own doc comment marks this experimental: "most accounts do not have access
+      // to this feature in their apps". A `false` result is therefore the expected outcome on many
+      // accounts, not evidence of a defect — the caller surfaces it as an ordinary failure rather
+      // than logging it as an error.
+      const result = await this.client.editMessage(whatsappMessageId as MessageId, newBody as Content);
+      if (result === false) {
+        return { success: false, error: "This account cannot edit messages, or the message is too old to edit." };
+      }
+      return { success: true, providerMessageId: typeof result === "string" ? result : whatsappMessageId };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async createGroup(groupName: string, contactPhoneNumbers: string[]): Promise<GroupCreationResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    if (contactPhoneNumbers.length === 0) {
+      // WhatsApp groups need at least one other member; a solo "group" is not a real request and
+      // the library's own response for it is not worth relying on.
+      return { success: false, error: "A group needs at least one member besides this account." };
+    }
+    try {
+      const contacts = contactPhoneNumbers.map((digits) => `${digits}@c.us` as ContactId);
+      const result = await this.client.createGroup(groupName, contacts.length === 1 ? contacts[0]! : contacts);
+      // 200 is the library's own documented success code; anything else is a real failure
+      // (a name WhatsApp rejected, a contact it could not add) rather than a network hiccup.
+      if (result.status !== 200 || !result.gid) {
+        return { success: false, error: `WhatsApp did not create the group (status ${result.status}).` };
+      }
+      return { success: true, whatsappGroupId: String(result.gid), name: groupName };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async joinGroupByInviteLink(inviteLink: string): Promise<GroupJoinResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      // The library's own doc comment: false means it did not work, 401 means this account was
+      // previously removed from the group. Both are real outcomes worth reporting distinctly
+      // rather than collapsing into one generic failure.
+      const result = await this.client.joinGroupViaLink(inviteLink);
+      if (result === false) return { success: false, error: "The invite link is invalid or has expired." };
+      if (result === 401) return { success: false, error: "This account was previously removed from that group." };
+      return { success: true, whatsappGroupId: String(result) };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async updateProfile(update: ProfileUpdate): Promise<ProfileUpdateResult> {
+    if (!this.client) return {};
+    const result: ProfileUpdateResult = {};
+    // Each field is its own try/catch and its own call: WhatsApp validates a display name, an
+    // About text and a photo independently, so one being rejected (a name with disallowed
+    // characters, say) must not also lose the other two fields the caller asked for.
+    if (update.displayName !== undefined) {
+      try {
+        result.displayName = await this.client.setMyName(update.displayName);
+      } catch {
+        result.displayName = false;
+      }
+    }
+    if (update.about !== undefined) {
+      try {
+        const ok = await this.client.setMyStatus(update.about);
+        result.about = ok !== false;
+      } catch {
+        result.about = false;
+      }
+    }
+    if (update.pictureDataUrl !== undefined) {
+      try {
+        result.pictureDataUrl = await this.client.setProfilePic(update.pictureDataUrl as DataURL);
+      } catch {
+        result.pictureDataUrl = false;
+      }
+    }
+    return result;
   }
 
   private async setState(

@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+import { prisma, encryptSecret } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
+import { normalizePhoneNumber } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -405,4 +406,192 @@ export async function setPairingMethod(
   await enqueueCommand("RECONNECT", accountId);
   revalidatePath("/accounts");
   return {};
+}
+
+/**
+ * The most recent CREATE_GROUP / JOIN_GROUP / UPDATE_PROFILE command's outcome for one account —
+ * one poll function shared by all three, since all three follow the same "queue it, then check
+ * back" shape and none of them can meaningfully overlap on a single account (the underlying
+ * browser session is one thing at a time regardless).
+ */
+export interface AccountCommandStatus {
+  status: "IDLE" | "PENDING" | "DONE" | "FAILED";
+  result?: Record<string, unknown>;
+  error?: string;
+}
+
+async function readLatestAccountCommand(
+  accountId: string,
+  type: "CREATE_GROUP" | "JOIN_GROUP" | "UPDATE_PROFILE",
+): Promise<AccountCommandStatus> {
+  await requireSession();
+  const command = await prisma.workerCommand.findFirst({
+    where: { type, accountId },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!command) return { status: "IDLE" };
+  if (command.status === "PENDING" || command.status === "PROCESSING") return { status: "PENDING" };
+  if (command.status === "FAILED") {
+    return {
+      status: "FAILED",
+      error: (command.result as { error?: string } | null)?.error ?? "The worker could not complete this action.",
+    };
+  }
+  return { status: "DONE", result: (command.result as Record<string, unknown> | null) ?? {} };
+}
+
+export interface CreateGroupResult {
+  error?: string;
+}
+
+/**
+ * Queues a new WhatsApp group creation from this account. The group is NOT written into
+ * `WhatsAppGroup` here -- the next sync discovers it like any other new group, at its default
+ * (unmonitored) flags, so an admin still has to opt it in deliberately.
+ */
+export async function requestCreateGroup(
+  accountId: string,
+  groupName: string,
+  contactPhoneNumbersRaw: string,
+): Promise<CreateGroupResult> {
+  await requireSession();
+
+  const trimmedName = groupName.trim();
+  if (!trimmedName) return { error: "Give the group a name." };
+
+  // One number per line or comma -- the same loose format bulk-entry fields in this app already
+  // accept, rather than asking for a single delimiter format nobody remembers.
+  const rawNumbers = contactPhoneNumbersRaw.split(/[,\n]+/).map((n) => n.trim()).filter(Boolean);
+  const digits = rawNumbers.map((n) => normalizePhoneNumber(n)).filter((d): d is string => d !== null);
+  if (digits.length === 0) {
+    return { error: "Enter at least one valid phone number, one per line or comma-separated." };
+  }
+
+  const existing = await prisma.workerCommand.findFirst({
+    where: { type: "CREATE_GROUP", accountId, status: { in: ["PENDING", "PROCESSING"] } },
+  });
+  if (existing) return { error: "A group creation is already in progress for this account." };
+
+  await prisma.workerCommand.create({
+    data: { type: "CREATE_GROUP", accountId, payload: { groupName: trimmedName, contactPhoneNumbers: digits } },
+  });
+  revalidatePath("/accounts");
+  return {};
+}
+
+export async function readCreateGroupResult(accountId: string): Promise<AccountCommandStatus> {
+  return readLatestAccountCommand(accountId, "CREATE_GROUP");
+}
+
+export interface JoinGroupResult {
+  error?: string;
+}
+
+/** Queues joining a group via its invite link, from this account. Same non-write behaviour as requestCreateGroup. */
+export async function requestJoinGroup(accountId: string, inviteLink: string): Promise<JoinGroupResult> {
+  await requireSession();
+
+  const trimmed = inviteLink.trim();
+  if (!/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]+$/.test(trimmed)) {
+    return { error: "That does not look like a WhatsApp invite link (https://chat.whatsapp.com/...)." };
+  }
+
+  const existing = await prisma.workerCommand.findFirst({
+    where: { type: "JOIN_GROUP", accountId, status: { in: ["PENDING", "PROCESSING"] } },
+  });
+  if (existing) return { error: "Already trying to join a group with this account." };
+
+  await prisma.workerCommand.create({ data: { type: "JOIN_GROUP", accountId, payload: { inviteLink: trimmed } } });
+  revalidatePath("/accounts");
+  return {};
+}
+
+export async function readJoinGroupResult(accountId: string): Promise<AccountCommandStatus> {
+  return readLatestAccountCommand(accountId, "JOIN_GROUP");
+}
+
+export interface UpdateProfileResult {
+  error?: string;
+}
+
+/**
+ * Queues an update to this account's own WhatsApp profile. A partial update -- a field the
+ * operator left blank in the form is omitted from the payload entirely, not sent as an empty
+ * string, so a blank "About" field means "leave it as it is", never "clear it".
+ */
+export async function requestUpdateProfile(
+  accountId: string,
+  fields: { displayName?: string; about?: string; pictureDataUrl?: string },
+): Promise<UpdateProfileResult> {
+  await requireSession();
+
+  const payload: Record<string, string> = {};
+  if (fields.displayName?.trim()) payload.displayName = fields.displayName.trim();
+  if (fields.about?.trim()) payload.about = fields.about.trim();
+  if (fields.pictureDataUrl?.trim()) payload.pictureDataUrl = fields.pictureDataUrl.trim();
+  if (Object.keys(payload).length === 0) return { error: "Change at least one field before saving." };
+
+  const existing = await prisma.workerCommand.findFirst({
+    where: { type: "UPDATE_PROFILE", accountId, status: { in: ["PENDING", "PROCESSING"] } },
+  });
+  if (existing) return { error: "A profile update is already in progress for this account." };
+
+  await prisma.workerCommand.create({ data: { type: "UPDATE_PROFILE", accountId, payload } });
+  revalidatePath("/accounts");
+  return {};
+}
+
+export async function readUpdateProfileResult(accountId: string): Promise<AccountCommandStatus> {
+  return readLatestAccountCommand(accountId, "UPDATE_PROFILE");
+}
+
+export interface ProxyFormState {
+  error?: string;
+  success?: boolean;
+}
+
+/**
+ * Saves (or clears) this account's outbound proxy and immediately queues a RECONNECT, because the
+ * new setting only takes effect on the NEXT connect -- mirrors setPairingMethod's write-then-
+ * reconnect shape above, for the same reason: a saved preference that needed a second button press
+ * to take effect is the shape that leaves somebody staring at an unchanged connection.
+ *
+ * The password is encrypted with the SAME `encryptSecret` this schema already uses for Teams OAuth
+ * tokens and AI provider keys. An empty address clears the whole configuration -- a proxy with no
+ * address is not a partial proxy, it is no proxy.
+ */
+export async function saveAccountProxy(
+  accountId: string,
+  fields: { address: string; protocol?: string; username?: string; password?: string },
+): Promise<ProxyFormState> {
+  await requireSession();
+
+  const address = fields.address.trim();
+  if (!address) {
+    await prisma.whatsAppAccount.update({
+      where: { id: accountId },
+      data: { proxyAddress: null, proxyProtocol: null, proxyUsername: null, proxyPasswordCiphertext: null },
+    });
+    await enqueueCommand("RECONNECT", accountId);
+    revalidatePath("/accounts");
+    return { success: true };
+  }
+
+  await prisma.whatsAppAccount.update({
+    where: { id: accountId },
+    data: {
+      proxyAddress: address,
+      proxyProtocol: fields.protocol?.trim() || null,
+      proxyUsername: fields.username?.trim() || null,
+      // Only re-encrypted when a new password was actually typed -- an operator editing the
+      // address to fix a typo must not be forced to retype a password they are not changing.
+      // Clearing a saved password is deliberately not this action's job: log out and back in with
+      // a blank password to remove one that is no longer needed, which keeps "leave it" and
+      // "clear it" from being ambiguous on the one field where a blank value cannot mean both.
+      ...(fields.password?.trim() ? { proxyPasswordCiphertext: encryptSecret(fields.password.trim()) } : {}),
+    },
+  });
+  await enqueueCommand("RECONNECT", accountId);
+  revalidatePath("/accounts");
+  return { success: true };
 }

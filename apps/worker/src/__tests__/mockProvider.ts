@@ -1,8 +1,12 @@
 import type {
   CollectionProbe,
   ConnectionStatus,
+  GroupCreationResult,
   GroupInfo,
+  GroupJoinResult,
   GroupParticipant,
+  ProfileUpdate,
+  ProfileUpdateResult,
   SendResult,
   WhatsAppProvider,
 } from "../provider/WhatsAppProvider.js";
@@ -98,5 +102,42 @@ export class MockProvider implements WhatsAppProvider {
   async addGroupParticipant(chatId: string, phoneNumber: string): Promise<SendResult> {
     this.addedParticipants.push({ chatId, phoneNumber });
     return this.nextAddParticipantResult;
+  }
+
+  public reactions: Array<{ whatsappMessageId: string; emoji: string }> = [];
+  public nextReactionResult: SendResult = { success: true };
+  async reactToMessage(whatsappMessageId: string, emoji: string): Promise<SendResult> {
+    this.reactions.push({ whatsappMessageId, emoji });
+    return this.nextReactionResult;
+  }
+
+  public edits: Array<{ whatsappMessageId: string; newBody: string }> = [];
+  public nextEditResult: SendResult = { success: true };
+  async editMessage(whatsappMessageId: string, newBody: string): Promise<SendResult> {
+    this.edits.push({ whatsappMessageId, newBody });
+    return this.nextEditResult;
+  }
+
+  public createdGroups: Array<{ groupName: string; contactPhoneNumbers: string[] }> = [];
+  public nextCreateGroupResult: GroupCreationResult = { success: true, whatsappGroupId: "mock-group@g.us", name: "" };
+  async createGroup(groupName: string, contactPhoneNumbers: string[]): Promise<GroupCreationResult> {
+    this.createdGroups.push({ groupName, contactPhoneNumbers });
+    return this.nextCreateGroupResult.success
+      ? { ...this.nextCreateGroupResult, name: groupName }
+      : this.nextCreateGroupResult;
+  }
+
+  public joinedInviteLinks: string[] = [];
+  public nextJoinGroupResult: GroupJoinResult = { success: true, whatsappGroupId: "mock-group@g.us" };
+  async joinGroupByInviteLink(inviteLink: string): Promise<GroupJoinResult> {
+    this.joinedInviteLinks.push(inviteLink);
+    return this.nextJoinGroupResult;
+  }
+
+  public profileUpdates: ProfileUpdate[] = [];
+  public nextProfileUpdateResult: ProfileUpdateResult = { displayName: true, about: true, pictureDataUrl: true };
+  async updateProfile(update: ProfileUpdate): Promise<ProfileUpdateResult> {
+    this.profileUpdates.push(update);
+    return this.nextProfileUpdateResult;
   }
 }
