@@ -8,6 +8,7 @@ import {
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { isMediaOnlyBody } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
+import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { buildAnswerPlan, renderAnswerPlan, validateGrounding } from "./answerPlan.js";
@@ -162,6 +163,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       reason,
       automationSettings: params.automationSettings,
       aiSettings,
+      correlationId: params.correlationId ?? null,
     });
     // Linked after the fact rather than at creation, since the row now exists first. Its own
     // try/catch: the team has already been told, and failing to record WHICH alert told them must
@@ -596,6 +598,8 @@ async function sendHumanFallbackAlert(params: {
   reason: string;
   automationSettings: AutomationSettings;
   aiSettings: AiSettings;
+  /** The pipeline trace id, so a failure here groups with everything else for this message. */
+  correlationId?: string | null;
 }): Promise<string | null> {
   const payload: Record<string, unknown> = {
     alertKind: "AI_ASSISTANCE_REQUIRED",
@@ -616,8 +620,17 @@ async function sendHumanFallbackAlert(params: {
       ? params.aiSettings.takeoverNotifyGroupIds
       : params.automationSettings.whatsappNotificationGroupIds;
 
+  // Why each channel did not deliver, so the terminal case below can say which door was shut
+  // rather than only that nobody answered. Routing policy is untouched: WhatsApp is still
+  // preferred, Teams is still the fallback, and a muted channel still falls through.
+  let whatsappOutcome = "NO_DESTINATIONS_CONFIGURED";
+  let teamsOutcome = "NO_WEBHOOK_CONFIGURED";
+
   if (takeoverDestinations.length > 0) {
     const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP");
+    if (isResolutionError(resolution)) {
+      whatsappOutcome = `ROUTING_FAILED: ${resolution.error}`;
+    }
     if (!isResolutionError(resolution)) {
       // EVERY configured destination, not just the first.
       //
@@ -652,6 +665,7 @@ async function sendHumanFallbackAlert(params: {
       // channel falls through to Teams instead: that is a statement about WhatsApp, not about
       // whether the team is told at all.
       if (firstNotificationId) return firstNotificationId;
+      whatsappOutcome = "MUTED";
     }
   }
 
@@ -664,7 +678,38 @@ async function sendHumanFallbackAlert(params: {
       payload,
     });
     if (!sent.suppressed) return sent.id;
+    teamsOutcome = "MUTED";
   }
+
+  // Every channel is shut, so nobody has been told a customer is waiting for a person.
+  //
+  // This used to be a bare `return null`. The AiFallbackDecision row was still written, so the
+  // handover appeared in the AI Activity log with a null notificationId — and a null there reads
+  // identically whether the alert was muted on purpose, could not be routed, or was never
+  // configured at all. Every sibling raise-point already records this: the escalation queue defers
+  // with a WARN, the watchdog states outright that nobody could be told, pattern detection and the
+  // Teams resolver both log a skip. This one said nothing, which is the shape the watchdog names —
+  // the absence of an alert reads as the absence of a problem.
+  //
+  // Reported, never retried: the routing policy above is unchanged, and the customer-facing side
+  // of the handover has already happened. This makes the terminal state observable, nothing more.
+  await logSystemEvent(
+    "ERROR",
+    "ai-fallback",
+    "AI_HUMAN_FALLBACK_NOTIFICATION_FAILED",
+    {
+      reason: "NO_AVAILABLE_NOTIFICATION_CHANNEL",
+      whatsapp: whatsappOutcome,
+      teams: teamsOutcome,
+      accountId: params.accountId,
+      handoverReason: params.reason,
+    },
+    {
+      targetType: "Message",
+      targetId: params.messageId,
+      correlationId: params.correlationId ?? null,
+    },
+  );
 
   return null;
 }

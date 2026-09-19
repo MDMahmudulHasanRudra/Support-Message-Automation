@@ -27,6 +27,46 @@ const RECOVERABLE = new Set(["DISCONNECTED", "ERROR"]);
 const lastRecoveryAttempt = new Map<string, number>();
 
 /**
+ * Drops providers for accounts that no longer exist in the database.
+ *
+ * This is how a dashboard delete reaches the worker, and it has to be reconciliation rather than a
+ * `WorkerCommand`: `WorkerCommand.accountId` is `onDelete: Cascade`, so a command announcing that
+ * an account was deleted would be deleted along with it. The registry-sync loop already reads the
+ * account table every pass, which makes the comparison free — the row is simply gone.
+ *
+ * Before this the registry only ever grew. Deleting an account cascaded its rows away and left the
+ * worker holding a live provider and its Chromium until the process restarted, still listed by
+ * `allAccountIds()` — which `pickSendingAccount` chooses from when it needs a number to raise a
+ * collection alert through.
+ *
+ * Runs FIRST in the tick, before anything is connected: releasing a dead entry is quick and cannot
+ * block, while the connect below deliberately returns after one account.
+ */
+export async function releaseDeletedAccounts(registry: ProviderRegistry): Promise<void> {
+  const held = registry.allAccountIds();
+  if (!held.length) return;
+
+  const live = await prisma.whatsAppAccount.findMany({
+    where: { id: { in: held } },
+    select: { id: true },
+  });
+  const liveIds = new Set(live.map((row) => row.id));
+
+  for (const accountId of held) {
+    if (liveIds.has(accountId)) continue;
+    const released = await registry.disconnectAccount(accountId);
+    // Its recovery cooldown is keyed by the same id and is never read again — small, but it is
+    // the same class of leak this function exists to close.
+    lastRecoveryAttempt.delete(accountId);
+    if (!released) continue;
+    console.log(`[registry] account ${accountId} no longer exists — released its session`);
+    await logSystemEvent("INFO", "provider", "Released the session of a deleted account", { accountId }).catch(
+      () => undefined,
+    );
+  }
+}
+
+/**
  * Picks up WhatsApp accounts the registry doesn't yet know about — a fresh "Add Account" from
  * the web UI, or (on worker restart) every account that was already connected before the
  * process died. Provisions a session identity for brand-new accounts, then connects anything
@@ -37,6 +77,8 @@ const lastRecoveryAttempt = new Map<string, number>();
  * `recoverIfDropped`.
  */
 async function syncOnce(registry: ProviderRegistry): Promise<void> {
+  await releaseDeletedAccounts(registry);
+
   const unprovisioned = await findUnprovisionedAccounts();
   for (const account of unprovisioned) {
     const assigned = await assignSessionForAccount(account);

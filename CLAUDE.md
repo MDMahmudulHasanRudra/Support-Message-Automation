@@ -467,7 +467,7 @@ can be running yet. Relatedly, `STUCK_PROCESSING_TIMEOUT_MS` is 5 minutes rather
 shorter than Puppeteer's 180s `protocolTimeout`, so a send still in flight could be requeued
 underneath itself and sent twice.
 
-**Every await into Chromium is bounded** (`util/withTimeout.ts`). `client.kill()` had no timeout at
+**Chromium calls are bounded by two different mechanisms, and the difference matters** (`util/withTimeout.ts`). Most are bounded by Puppeteer's own 180s `protocolTimeout`; only four carry an explicit application-level `withTimeout` — `kill()`, `logout()`, the watchdog's probe enumeration and the group sync. Do not assume all 21 `client.*` call sites share one timeout, and do not assume 180s is short: every caller is an overlap-guarded loop holding a boolean across the call, so three minutes on a hung send is three minutes of no outbound queue. The four that are wrapped are the ones `protocolTimeout` cannot help with. `client.kill()` had no timeout at
 all, against a browser that may itself be what has gone wrong, and every caller is an
 overlap-guarded loop holding a boolean across the call — so one unanswering `kill()` silenced the
 registry sync or the command processor for the process lifetime, green heartbeat, no log line.
