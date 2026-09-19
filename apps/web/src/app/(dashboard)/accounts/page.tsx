@@ -10,7 +10,7 @@ import {
   requestGroupResync,
   requestLogout,
   requestReconnect,
-  setPrimaryAccount,
+  setPrimaryAccount, getAccountDeletionImpact
 } from "@/server/actions/accounts";
 import { GroupSetupTransfer } from "./GroupSetupTransfer";
 import { AutoRefresh } from "@/components/AutoRefresh";
@@ -254,6 +254,7 @@ export default async function AccountsPage() {
               onSetPrimary={setPrimaryAccount.bind(null, account.id)}
               onRemovePrimary={removePrimaryAccount.bind(null, account.id)}
               onDelete={deleteWhatsAppAccount.bind(null, account.id)}
+              onReadDeletionImpact={getAccountDeletionImpact.bind(null, account.id)}
             />
           ))}
         </div>

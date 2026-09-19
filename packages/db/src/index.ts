@@ -338,6 +338,135 @@ export function reencryptSecret(stored: string): string {
 }
 
 /** Never send the real key to the browser — show only enough to recognize which one it is. */
+/**
+ * What deleting a WhatsApp account would actually destroy.
+ *
+ * Fourteen relations are `onDelete: Cascade` from `WhatsAppAccount`, and the delete guarded on
+ * exactly two things — is this the last account, is it Primary — before hard-deleting. The
+ * confirmation said "synced groups and message history", which is true and radically incomplete:
+ * it also takes every SupportActivity, SupportSession, AiFallbackDecision, ConversationSession,
+ * escalation case, linked issue and attendance evidence the number ever produced. That is the
+ * support record for that phone, and this codebase's own standard is the opposite — soft-delete
+ * over hard-delete for anything with historical value.
+ *
+ * Counted per KIND rather than as one total, because they are not interchangeable to the person
+ * deciding: losing a group's configuration is an afternoon's work, losing the support record is
+ * unrecoverable. The caller shows the real numbers and makes somebody confirm them.
+ *
+ * In the same file as `resolveWhatsAppAccount`/`encryptSecret` for the same reason they are:
+ * `packages/db/src` has zero relative imports between its own files, by hard rule.
+ */
+export interface AccountHistoryImpact {
+  messages: number;
+  groups: number;
+  supportActivities: number;
+  supportSessions: number;
+  aiDecisions: number;
+  escalationCases: number;
+  conversationSessions: number;
+  supportIssues: number;
+  /** TeamAttendanceGroup rows — the ones whose loss leaves a duty row claiming messages that are gone. */
+  attendanceEvidence: number;
+  total: number;
+  hasHistory: boolean;
+}
+
+export async function countAccountHistory(accountId: string): Promise<AccountHistoryImpact> {
+  const [
+    messages,
+    groups,
+    supportActivities,
+    supportSessions,
+    aiDecisions,
+    escalationCases,
+    conversationSessions,
+    supportIssues,
+    attendanceEvidence,
+  ] = await prisma.$transaction([
+    prisma.message.count({ where: { accountId } }),
+    prisma.whatsAppGroup.count({ where: { accountId } }),
+    prisma.supportActivity.count({ where: { accountId } }),
+    prisma.supportSession.count({ where: { accountId } }),
+    prisma.aiFallbackDecision.count({ where: { accountId } }),
+    prisma.supportEscalationCase.count({ where: { accountId } }),
+    prisma.conversationSession.count({ where: { accountId } }),
+    prisma.supportIssue.count({ where: { accountId } }),
+    prisma.teamAttendanceGroup.count({ where: { accountId } }),
+  ]);
+
+  const total =
+    messages +
+    groups +
+    supportActivities +
+    supportSessions +
+    aiDecisions +
+    escalationCases +
+    conversationSessions +
+    supportIssues +
+    attendanceEvidence;
+
+  return {
+    messages,
+    groups,
+    supportActivities,
+    supportSessions,
+    aiDecisions,
+    escalationCases,
+    conversationSessions,
+    supportIssues,
+    attendanceEvidence,
+    total,
+    hasHistory: total > 0,
+  };
+}
+
+/**
+ * Brings attendance day totals back in line with the evidence that is actually left.
+ *
+ * The silent half of an account delete. `TeamAttendanceGroup` cascades from the account;
+ * `TeamAttendanceDay`, which holds `messageCount` and `uniqueGroupCount`, hangs off
+ * `InternalTeamMember` and SURVIVES. So a duty row went on reading "93 messages across 23 groups"
+ * while expanding it showed nothing — a number that cannot be reconciled and gives no sign it is
+ * wrong, which is worse than a number that is obviously missing.
+ *
+ * Pass the `attendanceDayId`s collected BEFORE the delete; afterwards the rows naming them are
+ * gone and there is no way to find them again. Recomputes from what remains rather than
+ * subtracting what left, so running it twice converges instead of accumulating — the same
+ * reasoning as `recordTeamAttendance`, which recomputes a member-day rather than incrementing it.
+ *
+ * The day row itself is never deleted, even when nothing is left: it can carry an
+ * `AttendanceOverride`, which is a manager's explicit verdict rather than evidence, and this is
+ * not entitled to throw that away.
+ */
+export async function reconcileAttendanceAfterAccountRemoval(attendanceDayIds: string[]): Promise<number> {
+  const ids = [...new Set(attendanceDayIds)].filter(Boolean);
+  if (!ids.length) return 0;
+
+  let updated = 0;
+  for (const attendanceDayId of ids) {
+    const remaining = await prisma.teamAttendanceGroup.findMany({
+      where: { attendanceDayId },
+      select: { messageCount: true, firstAt: true, lastAt: true },
+    });
+
+    const messageCount = remaining.reduce((sum, row) => sum + row.messageCount, 0);
+    const firstActivityAt = remaining.length
+      ? new Date(Math.min(...remaining.map((row) => row.firstAt.getTime())))
+      : null;
+    const lastActivityAt = remaining.length
+      ? new Date(Math.max(...remaining.map((row) => row.lastAt.getTime())))
+      : null;
+
+    // The day may itself have gone — the member could have been removed in the same breath.
+    const result = await prisma.teamAttendanceDay.updateMany({
+      where: { id: attendanceDayId },
+      data: { messageCount, uniqueGroupCount: remaining.length, firstActivityAt, lastActivityAt },
+    });
+    updated += result.count;
+  }
+  return updated;
+}
+
 export function maskSecret(plaintext: string): string {
   if (plaintext.length <= 8) return "••••••••";
   return `${plaintext.slice(0, 4)}••••••••${plaintext.slice(-4)}`;

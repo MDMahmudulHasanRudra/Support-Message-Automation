@@ -419,10 +419,10 @@ function Waiting({
         className={`max-w-[17rem] text-[13px] leading-relaxed ${onWhite ? "text-[color:#52525b]" : "text-[color:var(--color-muted-foreground)]"}`}
       >
         {stale
-          ? "That code expired. Waiting for the worker to produce a fresh one…"
+          ? "That code expired. Press “Request a new code” — it restarts the session, which usually takes under a minute."
           : requestingCode
-            ? "Asking WhatsApp for a code. This restarts the session, so it usually takes under a minute."
-            : "Waiting for the worker to produce a code…"}
+            ? "Restarting the session to get a fresh code. This usually takes under a minute."
+            : "Starting a session and waiting for WhatsApp to issue a code. This usually takes under a minute."}
       </p>
     </div>
   );

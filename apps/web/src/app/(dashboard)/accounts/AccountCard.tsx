@@ -1,5 +1,7 @@
 "use client";
 
+import type { AccountHistoryImpact } from "@support-automation/db";
+import type { DeleteAccountResult } from "@/server/actions/accounts";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { QrCode } from "lucide-react";
 import {
@@ -72,6 +74,7 @@ export function AccountCard({
   onSetPrimary,
   onRemovePrimary,
   onDelete,
+  onReadDeletionImpact,
 }: {
   account: AccountCardData;
   onReconnect: () => Promise<void>;
@@ -79,11 +82,14 @@ export function AccountCard({
   onLogout: () => Promise<void>;
   onSetPrimary: () => Promise<void>;
   onRemovePrimary: () => Promise<void>;
-  onDelete: () => Promise<{ error?: string }>;
+  onDelete: (confirmDestroyHistory?: boolean) => Promise<DeleteAccountResult>;
+  /** Read-only: what a delete would destroy, so the confirmation can name real numbers. */
+  onReadDeletionImpact: () => Promise<AccountHistoryImpact>;
 }) {
   const { showToast } = useToast();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletionImpact, setDeletionImpact] = useState<AccountHistoryImpact | null>(null);
   const [isPending, startTransition] = useTransition();
   const [qrOpen, setQrOpen] = useState(false);
   const previousStatus = useRef(account.status);
@@ -180,18 +186,41 @@ export function AccountCard({
     });
   }
 
+  /**
+   * Opening the dialog reads what the delete would take. The figures are fetched rather than
+   * guessed because the previous copy — "synced groups and message history" — described about a
+   * third of the fourteen relations that cascade off this row, and a confirmation that
+   * misdescribes what it is about to do is worse than no confirmation.
+   */
+  function openDeleteDialog() {
+    setDeleteError(null);
+    setDeletionImpact(null);
+    setDialog("delete");
+    void onReadDeletionImpact()
+      .then(setDeletionImpact)
+      // A failed count must not block the dialog: the server refuses an unconfirmed delete on an
+      // account with history anyway, so the safe path holds either way.
+      .catch(() => setDeletionImpact(null));
+  }
+
   function confirmDelete() {
     startTransition(async () => {
-      const result = await onDelete();
+      // The operator has read the figures by the time this button is reachable, which is exactly
+      // what the server is asking to be told.
+      const result = await onDelete(true);
       if (result.error) {
         setDeleteError(result.error);
+        if (result.impact) setDeletionImpact(result.impact);
         return;
       }
       closeDialog();
+      const destroyed = result.destroyed;
       showToast({
         tone: "success",
         title: "Account deleted",
-        description: `"${account.label}" and its synced data have been removed.`,
+        description: destroyed?.hasHistory
+          ? `"${account.label}" is gone, with ${destroyed.messages.toLocaleString()} messages and ${destroyed.groups.toLocaleString()} groups.`
+          : `"${account.label}" has been removed. It held no history.`,
       });
     });
   }
@@ -298,7 +327,7 @@ export function AccountCard({
           Logout
         </Button>
         {account.canDelete ? (
-          <Button variant="ghost" onClick={() => setDialog("delete")}>
+          <Button variant="ghost" onClick={openDeleteDialog}>
             Delete
           </Button>
         ) : null}
@@ -383,13 +412,41 @@ export function AccountCard({
         onConfirm={confirmDelete}
         loading={isPending}
         title="Delete this WhatsApp account?"
-        description={
-          deleteError ??
-          "This permanently removes the account along with its synced groups and message history. This cannot be undone."
-        }
+        description={deleteError ?? describeDeletion(deletionImpact)}
         confirmLabel="Delete"
         tone="danger"
       />
     </Card>
   );
+}
+
+/**
+ * Says what is actually at stake, in the units somebody deciding thinks in.
+ *
+ * Fourteen relations cascade off a WhatsAppAccount. Listing all fourteen would be noise, so this
+ * names the three that cannot be rebuilt — the conversations, the support record, and the AI
+ * decision trail — and rolls the rest into a total. A number is only printed when it is non-zero:
+ * "0 support activities" reads as reassurance about the wrong thing.
+ */
+function describeDeletion(impact: AccountHistoryImpact | null): string {
+  if (!impact) return "Checking what this account still holds…";
+  if (!impact.hasHistory) {
+    return "This account holds no messages, groups or support history. Deleting it removes nothing else.";
+  }
+
+  const parts: string[] = [];
+  const add = (count: number, one: string, many: string) => {
+    if (count > 0) parts.push(`${count.toLocaleString()} ${count === 1 ? one : many}`);
+  };
+  add(impact.messages, "message", "messages");
+  add(impact.groups, "group", "groups");
+  add(impact.supportActivities, "support activity record", "support activity records");
+  add(impact.aiDecisions, "AI decision", "AI decisions");
+  add(impact.escalationCases, "escalation case", "escalation cases");
+
+  const listed = parts.join(", ");
+  const attendance = impact.attendanceEvidence
+    ? " Attendance totals for the days it contributed to will be recalculated."
+    : "";
+  return `This permanently destroys ${listed}. None of it can be recovered.${attendance} To retire the number without losing its history, use Log out instead.`;
 }

@@ -1,7 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma, encryptSecret } from "@support-automation/db";
+import {
+  prisma,
+  encryptSecret,
+  countAccountHistory,
+  reconcileAttendanceAfterAccountRemoval,
+} from "@support-automation/db";
+import type { AccountHistoryImpact } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { normalizePhoneNumber } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
@@ -33,6 +39,17 @@ async function enqueueCommand(
 
 export async function requestReconnect(accountId: string): Promise<void> {
   await requireSession();
+
+  // Drop the stored code first. A reconnect tears the session down and builds a new one, so
+  // whatever is on screen belongs to the attempt being replaced and cannot be scanned any more —
+  // leaving it there is how "Request a new code" looked like it had done nothing while the worker
+  // was in fact restarting Chromium. `setPairingMethod` has always cleared it for the same reason.
+  // Harmless on a connected account, where it is already null.
+  await prisma.whatsAppAccount.updateMany({
+    where: { id: accountId },
+    data: { qrCode: null, qrUpdatedAt: null },
+  });
+
   await enqueueCommand("RECONNECT", accountId);
   revalidatePath("/accounts");
 }
@@ -143,16 +160,33 @@ export async function removePrimaryAccount(accountId: string): Promise<void> {
 
 export interface DeleteAccountResult {
   error?: string;
+  /** Present on a refusal, so the dialog can print what it is asking about. */
+  impact?: AccountHistoryImpact;
+  /** Present on a successful delete, so the toast can say what actually went. */
+  destroyed?: AccountHistoryImpact;
 }
 
 /**
- * Permanently removes the account and (via cascade) every group/message/job history tied to it —
- * genuinely destructive, so this refuses two specific unsafe states rather than trusting the
- * frontend confirmation alone: the last remaining account (would break every service with no
- * fallback left), and the current Primary (must be reassigned first, never silently promotes a
- * replacement here).
+ * What this delete would actually take with it, for the dialog to print before anybody agrees.
+ *
+ * Read-only. Separate from the delete itself so the confirmation can name real numbers rather than
+ * a generic warning — a confirmation that misdescribes what it is about to do is worse than none,
+ * and "synced groups and message history" described about a third of the fourteen cascading
+ * relations hanging off this row.
  */
-export async function deleteWhatsAppAccount(accountId: string): Promise<DeleteAccountResult> {
+export async function getAccountDeletionImpact(accountId: string): Promise<AccountHistoryImpact> {
+  await requireSession();
+  return countAccountHistory(accountId);
+}
+
+export async function deleteWhatsAppAccount(
+  accountId: string,
+  /**
+   * Set only after the operator has been shown `getAccountDeletionImpact`'s real figures and said
+   * yes to them. Without it an account carrying history is refused rather than silently destroyed.
+   */
+  confirmDestroyHistory = false,
+): Promise<DeleteAccountResult> {
   const session = await requireSession();
   const target = await prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
   if (!target) return {};
@@ -165,13 +199,39 @@ export async function deleteWhatsAppAccount(accountId: string): Promise<DeleteAc
     return { error: "This account is Primary. Set a different account as Primary first." };
   }
 
+  const impact = await countAccountHistory(accountId);
+  if (impact.hasHistory && !confirmDestroyHistory) {
+    // Not a hard refusal — the operator may genuinely be retiring a number — but it does not
+    // happen on one click, and the caller has to have seen the figures to get past this.
+    return { error: "This account still holds history. Confirm what would be destroyed first.", impact };
+  }
+
+  // Collected BEFORE the delete: TeamAttendanceGroup cascades with the account, so afterwards
+  // there is nothing left naming which days it contributed to.
+  const affectedAttendanceDays = impact.attendanceEvidence
+    ? (
+        await prisma.teamAttendanceGroup.findMany({
+          where: { accountId },
+          select: { attendanceDayId: true },
+        })
+      ).map((row) => row.attendanceDayId)
+    : [];
+
   await prisma.whatsAppAccount.delete({ where: { id: accountId } });
+
+  // The day rows survive the cascade holding totals that counted the evidence just destroyed.
+  // Recomputing them is what stops a duty row claiming messages nothing can show.
+  const reconciledDays = await reconcileAttendanceAfterAccountRemoval(affectedAttendanceDays);
+
   await logSystemEvent("WARN", "accounts", `WhatsApp account "${target.label}" deleted`, {
     accountId,
     deletedBy: session.username,
+    destroyed: impact,
+    reconciledAttendanceDays: reconciledDays,
   });
   revalidatePath("/accounts");
-  return {};
+  revalidatePath("/team-management/attendance");
+  return { destroyed: impact };
 }
 
 export interface GroupSetupCandidate {
