@@ -263,6 +263,88 @@ backup, not reconstructible from source.
 
 ---
 
+## What the remaining five dimensions changed
+
+All nine dimensions have now run. Four findings change or sharpen the contract above; the rest are
+ordinary defects and belong with the 53 leads rather than here.
+
+### The blast radius is six of eight reports
+
+Mapping each headline Support Activity report onto the rebuildability boundary:
+
+| Report | Reads | Survives loss of derived data? |
+|---|---|---|
+| `getExecutiveWorkload` — *the headline report* | `SupportActivity` | **No** |
+| `getTeamAvailability` | `SupportActivity` | **No** |
+| `getPerTeamMemberBreakdown` | `SupportActivity` | **No** |
+| `getActorBreakdown` | `SupportActivity` | **No** |
+| `getGroupSessionHistory` | `SupportSession` | **No** |
+| `getAverageResolutionTime` | `SupportSession` | **No** |
+| `getFirstResponseStats` | `Message` | **Yes** |
+| `getGroupsAwaitingReply` | `Message` | **Yes** |
+
+The two that survive are the two that deliberately read `Message` directly, and CLAUDE.md says they
+do so precisely to avoid depending on tracking being enabled. That decision turns out to be the only
+reason any of this module is recoverable, which is worth knowing before anyone "simplifies" either
+of them onto `SupportActivity`.
+
+### Capture failures leave no durable trace — so incomplete work cannot be identified
+
+All four capture hooks in `processIncomingMessage.ts` are awaited, wrapped in their own try/catch and
+swallowed, which is correct — a failure to record must never stop a customer being answered. But
+every one of them reports only through `console.error`:
+
+```
+[escalation]       failed to update support escalation state
+[support-activity] failed to update support session
+[support-activity] failed to record support activity
+[team-attendance]  failed to record attendance evidence
+```
+
+Nothing durable is written. After a container restart there is no record that attendance failed for
+any message, so **§8's "can we identify incomplete work?" is answered "no" even for live capture**,
+not just for a rebuild. `MessageDropCounter` exists for exactly this reasoning on the drop path and
+was never extended here. A rebuild cannot target the member-days that actually need it; it can only
+be run blind over a range.
+
+### The verification tool is itself truncated
+
+`getDutyHistory` carries `take: 500`, and `api/team-management/export/route.ts` calls the *same*
+function — its own comment says that is so "an exported figure can never differ" from the page. The
+intent is right and the consequence is not: a month for twenty people is 600 member-day rows,
+ordered `dutyDate desc`, so the **oldest days are silently dropped** from the payroll export.
+
+This matters here rather than in the defect list because the export is the natural tool for
+verifying a rebuild's before/after counts (§9), and it under-reports without saying so.
+
+### Two things checked and cleared
+
+- **`senderIdentifiers` vs `resolveActiveTeamMember`.** The resolver normalises *both* sides; the
+  recompute builds literals for an exact `senderPhone IN (...)` match. That asymmetry is covered
+  today only because `Message.senderPhone` is `stripJidDomain(...)` of WhatsApp's own output, which
+  is digits, and the identifier list includes `normalizePhoneNumber(member.phoneNumber)`. **Not a
+  defect, but a fragile coupling**: any future ingestion path that stored a `+`-prefixed or spaced
+  number would make the recompute silently count fewer messages than the resolver matched, with no
+  error. Cheap hardening: normalise on write, or compare normalised on both sides.
+- **The advisory lock key.** `hashtext()` returns `integer`, so the key space is 2^32 rather than
+  2^64 and distinct member-days can collide. A collision makes two unrelated member-days *share* a
+  lock — over-locking, not under-locking. Safe for correctness; a negligible throughput cost.
+
+### Unchanged by this pass
+
+`TRIGGER_PRECEDENCE` genuinely orders `ANY_MESSAGE` last (3). `SupportActivity.messageId @unique` is
+the real idempotency guard. The Dhaka bucketing is correct.
+
+---
+
+## Depth of this audit, honestly
+
+Worker capture integrity and cross-module consistency were audited thoroughly, because those were
+the two most likely to change the contract. Report accuracy was audited at the dependency level —
+which report reads which table — rather than re-deriving every aggregate. Team Management
+filtering/UX and missing features were sampled, not exhausted; their findings belong with the 53
+leads.
+
 ## Still to verify
 
 The audit that produced the original 53 findings completed 4 of 9 dimensions. Five remain:
