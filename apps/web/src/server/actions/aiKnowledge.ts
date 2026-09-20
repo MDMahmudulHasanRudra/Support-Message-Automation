@@ -246,6 +246,10 @@ const MAX_BULK_KNOWLEDGE_IDS = 100;
 
 export interface BulkKnowledgeResult {
   updated: number;
+  /** Selected but already in the requested end state — a no-op write, not a failure. */
+  alreadyInTargetState?: number;
+  /** Selected but gone by the time this ran (e.g. deleted from another tab). */
+  notFound?: number;
   /** Actionable prose for the operator; the caller shows it as-is. */
   error?: string;
 }
@@ -332,6 +336,89 @@ export async function setKnowledgeStatus(id: string, status: AiKnowledgeStatus):
   await logSystemEvent("INFO", "ai-learning", `Knowledge item "${item.title}" set to ${status}`, { itemId: id });
   revalidatePath(`/ai-learning/knowledge-base/${id}`);
   revalidatePath("/ai-learning/knowledge-base");
+}
+
+/**
+ * Bulk status change for the main Knowledge Base table — Active, Inactive or Archived in one
+ * action, for the same reason bulkSetMonitoring exists for groups: a hundred entries from one
+ * import is a hundred clicks otherwise.
+ *
+ * Deliberately never touches `humanVerified` — that is a separate axis (an entry can be ACTIVE
+ * and unverified, or verified and INACTIVE) — and reads current status first so the report can
+ * tell "genuinely changed" from "already there", per ENGINEERING_STANDARDS.md's bulk-action rule.
+ */
+export async function bulkSetKnowledgeStatus(ids: string[], status: AiKnowledgeStatus): Promise<BulkKnowledgeResult> {
+  const session = await requireSession();
+  const checked = checkBulkIds(ids);
+  if (!("ids" in checked)) return checked;
+
+  const existing = await prisma.aiKnowledgeItem.findMany({
+    where: { id: { in: checked.ids } },
+    select: { id: true, status: true },
+  });
+  const existingIds = new Set(existing.map((item) => item.id));
+  const notFound = checked.ids.filter((id) => !existingIds.has(id)).length;
+  const idsToChange = existing.filter((item) => item.status !== status).map((item) => item.id);
+  const alreadyInTargetState = existing.length - idsToChange.length;
+
+  let updated = 0;
+  if (idsToChange.length > 0) {
+    const result = await prisma.aiKnowledgeItem.updateMany({
+      where: { id: { in: idsToChange } },
+      data: { status },
+    });
+    updated = result.count;
+
+    await logSystemEvent(
+      "INFO",
+      "ai-learning",
+      `${updated} knowledge entries set to ${status}`,
+      { count: updated, itemIds: idsToChange, status },
+      { actorUserId: session.userId, targetType: "AiKnowledgeItem" },
+    );
+  }
+
+  revalidatePath("/ai-learning/knowledge-base");
+  return { updated, alreadyInTargetState, notFound };
+}
+
+/**
+ * Permanently removes selected entries — the one irreversible action in this file. Every other
+ * discard path here archives instead, per this codebase's soft-delete-first rule; this exists
+ * because an operator also needs to clean up genuine junk (a duplicate created by mistake, a test
+ * entry) with no history worth keeping, and "Archived" would leave it cluttering that filter
+ * forever. `AiKnowledgeVersion` cascades with its item; `AiFallbackDecision.knowledgeItemId` is
+ * `SetNull`, so a past AI answer keeps its own audit record and is never silently deleted just
+ * because the entry it cited was.
+ */
+export async function bulkDeleteKnowledge(ids: string[]): Promise<BulkKnowledgeResult> {
+  const session = await requireSession();
+  const checked = checkBulkIds(ids);
+  if (!("ids" in checked)) return checked;
+
+  const existing = await prisma.aiKnowledgeItem.findMany({
+    where: { id: { in: checked.ids } },
+    select: { id: true, title: true },
+  });
+  const notFound = checked.ids.length - existing.length;
+  if (existing.length === 0) {
+    return { updated: 0, notFound, error: "None of the selected entries exist anymore." };
+  }
+
+  const { count } = await prisma.aiKnowledgeItem.deleteMany({
+    where: { id: { in: existing.map((item) => item.id) } },
+  });
+
+  await logSystemEvent(
+    "INFO",
+    "ai-learning",
+    `${count} knowledge entries permanently deleted`,
+    { count, itemIds: existing.map((item) => item.id), titles: existing.map((item) => item.title) },
+    { actorUserId: session.userId, targetType: "AiKnowledgeItem" },
+  );
+
+  revalidatePath("/ai-learning/knowledge-base");
+  return { updated: count, notFound };
 }
 
 /** Restoring never deletes history — it adds a new version copying the old one's content, same as any other edit. */
