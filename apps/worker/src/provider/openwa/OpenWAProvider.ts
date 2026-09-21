@@ -24,6 +24,7 @@ import type {
   GroupInfo,
   GroupJoinResult,
   GroupParticipant,
+  NumberCheckResult,
   ProfileUpdate,
   ProfileUpdateResult,
   SendResult,
@@ -149,6 +150,37 @@ function resolveMessageBody(message: WaMessage): string {
 }
 
 /** "8801XXXXXXXXX@c.us" -> "8801XXXXXXXXX". Leaves an already-bare number untouched. */
+/**
+ * The real reason an add failed, which the library hides inside a thrown error.
+ *
+ * `addParticipant` does not return its failures. On a per-participant failure it throws an
+ * `AddParticipantError` whose `.data` maps each contact id to a numeric status — 409 already in
+ * the group, 403 blocked by that person's "who can add me" privacy setting, 408 recently left,
+ * 500 group full — while the error's own `message` is the useless literal
+ * "Unable to add some participants".
+ *
+ * Reading only `err.message`, as this file did, collapsed all four into one indistinguishable
+ * string. "Already in the group" and "their privacy settings refuse you" call for opposite
+ * responses — the first is a no-op to record, the second needs an invite link — so the code is
+ * pulled out and returned in a form `describeAddFailure` can map.
+ */
+const ADD_PARTICIPANT_STATUS: Record<number, string> = {
+  409: "ALREADY_IN_GROUP",
+  403: "PRIVACY_SETTINGS",
+  408: "RECENTLY_LEFT",
+  500: "GROUP_FULL",
+};
+
+function readAddParticipantError(err: unknown): string {
+  const data = (err as { data?: Record<string, number> })?.data;
+  if (data && typeof data === "object") {
+    // One id per call, so the first entry is this participant's own verdict.
+    const status = Object.values(data)[0];
+    if (typeof status === "number") return ADD_PARTICIPANT_STATUS[status] ?? `ADD_FAILED_${status}`;
+  }
+  return (err as Error)?.message ?? "Failed to add participant.";
+}
+
 function stripJidDomain(jid: string | null | undefined): string {
   return String(jid ?? "").split("@")[0] ?? "";
 }
@@ -822,14 +854,25 @@ export class OpenWAProvider implements WhatsAppProvider {
       const members = await this.client.getGroupMembers(chatId as GroupChatId);
       if (!Array.isArray(members)) return [];
       return members
-        .map((member) => ({
-          phoneNumber: stripJidDomain(String(member.id)),
-          // formattedName is often just the number back again; a real pushname is preferred
-          // when the contact exposes one.
-          name: member.pushname || member.formattedName || null,
-          isSelf: Boolean(member.isMe),
-        }))
-        .filter((participant) => participant.phoneNumber.length > 0);
+        .map((member) => {
+          const rawId = String(member.id ?? "");
+          return {
+            phoneNumber: stripJidDomain(rawId),
+            // Carried through untouched. The domain is the only thing separating a real number
+            // from a LID, and stripping it is exactly what makes the two impossible to tell apart
+            // downstream — see GroupParticipant's own doc comment.
+            rawId,
+            // formattedName is often just the number back again; a real pushname is preferred
+            // when the contact exposes one.
+            name: member.pushname || member.formattedName || null,
+            isSelf: Boolean(member.isMe),
+            // getGroupMembers returns contacts, which carry no admin flag; getGroupAdmins is a
+            // separate call. Null rather than false: this provider does not know, and saying
+            // "not an admin" would be an answer we have not got.
+            isAdmin: null,
+          };
+        })
+        .filter((participant) => participant.rawId.length > 0);
     } catch (err) {
       console.error(`[provider] could not read participants for ${chatId}`, err);
       return [];
@@ -867,7 +910,39 @@ export class OpenWAProvider implements WhatsAppProvider {
       if (result === true) return { success: true };
       return { success: false, error: typeof result === "string" ? result : "Failed to add participant." };
     } catch (err) {
-      return { success: false, error: (err as Error).message };
+      return { success: false, error: readAddParticipantError(err) };
+    }
+  }
+
+  /**
+   * One call for every group this account can add to.
+   *
+   * `iAmAdmin()` answers for the signed-in account directly, with no id comparison — which matters,
+   * because comparing our own id against a roster runs straight into the LID problem this file
+   * already has to work around elsewhere.
+   */
+  async getAdminGroupIds(): Promise<string[] | null> {
+    if (!this.client) return null;
+    try {
+      const groups = await this.client.iAmAdmin();
+      return Array.isArray(groups) ? groups.map((id) => String(id)) : null;
+    } catch (err) {
+      console.error("[provider] could not read admin groups", err);
+      return null;
+    }
+  }
+
+  async checkNumberOnWhatsApp(phoneNumber: string): Promise<NumberCheckResult> {
+    if (!this.client) return { ok: false, reason: "Provider is not connected." };
+    try {
+      const result = await this.client.checkNumberStatus(`${phoneNumber}@c.us` as ContactId);
+      // 200 means an account exists, 404 means it does not. Anything else is the library telling
+      // us something we have no reading for, which is not the same as "no account".
+      if (result?.status === 200) return { ok: true, exists: true };
+      if (result?.status === 404) return { ok: true, exists: false };
+      return { ok: false, reason: "WhatsApp gave no clear answer for this number." };
+    } catch (err) {
+      return { ok: false, reason: (err as Error).message };
     }
   }
 

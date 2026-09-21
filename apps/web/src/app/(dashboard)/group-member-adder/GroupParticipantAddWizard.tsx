@@ -48,7 +48,7 @@ export interface AdderAccount {
   groups: AdderGroup[];
 }
 
-const STEP_LABELS = ["Select Account", "Numbers & Groups", "Review & Confirm"];
+const STEP_LABELS = ["Select Account", "Numbers & Groups", "Check Membership"];
 
 /** A roster member who can actually be added — see `reachable` on the page for what excludes one. */
 export interface AdderTeamMember {
@@ -548,20 +548,21 @@ export function GroupParticipantAddWizard({
       {step === 3 ? (
         <Card>
           <SectionHeader
-            title={`Review — ${totalAdds.toLocaleString()} add${totalAdds === 1 ? "" : "s"}`}
-            description={`${phoneNumbers.length} number${phoneNumbers.length === 1 ? "" : "s"} × ${targets.length.toLocaleString()} group${targets.length === 1 ? "" : "s"}. Anyone already in a group is skipped without an add being attempted.`}
+            title={`Check ${totalAdds.toLocaleString()} number/group combination${totalAdds === 1 ? "" : "s"}`}
+            description={`${phoneNumbers.length} number${phoneNumbers.length === 1 ? "" : "s"} × ${targets.length.toLocaleString()} group${targets.length === 1 ? "" : "s"}. Nothing is added yet — each group's member list is read first, and you choose what to add from the results.`}
           />
           <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
             <StatTile label="Account" value={account?.label ?? ""} />
             <StatTile label="Numbers" value={phoneNumbers.length} />
             <StatTile label="Target groups" value={targets.length.toLocaleString()} />
             <StatTile
-              label="Total adds"
+              label="To check"
               value={totalAdds.toLocaleString()}
               tone={overLimit ? "danger" : "neutral"}
-              // The honest expectation. At three per minute a full 2,000-add job runs for most of
-              // a day, and an operator who thinks it stalled will start a second one.
-              hint={estimatedDuration}
+              // The estimate belongs to the ADD phase, which only some of these will reach. Reading
+              // rosters is fast and unmetered, so quoting a day-long figure for the check would be
+              // wrong in the alarming direction.
+              hint={`up to ${estimatedDuration} if all are added`}
             />
           </div>
           {overLimit ? (
@@ -573,10 +574,11 @@ export function GroupParticipantAddWizard({
             </div>
           ) : null}
           <div className="mb-3">
-            <Alert tone="info">
-              This runs at {maxPerMinute} add{maxPerMinute === 1 ? "" : "s"} per minute across every job, so it will
-              take {estimatedDuration} and keep going on its own — leave the page, it does not need watching. Adding
-              participants is the strongest ban signal WhatsApp reacts to, which is why it is paced this way.
+            <Alert tone="info" title="This reads member lists first — it adds nobody">
+              Each group&apos;s current members are read so you can see who is already in and who is not.
+              You then pick what to add, and only that is queued — at {maxPerMinute} add
+              {maxPerMinute === 1 ? "" : "s"} per minute across every job, because adding participants is
+              the strongest ban signal WhatsApp reacts to. Checking is fast and costs none of that budget.
             </Alert>
           </div>
           {!automationEnabled ? (
@@ -628,23 +630,26 @@ export function GroupParticipantAddWizard({
           </Button>
         ) : (
           <Button disabled={targets.length === 0 || phoneNumbers.length === 0 || overLimit || invalidTyped.length > 0} onClick={() => setConfirmOpen(true)}>
-            Confirm &amp; Queue
+            Check Membership
           </Button>
         )}
       </div>
 
+      {/* Deliberately a light confirmation: this step adds nobody. The heavy one — naming the
+          people, the groups and the fact that it is a real WhatsApp action — lives on the review
+          screen, where the decision that actually sends something is made. */}
       <ConfirmDialog
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
         onConfirm={handleConfirm}
         loading={confirming}
-        title={`Add ${phoneNumbers.length} number${phoneNumbers.length === 1 ? "" : "s"} to ${targets.length.toLocaleString()} group${targets.length === 1 ? "" : "s"}?`}
+        title={`Check ${totalAdds.toLocaleString()} combination${totalAdds === 1 ? "" : "s"}?`}
         description={
           automationEnabled
-            ? "This queues the add-to-group requests for gradual processing by the worker."
-            : "Automation is paused — this will queue the job, but nothing runs until the kill switch is turned back on."
+            ? "Reads each group's member list so you can see who is genuinely missing. Nobody is added until you review the results and confirm."
+            : "Automation is paused. The check still runs — it only reads — but nothing can be added until the kill switch is turned back on."
         }
-        confirmLabel="Confirm & Queue"
+        confirmLabel="Start Check"
       />
     </div>
   );

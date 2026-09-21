@@ -6,6 +6,7 @@ import { ensureLegacyAccountExists, ensurePrimaryAccountExists, findConnectableA
 import { startAccountRegistrySync } from "./provider/accountRegistrySync.js";
 import { startOutboundQueueProcessor } from "./queue/outboundQueueProcessor.js";
 import { startGroupParticipantAddProcessor } from "./queue/groupParticipantAddProcessor.js";
+import { startGroupParticipantCheckProcessor } from "./queue/groupParticipantCheckProcessor.js";
 import { startNotificationDispatcher } from "./notifications/dispatcher.js";
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
@@ -64,9 +65,16 @@ async function main() {
   }
 
   const recovered = await runStuckWorkRecovery({ atBoot: true });
-  if (recovered.outbound + recovered.notifications + recovered.participantAdds + recovered.commands > 0) {
+  if (
+    recovered.outbound +
+      recovered.notifications +
+      recovered.participantAdds +
+      recovered.participantChecks +
+      recovered.commands >
+    0
+  ) {
     console.log(
-      `[worker] crash recovery: requeued ${recovered.outbound} outbound message(s), ${recovered.notifications} notification(s), ${recovered.participantAdds} group-participant-add item(s); failed ${recovered.commands} interrupted worker command(s)`,
+      `[worker] crash recovery: requeued ${recovered.outbound} outbound message(s), ${recovered.notifications} notification(s), ${recovered.participantAdds} group-participant-add item(s), ${recovered.participantChecks} membership check(s); failed ${recovered.commands} interrupted worker command(s)`,
     );
   }
 
@@ -118,6 +126,8 @@ async function main() {
   const intervals: NodeJS.Timeout[] = [
     startOutboundQueueProcessor(registry),
     startGroupParticipantAddProcessor(registry),
+    // Reads rosters so an operator can see who is genuinely missing before a single add is spent.
+    startGroupParticipantCheckProcessor(registry),
     startEscalationProcessor(),
     // Conversation Learning Phase 1 — always registered, but processOneSegmentationBatch()
     // itself no-ops on every tick until LearningSettings.conversationLearningEnabled is turned

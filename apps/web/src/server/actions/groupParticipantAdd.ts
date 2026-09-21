@@ -5,6 +5,8 @@ import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { normalizePhoneNumber, randomDelayMs } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
+import { requirePermission } from "@/server/permissions";
+import { logSystemEvent } from "@/server/logSystemEvent";
 
 export interface ParticipantAddTargetInput {
   groupId: string;
@@ -34,6 +36,9 @@ export async function createGroupParticipantAddJob(
   input: CreateParticipantAddJobInput,
 ): Promise<CreateParticipantAddJobResult> {
   const session = await requireSession();
+  // Enforced on the server, not by hiding a button: this queues real WhatsApp operations against
+  // the number that also serves every customer.
+  await requirePermission(session, "bulk_messaging.manage");
 
   const account = await prisma.whatsAppAccount.findUnique({ where: { id: input.accountId } });
   if (!account) return { error: "WhatsApp account not found." };
@@ -110,9 +115,12 @@ export async function createGroupParticipantAddJob(
       createdById: session.userId,
       phoneNumbers,
       totalRequested: dedupedTargets.length * phoneNumbers.length,
-      queuedCount: toQueue.length * phoneNumbers.length,
+      // Nothing is queued to SEND yet. The job starts by reading rosters; `queuedCount` is written
+      // at confirm time, once a person has chosen what to add.
+      queuedCount: 0,
       preQueueSkipped: preQueueSkipReasons.length,
       preQueueSkipReasons: preQueueSkipReasons as unknown as Prisma.InputJsonValue,
+      status: "CHECKING",
       delayMinMs: settings.delayMinMs,
       delayMaxMs: settings.delayMaxMs,
       maxPerMinute: settings.maxPerMinute,
@@ -121,22 +129,20 @@ export async function createGroupParticipantAddJob(
     },
   });
 
-  // Grouped by number rather than by group: one person lands everywhere before the next begins,
-  // so a job stopped halfway leaves whole people done instead of everybody half-added.
+  // Every pair starts as something to CHECK, not something to send. The pacing delays are applied
+  // later, at confirm — until a person has chosen, there is nothing to pace.
   //
   // createMany in chunks — a 2,000-row job issuing 2,000 separate inserts kept a server action
   // open long enough to look hung, and the wizard cannot report progress until it returns.
-  let cumulativeDelayMs = 0;
   const rows: Prisma.GroupParticipantAddItemCreateManyInput[] = [];
   for (const phone of phoneNumbers) {
     for (const target of toQueue) {
-      cumulativeDelayMs += randomDelayMs(settings.delayMinMs, settings.delayMaxMs);
       rows.push({
         jobId: job.id,
         groupId: target.groupId,
         groupNameSnapshot: target.groupName,
         phoneNumber: phone,
-        scheduledAt: new Date(Date.now() + cumulativeDelayMs),
+        status: "PENDING_CHECK",
       });
     }
   }
@@ -145,8 +151,147 @@ export async function createGroupParticipantAddJob(
     await prisma.groupParticipantAddItem.createMany({ data: rows.slice(i, i + CHUNK) });
   }
 
+  await logSystemEvent(
+    "INFO",
+    "group-participant-add",
+    `Membership check started for ${phoneNumbers.length} number(s) across ${toQueue.length} group(s)`,
+    { jobId: job.id, accountId: input.accountId, numbers: phoneNumbers.length, groups: toQueue.length },
+    { actorUserId: session.userId, targetType: "GroupParticipantAddJob", targetId: job.id },
+  );
+
   revalidatePath("/group-member-adder");
   return { jobId: job.id };
+}
+
+/** Statuses a person may legitimately choose to add. Everything else is a settled "no". */
+const SELECTABLE_STATUSES = ["READY", "CANNOT_VERIFY"] as const;
+
+export interface ConfirmParticipantAddResult {
+  queued: number;
+  /** Selected but no longer eligible — re-checked, or already actioned in another tab. */
+  skipped: number;
+  error?: string;
+}
+
+/**
+ * Turns a reviewed selection into queued work.
+ *
+ * This is the only path from a checked job to an actual WhatsApp add, and the eligibility filter
+ * lives in the WHERE rather than in the caller's list: a stale page could otherwise submit an id
+ * that has since come back ALREADY_MEMBER and spend exactly the operation the check phase exists
+ * to prevent.
+ *
+ * Unselected eligible rows become NOT_SELECTED rather than being deleted, so the job stays a
+ * complete record of what was considered as well as what was done.
+ */
+export async function confirmParticipantAddSelection(
+  jobId: string,
+  itemIds: string[],
+): Promise<ConfirmParticipantAddResult> {
+  const session = await requireSession();
+  await requirePermission(session, "bulk_messaging.manage");
+
+  const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: jobId } });
+  if (!job) return { queued: 0, skipped: 0, error: "That job no longer exists." };
+  if (job.status !== "AWAITING_REVIEW") {
+    return { queued: 0, skipped: 0, error: "This job is no longer waiting for review." };
+  }
+
+  const unique = Array.from(new Set(itemIds.map((id) => id.trim()).filter(Boolean)));
+  if (unique.length === 0) return { queued: 0, skipped: 0, error: "Select at least one entry to add." };
+
+  const eligible = await prisma.groupParticipantAddItem.findMany({
+    where: { id: { in: unique }, jobId, status: { in: [...SELECTABLE_STATUSES] } },
+    select: { id: true },
+    // Same ordering intent as before: one person lands everywhere before the next begins, so a job
+    // stopped halfway leaves whole people done rather than everybody half-added.
+    orderBy: [{ phoneNumber: "asc" }, { groupNameSnapshot: "asc" }],
+  });
+
+  if (eligible.length > job.maxPerJob) {
+    return {
+      queued: 0,
+      skipped: 0,
+      error: `That is ${eligible.length.toLocaleString()} adds, over the limit of ${job.maxPerJob.toLocaleString()} per job. Select fewer.`,
+    };
+  }
+
+  // The pacing is applied here rather than at creation, because until now nobody knew how many
+  // adds there would be. Cumulative, so the queue drains at the configured rate rather than all
+  // at once — the throttle that keeps the account safe.
+  let cumulativeDelayMs = 0;
+  for (const item of eligible) {
+    cumulativeDelayMs += randomDelayMs(job.delayMinMs, job.delayMaxMs);
+    await prisma.groupParticipantAddItem.update({
+      where: { id: item.id },
+      data: { status: "PENDING", scheduledAt: new Date(Date.now() + cumulativeDelayMs) },
+    });
+  }
+
+  // Everything eligible that was NOT chosen. Recorded, not removed.
+  await prisma.groupParticipantAddItem.updateMany({
+    where: { jobId, status: { in: [...SELECTABLE_STATUSES] }, id: { notIn: eligible.map((i) => i.id) } },
+    data: { status: "NOT_SELECTED" },
+  });
+
+  await prisma.groupParticipantAddJob.update({
+    where: { id: jobId },
+    data: { status: "QUEUED", queuedCount: eligible.length },
+  });
+
+  await logSystemEvent(
+    "INFO",
+    "group-participant-add",
+    `${eligible.length} participant add(s) approved and queued`,
+    { jobId, queued: eligible.length, requested: unique.length },
+    { actorUserId: session.userId, targetType: "GroupParticipantAddJob", targetId: jobId },
+  );
+
+  revalidatePath(`/group-member-adder/jobs/${jobId}`);
+  return { queued: eligible.length, skipped: unique.length - eligible.length };
+}
+
+/**
+ * Sends pairs back through the membership check.
+ *
+ * The only honest way to retry. A failed add may have failed because the person joined in the
+ * meantime, so re-attempting blind would spend an operation to be told 409 — which is the exact
+ * round trip this whole phase exists to avoid. Re-checking first turns that into a skip with no
+ * WhatsApp call at all.
+ */
+export async function recheckParticipantAddItems(jobId: string): Promise<{ rechecked: number; error?: string }> {
+  const session = await requireSession();
+  await requirePermission(session, "bulk_messaging.manage");
+
+  const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: jobId } });
+  if (!job) return { rechecked: 0, error: "That job no longer exists." };
+
+  // Everything that did not end in an add: failures, unverifiable answers, and checks that never
+  // completed. ADDED and SKIPPED_ALREADY_MEMBER are settled history and are left alone.
+  const { count } = await prisma.groupParticipantAddItem.updateMany({
+    where: {
+      jobId,
+      status: { in: ["FAILED", "CHECK_FAILED", "CANNOT_VERIFY", "NOT_SELECTED", "NO_PERMISSION", "GROUP_UNAVAILABLE"] },
+    },
+    data: { status: "PENDING_CHECK", attemptCount: 0, failureReason: null, failureCode: null },
+  });
+  if (count === 0) return { rechecked: 0, error: "Nothing here needs re-checking." };
+
+  await prisma.groupParticipantAddJob.update({
+    where: { id: jobId },
+    data: { status: "CHECKING", completedAt: null },
+  });
+
+  await logSystemEvent(
+    "INFO",
+    "group-participant-add",
+    `${count} participant pair(s) sent back for re-checking`,
+    { jobId, count },
+    { actorUserId: session.userId, targetType: "GroupParticipantAddJob", targetId: jobId },
+  );
+
+  revalidatePath(`/group-member-adder/jobs/${jobId}`);
+  return { rechecked: count };
 }
 
 /** Cancels a job's still-PENDING items (an in-flight PROCESSING add is left to finish naturally). */

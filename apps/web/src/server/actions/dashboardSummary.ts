@@ -172,11 +172,17 @@ export async function getBulkMessagingSummary() {
     prisma.groupParticipantAddJob.groupBy({ by: ["status"], _count: { status: true } }),
   ]);
 
-  const runningCount = (groups: typeof broadcastGroups) =>
+  // Typed on the shared shape rather than on one of the two job enums. It was typed as
+  // `typeof broadcastGroups` and only compiled because both enums happened to list the same
+  // statuses — so the participant-add job gaining a status of its own broke a function that was
+  // never really about broadcasts.
+  const runningCount = (groups: Array<{ status: string; _count: { status: number } }>) =>
     sumCounts(groups.filter((g) => g.status === "QUEUED" || g.status === "RUNNING"));
 
   return {
     broadcastRunning: runningCount(broadcastGroups),
+    // CHECKING and AWAITING_REVIEW are deliberately not counted as running: one is reading
+    // rosters and the other is waiting on a person, and neither is sending anything.
     addRunning: runningCount(addGroups),
   };
 }

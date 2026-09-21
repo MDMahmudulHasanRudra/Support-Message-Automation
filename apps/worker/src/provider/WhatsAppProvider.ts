@@ -11,11 +11,29 @@ export type ConnectionStatus =
 export interface GroupParticipant {
   /** Digits only, already stripped of the WhatsApp JID domain. */
   phoneNumber: string;
+  /**
+   * The id exactly as WhatsApp gave it, domain and all — `8801…@c.us`, or `1234567890123@lid`.
+   *
+   * Kept because the domain is the ONLY thing that distinguishes a phone number from a LID, and
+   * `phoneNumber` above throws it away. A LID is an opaque 14–15 digit id deliberately unrelated
+   * to anybody's number, and `normalizePhoneNumber` accepts 8–15 digits — so once stripped, a LID
+   * is indistinguishable from a real number and silently fails to match the person it belongs to.
+   * For a membership check that mistake reads as "not a member" and spends a redundant add on
+   * somebody already in the group, which is the single operation WhatsApp punishes hardest.
+   */
+  rawId: string;
   /** WhatsApp display name, when the contact exposes one. */
   name: string | null;
   /** True for the account this worker is signed in as — never a colleague to add to a roster. */
   isSelf: boolean;
+  /** Whether this participant can add others. Null when the provider could not say. */
+  isAdmin: boolean | null;
 }
+
+/** Whether a number has a WhatsApp account at all, or why we could not find out. */
+export type NumberCheckResult =
+  | { ok: true; exists: boolean }
+  | { ok: false; reason: string };
 
 export interface GroupInfo {
   whatsappGroupId: string;
@@ -161,6 +179,25 @@ export interface WhatsAppProvider {
    * exist, group doesn't exist, etc.) come back as `{ success: false, error }`.
    */
   addGroupParticipant(chatId: string, phoneNumber: string): Promise<SendResult>;
+  /**
+   * Which groups this account is an admin of — WhatsApp refuses every add to a group where it is
+   * not, so this is what turns INSUFFICIENT_PERMISSIONS from a failure discovered one add at a
+   * time into something the whole job can be told before it starts.
+   *
+   * One call answers for every group, so the check phase asks once rather than per group. Returns
+   * null (never throws) when it could not be determined — which must not be read as "not an
+   * admin", since that would refuse work the account is perfectly able to do.
+   */
+  getAdminGroupIds(): Promise<string[] | null>;
+  /**
+   * Whether a number has a WhatsApp account. A network call per number, so the check phase asks
+   * once per distinct number rather than once per (number, group) pair.
+   *
+   * Structured rather than a bare boolean because "no account exists" and "we could not ask" lead
+   * to opposite decisions: the first is a settled answer an operator should see, the second is a
+   * reason to retry.
+   */
+  checkNumberOnWhatsApp(phoneNumber: string): Promise<NumberCheckResult>;
   /**
    * Ends the current session and invalidates its persisted session data, so the NEXT connect()
    * requires a fresh QR scan — distinct from disconnect(), which is a transient step inside

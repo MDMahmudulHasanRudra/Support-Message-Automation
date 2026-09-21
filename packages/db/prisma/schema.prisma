@@ -110,6 +110,12 @@ enum GroupBroadcastSource {
 /// doc comment): QUEUED -> RUNNING -> COMPLETED, or a sticky CANCELLED /
 /// STOPPED_KILL_SWITCH short-circuit.
 enum GroupParticipantAddJobStatus {
+  /// Reading each group's roster to work out who is genuinely missing. Nothing is added in this
+  /// phase — it exists so an operator sees the answer before spending a single WhatsApp operation.
+  CHECKING
+  /// The check finished and the job is waiting for a person to choose what to add. A job can sit
+  /// here indefinitely; it holds no queue slot and costs nothing.
+  AWAITING_REVIEW
   QUEUED
   RUNNING
   COMPLETED
@@ -117,7 +123,41 @@ enum GroupParticipantAddJobStatus {
   STOPPED_KILL_SWITCH
 }
 
+/// The lifecycle of one (number, group) pair.
+///
+/// The first block is the CHECK phase, which is new: every item used to be claimable work the
+/// moment it existed, so the only way to discover somebody was already in a group was to attempt
+/// the add and be told. Adding a participant is the strongest ban signal WhatsApp reacts to, so
+/// "find out by trying" is the one approach this feature cannot take.
 enum GroupParticipantAddItemStatus {
+  /// Waiting for its group's roster to be read.
+  PENDING_CHECK
+  /// The roster read is in flight.
+  CHECKING
+  /// Not in the group, reachable, and this account may add to it — safe to offer.
+  READY
+  /// Absence could not be PROVEN. The roster came back carrying LIDs, which are opaque ids
+  /// deliberately unrelated to a phone number, so "no match" cannot be read as "not a member".
+  /// Offered, but never silently as READY: the difference is a wasted add on somebody already
+  /// there, which is exactly the operation this phase exists to avoid.
+  CANNOT_VERIFY
+  /// Already a participant, established before anything was attempted.
+  ALREADY_MEMBER
+  /// Not a usable phone number at all (wrong length, or nothing but punctuation).
+  INVALID_NUMBER
+  /// WhatsApp says no account exists for this number.
+  NOT_ON_WHATSAPP
+  /// This account is not an admin of that group, so WhatsApp will refuse every add to it.
+  NO_PERMISSION
+  /// The group is gone, left, or no longer readable.
+  GROUP_UNAVAILABLE
+  /// The check itself failed. Distinct from every result above: nothing was learned, so a recheck
+  /// is the right response rather than a decision.
+  CHECK_FAILED
+  /// Eligible, and the operator chose not to include it. Kept rather than deleted so a job stays a
+  /// complete record of what was considered.
+  NOT_SELECTED
+
   PENDING
   PROCESSING
   ADDED
@@ -1229,6 +1269,21 @@ model GroupParticipantAddItem {
   status            GroupParticipantAddItemStatus @default(PENDING)
   attemptCount      Int                           @default(0)
   failureReason     String?
+  /// WhatsApp's own code for what happened, kept beside the prose rather than buried inside it.
+  /// `failureReason` is written for a person and has always been the only record, so "how many
+  /// adds did privacy settings block this week" was not a question the data could answer. The
+  /// numeric codes come from AddParticipantError (409 already in group, 403 privacy settings, 408
+  /// recently left, 500 group full); the string ones are WhatsApp's own
+  /// (INSUFFICIENT_PERMISSIONS, NOT_A_CONTACT, GROUP_DOES_NOT_EXIST, NOT_A_GROUP_CHAT).
+  failureCode       String?
+  /// The participant id this number resolved to, when the check could establish one. Stored
+  /// because a roster may identify people by LID — an opaque id that is deliberately not a phone
+  /// number — and without keeping what we actually matched on, a later reader cannot tell a
+  /// verified absence from an unverifiable one.
+  whatsappId        String?
+  /// When the membership check last ran for this pair. A retry re-checks rather than re-attempts,
+  /// so this is what says whether the answer being acted on is fresh.
+  checkedAt         DateTime?
   scheduledAt       DateTime                      @default(now())
   processedAt       DateTime?
   createdAt         DateTime                      @default(now())
@@ -1236,6 +1291,9 @@ model GroupParticipantAddItem {
 
   @@unique([jobId, groupId, phoneNumber])
   @@index([status, scheduledAt])
+  /// The check loop claims by job so one job's roster reads stay together — reading a group's
+  /// roster once serves every number in that job, and scattering the claims would re-read it.
+  @@index([jobId, status])
 }
 
 /// Singleton row (id is always the literal string "global"), analogous to

@@ -304,7 +304,7 @@ describe("Already a member: skipped rather than attempted", () => {
 
     const provider = new MockProvider();
     provider.participantsByChatId.set(group.whatsappGroupId, [
-      { phoneNumber: "8801000000000", name: "Already In", isSelf: false },
+      MockProvider.phoneParticipant("8801000000000", "Already In"),
     ]);
 
     await processOne(provider);
@@ -321,7 +321,8 @@ describe("Already a member: skipped rather than attempted", () => {
 
     const provider = new MockProvider();
     provider.participantsByChatId.set(group.whatsappGroupId, [
-      { phoneNumber: "+880 1000000000", name: "Same Person", isSelf: false },
+      // Formatted differently from the queued number on purpose — matching is on digits, not bytes.
+      { phoneNumber: "+880 1000000000", rawId: "+880 1000000000@c.us", name: "Same Person", isSelf: false, isAdmin: null },
     ]);
 
     await processOne(provider);
@@ -355,7 +356,7 @@ describe("Already a member: skipped rather than attempted", () => {
 
     const provider = new MockProvider();
     provider.participantsByChatId.set(group.whatsappGroupId, [
-      { phoneNumber: "8809999999999", name: "Somebody Else", isSelf: false },
+      MockProvider.phoneParticipant("8809999999999", "Somebody Else"),
     ]);
 
     await processOne(provider);
@@ -449,7 +450,7 @@ describe("The per-minute cap is global, not per job", () => {
 
     const provider = new MockProvider();
     provider.participantsByChatId.set(groupA.whatsappGroupId, [
-      { phoneNumber: "8801000000000", name: "Already In", isSelf: false },
+      MockProvider.phoneParticipant("8801000000000", "Already In"),
     ]);
 
     await processOne(provider); // skips groupA — still spends the minute's budget

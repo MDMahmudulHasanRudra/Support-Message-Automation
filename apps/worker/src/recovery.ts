@@ -1,6 +1,7 @@
 import { prisma } from "@support-automation/db";
 import { recoverStuckOutboundMessages } from "./queue/outboundQueueProcessor.js";
 import { recoverStuckParticipantAddItems } from "./queue/groupParticipantAddProcessor.js";
+import { recoverStuckParticipantChecks } from "./queue/groupParticipantCheckProcessor.js";
 import { recoverStuckNotifications } from "./notifications/dispatcher.js";
 import { recoverStuckCommands } from "./commands/commandProcessor.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
@@ -26,6 +27,9 @@ export interface StuckWorkRecovered {
   outbound: number;
   notifications: number;
   participantAdds: number;
+  /** Pairs left mid-roster-read. Counted apart from adds: nothing was sent, so a spike here is a
+   *  provider that keeps stalling rather than work that keeps failing. */
+  participantChecks: number;
   commands: number;
 }
 
@@ -39,13 +43,14 @@ export interface StuckWorkRecovered {
  * claimed by the previous process would otherwise wait out a twenty-minute timer for no reason.
  */
 export async function runStuckWorkRecovery(options: { atBoot?: boolean } = {}): Promise<StuckWorkRecovered> {
-  const [outbound, notifications, participantAdds, commands] = await Promise.all([
+  const [outbound, notifications, participantAdds, participantChecks, commands] = await Promise.all([
     recoverStuckOutboundMessages(),
     recoverStuckNotifications(),
     recoverStuckParticipantAddItems(),
+    recoverStuckParticipantChecks(),
     recoverStuckCommands({ atBoot: options.atBoot }),
   ]);
-  return { outbound, notifications, participantAdds, commands };
+  return { outbound, notifications, participantAdds, participantChecks, commands };
 }
 
 /**

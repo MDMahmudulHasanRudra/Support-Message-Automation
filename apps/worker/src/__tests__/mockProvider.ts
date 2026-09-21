@@ -5,6 +5,7 @@ import type {
   GroupInfo,
   GroupJoinResult,
   GroupParticipant,
+  NumberCheckResult,
   ProfileUpdate,
   ProfileUpdateResult,
   SendResult,
@@ -89,6 +90,25 @@ export class MockProvider implements WhatsAppProvider {
   /** Per-chat roster, set by a test that needs one; empty otherwise. */
   public participantsByChatId = new Map<string, GroupParticipant[]>();
 
+  /**
+   * A roster entry WhatsApp identified by a real phone number.
+   *
+   * A factory rather than object literals in each test, so a fixture cannot accidentally omit
+   * `rawId` — the field the whole LID distinction rests on. A literal that forgot it would
+   * typecheck the day it was written and quietly become the wrong kind of participant later.
+   */
+  static phoneParticipant(phoneNumber: string, name: string | null = null): GroupParticipant {
+    return { phoneNumber, rawId: `${phoneNumber}@c.us`, name, isSelf: false, isAdmin: null };
+  }
+
+  /**
+   * A roster entry identified by a LID — an opaque id that is NOT anybody's phone number, even
+   * though it is all digits and passes every length check this codebase applies to a number.
+   */
+  static lidParticipant(lid: string, name: string | null = null): GroupParticipant {
+    return { phoneNumber: lid, rawId: `${lid}@lid`, name, isSelf: false, isAdmin: null };
+  }
+
   async getGroupParticipants(chatId: string): Promise<GroupParticipant[]> {
     return this.participantsByChatId.get(chatId) ?? [];
   }
@@ -102,6 +122,25 @@ export class MockProvider implements WhatsAppProvider {
   async addGroupParticipant(chatId: string, phoneNumber: string): Promise<SendResult> {
     this.addedParticipants.push({ chatId, phoneNumber });
     return this.nextAddParticipantResult;
+  }
+
+  /**
+   * Which groups this account may add to. Null is the "could not tell" case and is deliberately
+   * the default for nothing — a test has to opt into it, because reading null as "not an admin"
+   * is the mistake the check phase must never make.
+   */
+  public adminGroupIds: string[] | null = null;
+  /** True once a test has set `adminGroupIds`, so the default stays "unknown" rather than "none". */
+  public adminGroupIdsConfigured = false;
+  async getAdminGroupIds(): Promise<string[] | null> {
+    return this.adminGroupIdsConfigured ? this.adminGroupIds : null;
+  }
+
+  /** Per-number answers; anything not listed comes back as existing on WhatsApp. */
+  public numberChecks = new Map<string, NumberCheckResult>();
+  public defaultNumberCheck: NumberCheckResult = { ok: true, exists: true };
+  async checkNumberOnWhatsApp(phoneNumber: string): Promise<NumberCheckResult> {
+    return this.numberChecks.get(phoneNumber) ?? this.defaultNumberCheck;
   }
 
   public reactions: Array<{ whatsappMessageId: string; emoji: string }> = [];
