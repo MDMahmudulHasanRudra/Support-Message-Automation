@@ -461,3 +461,47 @@ describe("The per-minute cap is global, not per job", () => {
     );
   });
 });
+
+/**
+ * WhatsApp's own 409 is the backstop behind the pre-check, and the thing that actually makes this
+ * feature idempotent. The pre-check cannot catch everything — somebody can join between the check
+ * and their turn in a queue paced at three a minute, and a roster identifying people by LID cannot
+ * be matched at all — so the add path has to read that answer correctly when it arrives.
+ */
+describe("WhatsApp reports the person is already in the group", () => {
+  it("records ALREADY_IN_GROUP as a skip, not a failure, and does not retry it", async () => {
+    const group = await makeGroup();
+    const job = await makeJob({ retryMaxAttempts: 3 });
+    const item = await queueItem({ job, group });
+
+    const provider = new MockProvider();
+    // No roster registered, so the pre-check cannot tell — exactly the gap the 409 covers.
+    provider.nextAddParticipantResult = { success: false, error: "ALREADY_IN_GROUP" };
+
+    await processOne(provider);
+
+    const refreshed = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } });
+    // Not FAILED: the desired end state holds, so a red row would be wrong and a retry would spend
+    // another add to be told the same thing.
+    expect(refreshed.status).toBe("SKIPPED_ALREADY_MEMBER");
+    expect(refreshed.failureCode).toBe("ALREADY_IN_GROUP");
+  });
+
+  it("stores the machine-readable code alongside the prose for a real failure", async () => {
+    const group = await makeGroup();
+    const job = await makeJob({ retryMaxAttempts: 1 });
+    const item = await queueItem({ job, group });
+
+    const provider = new MockProvider();
+    provider.participantsByChatId.set(group.whatsappGroupId, [MockProvider.phoneParticipant("8809999999999")]);
+    provider.nextAddParticipantResult = { success: false, error: "PRIVACY_SETTINGS" };
+
+    await processOne(provider);
+
+    const refreshed = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(refreshed.status).toBe("FAILED");
+    expect(refreshed.failureCode).toBe("PRIVACY_SETTINGS");
+    // And the prose explains it rather than echoing the bare code.
+    expect(refreshed.failureReason).toContain("privacy settings");
+  });
+});

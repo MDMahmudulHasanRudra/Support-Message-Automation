@@ -275,6 +275,86 @@ describe("the job's own lifecycle", () => {
   });
 });
 
+/**
+ * Spec point 14. The pre-check catches most repeats, but the guarantee cannot rest on it: somebody
+ * can join between the check and their turn in a queue paced at three a minute, and a LID roster
+ * cannot be matched at all. WhatsApp's own 409 is the backstop that makes a repeat run settle as a
+ * skip rather than a duplicate add.
+ */
+describe("idempotency: running the same pair twice", () => {
+  it("records a second run as ALREADY_MEMBER rather than adding again", async () => {
+    const group = await makeGroup();
+    const job = await makeCheckingJob();
+    const first = await pendingCheckItem({ job, group });
+
+    const provider = new MockProvider();
+    provider.participantsByChatId.set(group.whatsappGroupId, [MockProvider.phoneParticipant("8809999999999")]);
+    await checkOneJob(provider, job.id);
+    expect(await statusOf(first.id)).toBe("READY");
+
+    // Same pair submitted again, by which time they are in the group.
+    const secondJob = await makeCheckingJob();
+    const second = await pendingCheckItem({ job: secondJob, group });
+    provider.participantsByChatId.set(group.whatsappGroupId, [
+      MockProvider.phoneParticipant("8809999999999"),
+      MockProvider.phoneParticipant("8801000000000"),
+    ]);
+
+    await checkOneJob(provider, secondJob.id);
+
+    expect(await statusOf(second.id)).toBe("ALREADY_MEMBER");
+    expect(provider.addedParticipants).toHaveLength(0);
+  });
+});
+
+/** Spec point 16: a retry must re-check membership, never blindly re-attempt. */
+describe("retry re-checks before adding", () => {
+  it("re-checks a failed pair and reports it as a member if they joined meanwhile", async () => {
+    const group = await makeGroup();
+    const job = await makeCheckingJob();
+    const item = await pendingCheckItem({ job, group });
+
+    // The pair previously failed an add.
+    await prisma.groupParticipantAddItem.update({
+      where: { id: item.id },
+      data: { status: "FAILED", failureReason: "WhatsApp rejected the request.", attemptCount: 1 },
+    });
+    // The re-check action puts it back to PENDING_CHECK; simulate that transition.
+    await prisma.groupParticipantAddItem.update({
+      where: { id: item.id },
+      data: { status: "PENDING_CHECK", failureReason: null, attemptCount: 0 },
+    });
+
+    const provider = new MockProvider();
+    // They joined in the meantime.
+    provider.participantsByChatId.set(group.whatsappGroupId, [MockProvider.phoneParticipant("8801000000000")]);
+
+    await checkOneJob(provider, job.id);
+
+    expect(await statusOf(item.id)).toBe("ALREADY_MEMBER");
+    // The whole point: the retry cost no WhatsApp add at all.
+    expect(provider.addedParticipants).toHaveLength(0);
+  });
+
+  it("re-checks a failed pair and offers it again when it is still genuinely missing", async () => {
+    const group = await makeGroup();
+    const job = await makeCheckingJob();
+    const item = await pendingCheckItem({ job, group });
+
+    await prisma.groupParticipantAddItem.update({
+      where: { id: item.id },
+      data: { status: "PENDING_CHECK", attemptCount: 0 },
+    });
+
+    const provider = new MockProvider();
+    provider.participantsByChatId.set(group.whatsappGroupId, [MockProvider.phoneParticipant("8809999999999")]);
+
+    await checkOneJob(provider, job.id);
+
+    expect(await statusOf(item.id)).toBe("READY");
+  });
+});
+
 describe("crash recovery", () => {
   it("returns a pair stranded mid-check to PENDING_CHECK", async () => {
     const group = await makeGroup();

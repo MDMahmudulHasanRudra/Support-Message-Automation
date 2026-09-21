@@ -6,7 +6,7 @@ import { requireSession } from "@/server/auth";
 import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, StatusDot, Table, Td, Th } from "@/components/ui";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { formatDateTime } from "@/lib/date";
-import { cancelParticipantAddJob, retryFailedParticipantAddItems } from "@/server/actions/groupParticipantAdd";
+import { cancelParticipantAddJob, recheckParticipantAddItems } from "@/server/actions/groupParticipantAdd";
 import { JobActions } from "./JobActions";
 import { MembershipReview } from "./MembershipReview";
 
@@ -77,7 +77,11 @@ export default async function GroupParticipantAddJobPage({ params }: { params: P
     }));
 
   const stopAction = cancelParticipantAddJob.bind(null, job.id);
-  const retryAction = retryFailedParticipantAddItems.bind(null, job.id);
+  // Re-check rather than re-attempt — see JobActions for why a blind retry is the wrong shape here.
+  const retryAction = async () => {
+    "use server";
+    await recheckParticipantAddItems(job.id);
+  };
 
   return (
     <div>

@@ -39,9 +39,13 @@ export function JobActions({
           Stop Job
         </Button>
       ) : null}
+      {/* Re-check, never a blind re-attempt. A failed add may have failed because the person
+          joined in the meantime, so retrying straight away would spend another add to be told so.
+          Sending them back through the membership check turns that into a skip costing nothing —
+          and puts the answer in front of a person again before anything is sent. */}
       {failedCount > 0 ? (
         <Button variant="secondary" onClick={() => setDialog("retry")}>
-          Retry {failedCount} Failed Group(s)
+          Re-check {failedCount} Failed
         </Button>
       ) : null}
 
@@ -51,13 +55,13 @@ export function JobActions({
         onConfirm={confirm}
         loading={isPending}
         tone={dialog === "stop" ? "danger" : "primary"}
-        title={dialog === "stop" ? "Stop this job?" : `Retry ${failedCount} failed group(s)?`}
+        title={dialog === "stop" ? "Stop this job?" : `Re-check ${failedCount} failed entr${failedCount === 1 ? "y" : "ies"}?`}
         description={
           dialog === "stop"
             ? "Still-pending groups will be cancelled. A group already being processed is left to finish."
-            : "Resets retry attempts for failed groups only — groups the number was already added to are never touched."
+            : "Reads each group's members again and brings the job back to the review screen. Anyone who has since joined is reported as already a member instead of being added again. Nothing is sent until you confirm the new results."
         }
-        confirmLabel={dialog === "stop" ? "Stop Job" : "Retry"}
+        confirmLabel={dialog === "stop" ? "Stop Job" : "Re-check"}
       />
     </div>
   );

@@ -242,6 +242,15 @@ export function describeAddFailure(code: string): string {
       "WhatsApp would not add this person automatically — their privacy settings require an invite link instead.",
     GROUP_DOES_NOT_EXIST: "That group no longer exists on WhatsApp.",
     NOT_A_GROUP_CHAT: "That conversation is not a group, so nobody can be added to it.",
+    // The four below arrive as numeric statuses inside a thrown AddParticipantError and were
+    // previously flattened into "Unable to add some participants" — indistinguishable from each
+    // other and from a generic failure, which is why none of them had wording until now.
+    ALREADY_IN_GROUP: "They were already in the group, so nothing was added.",
+    PRIVACY_SETTINGS:
+      "Their privacy settings do not allow this account to add them to groups. Send them an invite link instead.",
+    RECENTLY_LEFT:
+      "They left this group recently, and WhatsApp blocks re-adding somebody for a while afterwards. Try again later, or send an invite link.",
+    GROUP_FULL: "That group has reached WhatsApp's participant limit, so nobody else can be added.",
   };
   const explanation = explanations[code.trim().toUpperCase()];
   return explanation ? `${explanation} (${code.trim()})` : code;
@@ -252,19 +261,57 @@ async function handleAddFailure(
   retryMaxAttempts: number,
   rawFailure: string,
 ): Promise<void> {
+  const failureCode = rawFailure.trim().toUpperCase();
   const failureReason = describeAddFailure(rawFailure);
+
+  /**
+   * WhatsApp's own 409 is the authoritative answer, and it is not a failure.
+   *
+   * The pre-check catches most of these before an add is spent, but it cannot catch everything:
+   * somebody can join between the check and their turn in a queue paced at three a minute, and a
+   * roster identifying people by LID cannot be matched at all. When that happens WhatsApp says
+   * ALREADY_IN_GROUP, which means the desired end state holds — recording it as FAILED would put
+   * a red row in front of an operator for an outcome that is entirely correct, and a retry would
+   * then spend another add to be told the same thing.
+   *
+   * This is also what makes the whole feature idempotent: submit the same job twice and the second
+   * run settles as skips rather than duplicate adds.
+   */
+  if (failureCode === "ALREADY_IN_GROUP") {
+    await prisma.groupParticipantAddItem.update({
+      where: { id: item.id },
+      data: {
+        status: "SKIPPED_ALREADY_MEMBER",
+        attemptCount: item.attemptCount + 1,
+        processedAt: new Date(),
+        failureCode,
+        failureReason: "Already in the group by the time this ran — nothing was added.",
+      },
+    });
+    await maybeCompleteParticipantAddJob(item.jobId);
+    return;
+  }
+
   const attemptCount = item.attemptCount + 1;
   if (attemptCount >= retryMaxAttempts) {
     await prisma.groupParticipantAddItem.update({
       where: { id: item.id },
-      data: { status: "FAILED", attemptCount, failureReason, processedAt: new Date() },
+      // The machine-readable code beside the prose, so "how many adds did privacy settings block
+      // this week" is answerable without parsing a sentence written for a person.
+      data: { status: "FAILED", attemptCount, failureReason, failureCode, processedAt: new Date() },
     });
     await maybeCompleteParticipantAddJob(item.jobId);
     return;
   }
   await prisma.groupParticipantAddItem.update({
     where: { id: item.id },
-    data: { status: "PENDING", attemptCount, failureReason, scheduledAt: new Date(Date.now() + RETRY_DELAY_MS) },
+    data: {
+      status: "PENDING",
+      attemptCount,
+      failureReason,
+      failureCode,
+      scheduledAt: new Date(Date.now() + RETRY_DELAY_MS),
+    },
   });
 }
 
