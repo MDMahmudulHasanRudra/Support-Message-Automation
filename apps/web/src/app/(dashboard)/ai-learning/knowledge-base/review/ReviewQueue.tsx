@@ -47,7 +47,7 @@ export function ReviewQueue({ rows }: { rows: ReviewRow[] }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState<BulkKind | null>(null);
-  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkResult, setBulkResult] = useState<BulkKnowledgeResult | null>(null);
   const [pending, startTransition] = useTransition();
 
   if (rows.length === 0) {
@@ -91,14 +91,12 @@ export function ReviewQueue({ rows }: { rows: ReviewRow[] }) {
   function runBulk(kind: BulkKind) {
     const ids = selected;
     setConfirming(null);
-    setBulkError(null);
+    setBulkResult(null);
     startTransition(async () => {
       const result: BulkKnowledgeResult =
         kind === "verify" ? await bulkSetKnowledgeVerified(ids) : await bulkArchiveKnowledge(ids);
-      if (result.error) {
-        setBulkError(result.error);
-        return;
-      }
+      setBulkResult(result);
+      if (result.error) return;
       setSelected([]);
       router.refresh();
     });
@@ -108,7 +106,12 @@ export function ReviewQueue({ rows }: { rows: ReviewRow[] }) {
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3.5 py-2.5">
         <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[color:var(--color-foreground)]">
-          <Checkbox checked={allSelected} onChange={toggleAll} aria-label="Select every entry on this page" />
+          <Checkbox
+            checked={allSelected}
+            indeterminate={!allSelected && selected.length > 0}
+            onChange={toggleAll}
+            aria-label="Select every entry on this page"
+          />
           Select all on this page
         </label>
         <span className="tabular text-[11px] text-[color:var(--color-muted-foreground)]">
@@ -131,7 +134,34 @@ export function ReviewQueue({ rows }: { rows: ReviewRow[] }) {
         </div>
       </div>
 
-      {bulkError ? <Alert tone="danger">{bulkError}</Alert> : null}
+      {/* The `where` on both bulk actions silently skips rows that are already verified or already
+          archived, so a bare refresh could leave "verify 20" having verified fourteen with nothing
+          on screen saying so. */}
+      {bulkResult ? (
+        <Alert
+          tone={bulkResult.error ? "danger" : "success"}
+          actions={
+            <Button variant="ghost" size="sm" onClick={() => setBulkResult(null)}>
+              Dismiss
+            </Button>
+          }
+        >
+          {bulkResult.error ? (
+            bulkResult.error
+          ) : (
+            <ul className="space-y-0.5">
+              <li>{bulkResult.updated} updated successfully</li>
+              {bulkResult.alreadyInTargetState ? (
+                <li>{bulkResult.alreadyInTargetState} already in the requested state</li>
+              ) : null}
+              {bulkResult.skippedArchived ? (
+                <li>{bulkResult.skippedArchived} left alone — already discarded</li>
+              ) : null}
+              {bulkResult.notFound ? <li>{bulkResult.notFound} not found (may have been removed already)</li> : null}
+            </ul>
+          )}
+        </Alert>
+      ) : null}
 
       {rows.map((row) => {
         const expanded = expandedId === row.id;

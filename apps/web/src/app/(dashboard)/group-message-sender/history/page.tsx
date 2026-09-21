@@ -3,11 +3,16 @@ import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { OutboundMessageStatus, Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { Alert, Badge, type BadgeColor, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select, Table, Td, Th } from "@/components/ui";
+import { Alert, Badge, type BadgeColor, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Pagination, Select, Table, Td, Th } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { parseDhakaDayFromInput } from "@/lib/supportActivityPeriod";
 
 const STATUS_OPTIONS = ["PENDING", "PROCESSING", "SENT", "FAILED", "CANCELLED", "RATE_LIMITED", "SKIPPED"] as const;
+
+/** One 1,848-group broadcast produces 1,848 rows, so a fixed 200 showed roughly a tenth of a
+ *  single job — and said nothing about the rest. */
+const PAGE_SIZE_OPTIONS = [50, 200, 500] as const;
+const DEFAULT_PAGE_SIZE = 200;
 
 interface HistorySearchParams {
   accountId?: string;
@@ -15,6 +20,8 @@ interface HistorySearchParams {
   status?: string;
   from?: string;
   to?: string;
+  page?: string;
+  pageSize?: string;
 }
 
 export default async function GroupBroadcastHistoryPage({
@@ -46,12 +53,33 @@ export default async function GroupBroadcastHistoryPage({
     };
   }
 
-  const messages = await prisma.outboundMessage.findMany({
-    where,
-    include: { account: { select: { label: true } }, createdBy: { select: { name: true, email: true } } },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-  });
+  const page = Math.max(1, Number(filters.page ?? "1") || 1);
+  const requestedPageSize = Number(filters.pageSize ?? DEFAULT_PAGE_SIZE);
+  const PAGE_SIZE = PAGE_SIZE_OPTIONS.includes(requestedPageSize as (typeof PAGE_SIZE_OPTIONS)[number])
+    ? requestedPageSize
+    : DEFAULT_PAGE_SIZE;
+
+  const [messages, totalCount] = await Promise.all([
+    prisma.outboundMessage.findMany({
+      where,
+      include: { account: { select: { label: true } }, createdBy: { select: { name: true, email: true } } },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+    prisma.outboundMessage.count({ where }),
+  ]);
+
+  const buildHref = (nextPage: number, nextPageSize = PAGE_SIZE): string => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (key !== "page" && key !== "pageSize" && typeof value === "string" && value) qs.set(key, value);
+    }
+    if (nextPage > 1) qs.set("page", String(nextPage));
+    if (nextPageSize !== DEFAULT_PAGE_SIZE) qs.set("pageSize", String(nextPageSize));
+    const query = qs.toString();
+    return query ? `/group-message-sender/history?${query}` : "/group-message-sender/history";
+  };
 
   return (
     <div>
@@ -177,6 +205,18 @@ export default async function GroupBroadcastHistoryPage({
           </tbody>
         </Table>
       )}
+
+      {messages.length > 0 ? (
+        <Pagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={totalCount}
+          buildHref={(p) => buildHref(p)}
+          pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+          buildPageSizeHref={(size) => buildHref(1, size)}
+          sticky
+        />
+      ) : null}
     </div>
   );
 }

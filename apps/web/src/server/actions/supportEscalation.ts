@@ -185,6 +185,79 @@ export async function reassignCase(caseId: string, teamMemberId: string | null):
   revalidatePath(`/support-escalation/cases/${caseId}`);
 }
 
+/**
+ * A ceiling on one bulk escalation action. Each case is its own transaction (see below), so this
+ * bounds a sequential run as much as it bounds the write — and the active queue itself caps at 200.
+ */
+const MAX_BULK_CASE_IDS = 200;
+
+const TERMINAL_STATUSES = ["HUMAN_REPLIED", "RESOLVED", "CANCELLED"];
+
+export interface BulkCaseResult {
+  changed: number;
+  /** Selected but already finished — resolved, cancelled, or a human replied while the page sat open. */
+  alreadyClosed: number;
+  notFound: number;
+  error?: string;
+}
+
+/**
+ * Clears several cases at once — the action this queue was missing.
+ *
+ * Thirty stale P3 cases meant thirty navigations into thirty detail pages, on the one screen an
+ * operator opens under time pressure. Worse, the page's own 200-case notice tells you to "resolve
+ * some of these to see the rest" while offering no way to do it.
+ *
+ * Each case is handled INDIVIDUALLY rather than by one `updateMany`, and that is the load-bearing
+ * detail: every close writes a `SupportEscalationEvent` beside the status change, in the same
+ * transaction, and a batch update would silently skip the audit trail for all of them — leaving
+ * thirty cases that closed with no record of who closed them or why. Closing is also guarded per
+ * case, so a case a human answered while the page sat open is left alone rather than overwritten.
+ */
+async function runBulkCaseAction(
+  ids: string[],
+  apply: (caseId: string) => Promise<void>,
+): Promise<BulkCaseResult> {
+  await requireSession();
+
+  const unique = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+  if (unique.length === 0) return { changed: 0, alreadyClosed: 0, notFound: 0, error: "Select at least one case first." };
+  if (unique.length > MAX_BULK_CASE_IDS) {
+    return {
+      changed: 0,
+      alreadyClosed: 0,
+      notFound: 0,
+      error: `That is ${unique.length} cases at once, over the limit of ${MAX_BULK_CASE_IDS}. Narrow the filters and run it again.`,
+    };
+  }
+
+  const existing = await prisma.supportEscalationCase.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, status: true },
+  });
+  const notFound = unique.length - existing.length;
+  const actionable = existing.filter((row) => !TERMINAL_STATUSES.includes(row.status));
+
+  // Sequential, not Promise.all: each one is its own transaction, and firing two hundred at once
+  // would take two hundred connections out of a bounded pool the worker is also drawing from.
+  for (const row of actionable) {
+    await apply(row.id);
+  }
+
+  revalidatePath("/support-escalation");
+  return { changed: actionable.length, alreadyClosed: existing.length - actionable.length, notFound };
+}
+
+/** Marks several cases resolved, each with its own audit event. */
+export async function bulkResolveCases(ids: string[]): Promise<BulkCaseResult> {
+  return runBulkCaseAction(ids, markResolved);
+}
+
+/** Stops escalation on several cases without claiming anybody replied. */
+export async function bulkStopEscalation(ids: string[]): Promise<BulkCaseResult> {
+  return runBulkCaseAction(ids, stopEscalation);
+}
+
 /** Stops escalation without claiming a human replied — distinct from resolve/human-reply, same spirit as GroupBroadcastJob's cancel. */
 export async function stopEscalation(caseId: string): Promise<void> {
   await requireSession();

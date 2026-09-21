@@ -8,7 +8,7 @@ import {
   Button,
   Checkbox,
   ConfirmDialog,
-  Select,
+  SelectAllMatchingNotice,
   Table,
   Td,
   Th,
@@ -19,6 +19,7 @@ import {
   bulkSetMonitoring,
   requestGroupParticipantCount,
   requestGroupKnowledgeBuild,
+  selectAllMatchingGroupIds,
   toggleGroupAiAutomation,
   toggleGroupTestMode,
   toggleGroupAiExcluded,
@@ -77,20 +78,27 @@ const BULK_COPY: Record<Exclude<PendingBulkAction, null>, { title: string; descr
 
 export function GroupsTable({
   groups,
-  pageSize,
-  pageSizeHrefs,
   teamMembers = [],
+  totalMatching,
+  search,
+  filter,
 }: {
   groups: GroupRow[];
-  pageSize?: number;
-  pageSizeHrefs?: Array<{ size: number; href: string }>;
   teamMembers?: TeamMemberOption[];
+  /** How many groups match the current search + chip across EVERY page, not just this one. */
+  totalMatching: number;
+  /** The list's current filter state, passed back to the server to resolve a widened selection. */
+  search: string;
+  filter: string;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingBulkAction>(null);
   const [lastResult, setLastResult] = useState<BulkMonitoringResult | BulkAiAutomationResult | null>(null);
+  const [allMatchingSelected, setAllMatchingSelected] = useState(false);
+  const [widening, setWidening] = useState(false);
+  const [widenNotice, setWidenNotice] = useState<string | null>(null);
 
   const [toggleTarget, setToggleTarget] = useState<GroupRow | null>(null);
   const [isToggling, startToggle] = useTransition();
@@ -105,7 +113,13 @@ export function GroupsTable({
     [groups, selected],
   );
 
+  /**
+   * Any hand edit to the selection means it is no longer "everything matching the filter", so the
+   * widened flag is dropped — otherwise the notice would keep claiming all 1,798 are selected
+   * while the operator had just unticked one.
+   */
   function toggleOne(id: string) {
+    setAllMatchingSelected(false);
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -115,6 +129,7 @@ export function GroupsTable({
   }
 
   function toggleAllVisible() {
+    setAllMatchingSelected(false);
     setSelected((prev) => {
       if (allVisibleSelected) {
         const next = new Set(prev);
@@ -125,6 +140,38 @@ export function GroupsTable({
       groups.forEach((g) => next.add(g.id));
       return next;
     });
+  }
+
+  /**
+   * The answer to "I filtered to fifty, now let me act on those fifty."
+   *
+   * The page renders at most `pageSize` rows, so the checkbox above can only ever mean "these".
+   * This asks the server for every id matching the same search and chip — resolved by the same
+   * `where` builder the page used, so the set cannot differ from the one just counted.
+   */
+  function selectAllMatching() {
+    setWidening(true);
+    setWidenNotice(null);
+    void (async () => {
+      try {
+        const { ids, truncated } = await selectAllMatchingGroupIds(search, filter);
+        setSelected(new Set(ids));
+        setAllMatchingSelected(true);
+        if (truncated) {
+          setWidenNotice(
+            `Only the first ${ids.length.toLocaleString()} could be selected at once. Narrow the search and repeat for the rest.`,
+          );
+        }
+      } finally {
+        setWidening(false);
+      }
+    })();
+  }
+
+  function clearSelection() {
+    setAllMatchingSelected(false);
+    setWidenNotice(null);
+    setSelected(new Set());
   }
 
   async function confirmBulk() {
@@ -139,7 +186,7 @@ export function GroupsTable({
       setLastResult(result);
       setPendingAction(null);
       if (!result.error) {
-        setSelected(new Set());
+        clearSelection();
         router.refresh();
       }
     } finally {
@@ -199,32 +246,21 @@ export function GroupsTable({
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between">
+      {/* Pinned to the top of the scroll area: at a 1,000-row page size the selection is made at
+          the bottom of the list and the buttons that act on it were a thousand rows away. */}
+      <div className="sticky top-0 z-20 mb-2 -mx-5 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-background)]/95 px-5 py-2 backdrop-blur-sm sm:-mx-8 sm:px-8">
         <div className="flex items-center gap-3">
           <span className="text-xs text-[color:var(--color-muted-foreground)]">
-            {selected.size} selected (of {groups.length} visible)
+            <span className="tabular font-medium text-[color:var(--color-foreground)]">{selected.size}</span>{" "}
+            selected {allMatchingSelected ? "(everything matching these filters)" : `(of ${groups.length} on this page)`}
           </span>
-          {pageSizeHrefs ? (
-            <label className="flex items-center gap-1.5 text-xs text-[color:var(--color-muted-foreground)]">
-              Show
-              <Select
-                className="h-7 w-20 py-0 text-xs"
-                value={pageSize}
-                onChange={(e) => {
-                  const target = pageSizeHrefs.find((p) => p.size === Number(e.target.value));
-                  if (target) router.push(target.href);
-                }}
-              >
-                {pageSizeHrefs.map(({ size }) => (
-                  <option key={size} value={size}>
-                    {size}
-                  </option>
-                ))}
-              </Select>
-            </label>
+          {selected.size > 0 ? (
+            <Button variant="ghost" size="sm" onClick={clearSelection} disabled={busy}>
+              Clear
+            </Button>
           ) : null}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="secondary"
             size="sm"
@@ -259,6 +295,23 @@ export function GroupsTable({
           </Button>
         </div>
       </div>
+
+      <SelectAllMatchingNotice
+        pageSelectedCount={groups.filter((g) => selected.has(g.id)).length}
+        pageCount={groups.length}
+        totalMatching={totalMatching}
+        allMatchingSelected={allMatchingSelected}
+        onSelectAllMatching={selectAllMatching}
+        onClear={clearSelection}
+        loading={widening}
+        noun={{ singular: "group", plural: "groups" }}
+      />
+
+      {widenNotice ? (
+        <div className="mb-3">
+          <Alert tone="warning">{widenNotice}</Alert>
+        </div>
+      ) : null}
 
       {lastResult ? (
         <div className="mb-3">
@@ -297,7 +350,11 @@ export function GroupsTable({
           <tr>
             <Th>
               <label className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap font-normal normal-case">
-                <Checkbox checked={allVisibleSelected} onChange={toggleAllVisible} />
+                <Checkbox
+                  checked={allVisibleSelected}
+                  indeterminate={!allVisibleSelected && groups.some((g) => selected.has(g.id))}
+                  onChange={toggleAllVisible}
+                />
                 All visible
               </label>
             </Th>

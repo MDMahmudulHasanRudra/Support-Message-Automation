@@ -50,11 +50,26 @@ export function Select({
 
 export function Checkbox({
   className = "",
+  indeterminate = false,
   ...props
-}: InputHTMLAttributes<HTMLInputElement>) {
+}: InputHTMLAttributes<HTMLInputElement> & {
+  /**
+   * The third state a "select all" box needs: some but not all of what it governs is selected.
+   *
+   * Without it a partly-filled page renders its header box as plain UNCHECKED, which reads as
+   * "nothing here is selected" while a bulk action is armed and pointed at whatever is — and the
+   * one click available to resolve the confusion selects everything. There is no HTML attribute
+   * for it, so it is set on the node itself.
+   */
+  indeterminate?: boolean;
+}) {
   return (
     <input
       type="checkbox"
+      ref={(node) => {
+        if (node) node.indeterminate = indeterminate;
+      }}
+      aria-checked={indeterminate ? "mixed" : undefined}
       className={`size-4 cursor-pointer rounded-[var(--radius-xs)] border-[var(--color-border-strong)] accent-[var(--color-primary)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${className}`}
       {...props}
     />

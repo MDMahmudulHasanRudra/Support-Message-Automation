@@ -12,10 +12,16 @@ import {
 export default async function GroupParticipantAdderPage() {
   await requireSession();
 
-  const [accounts, settings, automationSettings, roster] = await Promise.all([
+  const [accounts, settings, automationSettings, roster, savedGroupSets] = await Promise.all([
     prisma.whatsAppAccount.findMany({
       where: { status: "CONNECTED" },
-      include: { groups: { where: { isActive: true }, orderBy: { name: "asc" } } },
+      include: {
+        groups: {
+          where: { isActive: true },
+          orderBy: { name: "asc" },
+          include: { chatCategory: { select: { id: true, name: true, color: true } } },
+        },
+      },
       orderBy: { createdAt: "asc" },
     }),
     prisma.groupParticipantAddSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
@@ -25,6 +31,7 @@ export default async function GroupParticipantAdderPage() {
       select: { id: true, name: true, phoneNumber: true, whatsappId: true, role: true },
       orderBy: { name: "asc" },
     }),
+    prisma.savedGroupSet.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, groupIds: true } }),
   ]);
 
   // Anyone mapped from message history has a WhatsApp id where their number should be, and WhatsApp
@@ -44,7 +51,24 @@ export default async function GroupParticipantAdderPage() {
     id: a.id,
     label: a.label,
     status: a.status,
-    groups: a.groups.map((g) => ({ id: g.id, name: g.name, isMonitored: g.isMonitored })),
+    groups: a.groups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      isMonitored: g.isMonitored,
+      // The chat inbox's categories and pins, reused rather than given a second parallel taxonomy.
+      categoryId: g.chatCategoryId,
+      categoryName: g.chatCategory?.name ?? null,
+      categoryColor: g.chatCategory?.color ?? null,
+      isPinned: g.chatPinnedAt !== null,
+    })),
+  }));
+
+  const savedSets = savedGroupSets.map((set) => ({
+    id: set.id,
+    name: set.name,
+    // The saved size, not the resolvable one — resolving every set on page load would be a query
+    // per set for a number that only matters once somebody loads one.
+    count: set.groupIds.length,
   }));
 
   return (
@@ -113,6 +137,7 @@ export default async function GroupParticipantAdderPage() {
         maxPerJob={settings.maxPerJob}
         maxPerMinute={settings.maxPerMinute}
         automationEnabled={automationSettings.automationEnabled}
+        savedSets={savedSets}
       />
     </div>
   );

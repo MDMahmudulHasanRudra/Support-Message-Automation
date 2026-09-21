@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import type { SupportPriority } from "@prisma/client";
 import { requireSession } from "@/server/auth";
+import { buildGroupWhere, isGroupFilterKey, type GroupFilterKey } from "@/lib/groupFilters";
 
 const PRIORITIES: SupportPriority[] = ["P1", "P2", "P3"];
 
@@ -220,6 +221,49 @@ export async function bulkSetAiAutomation(groupIds: string[], enabled: boolean):
     alreadyInTargetState,
     notFound,
     skippedExcluded: excluded.length,
+  };
+}
+
+/**
+ * A ceiling on one widened selection. This deployment has ~1,848 groups, so it is not reachable
+ * today — it exists so that a roster an order of magnitude larger cannot turn one checkbox into an
+ * unbounded id payload. Truncation is REPORTED rather than silent: a selection that quietly
+ * stopped short would have the operator acting on a set they believe is complete.
+ */
+const MAX_SELECT_ALL_GROUP_IDS = 5000;
+
+/**
+ * Every group id matching the list's current search and filter chip — the server half of
+ * "select all 1,798 matching", which a header checkbox cannot do on its own because the browser
+ * only ever holds the page it rendered.
+ *
+ * Returns IDS rather than taking the filter into each bulk action, deliberately. The two bulk
+ * actions already read current state and report a breakdown against a concrete id list, and
+ * keeping one code path means the widened selection cannot develop its own reporting or its own
+ * bugs. It also keeps the operation auditable: what gets written is exactly the set the operator
+ * was shown a count of.
+ *
+ * The `where` comes from `lib/groupFilters`, the same builder the page itself uses, so the ids
+ * returned here cannot describe a different set than the one on screen.
+ */
+export async function selectAllMatchingGroupIds(
+  search: string,
+  filter: string,
+): Promise<{ ids: string[]; truncated: boolean }> {
+  await requireSession();
+  const safeFilter: GroupFilterKey = isGroupFilterKey(filter) ? filter : "all";
+
+  const rows = await prisma.whatsAppGroup.findMany({
+    where: buildGroupWhere(typeof search === "string" ? search : "", safeFilter),
+    select: { id: true },
+    // Same order as the list, so "the first 5,000" means the first 5,000 the operator would see.
+    orderBy: { name: "asc" },
+    take: MAX_SELECT_ALL_GROUP_IDS + 1,
+  });
+
+  return {
+    ids: rows.slice(0, MAX_SELECT_ALL_GROUP_IDS).map((row) => row.id),
+    truncated: rows.length > MAX_SELECT_ALL_GROUP_IDS,
   };
 }
 

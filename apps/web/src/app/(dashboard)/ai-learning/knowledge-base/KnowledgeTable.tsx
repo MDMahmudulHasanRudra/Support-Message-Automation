@@ -127,7 +127,12 @@ export function KnowledgeTable({ items, filtered = false }: { items: KnowledgeRo
     <div>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3.5 py-2.5">
         <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[color:var(--color-foreground)]">
-          <Checkbox checked={allSelected} onChange={toggleAll} aria-label="Select every entry on this page" />
+          <Checkbox
+            checked={allSelected}
+            indeterminate={!allSelected && items.some((item) => selected.has(item.id))}
+            onChange={toggleAll}
+            aria-label="Select every entry on this page"
+          />
           Select all on this page
         </label>
         <span className="tabular text-[11px] text-[color:var(--color-muted-foreground)]">
@@ -186,6 +191,9 @@ export function KnowledgeTable({ items, filtered = false }: { items: KnowledgeRo
                 <li>{lastResult.updated} updated successfully</li>
                 {lastResult.alreadyInTargetState ? (
                   <li>{lastResult.alreadyInTargetState} already in the requested state</li>
+                ) : null}
+                {lastResult.skippedArchived ? (
+                  <li>{lastResult.skippedArchived} left alone — already discarded</li>
                 ) : null}
                 {lastResult.notFound ? (
                   <li>{lastResult.notFound} not found (may have been removed already)</li>

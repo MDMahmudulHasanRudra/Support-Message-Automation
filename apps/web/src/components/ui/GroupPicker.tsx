@@ -23,6 +23,16 @@ export interface PickableGroup {
  * Selections are submitted as repeated hidden inputs under one name, so the server reads them with
  * `formData.getAll(name)` — the shape the existing settings actions already expect.
  */
+/**
+ * How many matching rows are rendered at once.
+ *
+ * Searching stays across the WHOLE list — filtering 1,848 strings in the browser is free — but
+ * putting 1,848 labels in the DOM, on a settings page that shows several of these pickers at once,
+ * is not. So the cap bounds what is drawn, never what is findable, and it is stated on screen so a
+ * list that stops short never reads as a list that ended.
+ */
+const RENDER_LIMIT = 200;
+
 export function GroupPicker({
   name,
   groups,
@@ -44,6 +54,20 @@ export function GroupPicker({
     if (!query) return groups;
     return groups.filter((group) => group.name.toLowerCase().includes(query));
   }, [groups, search]);
+
+  /**
+   * Already-chosen groups are pinned to the top of what gets drawn.
+   *
+   * Without this, a selection made before the cap — or one made and then searched past — simply
+   * disappears from view while remaining submitted, so the form silently sends somewhere the
+   * operator can no longer see listed.
+   */
+  const visible = useMemo(() => {
+    if (filtered.length <= RENDER_LIMIT) return filtered;
+    const chosen = filtered.filter((group) => selected.has(group.whatsappGroupId));
+    const rest = filtered.filter((group) => !selected.has(group.whatsappGroupId));
+    return [...chosen, ...rest].slice(0, Math.max(RENDER_LIMIT, chosen.length));
+  }, [filtered, selected]);
 
   const selectedMonitored = useMemo(
     () => groups.filter((group) => selected.has(group.whatsappGroupId) && group.isMonitored),
@@ -92,7 +116,7 @@ export function GroupPicker({
             {groups.length === 0 ? "No groups synced yet." : "No groups match your search."}
           </p>
         ) : (
-          filtered.map((group) => (
+          visible.map((group) => (
             <label
               key={group.whatsappGroupId}
               className="flex cursor-pointer items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2 text-sm last:border-0 hover:bg-[var(--color-neutral-bg)]"
@@ -109,6 +133,13 @@ export function GroupPicker({
           ))
         )}
       </div>
+
+      {visible.length < filtered.length ? (
+        <p className="mt-1.5 text-xs text-[color:var(--color-muted-foreground)]">
+          Showing {visible.length.toLocaleString()} of {filtered.length.toLocaleString()} groups — search by
+          name to find the rest. Anything already chosen stays at the top.
+        </p>
+      ) : null}
 
       {selected.size === 0 && emptyMeaning ? (
         <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">{emptyMeaning}</p>

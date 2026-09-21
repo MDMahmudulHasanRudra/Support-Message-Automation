@@ -220,6 +220,16 @@ export function ConversationList({
     return remote.matches.filter((match) => !onScreen.has(match.id));
   }, [remote, needle, conversations]);
 
+  /**
+   * Everything a bulk action could reach right now: what the filters left, plus the search matches
+   * from beyond the loaded window. Those rows are already individually selectable, so leaving them
+   * out of "select all" made the two disagree about what "all" meant.
+   */
+  const selectableIds = useMemo(
+    () => [...filtered.map((c) => c.id), ...elsewhere.map((c) => c.id)],
+    [filtered, elsewhere],
+  );
+
   const { pinnedRows, otherRows, navigable } = useMemo(() => {
     const split = filter.kind === "all" && !query.trim() && pinnedCount > 0;
     const pinned = split ? filtered.filter((c) => c.isPinned) : [];
@@ -483,15 +493,19 @@ export function ConversationList({
             {selecting ? "Cancel" : "Select"}
           </ToolbarButton>
 
-          {selecting && filtered.length > 0 ? (
+          {/* Includes the search matches found BEYOND the loaded 300, which are individually
+              selectable in the list but were missing from this count — so "search, then bulk
+              categorise exactly those" silently dropped every match outside the loaded window,
+              and the number on the button was the tell nobody had. */}
+          {selecting && selectableIds.length > 0 ? (
             <ToolbarButton
               onClick={() =>
                 setSelected((current) =>
-                  current.size === filtered.length ? new Set() : new Set(filtered.map((c) => c.id)),
+                  current.size === selectableIds.length ? new Set() : new Set(selectableIds),
                 )
               }
             >
-              {selected.size === filtered.length ? "Clear all" : `Select all ${filtered.length}`}
+              {selected.size === selectableIds.length ? "Clear all" : `Select all ${selectableIds.length}`}
             </ToolbarButton>
           ) : null}
 

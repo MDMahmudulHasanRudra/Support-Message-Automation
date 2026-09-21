@@ -21,6 +21,11 @@ export default async function GroupMessageSenderPage() {
       where: { status: "CONNECTED" },
       include: {
         groups: {
+          // Inactive means a resync no longer found this account as a member, so a send here fails
+          // membership verification at the queue and lands as a skip nobody can account for. The
+          // adder already filtered these out; this side never did. Active ≠ monitored: this is
+          // only the "are we still in it" half, and monitored groups stay offered as before.
+          where: { isActive: true },
           orderBy: { name: "asc" },
           include: { chatCategory: { select: { id: true, name: true, color: true } } },
         },

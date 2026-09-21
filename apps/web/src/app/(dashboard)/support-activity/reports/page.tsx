@@ -156,6 +156,16 @@ export default async function SupportActivityReportsPage({ searchParams }: { sea
               ) : (
                 <EmptyState>No support activity for this group in the selected range.</EmptyState>
               )}
+              {/* The timeline is capped so a month-wide range cannot serialise the whole table into
+                  the page. Said out loud, because a list that simply stops reads as the end of the
+                  history — and the Activities tile beside it is reporting the real total. */}
+              {history?.timelineTruncated ? (
+                <p className="mt-3 border-t border-[var(--color-border)] pt-3 text-[13px] text-[color:var(--color-muted-foreground)]">
+                  Showing the most recent {history.activities.length.toLocaleString()} of{" "}
+                  {history.rawActivityCount.toLocaleString()} activities. Narrow the date range to see
+                  further back, or export the full range.
+                </p>
+              ) : null}
             </Card>
           </>
         )}

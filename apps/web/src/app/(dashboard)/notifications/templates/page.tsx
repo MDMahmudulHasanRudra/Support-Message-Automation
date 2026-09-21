@@ -12,10 +12,14 @@ import { TemplateCard, type TestTarget } from "./TemplateCard";
  * this page always lists exactly what the worker can actually raise — it cannot drift into showing
  * a template nothing sends, or hiding one that does.
  */
+/** How many groups the per-card test-send chooser offers. Every card renders its own `<select>`,
+ *  so this bounds roughly ten of them rather than one. */
+const TEST_TARGET_LIMIT = 300;
+
 export default async function NotificationTemplatesPage() {
   await requireSession();
 
-  const [overrides, liveness, aiSettings, groups] = await Promise.all([
+  const [overrides, liveness, aiSettings, groups, testTargetCount] = await Promise.all([
     prisma.notificationTemplate.findMany({
       include: { updatedBy: { select: { name: true, username: true } } },
     }),
@@ -30,11 +34,16 @@ export default async function NotificationTemplatesPage() {
       where: { isActive: true, account: { status: "CONNECTED" } },
       select: { id: true, name: true, isMonitored: true },
       orderBy: [{ isMonitored: "asc" }, { name: "asc" }],
-      take: 300,
+      take: TEST_TARGET_LIMIT,
     }),
+    prisma.whatsAppGroup.count({ where: { isActive: true, account: { status: "CONNECTED" } } }),
   ]);
   const byKey = new Map(overrides.map((row) => [row.key, row]));
   const testGroups: TestTarget[] = groups;
+  // Every card renders this list in its own <select>, so the cap bounds ten selects rather than
+  // one. Reported rather than silent: a chooser that stops at 300 of 1,848 otherwise reads as the
+  // full set of groups a test could reach.
+  const testTargetsTruncated = testTargetCount > groups.length;
 
   const customerFacing = NOTIFICATION_TEMPLATES.filter((t) => t.audience === "CUSTOMER");
   const internal = NOTIFICATION_TEMPLATES.filter((t) => t.audience === "TEAM");
@@ -47,6 +56,7 @@ export default async function NotificationTemplatesPage() {
         definition={definition}
         liveness={liveness[definition.key] ?? { live: true }}
         testGroups={testGroups}
+        testGroupsTruncated={testTargetsTruncated}
         replyLanguage={aiSettings?.defaultReplyLanguage ?? null}
         customBody={override?.body ?? null}
         updatedAt={

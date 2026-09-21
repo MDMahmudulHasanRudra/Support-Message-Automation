@@ -2,10 +2,22 @@
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import type { EscalationStatus } from "@prisma/client";
-import { Alert, Badge, type BadgeColor, Button, EmptyState, HelpButton, HelpSection, PageHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import type { EscalationStatus, Prisma, SupportPriority } from "@prisma/client";
+import {
+  ActiveFilters,
+  Alert,
+  EmptyState,
+  FilterBar,
+  HelpButton,
+  HelpSection,
+  NoFilterResults,
+  PageHeader,
+  StatTile,
+  type ActiveFilter,
+} from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
+import { ActiveCasesTable, type ActiveCaseRow } from "./ActiveCasesTable";
 
 const ACTIVE_STATUSES: EscalationStatus[] = [
   "NEW",
@@ -26,27 +38,106 @@ const ACTIVE_STATUSES: EscalationStatus[] = [
  */
 const ACTIVE_CASE_LIMIT = 200;
 
-export default async function SupportEscalationDashboardPage() {
+const PRIORITIES: SupportPriority[] = ["P1", "P2", "P3"];
+
+/** How long a case must have gone unanswered to count as "stale" for the filter — long enough that
+ *  every SLA tier has already fired, so what is left is a queue nobody has cleared. */
+const STALE_CASE_HOURS = 24;
+
+interface EscalationSearchParams {
+  priority?: string;
+  status?: string;
+  stale?: string;
+}
+
+function isPriority(value: string | undefined): value is SupportPriority {
+  return (PRIORITIES as string[]).includes(value ?? "");
+}
+
+function isActiveStatus(value: string | undefined): value is EscalationStatus {
+  return (ACTIVE_STATUSES as string[]).includes(value ?? "");
+}
+
+export default async function SupportEscalationDashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<EscalationSearchParams>;
+}) {
   await requireSession();
+  const params = await searchParams;
 
   // Dhaka midnight, not the container's — under UTC, setHours() started "today" at 06:00 Dhaka
   // and quietly omitted everything resolved overnight.
   const todayStart = getDhakaDayRange(new Date()).start;
 
-  const [activeCases, activeCaseCount, waitingCount, escalatedCount, pausedCount, resolvedTodayCount] =
+  const priority = isPriority(params.priority) ? params.priority : null;
+  const status = isActiveStatus(params.status) ? params.status : null;
+  const staleOnly = params.stale === "1";
+  // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
+  const staleBefore = new Date(Date.now() - STALE_CASE_HOURS * 60 * 60 * 1000);
+
+  /**
+   * Filters narrow WHICH active cases are listed; they never widen the set beyond active ones.
+   * A closed case is history and lives on its own page — surfacing one here would put something
+   * in the "deal with these now" queue that nobody needs to deal with.
+   */
+  const where: Prisma.SupportEscalationCaseWhereInput = {
+    status: status ? status : { in: ACTIVE_STATUSES },
+    ...(priority ? { priority } : {}),
+    ...(staleOnly ? { lastCustomerMessageAt: { lt: staleBefore } } : {}),
+  };
+
+  const [activeCases, filteredCount, activeCaseCount, waitingCount, escalatedCount, pausedCount, resolvedTodayCount] =
     await Promise.all([
       prisma.supportEscalationCase.findMany({
-        where: { status: { in: ACTIVE_STATUSES } },
+        where,
         include: { group: { select: { name: true } }, assignedTeamMember: { select: { name: true } } },
         orderBy: { lastCustomerMessageAt: "asc" },
         take: ACTIVE_CASE_LIMIT,
       }),
+      prisma.supportEscalationCase.count({ where }),
       prisma.supportEscalationCase.count({ where: { status: { in: ACTIVE_STATUSES } } }),
       prisma.supportEscalationCase.count({ where: { status: { in: ["NEW", "MONITORING", "WAITING_FOR_HUMAN"] } } }),
       prisma.supportEscalationCase.count({ where: { status: { in: ["SECOND_ALERT", "MEMBER_ESCALATED", "ADMIN_ESCALATED", "FOLLOW_UP"] } } }),
       prisma.supportEscalationCase.count({ where: { status: "PAUSED" } }),
       prisma.supportEscalationCase.count({ where: { resolvedAt: { gte: todayStart } } }),
     ]);
+
+  const buildHref = (overrides: Partial<EscalationSearchParams> = {}): string => {
+    const merged = {
+      priority: priority ?? "",
+      status: status ?? "",
+      stale: staleOnly ? "1" : "",
+      ...overrides,
+    };
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(merged)) if (value) qs.set(key, String(value));
+    const query = qs.toString();
+    return query ? `/support-escalation?${query}` : "/support-escalation";
+  };
+
+  const activeFilters: ActiveFilter[] = [];
+  if (priority) {
+    activeFilters.push({ label: "Priority", value: priority, removeHref: buildHref({ priority: "" }) });
+  }
+  if (status) activeFilters.push({ label: "Status", value: status, removeHref: buildHref({ status: "" }) });
+  if (staleOnly) {
+    activeFilters.push({
+      label: "Waiting",
+      value: `over ${STALE_CASE_HOURS}h`,
+      removeHref: buildHref({ stale: "" }),
+    });
+  }
+
+  const rows: ActiveCaseRow[] = activeCases.map((c) => ({
+    id: c.id,
+    groupName: c.group.name,
+    priority: c.priority,
+    status: c.status,
+    waitingSinceLabel: formatDateTime(c.lastCustomerMessageAt),
+    escalationLevel: c.escalationLevel,
+    assignedName: c.assignedTeamMember?.name ?? null,
+  }));
 
   return (
     <div>
@@ -102,65 +193,81 @@ export default async function SupportEscalationDashboardPage() {
         <StatTile label="Resolved today" value={resolvedTodayCount} tone="success" />
       </div>
 
-      {activeCaseCount > activeCases.length ? (
+      <FilterBar>
+        <div className="flex flex-wrap gap-1.5">
+          <CaseChip href={buildHref({ priority: "" })} active={!priority} label="All priorities" />
+          {PRIORITIES.map((value) => (
+            <CaseChip
+              key={value}
+              href={buildHref({ priority: value })}
+              active={priority === value}
+              label={value}
+            />
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <CaseChip href={buildHref({ status: "" })} active={!status} label="Any status" />
+          {ACTIVE_STATUSES.map((value) => (
+            <CaseChip
+              key={value}
+              href={buildHref({ status: value })}
+              active={status === value}
+              label={value.replace(/_/g, " ")}
+            />
+          ))}
+        </div>
+        {/* The queue this page is opened to clear: everything whose whole alert ladder has already
+            fired and which is still sitting there. */}
+        <CaseChip
+          href={buildHref({ stale: staleOnly ? "" : "1" })}
+          active={staleOnly}
+          label={`Waiting over ${STALE_CASE_HOURS}h`}
+        />
+      </FilterBar>
+
+      <ActiveFilters
+        filters={activeFilters}
+        clearAllHref="/support-escalation"
+        resultCount={filteredCount}
+        totalCount={activeCaseCount}
+        noun={{ singular: "case", plural: "cases" }}
+      />
+
+      {filteredCount > activeCases.length ? (
         <div className="mb-6">
-          <Alert tone="warning" title={`Showing the longest-waiting ${activeCases.length} of ${activeCaseCount} active cases`}>
-            Resolve or stop escalation on some of these to see the rest. Every case is still counted
-            in the totals above and reachable from its own case page.
+          <Alert tone="warning" title={`Showing the longest-waiting ${activeCases.length} of ${filteredCount} cases`}>
+            Resolve or stop escalation on some of these to see the rest — you can now select several
+            at once. Every case is still counted in the totals above and reachable from its own page.
           </Alert>
         </div>
       ) : null}
 
-      {activeCases.length === 0 ? (
-        <EmptyState>No active priority support cases right now.</EmptyState>
+      {rows.length === 0 ? (
+        activeFilters.length > 0 ? (
+          <NoFilterResults clearAllHref="/support-escalation" filters={activeFilters}>
+            No active cases match these filters.
+          </NoFilterResults>
+        ) : (
+          <EmptyState>No active priority support cases right now.</EmptyState>
+        )
       ) : (
-        <Table>
-          <thead>
-            <tr>
-              <Th>Group</Th>
-              <Th>Priority</Th>
-              <Th>Status</Th>
-              <Th>Waiting Since</Th>
-              <Th>Escalation Level</Th>
-              <Th>Assigned</Th>
-              <Th>{null}</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {activeCases.map((c) => (
-              <tr key={c.id}>
-                <Td>{c.group.name}</Td>
-                <Td>
-                  <Badge color={c.priority === "P1" ? "red" : c.priority === "P2" ? "yellow" : "blue"} dot>
-                    {c.priority}
-                  </Badge>
-                </Td>
-                <Td>
-                  <Badge color={statusColor(c.status)} dot>
-                    {c.status}
-                  </Badge>
-                </Td>
-                <Td>{formatDateTime(c.lastCustomerMessageAt)}</Td>
-                <Td className="tabular-nums">{c.escalationLevel}</Td>
-                <Td>{c.assignedTeamMember?.name ?? "—"}</Td>
-                <Td>
-                  <Link href={`/support-escalation/cases/${c.id}`}>
-                    <Button variant="secondary" size="sm">
-                      View
-                    </Button>
-                  </Link>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
+        <ActiveCasesTable cases={rows} />
       )}
     </div>
   );
 }
 
-function statusColor(status: string): BadgeColor {
-  if (status === "NEW" || status === "MONITORING") return "gray";
-  if (status === "WAITING_FOR_HUMAN") return "yellow";
-  return "red";
+function CaseChip({ href, active, label }: { href: string; active: boolean; label: string }) {
+  return (
+    <Link
+      href={href}
+      className={`rounded-full px-2.5 py-1 text-[11px] transition-colors ${
+        active
+          ? "bg-[var(--color-primary)] text-[var(--color-on-primary)]"
+          : "bg-[var(--color-neutral-bg)] text-[color:var(--color-neutral-fg)] hover:bg-[var(--color-border)]"
+      }`}
+    >
+      {label}
+    </Link>
+  );
 }

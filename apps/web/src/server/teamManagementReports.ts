@@ -463,11 +463,19 @@ export async function getTeamManagementSettings(): Promise<{
   return row;
 }
 
-/** Duty history over a range: plan, evidence and the reading, per member per day. */
+/**
+ * Duty history over a range: plan, evidence and the reading, per member per day.
+ *
+ * Paginated rather than a hard 500 with no page two. A twenty-person roster over a month is 600
+ * rows, so the ordinary monthly review truncated — and the page's own notice told the reader to
+ * narrow the dates because there was genuinely no other way through.
+ */
 export async function getDutyHistory(
   range: { start: Date; end: Date },
   teamMemberId?: string,
-): Promise<DutyHistoryRow[]> {
+  page = 1,
+  pageSize = 500,
+): Promise<{ rows: DutyHistoryRow[]; total: number }> {
   const startDate = toDhakaDateOnly(range.start);
   const endDate = toDhakaDateOnly(new Date(range.end.getTime() - 1));
   const where: Prisma.DutyAssignmentWhereInput = {
@@ -475,13 +483,15 @@ export async function getDutyHistory(
     ...(teamMemberId ? { teamMemberId } : {}),
   };
 
-  const [assignments, attendance, leave, settings] = await Promise.all([
+  const [assignments, total, attendance, leave, settings] = await Promise.all([
     prisma.dutyAssignment.findMany({
       where,
       include: { teamMember: { select: { name: true } } },
       orderBy: [{ dutyDate: "desc" }, { teamMember: { name: "asc" } }],
-      take: 500,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     }),
+    prisma.dutyAssignment.count({ where }),
     prisma.teamAttendanceDay.findMany({
       where: { activityDate: { gte: startDate, lte: endDate }, ...(teamMemberId ? { teamMemberId } : {}) },
       include: { overriddenBy: { select: { name: true, username: true } } },
@@ -504,7 +514,7 @@ export async function getDutyHistory(
   const onLeave = (memberId: string, date: Date) =>
     leave.some((row) => row.teamMemberId === memberId && row.startDate <= date && row.endDate >= date);
 
-  return assignments.map((assignment) => {
+  const rows = assignments.map((assignment) => {
     const evidence = evidenceByKey.get(key(assignment.teamMemberId, assignment.dutyDate)) ?? null;
     return {
       id: assignment.id,
@@ -540,6 +550,8 @@ export async function getDutyHistory(
       }),
     };
   });
+
+  return { rows, total };
 }
 
 export interface DutyHistorySummary {

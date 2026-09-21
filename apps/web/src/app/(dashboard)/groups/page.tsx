@@ -2,15 +2,32 @@
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
-import { Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Pagination } from "@/components/ui";
+import {
+  ActiveFilters,
+  Button,
+  EmptyState,
+  FilterBar,
+  HelpButton,
+  HelpSection,
+  Input,
+  NoFilterResults,
+  PageHeader,
+  Pagination,
+  type ActiveFilter,
+} from "@/components/ui";
+import {
+  buildGroupSearchWhere,
+  buildGroupWhere,
+  isGroupFilterKey,
+  type GroupFilterKey,
+} from "@/lib/groupFilters";
 import { GroupsTable, type GroupRow } from "./GroupsTable";
 import { SyncGroupsButton } from "./SyncGroupsButton";
 
 const PAGE_SIZE_OPTIONS = [10, 50, 100, 500, 1000] as const;
 const DEFAULT_PAGE_SIZE = 50;
-type FilterKey = "all" | "monitored" | "unmonitored" | "active" | "inactive";
+type FilterKey = GroupFilterKey;
 
 interface GroupsSearchParams {
   search?: string;
@@ -30,14 +47,10 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
     ? requestedPageSize
     : DEFAULT_PAGE_SIZE;
 
-  const searchOnlyWhere: Prisma.WhatsAppGroupWhereInput = search
-    ? { name: { contains: search, mode: "insensitive" } }
-    : {};
-  const where: Prisma.WhatsAppGroupWhereInput = { ...searchOnlyWhere };
-  if (filter === "monitored") where.isMonitored = true;
-  if (filter === "unmonitored") where.isMonitored = false;
-  if (filter === "active") where.isActive = true;
-  if (filter === "inactive") where.isActive = false;
+  // Both come from lib/groupFilters, which `selectAllMatchingGroupIds` also reads — so "select all
+  // 1,798 matching" can never resolve to a different 1,798 than this page counted and rendered.
+  const searchOnlyWhere = buildGroupSearchWhere(search);
+  const where = buildGroupWhere(search, filter);
 
   const [
     groups,
@@ -77,6 +90,23 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
   ]);
 
   const aiScopeIsGlobal = aiSettings.aiAutomationScope === "ALL_MONITORED_GROUPS";
+
+  // What is actually narrowing the list right now, each removable on its own. The chips above say
+  // what CAN be filtered; this says what IS, which is the question "why am I seeing 12 of 1,848?"
+  // needs answered.
+  const activeFilters: ActiveFilter[] = [];
+  if (search) {
+    activeFilters.push({ label: "Search", value: search, removeHref: buildHref("", filter, 1, PAGE_SIZE) });
+  }
+  if (filter !== "all") {
+    activeFilters.push({
+      label: "Showing",
+      value: FILTER_LABELS[filter],
+      removeHref: buildHref(search, "all", 1, PAGE_SIZE),
+    });
+  }
+  // Page size survives a clear — it is how the operator reads the list, not part of what they asked for.
+  const clearAllHref = buildHref("", "all", 1, PAGE_SIZE);
 
   const rows: GroupRow[] = groups.map((g) => ({
     id: g.id,
@@ -193,21 +223,42 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
         <SyncGroupsButton />
       </FilterBar>
 
+      <ActiveFilters
+        filters={activeFilters}
+        clearAllHref={clearAllHref}
+        resultCount={totalCount}
+        totalCount={allCount}
+        noun={{ singular: "group", plural: "groups" }}
+      />
+
       {groups.length === 0 ? (
-        <EmptyState>No groups match the current search/filter.</EmptyState>
+        activeFilters.length > 0 ? (
+          <NoFilterResults clearAllHref={clearAllHref} filters={activeFilters}>
+            No groups match these filters.
+          </NoFilterResults>
+        ) : (
+          <EmptyState>No groups yet — run Sync Groups to discover them.</EmptyState>
+        )
       ) : (
         <>
           <GroupsTable
             groups={rows}
-            pageSize={PAGE_SIZE}
-            pageSizeHrefs={PAGE_SIZE_OPTIONS.map((size) => ({ size, href: buildHref(search, filter, 1, size) }))}
             teamMembers={teamMembers}
+            totalMatching={totalCount}
+            search={search}
+            filter={filter}
           />
+          {/* The page-size control lives here now rather than inside the table: it belonged to the
+              pagination bar all along, and having it in both places meant two differently-shaped
+              controls for one setting. */}
           <Pagination
             page={page}
             pageSize={PAGE_SIZE}
             total={totalCount}
             buildHref={(p) => buildHref(search, filter, p, PAGE_SIZE)}
+            pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+            buildPageSizeHref={(size) => buildHref(search, filter, 1, size)}
+            sticky
           />
         </>
       )}
@@ -215,15 +266,16 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
   );
 }
 
-function isFilterKey(value: string | undefined): value is FilterKey {
-  return (
-    value === "all" ||
-    value === "monitored" ||
-    value === "unmonitored" ||
-    value === "active" ||
-    value === "inactive"
-  );
-}
+const isFilterKey = isGroupFilterKey;
+
+/** The chip wording, reused by the active-filter pill so the two cannot describe it differently. */
+const FILTER_LABELS: Record<FilterKey, string> = {
+  all: "All",
+  monitored: "Monitored",
+  unmonitored: "Not monitored",
+  active: "Active",
+  inactive: "Inactive",
+};
 
 function buildHref(search: string, filter: FilterKey, page = 1, pageSize = DEFAULT_PAGE_SIZE): string {
   const qs = new URLSearchParams();

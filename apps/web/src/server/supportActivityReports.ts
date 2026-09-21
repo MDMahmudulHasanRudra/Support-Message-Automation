@@ -250,6 +250,21 @@ export async function getActivitiesForExport(range: DateRange, groupId?: string)
  *  doc comment in schema.prisma for why). */
 export const STALE_SESSION_THRESHOLD_MS = 4 * 60 * 60 * 1000;
 
+/**
+ * Ceilings on what the Reports page renders in one go.
+ *
+ * All three reads below accept an arbitrary date range from the UI and had no bound at all, which
+ * on this deployment — 1,848 groups running an `ANY_MESSAGE` rule — makes "last month" a full
+ * table scan serialised into HTML. These are display ceilings only: every count the page reports
+ * is read separately and stays true.
+ *
+ * Open sessions get the smaller number deliberately. There should never be five hundred
+ * conversations open at once, so hitting that cap is itself the finding.
+ */
+const OPEN_SESSION_LIMIT = 500;
+const FINISHED_SESSION_LIMIT = 500;
+const ACTIVITY_TIMELINE_LIMIT = 500;
+
 /** 30-minute "available now" window, confirmed requirement — how recent a team member's last
  *  group message must be to still count as actively available. */
 /**
@@ -492,17 +507,43 @@ export interface GroupSessionRow {
  *  what lets the Reports page answer "what's happening right now" at a glance instead of requiring
  *  a group to be picked first. */
 export async function getGroupSessionHistory(range: DateRange, groupId?: string, now: Date = new Date()): Promise<GroupSessionRow[]> {
-  const sessions = await prisma.supportSession.findMany({
-    where: { startedAt: { gte: range.start, lt: range.end }, ...(groupId ? { groupId } : {}) },
-    orderBy: { startedAt: "desc" },
-    include: {
-      group: { select: { name: true } },
-      startedByTeamMember: { select: { name: true } },
-      completedByTeamMember: { select: { name: true } },
-      completedByUser: { select: { name: true } },
-    },
-  });
-  const rows = sessions.map((s) => ({
+  const where = { startedAt: { gte: range.start, lt: range.end }, ...(groupId ? { groupId } : {}) };
+  const include = {
+    group: { select: { name: true } },
+    startedByTeamMember: { select: { name: true } },
+    completedByTeamMember: { select: { name: true } },
+    completedByUser: { select: { name: true } },
+  };
+
+  /**
+   * Split and bounded, rather than one unbounded read.
+   *
+   * This accepted an arbitrary date range from the Reports page and fetched every matching row —
+   * a month on the `ANY_MESSAGE` rule this deployment runs is every session across 1,848 groups,
+   * serialised into HTML.
+   *
+   * It is two queries rather than one capped query because the ordering carries meaning: the whole
+   * point is that stale and open sessions surface first. A single `startedAt desc` with a `take`
+   * would keep the newest rows and drop exactly the old, still-open ones the page exists to
+   * surface. Open sessions are read oldest-first (the most stale is the most actionable) and are
+   * naturally few; the finished ones are the set that grows without bound, so they take the cap.
+   */
+  const [openSessions, finishedSessions] = await Promise.all([
+    prisma.supportSession.findMany({
+      where: { ...where, status: "OPEN" },
+      orderBy: { startedAt: "asc" },
+      take: OPEN_SESSION_LIMIT,
+      include,
+    }),
+    prisma.supportSession.findMany({
+      where: { ...where, status: { not: "OPEN" } },
+      orderBy: { startedAt: "desc" },
+      take: FINISHED_SESSION_LIMIT,
+      include,
+    }),
+  ]);
+
+  const rows = [...openSessions, ...finishedSessions].map((s) => ({
     id: s.id,
     groupId: s.groupId,
     groupName: s.group.name,
@@ -515,7 +556,7 @@ export async function getGroupSessionHistory(range: DateRange, groupId?: string,
     isStale: s.status === "OPEN" && now.getTime() - s.startedAt.getTime() > STALE_SESSION_THRESHOLD_MS,
   }));
   // Most-actionable-first: stale sessions, then other OPEN sessions, then completed — all secondary
-  // to that, most recently started first (the array is already startedAt-desc from the query).
+  // to that, in the order each query returned them.
   const rank = (r: (typeof rows)[number]) => (r.isStale ? 0 : r.status === "OPEN" ? 1 : 2);
   return rows.sort((a, b) => rank(a) - rank(b));
 }
@@ -575,13 +616,25 @@ export async function getStaleSessionCount(now: Date = new Date()): Promise<numb
   });
 }
 
-/** Group Support History: one group's activity timeline plus the raw-vs-counted distinction. */
+/**
+ * Group Support History: one group's activity timeline plus the raw-vs-counted distinction.
+ *
+ * The timeline is capped; the COUNT is not. Those have to be separate reads, because
+ * `rawActivityCount` was the length of the fetched array — so capping the fetch alone would have
+ * quietly turned a real total into "however many we chose to render", which is the kind of number
+ * somebody makes a staffing decision on.
+ */
 export async function getGroupSupportHistory(groupId: string, range: DateRange) {
-  const activities = await prisma.supportActivity.findMany({
-    where: { groupId, occurredAt: { gte: range.start, lt: range.end } },
-    orderBy: { occurredAt: "desc" },
-    include: { teamMember: { select: { name: true } }, keyword: { select: { value: true } }, message: { select: { body: true } } },
-  });
+  const where = { groupId, occurredAt: { gte: range.start, lt: range.end } };
+  const [activities, rawActivityCount] = await Promise.all([
+    prisma.supportActivity.findMany({
+      where,
+      orderBy: { occurredAt: "desc" },
+      take: ACTIVITY_TIMELINE_LIMIT,
+      include: { teamMember: { select: { name: true } }, keyword: { select: { value: true } }, message: { select: { body: true } } },
+    }),
+    prisma.supportActivity.count({ where }),
+  ]);
   return {
     activities: activities.map((a) => ({
       id: a.id,
@@ -591,9 +644,12 @@ export async function getGroupSupportHistory(groupId: string, range: DateRange) 
       keywordValue: a.keyword?.value ?? null,
       messageBody: a.message.body,
     })),
-    rawActivityCount: activities.length,
+    rawActivityCount,
+    /** True when the timeline below is a window onto a longer history — the page says so rather
+     *  than letting the list simply stop. */
+    timelineTruncated: rawActivityCount > activities.length,
     // Within a single group, UNIQUE_GROUP collapses to "1 if any activity occurred, else 0".
-    countedSupport: activities.length > 0 ? 1 : 0,
+    countedSupport: rawActivityCount > 0 ? 1 : 0,
   };
 }
 

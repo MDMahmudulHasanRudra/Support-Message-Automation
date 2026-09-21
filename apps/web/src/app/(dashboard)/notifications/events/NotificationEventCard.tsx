@@ -2,14 +2,23 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Badge, Button, Card, Checkbox, SectionHeader, SwitchField } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  GroupPicker,
+  SectionHeader,
+  SwitchField,
+  type PickableGroup,
+} from "@/components/ui";
 import { updateNotificationEvent } from "@/server/actions/notificationEvents";
 
 export interface NotificationEventCardProps {
   event: string;
   copy: { title: string; description: string; consequence: string };
   sentCount: number;
-  groups: Array<{ id: string; name: string }>;
+  groups: PickableGroup[];
   globalGroupCount: number;
   setting: {
     enabled: boolean;
@@ -35,9 +44,10 @@ export function NotificationEventCard({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [saving, startSaving] = useTransition();
-  const [selected, setSelected] = useState<Set<string>>(new Set(setting.whatsappGroupIds));
 
-  const usesGlobal = selected.size === 0;
+  // What was SAVED, not what is currently ticked — the picker below owns and displays live
+  // selection state, and two live counters describing one thing is how they end up disagreeing.
+  const usesGlobal = setting.whatsappGroupIds.length === 0;
 
   return (
     <Card>
@@ -112,39 +122,21 @@ export function NotificationEventCard({
               title="WhatsApp groups for this alert"
               description={
                 usesGlobal
-                  ? `None chosen, so this uses the ${globalGroupCount} global notification group${globalGroupCount === 1 ? "" : "s"}.`
-                  : `${selected.size} chosen. This alert goes only to these.`
+                  ? `Currently none chosen, so this uses the ${globalGroupCount} global notification group${globalGroupCount === 1 ? "" : "s"}.`
+                  : `Currently set to ${setting.whatsappGroupIds.length} group${setting.whatsappGroupIds.length === 1 ? "" : "s"}. This alert goes only to those.`
               }
             />
-            {groups.length === 0 ? (
-              <p className="text-[13px] text-[color:var(--color-muted-foreground)]">
-                No active groups yet.
-              </p>
-            ) : (
-              <div className="max-h-56 overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)]">
-                {groups.map((group) => (
-                  <label
-                    key={group.id}
-                    className="flex cursor-pointer items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-[13px] last:border-b-0 hover:bg-[var(--color-neutral-bg)]"
-                  >
-                    <Checkbox
-                      name="whatsappGroupIds"
-                      value={group.id}
-                      defaultChecked={selected.has(group.id)}
-                      onChange={(check) =>
-                        setSelected((current) => {
-                          const next = new Set(current);
-                          if (check.target.checked) next.add(group.id);
-                          else next.delete(group.id);
-                          return next;
-                        })
-                      }
-                    />
-                    <span className="min-w-0 truncate">{group.name}</span>
-                  </label>
-                ))}
-              </div>
-            )}
+            {/* The shared searchable picker, rather than a raw checkbox list of the first 300
+                groups alphabetically — which on 1,848 groups made any destination past the letter M
+                literally unselectable. It also carries the feedback-loop warning, which matters more
+                here than anywhere: alerting into a monitored group re-ingests the alert as a
+                customer message. */}
+            <GroupPicker
+              name="whatsappGroupIds"
+              groups={groups}
+              defaultSelected={setting.whatsappGroupIds}
+              emptyMeaning="Nothing chosen, so this alert uses the global notification groups."
+            />
           </div>
 
           <div className="flex justify-end gap-2">

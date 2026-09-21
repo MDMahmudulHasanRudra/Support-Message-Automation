@@ -59,11 +59,14 @@ export default async function NotificationEventsPage() {
   const [settings, automationSettings, groups, counts] = await Promise.all([
     prisma.notificationEventSetting.findMany(),
     prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
+    // No cap: the picker searches the whole roster and bounds what it DRAWS, so the previous
+    // "first 300 alphabetically" made every destination past the letter M unselectable rather
+    // than merely un-rendered. `isMonitored` rides along so the picker can warn that alerting
+    // into a monitored group feeds the alert back in as a customer message.
     prisma.whatsAppGroup.findMany({
       where: { isActive: true },
-      select: { whatsappGroupId: true, name: true },
+      select: { whatsappGroupId: true, name: true, isMonitored: true },
       orderBy: { name: "asc" },
-      take: 300,
     }),
     prisma.notification.groupBy({ by: ["event"], _count: { _all: true } }),
   ]);
@@ -146,7 +149,7 @@ export default async function NotificationEventsPage() {
             event={event}
             copy={EVENT_COPY[event]}
             sentCount={countByEvent.get(event) ?? 0}
-            groups={groups.map((group) => ({ id: group.whatsappGroupId, name: group.name }))}
+            groups={groups}
             globalGroupCount={automationSettings.whatsappNotificationGroupIds.length}
             setting={{
               enabled: settingByEvent.get(event)?.enabled ?? true,

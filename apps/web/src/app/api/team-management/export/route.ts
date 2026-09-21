@@ -71,7 +71,10 @@ export async function GET(request: NextRequest) {
       ? { start: parsedFrom, end: parsedTo }
       : getDhakaDayRange(new Date());
 
-  const history = await getDutyHistory(range, teamMemberId || undefined);
+  // One large page rather than the screen's 500: a download exists precisely to carry the whole
+  // range, so paging it would produce a file that silently ends where the table happened to.
+  const EXPORT_PAGE_SIZE = 50_000;
+  const { rows: history } = await getDutyHistory(range, teamMemberId || undefined, 1, EXPORT_PAGE_SIZE);
 
   const rows: Array<Record<string, unknown>> = byMember
     ? groupDutyHistoryByMember(history).map((row) =>

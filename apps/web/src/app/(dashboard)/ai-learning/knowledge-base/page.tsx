@@ -6,24 +6,36 @@ import type { AiKnowledgeCategory, Prisma } from "@prisma/client";
 import { KNOWLEDGE_IMPORT_CATEGORIES } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
 import {
+  ActiveFilters,
   Button,
   ButtonLink,
   FilterBar,
   HelpButton,
   HelpSection,
   Input,
+  NoFilterResults,
   PageHeader,
   Pagination,
   Select,
+  type ActiveFilter,
 } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { KnowledgeTable, type KnowledgeRow } from "./KnowledgeTable";
 
 type FilterKey = "all" | "active" | "inactive" | "archived";
 
-/** Matches the review queue's own page size — the importers can now add hundreds of entries at
- * once, and this page previously rendered every row in one document. */
-const PAGE_SIZE = 25;
+/**
+ * Operator-chosen, not free-typed: an importer can now add hundreds of entries at once, and
+ * "how many rows" is worth switching without round-tripping through the URL bar. Whitelisted
+ * rather than parsed from the query string, same reasoning as the Overview `within` param — a
+ * pasted arbitrary number should fall back to the default rather than page through the table.
+ */
+const PAGE_SIZE_OPTIONS = [50, 500, 1000] as const;
+const DEFAULT_PAGE_SIZE: (typeof PAGE_SIZE_OPTIONS)[number] = 50;
+
+function isPageSizeOption(value: string | undefined): value is `${(typeof PAGE_SIZE_OPTIONS)[number]}` {
+  return PAGE_SIZE_OPTIONS.some((option) => String(option) === value);
+}
 
 interface SearchParams {
   search?: string;
@@ -31,6 +43,7 @@ interface SearchParams {
   category?: string;
   module?: string;
   page?: string;
+  pageSize?: string;
 }
 
 export default async function KnowledgeBasePage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -41,6 +54,7 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
   const category = isCategory(params.category) ? params.category : null;
   const moduleName = (params.module ?? "").trim();
   const page = Math.max(1, Number(params.page ?? "1") || 1);
+  const pageSize = isPageSizeOption(params.pageSize) ? Number(params.pageSize) : DEFAULT_PAGE_SIZE;
 
   // Everything except the status chips. The chips' own counts are computed against this, so each
   // one says how many entries have that status *within the current search and filters* rather
@@ -71,8 +85,8 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
     prisma.aiKnowledgeItem.findMany({
       where,
       orderBy: { updatedAt: "desc" },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
       include: { sourceGroup: { select: { name: true } } },
     }),
     prisma.aiKnowledgeItem.count({ where }),
@@ -106,7 +120,37 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
     updatedAtLabel: formatDateTime(item.updatedAt),
   }));
 
-  const query = { search, category, module: moduleName };
+  const query = { search, category, module: moduleName, pageSize };
+
+  // Four filters compose here — search, category, module and the status chip — and until now none
+  // of them was visible as a thing you had applied, so a search typed five minutes ago silently
+  // explained a result set nobody could account for.
+  const activeFilters: ActiveFilter[] = [];
+  if (search) {
+    activeFilters.push({ label: "Search", value: search, removeHref: buildHref({ ...query, search: "" }, filter) });
+  }
+  if (category) {
+    activeFilters.push({
+      label: "Category",
+      value: category.replace(/_/g, " "),
+      removeHref: buildHref({ ...query, category: null }, filter),
+    });
+  }
+  if (moduleName) {
+    activeFilters.push({
+      label: "Module",
+      value: moduleName,
+      removeHref: buildHref({ ...query, module: "" }, filter),
+    });
+  }
+  if (filter !== "all") {
+    activeFilters.push({
+      label: "Status",
+      value: filter.charAt(0).toUpperCase() + filter.slice(1),
+      removeHref: buildHref(query, "all"),
+    });
+  }
+  const clearAllHref = buildHref({ search: "", category: null, module: "", pageSize }, "all");
 
   return (
     <div>
@@ -196,15 +240,29 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
         </div>
       </FilterBar>
 
-      <KnowledgeTable
-        items={rows}
-        filtered={Boolean(search || category || moduleName) || filter !== "all"}
+      <ActiveFilters
+        filters={activeFilters}
+        clearAllHref={clearAllHref}
+        resultCount={total}
+        totalCount={allCount}
+        noun={{ singular: "entry", plural: "entries" }}
       />
+
+      {rows.length === 0 && activeFilters.length > 0 ? (
+        <NoFilterResults clearAllHref={clearAllHref} filters={activeFilters}>
+          No knowledge matches these filters.
+        </NoFilterResults>
+      ) : (
+        <KnowledgeTable items={rows} filtered={activeFilters.length > 0} />
+      )}
       <Pagination
         page={page}
-        pageSize={PAGE_SIZE}
+        pageSize={pageSize}
         total={total}
         buildHref={(next) => buildHref(query, filter, next)}
+        pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+        buildPageSizeHref={(size) => buildPageSizeHref(query, filter, size)}
+        sticky
       />
     </div>
   );
@@ -214,6 +272,7 @@ interface QueryState {
   search: string;
   category: AiKnowledgeCategory | null;
   module: string;
+  pageSize: number;
 }
 
 function isFilterKey(value: string | undefined): value is FilterKey {
@@ -229,6 +288,7 @@ function buildParams(query: QueryState): URLSearchParams {
   if (query.search) qs.set("search", query.search);
   if (query.category) qs.set("category", query.category);
   if (query.module) qs.set("module", query.module);
+  if (query.pageSize !== DEFAULT_PAGE_SIZE) qs.set("pageSize", String(query.pageSize));
   return qs;
 }
 
@@ -239,6 +299,12 @@ function buildHref(query: QueryState, filter: FilterKey, page?: number): string 
   // landing on a page number the new result set may not have.
   if (page && page > 1) qs.set("page", String(page));
   return `/ai-learning/knowledge-base?${qs.toString()}`;
+}
+
+/** Switching page size, like switching a filter, always drops back to page 1 — the old page
+ * number belongs to a differently-sized result set and would otherwise land somewhere arbitrary. */
+function buildPageSizeHref(query: QueryState, filter: FilterKey, pageSize: number): string {
+  return buildHref({ ...query, pageSize }, filter);
 }
 
 /** The export route takes the real status, not this page's chip key. */

@@ -18,6 +18,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Pagination,
   Select,
   StatTile,
 } from "@/components/ui";
@@ -40,10 +41,22 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * disagree with the list beneath it, and a page that contradicts itself is worse than one with no
  * summary at all.
  */
+/** A 20-person roster over a month is 600 rows, so the old hard 500 truncated the ordinary
+ *  monthly review with no page two. */
+const PAGE_SIZE_OPTIONS = [100, 500, 1000] as const;
+const DEFAULT_PAGE_SIZE = 500;
+
 export default async function AttendancePage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; member?: string; view?: string }>;
+  searchParams: Promise<{
+    from?: string;
+    to?: string;
+    member?: string;
+    view?: string;
+    page?: string;
+    pageSize?: string;
+  }>;
 }) {
   const session = await requireSession();
   await requirePermission(session, "team_management.view");
@@ -57,14 +70,33 @@ export default async function AttendancePage({
   const teamMemberId = params.member && params.member !== "" ? params.member : undefined;
   const byMember = params.view === "member";
 
-  const [rows, members] = await Promise.all([
-    getDutyHistory(range, teamMemberId),
+  const page = Math.max(1, Number(params.page ?? "1") || 1);
+  const requestedPageSize = Number(params.pageSize ?? DEFAULT_PAGE_SIZE);
+  const pageSize = PAGE_SIZE_OPTIONS.includes(requestedPageSize as (typeof PAGE_SIZE_OPTIONS)[number])
+    ? requestedPageSize
+    : DEFAULT_PAGE_SIZE;
+
+  const [history, members] = await Promise.all([
+    getDutyHistory(range, teamMemberId, page, pageSize),
     prisma.internalTeamMember.findMany({
       where: { status: "ACTIVE" },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
   ]);
+  const rows = history.rows;
+
+  const buildHref = (nextPage: number, nextPageSize = pageSize): string => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (teamMemberId) qs.set("member", teamMemberId);
+    if (byMember) qs.set("view", "member");
+    if (nextPage > 1) qs.set("page", String(nextPage));
+    if (nextPageSize !== DEFAULT_PAGE_SIZE) qs.set("pageSize", String(nextPageSize));
+    const query = qs.toString();
+    return query ? `/team-management/attendance?${query}` : "/team-management/attendance";
+  };
 
   const summary = summariseDutyHistory(rows);
   // Folded once, not once per use. Pure over at most 500 rows either way, but the count in the
@@ -129,8 +161,15 @@ export default async function AttendancePage({
         </div>
       ) : null}
 
-      {rows.length >= 500 ? (
-        <Alert tone="info">Showing the most recent 500 rows. Narrow the dates or pick one person to see the rest.</Alert>
+      {/* The summary tiles above are folded from THIS page's rows, so with more than one page they
+          describe what is on screen rather than the whole range. Said plainly, because a timesheet
+          total that silently means "the first 500" is the kind of number somebody pays against. */}
+      {history.total > rows.length ? (
+        <Alert tone="info">
+          {history.total.toLocaleString()} scheduled days in this range. The figures above cover the{" "}
+          {rows.length.toLocaleString()} on this page — narrow the dates, pick one person, or export the
+          full range for totals across all of it.
+        </Alert>
       ) : null}
 
       <Card>
@@ -192,6 +231,18 @@ export default async function AttendancePage({
           </>
         )}
       </Card>
+
+      {rows.length > 0 ? (
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={history.total}
+          buildHref={(p) => buildHref(p)}
+          pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+          buildPageSizeHref={(size) => buildHref(1, size)}
+          sticky
+        />
+      ) : null}
     </div>
   );
 }

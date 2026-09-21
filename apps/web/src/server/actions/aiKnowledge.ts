@@ -236,13 +236,25 @@ export async function setKnowledgeVerified(id: string, verified: boolean): Promi
 }
 
 /**
- * A ceiling on one bulk action, not a technical limit.
+ * A ceiling on one bulk VERIFICATION, not a technical limit.
  *
  * Verifying is the moment an entry becomes something the system will say to a customer, so the
  * bulk control exists to spare a reviewer twenty round trips through a single import — not to
  * make "verify everything" a one-click habit. A cap keeps the action the size of a queue page.
  */
-const MAX_BULK_KNOWLEDGE_IDS = 100;
+const MAX_BULK_VERIFY_IDS = 100;
+
+/**
+ * Status changes and deletes get their own, larger ceiling, and the split is not cosmetic.
+ *
+ * One cap of 100 covered every bulk action, which was right while verification was the only one.
+ * Once the list offered 500- and 1,000-row pages, "select all on this page" then made *archiving*
+ * fail with the verifier's own wording — a refusal that made no sense for the action requested and
+ * which no amount of re-reading the page would explain. These three move an entry between ACTIVE,
+ * INACTIVE and ARCHIVED, or remove it; none of them is the gate in front of a customer, so the
+ * honest bound is the largest page the operator can actually select, not the reviewer's ceiling.
+ */
+const MAX_BULK_STATUS_IDS = 1000;
 
 export interface BulkKnowledgeResult {
   updated: number;
@@ -250,6 +262,9 @@ export interface BulkKnowledgeResult {
   alreadyInTargetState?: number;
   /** Selected but gone by the time this ran (e.g. deleted from another tab). */
   notFound?: number;
+  /** Selected but already discarded. Reported separately rather than folded into "already there",
+   *  because a stale selection reaching an archived entry is worth seeing, not smoothing over. */
+  skippedArchived?: number;
   /** Actionable prose for the operator; the caller shows it as-is. */
   error?: string;
 }
@@ -258,17 +273,26 @@ function normalizeBulkIds(ids: string[]): string[] {
   return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
 }
 
-function checkBulkIds(ids: string[]): { ids: string[] } | BulkKnowledgeResult {
+/**
+ * `overLimitHint` is per-action rather than one shared sentence, because the reason for each
+ * ceiling is different and a refusal that explains the wrong one is worse than a bare error.
+ */
+function checkBulkIds(
+  ids: string[],
+  max: number,
+  overLimitHint: string,
+): { ids: string[] } | BulkKnowledgeResult {
   const unique = normalizeBulkIds(ids);
   if (unique.length === 0) return { updated: 0, error: "Select at least one entry first." };
-  if (unique.length > MAX_BULK_KNOWLEDGE_IDS) {
-    return {
-      updated: 0,
-      error: `That is ${unique.length} entries at once, over the limit of ${MAX_BULK_KNOWLEDGE_IDS}. Work through them a page at a time — verifying is what lets an entry answer a customer.`,
-    };
+  if (unique.length > max) {
+    return { updated: 0, error: `That is ${unique.length} entries at once, over the limit of ${max}. ${overLimitHint}` };
   }
   return { ids: unique };
 }
+
+const VERIFY_LIMIT_HINT =
+  "Work through them a page at a time — verifying is what lets an entry answer a customer.";
+const STATUS_LIMIT_HINT = "Narrow the filters, or use a smaller page size, and run it again.";
 
 /**
  * Verifies several entries at once.
@@ -281,8 +305,22 @@ function checkBulkIds(ids: string[]): { ids: string[] } | BulkKnowledgeResult {
  */
 export async function bulkSetKnowledgeVerified(ids: string[]): Promise<BulkKnowledgeResult> {
   const session = await requireSession();
-  const checked = checkBulkIds(ids);
+  const checked = checkBulkIds(ids, MAX_BULK_VERIFY_IDS, VERIFY_LIMIT_HINT);
   if (!("ids" in checked)) return checked;
+
+  // Read first, so the result can say WHICH of the selected rows moved. The `where` below already
+  // excluded already-verified and archived rows silently, which meant "verify these 20" could
+  // verify fourteen and report nothing at all — the exact "Done" that the bulk-action standard
+  // exists to forbid.
+  const existing = await prisma.aiKnowledgeItem.findMany({
+    where: { id: { in: checked.ids } },
+    select: { id: true, humanVerified: true, status: true },
+  });
+  const notFound = checked.ids.length - existing.length;
+  const skippedArchived = existing.filter((item) => item.status === "ARCHIVED").length;
+  const alreadyInTargetState = existing.filter(
+    (item) => item.status !== "ARCHIVED" && item.humanVerified,
+  ).length;
 
   const { count } = await prisma.aiKnowledgeItem.updateMany({
     where: { id: { in: checked.ids }, humanVerified: false, status: { not: "ARCHIVED" } },
@@ -304,14 +342,21 @@ export async function bulkSetKnowledgeVerified(ids: string[]): Promise<BulkKnowl
   );
   revalidatePath("/ai-learning/knowledge-base/review");
   revalidatePath("/ai-learning/knowledge-base");
-  return { updated: count };
+  return { updated: count, alreadyInTargetState, notFound, skippedArchived };
 }
 
 /** Discards several entries at once — archived, never deleted, exactly like the single-entry path. */
 export async function bulkArchiveKnowledge(ids: string[]): Promise<BulkKnowledgeResult> {
   const session = await requireSession();
-  const checked = checkBulkIds(ids);
+  const checked = checkBulkIds(ids, MAX_BULK_STATUS_IDS, STATUS_LIMIT_HINT);
   if (!("ids" in checked)) return checked;
+
+  const existing = await prisma.aiKnowledgeItem.findMany({
+    where: { id: { in: checked.ids } },
+    select: { id: true, status: true },
+  });
+  const notFound = checked.ids.length - existing.length;
+  const alreadyInTargetState = existing.filter((item) => item.status === "ARCHIVED").length;
 
   const { count } = await prisma.aiKnowledgeItem.updateMany({
     where: { id: { in: checked.ids }, status: { not: "ARCHIVED" } },
@@ -327,7 +372,7 @@ export async function bulkArchiveKnowledge(ids: string[]): Promise<BulkKnowledge
   });
   revalidatePath("/ai-learning/knowledge-base/review");
   revalidatePath("/ai-learning/knowledge-base");
-  return { updated: count };
+  return { updated: count, alreadyInTargetState, notFound };
 }
 
 export async function setKnowledgeStatus(id: string, status: AiKnowledgeStatus): Promise<void> {
@@ -349,7 +394,7 @@ export async function setKnowledgeStatus(id: string, status: AiKnowledgeStatus):
  */
 export async function bulkSetKnowledgeStatus(ids: string[], status: AiKnowledgeStatus): Promise<BulkKnowledgeResult> {
   const session = await requireSession();
-  const checked = checkBulkIds(ids);
+  const checked = checkBulkIds(ids, MAX_BULK_STATUS_IDS, STATUS_LIMIT_HINT);
   if (!("ids" in checked)) return checked;
 
   const existing = await prisma.aiKnowledgeItem.findMany({
@@ -393,7 +438,7 @@ export async function bulkSetKnowledgeStatus(ids: string[], status: AiKnowledgeS
  */
 export async function bulkDeleteKnowledge(ids: string[]): Promise<BulkKnowledgeResult> {
   const session = await requireSession();
-  const checked = checkBulkIds(ids);
+  const checked = checkBulkIds(ids, MAX_BULK_STATUS_IDS, STATUS_LIMIT_HINT);
   if (!("ids" in checked)) return checked;
 
   const existing = await prisma.aiKnowledgeItem.findMany({

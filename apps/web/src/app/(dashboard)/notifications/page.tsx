@@ -6,13 +6,16 @@ import { Badge, type BadgeColor, Button, ButtonLink, EmptyState, FilterBar, Help
 import { formatDateTime } from "@/lib/date";
 import { TestNotificationForm } from "./TestNotificationForm";
 import { RetryNotificationButton } from "./RetryNotificationButton";
+import { RetryAllFailedButton } from "./RetryAllFailedButton";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [50, 100, 250] as const;
+const DEFAULT_PAGE_SIZE = 50;
 const STATUSES = ["PENDING", "SENT", "FAILED", "RETRYING"] as const;
 
 interface NotificationsSearchParams {
   status?: string;
   page?: string;
+  pageSize?: string;
 }
 
 export default async function NotificationsPage({
@@ -32,6 +35,11 @@ export default async function NotificationsPage({
   // backwards: the notification you come here to investigate is usually a failed one, and failures
   // are the rows most likely to have scrolled past the cap.
   const page = Math.max(1, Number(filters.page ?? "1") || 1);
+  const requestedPageSize = Number(filters.pageSize ?? DEFAULT_PAGE_SIZE);
+  const PAGE_SIZE = PAGE_SIZE_OPTIONS.includes(requestedPageSize as (typeof PAGE_SIZE_OPTIONS)[number])
+    ? requestedPageSize
+    : DEFAULT_PAGE_SIZE;
+
   const [notifications, totalCount, failedCount] = await Promise.all([
     prisma.notification.findMany({
       where,
@@ -43,10 +51,11 @@ export default async function NotificationsPage({
     prisma.notification.count({ where: { status: "FAILED" } }),
   ]);
 
-  const buildHref = (nextPage: number) => {
+  const buildHref = (nextPage: number, nextPageSize = PAGE_SIZE) => {
     const qs = new URLSearchParams();
     if (filters.status) qs.set("status", filters.status);
     if (nextPage > 1) qs.set("page", String(nextPage));
+    if (nextPageSize !== DEFAULT_PAGE_SIZE) qs.set("pageSize", String(nextPageSize));
     const query = qs.toString();
     return query ? `/notifications?${query}` : "/notifications";
   };
@@ -122,6 +131,9 @@ export default async function NotificationsPage({
               Show {failedCount} failed
             </ButtonLink>
           ) : null}
+          {/* Offered only from inside the failed view, so "retry everything" is something you
+              reach after looking at what failed rather than a button sitting beside the full log. */}
+          {filters.status === "FAILED" ? <RetryAllFailedButton failedCount={failedCount} /> : null}
           {filters.status ? (
             <ButtonLink href="/notifications" variant="ghost" size="sm">
               Clear
@@ -182,7 +194,15 @@ export default async function NotificationsPage({
       )}
 
       {notifications.length > 0 ? (
-        <Pagination page={page} pageSize={PAGE_SIZE} total={totalCount} buildHref={buildHref} />
+        <Pagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={totalCount}
+          buildHref={(p) => buildHref(p)}
+          pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+          buildPageSizeHref={(size) => buildHref(1, size)}
+          sticky
+        />
       ) : null}
     </div>
   );

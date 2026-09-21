@@ -7,16 +7,22 @@ import { parseDhakaDayFromInput } from "@/lib/supportActivityPeriod";
 import { MessagesFilterBar, type MessageFilters } from "./MessagesFilterBar";
 import { MessagesTable, type MessageRow } from "./MessagesTable";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [50, 100, 250] as const;
+const DEFAULT_PAGE_SIZE = 50;
 
 interface MessagesSearchParams extends MessageFilters {
   page?: string;
+  pageSize?: string;
 }
 
 export default async function MessagesPage({ searchParams }: { searchParams: Promise<MessagesSearchParams> }) {
   await requireSession();
   const params = await searchParams;
   const page = Math.max(1, Number(params.page ?? "1") || 1);
+  const requestedPageSize = Number(params.pageSize ?? DEFAULT_PAGE_SIZE);
+  const PAGE_SIZE = PAGE_SIZE_OPTIONS.includes(requestedPageSize as (typeof PAGE_SIZE_OPTIONS)[number])
+    ? requestedPageSize
+    : DEFAULT_PAGE_SIZE;
 
   const where: Prisma.MessageWhereInput = {};
   if (params.accountId) where.accountId = params.accountId;
@@ -186,17 +192,26 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
       <MessagesTable messages={rows} hasActiveFilters={hasActiveFilters} />
 
       {totalCount > 0 ? (
-        <Pagination page={page} pageSize={PAGE_SIZE} total={totalCount} buildHref={(p) => buildPageHref(params, p)} />
+        <Pagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={totalCount}
+          buildHref={(p) => buildPageHref(params, p, PAGE_SIZE)}
+          pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+          buildPageSizeHref={(size) => buildPageHref(params, 1, size)}
+          sticky
+        />
       ) : null}
     </div>
   );
 }
 
-function buildPageHref(params: MessagesSearchParams, page: number): string {
+function buildPageHref(params: MessagesSearchParams, page: number, pageSize?: number): string {
   const qs = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (key !== "page" && typeof value === "string" && value) qs.set(key, value);
+    if (key !== "page" && key !== "pageSize" && typeof value === "string" && value) qs.set(key, value);
   }
   if (page > 1) qs.set("page", String(page));
+  if (pageSize && pageSize !== DEFAULT_PAGE_SIZE) qs.set("pageSize", String(pageSize));
   return `/messages?${qs.toString()}`;
 }

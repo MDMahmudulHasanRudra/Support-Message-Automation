@@ -52,6 +52,7 @@ export function TemplateCard({
   updatedBy,
   liveness,
   testGroups,
+  testGroupsTruncated = false,
   replyLanguage,
 }: {
   definition: NotificationTemplateDefinition;
@@ -62,6 +63,9 @@ export function TemplateCard({
   liveness: TemplateLiveness;
   /** Groups a test can be sent to. Empty when no account is connected. */
   testGroups: TestTarget[];
+  /** True when more reachable groups exist than are listed — said out loud, since a chooser that
+   *  stops short otherwise reads as the complete set. */
+  testGroupsTruncated?: boolean;
   /** What AI answers customers in, so a customer-facing template can flag a mismatch. */
   replyLanguage: string | null;
 }) {
@@ -235,6 +239,12 @@ export function TemplateCard({
                   </option>
                 ))}
               </Select>
+              {testGroupsTruncated ? (
+                <p className="mt-1.5 text-xs text-[color:var(--color-muted-foreground)]">
+                  The first {testGroups.length.toLocaleString()} reachable groups, unmonitored ones first.
+                  Type in the list to jump to a name.
+                </p>
+              ) : null}
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
