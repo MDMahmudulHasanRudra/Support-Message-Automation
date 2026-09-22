@@ -328,6 +328,11 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   /** The raw payload we last rendered ourselves, so the library's own image stays a fallback. */
   private renderedQrPayload: string | null = null;
+  /**
+   * Called by whichever code path first publishes a code for the attempt in flight, to cancel the
+   * "no code ever appeared" deadline below. Set per attempt, cleared when the attempt settles.
+   */
+  private cancelFirstCodeDeadline: (() => void) | null = null;
 
   constructor(
     private readonly accountId: string,
@@ -379,12 +384,15 @@ export class OpenWAProvider implements WhatsAppProvider {
       if (typeof value !== "string" || !value) return;
       // A link code is not an image — pass it through exactly as before.
       if (this.pairingMode === "PHONE_CODE") {
+        // A code exists, so the attempt is now waiting on a person rather than stalled.
+        this.cancelFirstCodeDeadline?.();
         this.setState("QR_AVAILABLE", { qrLength: value.length }, value).catch(() => undefined);
         return;
       }
       // Fallback only. If our own render already published this attempt's code, showing the
       // library's coloured image on top of it would undo the fix a moment later.
       if (this.renderedQrPayload) return;
+      this.cancelFirstCodeDeadline?.();
       this.setState("QR_AVAILABLE", { qrLength: value.length, rendered: false }, value).catch(() => undefined);
     });
   }
@@ -401,6 +409,9 @@ export class OpenWAProvider implements WhatsAppProvider {
         color: { dark: "#000000ff", light: "#ffffffff" },
       });
       this.renderedQrPayload = payload;
+      // A scannable code is on screen: the attempt is waiting on a human now, not stalled, so the
+      // short no-code deadline gives way to the generous human-scan watchdog.
+      this.cancelFirstCodeDeadline?.();
       await this.setState("QR_AVAILABLE", { qrLength: dataUrl.length, rendered: true }, dataUrl);
     } catch (err) {
       console.error("[provider] could not render a QR code; falling back to the library's own image", err);
@@ -453,6 +464,49 @@ export class OpenWAProvider implements WhatsAppProvider {
     const abandoned = new Promise<never>((_, reject) => {
       this.abandonAttempt = reject;
     });
+
+    /**
+     * A fourth racer, for the failure the watchdog above is the wrong shape for.
+     *
+     * That watchdog is ten minutes because it is bounding a HUMAN: a code is on screen and
+     * somebody has to walk to a phone and scan it. But it was also the only bound on a completely
+     * different situation — an attempt that never produces a code at all, because the browser
+     * failed to start, WhatsApp Web never loaded, or a network call before the QR screen hung.
+     * Nothing is on screen in that case, so nobody is scanning anything, and waiting ten minutes
+     * for a human who has nothing to look at is ten minutes of an operator pressing Connect and
+     * watching a spinner.
+     *
+     * It is worse than slow, because the command processor is strictly serial: the stalled attempt
+     * holds it, so every later Connect/Reconnect the operator tries sits PENDING behind the one
+     * that is already never going to finish — which is exactly what "1 command waiting for the
+     * worker" beside a stuck dialog means.
+     *
+     * So: a deadline on the FIRST code only, cancelled the moment one is published. After that the
+     * generous human-scan bound takes over unchanged. Failing fast here is what lets
+     * `connectWithRetry` actually retry, and releases the queue for the next command.
+     *
+     * Why 150s rather than something snappier. A reconnect with valid stored session data never
+     * emits a code at all — it restores straight to authenticated — so this deadline is racing
+     * that restore too, and cutting a healthy one short would turn a working reconnect into a
+     * retry loop. The bound therefore has to sit comfortably above a slow cold start (Chromium,
+     * WhatsApp Web, session restore) rather than above a fast one. A restore that genuinely takes
+     * longer than this is not healthy anyway, and a retry is the right response to it.
+     */
+    const firstCodeMs = Number(process.env.WHATSAPP_FIRST_CODE_TIMEOUT_MS) || 150_000;
+    let firstCodeTimer: NodeJS.Timeout | undefined;
+    const firstCode = new Promise<never>((_, reject) => {
+      firstCodeTimer = setTimeout(() => {
+        reject(
+          new Error(
+            `No QR or link code appeared within ${Math.round(firstCodeMs / 1000)}s, and the session did not restore either — the attempt never reached WhatsApp's linking screen, so there was nothing to scan. Treating it as stalled so it can be retried.`,
+          ),
+        );
+      }, firstCodeMs);
+    });
+    this.cancelFirstCodeDeadline = () => {
+      clearTimeout(firstCodeTimer);
+      this.cancelFirstCodeDeadline = null;
+    };
 
     try {
       this.client = await Promise.race([
@@ -568,6 +622,7 @@ export class OpenWAProvider implements WhatsAppProvider {
         }),
         watchdog,
         abandoned,
+        firstCode,
       ]);
     } catch (err) {
       // An abandoned attempt is not a failure to report as one. It means an operator chose a
@@ -585,6 +640,8 @@ export class OpenWAProvider implements WhatsAppProvider {
       throw err;
     } finally {
       clearTimeout(watchdogTimer);
+      clearTimeout(firstCodeTimer);
+      this.cancelFirstCodeDeadline = null;
       this.abandonAttempt = null;
     }
 
