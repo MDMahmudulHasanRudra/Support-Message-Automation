@@ -590,6 +590,33 @@ export class OpenWAProvider implements WhatsAppProvider {
           cachedPatch: true,
           /** One npm round trip per connect, for a number nothing here acts on. */
           skipUpdateCheck: true,
+          /**
+           * The library's own half of the logout fix, in its own words: "Deletes the session data
+           * file (if found) on logout event. This results in a quicker login when you restart the
+           * process."
+           *
+           * It fires on the logout EVENT, which needs a live client to emit one — so it cannot
+           * reach the case `logout()` now handles by hand, where `create()` never resolved and
+           * there is no client at all. The two are complementary rather than redundant: this
+           * covers a clean logout from a working session, that covers the wedged one.
+           */
+          deleteSessionDataOnLogout: true,
+          /**
+           * Browser-side diagnostics, off unless asked for.
+           *
+           * When a connect never reaches the linking screen, everything explaining why happens
+           * inside the page — and none of it reaches our logs, which is why that failure has been
+           * so hard to tell apart from a slow network. These two surface it: console errors from
+           * the page, and a screenshot of the browser at the moment `create()` fails.
+           *
+           * Both are gated because neither is free. WhatsApp Web throws benign console errors in
+           * normal operation, so leaving the first on would bury real signal in noise; and the
+           * screenshots are written into the session volume, which nothing prunes. Turn on with
+           * WHATSAPP_DEBUG_BROWSER=true while diagnosing, off again afterwards.
+           */
+          ...(process.env.WHATSAPP_DEBUG_BROWSER === "true"
+            ? { logConsoleErrors: true, screenshotOnInitializationBrowserError: true }
+            : {}),
           // Selects WhatsApp's "Link with phone number" flow instead of the QR. The library's
           // initializer races one or the other and never both —
           // `if (config?.linkCode) race.push(qrManager.linkCode(...)) else race.push(smartQr(...))`
