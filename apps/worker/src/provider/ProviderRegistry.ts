@@ -6,8 +6,10 @@ import { syncGroupsWithTimeoutAndRetry } from "../commands/commandProcessor.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { countDroppedMessage } from "../pipeline/dropCounter.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
-
-const CONNECT_RETRY_DELAYS_MS = [15_000, 45_000]; // bounded, matching the spec's "safe retry policy" spirit — not unlimited
+// Moved to its own module to break the ProviderRegistry <-> commandProcessor import cycle; still
+// re-exported here so existing callers and tests are unaffected by where it lives.
+import { connectWithRetry } from "./connectWithRetry.js";
+export { connectWithRetry };
 
 /**
  * Owns every connected WhatsApp session in this process — one `OpenWAProvider` (one Chromium
@@ -176,30 +178,3 @@ export class ProviderRegistry {
   }
 }
 
-/**
- * A single transient failure (e.g. WhatsApp Web taking longer than usual to bootstrap) shouldn't
- * require a manual RECONNECT command. Bounded retries only — after these are exhausted, the
- * account is left in ERROR and a manual RECONNECT (or a worker restart) is required.
- */
-export async function connectWithRetry(provider: WhatsAppProvider, accountId: string): Promise<boolean> {
-  const attempts = CONNECT_RETRY_DELAYS_MS.length + 1;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      await provider.connect();
-      return true;
-    } catch (err) {
-      const isLastAttempt = attempt === attempts;
-      console.error(
-        `[worker] account ${accountId} connect attempt ${attempt}/${attempts} failed${isLastAttempt ? "" : " — will retry"}`,
-        err,
-      );
-      await logSystemEvent("ERROR", "provider", `Connect attempt ${attempt}/${attempts} failed`, {
-        accountId,
-        error: (err as Error).message,
-      });
-      if (isLastAttempt) return false;
-      await new Promise((resolve) => setTimeout(resolve, CONNECT_RETRY_DELAYS_MS[attempt - 1]));
-    }
-  }
-  return false;
-}

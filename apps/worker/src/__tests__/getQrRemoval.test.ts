@@ -84,10 +84,15 @@ describe("the real QR lifecycle is untouched", () => {
     expect(source).toContain('ev.on("qr.**"');
   });
 
-  it("a connection attempt is still what produces one — RECONNECT still calls connect()", () => {
+  it("a connection attempt is still what produces one — RECONNECT still connects", () => {
     const source = stripComments(read("commands/commandProcessor.ts"));
     const reconnect = source.slice(source.indexOf('case "RECONNECT"'));
-    expect(reconnect).toContain("provider.connect()");
+    // Via connectWithRetry now, which calls provider.connect() and retries an attempt that
+    // produced no code at all. The property this guards is that RECONNECT still starts a real
+    // connection — not which helper it goes through — so it asserts that rather than the literal
+    // call it used to make.
+    expect(reconnect).toContain("connectWithRetry(provider, accountId)");
+    expect(stripComments(read("provider/connectWithRetry.ts"))).toContain("provider.connect()");
   });
 
   it("automatic recovery still calls connect() for a dropped session", () => {

@@ -10,6 +10,9 @@ import { runForgeKnowledgeSync } from "../forge/forgeKnowledgeJob.js";
 import { buildCommunicationStyleProfile } from "../knowledge/communicationStyleJob.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { withTimeout } from "../util/withTimeout.js";
+// From its own module, not from ProviderRegistry — that would close an import cycle, since the
+// registry imports the group sync from this file.
+import { connectWithRetry } from "../provider/connectWithRetry.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 
 /** Name this loop reports itself under in the per-loop liveness view. */
@@ -483,7 +486,36 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
           break;
         }
         await provider.disconnect();
-        await provider.connect();
+        /**
+         * Retried, exactly like the automatic path — and it was not, which is why linking so often
+         * needed several presses.
+         *
+         * `accountRegistrySync` has always gone through `connectWithRetry`: three attempts with
+         * backoff, so a first attempt that never reaches WhatsApp's linking screen is followed by
+         * another on its own. The button an operator actually presses called `provider.connect()`
+         * once. One miss and there was no second try — the command simply failed, the account went
+         * ERROR, and the only thing that could produce a code again was a person pressing Connect
+         * again. Two paths to the same operation, one of them giving up instantly.
+         *
+         * This only ever retries a connect that produced NOTHING. Once a code is on screen the
+         * attempt is waiting on a human, the short no-code deadline is cancelled, and the generous
+         * scan watchdog takes over — so retrying here can never cut somebody's scan short.
+         */
+        const reconnected = await connectWithRetry(provider, accountId);
+        if (!reconnected) {
+          await prisma.workerCommand.update({
+            where: { id: command.id },
+            data: {
+              status: "FAILED",
+              processedAt: new Date(),
+              result: {
+                error:
+                  "WhatsApp did not produce a code after several attempts. Check System Logs for what the browser reported, then try again.",
+              },
+            },
+          });
+          break;
+        }
         // connect() re-attaches the message listener itself, so this no longer ends with a session
         // that looks connected and silently collects nothing. What it cannot undo is the gap: fill
         // that before reporting the command done.

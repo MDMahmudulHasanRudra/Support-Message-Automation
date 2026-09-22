@@ -244,3 +244,67 @@ describe("LOGOUT", () => {
     expect(refreshedCommand.status).toBe("FAILED");
   });
 });
+
+/**
+ * The button an operator presses must retry like the automatic path does.
+ *
+ * `accountRegistrySync` has always gone through `connectWithRetry` — three attempts with backoff —
+ * so an attempt that never reaches WhatsApp's linking screen gets another go on its own. The
+ * RECONNECT command, which is what Connect/Reconnect in the dashboard actually enqueues, called
+ * `provider.connect()` exactly once. One miss and there was no second try: the command failed, the
+ * account went ERROR, and the only thing that could produce a code again was a person pressing the
+ * button again. That is what "the QR keeps missing" looked like from the outside.
+ */
+describe("RECONNECT: retries a connect that produced nothing", () => {
+  // The real schedule is 15s then 45s. What is under test is that a retry HAPPENS and how the
+  // command is reported — not how long the pause is — so the wait is shortened rather than sat out.
+  const originalDelays = process.env.WHATSAPP_CONNECT_RETRY_DELAYS_MS;
+  beforeEach(() => {
+    process.env.WHATSAPP_CONNECT_RETRY_DELAYS_MS = "10,10";
+  });
+  afterEach(() => {
+    if (originalDelays === undefined) delete process.env.WHATSAPP_CONNECT_RETRY_DELAYS_MS;
+    else process.env.WHATSAPP_CONNECT_RETRY_DELAYS_MS = originalDelays;
+  });
+
+  it("tries again after a failed attempt instead of giving up on the first", async () => {
+    const provider = new MockProvider();
+    // The handler's first guard is the PROVIDER's own status — a RECONNECT into an already-healthy
+    // session is deliberately skipped, so a mock left at its CONNECTED default never reaches the
+    // connect path at all.
+    provider.connectionStatus = "DISCONNECTED";
+    let attempts = 0;
+    provider.disconnect = async () => {};
+    provider.connect = async () => {
+      attempts += 1;
+      // Fail once, succeed on the retry — the ordinary "WhatsApp Web was slow to bootstrap" case.
+      if (attempts === 1) throw new Error("never reached WhatsApp's linking screen");
+    };
+
+    await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: "DISCONNECTED" } });
+    const command = await prisma.workerCommand.create({ data: { type: "RECONNECT" } });
+    await processOneCommand(account.id, provider);
+
+    expect(attempts).toBeGreaterThan(1);
+    expect((await prisma.workerCommand.findUniqueOrThrow({ where: { id: command.id } })).status).toBe("DONE");
+  });
+
+  it("reports a command that failed every attempt, rather than claiming it reconnected", async () => {
+    const provider = new MockProvider();
+    provider.connectionStatus = "DISCONNECTED";
+    provider.disconnect = async () => {};
+    provider.connect = async () => {
+      throw new Error("never reached WhatsApp's linking screen");
+    };
+
+    await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: "DISCONNECTED" } });
+    const command = await prisma.workerCommand.create({ data: { type: "RECONNECT" } });
+    await processOneCommand(account.id, provider);
+
+    const refreshed = await prisma.workerCommand.findUniqueOrThrow({ where: { id: command.id } });
+    // Previously this path could only end DONE or throw; a connect that never produced a code has
+    // to be reported as the failure it is, with something an operator can act on.
+    expect(refreshed.status).toBe("FAILED");
+    expect(JSON.stringify(refreshed.result)).toMatch(/did not produce a code/i);
+  });
+});

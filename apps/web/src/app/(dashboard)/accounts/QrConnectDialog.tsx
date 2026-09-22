@@ -233,6 +233,7 @@ function PairingPanel({ account }: { account: QrDialogAccount }) {
               code={hasUsableCode ? account.qrCode : null}
               stale={account.qrStale}
               awaitingNumber={awaitingNumber}
+              phoneNumber={account.pairingPhoneNumber}
             />
           ) : (
             <QrPanel
@@ -350,14 +351,58 @@ function QrPanel({ code, stale, label }: { code: string | null; stale: boolean; 
  * Unlike the QR beside it this keeps the theme's own surface: nothing here is read by a camera, and
  * forcing white would be contrast for its own sake.
  */
+/**
+ * The code as WhatsApp itself presents it: one box per character, with the hyphen left between
+ * the halves as a separator rather than as a box of its own.
+ *
+ * It was a single run of monospaced text. That reads fine on a screen and badly off one — this
+ * code is copied by eye, one character at a time, into a phone held in the other hand, and losing
+ * your place in an eight-character string is the whole failure mode. Boxes give each character a
+ * position to come back to, which is exactly why WhatsApp draws it this way.
+ *
+ * The whole code stays inside one `select-all` container, so selecting it still yields the plain
+ * code with its hyphen and nothing else — boxes are presentation, not a change to what is copied.
+ */
+function LinkCodeCharacters({ code }: { code: string }) {
+  const characters = [...code.trim()];
+  return (
+    <p
+      className="flex select-all flex-wrap items-center justify-center gap-1.5"
+      aria-label={`Linking code ${characters.join(" ")}`}
+    >
+      {characters.map((character, index) =>
+        character === "-" ? (
+          <span
+            key={`sep-${index}`}
+            aria-hidden
+            className="px-0.5 text-[22px] font-medium text-[color:var(--color-muted-foreground)]"
+          >
+            –
+          </span>
+        ) : (
+          <span
+            key={`char-${index}`}
+            className="flex size-[38px] items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-[family-name:var(--font-mono)] text-[22px] font-semibold uppercase text-[color:var(--color-foreground)] sm:size-[42px] sm:text-[24px]"
+          >
+            {character}
+          </span>
+        ),
+      )}
+    </p>
+  );
+}
+
 function LinkCodePanel({
   code,
   stale,
   awaitingNumber,
+  phoneNumber,
 }: {
   code: string | null;
   stale: boolean;
   awaitingNumber: boolean;
+  /** Which number this code belongs to, echoed back exactly as WhatsApp's own screen does. */
+  phoneNumber: string | null;
 }) {
   return (
     <div className="flex min-h-[292px] w-[292px] items-center justify-center rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4 shadow-[var(--shadow-sm)] sm:min-h-[332px] sm:w-[332px]">
@@ -366,9 +411,17 @@ function LinkCodePanel({
           <p className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Enter this code
           </p>
-          <p className="mt-3 select-all font-[family-name:var(--font-mono)] text-[34px] font-semibold tracking-[0.18em] text-[color:var(--color-foreground)] sm:text-[40px]">
-            {code}
-          </p>
+          {/* Which number it belongs to, as WhatsApp's own screen states it. A team running several
+              numbers has no other way to tell from the code itself, and typing it into the wrong
+              phone links the wrong account. */}
+          {phoneNumber ? (
+            <p className="mt-1 text-[12px] text-[color:var(--color-muted-foreground)]">
+              for <span className="tabular font-medium text-[color:var(--color-foreground)]">+{phoneNumber}</span>
+            </p>
+          ) : null}
+          <div className="mt-3">
+            <LinkCodeCharacters code={code} />
+          </div>
           <p className="mt-3 text-[12px] leading-relaxed text-[color:var(--color-muted-foreground)]">
             Type it into Linked devices on the phone that owns this number.
           </p>
