@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { access, mkdir, rm } from "node:fs/promises";
 import { toDataURL as renderQrDataUrl } from "qrcode";
 import { join } from "node:path";
 import {
@@ -275,6 +275,49 @@ const ACCEPTED_STARTUP_MESSAGES = new Set([
   "Authenticated",
 ]);
 
+/**
+ * How long `@open-wa/wa-automate` may spend on its own authentication race, in SECONDS (its unit).
+ *
+ * It governs two different waits, which is why it is the number that matters most here:
+ *   - BEFORE a code: `isAuthenticated()` versus this timer. On a profile carrying any WhatsApp
+ *     storage this runs the full duration before a QR is even requested.
+ *   - AFTER a scan: the session loading and the phone syncing the new device.
+ *
+ * Raised from the library's 120 because 120 was observed cutting off a successful pairing: the
+ * scan was accepted, `AUTHENTICATED` was recorded, and two minutes later the library gave up with
+ * "Authentication timed out. Shutting down" → "App Offline". A phone finishing a first sync is
+ * doing real work over a real network, and two minutes is not a generous allowance for it.
+ *
+ * Not raised further than this. Every second added is also a second a genuinely broken pairing
+ * takes to report, and a second a poisoned profile hangs before `shouldResetProfile()` can act.
+ */
+const AUTH_TIMEOUT_SECONDS = Number(process.env.WHATSAPP_AUTH_TIMEOUT_SECONDS) || 180;
+
+/**
+ * The library's own bound on `phoneIsOutOfReach`, which it races AFTER `authTimeout` expires,
+ * before finally throwing. Not configured by us — its default, restated here because the deadline
+ * below has to clear it and a number you cannot see is a number you cannot reason about.
+ */
+const LIBRARY_OUT_OF_REACH_TIMEOUT_SECONDS = 60;
+
+/**
+ * Consecutive codeless attempts before the Chromium profile is treated as the cause. See
+ * `shouldResetProfile()` for why it is not one.
+ */
+const CODELESS_FAILURES_BEFORE_PROFILE_RESET = 2;
+
+/**
+ * The first-code deadline, and the rule it has to obey:
+ *
+ *     firstCode > authTimeout + oorTimeout
+ *
+ * because everything on the left of that sum is the library legitimately still working. 300s
+ * clears the current 240s sum with a minute of margin for the browser launch and page load that
+ * precede it. Raising `WHATSAPP_AUTH_TIMEOUT_SECONDS` without raising this would put the deadline
+ * back inside the library's own window, which is the bug this replaced.
+ */
+const MIN_FIRST_CODE_TIMEOUT_MS = 300_000;
+
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
   private state: OpenWAConnectionState = "DISCONNECTED";
@@ -347,6 +390,27 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   /** The raw payload we last rendered ourselves, so the library's own image stays a fallback. */
   private renderedQrPayload: string | null = null;
+
+  /**
+   * Whether THIS attempt got as far as something an operator could act on — a code on screen, or
+   * an accepted pairing. Reset per attempt; the only input to the profile reset below.
+   */
+  private attemptReachedLinkingScreen = false;
+
+  /**
+   * Consecutive attempts that never reached the linking screen at all.
+   *
+   * This exists because of a failure observed end to end on 23 Sep 2026, and the shape of it
+   * matters more than the count. A Chromium profile left in a HALF-AUTHENTICATED state — enough
+   * WhatsApp storage to look signed in, not enough to be — makes the library's own
+   * `isAuthenticated()` race neither succeed nor fail: it burns the full `authTimeout`, kills the
+   * browser, and produces NO QR AT ALL. Every retry then reuses the same profile and hits the same
+   * wall, so the account cannot produce a code ever again. Three attempts were watched doing
+   * exactly this, ~2.5 minutes each; only deleting the directory by hand broke it.
+   *
+   * A retry that cannot change its own inputs is not a retry. See `shouldResetProfile()`.
+   */
+  private codelessFailures = 0;
   /**
    * Bumped once at the start of every `openSession()` call — the ownership token that stops a
    * finished attempt from writing over a newer one.
@@ -380,10 +444,55 @@ export class OpenWAProvider implements WhatsAppProvider {
   /** Joins an attempt already in progress rather than starting a second one. */
   async connect(): Promise<void> {
     if (this.connecting) return this.connecting;
-    this.connecting = this.openSession().finally(() => {
-      this.connecting = null;
-    });
+    this.connecting = this.openSession()
+      .then(() => {
+        // Reached a live session, so whatever the profile held was usable after all.
+        this.codelessFailures = 0;
+      })
+      .catch((err) => {
+        // Only a CODELESS failure counts. An attempt that showed a code and then failed had a
+        // working profile and a different problem — a phone that went out of reach, a sync that
+        // timed out — and wiping the profile for that would force a re-scan over something a
+        // retry can fix on its own.
+        if (this.attemptReachedLinkingScreen) this.codelessFailures = 0;
+        else this.codelessFailures += 1;
+        throw err;
+      })
+      .finally(() => {
+        this.connecting = null;
+      });
     return this.connecting;
+  }
+
+  /**
+   * Whether the Chromium profile is the prime suspect, and may be deleted before trying again.
+   *
+   * Both conditions are load-bearing.
+   *
+   * REPEATED CODELESS FAILURES is the symptom of a half-authenticated profile (see
+   * `codelessFailures`). One is not enough — a browser that failed to launch, a page that did not
+   * load, a transient network fault all fail codelessly too, and they fix themselves on the next
+   * try. Waiting for the pattern costs one extra retry and buys not destroying a session over a
+   * blip.
+   *
+   * NO SESSION DATA FILE is what makes this safe rather than merely effective. While
+   * `<sessionId>.data.json` exists a restore is genuinely possible, and the profile is the thing
+   * that would restore it — deleting it would turn a recoverable session into a mandatory re-scan,
+   * which on an unattended worker at 3am means an account that stays down until somebody notices.
+   * With no data file there is nothing to preserve: the profile is not restoring anything, it is
+   * demonstrably not producing a code either, and a fresh directory is strictly better than the
+   * one that has failed twice.
+   */
+  private async shouldResetProfile(): Promise<boolean> {
+    if (this.codelessFailures < CODELESS_FAILURES_BEFORE_PROFILE_RESET) return false;
+    const sessionDataFile = join(this.sessionDataPath, `${this.sessionId}.data.json`);
+    try {
+      await access(sessionDataFile);
+      // A restore is still on the table. Leave it alone and let the retries keep trying.
+      return false;
+    } catch {
+      return true;
+    }
   }
 
   /**
@@ -507,6 +616,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       if (typeof message !== "string") return;
       if (!ACCEPTED_STARTUP_MESSAGES.has(message.trim())) return;
       // An accepted scan is plainly not an attempt that failed to produce a code.
+      this.attemptReachedLinkingScreen = true;
       this.cancelFirstCodeDeadline?.();
       // Never walk a live session backwards.
       if (this.state === "CONNECTED") return;
@@ -525,6 +635,7 @@ export class OpenWAProvider implements WhatsAppProvider {
    */
   private writeQrState(generation: number, metadata: Record<string, unknown>, qrCode: string): void {
     if (generation !== this.attemptGeneration) return;
+    this.attemptReachedLinkingScreen = true;
     this.setState("QR_AVAILABLE", metadata, qrCode).catch(() => undefined);
   }
 
@@ -560,6 +671,16 @@ export class OpenWAProvider implements WhatsAppProvider {
     // in-progress QR render — see attemptGeneration's own doc comment) must not be allowed to
     // write over what THIS attempt produces.
     this.attemptGeneration += 1;
+    this.attemptReachedLinkingScreen = false;
+
+    // Before anything is launched, because the profile directory is what gets launched AGAINST.
+    if (await this.shouldResetProfile()) {
+      console.warn(
+        `[openwa] ${this.codelessFailures} attempts in a row reached no code and no session data remains — removing the profile so this one starts clean`,
+      );
+      await this.removeSessionProfile();
+      this.codelessFailures = 0;
+    }
 
     // The directory has to exist before chdir, and nothing else guarantees it does.
     // accountProvisioning assigns every non-legacy account a path of `${SESSION_ROOT}/${id}`
@@ -627,14 +748,26 @@ export class OpenWAProvider implements WhatsAppProvider {
      * generous human-scan bound takes over unchanged. Failing fast here is what lets
      * `connectWithRetry` actually retry, and releases the queue for the next command.
      *
-     * Why 150s rather than something snappier. A reconnect with valid stored session data never
-     * emits a code at all — it restores straight to authenticated — so this deadline is racing
-     * that restore too, and cutting a healthy one short would turn a working reconnect into a
-     * retry loop. The bound therefore has to sit comfortably above a slow cold start (Chromium,
-     * WhatsApp Web, session restore) rather than above a fast one. A restore that genuinely takes
-     * longer than this is not healthy anyway, and a retry is the right response to it.
+     * THE DURATION IS NOT A TASTE JUDGEMENT — it is bounded from below by the library, and 150s
+     * violated that bound. Before a code can appear the library runs its own `isAuthenticated()`
+     * race for up to `authTimeout`, and on expiry races `phoneIsOutOfReach` for up to `oorTimeout`
+     * before it throws. So the longest LEGITIMATE codeless window is those two added together —
+     * 240s at the values now in force, where this deadline stood at 150. It was cutting in while
+     * the library was still working, abandoning attempts it had no evidence against, and replacing
+     * the library's accurate diagnosis ("App Offline", "Auth Timeout") with its own vaguer one.
+     * `connectTimeouts.test.ts` asserts the ordering so the two cannot drift apart again.
+     *
+     * A reconnect with valid stored session data is the other caller: it emits no code at all and
+     * restores straight to authenticated, so this races that too, and cutting a healthy restore
+     * short would turn a working reconnect into a retry loop.
+     *
+     * Not longer than it needs to be either. This only ever fires when NOTHING has appeared, and
+     * its entire job is to turn "wedged forever, silently" into something `connectWithRetry` can
+     * act on — so every extra minute is a minute of an account not collecting before anything
+     * tries again. The outer 10-minute watchdog already covers waiting on a human.
      */
-    const firstCodeMs = Number(process.env.WHATSAPP_FIRST_CODE_TIMEOUT_MS) || 150_000;
+    const firstCodeMs =
+      Number(process.env.WHATSAPP_FIRST_CODE_TIMEOUT_MS) || MIN_FIRST_CODE_TIMEOUT_MS;
     let firstCodeTimer: NodeJS.Timeout | undefined;
     const firstCode = new Promise<never>((_, reject) => {
       firstCodeTimer = setTimeout(() => {
@@ -705,7 +838,7 @@ export class OpenWAProvider implements WhatsAppProvider {
           // diagnostic signal. Any non-zero value here selects a 120s bound
           // (multiDevice is true) instead of the true value passed — an
           // upstream quirk, not something this value can fine-tune further.
-          authTimeout: 120,
+          authTimeout: AUTH_TIMEOUT_SECONDS,
           popup: false,
           cacheEnabled: false,
           /**
@@ -919,8 +1052,31 @@ export class OpenWAProvider implements WhatsAppProvider {
       // in (verified against the mounted volume; see this class's own notes). Logout already
       // promises the next connect needs a fresh scan, so deleting it takes nothing a caller
       // expected to keep.
-      await this.removeSessionProfile();
     }
+
+    /**
+     * ALWAYS, client or not — and the asymmetry this replaces cost a live account its ability to
+     * link at all, observed end to end on 23 Sep 2026.
+     *
+     * Only the no-client branch above used to remove the profile. With a client we called
+     * `client.logout(false)` and stopped, on the assumption that the library's own invalidation was
+     * enough. It is not: it deletes `<sessionId>.data.json`, then tries to clear the Chromium
+     * profile and FAILS, because the browser it is closing still holds files open —
+     *
+     *     ENOTEMPTY: directory not empty, rmdir
+     *       '.../Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb'
+     *
+     * — as an unhandled rejection, caught only by `installProcessGuards`, logged and otherwise
+     * invisible. What survives is a half-authenticated profile, and that is fatal in a way nothing
+     * about it announces: the next connect's `isAuthenticated()` race neither succeeds nor fails,
+     * burns the whole `authTimeout`, kills the browser, and produces NO CODE. Every retry reuses
+     * the same directory, so Logout followed by Connect was permanently broken — presenting as a
+     * QR that simply never appears, which reads as "the QR is slow" and is nothing of the kind.
+     *
+     * After the client is gone rather than before, so this is not racing the browser for the same
+     * files. `removeSessionProfile()` never throws, so it cannot stop the DISCONNECTED below.
+     */
+    await this.removeSessionProfile();
     await this.setState("DISCONNECTED");
   }
 
@@ -938,10 +1094,28 @@ export class OpenWAProvider implements WhatsAppProvider {
   private async removeSessionProfile(): Promise<void> {
     const profileDir = join(this.sessionDataPath, `_IGNORE_${this.sessionId}`);
     try {
-      await rm(profileDir, { recursive: true, force: true });
+      // `maxRetries` is exactly what ENOTEMPTY/EBUSY exists for, and this directory produces them
+      // for real: Chromium writes into its own IndexedDB while it is being torn down, so a single
+      // pass can delete a subtree and then find a file recreated underneath it. Node's default is
+      // 0 retries, which is why the library's own attempt failed.
+      await rm(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      // The session IS the profile, but the data file is what the library reads first on the next
+      // launch, and one describing a profile that no longer exists is its own kind of confusion.
+      await rm(join(this.sessionDataPath, `${this.sessionId}.data.json`), {
+        force: true,
+        maxRetries: 5,
+        retryDelay: 200,
+      });
       console.log(`[openwa] removed session profile at ${profileDir} — the next connect will ask for a fresh code`);
     } catch (err) {
-      console.error(`[openwa] could not remove the session profile at ${profileDir}`, err);
+      // Loud, because of what a survivor does. A profile left HALF-deleted rather than absent is
+      // the exact state that stops this account producing a code at all, and the symptom people
+      // report for it is "the QR does not work" — nothing points here. Naming the directory makes
+      // the manual remedy obvious; `shouldResetProfile()` is what retries it without being asked.
+      console.error(
+        `[openwa] COULD NOT REMOVE THE SESSION PROFILE at ${profileDir}. A half-deleted profile stops this account producing a QR code at all — delete this directory with the worker stopped if linking keeps failing.`,
+        err,
+      );
     }
   }
 

@@ -117,6 +117,10 @@ services:
       # you tell "WhatsApp said nothing" from "we stopped listening". The browser one was already
       # read by the provider and simply never passed through here, so it could not be switched on
       # in the deployment it exists for.
+      # Seconds WhatsApp itself may take, both for the pre-QR auth race and for the post-scan
+      # session sync. See .env.example; raising it requires raising the first-code deadline too.
+      WHATSAPP_AUTH_TIMEOUT_SECONDS: ${WHATSAPP_AUTH_TIMEOUT_SECONDS:-180}
+      WHATSAPP_FIRST_CODE_TIMEOUT_MS: ${WHATSAPP_FIRST_CODE_TIMEOUT_MS:-300000}
       WHATSAPP_DEBUG_BROWSER: ${WHATSAPP_DEBUG_BROWSER:-false}
       WHATSAPP_DEBUG_EVENTS: ${WHATSAPP_DEBUG_EVENTS:-false}
       TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL}
