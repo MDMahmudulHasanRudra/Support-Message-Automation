@@ -9,16 +9,35 @@ import type { WhatsAppAccountStatus } from "@prisma/client";
  * ARCHITECTURE.md; not touched in this phase) still drives the Accounts
  * page's status badge; these finer states are additive, via logs only.
  *
- * Honesty note: OpenWA's public API (the `create()` promise, the `qr.**`
- * event, and `onStateChanged`) does not expose a distinct callback between
- * "browser process launched" and "page finished loading WhatsApp Web", nor
- * between "QR scanned" and "fully connected" — those two pairs are only
- * observable as spinner/console output inside the library, not as events we
- * can subscribe to without patching further. STARTING/WAITING_FOR_QR are
- * logged at the call boundaries we do control; AUTHENTICATING is logged
- * immediately before CONNECTED at the point `create()` resolves, since that
- * promise only resolves after a successful scan+auth — there is no earlier
- * observable boundary between those two states via the public API.
+ * Honesty note, revised twice — and the second revision is the one that matters.
+ *
+ * It originally said that "QR scanned" was not observable through the public API, and that
+ * AUTHENTICATING immediately before CONNECTED was the earliest boundary available. That was wrong,
+ * and the gap it left was the one a person actually stands in front of.
+ *
+ * The first correction reached for the obvious candidate: 4.76.0 builds an
+ * `EvEmitter(sessionId, 'AUTH')` in `dist/controllers/browser.js`, fired when the page requests
+ * `_priority_components`. Structured, boolean, its own namespace. It also never fired once against
+ * the WhatsApp Web build actually being served — traced end to end on a real connect. Reading
+ * `dist/` establishes what a library CAN emit; only a trace establishes what it does, and the two
+ * are not the same answer. `WHATSAPP_DEBUG_EVENTS` exists so the next person can settle it in one
+ * reconnect instead of by inference.
+ *
+ * What the trace showed is that the library narrates the whole lifecycle on `STARTUP.<sessionId>`,
+ * including the moment that matters: `QrManager.smartQr` emits "QR code scanned. Loading session..."
+ * from the page's own `QR_CODE_SUCCESS` callback. That is a real signal wearing the clothes of a
+ * terminal spinner, and AUTHENTICATED below is driven from it — matched exactly, in the provider
+ * and nowhere else, degrading to no stage rather than to a wrong one. See
+ * `ACCEPTED_STARTUP_MESSAGES` in OpenWAProvider.ts.
+ *
+ * Genuinely still not observable, and now known rather than assumed:
+ *   - The boundary between "browser process launched" and "page finished loading WhatsApp Web" —
+ *     the longest part of a cold start. `BROWSER_LAUNCHED`/`WHATSAPP_WEB_LOADING` below are
+ *     declared and never written. STARTUP does narrate it ("Launching Browser", "Browser launched:
+ *     4349ms"), but as timings rather than states, and the dialog already explains that wait.
+ *   - A phone LINK CODE being accepted. `QrManager.linkCode` announces the code and then awaits
+ *     `isInsideChat`, emitting nothing in between, so that method reaches CONNECTED with no
+ *     intermediate stage. Not worked around: a fabricated "accepted" would be a claim nothing made.
  */
 export const OPENWA_CONNECTION_STATES = [
   "STARTING",
@@ -26,6 +45,13 @@ export const OPENWA_CONNECTION_STATES = [
   "WHATSAPP_WEB_LOADING",
   "WAITING_FOR_QR",
   "QR_AVAILABLE",
+  /**
+   * WhatsApp accepted the scan (or the typed link code) — see the honesty note above for how this
+   * is known rather than guessed. It sits before AUTHENTICATING because it is genuinely earlier:
+   * this fires as the page authenticates, while AUTHENTICATING is recorded once `create()` has
+   * resolved and the session is all but ready.
+   */
+  "AUTHENTICATED",
   "AUTHENTICATING",
   "CONNECTED",
   "DISCONNECTED",
@@ -42,6 +68,13 @@ function toAccountStatus(state: OpenWAConnectionState): WhatsAppAccountStatus {
     case "BROWSER_LAUNCHED":
     case "WHATSAPP_WEB_LOADING":
     case "WAITING_FOR_QR":
+    // Deliberately NOT a new WhatsAppAccountStatus member. An accepted scan is a session that
+    // still cannot carry a message, so every loop that gates on status must keep treating it
+    // exactly as it treats the rest of the connecting window — and a seventh status value would
+    // be a seventh thing for each of those `status: { in: [...] }` filters to have been told
+    // about, which is the shape of the 18 Sep 2026 outage. The progress lives in
+    // `connectionStage`, which nothing branches on.
+    case "AUTHENTICATED":
     case "AUTHENTICATING":
     case "RECONNECTING":
       return "RECONNECTING";
@@ -126,6 +159,7 @@ export async function recordConnectionState(
       where: { id: accountId },
       data: {
         status: toAccountStatus(state),
+        connectionStage: state,
         lastHeartbeatAt: new Date(),
         ...(state === "CONNECTED" ? { lastConnectedAt: new Date(), qrCode: null } : {}),
         ...(state === "QR_AVAILABLE" && qrCode ? { qrCode, qrUpdatedAt: new Date() } : {}),

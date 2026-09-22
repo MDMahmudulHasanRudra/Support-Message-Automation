@@ -116,6 +116,7 @@ export default async function AccountsPage() {
       lastConnectedAt: account.lastConnectedAt?.toISOString() ?? null,
       lastHeartbeatAt: account.lastHeartbeatAt?.toISOString() ?? null,
       sessionDataPath: account.sessionDataPath,
+      connectionStage: account.connectionStage,
       qrCode: account.qrCode,
       qrUpdatedAt,
       qrStale: isQrStale(qrUpdatedAt, nowMs),

@@ -89,6 +89,72 @@ export async function requestLogout(accountId: string): Promise<void> {
   revalidatePath("/accounts");
 }
 
+/** Everything the linking dialog needs to narrate an attempt, and nothing else. */
+export interface LinkState {
+  status: string;
+  connectionStage: string | null;
+  qrCode: string | null;
+  qrUpdatedAt: string | null;
+  pairingMethod: "QR_CODE" | "PHONE_CODE";
+  pairingPhoneNumber: string | null;
+  /** Only known once a session is live — what the dialog confirms back on success. */
+  phoneNumber: string | null;
+  /**
+   * When the worker last checked in, for anything on this account.
+   *
+   * Carried because a stage is only as current as the process that wrote it. With the worker down
+   * the poll keeps answering, keeps answering the same thing, and the dialog would go on saying
+   * "waiting for WhatsApp to hand over a code" indefinitely about a process that stopped — the
+   * exact failure the Accounts page has an alert for, hidden behind the modal sitting on top of it.
+   */
+  lastHeartbeatAt: string | null;
+}
+
+/**
+ * One account's linking state, for the dialog's own poll.
+ *
+ * The page already refreshes itself while something is in flight, but a whole-page refresh is the
+ * wrong instrument for this particular moment: it re-runs every query on the Accounts page —
+ * including the group-setup preview, which reads every group row of the connected account — so
+ * running it fast enough to feel live would multiply the heaviest thing on the page by the rate.
+ * Scanning a code is the one interaction here measured in the seconds a person spends waiting, and
+ * a three-second page poll is long enough that a successful scan reads as no reaction at all.
+ *
+ * So the dialog polls THIS instead, roughly once a second while it is open: a single indexed row
+ * read of seven columns, costing less than one of the queries the page refresh runs. The page's own
+ * refresh is left exactly as it was and still owns the card behind the dialog.
+ *
+ * A Server Action rather than a Route Handler, matching `readGroupParticipants` — this app has
+ * three Route Handlers and each is a file download, which is the one thing an action cannot do.
+ */
+export async function readLinkState(accountId: string): Promise<LinkState | null> {
+  await requireSession();
+  const account = await prisma.whatsAppAccount.findUnique({
+    where: { id: accountId },
+    select: {
+      status: true,
+      connectionStage: true,
+      qrCode: true,
+      qrUpdatedAt: true,
+      pairingMethod: true,
+      pairingPhoneNumber: true,
+      phoneNumber: true,
+      lastHeartbeatAt: true,
+    },
+  });
+  if (!account) return null;
+  return {
+    status: account.status,
+    connectionStage: account.connectionStage,
+    qrCode: account.qrCode,
+    qrUpdatedAt: account.qrUpdatedAt?.toISOString() ?? null,
+    pairingMethod: account.pairingMethod,
+    pairingPhoneNumber: account.pairingPhoneNumber,
+    phoneNumber: account.phoneNumber,
+    lastHeartbeatAt: account.lastHeartbeatAt?.toISOString() ?? null,
+  };
+}
+
 export interface AddAccountFormState {
   error?: string;
 }

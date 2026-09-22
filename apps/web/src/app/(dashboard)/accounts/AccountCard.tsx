@@ -10,9 +10,11 @@ import {
   Button,
   Card,
   ConfirmDialog,
+  StatusDot,
   useToast,
 } from "@/components/ui";
 import { QrConnectDialog, type PairingMethod } from "./QrConnectDialog";
+import { describeConnectionStage } from "@/lib/connectionStage";
 import { AccountAdvancedDialog } from "./AccountAdvancedDialog";
 
 /** What the operator should do next, per status — the card's job is to answer that, not just report state. */
@@ -54,6 +56,8 @@ export interface AccountCardData {
   lastConnectedAt: string | null;
   lastHeartbeatAt: string | null;
   sessionDataPath: string | null;
+  /** The provider's fine-grained lifecycle state. Reported to the operator; nothing branches on it. */
+  connectionStage: string | null;
   /** A QR data URL or a nine-character link code, depending on `pairingMethod`. */
   qrCode: string | null;
   qrUpdatedAt: string | null;
@@ -93,9 +97,17 @@ export function AccountCard({
   const [isPending, startTransition] = useTransition();
   const [qrOpen, setQrOpen] = useState(false);
   const previousStatus = useRef(account.status);
+  /**
+   * Set when this operator asks for a logout, so the DISCONNECTED that follows can be reported as
+   * "done" rather than mistaken for one. Not every DISCONNECTED is a completed logout — a dropped
+   * session lands on the same status — and congratulating somebody on an outage would be worse
+   * than saying nothing.
+   */
+  const logoutRequested = useRef(false);
 
   const needsScan = account.status === "AUTHENTICATION_REQUIRED";
   const isConnected = account.status === "CONNECTED";
+  const stage = describeConnectionStage(account.connectionStage);
 
   /**
    * Opens on the transition *into* a scannable state, not on every render where one exists.
@@ -106,20 +118,45 @@ export function AccountCard({
    * closing it stays closed.
    */
   useEffect(() => {
-    const wasNeedingScan = previousStatus.current === "AUTHENTICATION_REQUIRED";
-    const justStartedNeedingScan = !wasNeedingScan && account.status === "AUTHENTICATION_REQUIRED";
-    const justConnected = wasNeedingScan && account.status === "CONNECTED";
+    const previous = previousStatus.current;
+    const justStartedNeedingScan =
+      previous !== "AUTHENTICATION_REQUIRED" && account.status === "AUTHENTICATION_REQUIRED";
+    // Any pre-connected state counts as "was linking", not AUTHENTICATION_REQUIRED alone. A link
+    // code attempt passes through RECONNECTING on its way to CONNECTED and a restored session
+    // never shows a code at all, so keying the success toast to the scan state meant the two
+    // paths that do not involve staring at a QR produced no confirmation whatsoever.
+    const justConnected = previous !== "CONNECTED" && account.status === "CONNECTED";
+    const justLoggedOut =
+      logoutRequested.current && previous !== "DISCONNECTED" && account.status === "DISCONNECTED";
     previousStatus.current = account.status;
 
     if (justStartedNeedingScan) queueMicrotask(() => setQrOpen(true));
+
+    if (justLoggedOut) {
+      logoutRequested.current = false;
+      // The request toast said the worker had been ASKED. This one says it actually happened —
+      // the difference between the two is a command sitting in a queue nothing is draining, which
+      // is precisely the failure this page exists to make visible.
+      showToast({
+        tone: "success",
+        title: `${account.label} logged out`,
+        description: "The session is closed. Its groups are inactive until a number links again.",
+      });
+    }
+
     if (justConnected) {
-      showToast({ tone: "success", title: `${account.label} connected` });
+      showToast({
+        tone: "success",
+        title: `${account.label} connected`,
+        description: account.phoneNumber ? `Linked as +${account.phoneNumber}.` : undefined,
+      });
       // Left open for a beat so the success state is actually seen, rather than the dialog
-      // vanishing at the same instant the phone says "linked".
-      const timer = setTimeout(() => setQrOpen(false), 2500);
+      // vanishing at the same instant the phone says "linked". Longer than it was, because the
+      // dialog now confirms WHICH number linked and that is worth reading before it goes.
+      const timer = setTimeout(() => setQrOpen(false), 3500);
       return () => clearTimeout(timer);
     }
-  }, [account.status, account.label, showToast]);
+  }, [account.status, account.label, account.phoneNumber, showToast]);
 
   const closeDialog = () => {
     setDialog(null);
@@ -153,11 +190,12 @@ export function AccountCard({
   function confirmLogout() {
     startTransition(async () => {
       await onLogout();
+      logoutRequested.current = true;
       closeDialog();
       showToast({
-        tone: "success",
-        title: "Logout requested",
-        description: "Waiting for the worker to process it.",
+        tone: "info",
+        title: "Logging out",
+        description: "Sent to the worker. This card will confirm when the session is actually closed.",
       });
     });
   }
@@ -277,6 +315,18 @@ export function AccountCard({
         </p>
       ) : null}
 
+      {/* Where the attempt has actually got to, above the advice about the status it is inside.
+          The badge says RECONNECTING for a browser launch, a page load, a live code and an
+          accepted scan alike; this is the line that tells those four apart. Only while there is
+          something in motion — on a settled account the static hint below says it better. */}
+      {!isConnected && stage ? (
+        <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-foreground)]">
+          <StatusDot color={stage.accepted ? "green" : "blue"} pulse />
+          {stage.title}
+          <span className="font-normal text-[color:var(--color-muted-foreground)]">— {stage.detail}</span>
+        </p>
+      ) : null}
+
       {STATUS_HINT[account.status] ? (
         <p className="mt-3 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">
           {STATUS_HINT[account.status]}
@@ -288,11 +338,27 @@ export function AccountCard({
             so it is the one filled button, rather than a fifth equal-weight option. */}
         {!isConnected ? (
           <Button
+            loading={isPending}
             onClick={() => {
               // Already trying? Show the dialog so the operator can watch for the code, rather
-              // than asking them to confirm a second reconnect on top of the one in flight.
-              if (needsScan || account.status === "RECONNECTING") setQrOpen(true);
-              else setDialog("reconnect");
+              // than asking them to confirm a second reconnect on top of the one in flight —
+              // and, more importantly, rather than restarting an attempt that is mid-flight.
+              if (needsScan || account.status === "RECONNECTING") {
+                setQrOpen(true);
+                return;
+              }
+              // Otherwise: start, and open the dialog to watch it start.
+              //
+              // This used to raise "Reconnect this account? Sends a reconnect command to the
+              // worker." — a confirmation in front of the one action the page exists for, on an
+              // account that is not connected, describing the mechanism rather than the outcome.
+              // Nothing here is destructive: it launches a browser. The Reconnect button beside it
+              // keeps its confirmation, because on a LIVE session that one really does interrupt
+              // something.
+              setQrOpen(true);
+              startTransition(async () => {
+                await onReconnect();
+              });
             }}
           >
             <QrCode className="size-3.5" aria-hidden />

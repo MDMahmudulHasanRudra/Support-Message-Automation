@@ -61,11 +61,30 @@ describe("the QR is rendered black, not taken from WhatsApp's coloured canvas", 
     expect(source).toContain("if (generation !== this.attemptGeneration) return;");
   });
 
-  it("the QR listeners are attached once per provider, not once per attempt", () => {
+  it("the session listeners are attached once per provider, not once per attempt", () => {
     // Registered inside openSession() they accumulated on the library's process-global emitter,
     // one live handler per reconnect, each rewriting the same row on every rotation.
-    expect(source).toContain("if (this.qrListenersAttached) return;");
-    expect(source).toContain("this.qrListenersAttached = true;");
+    expect(source).toContain("if (this.sessionListenersAttached) return;");
+    expect(source).toContain("this.sessionListenersAttached = true;");
+  });
+
+  it("the accepted-scan moment is taken from the library, not inferred", () => {
+    // What turns "you scanned it and nothing on screen changed" into feedback. If this listener
+    // ever goes, the dialog silently reverts to having nothing to say between the code being shown
+    // and the session being ready — which reads as a dead code, and is what people press "request
+    // a new code" over, cancelling the attempt that was about to succeed.
+    expect(source).toContain('ev.on("STARTUP.**"');
+    expect(source).toContain('this.setState("AUTHENTICATED")');
+  });
+
+  it("the accepted-scan message is matched WHOLE, never as a substring", () => {
+    // The library's own copy, so the match has to fail safe. "Authenticating" and "Authenticated"
+    // differ by two characters and mean opposite things — a substring match on the shorter one
+    // would report an accepted scan the moment the attempt STARTED authenticating, which is before
+    // any code has even been shown. `Set.has` on a trimmed string cannot do that: a reworded
+    // message simply stops matching.
+    expect(source).toContain("ACCEPTED_STARTUP_MESSAGES.has(message.trim())");
+    expect(source).toContain('"QR code scanned. Loading session..."');
   });
 });
 

@@ -129,6 +129,16 @@ export async function reconcileAccountStatusesOnBoot(): Promise<number> {
     data: { qrCode: null, qrUpdatedAt: null },
   });
 
+  // The stage goes with the QR, and for the same reason: it describes where an attempt had got to
+  // in a process that no longer exists. Left behind, a card would report "WhatsApp accepted the
+  // link — getting the session ready" about a session that died mid-sentence, which is the single
+  // most misleading thing this column could say. Separate from the QR sweep above because a stage
+  // outlives the code — an attempt that authenticated has already had its QR cleared.
+  await prisma.whatsAppAccount.updateMany({
+    where: { connectionStage: { not: null } },
+    data: { connectionStage: null },
+  });
+
   if (stale.count > 0) {
     console.log(`[recovery] reset ${stale.count} account(s) from a status left behind by the previous process`);
     await logSystemEvent("INFO", "worker", "Reset connection status left behind by the previous process", {

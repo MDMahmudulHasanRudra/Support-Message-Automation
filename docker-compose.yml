@@ -111,6 +111,14 @@ services:
       WHATSAPP_USE_STEALTH: ${WHATSAPP_USE_STEALTH:-true}
       WHATSAPP_CUSTOM_USER_AGENT: ${WHATSAPP_CUSTOM_USER_AGENT}
       WHATSAPP_GROUP_SYNC_TIMEOUT_MS: ${WHATSAPP_GROUP_SYNC_TIMEOUT_MS:-150000}
+      # Two diagnostics, both off by default and both for the same class of problem: a session that
+      # looks healthy while nothing arrives. WHATSAPP_DEBUG_BROWSER turns on the library's own
+      # console/screenshot capture; WHATSAPP_DEBUG_EVENTS prints every event it raises, which is how
+      # you tell "WhatsApp said nothing" from "we stopped listening". The browser one was already
+      # read by the provider and simply never passed through here, so it could not be switched on
+      # in the deployment it exists for.
+      WHATSAPP_DEBUG_BROWSER: ${WHATSAPP_DEBUG_BROWSER:-false}
+      WHATSAPP_DEBUG_EVENTS: ${WHATSAPP_DEBUG_EVENTS:-false}
       TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL}
       WHATSAPP_NOTIFICATION_GROUP_ID: ${WHATSAPP_NOTIFICATION_GROUP_ID}
       # Needed by packages/ai-client's resolveAiClient() to decrypt a stored AiProvider API key

@@ -1,0 +1,14 @@
+-- The fine-grained connection state, so the dashboard can say WHERE a connection attempt is
+-- rather than only that one is under way.
+--
+-- `status` stays exactly as it was and remains the only column anything branches on. It is
+-- deliberately coarse: six of the provider's lifecycle states collapse into RECONNECTING, which
+-- is correct for the watchdog, the outbound queue and the recovery loops — they care whether a
+-- session can carry a message, not how far along it is. The cost of that collapse lands entirely
+-- on the person standing in front of the screen: having just scanned a code, they see the same
+-- word they saw before scanning, and cannot tell "WhatsApp accepted it" from "nothing happened".
+--
+-- Nullable with no default and no backfill: every existing row predates this, and inventing a
+-- stage for an attempt nobody observed would be a fact this system does not have. Null reads as
+-- "no stage recorded", which is exactly what it is.
+ALTER TABLE "WhatsAppAccount" ADD COLUMN "connectionStage" TEXT;

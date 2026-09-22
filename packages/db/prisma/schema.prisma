@@ -626,6 +626,17 @@ model WhatsAppAccount {
   label           String
   phoneNumber     String?
   status          WhatsAppAccountStatus @default(DISCONNECTED)
+  /// Where the current connection attempt has got to, one of `OPENWA_CONNECTION_STATES`
+  /// (apps/worker/src/provider/openwa/connectionState.ts). Reported to the operator, never
+  /// branched on — `status` above is the coarse column every loop, queue and health check reads,
+  /// and it stays the single source of truth for whether this session can carry a message.
+  ///
+  /// It exists because that coarse column collapses six lifecycle states into RECONNECTING, which
+  /// leaves the one moment a person is actually watching — the seconds between scanning a code and
+  /// the session being usable — reported with the same word as the minute before they scanned.
+  /// Null when no attempt has been recorded; cleared at boot with the QR, since a stage describes
+  /// an attempt that died with the previous process.
+  connectionStage String?
   /// Whatever the current pairing attempt produced, written by the worker and polled by the
   /// dashboard. Its SHAPE depends on `pairingMethod`: a `data:image/png` URL for a QR code, or a
   /// nine-character link code ("ABCD-EFGH") for phone pairing. One column for both because the

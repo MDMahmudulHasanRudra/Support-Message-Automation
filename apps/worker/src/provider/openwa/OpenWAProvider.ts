@@ -256,6 +256,25 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
  */
 const ABANDONED = "OPENWA_ATTEMPT_ABANDONED";
 
+/**
+ * The exact messages `@open-wa/wa-automate` 4.76.0 emits on `STARTUP.<sessionId>` at the moment a
+ * pairing is accepted. Exact strings, matched whole — see the listener that reads them for why
+ * this is a deliberate trade rather than an oversight.
+ *
+ * The first comes from `QrManager.smartQr` and is a genuine QR scan. The second comes from
+ * `initializer.js`'s `if (authenticated)` branch and is a session restored from stored data, where
+ * nobody scanned anything — the stage is equally true there, and CONNECTED follows within seconds.
+ *
+ * There is deliberately no entry for the phone-link-code path: `QrManager.linkCode` announces the
+ * code and then simply awaits `isInsideChat`, emitting nothing when the code is accepted. Inventing
+ * an entry for it would put a "Code accepted" panel on screen at a moment nothing has confirmed,
+ * which is the one mistake here that would send somebody away from a screen they still need.
+ */
+const ACCEPTED_STARTUP_MESSAGES = new Set([
+  "QR code scanned. Loading session...",
+  "Authenticated",
+]);
+
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
   private state: OpenWAConnectionState = "DISCONNECTED";
@@ -312,7 +331,7 @@ export class OpenWAProvider implements WhatsAppProvider {
   private abandonAttempt: ((reason: Error) => void) | null = null;
 
   /**
-   * The QR listeners are attached ONCE per provider, not once per attempt.
+   * The QR and AUTH listeners are attached ONCE per provider, not once per attempt.
    *
    * They used to be registered inside `openSession()`, which runs on every connect — and `ev` is
    * the library's process-global emitter with no removal anywhere here, so a number that had
@@ -321,7 +340,7 @@ export class OpenWAProvider implements WhatsAppProvider {
    * writes a minute, growing for the lifetime of the process, plus EventEmitter2's own
    * max-listener warning once it passes ten.
    */
-  private qrListenersAttached = false;
+  private sessionListenersAttached = false;
 
   /** Which linking method THIS attempt asked for — the two events mean different things per mode. */
   private pairingMode: "QR_CODE" | "PHONE_CODE" = "QR_CODE";
@@ -341,7 +360,7 @@ export class OpenWAProvider implements WhatsAppProvider {
    * than a wrong QR: the plain-text link-code panel rendered the raw `data:image/png;base64,…`
    * string one character per box, since it trusted whatever `qrCode` held.
    *
-   * The listeners are attached once and outlive every attempt (see `qrListenersAttached`), so this
+   * The listeners are attached once and outlive every attempt (see `sessionListenersAttached`), so this
    * cannot be a local variable in `openSession()` — every event handler reads it fresh at the
    * moment it actually writes, which is the only moment that matters.
    */
@@ -384,11 +403,33 @@ export class OpenWAProvider implements WhatsAppProvider {
    * A link-code attempt takes the other branch untouched: for it both events carry the bare
    * nine-character code rather than an image, and there is nothing to draw.
    *
-   * Attached once per provider. See `qrListenersAttached`.
+   * Attached once per provider. See `sessionListenersAttached`.
    */
-  private attachQrListeners(): void {
-    if (this.qrListenersAttached) return;
-    this.qrListenersAttached = true;
+  private attachSessionListeners(): void {
+    if (this.sessionListenersAttached) return;
+    this.sessionListenersAttached = true;
+
+    /**
+     * Every event the library raises, printed, when `WHATSAPP_DEBUG_EVENTS=true`.
+     *
+     * Off by default and deliberately not clever: `ev` is an undocumented process-global bus whose
+     * membership is set by whatever version of the library is installed, and the questions it
+     * answers are the ones this module keeps producing — "did WhatsApp tell us anything at all, or
+     * did we simply stop listening?". Working that out by reading `dist/` establishes what the
+     * library COULD emit; only this establishes what it DOES, against the WhatsApp Web build
+     * actually being served today.
+     *
+     * The QR payload is a tens-of-kilobytes data string reissued every twenty seconds, so it is
+     * summarised rather than printed — the same reason `recordConnectionState` keeps it out of
+     * SystemLog.
+     */
+    if (process.env.WHATSAPP_DEBUG_EVENTS === "true") {
+      ev.on("**", (data: unknown, sessionId: string, namespace: string) => {
+        const summary =
+          typeof data === "string" ? (data.length > 60 ? `<${data.length} chars>` : data) : typeof data;
+        console.log(`[openwa:ev] ${namespace}.${sessionId} ${summary}`);
+      });
+    }
 
     ev.on("qrData.**", (payload: string, sessionId: string) => {
       if (sessionId !== this.sessionId) return;
@@ -414,6 +455,62 @@ export class OpenWAProvider implements WhatsAppProvider {
       if (this.renderedQrPayload) return;
       this.cancelFirstCodeDeadline?.();
       this.writeQrState(generation, { qrLength: value.length, rendered: false }, value);
+    });
+
+    /**
+     * The moment WhatsApp accepts the scan.
+     *
+     * This is the one part of linking a person is actually watching, and until this listener
+     * existed it was the only part the dashboard could say nothing about: the account's coarse
+     * status reads RECONNECTING before the scan and RECONNECTING after it, so somebody who had
+     * just held their phone up to the screen saw no change at all, and no way to tell a successful
+     * scan from a dead code.
+     *
+     * WHY THIS EVENT, AND NOT THE STRUCTURED ONE. 4.76.0 also builds an `EvEmitter(sessionId,
+     * 'AUTH')` in `dist/controllers/browser.js`, fired when the page requests
+     * `_priority_components`. It is a boolean on a namespace of its own and it looked like the
+     * obvious choice — so it was implemented first, and then it did not fire once against the
+     * WhatsApp Web build being served (traced end to end with `WHATSAPP_DEBUG_EVENTS`, which
+     * exists because of this). Reading `dist/` establishes what the library CAN emit; only a trace
+     * establishes what it does. This is what it does, from `QrManager.smartQr`:
+     *
+     *     if (!gotResult && (qrData === 'QR_CODE_SUCCESS' || qrData === md)) {
+     *       spinner?.succeed("QR code scanned. Loading session...");
+     *
+     * — the page's own `QR_CODE_SUCCESS` callback, surfaced only as the text of a terminal
+     * spinner. `Spin` extends `EvEmitter`, so it reaches the same bus as `qr.**`.
+     *
+     * CONSUMING ANOTHER PACKAGE'S CONSOLE COPY IS A REAL COST, and it is accepted here on three
+     * conditions. It is matched EXACTLY rather than by substring, so a reworded message stops
+     * matching instead of matching the wrong thing — "Authenticating" and "Authenticated" differ
+     * by two characters and mean opposite things. It is confined to this adapter, which is the
+     * only file allowed to know what OpenWA is; everything above reads `connectionStage`. And
+     * failure is degradation, not breakage: an unmatched message costs the accepted-scan panel and
+     * nothing else, leaving exactly the behaviour that shipped before this — a code on screen
+     * until CONNECTED arrives.
+     *
+     * Deliberately NOT generation-guarded, because it cannot honestly be. The handler runs
+     * synchronously at fire time, so re-reading `attemptGeneration` inside it always yields the
+     * current one whichever attempt the event actually came from, and the bus carries no attempt
+     * identity to compare against — only a session id, which is per-provider and constant across
+     * attempts. An abandoned attempt's Chromium is orphaned rather than killed (see
+     * `abandonAttempt`), so it genuinely can reach this later. What that costs is bounded and
+     * self-correcting: the stage reads AUTHENTICATED for a moment during a live attempt, `status`
+     * is untouched, and the next real transition overwrites it. A guard that looked like the QR
+     * one but checked nothing would be worse than none — the next reader would believe it.
+     *
+     * It never claims CONNECTED. The session still has to load, and `create()` resolving remains
+     * the only thing that proves it can carry a message.
+     */
+    ev.on("STARTUP.**", (message: unknown, sessionId: string) => {
+      if (sessionId !== this.sessionId) return;
+      if (typeof message !== "string") return;
+      if (!ACCEPTED_STARTUP_MESSAGES.has(message.trim())) return;
+      // An accepted scan is plainly not an attempt that failed to produce a code.
+      this.cancelFirstCodeDeadline?.();
+      // Never walk a live session backwards.
+      if (this.state === "CONNECTED") return;
+      this.setState("AUTHENTICATED").catch(() => undefined);
     });
   }
 
@@ -479,7 +576,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     const pairing = await readPairingPreference(this.accountId);
     this.pairingMode = pairing.method;
     this.renderedQrPayload = null;
-    this.attachQrListeners();
+    this.attachSessionListeners();
     const proxy = await readProxyConfig(this.accountId);
 
     await this.setState("WAITING_FOR_QR");
