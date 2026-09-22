@@ -512,6 +512,30 @@ export class OpenWAProvider implements WhatsAppProvider {
           authTimeout: 120,
           popup: false,
           cacheEnabled: false,
+          /**
+           * Why a QR took so long to appear.
+           *
+           * Before showing a code, the library calls `getPatch()`, which does
+           * `axios.get('https://raw.githubusercontent.com/.../patches.json')` — and on failure
+           * retries the same host. That call carries **no timeout**, so axios falls back to the
+           * OS TCP timeout: on a connection where GitHub is slow or filtered, the connect simply
+           * sits there, and every second of it is spent before a QR can be rendered. From this
+           * deployment's network that is the dominant cost of linking a number, not Chromium.
+           *
+           * `cachedPatch` changes the shape rather than the speed. With a cached copy present the
+           * library returns it immediately and pushes the fresh download onto a background queue
+           * (`queue.add(freshPatchFetchPromise)`) instead of awaiting it — so the QR appears at
+           * once and the patches still refresh. The cache is written to `process.cwd()`, which
+           * `openSession()` has already chdir'd to the account's own session directory, so it
+           * lands on the persistent volume and survives restarts. It is ignored once a day old,
+           * which is the library's own staleness bound, not ours.
+           *
+           * The first connect after a fresh volume still pays the download once. Everything after
+           * it does not.
+           */
+          cachedPatch: true,
+          /** One npm round trip per connect, for a number nothing here acts on. */
+          skipUpdateCheck: true,
           // Selects WhatsApp's "Link with phone number" flow instead of the QR. The library's
           // initializer races one or the other and never both —
           // `if (config?.linkCode) race.push(qrManager.linkCode(...)) else race.push(smartQr(...))`
