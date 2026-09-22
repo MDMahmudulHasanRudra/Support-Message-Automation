@@ -734,8 +734,46 @@ export class OpenWAProvider implements WhatsAppProvider {
         console.error("[openwa] logout() call failed or timed out — still tearing down the local session", err);
       }
       this.client = null;
+    } else {
+      // No client, and this is the case that mattered.
+      //
+      // `client.logout()` is what invalidated the stored session, so with no client this method
+      // used to set a status and nothing else — the session on disk survived untouched. That is
+      // precisely the state an operator reaches after a QR is shown and never scanned: `create()`
+      // never resolved, so `this.client` is still null, while the profile it half-wrote stays
+      // behind and wedges every following attempt. Logout was the one control that should have
+      // cleared it, and it was the one control that could not.
+      //
+      // So do the invalidation ourselves. Removing the profile IS the logout here: the session is
+      // not a small credentials file beside the profile, it is the profile — the whole Chromium
+      // directory holding the cookies, local storage and IndexedDB that keep WhatsApp Web signed
+      // in (verified against the mounted volume; see this class's own notes). Logout already
+      // promises the next connect needs a fresh scan, so deleting it takes nothing a caller
+      // expected to keep.
+      await this.removeSessionProfile();
     }
     await this.setState("DISCONNECTED");
+  }
+
+  /**
+   * Deletes the Chromium profile that holds this session.
+   *
+   * Only ever called from `logout()` — never from `disconnect()`, which exists to drop a session
+   * that is expected to be reusable immediately afterwards, and would turn a routine reconnect
+   * into a forced re-scan.
+   *
+   * Never throws: a logout that cannot delete the folder must still land on DISCONNECTED, because
+   * refusing to change state would leave the operator with no working control at all — which is
+   * the situation this whole method exists to end.
+   */
+  private async removeSessionProfile(): Promise<void> {
+    const profileDir = join(this.sessionDataPath, `_IGNORE_${this.sessionId}`);
+    try {
+      await rm(profileDir, { recursive: true, force: true });
+      console.log(`[openwa] removed session profile at ${profileDir} — the next connect will ask for a fresh code`);
+    } catch (err) {
+      console.error(`[openwa] could not remove the session profile at ${profileDir}`, err);
+    }
   }
 
   getConnectionStatus(): ConnectionStatus {
