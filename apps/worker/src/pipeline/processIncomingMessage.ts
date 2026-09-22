@@ -203,6 +203,65 @@ export async function runAutomationStage(
       console.error("[team-attendance] failed to record attendance evidence", err);
     }
 
+    /**
+     * Only the Primary account answers customers.
+     *
+     * Every connected account collects messages, and every one of them could also reply — so
+     * connecting a second number silently doubled the voices answering in any group both were in,
+     * and a spare number linked just to watch the inbox would start speaking to customers on its
+     * own. One number is the support number; the rest are there to read.
+     *
+     * The gate sits HERE, immediately before the rules are read, because this is the one seam both
+     * reply paths cross: the deterministic rule's AUTO_REPLY and, on a rule-miss, the AI fallback.
+     * Everything above it — escalation, support activity, attendance — is evidence-gathering that
+     * must keep running for every account, or a non-Primary number would stop counting somebody's
+     * work simply because it does not reply.
+     *
+     * Deliberately NOT a re-route to the Primary account. WhatsApp group membership is per number,
+     * so an account that is not in that group fails `verifyGroupMembership` at the queue and the
+     * customer gets nothing at all — a redirect would turn "the wrong number answered" into
+     * "nobody answered", silently. Suppressing is the honest reading of "only Primary replies":
+     * the message is still stored, still appears in the inbox, and still counts as waiting for a
+     * human.
+     *
+     * With NO Primary set at all, this gate stands aside and the receiving account answers as it
+     * always did. That is the deliberate half, and it is the opposite of what "only Primary
+     * replies" first suggests: the rule exists to stop a SECOND number joining in, not to make a
+     * missing setting silently switch customer replies off everywhere. A deployment that has never
+     * touched the setting — or one where somebody pressed Remove Primary — would otherwise go
+     * quiet across every group with nothing on screen explaining it, which is a worse failure than
+     * the one being prevented. Exactly one account can be Primary (the database enforces it), so
+     * once one is set the rule is unambiguous.
+     */
+    const primaryAccount = await prisma.whatsAppAccount.findFirst({
+      where: { isPrimary: true },
+      select: { id: true, label: true },
+    });
+    if (primaryAccount && primaryAccount.id !== raw.accountId) {
+      const why = `it arrived on an account that is not Primary ("${primaryAccount.label}" is).`;
+      traceStage(traceId, "AUTOMATION_RULE_CHECK", { matched: false, matchedRuleType: null });
+      // Settled exactly as the ordinary no-match path does: PROCESSED, and the checkpoint moved.
+      // Leaving it PENDING would make `recoverStrandedMessages` re-run it every few hours, and the
+      // checkpoint is what `catchUpMissedMessages` reads to know where a gap begins — a message
+      // this worker genuinely saw and decided about must not look like one it missed.
+      await prisma.message.update({
+        where: { id: message.id },
+        data: { processingStatus: "PROCESSED" },
+      });
+      countMetric("processed");
+      await prisma.processingCheckpoint.upsert({
+        where: { accountId: raw.accountId },
+        update: { lastProcessedMessageId: message.id, lastProcessedTimestampWa: raw.timestampWa },
+        create: {
+          accountId: raw.accountId,
+          lastProcessedMessageId: message.id,
+          lastProcessedTimestampWa: raw.timestampWa,
+        },
+      });
+      console.log(`[pipeline] [${traceId}] AUTOMATION_SKIPPED_NOT_PRIMARY ${why}`);
+      return;
+    }
+
     const activeRuleRows = await prisma.automationRule.findMany({ where: { status: "ACTIVE" } });
     const rules: EngineRule[] = activeRuleRows.map(toEngineRule);
     const ruleRowById = new Map(activeRuleRows.map((r) => [r.id, r]));
