@@ -249,12 +249,16 @@ const MAX_SELECT_ALL_GROUP_IDS = 5000;
 export async function selectAllMatchingGroupIds(
   search: string,
   filter: string,
+  accountId?: string | null,
 ): Promise<{ ids: string[]; truncated: boolean }> {
   await requireSession();
   const safeFilter: GroupFilterKey = isGroupFilterKey(filter) ? filter : "all";
 
   const rows = await prisma.whatsAppGroup.findMany({
-    where: buildGroupWhere(typeof search === "string" ? search : "", safeFilter),
+    // The account narrowing goes through the SAME builder as the page's own query, so "select all
+    // 312 matching" cannot quietly reach groups belonging to a number the operator had filtered
+    // out — which is the one mistake a widened selection must never make.
+    where: buildGroupWhere(typeof search === "string" ? search : "", safeFilter, accountId ?? null),
     select: { id: true },
     // Same order as the list, so "the first 5,000" means the first 5,000 the operator would see.
     orderBy: { name: "asc" },

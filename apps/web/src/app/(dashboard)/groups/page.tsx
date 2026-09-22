@@ -14,6 +14,7 @@ import {
   NoFilterResults,
   PageHeader,
   Pagination,
+  Select,
   type ActiveFilter,
 } from "@/components/ui";
 import {
@@ -31,6 +32,7 @@ type FilterKey = GroupFilterKey;
 
 interface GroupsSearchParams {
   search?: string;
+  accountId?: string;
   filter?: string;
   page?: string;
   pageSize?: string;
@@ -41,6 +43,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
   const params = await searchParams;
   const filter: FilterKey = isFilterKey(params.filter) ? params.filter : "all";
   const search = (params.search ?? "").trim();
+  const accountId = (params.accountId ?? "").trim() || null;
   const page = Math.max(1, Number(params.page ?? "1") || 1);
   const requestedPageSize = Number(params.pageSize ?? DEFAULT_PAGE_SIZE);
   const PAGE_SIZE = PAGE_SIZE_OPTIONS.includes(requestedPageSize as (typeof PAGE_SIZE_OPTIONS)[number])
@@ -49,8 +52,8 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
 
   // Both come from lib/groupFilters, which `selectAllMatchingGroupIds` also reads — so "select all
   // 1,798 matching" can never resolve to a different 1,798 than this page counted and rendered.
-  const searchOnlyWhere = buildGroupSearchWhere(search);
-  const where = buildGroupWhere(search, filter);
+  const searchOnlyWhere = buildGroupSearchWhere(search, accountId);
+  const where = buildGroupWhere(search, filter, accountId);
 
   const [
     groups,
@@ -62,6 +65,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
     inactiveCount,
     teamMembers,
     aiSettings,
+    accounts,
   ] = await Promise.all([
     prisma.whatsAppGroup.findMany({
       where,
@@ -87,7 +91,12 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
       create: { id: "global" },
       select: { aiAutomationScope: true },
     }),
+    // Every account, not only connected ones: a disconnected number's groups are still listed and
+    // still need filtering to, and hiding it would make its rows unreachable by account.
+    prisma.whatsAppAccount.findMany({ select: { id: true, label: true, isPrimary: true }, orderBy: { label: "asc" } }),
   ]);
+
+  const selectedAccount = accountId ? accounts.find((a) => a.id === accountId) ?? null : null;
 
   const aiScopeIsGlobal = aiSettings.aiAutomationScope === "ALL_MONITORED_GROUPS";
 
@@ -96,17 +105,24 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
   // needs answered.
   const activeFilters: ActiveFilter[] = [];
   if (search) {
-    activeFilters.push({ label: "Search", value: search, removeHref: buildHref("", filter, 1, PAGE_SIZE) });
+    activeFilters.push({ label: "Search", value: search, removeHref: buildHref("", filter, 1, PAGE_SIZE, accountId ?? "") });
+  }
+  if (selectedAccount) {
+    activeFilters.push({
+      label: "Account",
+      value: selectedAccount.label,
+      removeHref: buildHref(search, filter, 1, PAGE_SIZE, ""),
+    });
   }
   if (filter !== "all") {
     activeFilters.push({
       label: "Showing",
       value: FILTER_LABELS[filter],
-      removeHref: buildHref(search, "all", 1, PAGE_SIZE),
+      removeHref: buildHref(search, "all", 1, PAGE_SIZE, accountId ?? ""),
     });
   }
   // Page size survives a clear — it is how the operator reads the list, not part of what they asked for.
-  const clearAllHref = buildHref("", "all", 1, PAGE_SIZE);
+  const clearAllHref = buildHref("", "all", 1, PAGE_SIZE, accountId ?? "");
 
   const rows: GroupRow[] = groups.map((g) => ({
     id: g.id,
@@ -195,6 +211,19 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
       <FilterBar>
         <form className="flex flex-wrap items-end gap-2" method="GET">
           <Input name="search" placeholder="Search group name…" defaultValue={search} className="w-64" />
+          {/* Only worth the space once there is more than one number — with a single account every
+              row belongs to it, and a picker offering one choice is furniture. */}
+          {accounts.length > 1 ? (
+            <Select name="accountId" defaultValue={accountId ?? ""} className="w-48" aria-label="Filter by account">
+              <option value="">All accounts</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                  {a.isPrimary ? " — Primary" : ""}
+                </option>
+              ))}
+            </Select>
+          ) : null}
           <input type="hidden" name="filter" value={filter} />
           <Button type="submit" size="sm">
             <Search className="size-3.5" aria-hidden />
@@ -202,20 +231,20 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
           </Button>
         </form>
         <div className="flex flex-wrap gap-1.5">
-          <FilterChip href={buildHref(search, "all")} active={filter === "all"} label={`All (${allCount})`} />
+          <FilterChip href={buildHref(search, "all", 1, PAGE_SIZE, accountId ?? "")} active={filter === "all"} label={`All (${allCount})`} />
           <FilterChip
-            href={buildHref(search, "monitored")}
+            href={buildHref(search, "monitored", 1, PAGE_SIZE, accountId ?? "")}
             active={filter === "monitored"}
             label={`Monitored (${monitoredCount})`}
           />
           <FilterChip
-            href={buildHref(search, "unmonitored")}
+            href={buildHref(search, "unmonitored", 1, PAGE_SIZE, accountId ?? "")}
             active={filter === "unmonitored"}
             label={`Not Monitored (${unmonitoredCount})`}
           />
-          <FilterChip href={buildHref(search, "active")} active={filter === "active"} label={`Active (${activeCount})`} />
+          <FilterChip href={buildHref(search, "active", 1, PAGE_SIZE, accountId ?? "")} active={filter === "active"} label={`Active (${activeCount})`} />
           <FilterChip
-            href={buildHref(search, "inactive")}
+            href={buildHref(search, "inactive", 1, PAGE_SIZE, accountId ?? "")}
             active={filter === "inactive"}
             label={`Inactive (${inactiveCount})`}
           />
@@ -247,6 +276,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
             totalMatching={totalCount}
             search={search}
             filter={filter}
+            accountId={accountId}
           />
           {/* The page-size control lives here now rather than inside the table: it belonged to the
               pagination bar all along, and having it in both places meant two differently-shaped
@@ -255,9 +285,9 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
             page={page}
             pageSize={PAGE_SIZE}
             total={totalCount}
-            buildHref={(p) => buildHref(search, filter, p, PAGE_SIZE)}
+            buildHref={(p) => buildHref(search, filter, p, PAGE_SIZE, accountId ?? "")}
             pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
-            buildPageSizeHref={(size) => buildHref(search, filter, 1, size)}
+            buildPageSizeHref={(size) => buildHref(search, filter, 1, size, accountId ?? "")}
             sticky
           />
         </>
@@ -277,12 +307,19 @@ const FILTER_LABELS: Record<FilterKey, string> = {
   inactive: "Inactive",
 };
 
-function buildHref(search: string, filter: FilterKey, page = 1, pageSize = DEFAULT_PAGE_SIZE): string {
+function buildHref(
+  search: string,
+  filter: FilterKey,
+  page = 1,
+  pageSize = DEFAULT_PAGE_SIZE,
+  accountId = "",
+): string {
   const qs = new URLSearchParams();
   if (search) qs.set("search", search);
   qs.set("filter", filter);
   if (page > 1) qs.set("page", String(page));
   if (pageSize !== DEFAULT_PAGE_SIZE) qs.set("pageSize", String(pageSize));
+  if (accountId) qs.set("accountId", accountId);
   return `/groups?${qs.toString()}`;
 }
 

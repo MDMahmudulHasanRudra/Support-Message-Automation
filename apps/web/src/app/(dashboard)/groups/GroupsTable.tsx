@@ -82,6 +82,7 @@ export function GroupsTable({
   totalMatching,
   search,
   filter,
+  accountId,
 }: {
   groups: GroupRow[];
   teamMembers?: TeamMemberOption[];
@@ -90,6 +91,9 @@ export function GroupsTable({
   /** The list's current filter state, passed back to the server to resolve a widened selection. */
   search: string;
   filter: string;
+  /** Which account the list is narrowed to, or null for all. Part of the same filter state — a
+   *  widened selection that ignored it would reach groups the operator had filtered out. */
+  accountId: string | null;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -154,7 +158,7 @@ export function GroupsTable({
     setWidenNotice(null);
     void (async () => {
       try {
-        const { ids, truncated } = await selectAllMatchingGroupIds(search, filter);
+        const { ids, truncated } = await selectAllMatchingGroupIds(search, filter, accountId);
         setSelected(new Set(ids));
         setAllMatchingSelected(true);
         if (truncated) {

@@ -26,11 +26,19 @@ export function isGroupFilterKey(value: string | undefined): value is GroupFilte
   return (GROUP_FILTER_KEYS as readonly string[]).includes(value ?? "");
 }
 
-/** The search half on its own — the filter chips' counts are computed against this, so each says
- *  how many match *within the current search* rather than across the whole table. */
-export function buildGroupSearchWhere(search: string): Prisma.WhatsAppGroupWhereInput {
+/**
+ * The narrowing that is NOT the status chips: the search box and the account picker.
+ *
+ * The chips' own counts are computed against this, so each says how many match *within the current
+ * search and account* rather than across the whole table — otherwise picking one account would
+ * leave "Monitored (312)" counting groups belonging to a different number.
+ */
+export function buildGroupSearchWhere(search: string, accountId?: string | null): Prisma.WhatsAppGroupWhereInput {
   const trimmed = search.trim();
-  return trimmed ? { name: { contains: trimmed, mode: "insensitive" } } : {};
+  return {
+    ...(trimmed ? { name: { contains: trimmed, mode: "insensitive" as const } } : {}),
+    ...(accountId ? { accountId } : {}),
+  };
 }
 
 /**
@@ -38,8 +46,12 @@ export function buildGroupSearchWhere(search: string): Prisma.WhatsAppGroupWhere
  * expressed as one chip list: "active" means the account is still a member of the group, while
  * "monitored" means an admin opted it into automation. Never conflate them.
  */
-export function buildGroupWhere(search: string, filter: GroupFilterKey): Prisma.WhatsAppGroupWhereInput {
-  const where: Prisma.WhatsAppGroupWhereInput = { ...buildGroupSearchWhere(search) };
+export function buildGroupWhere(
+  search: string,
+  filter: GroupFilterKey,
+  accountId?: string | null,
+): Prisma.WhatsAppGroupWhereInput {
+  const where: Prisma.WhatsAppGroupWhereInput = { ...buildGroupSearchWhere(search, accountId) };
   if (filter === "monitored") where.isMonitored = true;
   if (filter === "unmonitored") where.isMonitored = false;
   if (filter === "active") where.isActive = true;
