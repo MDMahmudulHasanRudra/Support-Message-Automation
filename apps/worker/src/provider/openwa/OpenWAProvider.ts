@@ -329,6 +329,24 @@ export class OpenWAProvider implements WhatsAppProvider {
   /** The raw payload we last rendered ourselves, so the library's own image stays a fallback. */
   private renderedQrPayload: string | null = null;
   /**
+   * Bumped once at the start of every `openSession()` call — the ownership token that stops a
+   * finished attempt from writing over a newer one.
+   *
+   * This was a real, reproducible bug: `publishRenderedQr` renders the QR image with `await
+   * renderQrDataUrl(...)`, which is not instant, and nothing re-checked whether the attempt it was
+   * rendering FOR was still the current one by the time that render finished. If a new attempt
+   * started in that gap — a retry, or an operator switching to the phone-number tab — its correct
+   * code could be overwritten a moment later by the STALE attempt's image finishing its render, and
+   * the dialog would show it, wrongly, as if it were current. What reached the screen was worse
+   * than a wrong QR: the plain-text link-code panel rendered the raw `data:image/png;base64,…`
+   * string one character per box, since it trusted whatever `qrCode` held.
+   *
+   * The listeners are attached once and outlive every attempt (see `qrListenersAttached`), so this
+   * cannot be a local variable in `openSession()` — every event handler reads it fresh at the
+   * moment it actually writes, which is the only moment that matters.
+   */
+  private attemptGeneration = 0;
+  /**
    * Called by whichever code path first publishes a code for the attempt in flight, to cancel the
    * "no code ever appeared" deadline below. Set per attempt, cleared when the attempt settles.
    */
@@ -376,29 +394,45 @@ export class OpenWAProvider implements WhatsAppProvider {
       if (sessionId !== this.sessionId) return;
       if (this.pairingMode === "PHONE_CODE") return; // the code itself, handled below
       if (typeof payload !== "string" || !payload) return;
-      void this.publishRenderedQr(payload);
+      // Captured NOW, not read again after the render — see attemptGeneration's own doc comment.
+      void this.publishRenderedQr(payload, this.attemptGeneration);
     });
 
     ev.on("qr.**", (value: string, sessionId: string) => {
       if (sessionId !== this.sessionId) return;
       if (typeof value !== "string" || !value) return;
+      const generation = this.attemptGeneration;
       // A link code is not an image — pass it through exactly as before.
       if (this.pairingMode === "PHONE_CODE") {
         // A code exists, so the attempt is now waiting on a person rather than stalled.
         this.cancelFirstCodeDeadline?.();
-        this.setState("QR_AVAILABLE", { qrLength: value.length }, value).catch(() => undefined);
+        this.writeQrState(generation, { qrLength: value.length }, value);
         return;
       }
       // Fallback only. If our own render already published this attempt's code, showing the
       // library's coloured image on top of it would undo the fix a moment later.
       if (this.renderedQrPayload) return;
       this.cancelFirstCodeDeadline?.();
-      this.setState("QR_AVAILABLE", { qrLength: value.length, rendered: false }, value).catch(() => undefined);
+      this.writeQrState(generation, { qrLength: value.length, rendered: false }, value);
     });
   }
 
+  /**
+   * The one place any QR/code write actually reaches the database, so the generation check cannot
+   * be forgotten at a call site the way three separate inline checks could be.
+   *
+   * These particular calls are synchronous with the event that produced them, so `generation`
+   * can never actually be stale here — but writing through the same guarded path as the async
+   * render below means nobody has to reason about which of the three sites needs the check and
+   * which doesn't.
+   */
+  private writeQrState(generation: number, metadata: Record<string, unknown>, qrCode: string): void {
+    if (generation !== this.attemptGeneration) return;
+    this.setState("QR_AVAILABLE", metadata, qrCode).catch(() => undefined);
+  }
+
   /** Never throws: a failure here must leave the library's own image free to arrive instead. */
-  private async publishRenderedQr(payload: string): Promise<void> {
+  private async publishRenderedQr(payload: string, generation: number): Promise<void> {
     try {
       const dataUrl = await renderQrDataUrl(payload, {
         errorCorrectionLevel: "M",
@@ -408,17 +442,28 @@ export class OpenWAProvider implements WhatsAppProvider {
         scale: 8,
         color: { dark: "#000000ff", light: "#ffffffff" },
       });
+      // The render just spent real time awaiting. A newer attempt — a retry, or an operator
+      // switching methods — may have already begun and written its own, correct code; writing
+      // this one now would silently replace it with an image belonging to an attempt that no
+      // longer exists. This is the check whose absence produced the exact bug described above
+      // attemptGeneration's declaration.
+      if (generation !== this.attemptGeneration) return;
       this.renderedQrPayload = payload;
       // A scannable code is on screen: the attempt is waiting on a human now, not stalled, so the
       // short no-code deadline gives way to the generous human-scan watchdog.
       this.cancelFirstCodeDeadline?.();
-      await this.setState("QR_AVAILABLE", { qrLength: dataUrl.length, rendered: true }, dataUrl);
+      this.writeQrState(generation, { qrLength: dataUrl.length, rendered: true }, dataUrl);
     } catch (err) {
       console.error("[provider] could not render a QR code; falling back to the library's own image", err);
     }
   }
 
   private async openSession(): Promise<void> {
+    // A new attempt begins: anything an OLDER attempt still has in flight (specifically, an
+    // in-progress QR render — see attemptGeneration's own doc comment) must not be allowed to
+    // write over what THIS attempt produces.
+    this.attemptGeneration += 1;
+
     // The directory has to exist before chdir, and nothing else guarantees it does.
     // accountProvisioning assigns every non-legacy account a path of `${SESSION_ROOT}/${id}`
     // but only records it — the folder itself was never created, so `process.chdir()` threw

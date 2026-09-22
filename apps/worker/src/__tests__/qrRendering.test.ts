@@ -43,7 +43,22 @@ describe("the QR is rendered black, not taken from WhatsApp's coloured canvas", 
   });
 
   it("a link-code attempt still passes the bare code straight through", () => {
-    expect(source).toMatch(/if \(this\.pairingMode === "PHONE_CODE"\) \{[\s\S]{0,200}?setState\("QR_AVAILABLE"/);
+    // `value`, not a rendered data URL — the whole point of the branch. It goes through
+    // `writeQrState` rather than `setState` directly because every QR write now shares one
+    // generation-guarded path; see the next test for why that matters.
+    expect(source).toMatch(
+      /if \(this\.pairingMode === "PHONE_CODE"\) \{[\s\S]{0,300}?writeQrState\(generation, \{ qrLength: value\.length \}, value\)/,
+    );
+  });
+
+  it("every QR write goes through the one generation-guarded path", () => {
+    // A stale render finishing after a newer attempt had already published its own code used to
+    // overwrite it — a phone link code replaced, on screen, by the raw `data:image/png;base64,…`
+    // string of an attempt that no longer existed. The guard is only worth anything if NOTHING
+    // writes a QR around it, so this counts the call sites rather than trusting the current ones.
+    // Behaviour is pinned end-to-end by qrGenerationRace.integration.test.ts.
+    expect(source.match(/setState\("QR_AVAILABLE"/g)).toHaveLength(1);
+    expect(source).toContain("if (generation !== this.attemptGeneration) return;");
   });
 
   it("the QR listeners are attached once per provider, not once per attempt", () => {
