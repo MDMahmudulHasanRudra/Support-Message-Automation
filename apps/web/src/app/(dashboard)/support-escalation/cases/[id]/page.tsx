@@ -2,8 +2,8 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Badge, type BadgeColor, Card, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Badge, type BadgeColor, Card, PageHeader, SectionHeader, Table, Td, Th, ViewOnlyNotice } from "@/components/ui";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { formatDateTime } from "@/lib/date";
 import { CaseActions } from "./CaseActions";
@@ -19,7 +19,7 @@ const ACTIVE_STATUSES = new Set([
 ]);
 
 export default async function SupportEscalationCasePage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("escalations.view", "escalations.manage");
   const { id } = await params;
 
   const [caseRow, teamMembers] = await Promise.all([
@@ -42,6 +42,8 @@ export default async function SupportEscalationCasePage({ params }: { params: Pr
   return (
     <div>
       <PageHeader title={`Priority Case: ${caseRow.group.name}`} description={`Case ${caseRow.id}`} />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <p className="mb-4">
         <Link
@@ -73,15 +75,19 @@ export default async function SupportEscalationCasePage({ params }: { params: Pr
           </div>
         </Card>
 
-        <Card>
-          <SectionHeader title="Actions" />
-          <CaseActions
-            caseId={caseRow.id}
-            status={caseRow.status}
-            assignedTeamMemberId={caseRow.assignedTeamMemberId}
-            teamMembers={teamMembers}
-          />
-        </Card>
+        {/* Not rendered for a view-only role: every button here would be refused, and a refusal from
+            these is a redirect to the Overview — a worse experience than simply not offering them. */}
+        {canManage ? (
+          <Card>
+            <SectionHeader title="Actions" />
+            <CaseActions
+              caseId={caseRow.id}
+              status={caseRow.status}
+              assignedTeamMemberId={caseRow.assignedTeamMemberId}
+              teamMembers={teamMembers}
+            />
+          </Card>
+        ) : null}
 
         <Card>
           <SectionHeader title={`Timeline (${caseRow.events.length} event(s))`} />

@@ -1,20 +1,9 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import type { EscalationStatus, Prisma, SupportPriority } from "@prisma/client";
-import {
-  ActiveFilters,
-  Alert,
-  EmptyState,
-  FilterBar,
-  HelpButton,
-  HelpSection,
-  NoFilterResults,
-  PageHeader,
-  StatTile,
-  type ActiveFilter,
-} from "@/components/ui";
+import { ActiveFilters, Alert, EmptyState, FilterBar, HelpButton, HelpSection, NoFilterResults, PageHeader, StatTile, type ActiveFilter, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 import { ActiveCasesTable, type ActiveCaseRow } from "./ActiveCasesTable";
@@ -63,7 +52,7 @@ export default async function SupportEscalationDashboardPage({
 }: {
   searchParams: Promise<EscalationSearchParams>;
 }) {
-  await requireSession();
+  const { canManage } = await pageAccess("escalations.view", "escalations.manage");
   const params = await searchParams;
 
   // Dhaka midnight, not the container's — under UTC, setHours() started "today" at 06:00 Dhaka
@@ -185,6 +174,8 @@ export default async function SupportEscalationDashboardPage({
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         <StatTile label="Waiting for first response" value={waitingCount} tone={waitingCount > 0 ? "warning" : "neutral"} />

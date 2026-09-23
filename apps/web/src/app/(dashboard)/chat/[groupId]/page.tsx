@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
 import { Badge } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
 import { getChatThread, getSavedReplies } from "@/server/chatInbox";
 import { markChatReviewed } from "@/server/actions/chatOrganisation";
 import { Composer } from "../Composer";
@@ -23,6 +24,9 @@ export default async function ChatConversationPage({
 }: {
   params: Promise<{ groupId: string }>;
 }) {
+  // Its own check rather than relying on the chat layout's: Next does not re-render a layout on
+  // navigation within it, so a layout-only check would miss a role changed mid-session.
+  const { canManage: canReply } = await pageAccess("messages.view", "messages.reply");
   const { groupId } = await params;
   const [thread, savedReplies] = await Promise.all([getChatThread(groupId), getSavedReplies()]);
   if (!thread) notFound();
@@ -46,7 +50,12 @@ export default async function ChatConversationPage({
   const lastEntry = entries.at(-1);
   const isUnanswered = lastEntry?.kind === "INCOMING" && !lastEntry.isTeamMember;
 
-  const disabledReason = !group.isActive
+  // First, because it is about the person rather than the conversation: nothing below matters to
+  // somebody whose role cannot send at all, and saying "reconnect the account" to them would send
+  // them off to fix something they are not allowed to touch.
+  const disabledReason = !canReply
+    ? "Your role can read conversations but not reply to them. Ask an administrator for Reply in WhatsApp Chat."
+    : !group.isActive
     ? `This account is no longer a member of ${group.name}. Resync groups if you have been re-added.`
     : group.accountStatus !== "CONNECTED"
       ? `${group.accountLabel} is ${group.accountStatus.toLowerCase()}, so nothing can be sent right now. Reconnect it on WhatsApp Accounts.`

@@ -1,4 +1,4 @@
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { getChatCategories, getChatConversations } from "@/server/chatInbox";
 import { ConversationList } from "./ConversationList";
@@ -17,7 +17,7 @@ import { ConversationList } from "./ConversationList";
  * nothing is duplicated into the DOM twice here.
  */
 export default async function ChatLayout({ children }: { children: React.ReactNode }) {
-  await requireSession();
+  await requireAccess("messages.view");
   const [conversations, categories] = await Promise.all([getChatConversations(), getChatCategories()]);
 
   return (

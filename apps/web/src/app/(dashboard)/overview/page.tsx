@@ -14,6 +14,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import { requireSession } from "@/server/auth";
+import { PERMISSIONS } from "@support-automation/shared";
 import { formatDateTime } from "@/lib/date";
 import {
   Alert,
@@ -93,8 +94,12 @@ function formatAgeShort(ms: number): string {
   return `${minutes}m`;
 }
 
-export default async function OverviewPage() {
+export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ denied?: string }> }) {
   await requireSession();
+  // Set by requirePermission when a page or an action refused this user. Only a known key is
+  // named, so a hand-edited URL cannot put arbitrary text into the banner.
+  const deniedParam = (await searchParams).denied ?? "";
+  const denied = PERMISSIONS.find((p) => p.key === deniedParam) ?? null;
 
   // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
   const nowMs = Date.now();
@@ -346,6 +351,15 @@ export default async function OverviewPage() {
           </>
         }
       />
+
+      {denied ? (
+        <div className="mb-5">
+          <Alert tone="warning" title="Your role does not allow that">
+            You were sent here because {denied.label.charAt(0).toLowerCase() + denied.label.slice(1)} is not part
+            of your Permission Module. Ask an administrator to add it if you need it.
+          </Alert>
+        </div>
+      ) : null}
 
       {issues.length > 0 ? (
         <div className="mb-5">

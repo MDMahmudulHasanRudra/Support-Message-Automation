@@ -40,7 +40,9 @@ export async function requirePermission(session: Session, key: PermissionKey): P
   const grantedKeys = new Set(user.permissionModule?.permissions.map((p) => p.permission.key) ?? []);
   if (!grantedKeys.has(key)) {
     await logSystemEvent("WARN", "permissions", "PERMISSION_DENIED", { userId: session.userId, key });
-    redirect("/overview");
+    // Carries the key so the Overview can say what was refused. A bare redirect dropped somebody on
+    // the dashboard with no idea why their click went nowhere — which reads as a broken button.
+    redirect(`/overview?denied=${encodeURIComponent(key)}`);
   }
 }
 

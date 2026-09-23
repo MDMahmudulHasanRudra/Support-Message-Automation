@@ -1,7 +1,7 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
 import { NotificationStatus, OutboundMessageStatus, type Prisma } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { Alert, HelpButton, HelpSection, PageHeader, Pagination } from "@/components/ui";
 import { parseDhakaDayFromInput } from "@/lib/supportActivityPeriod";
 import { enumParam } from "@/lib/enumParam";
@@ -17,7 +17,7 @@ interface MessagesSearchParams extends MessageFilters {
 }
 
 export default async function MessagesPage({ searchParams }: { searchParams: Promise<MessagesSearchParams> }) {
-  await requireSession();
+  await requireAccess("messages.view");
   const params = await searchParams;
   const page = Math.max(1, Number(params.page ?? "1") || 1);
   const requestedPageSize = Number(params.pageSize ?? DEFAULT_PAGE_SIZE);

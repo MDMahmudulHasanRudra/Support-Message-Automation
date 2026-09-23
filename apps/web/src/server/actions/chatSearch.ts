@@ -1,6 +1,6 @@
 "use server";
 
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import { getChatConversations, type ConversationSummary } from "@/server/chatInbox";
 
 /**
@@ -20,7 +20,8 @@ import { getChatConversations, type ConversationSummary } from "@/server/chatInb
  * cannot drag the whole roster into the browser.
  */
 export async function searchConversations(query: string): Promise<ConversationSummary[]> {
-  await requireSession();
+  const granted = await checkPermission("messages.view");
+  if ("denied" in granted) return [];
 
   const trimmed = query.trim();
   // One letter matches most of a roster and answers nothing, so it is not worth a round trip per

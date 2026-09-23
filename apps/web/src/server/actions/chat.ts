@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 export interface ChatSendState {
@@ -43,7 +43,9 @@ export async function sendChatMessage(
   _prevState: ChatSendState,
   formData: FormData,
 ): Promise<ChatSendState> {
-  const session = await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const body = String(formData.get("body") ?? "").trim();
   if (!body) return { error: "Type a message before sending." };
@@ -134,7 +136,7 @@ export async function sendChatMessage(
  * from here.
  */
 export async function cancelQueuedChatMessage(outboundId: string, groupId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("messages.reply");
   await prisma.outboundMessage.updateMany({
     where: { id: outboundId, actionType: "MANUAL_REPLY", status: "PENDING" },
     data: { status: "CANCELLED", failureReason: "Cancelled from the chat inbox before sending." },
@@ -155,7 +157,8 @@ export interface MessageActionResult {
  * has nothing to retry, rate-limit or queue: it either lands on the next tick or it does not.
  */
 export async function reactToChatMessage(messageId: string, emoji: string): Promise<MessageActionResult> {
-  await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
 
   const message = await prisma.message.findUnique({
     where: { id: messageId },
@@ -186,7 +189,8 @@ export async function reactToChatMessage(messageId: string, emoji: string): Prom
  * customer scrolling back actually sees.
  */
 export async function editChatMessage(messageId: string, newBody: string): Promise<MessageActionResult> {
-  await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
 
   const trimmed = newBody.trim();
   if (!trimmed) return { error: "The edited message cannot be empty." };

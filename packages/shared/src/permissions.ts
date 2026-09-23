@@ -12,7 +12,8 @@
  * feature that doesn't exist. `automation_rules`, `users`, `permissions`, `ai_settings`, and
  * `settings` use the finer-grained key lists explicitly requested for those modules; every other
  * real module gets a plain `.view`/`.manage` pair, or a single `.view`-only key for modules with
- * no meaningful separate "manage" action of their own (Messages, Notifications, System Logs).
+ * no meaningful separate "manage" action of their own (Notifications, System Logs). Messages
+ * gained `messages.reply` once the chat inbox could send — see its entry.
  */
 
 export interface PermissionDefinition {
@@ -32,6 +33,12 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "automation_rules.bulk_export", label: "Bulk Export Automation Rules", category: "Automation Rules" },
 
   { key: "messages.view", label: "View Messages", category: "Messages" },
+  // Messages had only `.view`, written before the chat inbox could send. Replying to a customer is
+  // the most consequential thing a support role does and it needed a key of its own: mapping it to
+  // an existing one would either let "Read Only" reply to customers (messages.view) or stop support
+  // staff replying unless handed an admin-level key (whatsapp.manage). A one-time migration grants
+  // it to every custom role that could already see Messages, so nobody loses the ability on deploy.
+  { key: "messages.reply", label: "Reply in WhatsApp Chat", category: "Messages" },
 
   { key: "escalations.view", label: "View Escalations", category: "Escalations" },
   { key: "escalations.manage", label: "Manage Escalations", category: "Escalations" },
@@ -107,6 +114,7 @@ export const READ_ONLY_PERMISSION_KEYS: readonly string[] = PERMISSIONS.filter((
 /** Matches the spec's own illustrative example for this default module verbatim. */
 export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
+  "messages.reply",
   "automation_rules.view",
   "automation_rules.create",
   "automation_rules.edit",
@@ -119,6 +127,7 @@ export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
 /** Matches the spec's own illustrative example for this default module verbatim. */
 export const SUPPORT_AGENT_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
+  "messages.reply",
   "automation_rules.view",
   "automation_rules.create",
   "automation_rules.edit",

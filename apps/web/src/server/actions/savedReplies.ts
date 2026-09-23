@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
+import { hasPermission } from "@/server/permissions";
+import { checkPermission } from "@/server/authorize";
 
 /**
  * The replies operators keep and reuse.
@@ -22,7 +24,9 @@ const MAX_TITLE = 60;
 const MAX_BODY = 2000;
 
 export async function createSavedReply(formData: FormData): Promise<SavedReplyResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const title = String(formData.get("title") ?? "").replace(/\s+/g, " ").trim();
   const body = String(formData.get("body") ?? "").replace(/\r\n/g, "\n").trim();
@@ -43,7 +47,8 @@ export async function createSavedReply(formData: FormData): Promise<SavedReplyRe
 }
 
 export async function updateSavedReply(id: string, formData: FormData): Promise<SavedReplyResult> {
-  await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
 
   const title = String(formData.get("title") ?? "").replace(/\s+/g, " ").trim();
   const body = String(formData.get("body") ?? "").replace(/\r\n/g, "\n").trim();
@@ -65,7 +70,8 @@ export async function updateSavedReply(id: string, formData: FormData): Promise<
 }
 
 export async function deleteSavedReply(id: string): Promise<SavedReplyResult> {
-  await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
   // deleteMany so removing one somebody else already deleted is a no-op rather than an error.
   await prisma.savedReply.deleteMany({ where: { id } });
   revalidatePath("/chat", "layout");
@@ -81,6 +87,9 @@ export async function deleteSavedReply(id: string): Promise<SavedReplyResult> {
  * whatever the operator had half-typed.
  */
 export async function recordSavedReplyUse(id: string): Promise<void> {
-  await requireSession();
+  const session = await requireSession();
+  // A usage counter, fired as a reply is inserted: silently skipped rather than refused, since the
+  // send that follows is the action that carries the real check.
+  if (!(await hasPermission(session, "messages.reply"))) return;
   await prisma.savedReply.updateMany({ where: { id }, data: { usageCount: { increment: 1 } } });
 }

@@ -1,5 +1,5 @@
 import { MessagesSquare } from "lucide-react";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { getChatCategories, getChatConversations } from "@/server/chatInbox";
 import { ConversationList } from "./ConversationList";
 
@@ -11,7 +11,7 @@ export const metadata = { title: "WhatsApp Chat" };
  * list becomes this page.
  */
 export default async function ChatIndexPage() {
-  await requireSession();
+  await requireAccess("messages.view");
   const [conversations, categories] = await Promise.all([getChatConversations(), getChatCategories()]);
 
   return (

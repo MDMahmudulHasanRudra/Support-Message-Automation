@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import { checkChatCategoryName, isChatCategoryColor } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
+import { hasPermission } from "@/server/permissions";
+import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 /**
@@ -40,7 +42,9 @@ function normaliseIds(groupIds: string[]): string[] {
 // ---------------------------------------------------------------------------- categories
 
 export async function createChatCategory(formData: FormData): Promise<ChatOrganisationResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const check = checkChatCategoryName(String(formData.get("name") ?? ""));
   if (check.error || !check.name) return { error: check.error };
@@ -72,7 +76,8 @@ export async function createChatCategory(formData: FormData): Promise<ChatOrgani
 }
 
 export async function renameChatCategory(id: string, formData: FormData): Promise<ChatOrganisationResult> {
-  await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
 
   const check = checkChatCategoryName(String(formData.get("name") ?? ""));
   if (check.error || !check.name) return { error: check.error };
@@ -94,7 +99,9 @@ export async function renameChatCategory(id: string, formData: FormData): Promis
 }
 
 export async function deleteChatCategory(id: string): Promise<ChatOrganisationResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const category = await prisma.chatCategory.findUnique({
     where: { id },
@@ -120,7 +127,8 @@ export async function setChatCategory(
   groupIds: string[],
   categoryId: string | null,
 ): Promise<ChatOrganisationResult> {
-  await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
   const ids = normaliseIds(groupIds);
   if (ids.length === 0) return { error: "Select at least one conversation." };
 
@@ -162,7 +170,8 @@ export async function setChatCategory(
 }
 
 export async function setChatPinned(groupIds: string[], pinned: boolean): Promise<ChatOrganisationResult> {
-  await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
   const ids = normaliseIds(groupIds);
   if (ids.length === 0) return { error: "Select at least one conversation." };
 
@@ -182,7 +191,8 @@ export async function setChatPinned(groupIds: string[], pinned: boolean): Promis
 }
 
 export async function setChatArchived(groupIds: string[], archived: boolean): Promise<ChatOrganisationResult> {
-  await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
   const ids = normaliseIds(groupIds);
   if (ids.length === 0) return { error: "Select at least one conversation." };
 
@@ -235,7 +245,12 @@ export async function setChatArchived(groupIds: string[], archived: boolean): Pr
  */
 export async function markChatReviewed(groupId: string): Promise<void> {
   try {
-    await requireSession();
+    const session = await requireSession();
+    // Silent, not refused: this runs from `after()` whenever a thread opens, so there is nobody to
+    // show a refusal to and a redirect has nowhere to go. A view-only observer simply does not
+    // clear conversations from the team's "waiting" queue — which is right, since reading one is
+    // what marks it handled for everybody.
+    if (!(await hasPermission(session, "messages.reply"))) return;
 
     const newest = await prisma.message.findFirst({
       where: { groupId },
@@ -279,7 +294,8 @@ export async function markChatReviewed(groupId: string): Promise<void> {
  * have already seen.
  */
 export async function setChatReviewed(groupIds: string[], reviewed: boolean): Promise<ChatOrganisationResult> {
-  await requireSession();
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
   const ids = normaliseIds(groupIds);
   if (ids.length === 0) return { error: "Select at least one conversation." };
 

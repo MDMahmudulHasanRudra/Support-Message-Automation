@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Archive } from "lucide-react";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { getArchivedChatConversations } from "@/server/chatInbox";
 import { ArchivedList } from "./ArchivedList";
 
@@ -15,7 +15,7 @@ export const metadata = { title: "Archived conversations" };
  * seconds.
  */
 export default async function ArchivedChatPage() {
-  await requireSession();
+  await requireAccess("messages.view");
   const conversations = await getArchivedChatConversations();
 
   return (
