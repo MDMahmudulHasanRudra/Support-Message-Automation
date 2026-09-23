@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 
 export interface CloseSupportSessionResult {
   ok: boolean;
@@ -25,7 +25,9 @@ export interface CloseSupportSessionResult {
  * overwriting the already-completed session or throwing.
  */
 export async function closeSupportSessionManually(sessionId: string): Promise<CloseSupportSessionResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("support_activity.manage");
+  if ("denied" in granted) return { ok: false };
+  const session = granted.session;
 
   const openSession = await prisma.supportSession.findUnique({ where: { id: sessionId } });
   if (!openSession || openSession.status !== "OPEN") {
@@ -79,7 +81,9 @@ export interface BulkCloseSupportSessionsResult {
  * overwritten — same safety property as the one-at-a-time button, just looped.
  */
 export async function closeSupportSessionsBulk(sessionIds: string[]): Promise<BulkCloseSupportSessionsResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("support_activity.manage");
+  if ("denied" in granted) return { requested: sessionIds.length, closed: 0, alreadyClosed: 0, notFound: 0, error: granted.denied };
+  const session = granted.session;
 
   const dedupedIds = [...new Set(sessionIds.filter((id) => typeof id === "string" && id.length > 0))];
   if (dedupedIds.length === 0) {

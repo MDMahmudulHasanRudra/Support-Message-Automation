@@ -1,10 +1,10 @@
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { Button, Card, Field, Input, PageHeader, SectionHeader, Select } from "@/components/ui";
 import { createSupportIssue } from "@/server/actions/issues";
 
 export default async function NewIssuePage() {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const [groups, channels] = await Promise.all([
     prisma.whatsAppGroup.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.teamsChannel.findMany({ orderBy: { name: "asc" }, include: { team: true } }),

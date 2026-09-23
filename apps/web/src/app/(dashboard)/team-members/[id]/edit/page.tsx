@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { Alert, Button, Card, Checkbox, PageHeader, SectionHeader } from "@/components/ui";
 import { NOTIFICATION_EVENTS } from "@/lib/notificationEvents";
 import { hasReachablePhoneNumber } from "@support-automation/shared";
@@ -16,7 +16,7 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 export default async function EditTeamMemberPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
   const { id } = await params;
   const member = await prisma.internalTeamMember.findUnique({ where: { id } });
   if (!member) notFound();

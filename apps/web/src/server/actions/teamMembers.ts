@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
 import { isUniqueViolation } from "@/lib/prismaErrors";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 import { normalizePhoneNumber } from "@support-automation/shared";
 
 export interface TeamMemberFormState {
@@ -67,7 +67,8 @@ async function findPhoneConflict(phoneNumber: string, excludeId?: string) {
 }
 
 export async function createTeamMember(_prev: TeamMemberFormState, formData: FormData): Promise<TeamMemberFormState> {
-  await requireSession();
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { error: granted.denied };
   const input = readTeamMemberForm(formData);
   if ("error" in input) return input;
 
@@ -102,7 +103,8 @@ export interface GroupParticipantCandidate {
  * because the number comes from WhatsApp rather than from a keyboard.
  */
 export async function getGroupParticipantCandidates(groupId: string): Promise<GroupParticipantCandidate[]> {
-  await requireSession();
+  const granted = await checkPermission("whatsapp.view");
+  if ("denied" in granted) return [];
 
   const [senders, existing] = await Promise.all([
     prisma.message.groupBy({
@@ -173,7 +175,7 @@ export interface RosterFetchState {
  * Deduplicated against a run already in flight for the same group, so repeated clicks are free.
  */
 export async function requestGroupParticipants(groupId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
 
   const inFlight = await prisma.workerCommand.findFirst({
     where: {
@@ -202,7 +204,8 @@ export async function requestGroupParticipants(groupId: string): Promise<void> {
  * count the operator sees is the count they can actually act on.
  */
 export async function readGroupParticipants(groupId: string): Promise<RosterFetchState> {
-  await requireSession();
+  const granted = await checkPermission("whatsapp.view");
+  if ("denied" in granted) return { status: "FAILED", participants: [], error: granted.denied };
 
   const command = await prisma.workerCommand.findFirst({
     where: { type: "GET_GROUP_PARTICIPANTS" },
@@ -269,7 +272,8 @@ export async function addTeamMembersFromGroup(
   _prevState: AddFromGroupState,
   formData: FormData,
 ): Promise<AddFromGroupState> {
-  await requireSession();
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { error: granted.denied };
 
   const role = String(formData.get("role") ?? "").trim() || "Support";
   const department = String(formData.get("department") ?? "").trim() || null;
@@ -338,7 +342,8 @@ export async function updateTeamMember(
   _prev: TeamMemberFormState,
   formData: FormData,
 ): Promise<TeamMemberFormState> {
-  await requireSession();
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { error: granted.denied };
   const input = readTeamMemberForm(formData);
   if ("error" in input) return input;
 
@@ -359,7 +364,7 @@ export async function updateTeamMember(
 }
 
 export async function toggleTeamMemberStatus(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
   const member = await prisma.internalTeamMember.findUniqueOrThrow({ where: { id } });
   await prisma.internalTeamMember.update({
     where: { id },
@@ -388,7 +393,7 @@ export interface DeleteTeamMemberResult {
  * ever would be its own kind of mess.
  */
 export async function deleteTeamMember(id: string): Promise<DeleteTeamMemberResult> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
 
   const activityCount = await prisma.supportActivity.count({ where: { teamMemberId: id } });
   if (activityCount > 0) {

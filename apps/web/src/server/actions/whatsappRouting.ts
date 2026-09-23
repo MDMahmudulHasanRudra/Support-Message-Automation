@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import type { WhatsAppFallbackPolicy, WhatsAppServiceKey } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 export interface ServiceRouteFormState {
@@ -21,7 +21,9 @@ export async function updateServiceRoute(
   _prevState: ServiceRouteFormState,
   formData: FormData,
 ): Promise<ServiceRouteFormState> {
-  const session = await requireSession();
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
   const serviceKey = formData.get("serviceKey") as WhatsAppServiceKey;
   const rawAccountId = String(formData.get("accountId") ?? "");
   const accountId = rawAccountId === "" ? null : rawAccountId;

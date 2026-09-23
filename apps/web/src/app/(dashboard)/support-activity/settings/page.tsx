@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { ButtonLink, Card, HelpButton, HelpSection, PageHeader, SectionHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { ButtonLink, Card, HelpButton, HelpSection, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { SupportActivitySettingsForm } from "./SupportActivitySettingsForm";
 
 export default async function SupportActivitySettingsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("support_activity.view", "support_activity.manage");
   const settings = await prisma.supportActivitySettings.upsert({
     where: { id: "global" },
     update: {},
@@ -36,6 +36,8 @@ export default async function SupportActivitySettingsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <SupportActivitySettingsForm settings={settings} />
 

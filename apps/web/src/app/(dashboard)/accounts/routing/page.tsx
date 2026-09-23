@@ -1,8 +1,8 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import type { WhatsAppServiceKey } from "@prisma/client";
-import { requireSession } from "@/server/auth";
-import { Alert, Card, HelpButton, HelpSection, PageHeader, SectionHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Alert, Card, HelpButton, HelpSection, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { ServiceRouteRow, type ServiceRouteAccountOption, type ServiceRouteRowData } from "./ServiceRouteRow";
 
 // The only two real WhatsApp-sending call sites in the app today (see WhatsAppServiceKey in
@@ -15,7 +15,7 @@ const SERVICES: Array<{ key: WhatsAppServiceKey; label: string }> = [
 ];
 
 export default async function WhatsAppRoutingPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
 
   const [accounts, routes, ...resolutions] = await Promise.all([
     prisma.whatsAppAccount.findMany({ orderBy: { createdAt: "asc" } }),
@@ -89,6 +89,8 @@ export default async function WhatsAppRoutingPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {accounts.length === 0 ? (
         <Alert tone="info" title="No WhatsApp accounts yet">

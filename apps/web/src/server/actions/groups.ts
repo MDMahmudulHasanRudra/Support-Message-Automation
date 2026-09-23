@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import type { SupportPriority } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 import { buildGroupWhere, isGroupFilterKey, type GroupFilterKey } from "@/lib/groupFilters";
 
 const PRIORITIES: SupportPriority[] = ["P1", "P2", "P3"];
@@ -17,7 +17,7 @@ export async function setGroupPriority(
   groupId: string,
   formData: FormData,
 ): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
   const priorityRaw = String(formData.get("priority") ?? "");
   const assignedTeamMemberId = String(formData.get("assignedTeamMemberId") ?? "").trim() || null;
   const escalationMonitoringEnabled = formData.get("escalationMonitoringEnabled") === "on";
@@ -34,7 +34,7 @@ export async function setGroupPriority(
 }
 
 export async function toggleGroupMonitoring(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
   const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
   await prisma.whatsAppGroup.update({ where: { id }, data: { isMonitored: !group.isMonitored } });
   revalidatePath("/groups");
@@ -48,7 +48,7 @@ export async function toggleGroupMonitoring(id: string): Promise<void> {
  * safe to nothing happening, so unlike monitoring this doesn't need a confirmation step.
  */
 export async function toggleGroupAiAutomation(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
   const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
   await prisma.whatsAppGroup.update({ where: { id }, data: { aiAutomationEnabled: !group.aiAutomationEnabled } });
   revalidatePath("/groups");
@@ -70,7 +70,7 @@ export async function toggleGroupAiAutomation(id: string): Promise<void> {
  * is in.
  */
 export async function toggleGroupTestMode(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
   const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
   await prisma.whatsAppGroup.update({ where: { id }, data: { testModeEnabled: !group.testModeEnabled } });
   revalidatePath("/groups");
@@ -83,7 +83,7 @@ export async function toggleGroupTestMode(id: string): Promise<void> {
  * meaningless as a way to hold a group back once the scope has opted everything in.
  */
 export async function toggleGroupAiExcluded(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
   const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
   await prisma.whatsAppGroup.update({ where: { id }, data: { aiAutomationExcluded: !group.aiAutomationExcluded } });
   revalidatePath("/groups");
@@ -96,7 +96,7 @@ export async function toggleGroupAiExcluded(id: string): Promise<void> {
  * Deduplicated against an already-queued run for the same group so repeated clicks are free.
  */
 export async function requestGroupKnowledgeBuild(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
 
   const existing = await prisma.workerCommand.findFirst({
     where: {
@@ -141,7 +141,8 @@ export interface BulkAiAutomationResult extends BulkMonitoringResult {
  * distinguish "genuinely changed" from "already correct" before writing.
  */
 export async function bulkSetMonitoring(groupIds: string[], enabled: boolean): Promise<BulkMonitoringResult> {
-  await requireSession();
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { requested: groupIds.length, updated: 0, alreadyInTargetState: 0, notFound: 0, error: granted.denied };
 
   const dedupedIds = [...new Set(groupIds.filter((id) => typeof id === "string" && id.length > 0))];
   if (dedupedIds.length === 0) {
@@ -183,7 +184,8 @@ export async function bulkSetMonitoring(groupIds: string[], enabled: boolean): P
  * reported as skipped instead, so the operator can see the exclusion held.
  */
 export async function bulkSetAiAutomation(groupIds: string[], enabled: boolean): Promise<BulkAiAutomationResult> {
-  await requireSession();
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { requested: groupIds.length, updated: 0, alreadyInTargetState: 0, notFound: 0, skippedExcluded: 0, error: granted.denied };
 
   const dedupedIds = [...new Set(groupIds.filter((id) => typeof id === "string" && id.length > 0))];
   if (dedupedIds.length === 0) {
@@ -251,7 +253,8 @@ export async function selectAllMatchingGroupIds(
   filter: string,
   accountId?: string | null,
 ): Promise<{ ids: string[]; truncated: boolean }> {
-  await requireSession();
+  const granted = await checkPermission("whatsapp.view");
+  if ("denied" in granted) return { ids: [], truncated: false };
   const safeFilter: GroupFilterKey = isGroupFilterKey(filter) ? filter : "all";
 
   const rows = await prisma.whatsAppGroup.findMany({
@@ -277,7 +280,7 @@ export async function selectAllMatchingGroupIds(
  * this exact group (clicking "Fetch" twice quickly shouldn't queue two lookups).
  */
 export async function requestGroupParticipantCount(groupId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
   const existing = await prisma.workerCommand.findFirst({
     where: {
       type: "GET_GROUP_PARTICIPANT_COUNT",

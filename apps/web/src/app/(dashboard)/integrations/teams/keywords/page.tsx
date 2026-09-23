@@ -1,13 +1,13 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { Plus } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Button, Card, Field, HelpButton, HelpSection, Input, Label, PageHeader, Select, SectionHeader, Switch } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Button, Card, Field, HelpButton, HelpSection, Input, Label, PageHeader, Select, SectionHeader, Switch, ViewOnlyNotice } from "@/components/ui";
 import { createTeamsResolutionKeyword } from "@/server/actions/teamsResolutionKeywords";
 import { TeamsResolutionKeywordsTable, type TeamsResolutionKeywordRow } from "./TeamsResolutionKeywordsTable";
 
 export default async function TeamsResolutionKeywordsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("teams_integration.view", "teams_integration.manage");
   const keywords: TeamsResolutionKeywordRow[] = await prisma.teamsResolutionKeyword.findMany({ orderBy: { createdAt: "desc" } });
 
   return (
@@ -27,6 +27,8 @@ export default async function TeamsResolutionKeywordsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <Card className="mb-6">
         <SectionHeader title="Add Keyword" />

@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { PageHeader } from "@/components/ui";
 import { updateSupportRule } from "@/server/actions/supportRules";
 import { SupportRuleForm } from "../../SupportRuleForm";
 
 export default async function EditSupportRulePage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   const { id } = await params;
 
   const [rule, groups, teamMembers, keywords] = await Promise.all([

@@ -1,11 +1,11 @@
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { PageHeader } from "@/components/ui";
 import { createTeamsResolutionRule } from "@/server/actions/teamsResolutionRules";
 import { TeamsResolutionRuleForm } from "../TeamsResolutionRuleForm";
 
 export default async function NewTeamsResolutionRulePage() {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const keywords = await prisma.teamsResolutionKeyword.findMany({
     where: { isActive: true },
     orderBy: { value: "asc" },

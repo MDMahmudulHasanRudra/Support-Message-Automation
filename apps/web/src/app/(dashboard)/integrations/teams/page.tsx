@@ -2,10 +2,10 @@
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import { isTeamsClientConfigured } from "@support-automation/teams-client";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
-import { Alert, ButtonLink, Card, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { Alert, ButtonLink, Card, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { TeamsConnectionCard } from "./TeamsConnectionCard";
 
 export default async function TeamsIntegrationPage({
@@ -13,7 +13,7 @@ export default async function TeamsIntegrationPage({
 }: {
   searchParams: Promise<{ connectError?: string; cancelled?: string; justConnected?: string }>;
 }) {
-  await requireSession();
+  const { canManage } = await pageAccess("teams_integration.view", "teams_integration.manage");
   const { connectError, cancelled, justConnected } = await searchParams;
   const account = await prisma.teamsAccount.findUnique({ where: { id: "global" } });
 
@@ -54,6 +54,8 @@ export default async function TeamsIntegrationPage({
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {connectError ? (
         <div className="mb-6">

@@ -1,13 +1,13 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Card, HelpButton, HelpSection, PageHeader, SectionHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Card, HelpButton, HelpSection, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { AddTeamMemberForm } from "./AddTeamMemberForm";
 import { TeamMembersTable, type TeamMemberRow } from "./TeamMembersTable";
 import { AddFromGroupDialog } from "./AddFromGroupDialog";
 
 export default async function TeamMembersPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
   const [members, groups] = await Promise.all([
     prisma.internalTeamMember.findMany({ orderBy: { createdAt: "desc" } }) as Promise<TeamMemberRow[]>,
     prisma.whatsAppGroup.findMany({
@@ -75,10 +75,14 @@ export default async function TeamMembersPage() {
         }
       />
 
-      <Card className="mb-6">
-        <SectionHeader title="Add Team Member" />
-        <AddTeamMemberForm />
-      </Card>
+      {canManage ? null : <ViewOnlyNotice />}
+
+      {canManage ? (
+        <Card className="mb-6">
+          <SectionHeader title="Add Team Member" />
+          <AddTeamMemberForm />
+        </Card>
+      ) : null}
 
       <TeamMembersTable members={members} />
     </div>

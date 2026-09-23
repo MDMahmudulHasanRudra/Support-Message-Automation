@@ -2,14 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 
 /** Dashboard "Sync Now" button — mirrors triggerAiAnalysisBatch()'s exact idempotency pattern
  * (never queue a second command of the same type while one is already pending/processing).
  * Account-agnostic: there is at most one connected TeamsAccount (see commandProcessor.ts's
  * special-case handling for TEAMS_SYNC_NOW). */
 export async function triggerTeamsSyncNow(): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const existing = await prisma.workerCommand.findFirst({
     where: { type: "TEAMS_SYNC_NOW", status: { in: ["PENDING", "PROCESSING"] } },
   });
@@ -23,7 +23,7 @@ export async function triggerTeamsSyncNow(): Promise<void> {
  * Teams/channel/message history and every SupportIssue/IssueResolutionEvent audit row intact
  * (soft-disconnect, same "never destroy history" convention as WhatsApp account logout). */
 export async function disconnectTeamsAccount(): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   await prisma.teamsAccount.update({
     where: { id: "global" },
     data: {
@@ -46,7 +46,7 @@ export async function disconnectTeamsAccount(): Promise<void> {
  * correctly turns a team/channel OFF rather than just being silently absent from the request.
  */
 export async function updateTeamsAutomationScope(formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
 
   const allTeamIds = String(formData.get("allTeamIds") ?? "").split(",").filter(Boolean);
   const allChannelIds = String(formData.get("allChannelIds") ?? "").split(",").filter(Boolean);
@@ -73,7 +73,8 @@ export async function saveTeamsIntegrationSettings(
   _prevState: TeamsIntegrationSettingsFormState,
   formData: FormData,
 ): Promise<TeamsIntegrationSettingsFormState> {
-  await requireSession();
+  const granted = await checkPermission("teams_integration.manage");
+  if ("denied" in granted) return { error: granted.denied };
 
   const notificationTemplate = String(formData.get("notificationTemplate") ?? "").trim();
   const pollingIntervalMinutes = Number(formData.get("pollingIntervalMinutes"));

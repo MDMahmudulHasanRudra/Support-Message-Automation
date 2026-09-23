@@ -1,12 +1,12 @@
 import { Plus } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Button, Card, Field, HelpButton, HelpSection, Input, Label, PageHeader, Select, SectionHeader, Switch } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Button, Card, Field, HelpButton, HelpSection, Input, Label, PageHeader, Select, SectionHeader, Switch, ViewOnlyNotice } from "@/components/ui";
 import { createSupportKeyword } from "@/server/actions/supportKeywords";
 import { SupportKeywordsTable, type SupportKeywordRow } from "./SupportKeywordsTable";
 
 export default async function SupportKeywordsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("support_activity.view", "support_activity.manage");
   const keywords: SupportKeywordRow[] = await prisma.supportKeyword.findMany({ orderBy: { createdAt: "desc" } });
 
   return (
@@ -42,6 +42,8 @@ export default async function SupportKeywordsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <Card className="mb-6">
         <SectionHeader title="Add Keyword" />

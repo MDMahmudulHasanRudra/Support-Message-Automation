@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Button, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Button, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { TeamsResolutionRulesTable, type TeamsResolutionRuleRow } from "./TeamsResolutionRulesTable";
 
 export default async function TeamsResolutionRulesPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("teams_integration.view", "teams_integration.manage");
   const rules = await prisma.teamsResolutionRule.findMany({
     orderBy: { createdAt: "desc" },
     include: { keywords: { include: { keyword: true } } },
@@ -44,6 +44,8 @@ export default async function TeamsResolutionRulesPage() {
           </>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <TeamsResolutionRulesTable rules={rows} />
     </div>

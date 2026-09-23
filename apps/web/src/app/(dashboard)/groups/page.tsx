@@ -2,21 +2,8 @@
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import {
-  ActiveFilters,
-  Button,
-  EmptyState,
-  FilterBar,
-  HelpButton,
-  HelpSection,
-  Input,
-  NoFilterResults,
-  PageHeader,
-  Pagination,
-  Select,
-  type ActiveFilter,
-} from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { ActiveFilters, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, NoFilterResults, PageHeader, Pagination, Select, type ActiveFilter, ViewOnlyNotice } from "@/components/ui";
 import {
   buildGroupSearchWhere,
   buildGroupWhere,
@@ -39,7 +26,7 @@ interface GroupsSearchParams {
 }
 
 export default async function GroupsPage({ searchParams }: { searchParams: Promise<GroupsSearchParams> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
   const params = await searchParams;
   const filter: FilterKey = isFilterKey(params.filter) ? params.filter : "all";
   const search = (params.search ?? "").trim();
@@ -207,6 +194,8 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <FilterBar>
         <form className="flex flex-wrap items-end gap-2" method="GET">

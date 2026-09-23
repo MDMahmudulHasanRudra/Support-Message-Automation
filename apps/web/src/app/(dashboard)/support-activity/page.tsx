@@ -1,6 +1,6 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import Link from "next/link";
 import { Download } from "lucide-react";
 import { formatDateTime } from "@/lib/date";
@@ -16,22 +16,7 @@ import {
   getStaleSessionCount,
   getUniqueGroupCount,
 } from "@/server/supportActivityReports";
-import {
-  Alert,
-  Badge,
-  ButtonLink,
-  Card,
-  EmptyState,
-  HelpButton,
-  HelpSection,
-  PageHeader,
-  SectionHeader,
-  Sparkline,
-  StatTile,
-  Table,
-  Td,
-  Th,
-} from "@/components/ui";
+import { Alert, Badge, ButtonLink, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, Sparkline, StatTile, Table, Td, Th, ViewOnlyNotice } from "@/components/ui";
 
 const PERIOD_LABEL: Record<string, string> = {
   DAILY: "Today's",
@@ -40,7 +25,7 @@ const PERIOD_LABEL: Record<string, string> = {
 };
 
 export default async function SupportActivityPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("support_activity.view", "support_activity.manage");
 
   const settings = await prisma.supportActivitySettings.upsert({
     where: { id: "global" },
@@ -115,6 +100,8 @@ export default async function SupportActivityPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <SetupBanner
         trackingEnabled={settings.enabled}

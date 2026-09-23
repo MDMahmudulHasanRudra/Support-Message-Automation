@@ -3,10 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import type { SupportKeywordMatchMode } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 
 export async function createSupportKeyword(formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   const value = String(formData.get("value") ?? "").trim();
   const matchMode = String(formData.get("matchMode") ?? "CONTAINS") as SupportKeywordMatchMode;
   const caseSensitive = formData.get("caseSensitive") === "on";
@@ -19,7 +19,7 @@ export async function createSupportKeyword(formData: FormData): Promise<void> {
 }
 
 export async function updateSupportKeyword(id: string, formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   const value = String(formData.get("value") ?? "").trim();
   const matchMode = String(formData.get("matchMode") ?? "CONTAINS") as SupportKeywordMatchMode;
   const caseSensitive = formData.get("caseSensitive") === "on";
@@ -32,14 +32,14 @@ export async function updateSupportKeyword(id: string, formData: FormData): Prom
 }
 
 export async function toggleSupportKeywordActive(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   const keyword = await prisma.supportKeyword.findUniqueOrThrow({ where: { id } });
   await prisma.supportKeyword.update({ where: { id }, data: { isActive: !keyword.isActive } });
   revalidatePath("/support-activity/keywords");
 }
 
 export async function deleteSupportKeyword(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   await prisma.supportKeyword.delete({ where: { id } });
   revalidatePath("/support-activity/keywords");
 }

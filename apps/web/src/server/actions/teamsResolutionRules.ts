@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 
 /** Mirrors supportRules.ts's create/update shape — no group/team-member scoping here (unlike
  * SupportRule) since a resolution rule applies to every Teams message evaluated against an
@@ -21,7 +21,7 @@ function parseRuleForm(formData: FormData) {
 }
 
 export async function createTeamsResolutionRule(formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const parsed = parseRuleForm(formData);
 
   await prisma.$transaction(async (tx) => {
@@ -40,7 +40,7 @@ export async function createTeamsResolutionRule(formData: FormData): Promise<voi
 }
 
 export async function updateTeamsResolutionRule(id: string, formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const parsed = parseRuleForm(formData);
 
   await prisma.$transaction(async (tx) => {
@@ -58,14 +58,14 @@ export async function updateTeamsResolutionRule(id: string, formData: FormData):
 }
 
 export async function toggleTeamsResolutionRuleActive(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const rule = await prisma.teamsResolutionRule.findUniqueOrThrow({ where: { id } });
   await prisma.teamsResolutionRule.update({ where: { id }, data: { isActive: !rule.isActive } });
   revalidatePath("/integrations/teams/rules");
 }
 
 export async function deleteTeamsResolutionRule(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   await prisma.teamsResolutionRule.delete({ where: { id } }); // cascades its join-table rows
   revalidatePath("/integrations/teams/rules");
 }

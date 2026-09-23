@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 
 /**
  * Issues are created manually by an admin, not auto-detected from every incoming WhatsApp message
@@ -12,7 +12,7 @@ import { requireSession } from "@/server/auth";
  * Teams channel/thread a developer is working the issue in.
  */
 export async function createSupportIssue(formData: FormData): Promise<void> {
-  const session = await requireSession();
+  const session = await requireAccess("teams_integration.manage");
 
   const groupId = String(formData.get("groupId") ?? "");
   const clientPhone = String(formData.get("clientPhone") ?? "").trim();
@@ -46,7 +46,7 @@ export async function createSupportIssue(formData: FormData): Promise<void> {
 /** Links (or changes) an existing issue's Teams channel/thread — the "link to Teams" step for an
  * issue that was created before a developer had started a thread yet. */
 export async function linkSupportIssueToTeams(id: string, formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const teamsChannelId = String(formData.get("teamsChannelId") ?? "") || null;
   const teamsThreadExternalId = String(formData.get("teamsThreadExternalId") ?? "").trim() || null;
 
@@ -66,21 +66,21 @@ export async function linkSupportIssueToTeams(id: string, formData: FormData): P
  * was never) a Teams resolution-keyword match. Does NOT send a customer notification itself; use
  * retryIssueNotification for that, so a manual status change never has a surprising side effect. */
 export async function markSupportIssueResolved(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   await prisma.supportIssue.update({ where: { id }, data: { status: "RESOLVED", resolvedAt: new Date() } });
   revalidatePath(`/issues/${id}`);
   revalidatePath("/issues");
 }
 
 export async function reopenSupportIssue(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   await prisma.supportIssue.update({ where: { id }, data: { status: "IN_PROGRESS", resolvedAt: null, closedAt: null } });
   revalidatePath(`/issues/${id}`);
   revalidatePath("/issues");
 }
 
 export async function closeSupportIssue(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   await prisma.supportIssue.update({ where: { id }, data: { status: "CLOSED", closedAt: new Date() } });
   revalidatePath(`/issues/${id}`);
   revalidatePath("/issues");
@@ -90,7 +90,7 @@ export async function closeSupportIssue(id: string): Promise<void> {
  * developer said "resolved" about something unrelated) — purely a record-keeping action, since the
  * notification (if one was already queued/sent) cannot be un-sent. */
 export async function ignoreIssueResolutionEvent(eventId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const event = await prisma.issueResolutionEvent.findUniqueOrThrow({ where: { id: eventId } });
   await prisma.issueResolutionEvent.update({ where: { id: eventId }, data: { outcome: "SKIPPED_MANUALLY_IGNORED" } });
   revalidatePath(`/issues/${event.issueId}`);

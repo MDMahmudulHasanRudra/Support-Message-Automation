@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import type { SupportActivityCountingPeriod } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 
 const VALID_PERIODS: SupportActivityCountingPeriod[] = ["DAILY", "WEEKLY", "MONTHLY"];
 
@@ -12,7 +12,7 @@ async function getOrCreateSupportActivitySettings() {
 }
 
 export async function setSupportActivityEnabled(enabled: boolean): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   await getOrCreateSupportActivitySettings();
   await prisma.supportActivitySettings.update({ where: { id: "global" }, data: { enabled } });
   revalidatePath("/support-activity");
@@ -21,7 +21,7 @@ export async function setSupportActivityEnabled(enabled: boolean): Promise<void>
 }
 
 export async function updateSupportActivitySettings(formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   const enabled = formData.get("enabled") === "on";
   // Clamped rather than rejected: this is a tuning number, and bouncing the whole form over it
   // would discard the other fields somebody had just set.

@@ -1,11 +1,11 @@
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { PageHeader } from "@/components/ui";
 import { createSupportRule } from "@/server/actions/supportRules";
 import { SupportRuleForm } from "../SupportRuleForm";
 
 export default async function NewSupportRulePage() {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   const [groups, teamMembers, keywords] = await Promise.all([
     prisma.whatsAppGroup.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.internalTeamMember.findMany({ where: { status: "ACTIVE" }, orderBy: { name: "asc" }, select: { id: true, name: true } }),

@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Button, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Button, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { SupportRulesTable, type SupportRuleRow } from "./SupportRulesTable";
 
 export default async function SupportRulesPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("support_activity.view", "support_activity.manage");
   const rules = await prisma.supportRule.findMany({
     orderBy: { createdAt: "desc" },
     include: { keywords: { include: { keyword: true } }, groups: true, teamMembers: true },
@@ -49,6 +49,8 @@ export default async function SupportRulesPage() {
           </>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <SupportRulesTable rules={rows} />
     </div>

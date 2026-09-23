@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
 import type { SupportActivityTriggerType } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 
 const VALID_TRIGGER_TYPES: SupportActivityTriggerType[] = [
   "KEYWORD_MATCH",
@@ -69,7 +69,7 @@ export interface EnsureRuleResult {
  * duplicates that would each match every message.
  */
 export async function enableCountEveryTeamMemberMessage(): Promise<EnsureRuleResult> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
 
   const existing = await prisma.supportRule.findFirst({
     where: { name: COUNT_EVERY_MESSAGE_RULE_NAME, triggerType: "ANY_MESSAGE" },
@@ -118,7 +118,7 @@ export async function enableCountEveryTeamMemberMessage(): Promise<EnsureRuleRes
 }
 
 export async function createSupportRule(formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   const parsed = parseRuleForm(formData);
 
   await prisma.$transaction(async (tx) => {
@@ -150,7 +150,7 @@ export async function createSupportRule(formData: FormData): Promise<void> {
 }
 
 export async function updateSupportRule(id: string, formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   const parsed = parseRuleForm(formData);
 
   await prisma.$transaction(async (tx) => {
@@ -191,14 +191,14 @@ export async function updateSupportRule(id: string, formData: FormData): Promise
 }
 
 export async function toggleSupportRuleActive(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   const rule = await prisma.supportRule.findUniqueOrThrow({ where: { id } });
   await prisma.supportRule.update({ where: { id }, data: { isActive: !rule.isActive } });
   revalidatePath("/support-activity/rules");
 }
 
 export async function deleteSupportRule(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("support_activity.manage");
   await prisma.supportRule.delete({ where: { id } }); // cascades its join-table rows
   revalidatePath("/support-activity/rules");
 }

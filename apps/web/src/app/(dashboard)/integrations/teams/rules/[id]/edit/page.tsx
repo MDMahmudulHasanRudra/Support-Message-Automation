@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { PageHeader } from "@/components/ui";
 import { updateTeamsResolutionRule } from "@/server/actions/teamsResolutionRules";
 import { TeamsResolutionRuleForm } from "../../TeamsResolutionRuleForm";
 
 export default async function EditTeamsResolutionRulePage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const { id } = await params;
 
   const [rule, keywords] = await Promise.all([

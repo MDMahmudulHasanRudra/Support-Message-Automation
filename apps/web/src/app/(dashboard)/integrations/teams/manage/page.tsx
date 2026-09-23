@@ -1,10 +1,10 @@
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Button, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, Switch } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Button, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, Switch, ViewOnlyNotice } from "@/components/ui";
 import { updateTeamsAutomationScope } from "@/server/actions/teamsIntegration";
 
 export default async function ManageTeamsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("teams_integration.view", "teams_integration.manage");
   const teams = await prisma.teamsTeam.findMany({ orderBy: { name: "asc" }, include: { channels: { orderBy: { name: "asc" } } } });
 
   const allTeamIds = teams.map((t) => t.id).join(",");
@@ -28,6 +28,8 @@ export default async function ManageTeamsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {teams.length === 0 ? (
         <EmptyState>

@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
-import { Badge, Button, Card, Field, ModuleCardRow, PageHeader, SectionHeader, Select, Table, Td, Th, Input } from "@/components/ui";
+import { Badge, Button, Card, Field, ModuleCardRow, PageHeader, SectionHeader, Select, Table, Td, Th, Input, ViewOnlyNotice } from "@/components/ui";
 import { linkSupportIssueToTeams } from "@/server/actions/issues";
 import { IssueActions } from "./IssueActions";
 import { IgnoreEventButton } from "./IgnoreEventButton";
@@ -23,7 +23,7 @@ const OUTCOME_COLOR: Record<string, "green" | "gray" | "yellow"> = {
 };
 
 export default async function IssueDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("teams_integration.view", "teams_integration.manage");
   const { id } = await params;
 
   const issue = await prisma.supportIssue.findUnique({
@@ -47,6 +47,8 @@ export default async function IssueDetailPage({ params }: { params: Promise<{ id
         description={`${issue.clientPhone} · ${issue.group.name}`}
         actions={<IssueActions id={issue.id} status={issue.status} />}
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>

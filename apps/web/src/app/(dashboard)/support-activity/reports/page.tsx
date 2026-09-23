@@ -1,7 +1,7 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { Download } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
 import { formatDurationShort, formatElapsedShort } from "@/lib/duration";
 import { getDhakaDayRange, parseDhakaDayRangeFromInput } from "@/lib/supportActivityPeriod";
@@ -30,7 +30,7 @@ interface SearchParams {
 }
 
 export default async function SupportActivityReportsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  await requireSession();
+  await requireAccess("support_activity.view");
   const { groupId, from, to } = await searchParams;
 
   const groups = await prisma.whatsAppGroup.findMany({

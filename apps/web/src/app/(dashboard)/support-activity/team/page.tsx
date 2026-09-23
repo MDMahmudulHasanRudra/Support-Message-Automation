@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { Download } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { getDhakaDayRange, getDhakaMonthRange, getDhakaWeekRange } from "@/lib/supportActivityPeriod";
 import { formatDurationShort } from "@/lib/duration";
 import {
@@ -59,7 +59,7 @@ export default async function SupportActivityTeamPage({
 }: {
   searchParams: Promise<{ period?: string }>;
 }) {
-  await requireSession();
+  await requireAccess("support_activity.view");
   const params = await searchParams;
   const period: PeriodKey = isPeriod(params.period) ? params.period : "today";
 

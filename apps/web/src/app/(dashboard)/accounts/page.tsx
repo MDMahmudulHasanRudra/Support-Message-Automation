@@ -1,7 +1,7 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Alert, Card, EmptyState, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Alert, Card, EmptyState, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import {
   adoptGroupSetupFromAccount,
   deleteWhatsAppAccount,
@@ -35,7 +35,7 @@ function isQrStale(qrUpdatedAtIso: string | null, nowMs: number): boolean {
 }
 
 export default async function AccountsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
   // Three independent reads, so one round trip rather than three sequential ones.
   const [accounts, pendingCommands, routes] = await Promise.all([
     prisma.whatsAppAccount.findMany({ orderBy: { createdAt: "asc" } }),
@@ -210,6 +210,8 @@ export default async function AccountsPage() {
           </>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {workerOffline ? (
         <div className="mb-6">

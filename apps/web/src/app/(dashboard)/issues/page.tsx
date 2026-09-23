@@ -1,23 +1,11 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
 import { Download } from "lucide-react";
 import type { Prisma, SupportIssueStatus } from "@prisma/client";
-import {
-  ActiveFilters,
-  Button,
-  ButtonLink,
-  FilterBar,
-  HelpButton,
-  HelpSection,
-  Input,
-  NoFilterResults,
-  PageHeader,
-  Pagination,
-  type ActiveFilter,
-} from "@/components/ui";
+import { ActiveFilters, Button, ButtonLink, FilterBar, HelpButton, HelpSection, Input, NoFilterResults, PageHeader, Pagination, type ActiveFilter, ViewOnlyNotice } from "@/components/ui";
 import { IssuesTable, type IssueRow } from "./IssuesTable";
 
 /** Every status an issue can hold. Seven of them existed and none was filterable, so anybody
@@ -56,7 +44,7 @@ function isIssueStatus(value: string | undefined): value is SupportIssueStatus {
 }
 
 export default async function IssuesPage({ searchParams }: { searchParams: Promise<IssuesSearchParams> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("teams_integration.view", "teams_integration.manage");
   const params = await searchParams;
 
   const status = isIssueStatus(params.status) ? params.status : null;
@@ -159,6 +147,8 @@ export default async function IssuesPage({ searchParams }: { searchParams: Promi
           </>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <FilterBar>
         <form className="flex flex-wrap items-end gap-2" method="GET">
