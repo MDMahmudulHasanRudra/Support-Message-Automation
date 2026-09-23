@@ -14,17 +14,21 @@ export interface LogRow {
   /** Groups every line belonging to one incoming message. Written since the log was built, and
    *  until now displayed nowhere — so the trail it exists to make followable was unfollowable. */
   correlationId: string | null;
+  /**
+   * Where the trail link goes, already built — a STRING, never a function.
+   *
+   * This used to be a `buildTrailHref` function prop. This file is a Client Component and the page
+   * rendering it is a Server Component, and a function cannot cross that boundary: Next has to
+   * serialise every prop into the RSC payload, and it throws on a function. Because the prop was
+   * passed whenever the table rendered, the System Logs page crashed to the error boundary on any
+   * view with at least one row — first reported as `/logs?level=ERROR` in production. Building the
+   * href on the server, where the filter state already lives, is what the boundary requires.
+   */
+  trailHref: string | null;
   metadataJson: string | null;
 }
 
-export function LogsTable({
-  logs,
-  buildTrailHref,
-}: {
-  logs: LogRow[];
-  /** Filters the page down to one correlation trail. Omitted where the caller has no filter state. */
-  buildTrailHref?: (correlationId: string) => string;
-}) {
+export function LogsTable({ logs }: { logs: LogRow[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   function toggle(id: string) {
@@ -81,10 +85,10 @@ export function LogsTable({
                 <Td className="w-px">
                   {/* One click from "this line looks wrong" to every line that came from the same
                       incoming message — which is what the column was always for. */}
-                  {log.correlationId && buildTrailHref ? (
+                  {log.trailHref ? (
                     <Tooltip content="Show every entry from this same event">
                       <Link
-                        href={buildTrailHref(log.correlationId)}
+                        href={log.trailHref}
                         aria-label="Show this event's full trail"
                         className="flex size-6 items-center justify-center rounded-[var(--radius-xs)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
                       >

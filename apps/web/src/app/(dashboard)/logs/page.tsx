@@ -77,7 +77,13 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
   const to = parseInstant(filters.to);
 
   const where: Prisma.SystemLogWhereInput = {};
-  if (filters.level) where.level = filters.level as LogLevel;
+  // Whitelisted, not cast. `filters.level as LogLevel` handed any URL value straight to Prisma, so a
+  // hand-edited or stale link (`?level=error`, `?level=DEBUG`) threw a validation error and took the
+  // whole page to the error boundary rather than simply showing nothing.
+  const level = (LEVELS as readonly string[]).includes(filters.level ?? "")
+    ? (filters.level as LogLevel)
+    : null;
+  if (level) where.level = level;
   if (scope) where.scope = { contains: scope, mode: "insensitive" };
   if (message) where.message = { contains: message, mode: "insensitive" };
   // The column has been written on every request-scoped event since the log was built and read by
@@ -120,7 +126,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
     nextPageSize = PAGE_SIZE,
   ) => {
     const merged = {
-      level: filters.level ?? "",
+      level: level ?? "",
       scope,
       message,
       correlationId,
@@ -140,8 +146,8 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
   };
 
   const activeFilters: ActiveFilter[] = [];
-  if (filters.level) {
-    activeFilters.push({ label: "Level", value: filters.level, removeHref: buildHref({ level: "" }) });
+  if (level) {
+    activeFilters.push({ label: "Level", value: level, removeHref: buildHref({ level: "" }) });
   }
   if (scope) activeFilters.push({ label: "Scope", value: scope, removeHref: buildHref({ scope: "" }) });
   if (message) activeFilters.push({ label: "Message", value: message, removeHref: buildHref({ message: "" }) });
@@ -175,6 +181,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
     scope: log.scope,
     message: log.message,
     correlationId: log.correlationId,
+    trailHref: log.correlationId ? buildHref({ correlationId: log.correlationId }) : null,
     metadataJson: log.metadata ? JSON.stringify(log.metadata, null, 2) : null,
   }));
 
@@ -221,7 +228,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
 
       <FilterBar>
         <form method="GET" className="flex flex-wrap items-end gap-2">
-          <Select name="level" defaultValue={filters.level ?? ""} className="w-32">
+          <Select name="level" defaultValue={level ?? ""} className="w-32">
             <option value="">All levels</option>
             {LEVELS.map((l) => (
               <option key={l} value={l}>
@@ -288,7 +295,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
         )
       ) : (
         <>
-          <LogsTable logs={rows} buildTrailHref={(id) => buildHref({ correlationId: id })} />
+          <LogsTable logs={rows} />
           <Pagination
             page={page}
             pageSize={PAGE_SIZE}
