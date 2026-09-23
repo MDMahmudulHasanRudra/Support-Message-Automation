@@ -255,7 +255,7 @@ export async function getAiOutcomeSeries(nowMs: number) {
 
   const rows = await prisma.$queryRaw<Array<{ bucket: Date; outcome: string; count: bigint }>>`
     SELECT
-      date_trunc('day', d."createdAt" AT TIME ZONE 'Asia/Dhaka') AS bucket,
+      date_trunc('day', d."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka') AS bucket,
       d."outcome"::text                                          AS outcome,
       COUNT(*)                                                   AS count
     FROM "AiFallbackDecision" d
@@ -264,9 +264,13 @@ export async function getAiOutcomeSeries(nowMs: number) {
     ORDER BY bucket
   `;
 
-  // date_trunc in a named zone returns a timestamp already shifted into it, so the epoch it
-  // reports is that many hours off. Reading the calendar date back out of the same zone is what
-  // keeps these buckets aligned with every other Dhaka-bucketed series on this page.
+  // `createdAt` is a timestamp WITHOUT time zone holding UTC, so the double AT TIME ZONE above is
+  // load-bearing: 'UTC' first makes it an instant, 'Asia/Dhaka' then gives the wall clock there.
+  // The single-argument form this used to have INTERPRETS the value as already being Dhaka time and
+  // shifts it six hours the wrong way — every decision between Dhaka midnight and noon landed on
+  // the previous day. The bucket comes back as a bare Dhaka-midnight timestamp, which Prisma hands
+  // over as that calendar date at 00:00Z, so slicing the ISO date reads it straight back.
+  // Same form as getActivityTrend, pinned in queryRewrites.integration.test.ts.
   const keyed = new Map<string, { replied: number; handedOver: number }>();
   for (const row of rows) {
     const key = row.bucket.toISOString().slice(0, 10);
@@ -350,7 +354,7 @@ export async function getResponseTimeSeries(nowMs: number) {
       FROM ordered
     )
     SELECT
-      date_trunc('day', ts AT TIME ZONE 'Asia/Dhaka')                              AS bucket,
+      date_trunc('day', ts AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka')           AS bucket,
       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (next_reply_ts - ts)))::float
                                                                                    AS median
     FROM marked

@@ -7,7 +7,15 @@ import { Alert, Badge, type BadgeColor, Button, EmptyState, FilterBar, HelpButto
 import { formatDateTime } from "@/lib/date";
 import { parseDhakaDayFromInput } from "@/lib/supportActivityPeriod";
 
-const STATUS_OPTIONS = ["PENDING", "PROCESSING", "SENT", "FAILED", "CANCELLED", "RATE_LIMITED", "SKIPPED"] as const;
+const STATUS_OPTIONS = [
+  "PENDING",
+  "PROCESSING",
+  "SENT",
+  "FAILED",
+  "CANCELLED",
+  "RATE_LIMITED",
+  "SKIPPED",
+] as const satisfies readonly OutboundMessageStatus[];
 
 /** One 1,848-group broadcast produces 1,848 rows, so a fixed 200 showed roughly a tenth of a
  *  single job — and said nothing about the rest. */
@@ -36,7 +44,14 @@ export default async function GroupBroadcastHistoryPage({
 
   const where: Prisma.OutboundMessageWhereInput = { actionType: "GROUP_BROADCAST" };
   if (filters.accountId) where.accountId = filters.accountId;
-  if (filters.status) where.status = filters.status as OutboundMessageStatus;
+  // Whitelisted, not cast. The raw value went straight to Prisma, so a stale or hand-edited link
+  // threw a validation error and replaced the whole page — the same failure the date filter just
+  // below was already fixed for. `satisfies` on the list proves every entry is a real status, so a
+  // typo cannot reach Prisma; it does not force the list to cover a status added to the enum later.
+  const status = (STATUS_OPTIONS as readonly string[]).includes(filters.status ?? "")
+    ? (filters.status as OutboundMessageStatus)
+    : null;
+  if (status) where.status = status;
   if (filters.group) where.groupNameSnapshot = { contains: filters.group, mode: "insensitive" };
   // Dhaka calendar days, and an unparseable value is dropped and reported instead of reaching
   // Prisma as an Invalid Date — that threw a validation error and replaced the whole page.
@@ -129,7 +144,7 @@ export default async function GroupBroadcastHistoryPage({
               </option>
             ))}
           </Select>
-          <Select name="status" defaultValue={filters.status ?? ""} className="w-36">
+          <Select name="status" defaultValue={status ?? ""} className="w-36">
             <option value="">All statuses</option>
             {STATUS_OPTIONS.map((s) => (
               <option key={s} value={s}>

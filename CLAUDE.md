@@ -1640,10 +1640,13 @@ INTERPRETS the value as already being in it — so the single-argument form shif
 hours the wrong way, moving every message sent before noon Dhaka onto the previous day. Verified
 against the database: `2026-09-18 02:00` (08:00 Dhaka, plainly the 18th) buckets as the 17th. The
 correct form is `AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka'`, pinned by a test in
-`queryRewrites.integration.test.ts`. `getActivityTrend` uses it. **Two charts in
-`dashboardMetrics.ts` (lines ~258 and ~353) still use the single-argument form and are wrong by a
-day for any morning activity** — left alone deliberately, because fixing them changes numbers
-already on screen and that is a decision, not a refactor.
+`queryRewrites.integration.test.ts`. `getActivityTrend` uses it, and so now do the two Overview
+charts in `dashboardMetrics.ts` (`getAiOutcomeSeries`, `getResponseTimeSeries`) that were left on
+the single-argument form for a while because fixing them changed numbers already on screen. That
+decision was taken on 23 Sep 2026: re-verified on Postgres 16 that the old form filed everything
+from Dhaka midnight to 11:59 on the PREVIOUS day, so those two charts shifted by a day for half of
+all activity until then. There should now be no single-argument `AT TIME ZONE` on a `DateTime`
+column anywhere; a new one is a bug.
 
 **Postgres has no index skip-scan, so `DISTINCT ON` is a sort, not a walk.** A comment in
 `chatInbox.ts` claimed the opposite for years. `DISTINCT ON (x) … ORDER BY x ASC, y DESC` is also
