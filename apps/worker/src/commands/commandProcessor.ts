@@ -200,6 +200,62 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
 }
 
 /**
+ * Everything that has to happen once a session is live again, wherever the connect came from.
+ *
+ * THIS EXISTS BECAUSE ONLY ONE OF THE THREE CONNECT PATHS DID IT. `ProviderRegistry.connectAccount()`
+ * chained a group sync and a catch-up sweep; the RECONNECT command and `recoverIfDropped()` both
+ * connected and stopped. So an account linked from the dashboard button — which, since Connect
+ * began issuing RECONNECT directly, is the normal way anybody links one — came up CONNECTED with
+ * whatever group rows it happened to already have. On a number that had just been logged out that
+ * is every group marked `isActive: false` by the LOGOUT handler, and on a fresh account it is none
+ * at all. The dashboard reported a healthy session with an empty or dead group list, and nothing
+ * anywhere said why. Observed in production on 23 Sep 2026, immediately after a deploy and a
+ * successful QR scan.
+ *
+ * The interaction that made it likely rather than rare: pressing Connect issues RECONNECT, whose
+ * first act is `provider.disconnect()`. If the registry's own `connectAccount()` was still waiting
+ * for a scan at that moment, that abandons it — taking its chained sync with it — and hands the
+ * link to the one path that does not sync.
+ *
+ * NOT AWAITED, exactly as the registry always had it. A sync is three attempts at up to 150s plus
+ * backoff, roughly eight minutes at worst, and the command processor is strictly serial: awaiting
+ * this would hold Show QR, Logout and every other account's commands behind it. The operator's
+ * question at that moment is "did it connect", which is answered either way.
+ *
+ * Catch-up runs AFTER the sync rather than beside it, which is the ordering the registry chose and
+ * documented: a message recovered from a group that is not in the database yet files under no
+ * group at all.
+ *
+ * Safe to call from all three paths at once — `syncGroupsWithTimeoutAndRetry` joins an in-flight
+ * sync for the same account rather than starting a second.
+ */
+export function resyncAndCatchUpAfterConnect(
+  accountId: string,
+  provider: WhatsAppProvider,
+  source: string,
+): void {
+  syncGroupsWithTimeoutAndRetry(accountId, provider)
+    .then((groupCount) => {
+      console.log(`[worker] synced ${groupCount} group(s) for account ${accountId} after ${source}`);
+    })
+    .catch((err) => {
+      console.error(
+        `[worker] group sync failed after retries for account ${accountId} after ${source} — the session stays connected, but its group list is now stale. Press Resync Groups.`,
+        err,
+      );
+      return logSystemEvent("ERROR", "provider", "Group sync failed after connecting", {
+        accountId,
+        source,
+        error: (err as Error).message,
+      }).catch(() => undefined);
+    })
+    .then(() => catchUpMissedMessages(accountId, provider))
+    .catch((err) => {
+      console.error(`[worker] catch-up failed for account ${accountId} after ${source}`, err);
+    });
+}
+
+/**
  * The longest a command can legitimately still be running.
  *
  * Set by the slowest one there is: RECONNECT calls `provider.connect()`, which waits up to ten
@@ -517,12 +573,23 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
           break;
         }
         // connect() re-attaches the message listener itself, so this no longer ends with a session
-        // that looks connected and silently collects nothing. What it cannot undo is the gap: fill
-        // that before reporting the command done.
-        const recovered = await catchUpMissedMessages(accountId, provider);
+        // that looks connected and silently collects nothing.
+        //
+        // The group sync is the other half, and its absence here is what left a freshly linked
+        // number reporting CONNECTED with a dead group list — see `resyncAndCatchUpAfterConnect`.
+        // The catch-up sweep moved inside it so it runs AFTER the sync: it used to be awaited here
+        // to "fill the gap before reporting the command done", which was right when nothing else
+        // followed, and is wrong now that a recovered message needs a group row to resolve against.
+        resyncAndCatchUpAfterConnect(accountId, provider, "a RECONNECT command");
         await prisma.workerCommand.update({
           where: { id: command.id },
-          data: { status: "DONE", processedAt: new Date(), result: { reconnected: true, ...recovered } },
+          data: {
+            status: "DONE",
+            processedAt: new Date(),
+            // Honest about what is still running: the session is up, the roster and the backlog are
+            // being worked through behind this row rather than before it.
+            result: { reconnected: true, groupSyncAndCatchUp: "running in the background" },
+          },
         });
         break;
       }

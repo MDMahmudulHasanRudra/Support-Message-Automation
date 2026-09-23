@@ -127,10 +127,27 @@ describe("Command loop: never overlaps two commands", () => {
       expect(resyncMidFlight.status).toBe("PENDING"); // never claimed while RECONNECT was still running
 
       releaseConnect();
-      await new Promise((resolve) => setTimeout(resolve, 60)); // let RECONNECT finish and RESYNC_GROUPS get its turn
 
-      const reconnectFinal = await prisma.workerCommand.findUniqueOrThrow({ where: { id: reconnectCommand.id } });
-      const resyncFinal = await prisma.workerCommand.findUniqueOrThrow({ where: { id: resyncCommand.id } });
+      /**
+       * POLLED, not a fixed sleep — and the difference is the difference between this test and a
+       * flaky one.
+       *
+       * The half above asserts something does NOT happen (RESYNC_GROUPS is never claimed while
+       * RECONNECT runs), and a fixed wait is the only honest way to test an absence. This half
+       * asserts something DOES happen, where a fixed wait is an assumption about speed rather than
+       * about behaviour. It was 60ms, and it started failing intermittently under full-suite load
+       * once RECONNECT began firing a background group sync that RESYNC_GROUPS then joins —
+       * genuinely slower, and correct. Waiting for the condition keeps exactly the same assertion
+       * while removing the guess.
+       */
+      const deadline = Date.now() + 5_000;
+      let reconnectFinal = await prisma.workerCommand.findUniqueOrThrow({ where: { id: reconnectCommand.id } });
+      let resyncFinal = await prisma.workerCommand.findUniqueOrThrow({ where: { id: resyncCommand.id } });
+      while ((reconnectFinal.status !== "DONE" || resyncFinal.status !== "DONE") && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        reconnectFinal = await prisma.workerCommand.findUniqueOrThrow({ where: { id: reconnectCommand.id } });
+        resyncFinal = await prisma.workerCommand.findUniqueOrThrow({ where: { id: resyncCommand.id } });
+      }
       expect(reconnectFinal.status).toBe("DONE");
       expect(resyncFinal.status).toBe("DONE");
     } finally {

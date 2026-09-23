@@ -275,23 +275,6 @@ const ACCEPTED_STARTUP_MESSAGES = new Set([
   "Authenticated",
 ]);
 
-/**
- * How long `@open-wa/wa-automate` may spend on its own authentication race, in SECONDS (its unit).
- *
- * It governs two different waits, which is why it is the number that matters most here:
- *   - BEFORE a code: `isAuthenticated()` versus this timer. On a profile carrying any WhatsApp
- *     storage this runs the full duration before a QR is even requested.
- *   - AFTER a scan: the session loading and the phone syncing the new device.
- *
- * Raised from the library's 120 because 120 was observed cutting off a successful pairing: the
- * scan was accepted, `AUTHENTICATED` was recorded, and two minutes later the library gave up with
- * "Authentication timed out. Shutting down" → "App Offline". A phone finishing a first sync is
- * doing real work over a real network, and two minutes is not a generous allowance for it.
- *
- * Not raised further than this. Every second added is also a second a genuinely broken pairing
- * takes to report, and a second a poisoned profile hangs before `shouldResetProfile()` can act.
- */
-const AUTH_TIMEOUT_SECONDS = Number(process.env.WHATSAPP_AUTH_TIMEOUT_SECONDS) || 180;
 
 /**
  * The library's own bound on `phoneIsOutOfReach`, which it races AFTER `authTimeout` expires,
@@ -299,6 +282,12 @@ const AUTH_TIMEOUT_SECONDS = Number(process.env.WHATSAPP_AUTH_TIMEOUT_SECONDS) |
  * below has to clear it and a number you cannot see is a number you cannot reason about.
  */
 const LIBRARY_OUT_OF_REACH_TIMEOUT_SECONDS = 60;
+
+/**
+ * The library's authentication race, in seconds — as it BEHAVES, not as configured. The value
+ * passed as `authTimeout` in the create() config below cannot change this; see the comment there.
+ */
+const LIBRARY_EFFECTIVE_AUTH_TIMEOUT_SECONDS = 120;
 
 /**
  * Consecutive codeless attempts before the Chromium profile is treated as the cause. See
@@ -311,10 +300,10 @@ const CODELESS_FAILURES_BEFORE_PROFILE_RESET = 2;
  *
  *     firstCode > authTimeout + oorTimeout
  *
- * because everything on the left of that sum is the library legitimately still working. 300s
- * clears the current 240s sum with a minute of margin for the browser launch and page load that
- * precede it. Raising `WHATSAPP_AUTH_TIMEOUT_SECONDS` without raising this would put the deadline
- * back inside the library's own window, which is the bug this replaced.
+ * because everything on the left of that sum is the library legitimately still working. Those are
+ * the library's EFFECTIVE values — 120 + 60 = 180s — not whatever is passed to it, and assuming
+ * they were the same is what made the previous version of this comment wrong. 300s clears 180s
+ * with two minutes of margin for the browser launch and page load that precede it.
  */
 const MIN_FIRST_CODE_TIMEOUT_MS = 300_000;
 
@@ -598,15 +587,23 @@ export class OpenWAProvider implements WhatsAppProvider {
      * nothing else, leaving exactly the behaviour that shipped before this — a code on screen
      * until CONNECTED arrives.
      *
-     * Deliberately NOT generation-guarded, because it cannot honestly be. The handler runs
-     * synchronously at fire time, so re-reading `attemptGeneration` inside it always yields the
-     * current one whichever attempt the event actually came from, and the bus carries no attempt
-     * identity to compare against — only a session id, which is per-provider and constant across
-     * attempts. An abandoned attempt's Chromium is orphaned rather than killed (see
-     * `abandonAttempt`), so it genuinely can reach this later. What that costs is bounded and
-     * self-correcting: the stage reads AUTHENTICATED for a moment during a live attempt, `status`
-     * is untouched, and the next real transition overwrites it. A guard that looked like the QR
-     * one but checked nothing would be worse than none — the next reader would believe it.
+     * GATED ON AN ATTEMPT BEING IN FLIGHT, and the reason is a correction to what this comment
+     * used to say. It claimed the blast radius was cosmetic — "the stage reads AUTHENTICATED for a
+     * moment, `status` is untouched". That was wrong. `setState` goes through
+     * `recordConnectionState`, whose single update writes `status: toAccountStatus(state)`, and
+     * AUTHENTICATED maps to RECONNECTING. So an orphan firing at an IDLE account would push it from
+     * DISCONNECTED or ERROR — both of which `recoverIfDropped` retries — into RECONNECTING, which
+     * it deliberately never retries. That is the absorbing state the 18 Sep 2026 outage was traced
+     * to, reached by a stray event.
+     *
+     * It still cannot be generation-guarded: the handler runs synchronously at fire time, so
+     * re-reading `attemptGeneration` inside it always yields the current one whichever attempt the
+     * event came from, and the bus carries no attempt identity — only a session id, which is
+     * per-provider and constant across attempts. An abandoned attempt's Chromium is orphaned rather
+     * than killed (see `abandonAttempt`), so it genuinely can reach this later. `this.connecting`
+     * is the honest substitute: it answers "does THIS provider have an attempt running right now",
+     * which is the question that separates the damaging case from the harmless one. An orphan
+     * arriving mid-attempt still lands, and that is fine — an attempt really is in progress.
      *
      * It never claims CONNECTED. The session still has to load, and `create()` resolving remains
      * the only thing that proves it can carry a message.
@@ -615,6 +612,10 @@ export class OpenWAProvider implements WhatsAppProvider {
       if (sessionId !== this.sessionId) return;
       if (typeof message !== "string") return;
       if (!ACCEPTED_STARTUP_MESSAGES.has(message.trim())) return;
+      // No attempt running here, so nothing this says can be about us. Before the deadline is
+      // disarmed as well as before the write: an orphan must not cancel a live attempt's no-code
+      // deadline either, which would leave only the ten-minute watchdog.
+      if (!this.connecting) return;
       // An accepted scan is plainly not an attempt that failed to produce a code.
       this.attemptReachedLinkingScreen = true;
       this.cancelFirstCodeDeadline?.();
@@ -838,7 +839,25 @@ export class OpenWAProvider implements WhatsAppProvider {
           // diagnostic signal. Any non-zero value here selects a 120s bound
           // (multiDevice is true) instead of the true value passed — an
           // upstream quirk, not something this value can fine-tune further.
-          authTimeout: AUTH_TIMEOUT_SECONDS,
+          //
+          // THAT LAST SENTENCE IS LOAD-BEARING AND WAS IGNORED ONCE, COSTING A WRONG FIX. On
+          // 23 Sep 2026 a pairing that had already succeeded died two minutes later with
+          // "Authentication timed out. Shutting down" -> "App Offline", so this was raised to 180
+          // to give the phone longer to sync. It changed nothing. The library builds its timer as
+          //
+          //     timeout((config.authTimeout || config.multiDevice ? 120 : 60) * 1000)
+          //
+          // and `||` binds tighter than `?:`, so that reads `(authTimeout || multiDevice) ? 120 :
+          // 60`. With multiDevice true, ANY truthy value here selects 120 seconds and the number
+          // passed is discarded. The 180 shipped as an inert env knob and a test that asserted the
+          // constant rather than the behaviour, so it passed while nothing had moved.
+          //
+          // The post-scan window is therefore 120s and cannot be widened from here. `0` is not an
+          // escape hatch, for the reason above. What DOES help is `shouldResetProfile()`, which
+          // recovers from the state this failure leaves behind rather than trying to prevent it.
+          // `connectTimeouts.test.ts` now asserts the library's own expression, so a version that
+          // fixes the precedence makes that test fail and this decision gets revisited.
+          authTimeout: 120,
           popup: false,
           cacheEnabled: false,
           /**

@@ -2,8 +2,8 @@ import { prisma } from "@support-automation/db";
 import type { WhatsAppAccount } from "@prisma/client";
 import type { ProviderRegistry } from "./ProviderRegistry.js";
 import { assignSessionForAccount, findConnectableAccounts, findUnprovisionedAccounts } from "./accountProvisioning.js";
-import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { resyncAndCatchUpAfterConnect } from "../commands/commandProcessor.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 
 /** Name this loop reports itself under in the per-loop liveness view. */
@@ -191,6 +191,12 @@ async function recoverIfDropped(registry: ProviderRegistry, account: WhatsAppAcc
   const outcome = provider.getConnectionStatus();
   if (outcome === "CONNECTED") {
     await logSystemEvent("INFO", "provider", "Session recovered automatically", { accountId, status: outcome });
+    // The roster can have changed while the session was down — groups joined, groups left — and
+    // this path used to connect and stop. Same omission the RECONNECT command had: a recovered
+    // account came back reporting CONNECTED against whatever group rows were last written, with
+    // nothing scheduled to reconcile them. Not awaited, for the reason in the routine's own doc
+    // comment; it also carries the catch-up sweep this function used to run inline below.
+    resyncAndCatchUpAfterConnect(accountId, provider, "automatic drop recovery");
   } else {
     console.warn(`[registry] recovery attempt for account ${accountId} ended in ${outcome}`);
     await logSystemEvent(
@@ -207,7 +213,11 @@ async function recoverIfDropped(registry: ProviderRegistry, account: WhatsAppAcc
     );
   }
 
-  await catchUpMissedMessages(accountId, provider);
+  // The catch-up sweep used to run here unconditionally, which had two problems now that the group
+  // sync above exists. It duplicated the sweep for a recovery that SUCCEEDED, and it raced the sync
+  // — filing a message from a group not yet in the database under no group. It also ran for a
+  // recovery that failed, where `fetchMessagesSince` has no client and can only return nothing.
+  // `resyncAndCatchUpAfterConnect` owns it for the one outcome where there is anything to recover.
 }
 
 /**

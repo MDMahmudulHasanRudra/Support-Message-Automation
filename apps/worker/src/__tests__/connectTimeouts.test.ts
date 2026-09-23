@@ -38,7 +38,7 @@ function numericConstant(name: string): number {
 }
 
 describe("the connect timeouts are ordered, not merely chosen", () => {
-  const authTimeoutSeconds = numericConstant("AUTH_TIMEOUT_SECONDS");
+  const authTimeoutSeconds = numericConstant("LIBRARY_EFFECTIVE_AUTH_TIMEOUT_SECONDS");
   const outOfReachSeconds = numericConstant("LIBRARY_OUT_OF_REACH_TIMEOUT_SECONDS");
   const firstCodeMs = numericConstant("MIN_FIRST_CODE_TIMEOUT_MS");
 
@@ -64,17 +64,36 @@ describe("the connect timeouts are ordered, not merely chosen", () => {
     expect(Number(watchdogMinutes) * 60_000).toBeGreaterThan(firstCodeMs);
   });
 
-  it("the post-scan settle window is long enough for a phone to finish a first sync", () => {
-    // The library's own 120 was observed cutting off a pairing that had genuinely succeeded: the
-    // scan was accepted and AUTHENTICATED recorded, then "Authentication timed out. Shutting
-    // down." → "App Offline" two minutes later. A first sync is real work over a real network.
-    expect(authTimeoutSeconds).toBeGreaterThanOrEqual(180);
+  it("the post-scan window is whatever the LIBRARY does, not what we pass it", () => {
+    /**
+     * This replaced an assertion that read our own constant and required it to be >= 180 — which
+     * passed while the effective value was still 120, because the library discards the number.
+     * A test that asserts the input to a setting that is ignored is a test that guards nothing,
+     * and it is the reason a wrong fix shipped believing the post-scan window had grown.
+     *
+     * So this reads the installed library instead. `||` binds tighter than `?:`, so
+     * `(config.authTimeout || config.multiDevice ? 120 : 60)` evaluates as
+     * `(authTimeout || multiDevice) ? 120 : 60` — and with multiDevice true, any truthy authTimeout
+     * selects 120. If a future version fixes that precedence, this fails, and whether to raise the
+     * post-scan window becomes a live question again rather than a silent assumption.
+     */
+    const initializer = readFileSync(
+      resolve(
+        require.resolve("@open-wa/wa-automate/package.json", { paths: [resolve(__dirname, "../..")] }),
+        "../dist/controllers/initializer.js",
+      ),
+      "utf8",
+    );
+    expect(initializer).toContain("config.authTimeout || config.multiDevice ? 120 : 60");
+    // And our own record of that behaviour agrees with it.
+    expect(authTimeoutSeconds).toBe(120);
   });
 
-  it("but not so long that a broken pairing takes forever to report", () => {
-    // Every second here is also a second a poisoned profile hangs before `shouldResetProfile()`
-    // can act on it, and a second an operator watches nothing happen.
-    expect(authTimeoutSeconds).toBeLessThanOrEqual(300);
+  it("we do not ship a knob for a value the library ignores", () => {
+    // `WHATSAPP_AUTH_TIMEOUT_SECONDS` was added, read into a constant, passed to the library and
+    // documented in compose and .env.example — an operator could set it, and nothing would change.
+    // That is the dead-setting pattern this project keeps removing.
+    expect(source).not.toContain("WHATSAPP_AUTH_TIMEOUT_SECONDS");
   });
 });
 

@@ -2,7 +2,7 @@ import { countMetric } from "../health/metrics.js";
 import { OpenWAProvider } from "./openwa/OpenWAProvider.js";
 import type { WhatsAppProvider } from "./WhatsAppProvider.js";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
-import { syncGroupsWithTimeoutAndRetry } from "../commands/commandProcessor.js";
+import { resyncAndCatchUpAfterConnect } from "../commands/commandProcessor.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { countDroppedMessage } from "../pipeline/dropCounter.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -113,18 +113,9 @@ export class ProviderRegistry {
     });
 
     // Deliberately NOT awaited — a slow/failed group sync must never delay this account's message
-    // processing (already wired above) or the next account's connectAccount() call.
-    syncGroupsWithTimeoutAndRetry(account.id, provider)
-      .then((groupCount) => {
-        console.log(`[worker] synced ${groupCount} group(s) for account ${account.id}`);
-      })
-      .catch((err) => {
-        console.error(`[worker] group sync failed after retries for account ${account.id} — connection remains active`, err);
-      })
-      // Then fill whatever arrived while this account was not listening. After the group sync
-      // rather than beside it: a recovered message resolves to a WhatsAppGroup row, and racing the
-      // sync would file messages from a newly-joined group under no group at all.
-      .then(() => catchUpMissedMessages(account.id, provider));
+    // processing (already wired above) or the next account's connectAccount() call. Shared with the
+    // other two connect paths, which each used to omit it; see the routine's own doc comment.
+    resyncAndCatchUpAfterConnect(account.id, provider, "the registry's initial connect");
 
     return true;
   }
