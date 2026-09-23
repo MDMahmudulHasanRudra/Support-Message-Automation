@@ -1,9 +1,10 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
-import type { Prisma } from "@prisma/client";
+import { NotificationStatus, OutboundMessageStatus, type Prisma } from "@prisma/client";
 import { requireSession } from "@/server/auth";
 import { Alert, HelpButton, HelpSection, PageHeader, Pagination } from "@/components/ui";
 import { parseDhakaDayFromInput } from "@/lib/supportActivityPeriod";
+import { enumParam } from "@/lib/enumParam";
 import { MessagesFilterBar, type MessageFilters } from "./MessagesFilterBar";
 import { MessagesTable, type MessageRow } from "./MessagesTable";
 
@@ -83,16 +84,20 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
   if (params.decision) executionFilter.decision = params.decision;
   if (params.ruleId) executionFilter.ruleId = params.ruleId;
   if (Object.keys(executionFilter).length > 0) where.executions = { some: executionFilter };
-  if (params.autoReplyStatus) {
-    where.outboundReplies = { some: { actionType: "AUTO_REPLY", status: params.autoReplyStatus as Prisma.EnumOutboundMessageStatusFilter["equals"] } };
+  // Both validated against the real enum: the raw values were cast straight into the query, so a
+  // stale Overview link or a hand-edited URL threw a Prisma validation error and replaced the page.
+  const autoReplyStatus = enumParam(OutboundMessageStatus, params.autoReplyStatus);
+  const notificationStatus = enumParam(NotificationStatus, params.notificationStatus);
+  if (autoReplyStatus) {
+    where.outboundReplies = { some: { actionType: "AUTO_REPLY", status: autoReplyStatus } };
   }
-  if (params.notificationStatus) {
-    where.notifications = { some: { status: params.notificationStatus as Prisma.EnumNotificationStatusFilter["equals"] } };
+  if (notificationStatus) {
+    where.notifications = { some: { status: notificationStatus } };
   }
 
   const hasActiveFilters = Boolean(
     params.accountId || params.group || params.sender || params.text || params.dateFrom || params.dateTo ||
-    params.decision || params.ruleId || params.autoReplyStatus || params.notificationStatus || withinHours,
+    params.decision || params.ruleId || autoReplyStatus || notificationStatus || withinHours,
   );
 
   const [messages, totalCount, accounts, rules] = await Promise.all([
