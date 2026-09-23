@@ -55,13 +55,37 @@ describe("the connect timeouts are ordered, not merely chosen", () => {
     expect(firstCodeMs - libraryCodelessWindowMs).toBeGreaterThanOrEqual(45_000);
   });
 
-  it("the outer watchdog is longer than the deadline inside it", () => {
-    // Otherwise the watchdog fires first and the specific, actionable "no code appeared" error is
-    // replaced by the generic "did not settle" one — losing the distinction between a session that
-    // never offered anything to scan and a human who has not scanned yet.
-    const watchdogMinutes = source.match(/WHATSAPP_CONNECT_WATCHDOG_MS\) \|\| (\d+) \* 60_000/)?.[1];
-    expect(watchdogMinutes).toBeDefined();
-    expect(Number(watchdogMinutes) * 60_000).toBeGreaterThan(firstCodeMs);
+  it("the linking window is longer than the no-code deadline inside it", () => {
+    // Otherwise the window fires first and the specific, actionable "no code appeared" error is
+    // replaced by the generic one — losing the distinction between a session that never offered
+    // anything to scan and a person who has not scanned yet.
+    expect(source).toContain("Number(process.env.WHATSAPP_CONNECT_WATCHDOG_MS) || LINK_WINDOW_MS");
+    expect(numericConstant("LINK_WINDOW_MS")).toBeGreaterThan(firstCodeMs);
+  });
+
+  it("docker-compose cannot override those constants with a hard-coded default", () => {
+    // Everything above reads the SOURCE, so it cannot see a runtime override. A `:-300000` default
+    // in compose once made the no-code deadline equal to the linking window in every Docker
+    // deployment while all of these tests passed. An empty default lets the constants apply.
+    const compose = readFileSync(resolve(__dirname, "../../../../docker-compose.yml"), "utf8");
+    for (const name of ["WHATSAPP_FIRST_CODE_TIMEOUT_MS", "WHATSAPP_CONNECT_WATCHDOG_MS"]) {
+      const line = compose.split(/\r?\n/).find((l) => l.trim().startsWith(`${name}:`));
+      if (line) expect(line).toContain("${" + name + ":-}");
+    }
+  });
+
+  it("the linking window is the five minutes that was asked for", () => {
+    // The countdown in the dialog is read from the deadline this produces, so changing it changes
+    // what an operator is told — deliberately a test, not an accident.
+    expect(numericConstant("LINK_WINDOW_MS")).toBe(300_000);
+  });
+
+  it("an accepted scan gets longer than the library needs to finish syncing", () => {
+    // The window is swapped for this the moment a scan lands. If it were shorter than the library's
+    // own post-scan sync, a pairing that had already succeeded would be killed and reported as time
+    // running out — the exact experience the swap exists to prevent.
+    const libraryCodelessWindowMs = (authTimeoutSeconds + outOfReachSeconds) * 1000;
+    expect(numericConstant("POST_SCAN_GRACE_MS")).toBeGreaterThan(libraryCodelessWindowMs);
   });
 
   it("the post-scan window is whatever the LIBRARY does, not what we pass it", () => {

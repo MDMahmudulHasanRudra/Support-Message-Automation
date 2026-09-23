@@ -53,6 +53,14 @@ const STAGE_COPY: Record<string, ConnectionStageCopy> = {
     detail: "The session is up and the last checks are running.",
     accepted: true,
   },
+  // The linking window ran out with a code on screen and nobody scanned it. Said as what it is,
+  // because the worker is already starting a fresh attempt — "something went wrong", which is what
+  // this used to read as, would send somebody to System Logs over a person not reaching a phone.
+  QR_EXPIRED: {
+    title: "Time ran out — getting a fresh code",
+    detail: "Nobody scanned within the linking window. A new code and a new window are on the way.",
+    accepted: false,
+  },
   CONNECTED: {
     title: "Connected",
     detail: "Sending and receiving normally.",

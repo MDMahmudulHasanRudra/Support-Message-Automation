@@ -1,0 +1,14 @@
+-- When the current linking attempt stops waiting for a scan, so the dashboard can count down to it.
+--
+-- WhatsApp Web reissues the QR roughly every twenty seconds and there is no setting that changes
+-- that, so "how long does this QR last" has no useful answer. "How long do I have to scan" does:
+-- it is the connect watchdog, which bounds one attempt. Until now that number lived only inside the
+-- worker process, and the dialog could show neither how long was left nor that time had run out.
+--
+-- Stored as the DEADLINE rather than as a start time plus a duration, because the duration is the
+-- worker's env var (WHATSAPP_CONNECT_WATCHDOG_MS). A dashboard that assumed its own copy of the
+-- length would count down to the wrong moment the first time somebody tuned it.
+--
+-- Nullable, no default, no backfill: null means no attempt is waiting on a person, which is the
+-- truth for every existing row.
+ALTER TABLE "WhatsAppAccount" ADD COLUMN "linkExpiresAt" TIMESTAMP(3);

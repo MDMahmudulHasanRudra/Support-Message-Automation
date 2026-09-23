@@ -643,6 +643,12 @@ model WhatsAppAccount {
   /// library emits them on one event — see `pairingMethod` for why that is not an accident.
   qrCode          String?
   qrUpdatedAt     DateTime?
+  /// When the current linking attempt stops waiting for a scan — the deadline the linking dialog
+  /// counts down to. Written by the worker as the attempt begins, from its own connect watchdog, so
+  /// the dashboard never needs a copy of that length. Cleared once the scan is accepted (the
+  /// countdown stops mattering), on connect, and on any end to the attempt. Null means nothing is
+  /// waiting on a person.
+  linkExpiresAt   DateTime?
 
   /// How this account asks WhatsApp to link it: by showing a QR code, or by asking for a code the
   /// operator types into the phone. Both are official WhatsApp Web flows and

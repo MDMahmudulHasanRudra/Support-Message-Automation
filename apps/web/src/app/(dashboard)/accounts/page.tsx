@@ -120,6 +120,7 @@ export default async function AccountsPage() {
       qrCode: account.qrCode,
       qrUpdatedAt,
       qrStale: isQrStale(qrUpdatedAt, nowMs),
+      linkExpiresAt: account.linkExpiresAt?.toISOString() ?? null,
       pairingMethod: account.pairingMethod,
       pairingPhoneNumber: account.pairingPhoneNumber,
       proxyAddress: account.proxyAddress,

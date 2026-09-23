@@ -32,6 +32,7 @@ import type {
 } from "../WhatsAppProvider.js";
 import {
   readPairingPreference,
+  recordLinkWindow,
   readProxyConfig,
   recordAccountMetadata,
   recordConnectionState,
@@ -270,6 +271,15 @@ const ABANDONED = "OPENWA_ATTEMPT_ABANDONED";
  * an entry for it would put a "Code accepted" panel on screen at a moment nothing has confirmed,
  * which is the one mistake here that would send somebody away from a screen they still need.
  */
+/** One group as `listGroupChats()` returns it — only what the sync and the collection probe read. */
+interface LeanGroupChat {
+  id: string;
+  name: string | null;
+  formattedTitle: string | null;
+  /** Seconds since the epoch of the chat's last interaction, as WhatsApp Web records it. */
+  t: number | null;
+}
+
 const ACCEPTED_STARTUP_MESSAGES = new Set([
   "QR code scanned. Loading session...",
   "Authenticated",
@@ -305,7 +315,37 @@ const CODELESS_FAILURES_BEFORE_PROFILE_RESET = 2;
  * they were the same is what made the previous version of this comment wrong. 300s clears 180s
  * with two minutes of margin for the browser launch and page load that precede it.
  */
-const MIN_FIRST_CODE_TIMEOUT_MS = 300_000;
+const MIN_FIRST_CODE_TIMEOUT_MS = 240_000;
+
+/**
+ * How long one linking attempt waits for somebody to scan — the window the dialog counts down.
+ *
+ * WhatsApp Web reissues the QR about every twenty seconds and nothing here can change that, so the
+ * code on screen is always fresh; what runs out is this. Five minutes because that is what was
+ * asked for, and it is still far more than a person standing at the phone needs. When it runs out
+ * unscanned the attempt ends as QR_EXPIRED and `connectWithRetry` starts a new one — a new window,
+ * a new code — without anybody pressing anything.
+ *
+ * It was ten minutes, which was generous for a scan and slow for everything else: this is also the
+ * only thing that recovers an attempt wedged inside the library, so every extra minute here was a
+ * minute of a stuck account before anything tried again.
+ *
+ * It must stay above MIN_FIRST_CODE_TIMEOUT_MS, or the generic "did not settle" error replaces the
+ * specific "no code ever appeared" one — `connectTimeouts.test.ts` pins that.
+ */
+const LINK_WINDOW_MS = 300_000;
+
+/**
+ * What replaces the linking window the moment a scan is accepted.
+ *
+ * Without this a scan at 4:55 would be cut off by the window at 5:00, in the middle of the phone
+ * syncing — killing a pairing that had already succeeded, and presenting it as time having run out.
+ * From the scan onward the attempt is not waiting on a person, so the person's window stops
+ * applying. It is replaced rather than cancelled because this is still the only bound on a wedged
+ * `create()`: the library allows `authTimeout` + `oorTimeout` = 180s for the sync, and this clears
+ * that by a minute.
+ */
+const POST_SCAN_GRACE_MS = 240_000;
 
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
@@ -423,6 +463,11 @@ export class OpenWAProvider implements WhatsAppProvider {
    * "no code ever appeared" deadline below. Set per attempt, cleared when the attempt settles.
    */
   private cancelFirstCodeDeadline: (() => void) | null = null;
+  /**
+   * Replaces the linking window with the post-scan grace period. Set per attempt, called at most
+   * once — the moment WhatsApp accepts the scan — and cleared when the attempt settles.
+   */
+  private extendAfterScan: (() => void) | null = null;
 
   constructor(
     private readonly accountId: string,
@@ -619,6 +664,8 @@ export class OpenWAProvider implements WhatsAppProvider {
       // An accepted scan is plainly not an attempt that failed to produce a code.
       this.attemptReachedLinkingScreen = true;
       this.cancelFirstCodeDeadline?.();
+      // Nobody is being waited on any more, so the person's five minutes stop applying.
+      this.extendAfterScan?.();
       // Never walk a live session backwards.
       if (this.state === "CONNECTED") return;
       this.setState("AUTHENTICATED").catch(() => undefined);
@@ -713,14 +760,36 @@ export class OpenWAProvider implements WhatsAppProvider {
     // on OUR wait only, generous enough to never cut off a real (if slow) human scan — it exists
     // purely to convert "hung forever, silently" into "fails after a long-but-finite wait", which
     // connectWithRetry can then actually retry.
-    const watchdogMs = Number(process.env.WHATSAPP_CONNECT_WATCHDOG_MS) || 10 * 60_000;
+    const watchdogMs = Number(process.env.WHATSAPP_CONNECT_WATCHDOG_MS) || LINK_WINDOW_MS;
     let watchdogTimer: NodeJS.Timeout | undefined;
+    // Set only by the LINKING-window timer, never by the post-scan one that may replace it, so the
+    // catch below can tell "nobody scanned in time" from "the attempt wedged".
+    let linkWindowExpired = false;
+    let rejectWatchdog: (reason: Error) => void = () => undefined;
     const watchdog = new Promise<never>((_, reject) => {
-      watchdogTimer = setTimeout(
-        () => reject(new Error(`OpenWA connection attempt did not settle within ${watchdogMs}ms — treating as stalled.`)),
-        watchdogMs,
-      );
+      rejectWatchdog = reject;
+      watchdogTimer = setTimeout(() => {
+        linkWindowExpired = true;
+        reject(new Error(`No scan within the ${Math.round(watchdogMs / 1000)}s linking window — starting a fresh one.`));
+      }, watchdogMs);
     });
+    this.extendAfterScan = () => {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = setTimeout(
+        () =>
+          rejectWatchdog(
+            new Error(
+              `The scan was accepted but the session did not finish loading within ${Math.round(POST_SCAN_GRACE_MS / 1000)}s — treating as stalled.`,
+            ),
+          ),
+        POST_SCAN_GRACE_MS,
+      );
+      this.extendAfterScan = null;
+    };
+    // The dashboard counts down to this. Chained onto the same write queue as every state change,
+    // so it cannot land after — and undo — a transition that has already closed the window.
+    const linkExpiresAt = new Date(Date.now() + watchdogMs);
+    this.pendingStateWrite = this.pendingStateWrite.then(() => recordLinkWindow(this.accountId, linkExpiresAt));
 
     // The third racer: an operator deciding, mid-wait, that they want to link a different way.
     // Rejecting here is what lets `openSession` unwind and `connect()` clear `this.connecting`, so
@@ -955,6 +1024,14 @@ export class OpenWAProvider implements WhatsAppProvider {
         await this.setState("DISCONNECTED", { reason: "Superseded by a new connection attempt." });
         throw err;
       }
+      // A code that sat on screen for the whole window without being scanned is not a failure of
+      // anything — record it as what it is, so the dialog says "time ran out, fresh code coming"
+      // instead of "something went wrong". `connectWithRetry` still sees the rejection and starts
+      // the next attempt; only the description changes.
+      if (linkWindowExpired && this.attemptReachedLinkingScreen) {
+        await this.setState("QR_EXPIRED", { windowSeconds: Math.round(watchdogMs / 1000) });
+        throw err;
+      }
       // Do not silently swallow: full error, with stack, goes to both the
       // console (docker logs) and SystemLog (dashboard).
       await this.setState("ERROR", { error: (err as Error).message, stack: (err as Error).stack });
@@ -963,6 +1040,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       clearTimeout(watchdogTimer);
       clearTimeout(firstCodeTimer);
       this.cancelFirstCodeDeadline = null;
+      this.extendAfterScan = null;
       this.abandonAttempt = null;
     }
 
@@ -1144,10 +1222,82 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   async getGroups(): Promise<GroupInfo[]> {
     if (!this.client) return [];
-    const chats = await this.client.getAllGroups();
+    const chats = await this.listGroupChats();
     return chats.map((chat) => ({
       whatsappGroupId: chat.id,
       name: chat.name || chat.formattedTitle || chat.id,
+    }));
+  }
+
+  /**
+   * Every group on the account, as the four fields anything here reads — and why this is not
+   * `client.getAllGroups()`.
+   *
+   * `getAllGroups()` is the call behind the group sync timing out in production (GROUP_SYNC_TIMEOUT
+   * on 7, 11 and 18 Sep 2026; 736 groups locally already blew the 150s ceiling once). Its cost is
+   * not the group count, it is what it does per chat. In the injected WAPI it is literally
+   *
+   *     getAllGroups = () => getAllChats().filter(chat => chat.isGroup)
+   *     getAllChats  = () => Store.Chat.map(chat => _serializeChatObj(chat))
+   *
+   * so it fully serialises EVERY chat on the account — each one-to-one conversation as well — and
+   * only then throws away everything that is not a group. And `_serializeChatObj` is heavy: the raw
+   * model, the contact with its profile-picture thumbnail, presence, and the complete
+   * `groupMetadata` including every participant. For ~1,848 groups that is the whole membership of
+   * every group, serialised inside the page and shipped across the Puppeteer boundary as JSON, to
+   * read two fields out of it.
+   *
+   * This runs one expression in the page instead: filter to groups FIRST, then return id, name,
+   * formattedTitle and `t` — nothing else crosses the boundary. The values are taken from the same
+   * places `_serializeChatObj` takes them (`toJSON()` for name and t, the model for formattedTitle,
+   * `id._serialized` for the id), so what callers receive is the same data for those fields, not an
+   * approximation of it.
+   *
+   * FALLS BACK TO `getAllGroups()`, and that is what makes it safe to ship without a live trace.
+   * `window.Store` is WhatsApp Web's internal module registry, not a public API, and a build that
+   * reshapes it would break this. Anything short of a non-empty list of string ids — a throw, a
+   * missing Store, an empty result — takes the old path, so the worst case is exactly today's
+   * behaviour rather than a group list quietly emptied. That also means a result of zero groups
+   * never reaches `syncGroups` from here unless the slow path agrees, which matters because an
+   * empty roster is the one input that sweep has been taught to distrust.
+   */
+  private async listGroupChats(): Promise<LeanGroupChat[]> {
+    const client = this.client;
+    if (!client) return [];
+    try {
+      const lean = await client.getPage().evaluate(() => {
+        interface PageChat {
+          isGroup?: boolean;
+          id?: { _serialized?: string };
+          formattedTitle?: string;
+          toJSON?: () => { name?: string; t?: number };
+        }
+        const store = (globalThis as unknown as { Store?: { Chat?: { filter?: (fn: (chat: PageChat) => boolean) => PageChat[] } } })
+          .Store;
+        if (!store?.Chat || typeof store.Chat.filter !== "function") return null;
+        return store.Chat.filter((chat) => Boolean(chat?.isGroup)).map((chat) => {
+          const json = typeof chat.toJSON === "function" ? chat.toJSON() : {};
+          return {
+            id: chat.id?._serialized ?? null,
+            name: typeof json.name === "string" ? json.name : null,
+            formattedTitle: typeof chat.formattedTitle === "string" ? chat.formattedTitle : null,
+            t: typeof json.t === "number" ? json.t : null,
+          };
+        });
+      });
+      if (Array.isArray(lean) && lean.length > 0 && lean.every((chat) => typeof chat.id === "string")) {
+        return lean as LeanGroupChat[];
+      }
+      console.warn("[openwa] lean group enumeration returned nothing usable — falling back to getAllGroups()");
+    } catch (err) {
+      console.warn("[openwa] lean group enumeration failed — falling back to getAllGroups()", err);
+    }
+    const chats = await client.getAllGroups();
+    return chats.map((chat) => ({
+      id: chat.id,
+      name: chat.name ?? null,
+      formattedTitle: chat.formattedTitle ?? null,
+      t: typeof chat.t === "number" ? chat.t : null,
     }));
   }
 
@@ -1218,7 +1368,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     const sinceMs = since.getTime();
     const collected: RawIncomingMessage[] = [];
 
-    let chats: Awaited<ReturnType<Client["getAllGroups"]>>;
+    let chats: LeanGroupChat[];
     try {
       // Bounded by us, not by Puppeteer. `getAllGroups()` is the single most expensive call this
       // provider makes — on a roster of ~1,848 groups it has been observed exceeding the 150s
@@ -1226,7 +1376,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       // 2026) — and without a bound of its own it runs until Puppeteer's 180s `protocolTimeout`
       // gives up. That is three minutes of a watchdog tick held open for a question that was
       // supposed to be cheap.
-      chats = await withTimeout(this.client.getAllGroups(), PROBE_ENUMERATION_TIMEOUT_MS, "chat list");
+      chats = await withTimeout(this.listGroupChats(), PROBE_ENUMERATION_TIMEOUT_MS, "chat list");
     } catch (err) {
       const message = (err as Error).message || "unknown error";
       // Worded apart from a hard failure on purpose. "The session is dead" and "the chat list is

@@ -53,6 +53,14 @@ export const OPENWA_CONNECTION_STATES = [
    */
   "AUTHENTICATED",
   "AUTHENTICATING",
+  /**
+   * A code was on screen for the whole linking window and nobody scanned it. Not an error: the
+   * attempt did everything right and the person did not get to the phone. It used to be recorded as
+   * ERROR, which put "Something went wrong — check System Logs" on the dialog at the one moment the
+   * honest message is "time ran out, here is a fresh code" — and `connectWithRetry` starts the fresh
+   * attempt a few seconds later on its own.
+   */
+  "QR_EXPIRED",
   "CONNECTED",
   "DISCONNECTED",
   "RECONNECTING",
@@ -83,11 +91,42 @@ function toAccountStatus(state: OpenWAConnectionState): WhatsAppAccountStatus {
     case "CONNECTED":
       return "CONNECTED";
     case "DISCONNECTED":
+    // DISCONNECTED rather than ERROR: there is no session and nothing broke. It is also a status
+    // `recoverIfDropped` understands, so an account whose retries are all used up rests somewhere
+    // recoverable rather than in RECONNECTING, the state the 18 Sep 2026 outage was traced to.
+    case "QR_EXPIRED":
       return "DISCONNECTED";
     case "AUTH_FAILED":
       return "SESSION_ERROR";
     case "ERROR":
       return "ERROR";
+  }
+}
+
+/** Every state after which nobody needs to be told how long they have left to scan. */
+const LINK_WINDOW_CLOSED_BY = new Set<OpenWAConnectionState>([
+  "AUTHENTICATED",
+  "AUTHENTICATING",
+  "CONNECTED",
+  "DISCONNECTED",
+  "QR_EXPIRED",
+  "AUTH_FAILED",
+  "ERROR",
+]);
+
+/**
+ * Opens the linking window: the moment the current attempt will stop waiting for a scan.
+ *
+ * Separate from `recordConnectionState` because it is not a state transition — the attempt is still
+ * WAITING_FOR_QR when it is written — and the deadline is the worker's own watchdog, which only the
+ * worker knows. Never throws, for the same reason that one does not: a failed write here must not
+ * take down the connection attempt it describes.
+ */
+export async function recordLinkWindow(accountId: string, expiresAt: Date): Promise<void> {
+  try {
+    await prisma.whatsAppAccount.update({ where: { id: accountId }, data: { linkExpiresAt: expiresAt } });
+  } catch (err) {
+    console.error("[openwa] could not record the linking window — the dialog will show no countdown", err);
   }
 }
 
@@ -160,6 +199,10 @@ export async function recordConnectionState(
       data: {
         status: toAccountStatus(state),
         connectionStage: state,
+        // The countdown ends the moment the attempt stops waiting on a person — an accepted scan
+        // included, since from then on only the library's own sync is running and a timer ticking
+        // down beside "Scan accepted" would invite a second scan of a spent code.
+        ...(LINK_WINDOW_CLOSED_BY.has(state) ? { linkExpiresAt: null } : {}),
         lastHeartbeatAt: new Date(),
         ...(state === "CONNECTED" ? { lastConnectedAt: new Date(), qrCode: null } : {}),
         ...(state === "QR_AVAILABLE" && qrCode ? { qrCode, qrUpdatedAt: new Date() } : {}),

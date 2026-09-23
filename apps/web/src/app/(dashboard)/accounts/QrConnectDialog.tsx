@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Hash, Loader2, QrCode, RefreshCw, Smartphone } from "lucide-react";
+import { CheckCircle2, Hash, Loader2, QrCode, RefreshCw, Smartphone, Timer } from "lucide-react";
 import { Alert, Button, Dialog, Field, Input, StatusDot } from "@/components/ui";
 import { readLinkState, setPairingMethod } from "@/server/actions/accounts";
 import { describeConnectionStage, isPairingAccepted } from "@/lib/connectionStage";
@@ -19,6 +19,8 @@ export interface QrDialogAccount {
   qrCode: string | null;
   qrUpdatedAt: string | null;
   qrStale: boolean;
+  /** When the current attempt stops waiting for a scan — the deadline the countdown runs to. */
+  linkExpiresAt: string | null;
   pairingMethod: PairingMethod;
   pairingPhoneNumber: string | null;
   /** True when the worker has not checked in recently — every stage below is then frozen, not live. */
@@ -183,6 +185,7 @@ function useLiveLinkState(serverAccount: QrDialogAccount, open: boolean): QrDial
             phoneNumber: next.phoneNumber,
             qrCode: next.qrCode,
             qrUpdatedAt: next.qrUpdatedAt,
+            linkExpiresAt: next.linkExpiresAt,
             // Computed here rather than during render: reading the clock while rendering is
             // impure, and this callback already runs on the interval that would drive it anyway.
             qrStale: next.qrUpdatedAt
@@ -392,6 +395,13 @@ function PairingPanel({ account, accepted }: { account: QrDialogAccount; accepte
             />
           )}
 
+          {/* How long is left to scan — shown only while a code is genuinely on screen and nothing has
+              been accepted yet. Past that point it would be counting down to a moment that no
+              longer governs anything. */}
+          {!accepted && hasUsableCode && account.linkExpiresAt ? (
+            <LinkCountdown expiresAt={account.linkExpiresAt} />
+          ) : null}
+
           <LiveStageLine
             stage={account.connectionStage}
             awaitingNumber={awaitingNumber}
@@ -439,6 +449,80 @@ function PairingPanel({ account, accepted }: { account: QrDialogAccount; accepte
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The wall clock to the second, for the countdown — through `useSyncExternalStore` rather than
+ * state seeded in an effect. Reading `Date.now()` while rendering is impure, and a `setState` at the
+ * top of an effect is the cascading render this app's lint rule rejects; this is the same pattern
+ * the chat inbox's density setting uses. The snapshot is the current whole second, so React sees a
+ * new value once a second and an unchanged one on every other read.
+ */
+function subscribeToSeconds(onChange: () => void) {
+  const timer = setInterval(onChange, 1000);
+  return () => clearInterval(timer);
+}
+const readCurrentSecond = () => Math.floor(Date.now() / 1000);
+const readNoSecondOnServer = () => null;
+
+function useCurrentSecond(): number | null {
+  return useSyncExternalStore(subscribeToSeconds, readCurrentSecond, readNoSecondOnServer);
+}
+
+/**
+ * Time left to scan, counted down to the deadline the WORKER wrote.
+ *
+ * Why this and not a countdown per QR: WhatsApp reissues the code every twenty seconds or so and the
+ * image simply swaps — watching that tick down is anxiety with nothing to do about it. What does
+ * run out is the linking window, and until this existed nothing on screen said there was one, so
+ * people pressed "Request a new code" to be safe, which abandons the attempt they were in.
+ *
+ * It counts to `linkExpiresAt` rather than to five minutes from when the dialog opened: the window
+ * began when the attempt did, not when somebody looked at it, and its length is the worker's env
+ * var. A dialog opened three minutes in must say two minutes, not five.
+ *
+ * At zero it says what happens next rather than stopping silently: the worker ends the attempt as
+ * QR_EXPIRED and starts a fresh one with a new code and a new window.
+ */
+function LinkCountdown({ expiresAt }: { expiresAt: string }) {
+  const nowSeconds = useCurrentSecond();
+  // Nothing on the server's render — a countdown frozen at page-load time would be wrong by
+  // however long the page took to reach the browser.
+  if (nowSeconds === null) return null;
+
+  const remaining = Math.max(0, Math.floor(new Date(expiresAt).getTime() / 1000) - nowSeconds);
+  const minutes = Math.floor(remaining / 60);
+  const seconds = remaining % 60;
+  const urgent = remaining > 0 && remaining <= 60;
+
+  if (remaining === 0) {
+    return (
+      <p className="flex items-center gap-1.5 text-[12px] font-medium text-[color:var(--color-muted-foreground)]">
+        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+        Time&rsquo;s up &mdash; a fresh code is on the way
+      </p>
+    );
+  }
+
+  return (
+    <p
+      className={`flex items-center gap-1.5 text-[12px] ${
+        urgent ? "text-[color:var(--color-warning)]" : "text-[color:var(--color-muted-foreground)]"
+      }`}
+      // Announced once a minute rather than every second: a screen reader reading "4 minutes 31
+      // seconds, 4 minutes 30 seconds…" continuously would drown out the rest of the dialog.
+      aria-live="off"
+    >
+      <Timer className="size-3.5" aria-hidden />
+      <span className="tabular font-[family-name:var(--font-mono)] font-semibold text-[color:var(--color-foreground)]">
+        {minutes}:{String(seconds).padStart(2, "0")}
+      </span>
+      left to scan &middot; the code refreshes on its own
+      <span className="sr-only" aria-live="polite">
+        {seconds === 0 ? `${minutes} minute${minutes === 1 ? "" : "s"} left to scan` : ""}
+      </span>
+    </p>
   );
 }
 

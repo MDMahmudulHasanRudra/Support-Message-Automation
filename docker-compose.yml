@@ -117,11 +117,15 @@ services:
       # you tell "WhatsApp said nothing" from "we stopped listening". The browser one was already
       # read by the provider and simply never passed through here, so it could not be switched on
       # in the deployment it exists for.
-      # How long to wait for a FIRST QR/link code before treating an attempt as stalled and
-      # retrying. Must stay above the library's own 180s codeless window — connectTimeouts.test.ts
-      # pins that relationship. There is deliberately no knob for the library's auth timeout: the
-      # value it accepts is discarded (see OpenWAProvider's create() config).
-      WHATSAPP_FIRST_CODE_TIMEOUT_MS: ${WHATSAPP_FIRST_CODE_TIMEOUT_MS:-300000}
+      # Connect timeouts. Both are OVERRIDES and deliberately default to empty, so the worker's own
+      # constants apply: they are only correct relative to each other and to the library's timers
+      # (connectTimeouts.test.ts), and a number written here would silently win over them. A
+      # default of 300000 here once made the no-code deadline equal to the linking window in every
+      # Docker deployment while the test — which reads the source — still passed.
+      #   WHATSAPP_CONNECT_WATCHDOG_MS    the linking window the dialog counts down (code: 5 min)
+      #   WHATSAPP_FIRST_CODE_TIMEOUT_MS  no code at all by then -> retry (code: 4 min, must be less)
+      WHATSAPP_CONNECT_WATCHDOG_MS: ${WHATSAPP_CONNECT_WATCHDOG_MS:-}
+      WHATSAPP_FIRST_CODE_TIMEOUT_MS: ${WHATSAPP_FIRST_CODE_TIMEOUT_MS:-}
       WHATSAPP_DEBUG_BROWSER: ${WHATSAPP_DEBUG_BROWSER:-false}
       WHATSAPP_DEBUG_EVENTS: ${WHATSAPP_DEBUG_EVENTS:-false}
       TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL}

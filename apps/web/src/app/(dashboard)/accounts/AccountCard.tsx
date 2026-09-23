@@ -62,6 +62,8 @@ export interface AccountCardData {
   qrCode: string | null;
   qrUpdatedAt: string | null;
   qrStale: boolean;
+  /** When the current attempt stops waiting for a scan; null when nothing is waiting on a person. */
+  linkExpiresAt: string | null;
   pairingMethod: PairingMethod;
   pairingPhoneNumber: string | null;
   /** `host:port`, or null when this account connects directly. Shown so a saved proxy is not an invisible setting. */

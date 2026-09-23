@@ -139,6 +139,13 @@ export async function reconcileAccountStatusesOnBoot(): Promise<number> {
     data: { connectionStage: null },
   });
 
+  // And its countdown. A deadline belonging to an attempt that died with the last process would
+  // show somebody minutes left to scan a code that no longer exists.
+  await prisma.whatsAppAccount.updateMany({
+    where: { linkExpiresAt: { not: null } },
+    data: { linkExpiresAt: null },
+  });
+
   if (stale.count > 0) {
     console.log(`[recovery] reset ${stale.count} account(s) from a status left behind by the previous process`);
     await logSystemEvent("INFO", "worker", "Reset connection status left behind by the previous process", {

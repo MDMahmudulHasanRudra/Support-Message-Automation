@@ -95,6 +95,8 @@ export interface LinkState {
   connectionStage: string | null;
   qrCode: string | null;
   qrUpdatedAt: string | null;
+  /** When the current attempt stops waiting for a scan — what the dialog counts down to. */
+  linkExpiresAt: string | null;
   pairingMethod: "QR_CODE" | "PHONE_CODE";
   pairingPhoneNumber: string | null;
   /** Only known once a session is live — what the dialog confirms back on success. */
@@ -136,6 +138,7 @@ export async function readLinkState(accountId: string): Promise<LinkState | null
       connectionStage: true,
       qrCode: true,
       qrUpdatedAt: true,
+      linkExpiresAt: true,
       pairingMethod: true,
       pairingPhoneNumber: true,
       phoneNumber: true,
@@ -148,6 +151,7 @@ export async function readLinkState(accountId: string): Promise<LinkState | null
     connectionStage: account.connectionStage,
     qrCode: account.qrCode,
     qrUpdatedAt: account.qrUpdatedAt?.toISOString() ?? null,
+    linkExpiresAt: account.linkExpiresAt?.toISOString() ?? null,
     pairingMethod: account.pairingMethod,
     pairingPhoneNumber: account.pairingPhoneNumber,
     phoneNumber: account.phoneNumber,
