@@ -5,6 +5,7 @@ import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { normalizePhoneNumber, randomDelayMs } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { requirePermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -296,7 +297,7 @@ export async function recheckParticipantAddItems(jobId: string): Promise<{ reche
 
 /** Cancels a job's still-PENDING items (an in-flight PROCESSING add is left to finish naturally). */
 export async function cancelParticipantAddJob(jobId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("bulk_messaging.manage");
   await prisma.groupParticipantAddItem.updateMany({
     where: { jobId, status: "PENDING" },
     data: { status: "CANCELLED", failureReason: "Cancelled by user." },
@@ -315,7 +316,7 @@ export async function cancelParticipantAddJob(jobId: string): Promise<void> {
  * retryFailedBroadcastMessages.
  */
 export async function retryFailedParticipantAddItems(jobId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("bulk_messaging.manage");
   const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: jobId } });
   if (!job || job.status === "CANCELLED" || job.status === "STOPPED_KILL_SWITCH") {
     return;

@@ -1,11 +1,11 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import { RuleTesterForm } from "./RuleTesterForm";
 
 export default async function RuleTesterPage() {
-  await requireSession();
+  await requireAccess("automation_rules.view");
   const groups = await prisma.whatsAppGroup.findMany({ select: { id: true, name: true } });
 
   return (

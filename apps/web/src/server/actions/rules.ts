@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import type { RuleAction, RuleConditions } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 import { validateRuleBusinessRules } from "@/server/ruleValidation";
 
 const ACTION_TYPES = [
@@ -111,7 +111,8 @@ function parseRuleFields(formData: FormData) {
 }
 
 export async function createRule(_prevState: RuleFormState, formData: FormData): Promise<RuleFormState> {
-  await requireSession();
+  const granted = await checkPermission("automation_rules.create");
+  if ("denied" in granted) return { error: granted.denied };
   const fields = parseRuleFields(formData);
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);
@@ -138,7 +139,8 @@ export async function createRule(_prevState: RuleFormState, formData: FormData):
 }
 
 export async function updateRule(id: string, _prevState: RuleFormState, formData: FormData): Promise<RuleFormState> {
-  await requireSession();
+  const granted = await checkPermission("automation_rules.edit");
+  if ("denied" in granted) return { error: granted.denied };
   const fields = parseRuleFields(formData);
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);
@@ -166,19 +168,19 @@ export async function updateRule(id: string, _prevState: RuleFormState, formData
 }
 
 export async function setRuleStatus(id: string, status: "ACTIVE" | "DISABLED" | "ARCHIVED"): Promise<void> {
-  await requireSession();
+  await requireAccess("automation_rules.activate");
   await prisma.automationRule.update({ where: { id }, data: { status } });
   revalidatePath("/rules");
 }
 
 export async function deleteRule(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("automation_rules.delete");
   await prisma.automationRule.delete({ where: { id } });
   revalidatePath("/rules");
 }
 
 export async function duplicateRule(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("automation_rules.create");
   const original = await prisma.automationRule.findUniqueOrThrow({ where: { id } });
   await prisma.automationRule.create({
     data: {
@@ -202,7 +204,7 @@ export async function duplicateRule(id: string): Promise<void> {
 }
 
 export async function updatePriority(id: string, priority: number): Promise<void> {
-  await requireSession();
+  await requireAccess("automation_rules.edit");
   await prisma.automationRule.update({ where: { id }, data: { priority } });
   revalidatePath("/rules");
 }

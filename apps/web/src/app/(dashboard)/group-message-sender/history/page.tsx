@@ -2,8 +2,8 @@
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { OutboundMessageStatus, Prisma } from "@prisma/client";
-import { requireSession } from "@/server/auth";
-import { Alert, Badge, type BadgeColor, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Pagination, Select, Table, Td, Th } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Alert, Badge, type BadgeColor, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, PageHeader, Pagination, Select, Table, Td, Th, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { parseDhakaDayFromInput } from "@/lib/supportActivityPeriod";
 
@@ -37,7 +37,7 @@ export default async function GroupBroadcastHistoryPage({
 }: {
   searchParams: Promise<HistorySearchParams>;
 }) {
-  await requireSession();
+  const { canManage } = await pageAccess("bulk_messaging.view", "bulk_messaging.manage");
   const filters = await searchParams;
 
   const accounts = await prisma.whatsAppAccount.findMany({ orderBy: { label: "asc" } });
@@ -122,6 +122,8 @@ export default async function GroupBroadcastHistoryPage({
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {invalidDateFilters.length > 0 ? (
         <div className="mb-6">

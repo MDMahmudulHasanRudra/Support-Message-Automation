@@ -13,7 +13,7 @@ import {
   validateMessageText,
   type GroupMatchResult,
 } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 
 export interface ExcelPreviewPayload {
   fileErrors: string[];
@@ -27,7 +27,8 @@ export interface ExcelPreviewPayload {
  * match candidates.
  */
 export async function previewExcelUpload(formData: FormData): Promise<ExcelPreviewPayload> {
-  await requireSession();
+  const granted = await checkPermission("bulk_messaging.manage");
+  if ("denied" in granted) return { fileErrors: [granted.denied], results: [] };
 
   const accountId = String(formData.get("accountId") ?? "").trim();
   if (!accountId) return { fileErrors: ["Select a WhatsApp account first."], results: [] };
@@ -97,7 +98,9 @@ export interface CreateBroadcastJobResult {
  * re-checked here against current DB state).
  */
 export async function createGroupBroadcastJob(input: CreateBroadcastJobInput): Promise<CreateBroadcastJobResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("bulk_messaging.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const account = await prisma.whatsAppAccount.findUnique({ where: { id: input.accountId } });
   if (!account) return { error: "WhatsApp account not found." };
@@ -213,7 +216,7 @@ export async function createGroupBroadcastJob(input: CreateBroadcastJobInput): P
 
 /** Cancels a job's still-PENDING items (an in-flight PROCESSING send is left to finish naturally). */
 export async function cancelBroadcastJob(jobId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("bulk_messaging.manage");
   await prisma.outboundMessage.updateMany({
     where: { broadcastJobId: jobId, status: "PENDING" },
     data: { status: "CANCELLED", failureReason: "Cancelled by user." },
@@ -236,7 +239,7 @@ export async function cancelBroadcastJob(jobId: string): Promise<void> {
  * plain `<form action>`, matching every other mutation action in this app.
  */
 export async function retryFailedBroadcastMessages(jobId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("bulk_messaging.manage");
   const job = await prisma.groupBroadcastJob.findUnique({ where: { id: jobId } });
   if (!job || job.status === "CANCELLED" || job.status === "STOPPED_KILL_SWITCH") {
     return;

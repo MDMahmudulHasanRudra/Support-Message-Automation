@@ -1,7 +1,7 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help prose reads better with real apostrophes */
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Alert, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Alert, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { BroadcastSettingsForm } from "./BroadcastSettingsForm";
 
 /**
@@ -11,7 +11,7 @@ import { BroadcastSettingsForm } from "./BroadcastSettingsForm";
  * and they should not sit beside the button that sends to two hundred groups.
  */
 export default async function BroadcastSettingsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("bulk_messaging.view", "bulk_messaging.manage");
   const settings = await prisma.groupBroadcastSettings.upsert({
     where: { id: "global" },
     update: {},
@@ -53,6 +53,8 @@ export default async function BroadcastSettingsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <div className="mb-5">
         <Alert tone="warning">

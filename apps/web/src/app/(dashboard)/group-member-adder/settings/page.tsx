@@ -1,6 +1,6 @@
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Alert, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Alert, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { ParticipantAddSettingsForm } from "./ParticipantAddSettingsForm";
 
 /**
@@ -12,7 +12,7 @@ import { ParticipantAddSettingsForm } from "./ParticipantAddSettingsForm";
  * while reading the other's explanation.
  */
 export default async function ParticipantAddSettingsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("bulk_messaging.view", "bulk_messaging.manage");
   const settings = await prisma.groupParticipantAddSettings.upsert({
     where: { id: "global" },
     update: {},
@@ -63,6 +63,8 @@ export default async function ParticipantAddSettingsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <div className="mb-4">
         <Alert tone="warning">

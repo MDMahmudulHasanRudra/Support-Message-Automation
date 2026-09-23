@@ -1,6 +1,6 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import { hasReachablePhoneNumber } from "@support-automation/shared";
 import {
@@ -10,7 +10,7 @@ import {
 } from "./GroupParticipantAddWizard";
 
 export default async function GroupParticipantAdderPage() {
-  await requireSession();
+  await requireAccess("bulk_messaging.manage");
 
   const [accounts, settings, automationSettings, roster, savedGroupSets] = await Promise.all([
     prisma.whatsAppAccount.findMany({

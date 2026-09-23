@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { History } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { Button, HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import { GroupMessageSenderWizard, type WizardAccount } from "./GroupMessageSenderWizard";
 
@@ -14,7 +14,7 @@ function isGroupSyncFresh(lastSyncedAt: Date | null): boolean {
 }
 
 export default async function GroupMessageSenderPage() {
-  await requireSession();
+  await requireAccess("bulk_messaging.manage");
 
   const [accounts, settings, automationSettings, savedGroupSets] = await Promise.all([
     prisma.whatsAppAccount.findMany({

@@ -10,7 +10,7 @@ import {
   type RuleImportRow,
   type RuleImportRowResult,
 } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { validateRuleBusinessRules } from "@/server/ruleValidation";
 
@@ -18,9 +18,14 @@ import { validateRuleBusinessRules } from "@/server/ruleValidation";
  * Bulk management for the existing Automation Rules module. Every function here is an additional
  * management layer over the same AutomationRule records the rule engine already reads — nothing
  * about rule evaluation, precedence, or the individual create/edit/activate/delete actions in
- * rules.ts changes. Authorization is identical to every existing single-rule action: this app has
- * no role/permission system (any authenticated session has full access today), so "equivalent or
- * stronger" authorization for bulk means the same, only check that exists — requireSession().
+ * rules.ts changes. Authorization matches the single-rule actions key for key: bulk activate needs
+ * automation_rules.activate, bulk delete needs automation_rules.delete, import needs
+ * automation_rules.bulk_import.
+ *
+ * This comment used to say the app had "no role/permission system (any authenticated session has
+ * full access today)", so the only check was requireSession(). That was true when written and
+ * stopped being true when Permission Modules shipped — and the sentence outliving the fact is how
+ * every rule action went on ignoring the roles an administrator had carefully assigned.
  */
 
 // ---------------------------------------------------------------------------
@@ -39,7 +44,8 @@ export interface BulkRuleStatusResult {
 }
 
 export async function bulkSetRuleStatus(ruleIds: string[], status: "ACTIVE" | "DISABLED"): Promise<BulkRuleStatusResult> {
-  await requireSession();
+  const granted = await checkPermission("automation_rules.activate");
+  if ("denied" in granted) return { requested: ruleIds.length, updated: 0, alreadyInTargetState: 0, notFound: 0, error: granted.denied };
 
   const dedupedIds = [...new Set(ruleIds.filter((id) => typeof id === "string" && id.length > 0))];
   if (dedupedIds.length === 0) {
@@ -90,7 +96,8 @@ export interface BulkDeleteRulesResult {
 }
 
 export async function bulkDeleteRules(ruleIds: string[]): Promise<BulkDeleteRulesResult> {
-  await requireSession();
+  const granted = await checkPermission("automation_rules.delete");
+  if ("denied" in granted) return { requested: ruleIds.length, deleted: 0, notFound: 0, error: granted.denied };
 
   const dedupedIds = [...new Set(ruleIds.filter((id) => typeof id === "string" && id.length > 0))];
   if (dedupedIds.length === 0) {
@@ -185,7 +192,8 @@ async function revalidateRow(parsed: RuleImportRowResult, existingNames: Set<str
 }
 
 export async function previewRuleImport(formData: FormData): Promise<RuleImportPreviewResult> {
-  await requireSession();
+  const granted = await checkPermission("automation_rules.bulk_import");
+  if ("denied" in granted) return { fileErrors: [granted.denied], rows: [] };
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
@@ -262,7 +270,8 @@ export interface RuleImportResult {
  * always DRAFT; a human separately activates via Bulk Activate or the individual Enable action).
  */
 export async function confirmRuleImport(rows: Array<{ rowNumber: number; row: RuleImportRow }>): Promise<RuleImportResult> {
-  await requireSession();
+  const granted = await checkPermission("automation_rules.bulk_import");
+  if ("denied" in granted) return { created: 0, skipped: 0, failed: 0, details: [], error: granted.denied };
 
   if (rows.length === 0) {
     return { created: 0, skipped: 0, failed: 0, details: [], error: "No valid rows to import." };

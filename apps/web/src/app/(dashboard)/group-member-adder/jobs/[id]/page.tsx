@@ -2,8 +2,8 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, StatusDot, Table, Td, Th } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, StatusDot, Table, Td, Th, ViewOnlyNotice } from "@/components/ui";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { formatDateTime } from "@/lib/date";
 import { cancelParticipantAddJob, recheckParticipantAddItems } from "@/server/actions/groupParticipantAdd";
@@ -25,7 +25,7 @@ const CHECK_RESULT_STATUSES = [
 ] as const;
 
 export default async function GroupParticipantAddJobPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("bulk_messaging.view", "bulk_messaging.manage");
   const { id } = await params;
 
   const job = await prisma.groupParticipantAddJob.findUnique({
@@ -86,6 +86,8 @@ export default async function GroupParticipantAddJobPage({ params }: { params: P
   return (
     <div>
       <PageHeader title="Add-to-Groups Progress" description={`Job ${job.id}`} />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {job.status === "STOPPED_KILL_SWITCH" ? (
         <div className="mb-4">

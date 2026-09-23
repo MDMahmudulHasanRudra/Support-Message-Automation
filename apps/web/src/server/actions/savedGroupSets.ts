@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 /**
@@ -22,7 +22,9 @@ export interface SavedGroupSetResult {
 const MAX_NAME = 60;
 
 export async function createSavedGroupSet(name: string, groupIds: string[]): Promise<SavedGroupSetResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("bulk_messaging.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const trimmed = name.replace(/\s+/g, " ").trim();
   if (!trimmed) return { error: "Give the set a name." };
@@ -51,7 +53,8 @@ export async function createSavedGroupSet(name: string, groupIds: string[]): Pro
 
 /** Overwrites an existing set with the current selection — "update this one to what I have now". */
 export async function replaceSavedGroupSet(id: string, groupIds: string[]): Promise<SavedGroupSetResult> {
-  await requireSession();
+  const granted = await checkPermission("bulk_messaging.manage");
+  if ("denied" in granted) return { error: granted.denied };
 
   const ids = [...new Set(groupIds.filter(Boolean))];
   if (ids.length === 0) return { error: "Select some groups first — there is nothing to save." };
@@ -68,7 +71,8 @@ export async function replaceSavedGroupSet(id: string, groupIds: string[]): Prom
 }
 
 export async function deleteSavedGroupSet(id: string): Promise<SavedGroupSetResult> {
-  await requireSession();
+  const granted = await checkPermission("bulk_messaging.manage");
+  if ("denied" in granted) return { error: granted.denied };
   await prisma.savedGroupSet.deleteMany({ where: { id } });
   revalidatePath("/group-message-sender");
   return {};
@@ -90,7 +94,8 @@ export interface LoadedGroupSet {
  * that still constitutes the intended audience belongs to the person about to broadcast.
  */
 export async function loadSavedGroupSet(id: string, accountId: string): Promise<LoadedGroupSet> {
-  await requireSession();
+  const granted = await checkPermission("bulk_messaging.view");
+  if ("denied" in granted) return { error: granted.denied };
 
   const set = await prisma.savedGroupSet.findUnique({ where: { id }, select: { groupIds: true } });
   if (!set) return { error: "That set no longer exists." };

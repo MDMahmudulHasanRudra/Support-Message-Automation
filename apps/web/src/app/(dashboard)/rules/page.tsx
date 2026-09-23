@@ -3,8 +3,8 @@ import Link from "next/link";
 import { Plus, Search } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import type { Prisma, RuleStatus, RuleType } from "@prisma/client";
-import { requireSession } from "@/server/auth";
-import { Button, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Button, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select, ViewOnlyNotice } from "@/components/ui";
 import { formatDate } from "@/lib/date";
 import { RULE_STATUS, RULE_TYPE, isRuleActionArray, isRuleConditions } from "@support-automation/shared";
 import { RulesTable, type RuleRow } from "./RulesTable";
@@ -16,7 +16,7 @@ interface RulesSearchParams {
 }
 
 export default async function RulesPage({ searchParams }: { searchParams: Promise<RulesSearchParams> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("automation_rules.view", "automation_rules.edit");
   const params = await searchParams;
   const search = (params.search ?? "").trim();
   const status = (RULE_STATUS as readonly string[]).includes(params.status ?? "") ? (params.status as RuleStatus) : undefined;
@@ -141,6 +141,8 @@ export default async function RulesPage({ searchParams }: { searchParams: Promis
           </>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <FilterBar>
         <form className="flex flex-wrap items-end gap-2" method="GET">

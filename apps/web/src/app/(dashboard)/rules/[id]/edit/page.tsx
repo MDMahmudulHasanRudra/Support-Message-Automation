@@ -1,13 +1,13 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { PageHeader } from "@/components/ui";
 import { updateRule } from "@/server/actions/rules";
 import { isRuleActionArray, isRuleConditions } from "@support-automation/shared";
 import { RuleForm, type RuleFormDefaults } from "../../RuleForm";
 
 export default async function EditRulePage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  await requireAccess("automation_rules.edit");
   const { id } = await params;
   const rule = await prisma.automationRule.findUnique({ where: { id } });
   if (!rule) notFound();

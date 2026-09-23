@@ -2,8 +2,8 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, StatusDot, Table, Td, Th } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Alert, Badge, type BadgeColor, Card, PageHeader, ProgressBar, StatTile, StatusDot, Table, Td, Th, ViewOnlyNotice } from "@/components/ui";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { formatDateTime } from "@/lib/date";
 import { cancelBroadcastJob, retryFailedBroadcastMessages } from "@/server/actions/groupBroadcast";
@@ -12,7 +12,7 @@ import { JobActions } from "./JobActions";
 const TERMINAL_JOB_STATUSES = new Set(["COMPLETED", "CANCELLED", "STOPPED_KILL_SWITCH"]);
 
 export default async function GroupBroadcastJobPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("bulk_messaging.view", "bulk_messaging.manage");
   const { id } = await params;
 
   const job = await prisma.groupBroadcastJob.findUnique({
@@ -45,6 +45,8 @@ export default async function GroupBroadcastJobPage({ params }: { params: Promis
   return (
     <div>
       <PageHeader title="Group Message Sending Progress" description={`Job ${job.id}`} />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {job.status === "STOPPED_KILL_SWITCH" ? (
         <div className="mb-4">

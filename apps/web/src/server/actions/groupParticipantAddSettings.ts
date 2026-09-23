@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 /**
@@ -48,7 +48,9 @@ export async function updateGroupParticipantAddSettings(
   _prev: ParticipantAddSettingsState,
   formData: FormData,
 ): Promise<ParticipantAddSettingsState> {
-  const session = await requireSession();
+  const granted = await checkPermission("bulk_messaging.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const current = await prisma.groupParticipantAddSettings.upsert({
     where: { id: "global" },

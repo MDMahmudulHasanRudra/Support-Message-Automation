@@ -2,14 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 
 async function getOrCreateSettings() {
   return prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
 }
 
 export async function setAutomationEnabled(enabled: boolean): Promise<void> {
-  await requireSession();
+  await requireAccess("settings.edit");
   await getOrCreateSettings();
   await prisma.automationSettings.update({ where: { id: "global" }, data: { automationEnabled: enabled } });
 
@@ -41,7 +41,7 @@ export async function setAutomationEnabled(enabled: boolean): Promise<void> {
 }
 
 export async function setAutomationMode(mode: "MANUAL_ONLY" | "SAFE_AUTO_REPLY" | "FULL_RULE_AUTOMATION"): Promise<void> {
-  await requireSession();
+  await requireAccess("settings.edit");
   await getOrCreateSettings();
   await prisma.automationSettings.update({ where: { id: "global" }, data: { mode } });
   revalidatePath("/automation-control");
@@ -66,7 +66,8 @@ function parseRetryIntervals(raw: FormDataEntryValue | null, current: unknown): 
 }
 
 export async function updateSafetySettings(_prevState: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
-  await requireSession();
+  const granted = await checkPermission("settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
   const current = await getOrCreateSettings();
 
   // An empty or malformed box keeps the current value rather than writing NaN, which Prisma

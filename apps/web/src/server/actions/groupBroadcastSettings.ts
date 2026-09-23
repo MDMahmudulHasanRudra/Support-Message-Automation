@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 
 /**
  * The throttles on the bulk-messaging path.
@@ -46,7 +46,8 @@ export async function updateGroupBroadcastSettings(
   _prevState: BroadcastSettingsState,
   formData: FormData,
 ): Promise<BroadcastSettingsState> {
-  await requireSession();
+  const granted = await checkPermission("bulk_messaging.manage");
+  if ("denied" in granted) return { error: granted.denied };
   const current = await prisma.groupBroadcastSettings.upsert({
     where: { id: "global" },
     update: {},
