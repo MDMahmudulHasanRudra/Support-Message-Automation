@@ -1,10 +1,10 @@
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { PageHeader } from "@/components/ui";
 import { createKnowledgeItem } from "@/server/actions/aiKnowledge";
 import { KnowledgeForm } from "../KnowledgeForm";
 
 export default async function NewKnowledgeItemPage() {
-  await requireSession();
+  await requireAccess("ai_learning.manage");
   return (
     <div>
       <PageHeader title="Add Knowledge" />

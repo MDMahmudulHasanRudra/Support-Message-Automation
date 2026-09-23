@@ -1,9 +1,9 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help prose reads better with real apostrophes */
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
-import { Alert, Card, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile } from "@/components/ui";
+import { Alert, Card, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile, ViewOnlyNotice } from "@/components/ui";
 import { getCommunicationStyleProfile } from "@/server/actions/communicationStyle";
 import { StyleProfileCard } from "./StyleProfileCard";
 
@@ -16,7 +16,7 @@ import { StyleProfileCard } from "./StyleProfileCard";
  * it.
  */
 export default async function CommunicationStylePage() {
-  await requireSession();
+  const { canManage } = await pageAccess("ai_learning.view", "ai_learning.manage");
 
   const [profile, aiSettings, approver] = await Promise.all([
     getCommunicationStyleProfile(),
@@ -69,6 +69,8 @@ export default async function CommunicationStylePage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {!aiSettings.aiEngineEnabled ? (
         <div className="mb-5">

@@ -5,7 +5,7 @@ import { ChevronsLeft, ChevronsRight, LogOut, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useSyncExternalStore } from "react";
-import { NAV_GROUPS, OVERVIEW_LINK, isNavActive, type NavLink } from "./navigation";
+import { OVERVIEW_LINK, isNavActive, type NavGroup, type NavLink } from "./navigation";
 import { ThemeToggle } from "./ThemeToggle";
 
 /**
@@ -91,6 +91,7 @@ export function Sidebar({
   onLogout,
   mobileOpen,
   onMobileClose,
+  navGroups,
 }: {
   username: string;
   automationEnabled: boolean;
@@ -98,6 +99,8 @@ export function Sidebar({
   onLogout: () => Promise<void>;
   mobileOpen: boolean;
   onMobileClose: () => void;
+  /** The nav already reduced to what this role can open — see navigation.navGroupsFor. */
+  navGroups: NavGroup[];
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -145,11 +148,11 @@ export function Sidebar({
           </div>
 
           <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-2.5 pt-4 pb-6">
-            {NAV_GROUPS.map((group, index) => {
+            {navGroups.map((group, index) => {
               // A section header draws only where the section actually changes from the group
               // before it — the department name, one level up from the existing group labels,
               // never a repeat of the same word stacked five times in a row.
-              const previousSection = index > 0 ? NAV_GROUPS[index - 1]!.section : null;
+              const previousSection = index > 0 ? navGroups[index - 1]!.section : null;
               const isNewSection = group.section !== previousSection;
               return (
                 <div key={group.label}>

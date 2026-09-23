@@ -1,8 +1,8 @@
 import { prisma } from "@support-automation/db";
 import { NOTIFICATION_TEMPLATES } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import { getTemplateLiveness } from "@/server/notificationTemplateStatus";
-import { Alert, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { Alert, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { TemplateCard, type TestTarget } from "./TemplateCard";
 
 /**
@@ -17,7 +17,7 @@ import { TemplateCard, type TestTarget } from "./TemplateCard";
 const TEST_TARGET_LIMIT = 300;
 
 export default async function NotificationTemplatesPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("notifications.view", "settings.edit");
 
   const [overrides, liveness, aiSettings, groups, testTargetCount] = await Promise.all([
     prisma.notificationTemplate.findMany({
@@ -149,6 +149,8 @@ export default async function NotificationTemplatesPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {customerFacing.length > 0 ? (
         <section className="mb-6">

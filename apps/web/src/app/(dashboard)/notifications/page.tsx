@@ -1,8 +1,8 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import type { Prisma } from "@prisma/client";
-import { Badge, type BadgeColor, Button, ButtonLink, EmptyState, FilterBar, HelpButton, HelpSection, PageHeader, Pagination, Select, Table, Td, Th, Tooltip } from "@/components/ui";
+import { Badge, type BadgeColor, Button, ButtonLink, EmptyState, FilterBar, HelpButton, HelpSection, PageHeader, Pagination, Select, Table, Td, Th, Tooltip, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { TestNotificationForm } from "./TestNotificationForm";
 import { RetryNotificationButton } from "./RetryNotificationButton";
@@ -23,7 +23,7 @@ export default async function NotificationsPage({
 }: {
   searchParams: Promise<NotificationsSearchParams>;
 }) {
-  await requireSession();
+  const { canManage } = await pageAccess("notifications.view", "settings.edit");
   const filters = await searchParams;
 
   const where: Prisma.NotificationWhereInput = {};
@@ -108,6 +108,8 @@ export default async function NotificationsPage({
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <TestNotificationForm />
 

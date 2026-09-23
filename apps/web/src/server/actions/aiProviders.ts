@@ -15,7 +15,7 @@ import {
   type AiModelListEntry,
   type AiProviderProfile,
 } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 import { decryptSecret, encryptSecret } from "@/server/aiCrypto";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -57,7 +57,8 @@ export async function createAiProvider(
   _prevState: AiProviderFormState,
   formData: FormData,
 ): Promise<AiProviderFormState> {
-  await requireSession();
+  const granted = await checkPermission("ai_settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
 
   const name = String(formData.get("name") ?? "").trim();
   const kindRaw = String(formData.get("kind") ?? "");
@@ -93,7 +94,8 @@ export async function updateAiProvider(
   _prevState: AiProviderFormState,
   formData: FormData,
 ): Promise<AiProviderFormState> {
-  await requireSession();
+  const granted = await checkPermission("ai_settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
 
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
   if (!provider) return { error: "Provider not found." };
@@ -152,7 +154,7 @@ export async function updateAiProvider(
 }
 
 export async function toggleAiProviderStatus(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("ai_settings.edit");
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
   if (!provider) return;
   await prisma.aiProvider.update({
@@ -163,7 +165,7 @@ export async function toggleAiProviderStatus(id: string): Promise<void> {
 }
 
 export async function deleteAiProvider(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("ai_settings.edit");
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
   if (!provider) return;
   await prisma.aiProvider.delete({ where: { id } });
@@ -208,7 +210,8 @@ async function recordProviderTestResult(id: string, name: string, ok: boolean, e
  * tokens costs a fraction of a cent and is the only thing that genuinely proves a completion works.
  */
 export async function testAiProviderConnection(id: string): Promise<TestConnectionResult> {
-  await requireSession();
+  const granted = await checkPermission("ai_settings.edit");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
   if (!provider) return { ok: false, error: "Provider not found." };
 
@@ -373,7 +376,8 @@ async function probeCompletion(
 export async function listAiProviderModels(
   providerId: string,
 ): Promise<{ models: AiModelListEntry[]; error?: string }> {
-  await requireSession();
+  const granted = await checkPermission("ai_settings.edit");
+  if ("denied" in granted) return { models: [], error: granted.denied };
 
   const provider = await prisma.aiProvider.findUnique({ where: { id: providerId } });
   if (!provider) return { models: [], error: "Provider not found." };

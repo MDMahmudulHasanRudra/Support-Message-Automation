@@ -2,10 +2,10 @@
 
 import { ChevronRight, LogOut, Menu, Search } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CommandPalette } from "./CommandPalette";
 import { FloatingAiChat } from "./FloatingAiChat";
-import { resolveNavLocation } from "./navigation";
+import { navGroupsFor, navPermissionFor, resolveNavLocation, ALL_NAV_LINKS } from "./navigation";
 import { Sidebar } from "./Sidebar";
 
 /** First one or two letters of a username, for the header identity chip — "rudra" → "RU". */
@@ -94,13 +94,26 @@ export function DashboardShell({
   automationEnabled,
   automationMode,
   onLogout,
+  grantedKeys,
 }: {
   children: ReactNode;
   username: string;
   automationEnabled: boolean;
   automationMode: string;
   onLogout: () => Promise<void>;
+  /** Permission keys this user's role grants — presentation only; see navigation.navPermissionFor. */
+  grantedKeys: string[];
 }) {
+  const granted = useMemo(() => new Set(grantedKeys), [grantedKeys]);
+  const navGroups = useMemo(() => navGroupsFor(granted), [granted]);
+  const paletteLinks = useMemo(
+    () =>
+      ALL_NAV_LINKS.filter((link) => {
+        const key = navPermissionFor(link.href);
+        return key === null || granted.has(key);
+      }),
+    [granted],
+  );
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const pathname = usePathname();
@@ -137,6 +150,7 @@ export function DashboardShell({
         automationEnabled={automationEnabled}
         automationMode={automationMode}
         onLogout={onLogout}
+        navGroups={navGroups}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
       />
@@ -199,8 +213,10 @@ export function DashboardShell({
       </div>
 
       {/* Mounted only while open, so each invocation starts from an empty query. */}
-      {paletteOpen ? <CommandPalette onClose={closePalette} /> : null}
-      <FloatingAiChat />
+      {paletteOpen ? <CommandPalette onClose={closePalette} links={paletteLinks} /> : null}
+      {/* Only for roles that can use it: every send is refused without ai_learning.view, and a
+          floating button on every page that always answers "not allowed" is worse than none. */}
+      {granted.has("ai_learning.view") ? <FloatingAiChat /> : null}
     </div>
   );
 }

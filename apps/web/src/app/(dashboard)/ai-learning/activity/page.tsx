@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import {
   Button,
   FilterBar,
@@ -48,7 +48,7 @@ export default async function AiActivityPage({
 }: {
   searchParams: Promise<AiActivitySearchParams>;
 }) {
-  await requireSession();
+  await requireAccess("ai_learning.view");
   const params = await searchParams;
 
   const windowKey = params.window && WINDOWS[params.window] ? params.window : "7d";

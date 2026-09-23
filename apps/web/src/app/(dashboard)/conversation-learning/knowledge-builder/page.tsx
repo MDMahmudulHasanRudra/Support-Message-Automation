@@ -2,20 +2,10 @@
 import Link from "next/link";
 import { BookOpen, MessagesSquare, PenLine } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import {
-  Alert,
-  Badge,
-  Card,
-  EmptyState,
-  HelpButton,
-  HelpSection,
-  PageHeader,
-  ProgressBar,
-  SectionHeader,
-} from "@/components/ui";
+import { Alert, Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, ProgressBar, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { AnalyzeConversationsForm } from "./AnalyzeConversationsForm";
 import { CandidateCard } from "./CandidateCard";
 
@@ -23,7 +13,7 @@ import { CandidateCard } from "./CandidateCard";
 const RECENT_RUNS = 5;
 
 export default async function KnowledgeBuilderPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
 
   const [groups, runs, aiSettings] = await Promise.all([
     // Only groups that actually have stored conversation are offered — selecting an empty group
@@ -93,6 +83,8 @@ export default async function KnowledgeBuilderPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {running ? <AutoRefresh intervalMs={4000} /> : null}
 

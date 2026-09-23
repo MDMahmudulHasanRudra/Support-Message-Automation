@@ -1671,6 +1671,41 @@ because an operator who selected a group and saw nothing happen needs to know wh
 dialog describes the action it is actually confirming; a confirmation that misdescribes what it is
 about to do is worse than no confirmation.
 
+### Permissions are enforced on every page and every action (`apps/web/src/server/authorize.ts`)
+
+**Every Server Action is a public HTTP endpoint** — anyone with a session can call it directly, whether
+or not the page that shows its button is one they can open. Hiding a page is therefore not a check;
+each action makes its own. Until 23 Sep 2026 the roles assigned on Permission Modules governed five
+modules and nothing else: the seeded "Read Only" role, described as "View-only access across every
+module", could toggle the kill switch, delete rules and broadcast to every group. `rulesBulk.ts` even
+said so in writing — "this app has no role/permission system" — a sentence that outlived the fact.
+
+Three shapes, and the choice between them is not taste:
+- `checkPermission(key)` for an action that returns form state — return `{ error: granted.denied }`.
+- `requireAccess(key)` for an action that returns NOTHING, and for pages. A void action has nowhere to
+  put a refusal: throwing replaces the page with the error boundary, and returning silently lets the
+  caller show a success toast for something that did not happen. It redirects to
+  `/overview?denied=<key>`, and the Overview names what was refused.
+- `pageAccess(view, manage)` for a module page, which renders `ViewOnlyNotice` when `canManage` is false.
+
+**Polled readers refuse as "nothing to show", never a redirect** — `readLinkState` is polled about once
+a second and a redirect would pull somebody off the page mid-scan. `markChatReviewed` (runs from
+`after()`) and `recordSavedReplyUse` (a counter) are silent rather than refused.
+
+Each module uses its own `.view` / `.manage` pair (Automation Rules has finer keys: create, edit,
+delete, activate, bulk_import, bulk_export). `messages.reply` exists because Messages had only `.view`
+and replying is the most consequential thing a support role does; its migration granted it to every
+custom role that could already see Messages, so nobody lost the ability on deploy. Pages whose only
+purpose is editing (new/edit forms, the two broadcast composers) need the manage key to open.
+
+**The sidebar and ⌘K palette only offer pages the role can open** (`navPermissionFor` in
+`navigation.ts`), and the AI assistant only renders with `ai_learning.view`. That is presentation, not a
+check. The map must match each page's own gate; it was verified against all 62 nav links when written,
+and a mismatch in the safe direction (a link that then refuses) costs only a bounce.
+
+**A new action or page must gate itself.** The Administrator module is re-synced to every key by the
+seed on each deploy, so the admin login cannot be locked out by a key added later.
+
 ### Release Notes (`apps/web/src/server/actions/releaseNotes.ts`, `server/releaseNotesReports.ts`, `apps/web/src/lib/releaseNotes.ts`)
 
 A permanent changelog, entirely apps/web-only — nothing in the worker ever reads or writes a

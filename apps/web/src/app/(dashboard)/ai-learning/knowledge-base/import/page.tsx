@@ -1,7 +1,7 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import {
   Badge,
@@ -47,7 +47,7 @@ const SOURCE_LABEL = {
  * about your software at all.
  */
 export default async function KnowledgeImportPage() {
-  await requireSession();
+  await requireAccess("ai_learning.manage");
 
   const [imports, moduleRows] = await Promise.all([
     prisma.knowledgeImport.findMany({

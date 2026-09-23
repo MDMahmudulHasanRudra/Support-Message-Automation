@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { PageHeader } from "@/components/ui";
 import { updateKnowledgeItem } from "@/server/actions/aiKnowledge";
 import { KnowledgeForm, type KnowledgeFormDefaults } from "../../KnowledgeForm";
 
 export default async function EditKnowledgeItemPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  await requireAccess("ai_learning.manage");
   const { id } = await params;
   const item = await prisma.aiKnowledgeItem.findUnique({ where: { id } });
   if (!item) notFound();

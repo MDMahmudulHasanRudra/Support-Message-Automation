@@ -4,13 +4,13 @@ import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { meetsCandidateFloor } from "@support-automation/engine";
-import { requireSession } from "@/server/auth";
-import { Badge, type BadgeColor, Button, Card, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Badge, type BadgeColor, Button, Card, PageHeader, SectionHeader, StatTile, Table, Td, Th, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { PatternCandidateActions } from "./PatternCandidateActions";
 
 export default async function PatternCandidateDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
   const { id } = await params;
 
   const [candidate, learningSettings] = await Promise.all([
@@ -61,6 +61,8 @@ export default async function PatternCandidateDetailPage({ params }: { params: P
           </div>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {!floorMet ? (
         <p className="mb-6 text-sm text-[color:var(--color-muted-foreground)]">

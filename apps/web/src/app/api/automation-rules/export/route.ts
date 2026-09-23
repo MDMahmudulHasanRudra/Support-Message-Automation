@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import { prisma } from "@support-automation/db";
 import type { Prisma, RuleStatus, RuleType } from "@prisma/client";
 import { RULE_STATUS, RULE_TYPE, buildRuleExportRow, isRuleActionArray, isRuleConditions, sanitizeExcelRow } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 
 /**
  * Export endpoint for the Automation Rules bulk-management feature — same justified exception as
@@ -15,7 +15,7 @@ import { requireSession } from "@/server/auth";
  * this repo's existing xlsx export (Support Activity) has no such protection; this one does.
  */
 export async function GET(request: NextRequest) {
-  await requireSession();
+  await requireAccess("automation_rules.bulk_export");
 
   const params = request.nextUrl.searchParams;
   const idsParam = params.get("ids");

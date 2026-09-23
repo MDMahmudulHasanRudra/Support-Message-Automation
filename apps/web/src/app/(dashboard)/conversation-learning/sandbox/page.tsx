@@ -2,18 +2,10 @@
 import Link from "next/link";
 import { FlaskConical, ShieldCheck } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import {
-  Alert,
-  Badge,
-  Card,
-  EmptyState,
-  HelpButton,
-  HelpSection,
-  PageHeader,
-} from "@/components/ui";
+import { Alert, Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { NewSandboxSession } from "./NewSandboxSession";
 import { SandboxComposer } from "./SandboxComposer";
 import { SandboxReviewControls } from "./SandboxReviewControls";
@@ -44,7 +36,7 @@ function explainReason(reason: string | null): string | null {
 }
 
 export default async function AiSandboxPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
   const { session: sessionId } = await searchParams;
 
   const [sessions, groups, aiSettings] = await Promise.all([
@@ -141,6 +133,8 @@ export default async function AiSandboxPage({ searchParams }: { searchParams: Pr
           </>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {/* Only while something is actually in flight — there is nothing to poll for otherwise. */}
       {waiting ? <AutoRefresh intervalMs={2500} /> : null}

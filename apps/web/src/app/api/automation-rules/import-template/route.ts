@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { buildRuleImportTemplateRows } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 
 /**
  * Downloadable Excel import template/demo file for the Automation Rules bulk-import feature — a
@@ -13,7 +13,7 @@ import { requireSession } from "@/server/auth";
  * generated file IS the demo/example file: real, valid example rows an admin can edit in place.
  */
 export async function GET() {
-  await requireSession();
+  await requireAccess("automation_rules.bulk_import");
 
   const rows = buildRuleImportTemplateRows();
   const worksheet = XLSX.utils.json_to_sheet(rows);

@@ -4,21 +4,8 @@ import { Download } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import type { AiKnowledgeCategory, Prisma } from "@prisma/client";
 import { KNOWLEDGE_IMPORT_CATEGORIES } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
-import {
-  ActiveFilters,
-  Button,
-  ButtonLink,
-  FilterBar,
-  HelpButton,
-  HelpSection,
-  Input,
-  NoFilterResults,
-  PageHeader,
-  Pagination,
-  Select,
-  type ActiveFilter,
-} from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { ActiveFilters, Button, ButtonLink, FilterBar, HelpButton, HelpSection, Input, NoFilterResults, PageHeader, Pagination, Select, type ActiveFilter, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { KnowledgeTable, type KnowledgeRow } from "./KnowledgeTable";
 
@@ -47,7 +34,7 @@ interface SearchParams {
 }
 
 export default async function KnowledgeBasePage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("ai_learning.view", "ai_learning.manage");
   const params = await searchParams;
   const filter: FilterKey = isFilterKey(params.filter) ? params.filter : "all";
   const search = (params.search ?? "").trim();
@@ -202,6 +189,8 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
           </>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <FilterBar>
         <form className="flex flex-wrap items-end gap-2" method="GET">

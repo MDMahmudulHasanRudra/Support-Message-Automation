@@ -1,8 +1,8 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help prose reads better with real apostrophes */
 import { prisma } from "@support-automation/db";
 import type { NotificationEvent } from "@prisma/client";
-import { requireSession } from "@/server/auth";
-import { Alert, HelpButton, HelpSection, PageHeader, StatTile } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Alert, HelpButton, HelpSection, PageHeader, StatTile, ViewOnlyNotice } from "@/components/ui";
 import { NOTIFICATION_EVENTS } from "@/lib/notificationEvents";
 import { NotificationEventCard } from "./NotificationEventCard";
 
@@ -54,7 +54,7 @@ const EVENT_COPY: Record<
 };
 
 export default async function NotificationEventsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("notifications.view", "settings.edit");
 
   const [settings, automationSettings, groups, counts] = await Promise.all([
     prisma.notificationEventSetting.findMany(),
@@ -107,6 +107,8 @@ export default async function NotificationEventsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
         <StatTile label="Event types" value={NOTIFICATION_EVENTS.length} hint="Everything the system can raise" />

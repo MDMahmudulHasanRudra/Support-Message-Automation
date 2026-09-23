@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import { FALLBACK_REPLY_LANGUAGE } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import { isAiResponseMode } from "@/lib/aiResponseModes";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -20,7 +20,8 @@ export async function updateAiSettings(
   _prevState: AiSettingsFormState,
   formData: FormData,
 ): Promise<AiSettingsFormState> {
-  await requireSession();
+  const granted = await checkPermission("ai_settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
 
   const flag = (key: string) => formData.get(key) === "on";
   // An EMPTY box keeps the current value rather than writing 0. `Number("")` is 0 and

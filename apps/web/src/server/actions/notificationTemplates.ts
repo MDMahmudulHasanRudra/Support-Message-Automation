@@ -8,7 +8,7 @@ import {
   renderNotificationTemplate,
   validateTemplateBody,
 } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 /**
@@ -35,7 +35,9 @@ export async function updateNotificationTemplate(
   _prev: TemplateActionState,
   formData: FormData,
 ): Promise<TemplateActionState> {
-  const session = await requireSession();
+  const granted = await checkPermission("settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const key = String(formData.get("key") ?? "");
   if (!isNotificationTemplateKey(key)) return { error: "That template does not exist." };
@@ -62,7 +64,9 @@ export async function updateNotificationTemplate(
 }
 
 export async function resetNotificationTemplate(key: string): Promise<TemplateActionState> {
-  const session = await requireSession();
+  const granted = await checkPermission("settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
   if (!isNotificationTemplateKey(key)) return { error: "That template does not exist." };
 
   // deleteMany, not delete: resetting a template nobody had customised is a no-op the operator
@@ -98,7 +102,9 @@ export interface TemplateTestSendResult {
  * conversation and must never be mistaken for a genuine alert.
  */
 export async function sendTemplateTestMessage(key: string, groupId: string): Promise<TemplateTestSendResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const definition = getTemplateDefinition(key);
   if (!definition) return { error: "That template does not exist." };

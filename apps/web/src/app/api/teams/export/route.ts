@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
 
 /**
@@ -36,7 +36,7 @@ function fileResponse(body: string | Buffer, filename: string, contentType: stri
 }
 
 export async function GET(request: NextRequest) {
-  await requireSession();
+  await requireAccess("teams_integration.view");
 
   const params = request.nextUrl.searchParams;
   const type = params.get("type") === "messages" ? "messages" : "issues";

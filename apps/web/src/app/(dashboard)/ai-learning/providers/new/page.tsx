@@ -1,10 +1,10 @@
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { PageHeader } from "@/components/ui";
 import { createAiProvider } from "@/server/actions/aiProviders";
 import { AiProviderForm } from "../AiProviderForm";
 
 export default async function NewAiProviderPage() {
-  await requireSession();
+  await requireAccess("ai_settings.edit");
   return (
     <div>
       <PageHeader title="Add AI Provider" />

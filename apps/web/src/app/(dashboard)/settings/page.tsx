@@ -1,11 +1,11 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { SettingsForm } from "./SettingsForm";
 
 export default async function SettingsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("settings.view", "settings.edit");
   const [settings, groups] = await Promise.all([
     prisma.automationSettings.upsert({
       where: { id: "global" },
@@ -59,6 +59,8 @@ export default async function SettingsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
       <SettingsForm settings={settings} groups={groups} />
     </div>
   );

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import type { AiModelJob } from "@prisma/client";
 import { aiProviderProfile } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 export interface AiModelFormState {
@@ -19,7 +19,8 @@ function isModelJob(value: string): value is AiModelJob {
 }
 
 export async function setAiModelConfig(_prevState: AiModelFormState, formData: FormData): Promise<AiModelFormState> {
-  await requireSession();
+  const granted = await checkPermission("ai_settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
 
   const jobRaw = String(formData.get("job") ?? "");
   const providerId = String(formData.get("providerId") ?? "").trim();
@@ -57,7 +58,7 @@ export async function setAiModelConfig(_prevState: AiModelFormState, formData: F
 }
 
 export async function clearAiModelConfig(job: string): Promise<void> {
-  await requireSession();
+  await requireAccess("ai_settings.edit");
   if (!isModelJob(job)) return;
   await prisma.aiModelConfig.deleteMany({ where: { job } });
   revalidatePath("/ai-learning/models");

@@ -1,8 +1,8 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import { prisma } from "@support-automation/db";
 import type { AiModelJob } from "@prisma/client";
-import { requireSession } from "@/server/auth";
-import { HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { AiModelsForm, type ModelJobRowData } from "./AiModelsForm";
 
 /**
@@ -61,7 +61,7 @@ const JOBS: Array<{
 ];
 
 export default async function AiModelsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("ai_settings.view", "ai_settings.edit");
 
   const [providers, configs] = await Promise.all([
     prisma.aiProvider.findMany({ orderBy: { name: "asc" } }),
@@ -136,6 +136,8 @@ export default async function AiModelsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
       <AiModelsForm
         rows={rows}
         providers={providers.map((p) => ({ id: p.id, name: p.name, status: p.status, kind: p.kind }))}

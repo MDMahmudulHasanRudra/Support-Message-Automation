@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { handleOAuthCallback } from "@/server/teamsAuth";
 
 export async function GET(request: NextRequest) {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
 
   const params = request.nextUrl.searchParams;
   const result = await handleOAuthCallback(

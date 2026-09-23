@@ -3,13 +3,13 @@ import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { PatternCandidateStatus } from "@prisma/client";
 import type { BadgeColor } from "@/components/ui";
-import { requireSession } from "@/server/auth";
-import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile, Table, Td, Th, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { RunAiAnalysisButton } from "./RunAiAnalysisButton";
 
 export default async function ConversationLearningPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
 
   const [learningSettings, aiSettings, learningModelConfig] = await Promise.all([
     prisma.learningSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
@@ -94,6 +94,8 @@ export default async function ConversationLearningPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <Badge color={learningSettings.conversationLearningEnabled ? "green" : "gray"} dot>

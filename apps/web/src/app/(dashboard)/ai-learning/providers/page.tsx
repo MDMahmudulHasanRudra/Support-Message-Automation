@@ -1,8 +1,8 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Button, HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Button, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { AiProvidersTable, type AiProviderRow } from "./AiProvidersTable";
 
@@ -17,7 +17,7 @@ const PROVIDER_HEALTH_LOG_SCOPE = "ai-provider";
 const TRANSIENT_WINDOW_HOURS = 24;
 
 export default async function AiProvidersPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("ai_settings.view", "ai_settings.edit");
 
   const now = new Date();
   const since = new Date(now.getTime() - TRANSIENT_WINDOW_HOURS * 60 * 60_000);
@@ -130,6 +130,8 @@ export default async function AiProvidersPage() {
           </>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
       <AiProvidersTable providers={rows} />
     </div>
   );

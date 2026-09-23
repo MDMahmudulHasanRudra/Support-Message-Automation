@@ -3,7 +3,7 @@
 import { CornerDownLeft, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ALL_NAV_LINKS } from "./navigation";
+import type { ALL_NAV_LINKS } from "./navigation";
 
 /**
  * Keyboard-first navigation across the ~45 destinations in the sidebar. With
@@ -14,7 +14,14 @@ import { ALL_NAV_LINKS } from "./navigation";
  * Mounted only while open (see DashboardShell), so every open starts from a
  * clean query and highlight without an effect to reset them.
  */
-export function CommandPalette({ onClose }: { onClose: () => void }) {
+export function CommandPalette({
+  onClose,
+  links,
+}: {
+  onClose: () => void;
+  /** Only the pages this role can open, so a search never offers one that would refuse. */
+  links: typeof ALL_NAV_LINKS;
+}) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -23,15 +30,15 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return ALL_NAV_LINKS;
+    if (!needle) return links;
     // Every whitespace-separated term must appear somewhere in "group label",
     // so "teams set" finds Teams Integration → Settings.
     const terms = needle.split(/\s+/);
-    return ALL_NAV_LINKS.filter((link) => {
+    return links.filter((link) => {
       const haystack = `${link.group} ${link.label}`.toLowerCase();
       return terms.every((term) => haystack.includes(term));
     });
-  }, [query]);
+  }, [query, links]);
 
   // Derived rather than stored: typing shrinks the list, and a stored index would
   // need an effect to clamp itself back into range on every keystroke.

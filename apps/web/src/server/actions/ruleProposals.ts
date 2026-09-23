@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma, createRuleProposalFromCandidate, approveRuleProposalById } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 
 /**
  * Conversation Learning Phase 3/4/6 — human review + real rule execution + auto-approval. The
@@ -13,7 +13,8 @@ import { requireSession } from "@/server/auth";
  */
 
 export async function createRuleProposal(candidateId: string): Promise<{ id: string } | { error: string }> {
-  await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { error: granted.denied };
   const result = await createRuleProposalFromCandidate(candidateId);
 
   if ("id" in result) {
@@ -25,7 +26,9 @@ export async function createRuleProposal(candidateId: string): Promise<{ id: str
 }
 
 export async function approveRuleProposal(id: string): Promise<{ error?: string }> {
-  const session = await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
   const result = await approveRuleProposalById({ proposalId: id, reviewedById: session.userId, autoApproved: false });
 
   if ("error" in result) return { error: result.error };
@@ -38,7 +41,7 @@ export async function approveRuleProposal(id: string): Promise<{ error?: string 
 }
 
 export async function rejectRuleProposal(id: string, reviewNote: string | null): Promise<void> {
-  const session = await requireSession();
+  const session = await requireAccess("conversation_learning.manage");
   const proposal = await prisma.ruleProposal.findUniqueOrThrow({ where: { id } });
   if (proposal.status !== "PENDING_REVIEW") return;
 
@@ -60,7 +63,7 @@ export async function rejectRuleProposal(id: string, reviewNote: string | null):
 }
 
 export async function withdrawRuleProposal(id: string): Promise<void> {
-  const session = await requireSession();
+  const session = await requireAccess("conversation_learning.manage");
   const proposal = await prisma.ruleProposal.findUniqueOrThrow({ where: { id } });
   if (proposal.status !== "PENDING_REVIEW") return;
 

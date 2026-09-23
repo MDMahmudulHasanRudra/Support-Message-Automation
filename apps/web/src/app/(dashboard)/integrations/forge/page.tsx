@@ -2,10 +2,9 @@
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import { isForgeConfigured } from "@support-automation/forge-client";
-import { requireSession } from "@/server/auth";
+import { pageAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
-import { Alert, Card, HelpButton, HelpSection, PageHeader,
-  SectionHeader, StatTile } from "@/components/ui";
+import { Alert, Card, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile, ViewOnlyNotice } from "@/components/ui";
 import { ForgeSettingsCard } from "./ForgeSettingsCard";
 
 /**
@@ -16,7 +15,7 @@ import { ForgeSettingsCard } from "./ForgeSettingsCard";
  * integration enabled".
  */
 export default async function ForgeIntegrationPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("ai_learning.view", "ai_learning.manage");
 
   const configured = isForgeConfigured();
   const settings = await prisma.forgeSettings.upsert({
@@ -91,6 +90,8 @@ export default async function ForgeIntegrationPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {!configured ? (
         <div className="mb-5">

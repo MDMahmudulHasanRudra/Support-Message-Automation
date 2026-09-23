@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createKnowledgeItem, prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 
 /**
  * Knowledge Builder — "Learn from Conversations".
@@ -45,7 +45,9 @@ export async function startConversationAnalysis(input: {
   messageLimit?: number;
   label?: string;
 }): Promise<StartAnalysisResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
+  const session = granted.session;
 
   const groupIds = [...new Set(input.groupIds.filter((id) => typeof id === "string" && id.length > 0))];
   if (groupIds.length === 0) return { ok: false, error: "Select at least one group to analyse." };
@@ -116,7 +118,9 @@ export interface CandidateActionResult {
  * them approve it twice, in two different queues, would only teach people to click through both.
  */
 export async function approveConversationCandidate(candidateId: string): Promise<CandidateActionResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
+  const session = granted.session;
 
   const candidate = await prisma.conversationCandidate.findUnique({ where: { id: candidateId } });
   if (!candidate) return { ok: false, error: "That candidate no longer exists." };
@@ -171,7 +175,9 @@ export async function approveConversationCandidate(candidateId: string): Promise
 /** Rejected candidates are kept, never deleted — "what did we turn down, and why" is the record
  *  that stops the same proposal being re-argued on every run. */
 export async function rejectConversationCandidate(candidateId: string): Promise<CandidateActionResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
+  const session = granted.session;
 
   const candidate = await prisma.conversationCandidate.findUnique({
     where: { id: candidateId },
@@ -203,7 +209,8 @@ export async function updateConversationCandidate(
   candidateId: string,
   input: { title: string; question?: string; answer: string },
 ): Promise<CandidateActionResult> {
-  await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
 
   const title = input.title?.trim();
   const answer = input.answer?.trim();
@@ -231,7 +238,8 @@ export async function updateConversationCandidate(
 /** Deletes a run and its candidates. Knowledge entries already approved out of it are untouched —
  *  they are their own records now, which is why promotedKnowledgeItemId is not a relation. */
 export async function deleteConversationAnalysisRun(runId: string): Promise<CandidateActionResult> {
-  await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
   await prisma.conversationAnalysisRun.deleteMany({ where: { id: runId } });
   revalidatePath("/conversation-learning/knowledge-builder");
   return { ok: true };

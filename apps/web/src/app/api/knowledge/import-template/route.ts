@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { buildKnowledgeImportTemplateRows } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 
 /**
  * The question/answer sheet the knowledge importer's spreadsheet mode expects — the same justified
@@ -13,7 +13,7 @@ import { requireSession } from "@/server/auth";
  * a Category column will accept.
  */
 export async function GET() {
-  await requireSession();
+  await requireAccess("ai_learning.manage");
 
   const worksheet = XLSX.utils.json_to_sheet(buildKnowledgeImportTemplateRows());
   const workbook = XLSX.utils.book_new();

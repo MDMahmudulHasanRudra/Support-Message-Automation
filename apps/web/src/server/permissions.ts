@@ -68,3 +68,21 @@ export async function hasPermission(session: Session, key: PermissionKey): Promi
   const grantedKeys = new Set(user.permissionModule?.permissions.map((p) => p.permission.key) ?? []);
   return grantedKeys.has(key);
 }
+
+/**
+ * Every permission key this user's role grants — for PRESENTATION only (which sidebar links and
+ * assistant to show). Never a substitute for `requirePermission`/`hasPermission` at the point of
+ * use: a hidden link is not a check, and every page and action makes its own. Answers an empty
+ * set for an inactive or missing user, which hides everything rather than guessing.
+ */
+export async function getGrantedPermissionKeys(session: Session): Promise<string[]> {
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: {
+      isActive: true,
+      permissionModule: { select: { permissions: { select: { permission: { select: { key: true } } } } } },
+    },
+  });
+  if (!user || !user.isActive) return [];
+  return user.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
+}

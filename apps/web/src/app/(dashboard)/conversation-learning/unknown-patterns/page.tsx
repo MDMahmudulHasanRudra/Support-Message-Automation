@@ -1,7 +1,7 @@
 import { prisma } from "@support-automation/db";
 import { Prisma, type NotificationStatus, type PatternCandidateStatus } from "@prisma/client";
-import { requireSession } from "@/server/auth";
-import { EmptyState, HelpButton, HelpSection, PageHeader, Pagination } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { EmptyState, HelpButton, HelpSection, PageHeader, Pagination, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { UnknownPatternsTable, type UnknownPatternRow } from "./UnknownPatternsTable";
 
@@ -19,7 +19,7 @@ type EvidencePreview = { patternCandidateId: string; body: string };
 type NotificationPreview = { patternCandidateId: string; status: NotificationStatus };
 
 export default async function UnknownPatternsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
   const params = await searchParams;
   const page = Math.max(1, Number(params.page ?? "1") || 1);
 
@@ -124,6 +124,8 @@ export default async function UnknownPatternsPage({ searchParams }: { searchPara
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {rows.length === 0 ? (
         <EmptyState>

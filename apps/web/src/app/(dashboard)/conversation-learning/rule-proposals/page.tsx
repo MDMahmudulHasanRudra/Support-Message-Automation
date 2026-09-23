@@ -1,8 +1,8 @@
 import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { EmptyState, HelpButton, HelpSection, PageHeader, Pagination } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { EmptyState, HelpButton, HelpSection, PageHeader, Pagination, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { RuleProposalsTable, type RuleProposalRow } from "./RuleProposalsTable";
 
@@ -16,7 +16,7 @@ interface SearchParams {
 }
 
 export default async function RuleProposalsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
   const params = await searchParams;
   const page = Math.max(1, Number(params.page ?? "1") || 1);
   const filter: FilterKey = isFilterKey(params.filter) ? params.filter : "all";
@@ -77,6 +77,8 @@ export default async function RuleProposalsPage({ searchParams }: { searchParams
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <div className="mb-4 flex flex-wrap gap-1.5">
         <FilterChip href={buildHref("all")} active={filter === "all"} label={`All (${allCount})`} />

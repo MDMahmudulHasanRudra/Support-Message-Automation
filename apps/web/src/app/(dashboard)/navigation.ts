@@ -225,6 +225,79 @@ export const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+/**
+ * The permission a link's page checks before it will open — so the sidebar and command palette
+ * only offer pages this role can actually reach.
+ *
+ * Until permissions were enforced everywhere this did not matter: every link opened. Now a link a
+ * role cannot open bounces to the Overview, and a sidebar full of those is a sidebar that lies. The
+ * keys here must match the page's own gate; `navPermissions.test.ts`-style drift is caught by the
+ * check run against every page file when this was written, and a mismatch in the safe direction
+ * (showing a link that then refuses) is only an inconvenience, since the page still enforces.
+ *
+ * Exact paths first, for pages that need more than their module's view key: the two broadcast
+ * composers exist only to launch a send and require the manage key to open.
+ */
+const NAV_KEY_EXACT: Record<string, string> = {
+  "/group-message-sender": "bulk_messaging.manage",
+  "/group-member-adder": "bulk_messaging.manage",
+  "/ai-learning/knowledge-base/import": "ai_learning.manage",
+  "/release-notes/manage": "release_notes.manage",
+  // Team Management's own pages already required manage for these two before this map existed.
+  "/team-management/shifts": "team_management.manage",
+  "/team-management/settings": "team_management.manage",
+};
+
+/** Longest prefix wins, so `/ai-learning/providers` resolves before `/ai-learning`. */
+const NAV_KEY_PREFIX: Array<[string, string]> = [
+  ["/chat", "messages.view"],
+  ["/messages", "messages.view"],
+  ["/support-escalation", "escalations.view"],
+  ["/support-activity", "support_activity.view"],
+  ["/team-management", "team_management.view"],
+  ["/issues", "teams_integration.view"],
+  ["/integrations/teams", "teams_integration.view"],
+  ["/accounts", "whatsapp.view"],
+  ["/groups", "whatsapp.view"],
+  ["/team-members", "whatsapp.view"],
+  ["/rules", "automation_rules.view"],
+  ["/automation-control", "settings.view"],
+  ["/group-message-sender", "bulk_messaging.view"],
+  ["/group-member-adder", "bulk_messaging.view"],
+  ["/ai-learning/providers", "ai_settings.view"],
+  ["/ai-learning/models", "ai_settings.view"],
+  ["/ai-learning/settings", "ai_settings.view"],
+  ["/ai-learning", "ai_learning.view"],
+  ["/integrations/forge", "ai_learning.view"],
+  ["/conversation-learning", "conversation_learning.view"],
+  ["/notifications", "notifications.view"],
+  ["/settings/security", "security_settings.view"],
+  ["/settings", "settings.view"],
+  ["/logs", "system_logs.view"],
+  ["/users", "users.view"],
+  ["/permissions", "permissions.view"],
+  ["/release-notes", "release_notes.view"],
+].sort((a, b) => b[0].length - a[0].length) as Array<[string, string]>;
+
+/** The key a link needs, or null for a page every signed-in user may open (the Overview). */
+export function navPermissionFor(href: string): string | null {
+  const path = href.split("?")[0]!;
+  if (path in NAV_KEY_EXACT) return NAV_KEY_EXACT[path]!;
+  const hit = NAV_KEY_PREFIX.find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`));
+  return hit ? hit[1] : null;
+}
+
+/** The nav, reduced to what a role can open. Groups left empty are dropped rather than shown bare. */
+export function navGroupsFor(granted: ReadonlySet<string>): NavGroup[] {
+  return NAV_GROUPS.map((group) => ({
+    ...group,
+    links: group.links.filter((link) => {
+      const key = navPermissionFor(link.href);
+      return key === null || granted.has(key);
+    }),
+  })).filter((group) => group.links.length > 0);
+}
+
 export function isNavActive(pathname: string, search: URLSearchParams, href: string) {
   const [hrefPath, hrefQuery = ""] = href.split("?");
   if (hrefPath !== pathname) return false;

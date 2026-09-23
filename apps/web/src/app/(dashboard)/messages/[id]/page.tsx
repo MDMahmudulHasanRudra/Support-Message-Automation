@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { Badge, type BadgeColor, Card, PageHeader, SectionHeader } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import type { ReactNode } from "react";
@@ -17,7 +17,7 @@ interface DecisionTraceEntry {
 }
 
 export default async function MessageDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  await requireAccess("messages.view");
   const { id } = await params;
 
   const message = await prisma.message.findUnique({

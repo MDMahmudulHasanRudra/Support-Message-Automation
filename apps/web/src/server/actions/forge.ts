@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import { ForgeClient, isForgeConfigured, loadForgeConfigFromEnv } from "@support-automation/forge-client";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 
 /**
  * Settings and on-demand actions for the Softify Forge integration — the source of the assistant's
@@ -24,7 +24,7 @@ function revalidate() {
 }
 
 export async function updateForgeSettings(formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("ai_learning.manage");
   await getOrCreate();
 
   const projectId = String(formData.get("projectId") ?? "").trim() || null;
@@ -58,7 +58,8 @@ export interface ForgeConnectionCheck {
  * choosing from reality rather than typing an id.
  */
 export async function checkForgeConnection(): Promise<ForgeConnectionCheck> {
-  await requireSession();
+  const granted = await checkPermission("ai_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
   if (!isForgeConfigured()) {
     return { ok: false, error: "Forge is not configured. Set FORGE_API_KEY and FORGE_API_URL, then restart." };
   }
@@ -87,7 +88,8 @@ export interface ForgeSyncRequest {
  * impatient double-click should cost nothing.
  */
 export async function requestForgeSync(): Promise<ForgeSyncRequest> {
-  await requireSession();
+  const granted = await checkPermission("ai_learning.manage");
+  if ("denied" in granted) return { queued: false, error: granted.denied };
   const settings = await getOrCreate();
   if (!settings.enabled) return { queued: false, error: "Turn the integration on first." };
   if (!settings.projectId) return { queued: false, error: "Choose which Forge project to learn from first." };
@@ -110,7 +112,8 @@ export interface ForgeSyncStatus {
 
 /** Polled by the settings page while a sync runs — the same shape as the roster fetch. */
 export async function readForgeSyncStatus(): Promise<ForgeSyncStatus> {
-  await requireSession();
+  const granted = await checkPermission("ai_learning.view");
+  if ("denied" in granted) return { status: "FAILED", error: granted.denied };
   const command = await prisma.workerCommand.findFirst({
     where: { type: "FORGE_SYNC_NOW" },
     orderBy: { createdAt: "desc" },

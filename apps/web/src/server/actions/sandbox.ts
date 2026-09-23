@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 
 /**
  * The AI Sandbox's web side. Every action here writes to SandboxSession/SandboxTurn and
@@ -23,7 +23,9 @@ export async function createSandboxSession(input: {
   label?: string;
   groupId?: string | null;
 }): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
-  const session = await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
+  const session = granted.session;
 
   const label = input.label?.trim() || null;
   const groupId = input.groupId?.trim() || null;
@@ -53,7 +55,8 @@ export async function sendSandboxMessage(
   sessionId: string,
   message: string,
 ): Promise<{ ok: boolean; turnId?: string; error?: string }> {
-  await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
 
   const body = message.trim();
   if (!body) return { ok: false, error: "Type a message first." };
@@ -95,7 +98,9 @@ export async function setSandboxReview(
   review: "WAITING" | "APPROVED" | "REJECTED",
   note?: string,
 ): Promise<SandboxActionResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
+  const session = granted.session;
 
   const turn = await prisma.sandboxTurn.findUnique({
     where: { id: turnId },
@@ -138,7 +143,9 @@ export async function promoteSandboxAnswer(
   turnId: string,
   input: { title: string; category?: string },
 ): Promise<{ ok: boolean; knowledgeItemId?: string; error?: string }> {
-  const session = await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
+  const session = granted.session;
 
   const title = input.title?.trim();
   if (!title) return { ok: false, error: "Give the knowledge entry a title." };
@@ -194,7 +201,8 @@ export async function promoteSandboxAnswer(
 }
 
 export async function deleteSandboxSession(sessionId: string): Promise<SandboxActionResult> {
-  await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
   // Turns cascade with the session (schema-level), and nothing outside these two tables
   // references either, so this genuinely deletes only test data.
   await prisma.sandboxSession.deleteMany({ where: { id: sessionId } });

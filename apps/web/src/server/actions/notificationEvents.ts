@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import type { NotificationEvent } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { isNotificationEvent } from "@/lib/notificationEvents";
 
 /**
@@ -16,7 +16,7 @@ import { isNotificationEvent } from "@/lib/notificationEvents";
  */
 
 export async function updateNotificationEvent(formData: FormData): Promise<void> {
-  await requireSession();
+  await requireAccess("settings.edit");
 
   const event = String(formData.get("event") ?? "");
   if (!isNotificationEvent(event)) throw new Error("Unknown notification event.");
@@ -38,7 +38,7 @@ export async function updateNotificationEvent(formData: FormData): Promise<void>
 
 /** One switch, for the mute/unmute button on each row — the action people reach for most. */
 export async function setNotificationEventEnabled(event: string, enabled: boolean): Promise<void> {
-  await requireSession();
+  await requireAccess("settings.edit");
   if (!isNotificationEvent(event)) throw new Error("Unknown notification event.");
 
   await prisma.notificationEventSetting.upsert({
@@ -62,7 +62,7 @@ export async function updateMemberNotificationPreferences(
   teamMemberId: string,
   formData: FormData,
 ): Promise<void> {
-  await requireSession();
+  await requireAccess("whatsapp.manage");
 
   const chosen = formData
     .getAll("events")

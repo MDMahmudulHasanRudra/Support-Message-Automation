@@ -1,8 +1,8 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { HelpButton, HelpSection, PageHeader, Pagination, StatTile } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { HelpButton, HelpSection, PageHeader, Pagination, StatTile, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { ReviewQueue, type ReviewRow } from "./ReviewQueue";
 
@@ -24,7 +24,7 @@ export default async function KnowledgeReviewPage({
 }: {
   searchParams: Promise<ReviewSearchParams>;
 }) {
-  await requireSession();
+  const { canManage } = await pageAccess("ai_learning.view", "ai_learning.manage");
   const params = await searchParams;
   const page = Math.max(1, Number(params.page ?? "1") || 1);
 
@@ -98,6 +98,8 @@ export default async function KnowledgeReviewPage({
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <div className="mb-6 grid grid-cols-2 gap-3.5 sm:grid-cols-3">
         <StatTile label="Waiting for review" value={total} tone={total > 0 ? "warning" : "neutral"} />

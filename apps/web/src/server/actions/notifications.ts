@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 
 export async function retryNotification(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("settings.edit");
   await prisma.notification.update({
     where: { id },
     data: { status: "PENDING", failureReason: null },
@@ -32,7 +32,8 @@ export interface BulkRetryResult {
  * cannot resurrect a row that has since been sent — the dispatcher would then deliver it twice.
  */
 export async function bulkRetryFailedNotifications(ids: string[]): Promise<BulkRetryResult> {
-  await requireSession();
+  const granted = await checkPermission("settings.edit");
+  if ("denied" in granted) return { requeued: 0, notFailed: 0, error: granted.denied };
 
   const unique = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
   if (unique.length === 0) return { requeued: 0, notFailed: 0, error: "Select at least one notification first." };
@@ -61,7 +62,8 @@ export async function bulkRetryFailedNotifications(ids: string[]): Promise<BulkR
  * also cannot go stale — anything the dispatcher has since picked up no longer matches.
  */
 export async function retryAllFailedNotifications(): Promise<BulkRetryResult> {
-  await requireSession();
+  const granted = await checkPermission("settings.edit");
+  if ("denied" in granted) return { requeued: 0, notFailed: 0, error: granted.denied };
   const { count } = await prisma.notification.updateMany({
     where: { status: "FAILED" },
     data: { status: "PENDING", failureReason: null },
@@ -76,7 +78,8 @@ export interface TestNotificationState {
 }
 
 export async function sendTestNotification(_prevState: TestNotificationState, formData: FormData): Promise<TestNotificationState> {
-  await requireSession();
+  const granted = await checkPermission("settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
   const settings = await prisma.automationSettings.findUnique({ where: { id: "global" } });
   if (!settings?.teamsWebhookUrl) {
     return { error: "Configure a Teams webhook URL in Settings first." };

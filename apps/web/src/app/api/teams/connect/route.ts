@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { buildConnectRedirectUrl } from "@/server/teamsAuth";
 
 /**
@@ -8,7 +8,7 @@ import { buildConnectRedirectUrl } from "@/server/teamsAuth";
  * redirect to login.microsoftonline.com cannot be triggered from a Server Action.
  */
 export async function GET() {
-  await requireSession();
+  await requireAccess("teams_integration.manage");
   const url = await buildConnectRedirectUrl();
   return NextResponse.redirect(url);
 }

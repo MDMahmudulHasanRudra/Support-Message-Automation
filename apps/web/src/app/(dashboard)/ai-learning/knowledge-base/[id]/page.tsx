@@ -2,13 +2,13 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Badge, type BadgeColor, Button, Card, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Badge, type BadgeColor, Button, Card, PageHeader, SectionHeader, Table, Td, Th, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { KnowledgeStatusActions, KnowledgeVerifyAction, RestoreVersionButton } from "./KnowledgeActions";
 
 export default async function KnowledgeItemPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("ai_learning.view", "ai_learning.manage");
   const { id } = await params;
 
   const item = await prisma.aiKnowledgeItem.findUnique({
@@ -32,6 +32,8 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
           </Link>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <Card className="mb-6">
         <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">

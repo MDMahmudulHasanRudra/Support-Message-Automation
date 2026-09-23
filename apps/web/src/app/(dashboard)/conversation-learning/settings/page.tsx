@@ -1,10 +1,10 @@
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { HelpButton, HelpSection, PageHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { LearningSettingsForm } from "./LearningSettingsForm";
 
 export default async function LearningSettingsPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
   const settings = await prisma.learningSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
 
   return (
@@ -33,6 +33,8 @@ export default async function LearningSettingsPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
       <LearningSettingsForm settings={settings} />
     </div>
   );

@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { PageHeader } from "@/components/ui";
 import { updateAiProvider } from "@/server/actions/aiProviders";
 import { AiProviderForm, type AiProviderFormDefaults } from "../../AiProviderForm";
 
 export default async function EditAiProviderPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  await requireAccess("ai_settings.edit");
   const { id } = await params;
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
   if (!provider) notFound();

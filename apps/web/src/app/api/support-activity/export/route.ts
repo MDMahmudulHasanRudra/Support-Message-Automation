@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 import { getActivitiesForExport, getPerTeamMemberBreakdown, getSessionsForExport } from "@/server/supportActivityReports";
 
@@ -34,7 +34,7 @@ function fileResponse(body: string | Buffer, filename: string, contentType: stri
 }
 
 export async function GET(request: NextRequest) {
-  await requireSession();
+  await requireAccess("support_activity.view");
 
   const params = request.nextUrl.searchParams;
   const rawType = params.get("type");

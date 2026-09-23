@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import { prisma } from "@support-automation/db";
 import type { AiKnowledgeCategory, AiKnowledgeStatus, Prisma } from "@prisma/client";
 import { KNOWLEDGE_IMPORT_CATEGORIES, buildKnowledgeExportRow, sanitizeExcelRow } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 
 /**
  * Gets the knowledge base back out of the application.
@@ -23,7 +23,7 @@ import { requireSession } from "@/server/auth";
 const KNOWLEDGE_STATUSES = ["ACTIVE", "INACTIVE", "ARCHIVED"] as const;
 
 export async function GET(request: NextRequest) {
-  await requireSession();
+  await requireAccess("ai_learning.view");
 
   const params = request.nextUrl.searchParams;
   const search = params.get("search")?.trim();

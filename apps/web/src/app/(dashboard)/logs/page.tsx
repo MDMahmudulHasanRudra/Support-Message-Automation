@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { prisma } from "@support-automation/db";
 import type { LogLevel, Prisma } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { requireAccess } from "@/server/authorize";
 import {
   ActiveFilters,
   Button,
@@ -66,7 +66,7 @@ interface LogsSearchParams {
 }
 
 export default async function LogsPage({ searchParams }: { searchParams: Promise<LogsSearchParams> }) {
-  await requireSession();
+  await requireAccess("system_logs.view");
   const filters = await searchParams;
 
   const scope = (filters.scope ?? "").trim();

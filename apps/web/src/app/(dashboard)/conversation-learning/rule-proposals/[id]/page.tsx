@@ -4,13 +4,13 @@ import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { RuleAction } from "@support-automation/shared";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Badge, type BadgeColor, Card, PageHeader, SectionHeader } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Badge, type BadgeColor, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { RuleProposalActions } from "./RuleProposalActions";
 
 export default async function RuleProposalDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
   const { id } = await params;
 
   const proposal = await prisma.ruleProposal.findUnique({
@@ -35,6 +35,8 @@ export default async function RuleProposalDetailPage({ params }: { params: Promi
           </Badge>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {proposal.status === "PENDING_REVIEW" ? (
         <Card className="mb-6">

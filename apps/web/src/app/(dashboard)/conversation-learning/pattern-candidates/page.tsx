@@ -1,6 +1,6 @@
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { EmptyState, HelpButton, HelpSection, PageHeader, Pagination } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { EmptyState, HelpButton, HelpSection, PageHeader, Pagination, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { PatternCandidatesTable, type PatternCandidateRow } from "./PatternCandidatesTable";
 
@@ -11,7 +11,7 @@ interface SearchParams {
 }
 
 export default async function PatternCandidatesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  await requireSession();
+  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
   const params = await searchParams;
   const page = Math.max(1, Number(params.page ?? "1") || 1);
 
@@ -73,6 +73,8 @@ export default async function PatternCandidatesPage({ searchParams }: { searchPa
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       {rows.length === 0 ? (
         <EmptyState>

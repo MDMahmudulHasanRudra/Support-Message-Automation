@@ -2,12 +2,12 @@
 import Link from "next/link";
 import { ArrowRight, BookOpen, Cpu, Gauge, KeyRound, Settings as SettingsIcon, type LucideIcon } from "lucide-react";
 import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
-import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile } from "@/components/ui";
+import { pageAccess } from "@/server/authorize";
+import { Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, SectionHeader, StatTile, ViewOnlyNotice } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 
 export default async function AiLearningDashboardPage() {
-  await requireSession();
+  const { canManage } = await pageAccess("ai_learning.view", "ai_learning.manage");
 
   const [
     settings,
@@ -89,6 +89,8 @@ export default async function AiLearningDashboardPage() {
           </HelpButton>
         }
       />
+
+      {canManage ? null : <ViewOnlyNotice />}
 
       <SectionHeader title="Sections" description="Jump into a specific area of the AI Learning module." />
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
