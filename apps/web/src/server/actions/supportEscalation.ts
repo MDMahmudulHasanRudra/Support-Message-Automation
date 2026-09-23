@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
 import type { SupportPriority } from "@prisma/client";
@@ -65,6 +66,22 @@ export async function updateEscalationSettings(
   return { success: true };
 }
 
+/**
+ * A distinct recipient key for each manual action's audit row.
+ *
+ * `SupportEscalationEvent` is unique on (caseId, level, eventType, recipientKey). That constraint
+ * exists for the WORKER: a tier that fans out to several groups gets exactly one row per group, so
+ * a retried tick can never alert twice. The manual actions below borrowed it with a fixed "SYSTEM"
+ * key — but a person pressing a button is not meant to be idempotent. Reassigning a case to one
+ * colleague and then to another, or pausing, resuming and pausing again, or resetting twice, all
+ * produced the same key at the same level, and the second press threw a raw P2002 that replaced
+ * the page. Each press is a real, separate event, so each gets its own key. `recipientType` stays
+ * "SYSTEM", which is what marks these as manual; nothing reads the key back.
+ */
+function manualEventKey(): string {
+  return `SYSTEM:${randomUUID()}`;
+}
+
 /** Still-pending checks stop; a check already in flight (within its claim lease) finishes naturally. */
 export async function pauseCase(caseId: string): Promise<void> {
   await requireSession();
@@ -79,7 +96,7 @@ export async function pauseCase(caseId: string): Promise<void> {
         level: caseRow.escalationLevel,
         eventType: "PAUSED",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Paused by admin",
       },
     }),
@@ -127,7 +144,7 @@ export async function resumeCase(caseId: string): Promise<void> {
         level: caseRow.escalationLevel,
         eventType: "RESUMED",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Resumed by admin",
       },
     }),
@@ -151,7 +168,7 @@ export async function escalateNow(caseId: string): Promise<void> {
         level: caseRow.escalationLevel,
         eventType: "MANUAL_ESCALATE",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Escalated immediately by admin",
       },
     }),
@@ -176,7 +193,7 @@ export async function reassignCase(caseId: string, teamMemberId: string | null):
         level: caseRow.escalationLevel,
         eventType: "REASSIGNED",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: member ? `Reassigned to ${member.name}` : "Assignment cleared",
       },
     }),
@@ -286,7 +303,7 @@ export async function resetEscalation(caseId: string): Promise<void> {
         level: 0,
         eventType: "RESET",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Reset by admin",
       },
     }),
@@ -312,7 +329,7 @@ export async function markResolved(caseId: string): Promise<void> {
         level: caseRow.escalationLevel,
         eventType: "RESOLVED",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Marked resolved by admin",
       },
     }),

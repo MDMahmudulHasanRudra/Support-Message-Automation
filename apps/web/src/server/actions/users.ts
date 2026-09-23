@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { isUniqueViolation } from "@/lib/prismaErrors";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
 import { requireSession, hashPassword } from "@/server/auth";
@@ -36,16 +37,27 @@ export async function createUser(_prevState: UserFormState, formData: FormData):
 
   const existing = await prisma.user.findUnique({ where: { username } });
   if (existing) return { error: `A user named "${username}" already exists.` };
+  // Email is unique too, and was not checked: reusing one threw a raw P2002 that replaced the page.
+  if (email && (await prisma.user.findUnique({ where: { email } }))) {
+    return { error: "Another user already has that email address." };
+  }
 
-  const created = await prisma.user.create({
-    data: {
-      username,
-      name,
-      email,
-      passwordHash: hashPassword(password),
-      permissionModuleId,
-    },
-  });
+  let created;
+  try {
+    created = await prisma.user.create({
+      data: {
+        username,
+        name,
+        email,
+        passwordHash: hashPassword(password),
+        permissionModuleId,
+      },
+    });
+  } catch (err) {
+    // Two admins creating the same username or email in the same instant both pass the checks above.
+    if (isUniqueViolation(err)) return { error: "That username or email was just taken by another user." };
+    throw err;
+  }
 
   await logSystemEvent("INFO", "users", "USER_CREATED", { actorId: session.userId, targetUserId: created.id, username });
   revalidatePath("/users");
@@ -64,11 +76,22 @@ export async function updateUser(id: string, _prevState: UserFormState, formData
   const permissionModuleId = String(formData.get("permissionModuleId") ?? "").trim() || null;
 
   if (!name) return { error: "Display name is required." };
+  // Email is unique; changing it to one another user already has threw a raw P2002 that replaced
+  // the page. Checked against everyone else, so saving without changing it is not a clash.
+  if (email && email !== target.email) {
+    const holder = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (holder && holder.id !== id) return { error: "Another user already has that email address." };
+  }
 
-  await prisma.user.update({
-    where: { id },
-    data: { name, email, permissionModuleId },
-  });
+  try {
+    await prisma.user.update({
+      where: { id },
+      data: { name, email, permissionModuleId },
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) return { error: "That email address was just taken by another user." };
+    throw err;
+  }
 
   await logSystemEvent("INFO", "users", "USER_UPDATED", { actorId: session.userId, targetUserId: id });
   revalidatePath("/users");

@@ -3,24 +3,85 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
+import { isUniqueViolation } from "@/lib/prismaErrors";
 import { requireSession } from "@/server/auth";
 import { normalizePhoneNumber } from "@support-automation/shared";
 
-export async function createTeamMember(formData: FormData): Promise<void> {
-  await requireSession();
+export interface TeamMemberFormState {
+  error?: string;
+  success?: boolean;
+}
+
+interface TeamMemberInput {
+  name: string;
+  phoneNumber: string;
+  role: string;
+  department: string | null;
+}
+
+/**
+ * Reads and checks the form, returning a message for anything wrong instead of throwing.
+ *
+ * These actions used to `throw new Error("Name, phone number, and role are required.")`. A throw in
+ * a Server Action does not reach the form — it replaces the whole page with the error boundary — so
+ * the one message written for the person filling the form in was the one they could never see. The
+ * inputs are `required`, but a name of three spaces passes that and trimmed to nothing here.
+ */
+function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: string } {
   const name = String(formData.get("name") ?? "").trim();
   const phoneNumber = String(formData.get("phoneNumber") ?? "").trim();
   const role = String(formData.get("role") ?? "").trim();
   const department = String(formData.get("department") ?? "").trim() || null;
-
-  if (!name || !phoneNumber || !role) {
-    throw new Error("Name, phone number, and role are required.");
+  if (!name || !phoneNumber || !role) return { error: "Name, phone number and role are all required." };
+  if (!normalizePhoneNumber(phoneNumber)) {
+    return { error: "That does not look like a phone number. Enter it with the country code, e.g. +8801XXXXXXXXX." };
   }
+  return { name, phoneNumber, role, department };
+}
 
-  await prisma.internalTeamMember.create({
-    data: { name, phoneNumber, role, department, status: "ACTIVE" },
+/**
+ * Whoever already holds this number, compared DIGITS-ONLY — or null.
+ *
+ * `phoneNumber @unique` only rejects a byte-identical duplicate, so `+8801711…` and `8801711…` were
+ * both accepted as two different people. That is not a cosmetic duplicate: team-member matching
+ * normalises to digits, so the same colleague's messages split across two identities and every
+ * per-member count — attendance, Team Performance, first response — goes quietly wrong. The
+ * add-from-group paths below have always compared this way; the manual form never did.
+ *
+ * `whatsappId` is compared too, because a member added from message history has their WhatsApp id
+ * stored where a number would be, and typing that same id in again is the same person.
+ */
+async function findPhoneConflict(phoneNumber: string, excludeId?: string) {
+  const digits = normalizePhoneNumber(phoneNumber);
+  if (!digits) return null;
+  const members = await prisma.internalTeamMember.findMany({
+    select: { id: true, name: true, phoneNumber: true, whatsappId: true },
   });
+  return (
+    members.find(
+      (m) =>
+        m.id !== excludeId &&
+        (normalizePhoneNumber(m.phoneNumber) === digits || (m.whatsappId && normalizePhoneNumber(m.whatsappId) === digits)),
+    ) ?? null
+  );
+}
+
+export async function createTeamMember(_prev: TeamMemberFormState, formData: FormData): Promise<TeamMemberFormState> {
+  await requireSession();
+  const input = readTeamMemberForm(formData);
+  if ("error" in input) return input;
+
+  const conflict = await findPhoneConflict(input.phoneNumber);
+  if (conflict) return { error: `${conflict.name} already has that number.` };
+
+  try {
+    await prisma.internalTeamMember.create({ data: { ...input, status: "ACTIVE" } });
+  } catch (err) {
+    if (isUniqueViolation(err)) return { error: "Someone already has that number." };
+    throw err;
+  }
   revalidatePath("/team-members");
+  return { success: true };
 }
 
 export interface GroupParticipantCandidate {
@@ -272,21 +333,27 @@ export async function addTeamMembersFromGroup(
   return { addedCount: result.count };
 }
 
-export async function updateTeamMember(id: string, formData: FormData): Promise<void> {
+export async function updateTeamMember(
+  id: string,
+  _prev: TeamMemberFormState,
+  formData: FormData,
+): Promise<TeamMemberFormState> {
   await requireSession();
-  const name = String(formData.get("name") ?? "").trim();
-  const phoneNumber = String(formData.get("phoneNumber") ?? "").trim();
-  const role = String(formData.get("role") ?? "").trim();
-  const department = String(formData.get("department") ?? "").trim() || null;
+  const input = readTeamMemberForm(formData);
+  if ("error" in input) return input;
 
-  if (!name || !phoneNumber || !role) {
-    throw new Error("Name, phone number, and role are required.");
+  // Excluding this member, so saving without changing the number is not reported as a clash with
+  // themselves — and so typing a real number over a WhatsApp id works, which is the whole point of
+  // this form for anybody added from message history.
+  const conflict = await findPhoneConflict(input.phoneNumber, id);
+  if (conflict) return { error: `${conflict.name} already has that number.` };
+
+  try {
+    await prisma.internalTeamMember.update({ where: { id }, data: input });
+  } catch (err) {
+    if (isUniqueViolation(err)) return { error: "Someone already has that number." };
+    throw err;
   }
-
-  await prisma.internalTeamMember.update({
-    where: { id },
-    data: { name, phoneNumber, role, department },
-  });
   revalidatePath("/team-members");
   redirect("/team-members");
 }

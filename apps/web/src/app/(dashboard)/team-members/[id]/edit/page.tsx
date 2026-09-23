@@ -1,10 +1,10 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@support-automation/db";
 import { requireSession } from "@/server/auth";
-import { Alert, Button, Card, Checkbox, Field, Input, PageHeader, SectionHeader } from "@/components/ui";
+import { Alert, Button, Card, Checkbox, PageHeader, SectionHeader } from "@/components/ui";
 import { NOTIFICATION_EVENTS } from "@/lib/notificationEvents";
 import { hasReachablePhoneNumber } from "@support-automation/shared";
-import { updateTeamMember } from "@/server/actions/teamMembers";
+import { EditTeamMemberForm } from "./EditTeamMemberForm";
 import { updateMemberNotificationPreferences } from "@/server/actions/notificationEvents";
 
 const EVENT_LABELS: Record<string, string> = {
@@ -28,28 +28,16 @@ export default async function EditTeamMemberPage({ params }: { params: Promise<{
   const chosen = new Set(preferences.map((row) => row.event));
   const reachable = hasReachablePhoneNumber(member);
 
-  const updateWithId = updateTeamMember.bind(null, member.id);
   const updatePreferences = updateMemberNotificationPreferences.bind(null, member.id);
 
   return (
     <div>
       <PageHeader title={`Edit ${member.name}`} />
       <Card className="max-w-lg">
-        <form action={updateWithId} className="space-y-4">
-          <Field label="Name" required>
-            <Input name="name" defaultValue={member.name} required />
-          </Field>
-          <Field label="Phone Number" required>
-            <Input name="phoneNumber" defaultValue={member.phoneNumber} required />
-          </Field>
-          <Field label="Role" required>
-            <Input name="role" defaultValue={member.role} required />
-          </Field>
-          <Field label="Department">
-            <Input name="department" defaultValue={member.department ?? ""} />
-          </Field>
-          <Button type="submit">Save</Button>
-        </form>
+        <EditTeamMemberForm
+          memberId={member.id}
+          defaults={{ name: member.name, phoneNumber: member.phoneNumber, role: member.role, department: member.department }}
+        />
       </Card>
 
       <Card className="mt-5 max-w-lg">

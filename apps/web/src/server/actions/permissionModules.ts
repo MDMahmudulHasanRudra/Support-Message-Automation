@@ -75,6 +75,12 @@ export async function updatePermissionModule(
   if (target.isSystem && name !== target.name) {
     return { error: `"${target.name}" is a default Permission Module and cannot be renamed.` };
   }
+  // `name` is unique. Renaming onto another module's name threw a raw P2002 inside the transaction
+  // below and replaced the page; create already checked this, update did not.
+  if (name !== target.name) {
+    const clash = await prisma.permissionModule.findUnique({ where: { name }, select: { id: true } });
+    if (clash && clash.id !== id) return { error: `A Permission Module named "${name}" already exists.` };
+  }
 
   const permissions = keys.length
     ? await prisma.permission.findMany({ where: { key: { in: keys } }, select: { id: true } })
