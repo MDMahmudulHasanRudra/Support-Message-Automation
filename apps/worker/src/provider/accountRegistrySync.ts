@@ -27,6 +27,14 @@ const RECOVERABLE = new Set(["DISCONNECTED", "ERROR"]);
 const lastRecoveryAttempt = new Map<string, number>();
 
 /**
+ * How often a CONNECTED session is asked whether WhatsApp is really still running inside it — see
+ * `checkSessionHealth` in OpenWAProvider. Two failed checks trip it, so a dead page is handed to
+ * recovery within about five minutes; the check itself is one line evaluated in the page.
+ */
+const HEALTH_CHECK_INTERVAL_MS = 2 * 60_000;
+const lastHealthCheck = new Map<string, number>();
+
+/**
  * Drops providers for accounts that no longer exist in the database.
  *
  * This is how a dashboard delete reaches the worker, and it has to be reconciliation rather than a
@@ -140,6 +148,19 @@ async function recoverIfDropped(registry: ProviderRegistry, account: WhatsAppAcc
   const provider = registry.get(accountId);
   if (!provider) return;
   if (!account.lastConnectedAt || !account.phoneNumber) return;
+
+  // A session can claim CONNECTED with no WhatsApp left in its page, and that raises no state
+  // change for the check below to see. Asking now and then is what turns it into DISCONNECTED,
+  // which this function already knows how to recover.
+  if (provider.getConnectionStatus() === "CONNECTED" && provider.checkSessionHealth) {
+    const lastChecked = lastHealthCheck.get(accountId) ?? 0;
+    if (Date.now() - lastChecked >= HEALTH_CHECK_INTERVAL_MS) {
+      lastHealthCheck.set(accountId, Date.now());
+      await provider.checkSessionHealth().catch((err) =>
+        console.error(`[registry] session health check errored for account ${accountId}`, err),
+      );
+    }
+  }
 
   const status = provider.getConnectionStatus();
   if (!RECOVERABLE.has(status)) return;

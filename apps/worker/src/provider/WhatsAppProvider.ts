@@ -153,6 +153,12 @@ export interface WhatsAppProvider {
    */
   probeCollection(since: Date, limit: number): Promise<CollectionProbe>;
   /**
+   * Cheap check that a session reporting CONNECTED still has a working WhatsApp inside it. When it
+   * plainly does not, the provider records itself DISCONNECTED so ordinary drop recovery brings it
+   * back. Optional: a provider that cannot tell simply does not implement it.
+   */
+  checkSessionHealth?(): Promise<void>;
+  /**
    * `mentions` are contact ids ("<digits>@c.us") to tag. WhatsApp only notifies a mentioned person
    * if they are a participant of that chat; tagging someone who is not simply renders as text.
    */

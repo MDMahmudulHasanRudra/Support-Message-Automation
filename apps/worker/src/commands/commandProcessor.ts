@@ -14,6 +14,7 @@ import { withTimeout } from "../util/withTimeout.js";
 // registry imports the group sync from this file.
 import { connectWithRetry } from "../provider/connectWithRetry.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
+import { shouldHoldDeactivationSweep } from "./groupSyncGuard.js";
 
 /** Name this loop reports itself under in the per-loop liveness view. */
 const LOOP_NAME = "command-processor";
@@ -100,12 +101,25 @@ export async function syncGroups(accountId: string, provider: WhatsAppProvider):
   // run the sweep when we actually have a real result set to compare against.
   if (groups.length > 0) {
     const currentWhatsappGroupIds = groups.map((g) => g.whatsappGroupId);
-    const deactivated = await prisma.whatsAppGroup.updateMany({
-      where: { accountId, isActive: true, whatsappGroupId: { notIn: currentWhatsappGroupIds } },
-      data: { isActive: false },
-    });
-    if (deactivated.count > 0) {
-      console.log(`[groupsync] GROUP_SYNC_DEACTIVATED ${deactivated.count} group(s) no longer returned by the account`);
+    const missingWhere = { accountId, isActive: true, whatsappGroupId: { notIn: currentWhatsappGroupIds } };
+    const wouldDeactivate = await prisma.whatsAppGroup.count({ where: missingWhere });
+    // Counted after the reactivation above, so this is the active roster the sweep would cut.
+    const activeBefore = await prisma.whatsAppGroup.count({ where: { accountId, isActive: true } });
+
+    if (shouldHoldDeactivationSweep(activeBefore, wouldDeactivate)) {
+      // See groupSyncGuard.ts: this read is far more likely incomplete than a real mass exit.
+      await logSystemEvent("WARN", "provider", "GROUP_SYNC_SWEEP_HELD", {
+        accountId,
+        returned: groups.length,
+        activeBefore,
+        wouldDeactivate,
+        note: "WhatsApp returned far fewer groups than are active. Nothing was deactivated; a later sync will finish the list.",
+      });
+    } else if (wouldDeactivate > 0) {
+      const deactivated = await prisma.whatsAppGroup.updateMany({ where: missingWhere, data: { isActive: false } });
+      if (deactivated.count > 0) {
+        console.log(`[groupsync] GROUP_SYNC_DEACTIVATED ${deactivated.count} group(s) no longer returned by the account`);
+      }
     }
   }
 
@@ -255,7 +269,40 @@ export function resyncAndCatchUpAfterConnect(
     .then(() => catchUpMissedMessages(accountId, provider))
     .catch((err) => {
       console.error(`[worker] catch-up failed for account ${accountId} after ${source}`, err);
-    });
+    })
+    .finally(() => scheduleFollowUpSyncs(accountId, provider, source));
+}
+
+/**
+ * Sync again a few minutes after connecting, because the first read is often not the whole list.
+ *
+ * A number that has just been linked receives its chats from the phone over several minutes, and
+ * the sync above runs the moment `create()` resolves — so it reads whatever has arrived by then.
+ * On 24 Sep 2026 that was 498 of 1,952 groups, and nothing ever read the list again unless somebody
+ * pressed Resync, so three quarters of the roster stayed missing from the inbox. These passes pick
+ * up the rest once it has landed. Each one only ADDS and reactivates groups it can see (the
+ * deactivation sweep holds on a list that is still short — see groupSyncGuard.ts), and each is
+ * skipped if the session is no longer connected by then.
+ *
+ * Bounded to two, on purpose: this is filling in after a connect, not a polling loop over a
+ * 1,952-group roster. `unref` so a pending pass never holds the process open at shutdown.
+ */
+const FOLLOW_UP_SYNC_DELAYS_MS = [5 * 60_000, 15 * 60_000];
+
+function scheduleFollowUpSyncs(accountId: string, provider: WhatsAppProvider, source: string): void {
+  for (const delayMs of FOLLOW_UP_SYNC_DELAYS_MS) {
+    const timer = setTimeout(() => {
+      if (provider.getConnectionStatus() !== "CONNECTED") return;
+      syncGroupsWithTimeoutAndRetry(accountId, provider)
+        .then((groupCount) => {
+          console.log(
+            `[worker] follow-up sync ${Math.round(delayMs / 60_000)}m after ${source}: ${groupCount} group(s) for account ${accountId}`,
+          );
+        })
+        .catch((err) => console.error(`[worker] follow-up group sync failed for account ${accountId}`, err));
+    }, delayMs);
+    timer.unref?.();
+  }
 }
 
 /**

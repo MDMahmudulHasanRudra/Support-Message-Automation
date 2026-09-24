@@ -332,6 +332,21 @@ relaunch Chromium every few minutes for a retired spare, forever. `connect()` is
 (it joins an attempt in flight rather than starting a second), because two callers can ask at once
 and it does a process-global `process.chdir()` first.
 
+**The group list is completed from evidence, not trusted from one read** (24 Sep 2026, production).
+A number linked at 3:11 PM was synced two minutes later, while the phone was still pushing its chats
+to the new device: 498 of 1,952 groups. Nothing read the list again, so 1,454 groups stayed
+inactive and the inbox (active groups only) hid their conversations; later the page lost WhatsApp
+Web's chat store while the account kept reading CONNECTED, and the collection watchdog never looked
+because it only checks accounts with *monitored* groups — this one had none. Four fixes:
+`resolveGroup` treats a message from a group as proof of membership (reactivates an inactive group,
+registers an unknown one with every automation flag off — it never deactivates or enables anything);
+the deactivation sweep holds when a read would switch off more than a tenth of the active roster
+(`groupSyncGuard.ts`, logged as `GROUP_SYNC_SWEEP_HELD`); two follow-up syncs run 5 and 15 minutes
+after every connect; and `checkSessionHealth()` asks each CONNECTED page every two minutes whether
+`Store.Chat` exists — two misses record the account DISCONNECTED so `recoverIfDropped` restarts it.
+A sync on a page with no chat store fails once with `SessionNotReadyError`, never three times with
+"reading 'map'". The watchdog's monitored-only selection is unchanged and still worth widening.
+
 ### Staying up, and noticing when nothing is arriving (`lifecycle.ts`, `recovery.ts`, `pipeline/messageRecovery.ts`, `health/collectionWatchdog.ts`)
 
 **Accounts connect in the BACKGROUND, and nothing may put that back on the startup path.**

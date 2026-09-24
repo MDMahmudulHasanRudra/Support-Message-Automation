@@ -5,6 +5,9 @@ export interface RawIncomingMessage {
   chatId: string;
   /** Present when the chat is a group; absent for a 1:1 DM. */
   whatsappGroupId?: string | null;
+  /** The group's name as WhatsApp shows it, when the message carried one. Used only to register a
+   *  group the group sync has not stored yet — the sync remains the authority on names. */
+  groupName?: string | null;
   senderPhone: string;
   senderName?: string | null;
   direction: "INCOMING" | "OUTGOING" | "SYSTEM";

@@ -680,23 +680,64 @@ export async function loadStoredMessageContext(
  * isn't from a group, or from one this account hasn't synced yet. Shared by both storage paths so
  * there is exactly one lookup, not a second one that could drift.
  */
-async function resolveGroup(raw: RawIncomingMessage) {
+const RESOLVED_GROUP_SELECT = {
+  id: true,
+  name: true,
+  isActive: true,
+  priority: true,
+  assignedTeamMemberId: true,
+  escalationMonitoringEnabled: true,
+  isMonitored: true,
+  aiAutomationEnabled: true,
+  aiAutomationExcluded: true,
+  aiSuppressedUntil: true,
+  testModeEnabled: true,
+} as const;
+
+/**
+ * A message from a group is proof this account is in that group — and that proof now counts.
+ *
+ * The group list used to come ONLY from the group sync, which reads WhatsApp Web's chat list. That
+ * read can be partial: straight after a number is linked the phone is still pushing its chats
+ * across, and on 24 Sep 2026 a sync two minutes after linking saw 498 of 1,952 groups. Every group
+ * outside that read stayed inactive, so the inbox (which lists active groups) hid their
+ * conversations while their messages kept arriving, and a group that appeared after the last
+ * sync had no row at all — its messages were stored against no group and shown nowhere.
+ *
+ * So the pipeline closes both gaps from evidence it already has:
+ *   - an INACTIVE group that sends a message is marked active again;
+ *   - an UNKNOWN group is registered, with every automation flag at its default (off) — a group
+ *     nobody has looked at must never start receiving automated replies because it spoke.
+ * Neither ever deactivates anything or touches monitoring, AI or priority settings.
+ *
+ * Create-and-catch rather than upsert, so the common case (a known, active group) stays one read.
+ */
+export async function resolveGroup(raw: RawIncomingMessage) {
   if (!raw.whatsappGroupId) return null;
-  return prisma.whatsAppGroup.findUnique({
-    where: { accountId_whatsappGroupId: { accountId: raw.accountId, whatsappGroupId: raw.whatsappGroupId } },
-    select: {
-      id: true,
-      name: true,
-      priority: true,
-      assignedTeamMemberId: true,
-      escalationMonitoringEnabled: true,
-      isMonitored: true,
-      aiAutomationEnabled: true,
-      aiAutomationExcluded: true,
-      aiSuppressedUntil: true,
-      testModeEnabled: true,
-    },
-  });
+  const where = {
+    accountId_whatsappGroupId: { accountId: raw.accountId, whatsappGroupId: raw.whatsappGroupId },
+  };
+  const existing = await prisma.whatsAppGroup.findUnique({ where, select: RESOLVED_GROUP_SELECT });
+  if (existing) {
+    if (existing.isActive) return existing;
+    return prisma.whatsAppGroup.update({ where, data: { isActive: true }, select: RESOLVED_GROUP_SELECT });
+  }
+  try {
+    return await prisma.whatsAppGroup.create({
+      data: {
+        accountId: raw.accountId,
+        whatsappGroupId: raw.whatsappGroupId,
+        name: raw.groupName?.trim() || raw.whatsappGroupId,
+      },
+      select: RESOLVED_GROUP_SELECT,
+    });
+  } catch (err) {
+    // Two messages from a brand-new group raced to register it; the other one won.
+    if ((err as { code?: string }).code === "P2002") {
+      return prisma.whatsAppGroup.findUnique({ where, select: RESOLVED_GROUP_SELECT });
+    }
+    throw err;
+  }
 }
 
 async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> {

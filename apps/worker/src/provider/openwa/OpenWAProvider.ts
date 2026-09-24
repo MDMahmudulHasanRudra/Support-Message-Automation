@@ -194,6 +194,8 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
     whatsappMessageId: message.id,
     chatId: message.chatId,
     whatsappGroupId: message.isGroupMsg ? message.chatId : null,
+    // Optional chaining because the history API behind catch-up does not always attach `chat`.
+    groupName: message.isGroupMsg ? message.chat?.name || message.chat?.formattedTitle || null : null,
     // OpenWA hands these over as JIDs ("8801XXXXXXXXX@c.us"), not phone numbers. Everything
     // downstream compares this against InternalTeamMember.phoneNumber, which people type as
     // "+8801XXXXXXXXX" — so storing the JID verbatim meant no team member ever matched, and
@@ -1243,6 +1245,60 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   getConnectionStatus(): ConnectionStatus {
     return toInterfaceStatus(this.state);
+  }
+
+  /** Consecutive health checks that found no working WhatsApp in the page. */
+  private unhealthyChecks = 0;
+
+  /**
+   * Notices a session that says CONNECTED while its page holds no WhatsApp at all.
+   *
+   * Observed on 24 Sep 2026: the account read CONNECTED, "sending and receiving normally", while the
+   * browser's WhatsApp Web had no chat store — every group sync crashed inside the page, and no
+   * message arrived for hours. Nothing reported it. The status only changes when the library raises
+   * a state event, and a page that has fallen out of WhatsApp raises none; the collection watchdog
+   * only looks at accounts with MONITORED groups, and this one had none, because it is used for the
+   * inbox rather than for automation.
+   *
+   * Two failed checks in a row, never one: WhatsApp Web can briefly rebuild its store (an in-page
+   * update), and restarting a working session over that would cost a minute of collection for
+   * nothing. When it does trip, the account is recorded DISCONNECTED — which is the truth, and
+   * which `recoverIfDropped` already knows what to do with: restart the browser from the saved
+   * session, then sync groups and run the catch-up sweep. No second recovery path.
+   */
+  async checkSessionHealth(): Promise<void> {
+    const client = this.client;
+    if (!client || this.state !== "CONNECTED" || this.connecting) {
+      this.unhealthyChecks = 0;
+      return;
+    }
+    let healthy: boolean;
+    try {
+      const page = client.getPage();
+      healthy =
+        !page.isClosed() &&
+        (await withTimeout(
+          page.evaluate(() => Boolean((globalThis as unknown as { Store?: { Chat?: unknown } }).Store?.Chat)),
+          20_000,
+          "session health check",
+        ));
+    } catch {
+      // A browser that cannot answer twenty seconds' worth of a one-line question is not
+      // collecting messages either.
+      healthy = false;
+    }
+    if (healthy) {
+      this.unhealthyChecks = 0;
+      return;
+    }
+    this.unhealthyChecks += 1;
+    console.warn(`[openwa] session health check failed for ${this.sessionId} (${this.unhealthyChecks}/2)`);
+    // Re-checked after the await: a reconnect may have begun while the page was being asked.
+    if (this.unhealthyChecks < 2 || this.state !== "CONNECTED" || this.connecting) return;
+    this.unhealthyChecks = 0;
+    await this.setState("DISCONNECTED", {
+      reason: "The account said it was connected, but WhatsApp Web in its browser had stopped working. Reconnecting automatically.",
+    });
   }
 
   async getGroups(): Promise<GroupInfo[]> {
