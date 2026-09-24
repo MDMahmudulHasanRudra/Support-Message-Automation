@@ -95,11 +95,64 @@ describe("the lean path", () => {
   });
 });
 
+describe("a page with no WhatsApp in it is reported, not crashed into", () => {
+  /**
+   * Observed 24 Sep 2026: every sync against a logged-out session failed with "Cannot read
+   * properties of undefined (reading 'map')", three times per press. The missing store used to
+   * fall back to `getAllGroups()`, which is `Store.Chat.map(...)` on the same missing object — the
+   * fallback only moved the crash. This case used to assert that fallback.
+   */
+  it("when WhatsApp Web's chat store is not there, it says so and never calls the slow path", async () => {
+    installStore(null);
+    const getAllGroups = vi.fn(async () => {
+      throw new TypeError("Cannot read properties of undefined (reading 'map')");
+    });
+    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups });
+
+    await expect(provider.getGroups()).rejects.toMatchObject({
+      name: "SessionNotReadyError",
+      message: expect.stringContaining("WhatsApp Web is not loaded"),
+    });
+    expect(getAllGroups).not.toHaveBeenCalled();
+  });
+
+  it("when the session was logged out on the phone, it refuses before touching the page", async () => {
+    const evaluate = vi.fn();
+    const provider = await providerWith({ getPage: () => ({ evaluate }), getAllGroups: vi.fn() });
+    (provider as unknown as { state: string }).state = "AUTH_FAILED";
+
+    await expect(provider.getGroups()).rejects.toMatchObject({
+      name: "SessionNotReadyError",
+      message: expect.stringContaining("logged out on the phone"),
+    });
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  it("but a session still coming up is let through, so the post-connect sync is not blocked", async () => {
+    installStore([chat("121-212@g.us", true, { name: "Right after linking" })]);
+    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups: vi.fn() });
+    // OpenWA reports SYNCING (recorded as RECONNECTING) for a while right after a successful connect.
+    (provider as unknown as { state: string }).state = "RECONNECTING";
+
+    expect(await provider.getGroups()).toEqual([{ whatsappGroupId: "121-212@g.us", name: "Right after linking" }]);
+  });
+
+  it("when the slow path returns something that is not a list, the error says so rather than 'map'", async () => {
+    const provider = await providerWith({
+      getPage: () => ({ evaluate: () => Promise.reject(new Error("Execution context was destroyed")) }),
+      getAllGroups: vi.fn(async () => undefined),
+    });
+
+    await expect(provider.getGroups()).rejects.toThrow(/returned no group list \(got undefined\)/);
+  });
+});
+
 describe("every failure takes the old path, never an emptied roster", () => {
   const slowPathResult = [{ id: "999-000@g.us", name: "From getAllGroups", formattedTitle: "", t: 1 }];
 
-  it("when WhatsApp Web's Store is not there", async () => {
-    installStore(null);
+  it("when the chat store exists but has been reshaped", async () => {
+    // The case the fallback is actually for: WhatsApp Web changed the collection, not lost it.
+    (globalThis as unknown as { Store?: unknown }).Store = { Chat: { length: 1 } };
     const getAllGroups = vi.fn(async () => slowPathResult);
     const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups });
 

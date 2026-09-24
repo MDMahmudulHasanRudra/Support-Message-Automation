@@ -1,6 +1,6 @@
 import { trackTick } from "../lifecycle.js";
 import { prisma } from "@support-automation/db";
-import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
+import { SessionNotReadyError, type WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { processOneGroupKnowledgeBuild } from "../knowledge/groupKnowledgeJob.js";
@@ -182,7 +182,10 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
     } catch (err) {
       const message = (err as Error).message ?? String(err);
       const isTimeout = message.includes("timed out");
-      const isLastAttempt = attempt === attempts;
+      // A logged-out or disconnected session will be exactly as logged out in ten seconds, so this
+      // is the last attempt whatever the counter says. Retrying it produced two more identical
+      // failures and forty seconds of the operator waiting on an answer that was already known.
+      const isLastAttempt = attempt === attempts || err instanceof SessionNotReadyError;
       await logSystemEvent(
         isLastAttempt ? "ERROR" : "WARN",
         "provider",

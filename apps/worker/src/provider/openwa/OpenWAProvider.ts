@@ -30,6 +30,7 @@ import type {
   SendResult,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
+import { SessionNotReadyError } from "../WhatsAppProvider.js";
 import {
   readPairingPreference,
   recordLinkWindow,
@@ -1246,6 +1247,20 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   async getGroups(): Promise<GroupInfo[]> {
     if (!this.client) return [];
+    // A client object outlives its session: logging out on the phone reloads WhatsApp Web to its
+    // login screen while `this.client` stays set, and the state listener records AUTH_FAILED
+    // (UNPAIRED). Asking that page for groups crashes inside it, so say what is actually wrong.
+    //
+    // ONLY that state. DISCONNECTED is also where `mapLibraryState` files every library state it
+    // does not recognise, and RECONNECTING is what OpenWA reports for a while right after a
+    // successful connect — refusing either could stop a sync on a session that works, including
+    // the post-connect one that fills in a freshly linked number. Every other dead page is caught
+    // by evidence rather than by a label: `listGroupChats` finds no chat store in it.
+    if (this.state === "AUTH_FAILED") {
+      throw new SessionNotReadyError(
+        "This account was logged out on the phone, so its groups cannot be read. Link it again from WhatsApp Accounts.",
+      );
+    }
     const chats = await this.listGroupChats();
     return chats.map((chat) => ({
       whatsappGroupId: chat.id,
@@ -1284,6 +1299,12 @@ export class OpenWAProvider implements WhatsAppProvider {
    * behaviour rather than a group list quietly emptied. That also means a result of zero groups
    * never reaches `syncGroups` from here unless the slow path agrees, which matters because an
    * empty roster is the one input that sweep has been taught to distrust.
+   *
+   * EXCEPT when the chat store is missing altogether, which is not a shape change but a page with
+   * no WhatsApp in it — logged out on the phone, reloaded to the login screen, not finished
+   * loading. The slow path cannot help there: `getAllGroups()` is `Store.Chat.map(...)` on the very
+   * same object, so falling back only moved the crash, and the operator got "Cannot read
+   * properties of undefined (reading 'map')" from inside the page instead of the reason.
    */
   private async listGroupChats(): Promise<LeanGroupChat[]> {
     const client = this.client;
@@ -1298,7 +1319,10 @@ export class OpenWAProvider implements WhatsAppProvider {
         }
         const store = (globalThis as unknown as { Store?: { Chat?: { filter?: (fn: (chat: PageChat) => boolean) => PageChat[] } } })
           .Store;
-        if (!store?.Chat || typeof store.Chat.filter !== "function") return null;
+        // Distinguished from `null` below on purpose: a missing store is the page having no
+        // WhatsApp session in it, a store without `filter` is a WhatsApp Web build that reshaped it.
+        if (!store?.Chat) return "NO_CHAT_STORE" as const;
+        if (typeof store.Chat.filter !== "function") return null;
         return store.Chat.filter((chat) => Boolean(chat?.isGroup)).map((chat) => {
           const json = typeof chat.toJSON === "function" ? chat.toJSON() : {};
           return {
@@ -1309,15 +1333,29 @@ export class OpenWAProvider implements WhatsAppProvider {
           };
         });
       });
+      if (lean === "NO_CHAT_STORE") {
+        throw new SessionNotReadyError(
+          "WhatsApp Web is not loaded in this account's session (it has no chat list), so its groups cannot be read. This usually means the number was logged out on the phone. Reconnect it from WhatsApp Accounts, and link it again if it asks for a QR code.",
+        );
+      }
       if (Array.isArray(lean) && lean.length > 0 && lean.every((chat) => typeof chat.id === "string")) {
         return lean as LeanGroupChat[];
       }
       console.warn("[openwa] lean group enumeration returned nothing usable — falling back to getAllGroups()");
     } catch (err) {
+      if (err instanceof SessionNotReadyError) throw err;
       console.warn("[openwa] lean group enumeration failed — falling back to getAllGroups()", err);
     }
-    const chats = await client.getAllGroups();
-    return chats.map((chat) => ({
+    const chats: unknown = await client.getAllGroups();
+    // The library returns whatever the page evaluated to, which is not always a list — `false` under
+    // some `onError` settings, `undefined` when the page produced nothing serialisable. Mapping over
+    // either was the second way this crashed with a message about `map`.
+    if (!Array.isArray(chats)) {
+      throw new Error(
+        `WhatsApp Web returned no group list (got ${chats === null ? "null" : typeof chats}). The session may still be loading — try the sync again in a minute, and reconnect the account if it keeps failing.`,
+      );
+    }
+    return (chats as Awaited<ReturnType<typeof client.getAllGroups>>).map((chat) => ({
       id: chat.id,
       name: chat.name ?? null,
       formattedTitle: chat.formattedTitle ?? null,

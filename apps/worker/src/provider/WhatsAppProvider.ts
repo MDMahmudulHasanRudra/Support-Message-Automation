@@ -40,6 +40,22 @@ export interface GroupInfo {
   name: string;
 }
 
+/**
+ * The session cannot list its groups, and trying again in ten seconds will not change that — it
+ * needs somebody to reconnect or re-link the account.
+ *
+ * Thrown by `getGroups()` so the group sync can tell this apart from a transient failure. Without
+ * it a sync against a logged-out session retried twice into the same dead page, and the operator
+ * read "Cannot read properties of undefined (reading 'map')" three times — a crash inside WhatsApp
+ * Web's page that named nothing they could act on.
+ */
+export class SessionNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionNotReadyError";
+  }
+}
+
 export interface AccountInfo {
   phoneNumber: string | null;
   pushName: string | null;
