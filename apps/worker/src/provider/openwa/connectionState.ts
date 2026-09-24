@@ -115,6 +115,17 @@ const LINK_WINDOW_CLOSED_BY = new Set<OpenWAConnectionState>([
 ]);
 
 /**
+ * States that END an attempt without a session. The code on file belongs to that attempt, whose
+ * browser is killed as it unwinds (`orphanBrowsers.ts`), so from here it cannot link anything.
+ *
+ * Left in place it stayed "usable" in the dialog until it aged past the 60s staleness check —
+ * a minute in which somebody could scan a code with nothing behind it. The boot reconcile already
+ * clears every QR for exactly this reason; this is the same rule applied when an attempt ends
+ * rather than when the process does.
+ */
+const QR_DISCARDED_BY = new Set<OpenWAConnectionState>(["DISCONNECTED", "QR_EXPIRED", "AUTH_FAILED", "ERROR"]);
+
+/**
  * Opens the linking window: the moment the current attempt will stop waiting for a scan.
  *
  * Separate from `recordConnectionState` because it is not a state transition — the attempt is still
@@ -205,6 +216,7 @@ export async function recordConnectionState(
         ...(LINK_WINDOW_CLOSED_BY.has(state) ? { linkExpiresAt: null } : {}),
         lastHeartbeatAt: new Date(),
         ...(state === "CONNECTED" ? { lastConnectedAt: new Date(), qrCode: null } : {}),
+        ...(QR_DISCARDED_BY.has(state) ? { qrCode: null } : {}),
         ...(state === "QR_AVAILABLE" && qrCode ? { qrCode, qrUpdatedAt: new Date() } : {}),
       },
     });

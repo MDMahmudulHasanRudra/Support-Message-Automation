@@ -50,7 +50,7 @@ export function Select({
 
 export function Checkbox({
   className = "",
-  indeterminate = false,
+  indeterminate,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & {
   /**
@@ -60,15 +60,25 @@ export function Checkbox({
    * "nothing here is selected" while a bulk action is armed and pointed at whatever is — and the
    * one click available to resolve the confusion selects everything. There is no HTML attribute
    * for it, so it is set on the node itself.
+   *
+   * The ref that does that is attached ONLY when this prop is passed. This file is not a client
+   * module, and a Server Component cannot render a ref at all — an unconditional callback ref
+   * made every server page using a Checkbox (the team member alert preferences) crash with
+   * "Refs cannot be used in Server Components". Callers that manage the state are client
+   * components and always pass a boolean, so the ref stays attached for them across renders.
    */
   indeterminate?: boolean;
 }) {
   return (
     <input
       type="checkbox"
-      ref={(node) => {
-        if (node) node.indeterminate = indeterminate;
-      }}
+      ref={
+        indeterminate === undefined
+          ? undefined
+          : (node) => {
+              if (node) node.indeterminate = indeterminate;
+            }
+      }
       aria-checked={indeterminate ? "mixed" : undefined}
       className={`size-4 cursor-pointer rounded-[var(--radius-xs)] border-[var(--color-border-strong)] accent-[var(--color-primary)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${className}`}
       {...props}

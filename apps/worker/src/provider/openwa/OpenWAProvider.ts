@@ -40,6 +40,7 @@ import {
 } from "./connectionState.js";
 import { serializeMessageId } from "./messageId.js";
 import { withTimeout } from "../../util/withTimeout.js";
+import { killBrowsersUsingProfile } from "./orphanBrowsers.js";
 
 /**
  * Ceilings on the two teardown calls into Chromium, neither of which had one.
@@ -393,12 +394,13 @@ export class OpenWAProvider implements WhatsAppProvider {
    * Set for the life of one attempt and cleared with it, so an attempt that has already settled
    * cannot be abandoned retroactively.
    *
-   * ONE HONEST COST. The browser an abandoned attempt launched cannot be killed: OpenWA hands back
-   * a client only when `create()` RESOLVES, and the whole point here is that it has not. That
-   * Chromium is orphaned until the worker restarts. Survivable, because `clearStaleChromiumLock()`
-   * removes the profile's Singleton files at the start of every attempt — which is exactly what
-   * lets the next one launch over it — and bounded, because this is reached by a person changing
-   * how they want to link, never by a loop.
+   * The browser an abandoned attempt launched cannot be killed THROUGH THE LIBRARY: OpenWA hands
+   * back a client only when `create()` RESOLVES, and the whole point here is that it has not. This
+   * comment used to call the resulting orphan survivable "because this is reached by a person
+   * changing how they want to link, never by a loop". That stopped being true the day the linking
+   * window became five minutes: every unscanned window ends the same way, so orphans accumulated
+   * in a loop, fought each retry for the profile, and kept publishing codes. They are now killed by
+   * process, keyed on the profile directory — see `orphanBrowsers.ts`.
    */
   private abandonAttempt: ((reason: Error) => void) | null = null;
 
@@ -644,8 +646,9 @@ export class OpenWAProvider implements WhatsAppProvider {
      * It still cannot be generation-guarded: the handler runs synchronously at fire time, so
      * re-reading `attemptGeneration` inside it always yields the current one whichever attempt the
      * event came from, and the bus carries no attempt identity — only a session id, which is
-     * per-provider and constant across attempts. An abandoned attempt's Chromium is orphaned rather
-     * than killed (see `abandonAttempt`), so it genuinely can reach this later. `this.connecting`
+     * per-provider and constant across attempts. An abandoned attempt's Chromium is now killed when
+     * the attempt unwinds (see `orphanBrowsers.ts`), but a browser can still emit in the moment
+     * before that kill lands, so the gate stays. `this.connecting`
      * is the honest substitute: it answers "does THIS provider have an attempt running right now",
      * which is the question that separates the damaging case from the harmless one. An orphan
      * arriving mid-attempt still lands, and that is fine — an attempt really is in progress.
@@ -683,6 +686,12 @@ export class OpenWAProvider implements WhatsAppProvider {
    */
   private writeQrState(generation: number, metadata: Record<string, unknown>, qrCode: string): void {
     if (generation !== this.attemptGeneration) return;
+    // No attempt running, so no code can be ours to show. The generation check above cannot catch
+    // this: an orphaned browser's events carry the same session id and arrive within the CURRENT
+    // generation. Observed on 24 Sep 2026 — codes kept landing on the dashboard after every retry
+    // had given up, each one linking a browser nothing was listening to. Same gate, and same
+    // reasoning, as the STARTUP listener.
+    if (!this.connecting) return;
     this.attemptReachedLinkingScreen = true;
     this.setState("QR_AVAILABLE", metadata, qrCode).catch(() => undefined);
   }
@@ -719,6 +728,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     // in-progress QR render — see attemptGeneration's own doc comment) must not be allowed to
     // write over what THIS attempt produces.
     this.attemptGeneration += 1;
+    const generation = this.attemptGeneration;
     this.attemptReachedLinkingScreen = false;
 
     // Before anything is launched, because the profile directory is what gets launched AGAINST.
@@ -738,6 +748,11 @@ export class OpenWAProvider implements WhatsAppProvider {
     // which Docker creates. Recursive and idempotent, so an existing session is untouched.
     await mkdir(this.sessionDataPath, { recursive: true });
     process.chdir(this.sessionDataPath);
+    // Before the lock files go, never after: removing them is what lets a second Chromium start
+    // against a profile a live one still holds, and two browsers on one profile is the failure
+    // `killBrowsersUsingProfile` exists to prevent. Covers every way the last attempt could have
+    // ended, including a worker path that never reached the catch below.
+    await this.killOrphanedBrowsers("before launching");
     await this.clearStaleChromiumLock();
     await this.setState("STARTING");
 
@@ -1015,6 +1030,15 @@ export class OpenWAProvider implements WhatsAppProvider {
         firstCode,
       ]);
     } catch (err) {
+      // `create()` did not resolve, so its browser belongs to nobody — and left alive it keeps
+      // rotating codes onto the dashboard and holding the profile the next attempt needs. Killed
+      // here rather than only at the next launch, because after the LAST retry there is no next
+      // launch. Guarded on the generation so it can never reach a newer attempt's browser; in
+      // practice none can exist yet, since `disconnect()` awaits this unwinding and retries are
+      // sequential.
+      if (generation === this.attemptGeneration) {
+        await this.killOrphanedBrowsers("after an attempt that did not connect");
+      }
       // An abandoned attempt is not a failure to report as one. It means an operator chose a
       // different way to link while this one was still waiting, and the attempt that replaces it
       // is already on its way — recording ERROR here would put a red badge on the account for the
@@ -1699,10 +1723,30 @@ export class OpenWAProvider implements WhatsAppProvider {
    * stale and safe to remove before every connection attempt.
    */
   private async clearStaleChromiumLock(): Promise<void> {
-    const profileDir = join(this.sessionDataPath, `_IGNORE_${this.sessionId}`);
+    const profileDir = this.chromiumProfileDir();
     const lockFiles = ["SingletonLock", "SingletonCookie", "SingletonSocket"];
     for (const file of lockFiles) {
       await rm(join(profileDir, file), { force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * The directory the library launches Chromium against: `config.userDataDir`, which we never set,
+   * so its own default of `${sessionDataPath}/_IGNORE_${sessionId}` (dist/controllers/browser.js).
+   */
+  private chromiumProfileDir(): string {
+    return join(this.sessionDataPath, `_IGNORE_${this.sessionId}`);
+  }
+
+  /** See `orphanBrowsers.ts`. Never throws: failing to kill must not fail the attempt. */
+  private async killOrphanedBrowsers(when: string): Promise<void> {
+    try {
+      const killed = await killBrowsersUsingProfile(this.chromiumProfileDir());
+      if (killed > 0) {
+        console.warn(`[openwa] killed ${killed} orphaned browser process(es) ${when} for ${this.sessionId}`);
+      }
+    } catch (err) {
+      console.error("[openwa] could not clear orphaned browser processes", err);
     }
   }
 }

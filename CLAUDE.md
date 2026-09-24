@@ -217,6 +217,17 @@ worker is down" from "the worker is up but this account will not connect". Every
 a `WorkerCommand` and waits; with the worker down they all still "succeed" and then do nothing,
 and the heartbeat is the only thing that distinguishes that from a slow reconnect.
 
+**An attempt that does not connect must not leave its Chromium running** (`orphanBrowsers.ts`).
+OpenWA returns a client only when `create()` resolves, so an attempt that ends any other way — the
+five-minute window expiring unscanned, an operator switching to a phone code — left its browser
+parked on a rotating QR, unreachable (the library keeps it in a module variable the next launch
+overwrites). Once the window became five minutes that was the normal case, not an edge: observed
+24 Sep 2026, every retry launched a second browser on the same profile and died early as "App
+Offline", and the orphan kept writing codes to the dashboard after the last retry gave up. Browsers
+are now killed by process, matched on the exact `--user-data-dir` argument (one profile per
+account), before every launch and when an attempt unwinds; a code arriving with no attempt in
+flight is never published; and an attempt ending clears its stored QR.
+
 ### Replacing the number that serves customers (`accounts.ts`, `GroupSetupTransfer.tsx`)
 
 **A customer reply always goes out on the account that received the message** — `runAiFallback` is
