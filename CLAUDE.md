@@ -748,6 +748,22 @@ with a note, never an empty report. `team=none` is "members in no Team". Exports
 the file name and Summary sheet, and the Missed & Recall sheet lists `countedMissedWaits` — exactly
 the waits behind the scoped figures. A Team is never deleted once any membership points at it.
 
+**The Team members and By day tables are selectable and exportable** (`ReportDataTable.tsx`,
+`server/teamReportTables.ts`, `POST /api/team-report/table-export`). Row checkboxes (header = this
+page), search on the first column, sortable headers, 50–1,000 rows per page, sticky header and footer
+inside the table's own scroll box, and Export → Selected / Current page / All filtered × Excel / CSV.
+Paging is client-side ON PURPOSE: the report must read every message in the period to compute any
+figure, so these rows are already-computed aggregates (one per member, at most 92 days) and paging on
+the server would re-run the whole report per page. The export posts the row KEYS in on-screen order;
+the server recomputes the report and builds the rows with the same `buildMembersTable`/
+`buildBucketsTable` the page rendered, so the file has the table's columns, names, order and values
+(durations as the displayed text, counts as numbers) and never the checkbox column.
+
+The dashboard's content column carries `min-w-0` (`DashboardShell.tsx`). Without it a wide table
+inside `overflow-x-auto` still widened the whole column — `main` measured 882–995px at a 390px
+viewport on Team Members, Teams and Team Report — because a flex child cannot shrink below its
+content's minimum width unless told to.
+
 ### Team Management (`apps/web/src/server/teamManagementReports.ts`, `server/actions/teamManagement.ts`, `apps/worker/src/teamManagement/attendance.ts`)
 
 Shifts, roster, leave and coverage, built on `InternalTeamMember` — **there is no second identity

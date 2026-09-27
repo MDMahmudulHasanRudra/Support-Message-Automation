@@ -27,6 +27,8 @@ import {
   teamReportQuery,
 } from "@/server/teamReport";
 import { TeamReportFilters } from "./TeamReportFilters";
+import { ReportDataTable } from "./ReportDataTable";
+import { buildBucketsTable, buildMembersTable } from "@/server/teamReportTables";
 
 export const metadata = { title: "Team Report" };
 
@@ -56,8 +58,8 @@ export default async function TeamReportPage({
   const params = await searchParams;
   const now = new Date();
   const requested = parseTeamReportFilters(params, now);
-  const { filters, range, result, memberNames, members, groups, rules, teams, teamMemberIds, teamName, filterNote } =
-    await loadTeamReport(requested, now);
+  const report = await loadTeamReport(requested, now);
+  const { filters, range, result, memberNames, members, groups, rules, teams, teamMemberIds, teamName, filterNote } = report;
   const { summary } = result;
 
   const scopedName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
@@ -210,7 +212,10 @@ export default async function TeamReportPage({
 
           {!filters.memberId ? (
             <Card className="mb-5">
-              <SectionHeader
+              <ReportDataTable
+                table={buildMembersTable(report)}
+                query={query}
+                noun={{ singular: "team member", plural: "team members" }}
                 title={teamName ? `${teamName} members` : "Team members"}
                 description={
                   teamName
@@ -218,75 +223,23 @@ export default async function TeamReportPage({
                     : "Missed belongs to the group's assigned member; Recall to whoever answered late. Select a name for that person's report."
                 }
               />
-              <Table>
-                <thead>
-                  <tr>
-                    <Th>Team member</Th>
-                    <Th>Groups</Th>
-                    <Th>Replies</Th>
-                    <Th>Customer msgs</Th>
-                    <Th>Missed</Th>
-                    <Th>Recall</Th>
-                    <Th>Support time</Th>
-                    <Th>First – last</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.members.map((row) => (
-                    <tr key={row.memberId}>
-                      <Td>
-                        {row.memberId === "UNASSIGNED" ? (
-                          <span className="text-[color:var(--color-muted-foreground)]">Unassigned groups</span>
-                        ) : (
-                          <Link className="link" href={`/team-report?${teamReportQuery(filters, { memberId: row.memberId })}`}>
-                            {memberLabel(row.memberId, memberNames)}
-                          </Link>
-                        )}
-                      </Td>
-                      <Td className="tabular">{count(row.groups)}</Td>
-                      <Td className="tabular">{count(row.messages)}</Td>
-                      <Td className="tabular">{count(row.customerMessages)}</Td>
-                      <Td className="tabular">{count(row.missed)}</Td>
-                      <Td className="tabular">{count(row.recalled)}</Td>
-                      <Td className="tabular">{duration(row.activeSeconds)}</Td>
-                      <Td className="tabular text-[color:var(--color-muted-foreground)]">
-                        {row.firstAt ? `${when(row.firstAt)} – ${when(row.lastAt)}` : "—"}
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
             </Card>
           ) : null}
 
           <Card className="mb-5">
-            <SectionHeader title={`By ${filters.granularity}`} description="The same figures, split over the period." />
-            <Table>
-              <thead>
-                <tr>
-                  <Th>{filters.granularity === "day" ? "Date" : filters.granularity === "week" ? "Week" : "Month"}</Th>
-                  <Th>Groups</Th>
-                  <Th>Team replies</Th>
-                  <Th>Customer msgs</Th>
-                  <Th>Missed</Th>
-                  <Th>Recall</Th>
-                  <Th>Support time</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.buckets.map((b) => (
-                  <tr key={b.key}>
-                    <Td>{bucketLabel(b.key, filters.granularity)}</Td>
-                    <Td className="tabular">{count(b.groups)}</Td>
-                    <Td className="tabular">{count(b.memberMessages + b.businessReplies)}</Td>
-                    <Td className="tabular">{count(b.customerMessages)}</Td>
-                    <Td className="tabular">{count(b.missed)}</Td>
-                    <Td className="tabular">{count(b.recalled)}</Td>
-                    <Td className="tabular">{duration(b.activeSeconds)}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            <ReportDataTable
+              table={buildBucketsTable(report)}
+              query={query}
+              noun={
+                filters.granularity === "day"
+                  ? { singular: "day", plural: "days" }
+                  : filters.granularity === "week"
+                    ? { singular: "week", plural: "weeks" }
+                    : { singular: "month", plural: "months" }
+              }
+              title={`By ${filters.granularity}`}
+              description="The same figures, split over the period."
+            />
           </Card>
 
           <Card>

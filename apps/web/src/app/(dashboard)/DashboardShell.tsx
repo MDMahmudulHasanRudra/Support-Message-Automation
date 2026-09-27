@@ -160,7 +160,7 @@ export function DashboardShell({
         onMobileClose={() => setMobileNavOpen(false)}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-13 shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-6">
           <button
             type="button"
