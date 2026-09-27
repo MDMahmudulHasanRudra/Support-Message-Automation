@@ -5,7 +5,8 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CommandPalette } from "./CommandPalette";
 import { FloatingAiChat } from "./FloatingAiChat";
-import { isSettingsPath, navGroupsFor, navPermissionFor, resolveNavLocation, settingsSectionsFor, ALL_NAV_LINKS } from "./navigation";
+import { isSettingsPath, navGroupsFor, navPermissionFor, resolveNavLocation, settingsSectionsFor, tabsForLocation, ALL_NAV_LINKS } from "./navigation";
+import { SubNavTabs } from "./SubNavTabs";
 import { SettingsNav } from "./SettingsNav";
 import { Sidebar } from "./Sidebar";
 
@@ -121,6 +122,8 @@ export function DashboardShell({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const location = resolveNavLocation(pathname, searchParams);
+  // Pages sharing one sidebar entry show their siblings as tabs; see SubNavTabs.
+  const tabSet = tabsForLocation(pathname, searchParams, navGroups);
 
   useEffect(() => {
     // Deferred via a microtask rather than called directly in the effect body — satisfies
@@ -209,6 +212,7 @@ export function DashboardShell({
             key={pathname}
             className="mx-auto w-full max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9"
           >
+            {tabSet ? <SubNavTabs tabs={tabSet.tabs} activeHref={tabSet.activeHref} /> : null}
             {/* Every configuration page gets the Settings rail beside it, whatever route it lives
                 at, so the module reads as one place. See SettingsNav. */}
             {isSettingsPath(pathname) && settingsSections.length > 0 ? (

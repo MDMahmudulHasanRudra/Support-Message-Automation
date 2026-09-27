@@ -639,10 +639,9 @@ local and would split every morning in two.
 **A team member with recorded activity is deactivated, never deleted.** `SupportActivity.teamMemberId`
 is `SetNull`, so hard-deleting someone silently orphaned every activity they ever recorded — this
 had already happened in the live database. Someone added by mistake with no activity is still
-genuinely deleted. Sidebar nav for this module is four entries, not six: Rules and Keywords were
-two more lines for the same job as Settings (deciding what counts), so **Setup** hosts them with
-their routes unchanged, and **Team Performance** leads because it is the question the module gets
-opened to answer.
+genuinely deleted. Rules and Keywords are not nav entries: they are the same job as Settings
+(deciding what counts), so **Setup** hosts them with their routes unchanged. Team Performance and
+the Activity Feed now sit in the sidebar's **Team** module beside Team Management's pages.
 
 **Presence is one timeline per person, split on an idle gap** (`SupportActivitySettings.offlineAfterMinutes`,
 default 120). Somebody is online from the moment they message any group; go that long without
@@ -814,7 +813,7 @@ country and company, and a seeded guess quietly becomes policy because nobody ch
 decided request. Cancelling approved leave does **not** restore the duty rows: cover was very likely
 arranged, and silently un-cancelling would double-staff the day.
 
-Nav group **Team Management** sits after Support Activity. `/team-members` stays under WhatsApp and
+Its pages (Today, Roster, Leave) sit in the sidebar's **Team** module. `/team-members` stays under WhatsApp and
 is linked to, never duplicated. This module does **not** duplicate `/support-activity/team`, which
 owns who is online, engaged time and first-response stats; this one owns **schedule versus reality**.
 
@@ -1655,11 +1654,31 @@ days of messages partitioned by group, leaning on `Message`'s `[groupId, timesta
 `[timestampWa]` indexes. If volume ever makes it the bottleneck the answer is a nightly rollup, not
 a narrower window: the "wait" definition must stay identical to Team Performance's.
 
-Nav lives in one place — `(dashboard)/navigation.ts`. Groups, top to bottom (a pinned
-"Overview" link sits above all of them; Messages leads with the WhatsApp Chat inbox): Messages,
-Escalations, Support Activity, Team Management, WhatsApp, Automation, Bulk Messaging, AI Learning,
-Conversation Learning, System, Users & Permissions — ordered by day-to-day check frequency, not by
-when each feature shipped. See `PROJECT_REFERENCE.md` for every link in every group.
+Nav lives in one place — `(dashboard)/navigation.ts`. A pinned "Overview" link, then ten
+**collapsible modules** (27 Sep 2026): Support (WhatsApp Chat, Messages, Escalations), Team (Today,
+Roster, Leave, Team Performance, Activity Feed), Reports, WhatsApp (Accounts, Groups, Team Members,
+Broadcast, Add Number to Groups), Automation, AI Learning, Conversation Learning, System, Users &
+Permissions, Release Notes. It used to be thirteen always-expanded groups under four department
+headings — about fifty rows. **Navigation only: no route, page or permission changed**, and the
+check that proved it compared the old and new `navGroupsFor()` across 323 role sets (every single
+key, all, none, 300 random) and found every role reaching exactly the same pages.
+
+Only the module holding the current page opens by itself, and it cannot be closed (that would hide
+the page you are on). Others toggle, and which ones somebody keeps open persists in `localStorage`
+(`sidebar-open-groups`, a `useSyncExternalStore` store like the collapse preference). A module with
+one link renders as that link. `isGroupActive` decides which module opens; a settings page or a
+report that sits under another module's path (`/support-activity/settings`,
+`/team-management/attendance`) opens System or Reports, not the module whose path it shares.
+
+**`NavLink.tabs` groups sibling pages behind ONE sidebar entry**, drawn as a tab strip
+(`SubNavTabs.tsx`, rendered by `DashboardShell` from `tabsForLocation`): Messages (All / Needs
+attention / Ignored), Broadcast (New / History), Automation Rules (Rules / Rule Tester), Knowledge
+Base (Entries / Pending review / Import), Patterns (candidates / unknown), Release Notes (read /
+manage). Each tab keeps its own route and its own permission gate; `navGroupsFor` filters tabs per
+role, hides an entry with none left and points it at the first tab the role can open.
+`ALL_NAV_LINKS` expands tabs into their own entries, so ⌘K and the breadcrumb still find "Rule
+Tester" by name. The active tab is the LONGEST match (`activeTabHref`), so the import page lights
+"Import", not "Entries". See `PROJECT_REFERENCE.md` for every page.
 
 **Configuration lives in one Settings module** (`SETTINGS_SECTIONS` in `navigation.ts`, 27 Sep 2026).
 The configuration pages that used to sit at the end of their own groups (AI Settings, Providers,

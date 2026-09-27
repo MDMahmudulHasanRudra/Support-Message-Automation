@@ -1,11 +1,11 @@
 "use client";
 
 import { Badge, BrandMark } from "@/components/ui";
-import { ChevronsLeft, ChevronsRight, LogOut, X } from "lucide-react";
+import { ChevronDown, ChevronsLeft, ChevronsRight, LogOut, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useCallback, useSyncExternalStore } from "react";
-import { OVERVIEW_LINK, isNavActive, type NavGroup, type NavLink } from "./navigation";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { OVERVIEW_LINK, isGroupActive, isLinkActive, isNavActive, type NavGroup, type NavLink } from "./navigation";
 import { ThemeToggle } from "./ThemeToggle";
 
 /**
@@ -37,6 +37,58 @@ function collapseServerSnapshot(): boolean {
 function subscribeCollapse(onChange: () => void): () => void {
   collapseListeners.add(onChange);
   return () => collapseListeners.delete(onChange);
+}
+
+/**
+ * Which parent modules the reader has opened by hand, as an external store for the same reason as
+ * the collapse preference above. The snapshot is the raw stored string, so it is referentially
+ * stable between renders; the component parses it. The parent holding the current page is always
+ * open regardless, so this only ever records the OTHERS somebody chose to keep open.
+ */
+const OPEN_GROUPS_KEY = "sidebar-open-groups";
+const openGroupListeners = new Set<() => void>();
+let openGroupsCache: string | null = null;
+
+function openGroupsSnapshot(): string {
+  if (openGroupsCache === null) {
+    try {
+      openGroupsCache = window.localStorage.getItem(OPEN_GROUPS_KEY) ?? "[]";
+    } catch {
+      openGroupsCache = "[]";
+    }
+  }
+  return openGroupsCache;
+}
+
+function openGroupsServerSnapshot(): string {
+  return "[]";
+}
+
+function subscribeOpenGroups(onChange: () => void): () => void {
+  openGroupListeners.add(onChange);
+  return () => openGroupListeners.delete(onChange);
+}
+
+function parseOpenGroups(raw: string): Set<string> {
+  try {
+    const value: unknown = JSON.parse(raw);
+    return new Set(Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function toggleOpenGroup(label: string): void {
+  const open = parseOpenGroups(openGroupsSnapshot());
+  if (open.has(label)) open.delete(label);
+  else open.add(label);
+  openGroupsCache = JSON.stringify([...open]);
+  try {
+    window.localStorage.setItem(OPEN_GROUPS_KEY, openGroupsCache);
+  } catch {
+    /* private mode — still works for this tab */
+  }
+  openGroupListeners.forEach((listener) => listener());
 }
 
 function writeCollapse(collapsed: boolean): void {
@@ -106,6 +158,8 @@ export function Sidebar({
   const searchParams = useSearchParams();
   const collapsed = useSyncExternalStore(subscribeCollapse, collapseSnapshot, collapseServerSnapshot);
   const toggleCollapsed = useCallback(() => writeCollapse(!collapseSnapshot()), []);
+  const openGroupsRaw = useSyncExternalStore(subscribeOpenGroups, openGroupsSnapshot, openGroupsServerSnapshot);
+  const openGroups = useMemo(() => parseOpenGroups(openGroupsRaw), [openGroupsRaw]);
 
   return (
     <>
@@ -147,43 +201,68 @@ export function Sidebar({
             <NavItem link={OVERVIEW_LINK} active={isNavActive(pathname, searchParams, OVERVIEW_LINK.href)} collapsed={collapsed} />
           </div>
 
-          <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-2.5 pt-4 pb-6">
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pt-3 pb-6">
             {navGroups.map((group, index) => {
-              // A section header draws only where the section actually changes from the group
-              // before it — the department name, one level up from the existing group labels,
-              // never a repeat of the same word stacked five times in a row.
-              const previousSection = index > 0 ? navGroups[index - 1]!.section : null;
-              const isNewSection = group.section !== previousSection;
-              return (
-                <div key={group.label}>
-                  {isNewSection ? (
-                    collapsed ? (
-                      <div className={`mx-3 border-t border-[var(--color-border-strong)] ${index === 0 ? "mb-1.5" : "mt-4 mb-1.5"}`} />
-                    ) : (
-                      <p
-                        className={`px-3 text-[10px] font-semibold tracking-[0.06em] text-[color:var(--color-subtle-foreground)] uppercase ${
-                          index === 0 ? "mb-2" : "mt-2 mb-2"
-                        }`}
-                      >
-                        {group.section}
-                      </p>
-                    )
-                  ) : null}
-                  {collapsed ? null : (
-                    <p className="mb-1.5 px-3 text-[11px] font-medium text-[color:var(--color-muted-foreground)]">
-                      {group.label}
-                    </p>
-                  )}
-                  <div className="space-y-px">
+              // Icon rail: every page as an icon, a hairline between modules. Opening and closing
+              // parents means nothing when there is no room for their names.
+              if (collapsed) {
+                return (
+                  <div key={group.label} className={index > 0 ? "mt-1.5 border-t border-[var(--color-border)] pt-1.5" : ""}>
                     {group.links.map((link) => (
-                      <NavItem
-                        key={link.href}
-                        link={link}
-                        active={isNavActive(pathname, searchParams, link.href, link.label)}
-                        collapsed={collapsed}
-                      />
+                      <NavItem key={link.href} link={link} active={isLinkActive(pathname, searchParams, link)} collapsed />
                     ))}
                   </div>
+                );
+              }
+
+              // A module holding one page is that page — a parent row above a single child would be
+              // a click that leads nowhere new.
+              if (group.links.length === 1) {
+                const only = group.links[0]!;
+                return (
+                  <NavItem key={group.label} link={only} active={isLinkActive(pathname, searchParams, only)} collapsed={false} />
+                );
+              }
+
+              const containsCurrentPage = isGroupActive(pathname, searchParams, group);
+              const open = containsCurrentPage || openGroups.has(group.label);
+              const Icon = group.icon;
+              const panelId = `nav-group-${index}`;
+              return (
+                <div key={group.label}>
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    aria-controls={panelId}
+                    // The module you are in stays open: closing it would hide the very page you are on.
+                    onClick={containsCurrentPage ? undefined : () => toggleOpenGroup(group.label)}
+                    className={`group flex w-full items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-left text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
+                      containsCurrentPage
+                        ? "cursor-default font-medium text-[color:var(--color-foreground)]"
+                        : "cursor-pointer text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]/60 hover:text-[color:var(--color-foreground)]"
+                    }`}
+                  >
+                    <Icon
+                      className={`size-4 shrink-0 ${containsCurrentPage ? "text-[color:var(--color-accent)]" : "text-[color:var(--color-subtle-foreground)]"}`}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                    {containsCurrentPage ? null : (
+                      <ChevronDown
+                        className={`size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)] transition-transform duration-[var(--duration-fast)] ${
+                          open ? "rotate-180" : ""
+                        }`}
+                        aria-hidden
+                      />
+                    )}
+                  </button>
+                  {open ? (
+                    <div id={panelId} className="mt-px mb-1.5 ml-[1.1rem] space-y-px border-l border-[var(--color-border)] pl-1.5">
+                      {group.links.map((link) => (
+                        <NavItem key={link.href} link={link} active={isLinkActive(pathname, searchParams, link)} collapsed={false} />
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}

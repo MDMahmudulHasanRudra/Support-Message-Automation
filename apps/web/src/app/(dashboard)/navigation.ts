@@ -20,7 +20,6 @@ import {
   History,
   KeyRound,
   LayoutDashboard,
-  Link2,
   ListChecks,
   MessageCircleMore,
   MessageSquareQuote,
@@ -36,7 +35,6 @@ import {
   SlidersHorizontal,
   Smartphone,
   Sparkles,
-  Tag,
   Terminal as ConsoleIcon,
   UserCog,
   UserPlus,
@@ -55,19 +53,27 @@ export interface NavLink {
   href: string;
   label: string;
   icon: LucideIcon;
+  /**
+   * Pages that share this ONE sidebar entry, shown as tabs across the top of each of them (see
+   * SubNavTabs). The entry's own page is normally the first tab. Every tab keeps its own route,
+   * page and permission — this is navigation only, no page was merged. A role sees the entry if it
+   * can open any tab, and the entry opens the first tab it can.
+   */
+  tabs?: NavLink[];
 }
 
+/**
+ * One top-level module in the sidebar: a collapsible parent whose children are its links.
+ *
+ * The sidebar used to draw every group fully expanded under four department headings — about fifty
+ * rows, most of them irrelevant to whatever the reader was doing. Now only the parent holding the
+ * current page opens by itself; the rest stay one line each until opened (and stay open if the reader
+ * opens them). A group with a single link renders as that link directly, with no parent row.
+ */
 export interface NavGroup {
   label: string;
+  icon: LucideIcon;
   links: NavLink[];
-  /**
-   * The coarser section this group sits under in the sidebar — an added VISUAL tier, not a
-   * restructure. Every existing group keeps its own label, its own links, and its own position;
-   * this only draws a section header above a run of adjacent groups so the ~75 routes read as a
-   * handful of departments rather than one long undifferentiated list. `resolveNavLocation` and
-   * the command palette ignore it entirely -- they already work at the group/link level.
-   */
-  section: "Support Operations" | "Automation & AI" | "Channels & Integrations" | "System";
 }
 
 // The one always-visible landing page — pinned above the scrollable groups below rather than
@@ -241,101 +247,119 @@ export function reportPagesFor(granted: ReadonlySet<string>): ReportPage[] {
 // analytical modules and system admin — checked rarely — last.
 export const NAV_GROUPS: NavGroup[] = [
   {
-    section: "Support Operations",
-    label: "Messages",
+    label: "Support",
+    icon: MessageCircleMore,
     links: [
       { href: "/chat", label: "WhatsApp Chat", icon: MessageCircleMore },
-      { href: "/messages", label: "All Messages", icon: MessagesSquare },
-      { href: "/messages?decision=SUPPORT_REQUIRED", label: "Needs Attention", icon: AlertCircle },
-      { href: "/messages?decision=IGNORE", label: "Ignored Messages", icon: EyeOff },
+      {
+        href: "/messages",
+        label: "Messages",
+        icon: MessagesSquare,
+        tabs: [
+          { href: "/messages", label: "All messages", icon: MessagesSquare },
+          { href: "/messages?decision=SUPPORT_REQUIRED", label: "Needs attention", icon: AlertCircle },
+          { href: "/messages?decision=IGNORE", label: "Ignored", icon: EyeOff },
+        ],
+      },
+      { href: "/support-escalation", label: "Escalations", icon: ShieldAlert },
     ],
   },
   {
-    section: "Support Operations",
-    label: "Escalations",
-    links: [
-      { href: "/support-escalation", label: "Active Cases", icon: ShieldAlert },
-    ],
-  },
-  {
-    section: "Support Operations",
-    label: "Support Activity",
-    links: [
-      { href: "/support-activity/team", label: "Team Performance", icon: Users },
-      { href: "/support-activity", label: "Activity Feed", icon: Activity },
-    ],
-  },
-  {
-    // After Support Activity: this group is checked daily (who is on,
-    // who is short) which is what `navigation.ts` orders by. Internal Team Members deliberately
-    // stays under WhatsApp — one roster, linked to from here, never a second copy of it.
-    section: "Support Operations",
-    label: "Team Management",
+    // Support Activity's two people-pages joined Team Management's three: both answer "what is the
+    // team doing" — one from the schedule, one from the messages.
+    label: "Team",
+    icon: Users,
     links: [
       { href: "/team-management", label: "Today", icon: Users },
       { href: "/team-management/schedule", label: "Roster", icon: CalendarDays },
       { href: "/team-management/leave", label: "Leave", icon: ClipboardList },
+      { href: "/support-activity/team", label: "Team Performance", icon: Gauge },
+      { href: "/support-activity", label: "Activity Feed", icon: Activity },
     ],
   },
   {
-    section: "Support Operations",
     label: "Reports",
+    icon: BarChart3,
     links: [TEAM_REPORT_LINK, REPORTS_LINK],
   },
   {
-    section: "Channels & Integrations",
+    // Bulk Messaging lives here now: broadcasting to groups and adding a number to groups are
+    // WhatsApp work done with the same accounts and the same groups listed right above them.
     label: "WhatsApp",
+    icon: Smartphone,
     links: [
-      { href: "/accounts", label: "WhatsApp Accounts", icon: Smartphone },
+      { href: "/accounts", label: "Accounts", icon: Smartphone },
       { href: "/groups", label: "Groups", icon: Users },
-      { href: "/team-members", label: "Internal Team Members", icon: UserCog },
-    ],
-  },
-  {
-    section: "Automation & AI",
-    label: "Automation",
-    links: [
-      { href: "/rules", label: "Automation Rules", icon: ListChecks },
-      { href: "/rules/tester", label: "Rule Tester", icon: FlaskConical },
-      { href: "/automation-control", label: "Automation Control", icon: Power },
-    ],
-  },
-  {
-    section: "Channels & Integrations",
-    label: "Bulk Messaging",
-    links: [
-      { href: "/group-message-sender", label: "Group Message Sender", icon: Send },
-      { href: "/group-message-sender/history", label: "Broadcast History", icon: History },
+      { href: "/team-members", label: "Team Members", icon: UserCog },
+      {
+        href: "/group-message-sender",
+        label: "Broadcast",
+        icon: Send,
+        tabs: [
+          { href: "/group-message-sender", label: "New broadcast", icon: Send },
+          { href: "/group-message-sender/history", label: "Broadcast history", icon: History },
+        ],
+      },
       { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
     ],
   },
   {
-    section: "Automation & AI",
+    label: "Automation",
+    icon: ListChecks,
+    links: [
+      {
+        href: "/rules",
+        label: "Automation Rules",
+        icon: ListChecks,
+        tabs: [
+          { href: "/rules", label: "Rules", icon: ListChecks },
+          { href: "/rules/tester", label: "Rule Tester", icon: FlaskConical },
+        ],
+      },
+      { href: "/automation-control", label: "Automation Control", icon: Power },
+    ],
+  },
+  {
     label: "AI Learning",
+    icon: Sparkles,
     links: [
       { href: "/ai-learning", label: "Overview", icon: Sparkles },
       { href: "/ai-learning/activity", label: "AI Activity", icon: Gauge },
-      { href: "/ai-learning/knowledge-base", label: "Knowledge Base", icon: BookOpen },
-      { href: "/ai-learning/knowledge-base/import", label: "Import Knowledge", icon: FileUp },
-      { href: "/ai-learning/knowledge-base/review", label: "Pending Review", icon: ClipboardCheck },
+      {
+        href: "/ai-learning/knowledge-base",
+        label: "Knowledge Base",
+        icon: BookOpen,
+        tabs: [
+          { href: "/ai-learning/knowledge-base", label: "Entries", icon: BookOpen },
+          { href: "/ai-learning/knowledge-base/review", label: "Pending review", icon: ClipboardCheck },
+          { href: "/ai-learning/knowledge-base/import", label: "Import", icon: FileUp },
+        ],
+      },
       { href: "/ai-learning/communication-style", label: "Communication Style", icon: MessageSquareQuote },
     ],
   },
   {
-    section: "Automation & AI",
     label: "Conversation Learning",
+    icon: Waypoints,
     links: [
       { href: "/conversation-learning", label: "Overview", icon: Waypoints },
       { href: "/conversation-learning/sandbox", label: "AI Sandbox", icon: FlaskConical },
       { href: "/conversation-learning/knowledge-builder", label: "Knowledge Builder", icon: GraduationCap },
-      { href: "/conversation-learning/pattern-candidates", label: "Pattern Candidates", icon: Fingerprint },
-      { href: "/conversation-learning/unknown-patterns", label: "Unknown Patterns", icon: EyeOff },
+      {
+        href: "/conversation-learning/pattern-candidates",
+        label: "Patterns",
+        icon: Fingerprint,
+        tabs: [
+          { href: "/conversation-learning/pattern-candidates", label: "Pattern candidates", icon: Fingerprint },
+          { href: "/conversation-learning/unknown-patterns", label: "Unknown patterns", icon: EyeOff },
+        ],
+      },
       { href: "/conversation-learning/rule-proposals", label: "Rule Proposals", icon: ClipboardCheck },
     ],
   },
   {
-    section: "System",
     label: "System",
+    icon: ConsoleIcon,
     links: [
       { href: "/notifications", label: "Notifications", icon: Bell },
       { href: "/logs", label: "System Logs", icon: ConsoleIcon },
@@ -343,22 +367,26 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    section: "System",
     label: "Users & Permissions",
+    icon: ShieldCheck,
     links: [
       { href: "/users", label: "App Users", icon: UserCog },
       { href: "/permissions", label: "Permission Modules", icon: ShieldCheck },
     ],
   },
   {
-    // Last, deliberately: this is a changelog, not an operational surface — nobody needs it in
-    // front of them daily the way Messages or Team Management are, so it sits after every group
-    // that is checked routinely rather than displacing one of them.
-    section: "System",
     label: "Release Notes",
+    icon: Megaphone,
     links: [
-      { href: "/release-notes", label: "Release Notes", icon: Megaphone },
-      { href: "/release-notes/manage", label: "Manage Releases", icon: FileEdit },
+      {
+        href: "/release-notes",
+        label: "Release Notes",
+        icon: Megaphone,
+        tabs: [
+          { href: "/release-notes", label: "Release notes", icon: Megaphone },
+          { href: "/release-notes/manage", label: "Manage releases", icon: FileEdit },
+        ],
+      },
     ],
   },
 ];
@@ -435,8 +463,17 @@ export function navGroupsFor(granted: ReadonlySet<string>): NavGroup[] {
     links: group.links.flatMap((link) => {
       if (link === SETTINGS_LINK) return firstSettingsPage ? [{ ...SETTINGS_LINK, href: firstSettingsPage.href }] : [];
       if (link === REPORTS_LINK) return canOpenAnyReport ? [link] : [];
-      const key = navPermissionFor(link.href);
-      return key === null || granted.has(key) ? [link] : [];
+      const permitted = (candidate: NavLink) => {
+        const key = navPermissionFor(candidate.href);
+        return key === null || granted.has(key);
+      };
+      if (link.tabs) {
+        // Shown when ANY tab opens for this role, pointing at the first one that does — a role
+        // that can read Broadcast history but not send one still finds its way in.
+        const tabs = link.tabs.filter(permitted);
+        return tabs.length ? [{ ...link, href: tabs[0]!.href, tabs }] : [];
+      }
+      return permitted(link) ? [link] : [];
     }),
   })).filter((group) => group.links.length > 0);
 }
@@ -454,11 +491,72 @@ export function isNavActive(pathname: string, search: URLSearchParams, href: str
   return hrefDecision === search.get("decision");
 }
 
+/** Whether a location is on one tab: its exact page (query included), or a detail page beneath it. */
+function onTab(pathname: string, search: URLSearchParams, tabHref: string): boolean {
+  if (isNavActive(pathname, search, tabHref)) return true;
+  const [tabPath, tabQuery] = tabHref.split("?");
+  return !tabQuery && pathname.startsWith(`${tabPath}/`);
+}
+
+/**
+ * The tab a location belongs to within one tab set — the LONGEST match, so the Knowledge Base
+ * import page lights "Import" rather than "Entries", whose path it also sits under.
+ */
+export function activeTabHref(pathname: string, search: URLSearchParams, tabs: readonly NavLink[]): string | null {
+  const exact = tabs.find((tab) => isNavActive(pathname, search, tab.href));
+  if (exact) return exact.href;
+  const ancestors = tabs.filter((tab) => onTab(pathname, search, tab.href));
+  ancestors.sort((a, b) => b.href.length - a.href.length);
+  return ancestors[0]?.href ?? null;
+}
+
+/** Whether a sidebar entry is the current page — for an entry with tabs, whether any tab is. */
+export function isLinkActive(pathname: string, search: URLSearchParams, link: NavLink): boolean {
+  if (link.tabs) return activeTabHref(pathname, search, link.tabs) !== null;
+  return isNavActive(pathname, search, link.href, link.label);
+}
+
+/** Whether a location is anywhere inside a group — decides which parent opens by itself. */
+export function isGroupActive(pathname: string, search: URLSearchParams, group: NavGroup): boolean {
+  // A settings page or report (/support-activity/settings, /team-management/attendance) sits under
+  // another module's path but belongs to System or Reports, whose links light for it — without this,
+  // Team would open beside them.
+  const ownedElsewhere = isSettingsPath(pathname) || isReportPath(pathname);
+  return group.links.some((link) => {
+    if (isLinkActive(pathname, search, link)) return true;
+    // Detail pages beneath an entry (/rules/42/edit) belong to its group even when the entry itself
+    // is not lit because another entry is a longer match.
+    const [path, query] = link.href.split("?");
+    if (ownedElsewhere && !isSettingsPath(path!) && !isReportPath(path!)) return false;
+    return !query && link.href !== OVERVIEW_LINK.href && pathname.startsWith(`${path}/`);
+  });
+}
+
+/** The tab strip for the current location, if it is on a page that shares an entry. */
+export function tabsForLocation(
+  pathname: string,
+  search: URLSearchParams,
+  groups: readonly NavGroup[],
+): { tabs: NavLink[]; activeHref: string | null } | null {
+  for (const group of groups) {
+    for (const link of group.links) {
+      if (!link.tabs || link.tabs.length < 2) continue;
+      const activeHref = activeTabHref(pathname, search, link.tabs);
+      if (activeHref) return { tabs: link.tabs, activeHref };
+    }
+  }
+  return null;
+}
+
 /** Flat list of every navigable destination, Overview first — what the command palette searches. */
 export const ALL_NAV_LINKS: Array<NavLink & { group: string }> = [
   { ...OVERVIEW_LINK, group: "Dashboard" },
+  // Tabs are expanded into their own entries, so searching "Rule Tester" or "Pending review" still
+  // lands on that exact page, and the breadcrumb names the page rather than the shared entry.
   ...NAV_GROUPS.flatMap((group) =>
-    group.links.filter((link) => link !== SETTINGS_LINK).map((link) => ({ ...link, group: group.label })),
+    group.links
+      .filter((link) => link !== SETTINGS_LINK)
+      .flatMap((link) => (link.tabs ?? [link]).map(({ href, label, icon }) => ({ href, label, icon, group: group.label }))),
   ),
   // No longer in the sidebar one by one, but still a keystroke away in the command palette, and the
   // breadcrumb reads "Settings > AI Providers" rather than nothing.

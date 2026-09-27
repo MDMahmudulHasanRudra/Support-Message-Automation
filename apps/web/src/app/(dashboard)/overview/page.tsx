@@ -3,7 +3,6 @@ import Link from "next/link";
 import {
   Activity,
   Bell,
-  Link2,
   ListChecks,
   Power,
   Send,

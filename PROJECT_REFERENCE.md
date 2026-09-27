@@ -7,6 +7,14 @@ agent working on the code read `CLAUDE.md`; if you just want to run the thing re
 This document is about *what the product does today*, module by module, in the order it appears in
 the sidebar.
 
+**Sidebar (27 Sep 2026):** pinned Overview, then ten collapsible modules — Support (WhatsApp Chat,
+Messages, Escalations), Team (Today, Roster, Leave, Team Performance, Activity Feed), Reports,
+WhatsApp (Accounts, Groups, Team Members, Broadcast, Add Number to Groups), Automation, AI Learning,
+Conversation Learning, System, Users & Permissions, Release Notes. Sections below keep their
+original order; each "Sidebar group" line names where the pages now sit. Sibling pages that share
+one entry appear as tabs across the top of each page (Messages, Broadcast, Automation Rules,
+Knowledge Base, Patterns, Release Notes). Every route and permission is unchanged.
+
 Keep this file up to date: whenever a page's fields, buttons, or behavior change, update the
 matching section here in the same change.
 
@@ -92,7 +100,7 @@ automation decisions, load by hour, outbound delivery, busiest groups):
 
 ## Messages
 
-Sidebar group: **Messages**
+Sidebar group: **Support** → Messages (tabs: All messages / Needs attention / Ignored)
 
 - **WhatsApp Chat** (`/chat`) — a WhatsApp-Web-style two-pane inbox: a searchable conversation list
   (rendered at layout level, so it keeps scroll position and search across navigations) plus the
@@ -127,7 +135,7 @@ Sidebar group: **Messages**
 
 ## Escalations
 
-Sidebar group: **Escalations** (renamed from "Priority Support" — the tier names, `Priority` rule
+Sidebar group: **Support** → Escalations (renamed from "Priority Support" — the tier names, `Priority` rule
 field, and `WhatsAppServiceKey.PRIORITY_SUPPORT` enum are unchanged; only the display label moved)
 
 ### Active Cases — `/support-escalation`
@@ -177,15 +185,14 @@ them) and the org-wide Escalation Admin picker (one person, receives every admin
 
 ## Support Activity
 
-Sidebar group: **Support Activity**
+Sidebar group: **Team** → Team Performance, Activity Feed
 
 Automatically detects when a configured support team member's message inside a WhatsApp group
 satisfies a configured rule, and turns that into countable, reportable activity — entirely separate
 from the rule engine's automated replies. Off by default.
 
-The sidebar carries **four** entries, not six: Rules and Keywords were two more lines for the same
-job as Settings — deciding what counts — so **Setup** hosts them, with their routes unchanged.
-Team Performance leads, because it is the question the module gets opened to answer.
+Rules and Keywords are not sidebar entries: they are the same job as Settings — deciding what
+counts — so **Setup** hosts them, with their routes unchanged.
 
 ### Team Performance — `/support-activity/team`
 
@@ -291,7 +298,7 @@ matches at a whole-word boundary; case-insensitive is the default.
 
 ## Team Management
 
-Sidebar group: **Team Management**. Who is scheduled, who is on leave, where the roster is short —
+Sidebar group: **Team** → Today, Roster, Leave. Who is scheduled, who is on leave, where the roster is short —
 and what the messages actually show. Permission-gated on `team_management.view` / `.manage`.
 
 It does **not** duplicate Support Activity's Team Performance page, which owns who is online now,
@@ -377,7 +384,7 @@ after that point; dates already rostered keep what somebody assigned them.
 
 ## Teams Integration
 
-Sidebar group: **Teams Integration** — links a developer's Microsoft Teams conversation to an open
+**Removed 27 Sep 2026** (commit 9c2fb2c) — no longer in the sidebar or the app; kept here as history. It linked a developer's Microsoft Teams conversation to an open
 customer WhatsApp conversation, so a resolution keyword in a linked Teams thread can notify the
 customer automatically. Requires a one-time Microsoft OAuth connection (real Azure App
 Registration credentials — see `TEAMS_SETUP.md`); every page here works but shows a clear
@@ -595,7 +602,7 @@ separate general Settings page, not here.
 
 ## Bulk Messaging
 
-Sidebar group: **Bulk Messaging**
+Sidebar group: **WhatsApp** → Broadcast (tabs: New broadcast / Broadcast history), Add Number to Groups
 
 ### Group Message Sender — `/group-message-sender`
 
