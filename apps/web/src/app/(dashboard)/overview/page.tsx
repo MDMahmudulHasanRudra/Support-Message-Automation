@@ -455,7 +455,18 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           title="Metrics"
           description="Live aggregates computed per request — every figure links back to a page where you can act on it."
         />
-        <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-3 lg:grid-flow-row-dense">
+        {/*
+          Fixed pairs, one per row: a wide chart (two columns) beside the narrow card that answers
+          the same kind of question over the same span. It was a dense-flow grid with a three-card
+          stack in the last column, which reordered cards to fill holes and still left them — a tall
+          stack beside one chart, blank space under another, a lone card on the last row.
+            volume (14d)         · what the rules decided (24h)
+            load by hour (24h)   · what the queue delivered (24h)
+            AI vs handover (14d) · who delivered support (7d)
+            how long people wait · who did the answering (7d)
+            busiest groups, full width
+        */}
+        <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-3">
           <ChartCard
             className="lg:col-span-2"
             href="/messages?within=14d"
@@ -511,6 +522,22 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
             }
           >
             <ColumnChart data={messageLoad.hourly} ariaLabel="Incoming messages per hour, last 24 hours" />
+          </ChartCard>
+
+          <ChartCard
+            title="Outbound delivery"
+            description="Every message the send queue handled in the last 24 hours."
+            headline={
+              deliveryOutcomes.successRate === null ? undefined : (
+                <ChartHeadline value={`${deliveryOutcomes.successRate}%`} caption="sent" />
+              )
+            }
+          >
+            <StackedBar
+              segments={deliveryOutcomes.slices}
+              total={deliveryOutcomes.total}
+              ariaLabel="Outbound message outcomes, last 24 hours"
+            />
           </ChartCard>
 
           <ChartCard
@@ -599,48 +626,31 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
             />
           </ChartCard>
 
-          <div className="flex flex-col gap-3.5">
-            <ChartCard
-              href="/support-activity/team"
-              title="Busiest executives"
-              description="Support messages per person over the last 7 days."
-            >
-              <BarList
-                items={executiveLoad.people}
-                emptyMessage="No support activity recorded in the last 7 days."
-              />
-            </ChartCard>
+          <ChartCard
+            href="/support-activity/team"
+            title="Busiest executives"
+            description="Support messages per person over the last 7 days."
+          >
+            <BarList
+              items={executiveLoad.people}
+              emptyMessage="No support activity recorded in the last 7 days."
+            />
+          </ChartCard>
 
-            <ChartCard
-              title="Outbound delivery"
-              description="Every message the send queue handled in the last 24 hours."
-              headline={
-                deliveryOutcomes.successRate === null ? undefined : (
-                  <ChartHeadline value={`${deliveryOutcomes.successRate}%`} caption="sent" />
-                )
-              }
-            >
-              <StackedBar
-                segments={deliveryOutcomes.slices}
-                total={deliveryOutcomes.total}
-                ariaLabel="Outbound message outcomes, last 24 hours"
-              />
-            </ChartCard>
-
-            <ChartCard
-              title="Busiest groups"
-              description="Incoming messages per group over the last 7 days."
-            >
-              <BarList
-                items={busiestGroups.groups.map((group) => ({
-                  id: group.id,
-                  label: group.name,
-                  value: group.value,
-                }))}
-                emptyMessage="No group messages in the last 7 days."
-              />
-            </ChartCard>
-          </div>
+          <ChartCard
+            className="lg:col-span-3"
+            title="Busiest groups"
+            description="Incoming messages per group over the last 7 days."
+          >
+            <BarList
+              items={busiestGroups.groups.map((group) => ({
+                id: group.id,
+                label: group.name,
+                value: group.value,
+              }))}
+              emptyMessage="No group messages in the last 7 days."
+            />
+          </ChartCard>
         </div>
       </section>
 

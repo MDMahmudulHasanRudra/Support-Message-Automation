@@ -60,7 +60,10 @@ export function ChartCard({
           ) : null}
         </div>
       </div>
-      <div className="flex-1">{children}</div>
+      {/* Centred in whatever height the row gives it. Overview pairs each wide chart with a narrow
+          card in the same row, and a donut beside an area chart is shorter than its row — top-
+          aligned, that left a band of blank card under every short chart. */}
+      <div className="flex flex-1 flex-col justify-center">{children}</div>
     </Card>
   );
 }
