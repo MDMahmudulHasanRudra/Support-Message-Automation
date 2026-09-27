@@ -22,10 +22,10 @@ export default async function SettingsPage() {
   return (
     <div>
       <PageHeader
-        title="Settings"
+        title={"Automation & Safety"}
         description="Safety limits and notification destinations. The default configuration is conservative."
         actions={
-          <HelpButton moduleTitle="Settings">
+          <HelpButton moduleTitle={"Automation & Safety"}>
             <HelpSection title="Where things live, so you don't hunt for them">
               <p>
                 This page = safety dials + destinations (Teams webhook, which WhatsApp groups receive

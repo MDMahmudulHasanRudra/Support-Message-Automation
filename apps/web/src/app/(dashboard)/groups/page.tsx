@@ -188,12 +188,12 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
               <p>
                 Opt-in for the Hybrid AI Automation fallback layer, per group. Even when enabled here,
                 AI only ever runs for a message in this group when it's also Monitored, and the
-                account-wide AI Engine + Auto Response switches (AI Learning → Settings) are both on
+                account-wide AI Engine + Auto Response switches (Settings → AI Settings) are both on
                 — this is one gate among several, never the only one. Disabling it just stops that one
                 group from ever reaching the AI/human-fallback stage; every other automation on the
                 group is unaffected. A yellow "Human active until…" badge means a team member sent
                 a message here recently — AI is briefly paused for this group (configurable on the
-                AI Learning → Settings page) so it doesn't step on a human who's already engaged;
+                Settings → AI Settings page) so it doesn't step on a human who's already engaged;
                 deterministic rules and escalation are unaffected and keep working normally.
               </p>
             </HelpSection>

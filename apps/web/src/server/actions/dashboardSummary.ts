@@ -289,6 +289,17 @@ interface LoopSnapshotEntry {
  */
 const LOOP_OVERDUE_FACTOR = 3;
 
+/**
+ * Nothing is called stalled until it is at least this far behind, whatever its interval.
+ *
+ * The snapshot is written once per worker heartbeat (15s), not once per tick, so a loop that runs
+ * every 1.5 seconds always looks several seconds old by the time this reads it — which is already
+ * "3x overdue". Production showed the result on 27 Sep 2026: "command-processor has not run for
+ * 0 minute(s)" on a perfectly healthy worker. A floor of one minute is four heartbeats: past it the
+ * snapshot's own cadence can no longer explain the gap.
+ */
+const LOOP_STALLED_MIN_MS = 60_000;
+
 export async function getWorkerLivenessSummary(nowMs: number) {
   const [newest, snapshot] = await Promise.all([
     prisma.whatsAppAccount.aggregate({ _max: { lastHeartbeatAt: true } }),
@@ -310,7 +321,10 @@ export async function getWorkerLivenessSummary(nowMs: number) {
      * Suppressed entirely while the worker is offline, because then every loop is stalled and
      * naming one of them is noise on top of the only fact that matters.
      */
-    stalledLoop: workerOffline ? null : readStalledLoop(snapshot?.loops, nowMs),
+    // Measured at the moment the worker WROTE the snapshot, not now — the same instant its own
+    // lastTickAt values describe. Reading them against `nowMs` added up to a heartbeat of age that
+    // no loop was responsible for.
+    stalledLoop: workerOffline ? null : readStalledLoop(snapshot?.loops, snapshot?.updatedAt.getTime() ?? nowMs),
   };
 }
 
@@ -327,7 +341,7 @@ function readStalledLoop(loops: unknown, nowMs: number): { name: string; overdue
     if (typeof raw.lastTickAt !== "number") continue;
     const sinceMs = nowMs - raw.lastTickAt;
     const ratio = sinceMs / raw.intervalMs;
-    if (ratio <= LOOP_OVERDUE_FACTOR) continue;
+    if (ratio <= LOOP_OVERDUE_FACTOR || sinceMs < LOOP_STALLED_MIN_MS) continue;
     if (!worst || ratio > worst.ratio) {
       worst = { name: raw.name, overdueMinutes: Math.floor(sinceMs / 60_000), ratio };
     }
@@ -363,14 +377,17 @@ const STUCK_STATUSES = ["AUTHENTICATION_REQUIRED", "SESSION_ERROR", "RECONNECTIN
  * the cost of the two mistakes is wildly asymmetric: a needless glance at a quiet Friday costs a
  * few seconds, and the alternative cost three hours of unanswered customers.
  *
- * Scoped to accounts that have connected before AND have monitored active groups — a number in
- * nothing, or one never linked, is supposed to be silent and must never appear here.
+ * Scoped to accounts that have connected before AND are in active groups — a number in nothing, or
+ * one never linked, is supposed to be silent and must never appear here. Active, not MONITORED:
+ * monitoring governs automation, and an inbox-only deployment (production, 27 Sep 2026: zero
+ * monitored groups, zero messages stored in 24 hours) was invisible here while it collected
+ * nothing. Same selection as the worker's collection watchdog, so the two cannot disagree.
  */
 export async function getCollectionHealthSummary(nowMs: number) {
   const accounts = await prisma.whatsAppAccount.findMany({
     where: {
       lastConnectedAt: { not: null },
-      groups: { some: { isActive: true, isMonitored: true } },
+      groups: { some: { isActive: true } },
     },
     select: { id: true, label: true, status: true },
   });

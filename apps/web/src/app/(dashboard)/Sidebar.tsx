@@ -179,7 +179,7 @@ export function Sidebar({
                       <NavItem
                         key={link.href}
                         link={link}
-                        active={isNavActive(pathname, searchParams, link.href)}
+                        active={isNavActive(pathname, searchParams, link.href, link.label)}
                         collapsed={collapsed}
                       />
                     ))}

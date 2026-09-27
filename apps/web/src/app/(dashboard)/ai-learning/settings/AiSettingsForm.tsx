@@ -96,7 +96,7 @@ export function AiSettingsForm({
           <Field label="Learning Confidence — not implemented yet" hint="Saved, but no code reads it.">
             <Input name="learningConfidenceThreshold" type="number" min={0} max={100} defaultValue={settings.learningConfidenceThreshold} />
           </Field>
-          <Field label="Auto Approval — not implemented yet" hint="Saved, but no code reads it. The live auto-approval bar is on Conversation Learning → Settings.">
+          <Field label="Auto Approval — not implemented yet" hint="Saved, but no code reads it. The live auto-approval bar is on Settings → Conversation Learning.">
             <Input name="autoApprovalThreshold" type="number" min={0} max={100} defaultValue={settings.autoApprovalThreshold} />
           </Field>
           <Field label="Human Review" hint="LIVE. A Conversation Learning pattern scoring below this is not surfaced for review.">

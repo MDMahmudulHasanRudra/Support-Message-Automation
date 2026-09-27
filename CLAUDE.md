@@ -1637,6 +1637,21 @@ Escalations, Support Activity, Teams Integration, WhatsApp, Automation, Bulk Mes
 Conversation Learning, System, Users & Permissions — ordered by day-to-day check frequency, not by
 when each feature shipped. See `PROJECT_REFERENCE.md` for every link in every group.
 
+**Configuration lives in one Settings module** (`SETTINGS_SECTIONS` in `navigation.ts`, 27 Sep 2026).
+Twenty configuration pages that used to sit at the end of ten different groups (AI Settings,
+Providers, Models, Product Knowledge, Notification Center/Templates, Account Routing, the two bulk
+limits pages, Escalation Policies, Support Activity Setup, Shifts, Team Settings, the five Teams
+pages, Security, and `/settings` itself, now titled "Automation & Safety") are offered through a
+single sidebar **Settings** link. **Their routes did not move** — every page, form, save action and
+permission gate is untouched, so bookmarks and in-page links keep working. `DashboardShell` draws
+`SettingsNav` beside any path `isSettingsPath()` claims (exact or child), because the pages live under
+different route segments and no Next layout could wrap them. The rail and the sidebar link are
+permission-filtered (`settingsSectionsFor`); the link opens the first settings page the role can
+reach. ⌘K and the breadcrumb still resolve every settings page via `ALL_NAV_LINKS`. Left out on
+purpose: Automation Control (operational kill switch), WhatsApp Accounts, Groups, Team Members,
+Users, Permission Modules, Issues and the notification delivery log — places you work in, not
+preferences. A new configuration page belongs in `SETTINGS_SECTIONS`, not at the end of its group.
+
 **Every settings column should have a control, and the audit that closed the last gaps is worth
 not undoing.** `GroupBroadcastSettings` had six columns and no form anywhere — so the throttles
 governing the riskiest thing this product does (sending the same message to hundreds of groups,

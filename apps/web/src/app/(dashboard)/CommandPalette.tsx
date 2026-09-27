@@ -32,7 +32,7 @@ export function CommandPalette({
     const needle = query.trim().toLowerCase();
     if (!needle) return links;
     // Every whitespace-separated term must appear somewhere in "group label",
-    // so "teams set" finds Teams Integration → Settings.
+    // so "teams set" finds Settings → Teams Settings.
     const terms = needle.split(/\s+/);
     return links.filter((link) => {
       const haystack = `${link.group} ${link.label}`.toLowerCase();

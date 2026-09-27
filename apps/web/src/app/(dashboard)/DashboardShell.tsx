@@ -5,7 +5,8 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CommandPalette } from "./CommandPalette";
 import { FloatingAiChat } from "./FloatingAiChat";
-import { navGroupsFor, navPermissionFor, resolveNavLocation, ALL_NAV_LINKS } from "./navigation";
+import { isSettingsPath, navGroupsFor, navPermissionFor, resolveNavLocation, settingsSectionsFor, ALL_NAV_LINKS } from "./navigation";
+import { SettingsNav } from "./SettingsNav";
 import { Sidebar } from "./Sidebar";
 
 /** First one or two letters of a username, for the header identity chip — "rudra" → "RU". */
@@ -106,6 +107,7 @@ export function DashboardShell({
 }) {
   const granted = useMemo(() => new Set(grantedKeys), [grantedKeys]);
   const navGroups = useMemo(() => navGroupsFor(granted), [granted]);
+  const settingsSections = useMemo(() => settingsSectionsFor(granted), [granted]);
   const paletteLinks = useMemo(
     () =>
       ALL_NAV_LINKS.filter((link) => {
@@ -207,7 +209,18 @@ export function DashboardShell({
             key={pathname}
             className="mx-auto w-full max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9"
           >
-            {children}
+            {/* Every configuration page gets the Settings rail beside it, whatever route it lives
+                at, so the module reads as one place. See SettingsNav. */}
+            {isSettingsPath(pathname) && settingsSections.length > 0 ? (
+              <div className="lg:grid lg:grid-cols-[13.5rem_minmax(0,1fr)] lg:gap-10">
+                <div className="lg:sticky lg:top-0 lg:self-start">
+                  <SettingsNav sections={settingsSections} pathname={pathname} />
+                </div>
+                <div className="min-w-0">{children}</div>
+              </div>
+            ) : (
+              children
+            )}
           </div>
         </main>
       </div>

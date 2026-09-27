@@ -74,6 +74,122 @@ export interface NavGroup {
 // living inside a redundant single-item group of its own.
 export const OVERVIEW_LINK: NavLink = { href: "/overview", label: "Overview", icon: LayoutDashboard };
 
+/**
+ * Every page whose job is CONFIGURATION, gathered into one Settings module.
+ *
+ * They used to sit as the last link of whichever group they configured: twenty "Settings", "Setup",
+ * "Limits" and "Policies" entries spread across ten groups, so the sidebar was long and the screen
+ * you wanted was always somewhere else. The pages themselves did not move. Every route, form, save
+ * action and permission check is exactly as it was, which keeps bookmarks, in-page links and the
+ * settings the worker reads untouched. Only where they are OFFERED changed: one sidebar link, plus
+ * the settings rail (`SettingsNav`) drawn beside any of these pages.
+ *
+ * Deliberately left out, because they are places you work IN rather than configure: Automation
+ * Control (the kill switch is an operational control, used under pressure), WhatsApp Accounts
+ * (linking and reconnecting), Groups, Team Members, Users and Permission Modules (records, not
+ * preferences), Issues, and the notification delivery log.
+ */
+export interface SettingsSection {
+  label: string;
+  description: string;
+  links: NavLink[];
+}
+
+export const SETTINGS_SECTIONS: SettingsSection[] = [
+  {
+    label: "General",
+    description: "How automation behaves, and how sign-in is protected.",
+    links: [
+      { href: "/settings", label: "Automation & Safety", icon: SettingsIcon },
+      { href: "/settings/security", label: "Security", icon: SlidersHorizontal },
+    ],
+  },
+  {
+    label: "Notifications",
+    description: "Which alerts are raised, where they go, and what they say.",
+    links: [
+      { href: "/notifications/events", label: "Notification Center", icon: BellRing },
+      { href: "/notifications/templates", label: "Message Templates", icon: MessageSquareQuote },
+    ],
+  },
+  {
+    label: "WhatsApp",
+    description: "Which number sends each kind of notification.",
+    links: [{ href: "/accounts/routing", label: "Account Routing", icon: Route }],
+  },
+  {
+    label: "Bulk Messaging",
+    description: "Pace and size limits that protect the number.",
+    links: [
+      { href: "/group-message-sender/settings", label: "Sending Limits", icon: Send },
+      { href: "/group-member-adder/settings", label: "Add-to-Groups Limits", icon: UserPlus },
+    ],
+  },
+  {
+    label: "AI",
+    description: "Providers, models, behaviour and product knowledge.",
+    links: [
+      { href: "/ai-learning/settings", label: "AI Settings", icon: Sparkles },
+      { href: "/ai-learning/providers", label: "AI Providers", icon: KeyRound },
+      { href: "/ai-learning/models", label: "AI Models", icon: Cpu },
+      { href: "/integrations/forge", label: "Product Knowledge", icon: PackageSearch },
+      { href: "/conversation-learning/settings", label: "Conversation Learning", icon: Waypoints },
+    ],
+  },
+  {
+    label: "Support",
+    description: "Escalation timers and what counts as support work.",
+    links: [
+      { href: "/support-escalation/policies", label: "Escalation Policies", icon: ShieldAlert },
+      { href: "/support-activity/settings", label: "Support Activity Setup", icon: Activity },
+    ],
+  },
+  {
+    label: "Team Management",
+    description: "Shift templates and roster rules.",
+    links: [
+      { href: "/team-management/shifts", label: "Shifts", icon: Clock },
+      { href: "/team-management/settings", label: "Team Settings", icon: CalendarDays },
+    ],
+  },
+  {
+    label: "Microsoft Teams",
+    description: "The connection, which channels are read, and how issues resolve.",
+    links: [
+      { href: "/integrations/teams", label: "Connection", icon: Link2 },
+      { href: "/integrations/teams/manage", label: "Teams & Channels", icon: Users },
+      { href: "/integrations/teams/rules", label: "Resolution Rules", icon: ClipboardList },
+      { href: "/integrations/teams/keywords", label: "Resolution Keywords", icon: Tag },
+      { href: "/integrations/teams/settings", label: "Teams Settings", icon: SettingsIcon },
+    ],
+  },
+];
+
+const SETTINGS_PATHS = SETTINGS_SECTIONS.flatMap((section) => section.links.map((link) => link.href));
+
+/** The single sidebar entry for all of the above. Its href is re-pointed per role in `navGroupsFor`. */
+export const SETTINGS_LINK: NavLink = { href: "/settings", label: "Settings", icon: SettingsIcon };
+
+/**
+ * Whether a path belongs to the Settings module: one of its pages or anything beneath one (an edit
+ * form under Resolution Rules is still Settings). Exact-or-child only, so `/accounts/routing` never
+ * claims `/accounts`, which is not a setting.
+ */
+export function isSettingsPath(pathname: string): boolean {
+  return SETTINGS_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+/** The Settings sections reduced to the pages this role can open. Empty sections are dropped. */
+export function settingsSectionsFor(granted: ReadonlySet<string>): SettingsSection[] {
+  return SETTINGS_SECTIONS.map((section) => ({
+    ...section,
+    links: section.links.filter((link) => {
+      const key = navPermissionFor(link.href);
+      return key === null || granted.has(key);
+    }),
+  })).filter((section) => section.links.length > 0);
+}
+
 // Ordered for day-to-day frequency: live/operational areas checked constantly (messages,
 // escalations, team activity) first, setup/config areas checked occasionally next, advanced
 // analytical modules and system admin — checked rarely — last.
@@ -93,7 +209,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Escalations",
     links: [
       { href: "/support-escalation", label: "Active Cases", icon: ShieldAlert },
-      { href: "/support-escalation/policies", label: "Policies", icon: SlidersHorizontal },
     ],
   },
   {
@@ -103,7 +218,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/support-activity/team", label: "Team Performance", icon: Users },
       { href: "/support-activity", label: "Activity Feed", icon: Activity },
       { href: "/support-activity/reports", label: "Reports", icon: BarChart3 },
-      { href: "/support-activity/settings", label: "Setup", icon: SettingsIcon },
     ],
   },
   {
@@ -117,8 +231,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/team-management/schedule", label: "Roster", icon: CalendarDays },
       { href: "/team-management/leave", label: "Leave", icon: ClipboardList },
       { href: "/team-management/attendance", label: "Duty History", icon: BarChart3 },
-      { href: "/team-management/shifts", label: "Shifts", icon: Clock },
-      { href: "/team-management/settings", label: "Settings", icon: SettingsIcon },
     ],
   },
   {
@@ -126,11 +238,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Teams Integration",
     links: [
       { href: "/issues", label: "Issues", icon: Link2 },
-      { href: "/integrations/teams", label: "Connection", icon: Link2 },
-      { href: "/integrations/teams/manage", label: "Manage Teams & Channels", icon: Users },
-      { href: "/integrations/teams/rules", label: "Resolution Rules", icon: ClipboardList },
-      { href: "/integrations/teams/keywords", label: "Resolution Keywords", icon: Tag },
-      { href: "/integrations/teams/settings", label: "Settings", icon: SettingsIcon },
     ],
   },
   {
@@ -138,7 +245,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "WhatsApp",
     links: [
       { href: "/accounts", label: "WhatsApp Accounts", icon: Smartphone },
-      { href: "/accounts/routing", label: "Account Routing", icon: Route },
       { href: "/groups", label: "Groups", icon: Users },
       { href: "/team-members", label: "Internal Team Members", icon: UserCog },
     ],
@@ -159,8 +265,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/group-message-sender", label: "Group Message Sender", icon: Send },
       { href: "/group-message-sender/history", label: "Broadcast History", icon: History },
       { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
-      { href: "/group-message-sender/settings", label: "Sending Limits", icon: SettingsIcon },
-      { href: "/group-member-adder/settings", label: "Add-to-Groups Limits", icon: SettingsIcon },
     ],
   },
   {
@@ -173,10 +277,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/ai-learning/knowledge-base/import", label: "Import Knowledge", icon: FileUp },
       { href: "/ai-learning/knowledge-base/review", label: "Pending Review", icon: ClipboardCheck },
       { href: "/ai-learning/communication-style", label: "Communication Style", icon: MessageSquareQuote },
-      { href: "/integrations/forge", label: "Product Knowledge", icon: PackageSearch },
-      { href: "/ai-learning/providers", label: "AI Providers", icon: KeyRound },
-      { href: "/ai-learning/models", label: "AI Models", icon: Cpu },
-      { href: "/ai-learning/settings", label: "AI Settings", icon: SettingsIcon },
     ],
   },
   {
@@ -189,7 +289,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/conversation-learning/pattern-candidates", label: "Pattern Candidates", icon: Fingerprint },
       { href: "/conversation-learning/unknown-patterns", label: "Unknown Patterns", icon: EyeOff },
       { href: "/conversation-learning/rule-proposals", label: "Rule Proposals", icon: ClipboardCheck },
-      { href: "/conversation-learning/settings", label: "Conversation Settings", icon: SettingsIcon },
     ],
   },
   {
@@ -197,10 +296,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "System",
     links: [
       { href: "/notifications", label: "Notifications", icon: Bell },
-      { href: "/notifications/events", label: "Notification Center", icon: BellRing },
-      { href: "/notifications/templates", label: "Notification Templates", icon: MessageSquareQuote },
-      { href: "/settings", label: "Settings", icon: SettingsIcon },
       { href: "/logs", label: "System Logs", icon: ConsoleIcon },
+      SETTINGS_LINK,
     ],
   },
   {
@@ -209,7 +306,6 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/users", label: "App Users", icon: UserCog },
       { href: "/permissions", label: "Permission Modules", icon: ShieldCheck },
-      { href: "/settings/security", label: "Security Settings", icon: SlidersHorizontal },
     ],
   },
   {
@@ -289,16 +385,22 @@ export function navPermissionFor(href: string): string | null {
 
 /** The nav, reduced to what a role can open. Groups left empty are dropped rather than shown bare. */
 export function navGroupsFor(granted: ReadonlySet<string>): NavGroup[] {
+  // Settings is shown whenever the role can open ANY settings page, and opens the first one it can:
+  // a role with AI access but no general settings access must still find its way to AI Settings.
+  const firstSettingsPage = settingsSectionsFor(granted)[0]?.links[0] ?? null;
   return NAV_GROUPS.map((group) => ({
     ...group,
-    links: group.links.filter((link) => {
+    links: group.links.flatMap((link) => {
+      if (link === SETTINGS_LINK) return firstSettingsPage ? [{ ...SETTINGS_LINK, href: firstSettingsPage.href }] : [];
       const key = navPermissionFor(link.href);
-      return key === null || granted.has(key);
+      return key === null || granted.has(key) ? [link] : [];
     }),
   })).filter((group) => group.links.length > 0);
 }
 
-export function isNavActive(pathname: string, search: URLSearchParams, href: string) {
+export function isNavActive(pathname: string, search: URLSearchParams, href: string, label?: string) {
+  // The one Settings entry stands for the whole module, so it stays lit on every settings page.
+  if (label === SETTINGS_LINK.label && isSettingsPath(href.split("?")[0]!)) return isSettingsPath(pathname);
   const [hrefPath, hrefQuery = ""] = href.split("?");
   if (hrefPath !== pathname) return false;
   const hrefDecision = new URLSearchParams(hrefQuery).get("decision");
@@ -308,7 +410,12 @@ export function isNavActive(pathname: string, search: URLSearchParams, href: str
 /** Flat list of every navigable destination, Overview first — what the command palette searches. */
 export const ALL_NAV_LINKS: Array<NavLink & { group: string }> = [
   { ...OVERVIEW_LINK, group: "Dashboard" },
-  ...NAV_GROUPS.flatMap((group) => group.links.map((link) => ({ ...link, group: group.label }))),
+  ...NAV_GROUPS.flatMap((group) =>
+    group.links.filter((link) => link !== SETTINGS_LINK).map((link) => ({ ...link, group: group.label })),
+  ),
+  // No longer in the sidebar one by one, but still a keystroke away in the command palette, and the
+  // breadcrumb reads "Settings > AI Providers" rather than nothing.
+  ...SETTINGS_SECTIONS.flatMap((section) => section.links.map((link) => ({ ...link, group: "Settings" }))),
 ];
 
 /**
