@@ -195,6 +195,13 @@ export interface ReportPage extends NavLink {
 
 export const REPORT_PAGES: ReportPage[] = [
   {
+    href: "/team-report",
+    label: "Team Report",
+    icon: ClipboardCheck,
+    module: "WhatsApp support",
+    description: "Groups, replies, missed and recalled customer waits, and support time per team member — from the stored WhatsApp messages, for any day, week, month or range.",
+  },
+  {
     href: "/support-activity/reports",
     label: "Support Activity",
     icon: Activity,
@@ -211,6 +218,9 @@ export const REPORT_PAGES: ReportPage[] = [
 ];
 
 export const REPORTS_LINK: NavLink = { href: "/reports", label: "All Reports", icon: BarChart3 };
+
+/** Team Report is also a sidebar entry of its own, so it is excluded from lighting "All Reports". */
+export const TEAM_REPORT_LINK: NavLink = { href: "/team-report", label: "Team Report", icon: ClipboardCheck };
 
 /** Whether a path is the reports hub or one of the reports it lists (or anything beneath one). */
 export function isReportPath(pathname: string): boolean {
@@ -270,7 +280,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     section: "Support Operations",
     label: "Reports",
-    links: [REPORTS_LINK],
+    links: [TEAM_REPORT_LINK, REPORTS_LINK],
   },
   {
     section: "Channels & Integrations",
@@ -382,6 +392,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/messages", "messages.view"],
   ["/support-escalation", "escalations.view"],
   ["/support-activity", "support_activity.view"],
+  ["/team-report", "support_activity.view"],
   ["/team-management", "team_management.view"],
   ["/accounts", "whatsapp.view"],
   ["/groups", "whatsapp.view"],
@@ -433,7 +444,10 @@ export function navGroupsFor(granted: ReadonlySet<string>): NavGroup[] {
 export function isNavActive(pathname: string, search: URLSearchParams, href: string, label?: string) {
   // The one Settings entry stands for the whole module, so it stays lit on every settings page.
   if (label === SETTINGS_LINK.label && isSettingsPath(href.split("?")[0]!)) return isSettingsPath(pathname);
-  if (href === REPORTS_LINK.href) return isReportPath(pathname);
+  if (href === REPORTS_LINK.href) {
+    const onTeamReport = pathname === TEAM_REPORT_LINK.href || pathname.startsWith(`${TEAM_REPORT_LINK.href}/`);
+    return isReportPath(pathname) && !onTeamReport;
+  }
   const [hrefPath, hrefQuery = ""] = href.split("?");
   if (hrefPath !== pathname) return false;
   const hrefDecision = new URLSearchParams(hrefQuery).get("decision");
@@ -449,7 +463,12 @@ export const ALL_NAV_LINKS: Array<NavLink & { group: string }> = [
   // No longer in the sidebar one by one, but still a keystroke away in the command palette, and the
   // breadcrumb reads "Settings > AI Providers" rather than nothing.
   ...SETTINGS_SECTIONS.flatMap((section) => section.links.map((link) => ({ ...link, group: "Settings" }))),
-  ...REPORT_PAGES.map(({ href, label, icon }) => ({ href, label, icon, group: "Reports" })),
+  ...REPORT_PAGES.filter((page) => page.href !== TEAM_REPORT_LINK.href).map(({ href, label, icon }) => ({
+    href,
+    label,
+    icon,
+    group: "Reports",
+  })),
 ];
 
 /**

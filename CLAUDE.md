@@ -700,6 +700,34 @@ deployment does not have**, so the trigger would appear configured in the UI and
 (`sendTextWithMentions`, used by the handover mention, is *not* licence-gated — the two are often
 assumed to go together.)
 
+### Team Report (`packages/shared/src/teamReport.ts`, `apps/web/src/server/teamReport.ts`, `(dashboard)/team-report/`)
+
+Per-member and per-group WhatsApp support report — groups supported, replies, customer messages,
+customer waits, **Missed**, **Recall** and support duration — for a day, week, month or custom range
+(capped at 92 days), for the whole team or one member, broken down by day/week/month, with a group
+drill-down listing every wait and CSV (groups) / Excel (full: Summary, Team Members, Groups, period,
+Missed & Recall) exports. Sidebar: Reports → Team Report; also the first card on All Reports.
+
+**All counting is ONE pure function, `computeTeamReport`, unit-tested in packages/shared.** The page,
+the drill-down and both exports call `loadTeamReport`, which only fetches and classifies rows, so the
+screen and the file cannot disagree. Its doc comment is the rulebook; the page's Help repeats it.
+Reads `Message` (not `SupportActivity`, which is off by default), one row per real message —
+`DISTINCT ON (whatsappGroupId, whatsappMessageId)` collapses the copies two accounts in one group
+store. Senders are matched to `InternalTeamMember` exactly as Duty History does (whatsappId, raw and
+digits-only phone), including deactivated members so history keeps its owner.
+
+The definitions are existing ones wherever one existed: a **wait** is First Response's (a customer
+message after a reply or none; a run of lines is one wait; closed by the next MEMBER or BUSINESS
+message), and duration uses Team Performance's idle gap (`offlineAfterMinutes`) over one timeline per
+member across all groups, split at Dhaka midnight. **No "missed" rule existed**, so: a group with a
+priority uses its escalation policy's `firstAlertMinutes`; every other group uses the new
+`SupportActivitySettings.missedReplyAfterMinutes` (default 30, on Support Activity Setup). Answered
+after the threshold = Recall (a subset of Missed, never counted twice); never answered past it =
+Missed and unrecovered; still inside it = neither. Missed is charged to the group's
+`assignedTeamMemberId` ("Unassigned" otherwise); Recall to whoever sent the late reply. Business-number
+replies count as replies but carry no person and no duration. Replies are looked for up to 24 h
+past the period end, and only waits starting inside the period count.
+
 ### Team Management (`apps/web/src/server/teamManagementReports.ts`, `server/actions/teamManagement.ts`, `apps/worker/src/teamManagement/attendance.ts`)
 
 Shifts, roster, leave and coverage, built on `InternalTeamMember` — **there is no second identity

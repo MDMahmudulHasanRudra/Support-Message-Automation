@@ -54,6 +54,18 @@ export function SupportActivitySettingsForm({ settings }: { settings: SupportAct
               defaultValue={settings.offlineAfterMinutes}
             />
           </Field>
+          <Field
+            label="Missed after (minutes)"
+            hint="Team Report: a customer who waits longer than this for a reply counts as Missed — and as Recall if somebody answers later. Groups with a support priority use their escalation policy's first alert instead. Between 1 minute and 24 hours."
+          >
+            <Input
+              name="missedReplyAfterMinutes"
+              type="number"
+              min={1}
+              max={1440}
+              defaultValue={settings.missedReplyAfterMinutes}
+            />
+          </Field>
         </div>
       </Card>
 

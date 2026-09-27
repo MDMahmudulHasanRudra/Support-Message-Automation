@@ -2657,6 +2657,11 @@ model SupportActivitySettings {
   /// measured per group per day — produces a page where somebody shows as offline inside a stretch
   /// of work the same page is counting.
   offlineAfterMinutes Int                           @default(120)
+  /// Team Report: a customer wait answered later than this — or not at all, once older than this —
+  /// counts as Missed (and as Recall if it was answered in the end). Groups with a support priority
+  /// use their escalation policy's first-alert time instead; this covers every other group, since
+  /// no rule for them existed. See packages/shared/src/teamReport.ts.
+  missedReplyAfterMinutes Int                       @default(30)
 }
 
 /// Admin-managed keyword/phrase. Referenced by zero or more SupportRules via SupportRuleKeyword —

@@ -17,6 +17,7 @@ export async function setSupportActivityEnabled(enabled: boolean): Promise<void>
   await prisma.supportActivitySettings.update({ where: { id: "global" }, data: { enabled } });
   revalidatePath("/support-activity");
   revalidatePath("/support-activity/settings");
+  revalidatePath("/team-report");
   revalidatePath("/overview");
 }
 
@@ -30,6 +31,13 @@ export async function updateSupportActivitySettings(formData: FormData): Promise
     ? Math.min(1440, Math.max(5, Math.round(rawOffline)))
     : 120;
 
+  // Same clamping, same reason. 1 minute to 24 hours: below a minute nearly every reply would count
+  // as missed, above a day "missed" stops meaning anything a lead could act on.
+  const rawMissed = Number(formData.get("missedReplyAfterMinutes"));
+  const missedReplyAfterMinutes = Number.isFinite(rawMissed)
+    ? Math.min(1440, Math.max(1, Math.round(rawMissed)))
+    : 30;
+
   const countingPeriod = String(formData.get("countingPeriod") ?? "DAILY");
   if (!VALID_PERIODS.includes(countingPeriod as SupportActivityCountingPeriod)) {
     throw new Error("Invalid counting period.");
@@ -41,6 +49,7 @@ export async function updateSupportActivitySettings(formData: FormData): Promise
     data: {
       enabled,
       offlineAfterMinutes,
+      missedReplyAfterMinutes,
       countingPeriod: countingPeriod as SupportActivityCountingPeriod,
     },
   });
