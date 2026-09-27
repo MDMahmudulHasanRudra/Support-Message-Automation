@@ -12,7 +12,7 @@ import type { Prisma } from "@prisma/client";
  * "use server" files may only export async functions, which is why this cannot live in
  * `server/actions/groups.ts` alongside its only other caller.
  */
-export type GroupFilterKey = "all" | "monitored" | "unmonitored" | "active" | "inactive";
+export type GroupFilterKey = "all" | "monitored" | "unmonitored" | "active" | "inactive" | "needs_setup";
 
 export const GROUP_FILTER_KEYS = [
   "all",
@@ -20,6 +20,7 @@ export const GROUP_FILTER_KEYS = [
   "unmonitored",
   "active",
   "inactive",
+  "needs_setup",
 ] as const satisfies readonly GroupFilterKey[];
 
 export function isGroupFilterKey(value: string | undefined): value is GroupFilterKey {
@@ -56,5 +57,12 @@ export function buildGroupWhere(
   if (filter === "unmonitored") where.isMonitored = false;
   if (filter === "active") where.isActive = true;
   if (filter === "inactive") where.isActive = false;
+  // The one combination the single chip list could not express, and the list somebody opens this
+  // page to work through: groups the account is really in that nobody has switched on yet.
+  // Inactive groups are left out because monitoring a group the number has left does nothing.
+  if (filter === "needs_setup") {
+    where.isActive = true;
+    where.isMonitored = false;
+  }
   return where;
 }

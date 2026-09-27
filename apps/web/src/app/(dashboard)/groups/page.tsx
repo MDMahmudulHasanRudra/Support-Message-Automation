@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Search } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { pageAccess } from "@/server/authorize";
-import { ActiveFilters, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, NoFilterResults, PageHeader, Pagination, Select, type ActiveFilter, ViewOnlyNotice } from "@/components/ui";
+import { ActiveFilters, Button, EmptyState, FilterBar, HelpButton, HelpSection, Input, NoFilterResults, PageHeader, Pagination, type ActiveFilter, ViewOnlyNotice } from "@/components/ui";
 import {
   buildGroupSearchWhere,
   buildGroupWhere,
@@ -50,6 +50,8 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
     unmonitoredCount,
     activeCount,
     inactiveCount,
+    needsSetupCount,
+    groupsPerAccount,
     teamMembers,
     aiSettings,
     accounts,
@@ -67,6 +69,10 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
     prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isMonitored: false } }),
     prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isActive: true } }),
     prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isActive: false } }),
+    prisma.whatsAppGroup.count({ where: { ...searchOnlyWhere, isActive: true, isMonitored: false } }),
+    // Per-account counts for the account chips, within the current search but across ALL accounts —
+    // each chip says how many groups picking it would show.
+    prisma.whatsAppGroup.groupBy({ by: ["accountId"], where: buildGroupSearchWhere(search, null), _count: { _all: true } }),
     prisma.internalTeamMember.findMany({ where: { status: "ACTIVE" }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     // Whether a row's own opt-in switch is what decides AI eligibility depends on the global
     // scope, so the table is told which mode it is rendering in rather than guessing. It depends
@@ -200,27 +206,40 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
       <FilterBar>
         <form className="flex flex-wrap items-end gap-2" method="GET">
           <Input name="search" placeholder="Search group name…" defaultValue={search} className="w-64" />
-          {/* Only worth the space once there is more than one number — with a single account every
-              row belongs to it, and a picker offering one choice is furniture. */}
-          {accounts.length > 1 ? (
-            <Select name="accountId" defaultValue={accountId ?? ""} className="w-48" aria-label="Filter by account">
-              <option value="">All accounts</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.label}
-                  {a.isPrimary ? " — Primary" : ""}
-                </option>
-              ))}
-            </Select>
-          ) : null}
+          {/* The account travels with a search rather than being reset by it. */}
+          {accountId ? <input type="hidden" name="accountId" value={accountId} /> : null}
           <input type="hidden" name="filter" value={filter} />
           <Button type="submit" size="sm">
             <Search className="size-3.5" aria-hidden />
             Search
           </Button>
         </form>
+        {/* One click per account, not a dropdown plus a Search press: switching numbers is the most
+            common thing done here once there is more than one. Only shown when there is a choice. */}
+        {accounts.length > 1 ? (
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Account">
+            <FilterChip
+              href={buildHref(search, filter, 1, PAGE_SIZE, "")}
+              active={!accountId}
+              label={`All accounts (${groupsPerAccount.reduce((sum, row) => sum + row._count._all, 0)})`}
+            />
+            {accounts.map((a) => (
+              <FilterChip
+                key={a.id}
+                href={buildHref(search, filter, 1, PAGE_SIZE, a.id)}
+                active={accountId === a.id}
+                label={`${a.label}${a.isPrimary ? " · Primary" : ""} (${groupsPerAccount.find((row) => row.accountId === a.id)?._count._all ?? 0})`}
+              />
+            ))}
+          </div>
+        ) : null}
         <div className="flex flex-wrap gap-1.5">
           <FilterChip href={buildHref(search, "all", 1, PAGE_SIZE, accountId ?? "")} active={filter === "all"} label={`All (${allCount})`} />
+          <FilterChip
+            href={buildHref(search, "needs_setup", 1, PAGE_SIZE, accountId ?? "")}
+            active={filter === "needs_setup"}
+            label={`Active, not monitored (${needsSetupCount})`}
+          />
           <FilterChip
             href={buildHref(search, "monitored", 1, PAGE_SIZE, accountId ?? "")}
             active={filter === "monitored"}
@@ -294,6 +313,7 @@ const FILTER_LABELS: Record<FilterKey, string> = {
   unmonitored: "Not monitored",
   active: "Active",
   inactive: "Inactive",
+  needs_setup: "Active, not monitored",
 };
 
 function buildHref(
