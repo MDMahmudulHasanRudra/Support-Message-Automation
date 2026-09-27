@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+import { prisma, type Prisma } from "@support-automation/db";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { normalizePhoneNumber } from "@support-automation/shared";
@@ -15,8 +15,11 @@ export interface TeamMemberFormState {
 interface TeamMemberInput {
   name: string;
   phoneNumber: string;
+  /** The designation (Support Executive, CTO...) — stored in the `role` column. */
   role: string;
   department: string | null;
+  teamId: string | null;
+  status: "ACTIVE" | "INACTIVE";
 }
 
 /**
@@ -32,11 +35,51 @@ function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: stri
   const phoneNumber = String(formData.get("phoneNumber") ?? "").trim();
   const role = String(formData.get("role") ?? "").trim();
   const department = String(formData.get("department") ?? "").trim() || null;
-  if (!name || !phoneNumber || !role) return { error: "Name, phone number and role are all required." };
+  const teamId = String(formData.get("teamId") ?? "").trim() || null;
+  const status = formData.get("status") === "INACTIVE" ? "INACTIVE" : "ACTIVE";
+  if (!name || !phoneNumber || !role) return { error: "Name, phone number and designation are all required." };
   if (!normalizePhoneNumber(phoneNumber)) {
     return { error: "That does not look like a phone number. Enter it with the country code, e.g. +8801XXXXXXXXX." };
   }
-  return { name, phoneNumber, role, department };
+  return { name, phoneNumber, role, department, teamId, status };
+}
+
+/**
+ * The chosen Team must exist, and must be active unless the member is already in it — a disabled
+ * Team is not offered for new assignments, but editing somebody who is still in one must not force
+ * them out of it.
+ */
+async function checkTeam(teamId: string | null, currentTeamId: string | null = null): Promise<string | null> {
+  if (!teamId) return null;
+  const team = await prisma.team.findUnique({ where: { id: teamId }, select: { status: true, name: true } });
+  if (!team) return "That team no longer exists. Pick another, or refresh the page.";
+  if (team.status === "DISABLED" && teamId !== currentTeamId) {
+    return `${team.name} is disabled. Enable it on the Teams page, or pick another team.`;
+  }
+  return null;
+}
+
+/**
+ * Moves a member to a Team (or to none), keeping the history reports read.
+ *
+ * Closes their open membership and opens a new one, in the caller's transaction so `teamId` and the
+ * memberships can never disagree. Somebody's FIRST Team gets no start date — it counts back over
+ * everything they did before Teams existed, so reports are filterable the day Teams are set up. Every
+ * later change is dated now, so last month's report keeps them where they were last month.
+ */
+async function applyTeamChange(
+  tx: Prisma.TransactionClient,
+  memberId: string,
+  nextTeamId: string | null,
+  now: Date,
+): Promise<void> {
+  const hasHistory = (await tx.teamMembership.count({ where: { teamMemberId: memberId } })) > 0;
+  await tx.teamMembership.updateMany({ where: { teamMemberId: memberId, endedAt: null }, data: { endedAt: now } });
+  if (nextTeamId) {
+    await tx.teamMembership.create({
+      data: { teamMemberId: memberId, teamId: nextTeamId, startedAt: hasHistory ? now : null },
+    });
+  }
 }
 
 /**
@@ -74,9 +117,14 @@ export async function createTeamMember(_prev: TeamMemberFormState, formData: For
 
   const conflict = await findPhoneConflict(input.phoneNumber);
   if (conflict) return { error: `${conflict.name} already has that number.` };
+  const teamProblem = await checkTeam(input.teamId);
+  if (teamProblem) return { error: teamProblem };
 
   try {
-    await prisma.internalTeamMember.create({ data: { ...input, status: "ACTIVE" } });
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.internalTeamMember.create({ data: input, select: { id: true } });
+      if (input.teamId) await applyTeamChange(tx, created.id, input.teamId, new Date());
+    });
   } catch (err) {
     if (isUniqueViolation(err)) return { error: "Someone already has that number." };
     throw err;
@@ -277,6 +325,9 @@ export async function addTeamMembersFromGroup(
 
   const role = String(formData.get("role") ?? "").trim() || "Support";
   const department = String(formData.get("department") ?? "").trim() || null;
+  const teamId = String(formData.get("teamId") ?? "").trim() || null;
+  const teamProblem = await checkTeam(teamId);
+  if (teamProblem) return { error: teamProblem };
   const selections = formData.getAll("selected").map((value) => String(value));
 
   if (selections.length === 0) return { error: "Pick at least one person to add." };
@@ -321,16 +372,31 @@ export async function addTeamMembersFromGroup(
     return { error: "Everyone selected is already on the roster." };
   }
 
-  const result = await prisma.internalTeamMember.createMany({
-    data: toCreate.map((entry) => ({
-      name: entry.name,
-      phoneNumber: entry.phoneNumber,
-      whatsappId: entry.whatsappId,
-      role,
-      department,
-      status: "ACTIVE" as const,
-    })),
-    skipDuplicates: true,
+  const result = await prisma.$transaction(async (tx) => {
+    const created = await tx.internalTeamMember.createMany({
+      data: toCreate.map((entry) => ({
+        name: entry.name,
+        phoneNumber: entry.phoneNumber,
+        whatsappId: entry.whatsappId,
+        role,
+        department,
+        teamId,
+        status: "ACTIVE" as const,
+      })),
+      skipDuplicates: true,
+    });
+    if (teamId) {
+      // createMany returns no ids, so the new rows are found by the numbers just inserted. Their
+      // first Team, so it carries no start date (see applyTeamChange).
+      const fresh = await tx.internalTeamMember.findMany({
+        where: { phoneNumber: { in: toCreate.map((entry) => entry.phoneNumber) }, teamId, teamMemberships: { none: {} } },
+        select: { id: true },
+      });
+      await tx.teamMembership.createMany({
+        data: fresh.map((member) => ({ teamMemberId: member.id, teamId, startedAt: null })),
+      });
+    }
+    return created;
   });
 
   revalidatePath("/team-members");
@@ -352,9 +418,16 @@ export async function updateTeamMember(
   // this form for anybody added from message history.
   const conflict = await findPhoneConflict(input.phoneNumber, id);
   if (conflict) return { error: `${conflict.name} already has that number.` };
+  const current = await prisma.internalTeamMember.findUnique({ where: { id }, select: { teamId: true } });
+  if (!current) return { error: "This team member no longer exists." };
+  const teamProblem = await checkTeam(input.teamId, current.teamId);
+  if (teamProblem) return { error: teamProblem };
 
   try {
-    await prisma.internalTeamMember.update({ where: { id }, data: input });
+    await prisma.$transaction(async (tx) => {
+      await tx.internalTeamMember.update({ where: { id }, data: input });
+      if (current.teamId !== input.teamId) await applyTeamChange(tx, id, input.teamId, new Date());
+    });
   } catch (err) {
     if (isUniqueViolation(err)) return { error: "Someone already has that number." };
     throw err;

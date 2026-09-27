@@ -1,12 +1,17 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Field, Input, Select } from "@/components/ui";
 
 /**
  * The report's filters. A plain GET form, like every other filter in this app, so a report is a URL
  * that can be bookmarked and sent to someone — it just submits itself the moment a choice changes
  * rather than waiting for an Apply press.
+ *
+ * Team and Team member cascade: picking a Team narrows the member list to the people who were in it
+ * during the period, and a member who was not is reset to "all of that Team" before submitting — so
+ * the form can never ask for a combination that means nothing.
  */
 export function TeamReportFilters({
   period,
@@ -14,8 +19,11 @@ export function TeamReportFilters({
   from,
   to,
   memberId,
+  teamId,
   granularity,
   members,
+  teams,
+  teamMemberIds,
 }: {
   period: string;
   date: string;
@@ -24,9 +32,22 @@ export function TeamReportFilters({
   memberId: string | null;
   granularity: string;
   members: Array<{ id: string; name: string; status: string }>;
+  teamId: string | null;
+  teams: Array<{ id: string; name: string; status: string }>;
+  teamMemberIds: Record<string, string[]>;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [chosenPeriod, setChosenPeriod] = useState(period);
+  const [chosenTeam, setChosenTeam] = useState(teamId ?? "");
+  const [chosenMember, setChosenMember] = useState(memberId ?? "");
+  const inTeam = chosenTeam ? new Set(teamMemberIds[chosenTeam] ?? []) : null;
+  const memberOptions = inTeam ? members.filter((member) => inTeam.has(member.id)) : members;
+  const allLabel =
+    chosenTeam === "none"
+      ? "All members without a team"
+      : chosenTeam
+        ? `All ${teams.find((team) => team.id === chosenTeam)?.name ?? "team"} members`
+        : "All team members";
   const submit = () => formRef.current?.requestSubmit();
 
   return (
@@ -64,10 +85,45 @@ export function TeamReportFilters({
         </Field>
       )}
 
+      <Field label="Team">
+        <Select
+          name="team"
+          value={chosenTeam}
+          className="w-48"
+          onChange={(event) => {
+            const next = event.target.value;
+            // Rendered synchronously so the submitted form already carries the reset member.
+            flushSync(() => {
+              setChosenTeam(next);
+              // A member who was not in the new Team would narrow it to nothing: fall back to all of it.
+              if (next && chosenMember && !(teamMemberIds[next] ?? []).includes(chosenMember)) setChosenMember("");
+            });
+            submit();
+          }}
+        >
+          <option value="">All teams</option>
+          {teams.map((team) => (
+            <option key={team.id} value={team.id}>
+              {team.name}
+              {team.status === "ACTIVE" ? "" : " (disabled)"}
+            </option>
+          ))}
+          <option value="none">No team</option>
+        </Select>
+      </Field>
+
       <Field label="Team member">
-        <Select name="member" defaultValue={memberId ?? ""} className="w-56" onChange={submit}>
-          <option value="">All team members</option>
-          {members.map((member) => (
+        <Select
+          name="member"
+          value={chosenMember}
+          className="w-56"
+          onChange={(event) => {
+            flushSync(() => setChosenMember(event.target.value));
+            submit();
+          }}
+        >
+          <option value="">{allLabel}</option>
+          {memberOptions.map((member) => (
             <option key={member.id} value={member.id}>
               {member.name}
               {member.status === "ACTIVE" ? "" : " (inactive)"}

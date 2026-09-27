@@ -6,9 +6,13 @@ import {
   getDhakaDayRange,
   getDhakaMonthRange,
   getDhakaWeekRange,
+  inTeamAt,
+  membersOfTeamDuring,
+  NO_TEAM,
   normalizePhoneNumber,
   type ReportGranularity,
   type ReportMessage,
+  type TeamMembershipInterval,
   type TeamReportResult,
 } from "@support-automation/shared";
 
@@ -21,6 +25,8 @@ import {
  *   WhatsAppGroup             name, priority and assigned team member per group
  *   InternalTeamMember        who a sender is — every member, including deactivated ones, so a
  *                             person who has since left still owns their history
+ *   Team, TeamMembership      the Team filter: which Team each member was in at each moment, so a
+ *                             person who changed team is counted where they were at the time
  *   SupportPriorityPolicy     a prioritised group's first-alert time = its "missed" threshold
  *   SupportActivitySettings   the idle gap (offlineAfterMinutes) and the "missed after" default
  *
@@ -49,6 +55,8 @@ export interface TeamReportFilters {
   from: string;
   to: string;
   memberId: string | null;
+  /** A Team id, NO_TEAM ("none") for members in no Team, or null for all Teams. */
+  teamId: string | null;
   granularity: ReportGranularity;
 }
 
@@ -85,6 +93,7 @@ export function parseTeamReportFilters(params: Record<string, string | undefined
     from: params.from && DATE_RE.test(params.from) ? params.from : today,
     to: params.to && DATE_RE.test(params.to) ? params.to : today,
     memberId: params.member?.trim() || null,
+    teamId: params.team?.trim() || null,
     granularity,
   };
 }
@@ -138,12 +147,26 @@ export interface GroupMeta {
   assignedMemberId: string | null;
 }
 
+export interface TeamOption {
+  id: string;
+  name: string;
+  status: string;
+}
+
 export interface TeamReportData {
+  /** The filters actually applied — a member outside the chosen Team is reset to all its members. */
   filters: TeamReportFilters;
   range: ResolvedRange;
   result: TeamReportResult;
   memberNames: Map<string, string>;
   members: Array<{ id: string; name: string; status: string }>;
+  teams: TeamOption[];
+  /** For each Team id (and NO_TEAM), the members who were in it at some point of the period. */
+  teamMemberIds: Record<string, string[]>;
+  /** The chosen Team's name, "No team", or null for all Teams. */
+  teamName: string | null;
+  /** Set when a chosen member was not in the chosen Team this period, so the page can say so. */
+  filterNote: string | null;
   groups: Map<string, GroupMeta>;
   rules: {
     idleGapMinutes: number;
@@ -171,7 +194,7 @@ export async function loadTeamReport(
   const range = resolveTeamReportRange(filters, now);
   const lookaheadEnd = new Date(range.end.getTime() + LOOKAHEAD_MS);
 
-  const [members, settings, policies, rows] = await Promise.all([
+  const [members, settings, policies, teams, membershipRows, rows] = await Promise.all([
     prisma.internalTeamMember.findMany({
       select: { id: true, name: true, phoneNumber: true, whatsappId: true, status: true },
       orderBy: { name: "asc" },
@@ -181,6 +204,8 @@ export async function loadTeamReport(
       select: { offlineAfterMinutes: true, missedReplyAfterMinutes: true },
     }),
     prisma.supportPriorityPolicy.findMany({ select: { priority: true, firstAlertMinutes: true } }),
+    prisma.team.findMany({ select: { id: true, name: true, status: true }, orderBy: { name: "asc" } }),
+    prisma.teamMembership.findMany({ select: { teamMemberId: true, teamId: true, startedAt: true, endedAt: true } }),
     // One row per real message. DISTINCT ON collapses the copies a message gets when two of our
     // numbers are in the same group (each account stores its own row). Bounded by the timestamp
     // index; nothing unbounded is scanned, and only six narrow columns cross to Node.
@@ -268,6 +293,33 @@ export async function loadTeamReport(
   const policyMinutes: Record<string, number> = {};
   for (const policy of policies) policyMinutes[policy.priority] = policy.firstAlertMinutes;
 
+  // ---- Team filter ----
+  const intervals: TeamMembershipInterval[] = membershipRows.map((row) => ({
+    memberId: row.teamMemberId,
+    teamId: row.teamId,
+    startedAt: row.startedAt?.getTime() ?? null,
+    endedAt: row.endedAt?.getTime() ?? null,
+  }));
+  const memberIds = members.map((m) => m.id);
+  const teamMemberIds: Record<string, string[]> = {};
+  for (const teamKey of [...teams.map((t) => t.id), NO_TEAM]) {
+    teamMemberIds[teamKey] = membersOfTeamDuring(intervals, memberIds, teamKey, range.start.getTime(), range.end.getTime());
+  }
+  const memberNames = new Map(members.map((m) => [m.id, m.name]));
+  // An unknown Team (deleted, or a mistyped link) falls back to all Teams rather than an empty report.
+  const teamId = filters.teamId && filters.teamId in teamMemberIds ? filters.teamId : null;
+  const teamName = teamId === null ? null : teamId === NO_TEAM ? "No team" : (teams.find((t) => t.id === teamId)?.name ?? null);
+  let memberId = filters.memberId;
+  let filterNote: string | null = null;
+  if (teamId && memberId && !teamMemberIds[teamId]!.includes(memberId)) {
+    filterNote = `${memberNames.get(memberId) ?? "That team member"} was not in ${teamName} during ${range.label}, so this shows all of ${teamName}.`;
+    memberId = null;
+  }
+  const applied: TeamReportFilters = { ...filters, teamId, memberId };
+  const scope = teamId
+    ? (id: string, ts: number) => (memberId === null || id === memberId) && inTeamAt(intervals, id, teamId, ts)
+    : null;
+
   const result = computeTeamReport(messages, {
     rangeStart: range.start.getTime(),
     rangeEnd: range.end.getTime(),
@@ -279,16 +331,21 @@ export async function loadTeamReport(
       return minutes * 60_000;
     },
     assignedMemberFor: (groupKey) => groups.get(groupKey)?.assignedMemberId ?? null,
-    memberId: filters.memberId,
+    memberId,
+    scope,
     granularity: filters.granularity,
   });
 
   return {
-    filters,
+    filters: applied,
     range,
     result,
-    memberNames: new Map(members.map((m) => [m.id, m.name])),
+    memberNames,
     members: members.map((m) => ({ id: m.id, name: m.name, status: m.status })),
+    teams,
+    teamMemberIds,
+    teamName,
+    filterNote,
     groups,
     rules: { idleGapMinutes, missedAfterMinutes, policyMinutes },
   };
@@ -305,6 +362,7 @@ export function teamReportQuery(filters: TeamReportFilters, overrides: Partial<T
   } else {
     qs.set("date", merged.date);
   }
+  if (merged.teamId) qs.set("team", merged.teamId);
   if (merged.memberId) qs.set("member", merged.memberId);
   qs.set("by", merged.granularity);
   if (overrides.page && overrides.page > 1) qs.set("page", String(overrides.page));
@@ -321,6 +379,12 @@ export function bucketLabel(key: string, granularity: ReportGranularity): string
   if (!date) return key;
   const label = fmt(date, { day: "numeric", month: "short" });
   return granularity === "week" ? `Week of ${label}` : label;
+}
+
+/** "Support Team · All members", "Support Team · Rudra", "All teams · All team members" — the report's scope in words. */
+export function scopeLabel(teamName: string | null, memberName: string | null): string {
+  const member = memberName ?? (teamName ? "All members" : "All team members");
+  return teamName ? `${teamName} · ${member}` : memberName ?? "All team members";
 }
 
 /** A person's name for a report row, including the two rows that are not people. */

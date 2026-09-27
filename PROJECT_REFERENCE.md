@@ -538,8 +538,13 @@ default) or every monitored group. The per-group exclusion is honoured under bot
 
 ### Internal Team Members — `/team-members` (+ `/[id]/edit`)
 
-CRUD: Name, Phone Number, Role, Department (optional), with Disable/Enable and Delete as row
-actions. The edit page also carries an **"Alert this person directly"** card — a checkbox per
+CRUD: Name, Phone Number, **Team** (a dropdown of active Teams from `/teams`, or "No team"),
+Department (optional, suggestions from existing values), **Designation** (free text with
+suggestions — stored in the `role` column, which the form used to label "Role") and Status, with
+Disable/Enable and Delete as row actions. The table shows Team, Designation and Department as
+separate columns. Changing someone's Team closes their old membership and opens a new one dated
+now, so reports keep their past work with the Team they were in at the time; a member's first Team
+has no start date and counts back over their whole history. "Add from group" also takes a Team. The edit page also carries an **"Alert this person directly"** card — a checkbox per
 notification event, sending that alert to them as a WhatsApp message *in addition to* whichever
 shared group it already goes to. Disabling stops treating them as staff going forward without
 losing the record. **Someone with recorded support activity is deactivated
@@ -560,6 +565,23 @@ identifier) and useless for messaging them: a direct message to such an id goes 
 carry a **"Needs phone number"** badge, and their direct-notification checkboxes are disabled with
 the reason. Escalations, direct alerts and AI handover mentions all skip them with a log rather than
 enqueueing into nothing.
+
+### Teams — `/teams` (+ `/[id]`, `/[id]/edit`)
+
+Sidebar group: **WhatsApp** → Teams. Organisational Teams (Support Team, Billing Team, Commercial
+Team…): Name, Code (optional, upper-cased), Description (optional), Status (Active/Disabled). Table:
+Team, Code, Members (current), Description, Status, and View / Edit / Disable / Delete. Names and
+codes are unique ignoring case. **Disable** hides a Team from the member forms only — its members
+keep it and every report can still filter on it. **Delete** is refused while it has members ("This
+team has N assigned members. Reassign or remove the members before deleting this team.") and also
+when it only has *past* members, because those memberships are what earlier reports read — disable
+it instead. The View page lists current members, previous members with their dates, and links to
+the Team Report filtered to that Team. Same permissions as Internal Team Members
+(`whatsapp.view` / `whatsapp.manage`).
+
+The migration that introduced Teams created **Support Team** and **Commercial Team** only if members
+with the department "Customer Support" / "Business Development" existed, and put those members in
+them; everyone else starts with no Team.
 
 ---
 

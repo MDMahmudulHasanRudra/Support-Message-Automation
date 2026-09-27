@@ -23,6 +23,7 @@ import {
   loadTeamReport,
   memberLabel,
   parseTeamReportFilters,
+  scopeLabel,
   teamReportQuery,
 } from "@/server/teamReport";
 import { TeamReportFilters } from "./TeamReportFilters";
@@ -54,11 +55,15 @@ export default async function TeamReportPage({
   await requireAccess("support_activity.view");
   const params = await searchParams;
   const now = new Date();
-  const filters = parseTeamReportFilters(params, now);
-  const { range, result, memberNames, members, groups, rules } = await loadTeamReport(filters, now);
+  const requested = parseTeamReportFilters(params, now);
+  const { filters, range, result, memberNames, members, groups, rules, teams, teamMemberIds, teamName, filterNote } =
+    await loadTeamReport(requested, now);
   const { summary } = result;
 
   const scopedName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
+  const scope = scopeLabel(teamName, scopedName);
+  const teamOnly = Boolean(filters.teamId && !filters.memberId);
+  const PERIOD_NAMES: Record<string, string> = { day: "Daily", week: "Weekly", month: "Monthly", custom: "Custom range" };
   const query = teamReportQuery(filters);
   const page = Math.max(1, Number(params.page ?? "1") || 1);
   const pagedGroups = result.groups.slice((page - 1) * GROUPS_PER_PAGE, page * GROUPS_PER_PAGE);
@@ -77,7 +82,7 @@ export default async function TeamReportPage({
     <div>
       <PageHeader
         title="Team Report"
-        description={`${scopedName ?? "All team members"} · ${range.label}. Built from the WhatsApp messages the system stored — nothing here is entered by hand.`}
+        description={`${scope} · ${range.label}. Built from the WhatsApp messages the system stored — nothing here is entered by hand.`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <ButtonLink href={`/api/team-report/export?${query}&format=csv`}>
@@ -102,10 +107,34 @@ export default async function TeamReportPage({
           from={filters.from}
           to={filters.to}
           memberId={filters.memberId}
+          teamId={filters.teamId}
           granularity={filters.granularity}
           members={members}
+          teams={teams}
+          teamMemberIds={teamMemberIds}
         />
       </Card>
+
+      {/* What the numbers below are about, in one line — also what a screenshot or export carries. */}
+      <p className="mb-4 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-[color:var(--color-muted-foreground)]">
+        <span>
+          Showing: <strong className="font-medium text-[color:var(--color-foreground)]">{scope}</strong>
+        </span>
+        <span>
+          Period: <strong className="font-medium text-[color:var(--color-foreground)]">{PERIOD_NAMES[filters.period]} · {range.label}</strong>
+        </span>
+        {filters.teamId ? (
+          <span>
+            Members in team: <strong className="font-medium text-[color:var(--color-foreground)]">{teamMemberIds[filters.teamId]?.length ?? 0}</strong>
+          </span>
+        ) : null}
+      </p>
+
+      {filterNote ? (
+        <div className="mb-5">
+          <Alert tone="info">{filterNote}</Alert>
+        </div>
+      ) : null}
 
       {range.note ? (
         <div className="mb-5">
@@ -114,12 +143,26 @@ export default async function TeamReportPage({
       ) : null}
 
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatTile label="Groups supported" value={count(summary.groupsSupported)} hint={filters.memberId ? "groups they replied in" : "groups that got a reply"} />
-        <StatTile label="Customer messages" value={count(summary.customerMessages)} hint={filters.memberId ? "in the groups they supported" : "from customers, all groups"} />
+        <StatTile
+          label="Groups supported"
+          value={count(summary.groupsSupported)}
+          hint={filters.memberId ? "groups they replied in" : teamOnly ? "groups the team replied in" : "groups that got a reply"}
+        />
+        <StatTile
+          label="Customer messages"
+          value={count(summary.customerMessages)}
+          hint={filters.memberId ? "in the groups they supported" : teamOnly ? "in the groups the team supported" : "from customers, all groups"}
+        />
         <StatTile
           label="Team replies"
           value={count(summary.memberReplies)}
-          hint={filters.memberId ? "messages they sent" : `+ ${count(summary.businessReplies)} from the business number`}
+          hint={
+            filters.memberId
+              ? "messages they sent"
+              : teamOnly
+                ? "messages the team's members sent"
+                : `+ ${count(summary.businessReplies)} from the business number`
+          }
         />
         <StatTile
           label="Support duration"
@@ -134,11 +177,15 @@ export default async function TeamReportPage({
         />
         <StatTile label="Recall support" value={count(summary.recalled)} hint="missed, then answered" tone="accent" />
         <StatTile label="Customer waits" value={count(summary.waits)} hint="conversations that needed a reply" />
-        <StatTile label="Last activity" value={when(summary.lastActivityAt)} hint="most recent team message" />
+        <StatTile
+          label="Last activity"
+          value={when(summary.lastActivityAt)}
+          hint={filters.memberId ? "their most recent message" : teamOnly ? `most recent ${teamName} message` : "most recent team message"}
+        />
       </div>
 
       {summary.waits === 0 && summary.memberReplies === 0 && summary.customerMessages === 0 ? (
-        <EmptyState>No WhatsApp group messages were stored for {scopedName ?? "the team"} in {range.label}.</EmptyState>
+        <EmptyState>No WhatsApp group messages were stored for {scopedName ?? teamName ?? "the team"} in {range.label}.</EmptyState>
       ) : (
         <>
           <section className="mb-5 grid grid-cols-1 gap-3.5 lg:grid-cols-3">
@@ -164,8 +211,12 @@ export default async function TeamReportPage({
           {!filters.memberId ? (
             <Card className="mb-5">
               <SectionHeader
-                title="Team members"
-                description="Missed belongs to the group's assigned member; Recall to whoever answered late. Select a name for that person's report."
+                title={teamName ? `${teamName} members` : "Team members"}
+                description={
+                  teamName
+                    ? "Only their work while in this team. Missed belongs to the group's assigned member; Recall to whoever answered late. Select a name for that person's report."
+                    : "Missed belongs to the group's assigned member; Recall to whoever answered late. Select a name for that person's report."
+                }
               />
               <Table>
                 <thead>
@@ -242,8 +293,8 @@ export default async function TeamReportPage({
             <SectionHeader
               title={`Groups (${count(result.groups.length)})`}
               description={
-                filters.memberId
-                  ? `Groups ${scopedName} replied in. Replies, time and first/last are theirs; Missed and Recall are the group's own. Select a group to see every wait behind its numbers.`
+                filters.memberId || filters.teamId
+                  ? `Groups ${scopedName ?? teamName} replied in. Replies, time and first/last are theirs; Missed and Recall are the group's own. Select a group to see every wait behind its numbers.`
                   : "Every group with a message in the period, busiest first. Select a group to see every wait behind its numbers."
               }
             />

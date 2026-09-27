@@ -5,6 +5,7 @@ import { Alert, Button, Card, Checkbox, PageHeader, SectionHeader } from "@/comp
 import { NOTIFICATION_EVENTS } from "@/lib/notificationEvents";
 import { hasReachablePhoneNumber } from "@support-automation/shared";
 import { EditTeamMemberForm } from "./EditTeamMemberForm";
+import { loadMemberFormOptions } from "../../memberFormOptions";
 import { updateMemberNotificationPreferences } from "@/server/actions/notificationEvents";
 
 const EVENT_LABELS: Record<string, string> = {
@@ -18,7 +19,10 @@ const EVENT_LABELS: Record<string, string> = {
 export default async function EditTeamMemberPage({ params }: { params: Promise<{ id: string }> }) {
   await requireAccess("whatsapp.manage");
   const { id } = await params;
-  const member = await prisma.internalTeamMember.findUnique({ where: { id } });
+  const [member, options] = await Promise.all([
+    prisma.internalTeamMember.findUnique({ where: { id } }),
+    loadMemberFormOptions(),
+  ]);
   if (!member) notFound();
 
   const preferences = await prisma.teamMemberNotificationPreference.findMany({
@@ -36,7 +40,15 @@ export default async function EditTeamMemberPage({ params }: { params: Promise<{
       <Card className="max-w-lg">
         <EditTeamMemberForm
           memberId={member.id}
-          defaults={{ name: member.name, phoneNumber: member.phoneNumber, role: member.role, department: member.department }}
+          options={options}
+          defaults={{
+            name: member.name,
+            phoneNumber: member.phoneNumber,
+            role: member.role,
+            department: member.department,
+            teamId: member.teamId,
+            status: member.status,
+          }}
         />
       </Card>
 

@@ -25,6 +25,7 @@ import {
   MessageSquareQuote,
   Megaphone,
   MessagesSquare,
+  Network,
   PackageSearch,
   Power,
   Route,
@@ -291,6 +292,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/accounts", label: "Accounts", icon: Smartphone },
       { href: "/groups", label: "Groups", icon: Users },
       { href: "/team-members", label: "Team Members", icon: UserCog },
+      { href: "/teams", label: "Teams", icon: Network },
       {
         href: "/group-message-sender",
         label: "Broadcast",
@@ -425,6 +427,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/accounts", "whatsapp.view"],
   ["/groups", "whatsapp.view"],
   ["/team-members", "whatsapp.view"],
+  ["/teams", "whatsapp.view"],
   ["/rules", "automation_rules.view"],
   ["/automation-control", "settings.view"],
   ["/group-message-sender", "bulk_messaging.view"],

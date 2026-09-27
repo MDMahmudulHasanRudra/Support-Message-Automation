@@ -727,6 +727,27 @@ Missed and unrecovered; still inside it = neither. Missed is charged to the grou
 replies count as replies but carry no person and no duration. Replies are looked for up to 24 h
 past the period end, and only waits starting inside the period count.
 
+**Team filter (28 Sep 2026): a Team is "who was in it AT THAT MOMENT", not "who is in it now".**
+`Team` rows are created on `/teams` (WhatsApp module); `InternalTeamMember.teamId` is the person's
+current Team, and `TeamMembership` (member, team, `startedAt`, `endedAt`) is the history the report
+actually reads. Changing a member's Team closes the open membership and opens a new one dated now,
+in the same transaction as `teamId` (`applyTeamChange` in `server/actions/teamMembers.ts`); a
+member's FIRST Team has a null `startedAt`, meaning "since before Teams were recorded", so assigning
+Teams makes past reports filterable immediately instead of empty. Filtering on the current `teamId`
+instead would move somebody's whole history into their new Team the day they transfer.
+
+`computeTeamReport` takes a `scope(memberId, ts)` predicate (overriding `memberId`); the loader
+composes Team + member into it with `inTeamAt`. In scope: that member's messages, groups and
+duration while in scope; Missed when the group's assigned member was in scope when the customer
+asked; Recall when the late replier was in scope when they answered; customer messages and waits of
+the in-scope groups counted once per group. **With no Team chosen nothing changes** — the unscoped
+path is untouched, and `teamReportTeams.test.ts` proves a one-member `scope` equals the old
+`memberId` report byte-for-byte. The member dropdown cascades from `membersOfTeamDuring` (anyone in
+the Team at any moment of the period); a member not in the chosen Team is reset to the whole Team
+with a note, never an empty report. `team=none` is "members in no Team". Exports carry the Team in
+the file name and Summary sheet, and the Missed & Recall sheet lists `countedMissedWaits` — exactly
+the waits behind the scoped figures. A Team is never deleted once any membership points at it.
+
 ### Team Management (`apps/web/src/server/teamManagementReports.ts`, `server/actions/teamManagement.ts`, `apps/worker/src/teamManagement/attendance.ts`)
 
 Shifts, roster, leave and coverage, built on `InternalTeamMember` — **there is no second identity
@@ -1657,7 +1678,7 @@ a narrower window: the "wait" definition must stay identical to Team Performance
 Nav lives in one place — `(dashboard)/navigation.ts`. A pinned "Overview" link, then ten
 **collapsible modules** (27 Sep 2026): Support (WhatsApp Chat, Messages, Escalations), Team (Today,
 Roster, Leave, Team Performance, Activity Feed), Reports, WhatsApp (Accounts, Groups, Team Members,
-Broadcast, Add Number to Groups), Automation, AI Learning, Conversation Learning, System, Users &
+Teams, Broadcast, Add Number to Groups), Automation, AI Learning, Conversation Learning, System, Users &
 Permissions, Release Notes. It used to be thirteen always-expanded groups under four department
 headings — about fifty rows. **Navigation only: no route, page or permission changed**, and the
 check that proved it compared the old and new `navGroupsFor()` across 323 role sets (every single

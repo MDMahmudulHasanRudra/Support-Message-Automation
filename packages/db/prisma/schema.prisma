@@ -395,6 +395,11 @@ enum TeamMemberStatus {
   INACTIVE
 }
 
+enum TeamStatus {
+  ACTIVE
+  DISABLED
+}
+
 /// Every state a WhatsApp account can actually be in — and nothing else.
 ///
 /// `OUTBOUND_PAUSED` and `RATE_LIMITED` used to be members here, written by nothing anywhere in
@@ -531,8 +536,8 @@ model User {
 
   createdAnalysisRuns            ConversationAnalysisRun[]
   reviewedConversationCandidates ConversationCandidate[]
-  knowledgeVerified      AiKnowledgeItem[]        @relation("AiKnowledgeVerifier")
-  systemLogs             SystemLog[]
+  knowledgeVerified              AiKnowledgeItem[]         @relation("AiKnowledgeVerifier")
+  systemLogs                     SystemLog[]
 }
 
 // ---------------------------------------------------------------------------
@@ -665,9 +670,9 @@ model WhatsAppAccount {
   /// `proxyServerCredentials`. Address is `host:port`; protocol/username/password are optional —
   /// the library can infer the protocol from the address, and most proxies need no credentials.
   /// Null means no proxy, which is what every existing account already does.
-  proxyAddress  String?
-  proxyProtocol String?
-  proxyUsername String?
+  proxyAddress            String?
+  proxyProtocol           String?
+  proxyUsername           String?
   /// Encrypted at rest with the same `encryptSecret`/`decryptSecret` this schema already uses for
   /// the Teams OAuth tokens and AI provider keys — no second encryption mechanism for one more
   /// credential. Null whenever the proxy needs no password, which most do not.
@@ -686,9 +691,9 @@ model WhatsAppAccount {
   /// hand to this field's migration (`CREATE UNIQUE INDEX ... WHERE "isPrimary" = true`), not
   /// expressible in the Prisma schema DSL directly. See also the transactional service-layer
   /// guard in setPrimaryAccount() (apps/web/src/server/actions/accounts.ts).
-  isPrimary       Boolean               @default(false)
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
+  isPrimary       Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   groups               WhatsAppGroup[]
   messages             Message[]
@@ -706,7 +711,7 @@ model WhatsAppAccount {
   aiFallbackDecisions  AiFallbackDecision[]
   attendanceEvidence   TeamAttendanceGroup[]
   droppedMessages      MessageDropCounter[]
-  scopedKnowledge      AiKnowledgeItem[]      @relation("AiKnowledgeScopeAccount")
+  scopedKnowledge      AiKnowledgeItem[]        @relation("AiKnowledgeScopeAccount")
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -927,9 +932,9 @@ model WhatsAppGroup {
 }
 
 model InternalTeamMember {
-  id             String           @id @default(cuid())
-  name           String
-  phoneNumber    String           @unique
+  id              String           @id @default(cuid())
+  name            String
+  phoneNumber     String           @unique
   /// The opaque identifier WhatsApp actually puts on this person's messages.
   ///
   /// WhatsApp migrated group participants to "LID" (linked id) — a 14-15 digit number that is
@@ -941,17 +946,24 @@ model InternalTeamMember {
   /// Nullable and additive: a member added by phone number still matches by phone number, and one
   /// picked out of message history matches by this. Editing the phone number to the person's real
   /// one never breaks matching, because this keeps working.
-  whatsappId     String?          @unique
-  role           String
-  department     String?
-  status         TeamMemberStatus @default(ACTIVE)
+  whatsappId      String?          @unique
+  /// The person's designation / job title (Support Executive, CTO, ...). Free text, shown as
+  /// "Designation" in the UI; the column keeps its original name so nothing reading it changes.
+  role            String
+  department      String?
+  status          TeamMemberStatus @default(ACTIVE)
+  /// The Team this person belongs to NOW — a convenience copy of their open `TeamMembership`, kept
+  /// in the same transaction. Reports never read it for history; they read the memberships.
+  teamId          String?
+  team            Team?            @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  teamMemberships TeamMembership[]
   /// Maps this team member to their Microsoft Teams sender identity (Graph API messages carry an
   /// email/UPN, not a phone number) — nullable/additive since most team members won't have a
   /// Teams account, or won't be mapped yet. Used only for Issue "handled by" attribution
   /// (apps/worker/src/teams/resolutionEngine.ts); never required for the integration to function.
-  microsoftEmail String?          @unique
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  microsoftEmail  String?          @unique
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   assignedGroups            WhatsAppGroup[]
   assignedEscalationCases   SupportEscalationCase[]
@@ -978,6 +990,50 @@ model InternalTeamMember {
   dutyAssignmentChanges DutyAssignmentChange[]
   leaveRequests         LeaveRequest[]
   attendanceDays        TeamAttendanceDay[]
+
+  @@index([teamId])
+}
+
+/// An organisational Team (Support, Billing, Commercial...). Nothing hardcodes a Team's name: they
+/// are rows an admin creates on the Teams page, and the Team Report filters on them.
+///
+/// A Team is never deleted while any membership — current or past — points at it: that history is
+/// what lets last month's report still say who was in Support last month. Disable it instead.
+model Team {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  code        String?    @unique
+  description String?
+  status      TeamStatus @default(ACTIVE)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  members     InternalTeamMember[]
+  memberships TeamMembership[]
+}
+
+/// One stretch of a person belonging to a Team. Changing someone's Team closes their open row
+/// (`endedAt`) and opens a new one, so a report for a past period attributes their work to the Team
+/// they were in at the time rather than the one they are in today.
+///
+/// `startedAt` null means "since before Teams were recorded": somebody's FIRST Team counts back over
+/// their whole history, so assigning Teams today makes past reports filterable immediately instead
+/// of empty. Only a later change is dated.
+///
+/// Rows rather than a column so multi-team membership can be added later without a migration;
+/// today the app keeps at most one open row per person.
+model TeamMembership {
+  id           String             @id @default(cuid())
+  teamMemberId String
+  teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  teamId       String
+  team         Team               @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  startedAt    DateTime?
+  endedAt      DateTime?
+  createdAt    DateTime           @default(now())
+
+  @@index([teamMemberId])
+  @@index([teamId])
 }
 
 model Message {
@@ -1145,7 +1201,7 @@ model OutboundMessage {
   createdById       String?
   createdBy         User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
-  aiFallbackDecision   AiFallbackDecision?
+  aiFallbackDecision AiFallbackDecision?
 
   @@index([status, scheduledAt])
   @@index([toPhone, sentAt])
@@ -1500,11 +1556,11 @@ model AutomationSettings {
 }
 
 model SystemLog {
-  id        String   @id @default(cuid())
-  level     LogLevel
-  scope     String
-  message   String
-  metadata  Json?
+  id       String   @id @default(cuid())
+  level    LogLevel
+  scope    String
+  message  String
+  metadata Json?
 
   /// WHO did it, TO WHAT, and as part of which request.
   ///
@@ -1512,12 +1568,12 @@ model SystemLog {
   /// "who verified this knowledge entry, and when" was unanswerable even though the whole
   /// customer-facing safety gate rests on that approval. Null for the worker's own background
   /// events, which have no actor by definition.
-  actorUserId String?
-  actorUser   User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorUserId   String?
+  actorUser     User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
   /// Free strings rather than enums: the set of auditable things grows with the product, and an
   /// enum would mean a migration to record a new kind of action.
-  targetType String?
-  targetId   String?
+  targetType    String?
+  targetId      String?
   /// The pipeline's own trace id, so every line belonging to one incoming message groups together.
   correlationId String?
 
@@ -1905,28 +1961,28 @@ model AiKnowledgeItem {
   /// and the Forge repository sync — none of which belong to a group — behave exactly as they
   /// always have. Anything carrying a `sourceGroupId` is written as GROUP by the code that creates
   /// it, and a person promotes it to GLOBAL deliberately.
-  scope           AiKnowledgeScope    @default(GLOBAL)
+  scope          AiKnowledgeScope @default(GLOBAL)
   /// Only meaningful for `scope = ACCOUNT`. Null otherwise.
-  scopeAccountId  String?
-  scopeAccount    WhatsAppAccount?    @relation("AiKnowledgeScopeAccount", fields: [scopeAccountId], references: [id], onDelete: SetNull)
+  scopeAccountId String?
+  scopeAccount   WhatsAppAccount? @relation("AiKnowledgeScopeAccount", fields: [scopeAccountId], references: [id], onDelete: SetNull)
 
   /// SHA-256 over the canonicalised factual content (title, question, answer, procedure, module).
   /// For detecting an unchanged re-import and an unexpected modification — NOT for confidentiality,
   /// and never a merge trigger on its own. Deliberately excludes timestamps and status, so the
   /// hash describes the content rather than the row.
-  contentHash     String?
+  contentHash String?
 
   /// Who actually approved this, and when. `humanVerified` is the gate every customer-facing
   /// answer passes through, and it recorded only THAT somebody approved — never who or when, which
   /// leaves the safety chain unauditable at exactly the point it matters most.
-  verifiedById    String?
-  verifiedBy      User?               @relation("AiKnowledgeVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
-  verifiedAt      DateTime?
+  verifiedById String?
+  verifiedBy   User?     @relation("AiKnowledgeVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt   DateTime?
 
-  createdById     String?
-  createdBy       User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   versions     AiKnowledgeVersion[]
   evidenceUses AiEvidenceItem[]
@@ -2050,7 +2106,7 @@ model AiFallbackDecision {
   /// second identifier for the same thing.
   correlationId String?
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 
   /// Set when this decision's unanswered question was queued for research against the ISPDIGITAL
   /// repository — see ForgeResearchTask.
@@ -2113,8 +2169,8 @@ model AiEvidenceItem {
 
   /// SetNull rather than Cascade: deleting a knowledge item must not erase the record that it once
   /// grounded an answer, which is the whole purpose of this table.
-  knowledgeItemId String?
-  knowledgeItem   AiKnowledgeItem? @relation(fields: [knowledgeItemId], references: [id], onDelete: SetNull)
+  knowledgeItemId  String?
+  knowledgeItem    AiKnowledgeItem? @relation(fields: [knowledgeItemId], references: [id], onDelete: SetNull)
   /// The version that was live WHEN THE ANSWER WAS GENERATED — join to AiKnowledgeVersion for the
   /// exact text. This is what survives a later edit.
   knowledgeVersion Int
@@ -2644,10 +2700,10 @@ enum SupportSessionStatus {
 /// feature is off until an admin opts in; while off, apps/worker/src/supportActivity/detector.ts
 /// countingPeriod are global, not per-rule, by explicit requirement.
 model SupportActivitySettings {
-  id                  String                        @id @default("global")
-  enabled             Boolean                       @default(false)
-  countingPeriod      SupportActivityCountingPeriod @default(DAILY)
-  updatedAt           DateTime                      @updatedAt
+  id                      String                        @id @default("global")
+  enabled                 Boolean                       @default(false)
+  countingPeriod          SupportActivityCountingPeriod @default(DAILY)
+  updatedAt               DateTime                      @updatedAt
   /// How long an executive can go without messaging any group before they count as offline, and
   /// the gap that splits one stretch of work from the next.
   ///
@@ -2656,12 +2712,12 @@ model SupportActivitySettings {
   /// which is what happened when availability used a hardcoded 30 minutes while work time was
   /// measured per group per day — produces a page where somebody shows as offline inside a stretch
   /// of work the same page is counting.
-  offlineAfterMinutes Int                           @default(120)
+  offlineAfterMinutes     Int                           @default(120)
   /// Team Report: a customer wait answered later than this — or not at all, once older than this —
   /// counts as Missed (and as Recall if it was answered in the end). Groups with a support priority
   /// use their escalation policy's first-alert time instead; this covers every other group, since
   /// no rule for them existed. See packages/shared/src/teamReport.ts.
-  missedReplyAfterMinutes Int                       @default(30)
+  missedReplyAfterMinutes Int                           @default(30)
 }
 
 /// Admin-managed keyword/phrase. Referenced by zero or more SupportRules via SupportRuleKeyword —

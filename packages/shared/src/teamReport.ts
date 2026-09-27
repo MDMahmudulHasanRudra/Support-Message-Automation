@@ -44,6 +44,17 @@ import { formatDhakaDateKey, getDhakaWeekRange } from "./dhakaDay.js";
  *   can add up to more than the team total when people work groups in parallel.
  *
  * Time: every day, week (Sunday start, as elsewhere in this app) and month is an Asia/Dhaka one.
+ *
+ * Scope — the whole team, one member, one Team (organisational group), or a member inside a Team:
+ *   A scoped report asks "is this member in scope AT THIS MOMENT" for every message, so a person who
+ *   moved from Support to Billing mid-month counts for Support up to the move and for Billing after
+ *   it. In scope, a member's replies, groups and duration count; a Missed wait counts when the
+ *   group's assigned member was in scope when the customer asked; a Recall counts when whoever
+ *   answered late was in scope when they answered. Business-number replies belong to no person and
+ *   are left out of every scoped report. Groups supported are the groups an in-scope member replied
+ *   in, and customer messages and waits are those groups' — counted once per group, so two
+ *   colleagues in one group do not double it. The unscoped (whole-team) report is unchanged by any
+ *   of this.
  */
 
 export type ReportMessageKind = "CUSTOMER" | "MEMBER" | "BUSINESS";
@@ -82,6 +93,11 @@ export interface TeamReportOptions {
   assignedMemberFor: (groupKey: string) => string | null;
   /** Null for the whole team; a member id for one person's report. */
   memberId: string | null;
+  /**
+   * Who is in scope at a given moment. Overrides `memberId` when given — the caller composes a Team
+   * filter and a member filter into one predicate (see `inTeamAt`). Null or absent: `memberId` decides.
+   */
+  scope?: ((memberId: string, ts: number) => boolean) | null;
   granularity: ReportGranularity;
 }
 
@@ -149,6 +165,65 @@ export interface TeamReportResult {
   buckets: BucketReportRow[];
   /** Every wait that started in the period, oldest first — the audit trail behind Missed/Recall. */
   waits: ReportWait[];
+  /** The waits behind the summary's Missed and Recall figures, in this report's scope. */
+  countedMissedWaits: ReportWait[];
+}
+
+/** One stretch of a member belonging to a Team. Null start = since before Teams were recorded. */
+export interface TeamMembershipInterval {
+  memberId: string;
+  teamId: string;
+  startedAt: number | null;
+  endedAt: number | null;
+}
+
+/** The Team filter value meaning "members who belong to no Team". */
+export const NO_TEAM = "none";
+
+const covers = (i: TeamMembershipInterval, ts: number) =>
+  (i.startedAt === null || i.startedAt <= ts) && (i.endedAt === null || ts < i.endedAt);
+
+/** Whether a member belonged to a Team (or, for NO_TEAM, to none) at a moment. */
+export function inTeamAt(
+  intervals: readonly TeamMembershipInterval[],
+  memberId: string,
+  teamId: string,
+  ts: number,
+): boolean {
+  if (teamId === NO_TEAM) return !intervals.some((i) => i.memberId === memberId && covers(i, ts));
+  return intervals.some((i) => i.memberId === memberId && i.teamId === teamId && covers(i, ts));
+}
+
+/**
+ * The members who belonged to a Team at any moment in [start, end) — the Team Member dropdown for
+ * that Team. For NO_TEAM: the members who were outside every Team at some moment in it.
+ */
+export function membersOfTeamDuring(
+  intervals: readonly TeamMembershipInterval[],
+  memberIds: readonly string[],
+  teamId: string,
+  start: number,
+  end: number,
+): string[] {
+  const overlaps = (i: TeamMembershipInterval) =>
+    (i.startedAt === null || i.startedAt < end) && (i.endedAt === null || i.endedAt > start);
+  if (teamId !== NO_TEAM) {
+    const inTeam = new Set(intervals.filter((i) => i.teamId === teamId && overlaps(i)).map((i) => i.memberId));
+    return memberIds.filter((id) => inTeam.has(id));
+  }
+  return memberIds.filter((id) => {
+    const own = intervals
+      .filter((i) => i.memberId === id && overlaps(i))
+      .sort((a, b) => (a.startedAt ?? -Infinity) - (b.startedAt ?? -Infinity));
+    // Walk forward from the period start; any gap before the end is time outside every Team.
+    let cursor = start;
+    for (const interval of own) {
+      if ((interval.startedAt ?? -Infinity) > cursor) return true;
+      cursor = Math.max(cursor, interval.endedAt ?? Infinity);
+      if (cursor >= end) return false;
+    }
+    return cursor < end;
+  });
 }
 
 export const UNASSIGNED = "UNASSIGNED";
@@ -329,11 +404,75 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     }
   }
 
-  // ---- Scope: the whole team, or one member ----
-  const scoped = opts.memberId;
-  const scopeGroups = scoped ? (memberAcc.get(scoped)?.groups ?? new Set<string>()) : null;
-  const waitInScopeForMissed = (w: ReportWait) => !scoped || opts.assignedMemberFor(w.groupKey) === scoped;
-  const waitInScopeForRecall = (w: ReportWait) => !scoped || w.repliedBy === scoped;
+  // ---- Scope: the whole team, one member, a Team, or a member within a Team ----
+  const inScope: ((memberId: string, ts: number) => boolean) | null =
+    opts.scope ?? (opts.memberId ? (memberId: string) => memberId === opts.memberId : null);
+  const scoped = inScope !== null;
+  const memberInScope = (m: ReportMessage) => m.kind === "MEMBER" && m.memberId !== null && inScope!(m.memberId, m.ts);
+  // The in-scope part of each member's activity. For one member this is exactly their own.
+  const scopedAcc = new Map<string, { ts: number[]; groups: Set<string> }>();
+  if (inScope) {
+    for (const [memberId, acc] of memberAcc) {
+      const ts = acc.ts.filter((t) => inScope(memberId, t));
+      if (ts.length === 0) continue;
+      const groups = new Set<string>();
+      for (const [groupKey, list] of acc.byGroup) if (list.some((t) => inScope(memberId, t))) groups.add(groupKey);
+      scopedAcc.set(memberId, { ts, groups });
+    }
+  }
+  const scopeGroups = scoped ? new Set([...scopedAcc.values()].flatMap((a) => [...a.groups])) : null;
+  const waitInScopeForMissed = (w: ReportWait) => {
+    if (!inScope) return true;
+    const owner = opts.assignedMemberFor(w.groupKey);
+    return owner !== null && inScope(owner, w.askedAt);
+  };
+  const waitInScopeForRecall = (w: ReportWait) =>
+    !inScope ||
+    (w.repliedBy !== null && w.repliedBy !== "BUSINESS" && w.repliedAt !== null && inScope(w.repliedBy, w.repliedAt));
+
+  // Member rows as the scope sees them: in-scope activity, misses charged while in scope.
+  const scopedRows = new Map<string, MemberReportRow>();
+  const scopedRowFor = (memberId: string): MemberReportRow => {
+    let row = scopedRows.get(memberId);
+    if (!row) {
+      row = {
+        memberId,
+        messages: 0,
+        groups: 0,
+        customerMessages: 0,
+        missed: 0,
+        recalled: 0,
+        unrecovered: 0,
+        activeSeconds: 0,
+        stretches: 0,
+        firstAt: null,
+        lastAt: null,
+      };
+      scopedRows.set(memberId, row);
+    }
+    return row;
+  };
+  if (scoped) {
+    for (const [memberId, acc] of scopedAcc) {
+      const row = scopedRowFor(memberId);
+      const stretches = splitIntoStretches(acc.ts, opts.idleGapMs);
+      row.messages = acc.ts.length;
+      row.groups = acc.groups.size;
+      row.customerMessages = [...acc.groups].reduce((sum, g) => sum + (customerInRangeByGroup.get(g) ?? 0), 0);
+      row.activeSeconds = stretchSeconds(stretches);
+      row.stretches = stretches.length;
+      row.firstAt = acc.ts[0] ?? null;
+      row.lastAt = acc.ts[acc.ts.length - 1] ?? null;
+    }
+    for (const wait of waits) {
+      if (isMissed(wait) && waitInScopeForMissed(wait)) {
+        const owner = scopedRowFor(opts.assignedMemberFor(wait.groupKey)!);
+        owner.missed += 1;
+        if (wait.status === "MISSED") owner.unrecovered += 1;
+      }
+      if (wait.status === "RECALLED" && waitInScopeForRecall(wait)) scopedRowFor(wait.repliedBy!).recalled += 1;
+    }
+  }
 
   // ---- Per-group rows ----
   const waitsByGroup = new Map<string, ReportWait[]>();
@@ -347,7 +486,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     if (scopeGroups && !scopeGroups.has(groupKey)) continue;
     const ranged = list.filter((m) => inRange(m.ts));
     if (ranged.length === 0) continue;
-    const memberMsgs = ranged.filter((m) => m.kind === "MEMBER" && (!scoped || m.memberId === scoped));
+    const memberMsgs = ranged.filter((m) => m.kind === "MEMBER" && (!scoped || memberInScope(m)));
     const groupWaits = waitsByGroup.get(groupKey) ?? [];
     const activityTs = (scoped ? memberMsgs : ranged.filter(isReply)).map((m) => m.ts);
     groupRows.push({
@@ -391,7 +530,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     if (message.kind === "CUSTOMER") {
       if (!scopeGroups || scopeGroups.has(message.groupKey)) b.customerMessages += 1;
     } else if (message.kind === "MEMBER") {
-      if (!scoped || message.memberId === scoped) {
+      if (!scoped || memberInScope(message)) {
         b.memberMessages += 1;
         b.groupSet.add(message.groupKey);
       }
@@ -406,10 +545,8 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     if (isMissed(wait) && waitInScopeForMissed(wait)) b.missed += 1;
     if (wait.status === "RECALLED" && waitInScopeForRecall(wait)) b.recalled += 1;
   }
-  const scopedMembers = scoped ? [scoped] : [...memberAcc.keys()];
-  for (const memberId of scopedMembers) {
-    const acc = memberAcc.get(memberId);
-    if (!acc) continue;
+  const timelines = scoped ? scopedAcc : memberAcc;
+  for (const acc of timelines.values()) {
     for (const stretch of splitIntoStretches(acc.ts, opts.idleGapMs)) {
       const b = bucket(stretch.start);
       if (b) b.activeSeconds += Math.round((stretch.end - stretch.start) / 1000);
@@ -421,29 +558,30 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   }));
 
   // ---- Summary ----
-  const scopedMemberRows = scoped ? [memberRows.get(scoped)].filter(Boolean) as MemberReportRow[] : [...memberRows.values()];
-  // One member's "waits" are the waits in the groups they supported — the conversations they were in.
-  const inScopeWaits = scoped ? waits.filter((w) => scopeGroups!.has(w.groupKey)) : waits;
-  const lastActivity = scopedMemberRows
-    .filter((r) => r.memberId !== UNASSIGNED)
-    .reduce<number | null>((latest, r) => (r.lastAt !== null && (latest === null || r.lastAt > latest) ? r.lastAt : latest), null);
+  const scopedMemberRows = [...scopedRows.values()];
+  // A scoped report's "waits" are the waits in the groups its members supported.
+  const inScopeWaits = scopeGroups ? waits.filter((w) => scopeGroups.has(w.groupKey)) : waits;
+  const latest = (rows: readonly MemberReportRow[]) =>
+    rows
+      .filter((r) => r.memberId !== UNASSIGNED)
+      .reduce<number | null>((max, r) => (r.lastAt !== null && (max === null || r.lastAt > max) ? r.lastAt : max), null);
   const allReplyGroups = new Set(
     messages.filter((m) => inRange(m.ts) && isReply(m)).map((m) => m.groupKey),
   );
 
-  const summary: TeamReportSummary = scoped
+  const summary: TeamReportSummary = scopeGroups
     ? {
-        groupsSupported: scopeGroups!.size,
-        customerMessages: memberRows.get(scoped)?.customerMessages ?? 0,
-        memberReplies: memberRows.get(scoped)?.messages ?? 0,
+        groupsSupported: scopeGroups.size,
+        customerMessages: [...scopeGroups].reduce((sum, g) => sum + (customerInRangeByGroup.get(g) ?? 0), 0),
+        memberReplies: [...scopedAcc.values()].reduce((sum, a) => sum + a.ts.length, 0),
         businessReplies: 0,
         waits: inScopeWaits.length,
         missed: waits.filter((w) => isMissed(w) && waitInScopeForMissed(w)).length,
         recalled: waits.filter((w) => w.status === "RECALLED" && waitInScopeForRecall(w)).length,
         unrecovered: waits.filter((w) => w.status === "MISSED" && waitInScopeForMissed(w)).length,
-        activeSeconds: memberRows.get(scoped)?.activeSeconds ?? 0,
-        activeMembers: memberAcc.has(scoped) ? 1 : 0,
-        lastActivityAt: memberRows.get(scoped)?.lastAt ?? null,
+        activeSeconds: scopedMemberRows.reduce((sum, r) => sum + r.activeSeconds, 0),
+        activeMembers: scopedAcc.size,
+        lastActivityAt: latest(scopedMemberRows),
       }
     : {
         groupsSupported: allReplyGroups.size,
@@ -456,7 +594,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         unrecovered: waits.filter((w) => w.status === "MISSED").length,
         activeSeconds: [...memberRows.values()].reduce((sum, r) => sum + r.activeSeconds, 0),
         activeMembers: memberAcc.size,
-        lastActivityAt: lastActivity,
+        lastActivityAt: latest([...memberRows.values()]),
       };
 
   const members = (scoped ? scopedMemberRows : [...memberRows.values()]).sort(
@@ -466,5 +604,9 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
       a.memberId.localeCompare(b.memberId),
   );
 
-  return { summary, members, groups: groupRows, buckets: bucketRows, waits };
+  const countedMissedWaits = waits.filter(
+    (w) => (isMissed(w) && waitInScopeForMissed(w)) || (w.status === "RECALLED" && waitInScopeForRecall(w)),
+  );
+
+  return { summary, members, groups: groupRows, buckets: bucketRows, waits, countedMissedWaits };
 }

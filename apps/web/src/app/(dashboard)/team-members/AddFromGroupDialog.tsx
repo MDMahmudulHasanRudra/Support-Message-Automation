@@ -21,6 +21,7 @@ import {
   type AddFromGroupState,
   type GroupParticipantCandidate,
 } from "@/server/actions/teamMembers";
+import { MemberSuggestionLists, TeamSelect, type MemberFormOptions } from "./MemberFormFields";
 
 const INITIAL: AddFromGroupState = {};
 
@@ -37,7 +38,7 @@ export interface GroupOption {
  * staff. Every number offered here came from a message WhatsApp actually delivered, so it cannot
  * be mistyped.
  */
-export function AddFromGroupDialog({ groups }: { groups: GroupOption[] }) {
+export function AddFromGroupDialog({ groups, options }: { groups: GroupOption[]; options: MemberFormOptions }) {
   const router = useRouter();
   const { showToast } = useToast();
   const [open, setOpen] = useState(false);
@@ -237,11 +238,15 @@ export function AddFromGroupDialog({ groups }: { groups: GroupOption[] }) {
           {selected.size > 0 ? (
             <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Role" hint="Applied to everyone selected. Edit individually later.">
-                  <Input name="role" defaultValue="Support" required />
+                <MemberSuggestionLists options={options} />
+                <Field label="Team" hint="Applied to everyone selected.">
+                  <TeamSelect teams={options.teams} />
+                </Field>
+                <Field label="Designation" hint="Applied to everyone selected. Edit individually later.">
+                  <Input name="role" defaultValue="Support" list="member-designations" required />
                 </Field>
                 <Field label="Department" hint="Optional.">
-                  <Input name="department" placeholder="e.g. Retail" />
+                  <Input name="department" placeholder="e.g. Customer Support" list="member-departments" />
                 </Field>
               </div>
 

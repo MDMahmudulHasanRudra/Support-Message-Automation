@@ -5,16 +5,21 @@ import { Card, HelpButton, HelpSection, PageHeader, SectionHeader, ViewOnlyNotic
 import { AddTeamMemberForm } from "./AddTeamMemberForm";
 import { TeamMembersTable, type TeamMemberRow } from "./TeamMembersTable";
 import { AddFromGroupDialog } from "./AddFromGroupDialog";
+import { loadMemberFormOptions } from "./memberFormOptions";
 
 export default async function TeamMembersPage() {
   const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
-  const [members, groups] = await Promise.all([
-    prisma.internalTeamMember.findMany({ orderBy: { createdAt: "desc" } }) as Promise<TeamMemberRow[]>,
+  const [members, groups, options] = await Promise.all([
+    prisma.internalTeamMember.findMany({
+      orderBy: { createdAt: "desc" },
+      include: { team: { select: { id: true, name: true, status: true } } },
+    }) as Promise<TeamMemberRow[]>,
     prisma.whatsAppGroup.findMany({
       where: { isActive: true },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
+    loadMemberFormOptions(),
   ]);
 
   return (
@@ -24,7 +29,7 @@ export default async function TeamMembersPage() {
         description="Messages from active team members are ignored by client automation by default."
         actions={
           <>
-            <AddFromGroupDialog groups={groups} />
+            <AddFromGroupDialog groups={groups} options={options} />
             <HelpButton moduleTitle="Internal Team Members">
             <HelpSection title="What this page is for">
               <p>
@@ -51,6 +56,15 @@ export default async function TeamMembersPage() {
                 also be scoped to "Sender = Team Member" or "Sender = Client" directly. And in a
                 Priority Support group, a message from an active team member is treated as a human
                 reply — it immediately closes any open escalation case for that chat.
+              </p>
+            </HelpSection>
+            <HelpSection title="Team, Department and Designation">
+              <p>
+                Three different things. <strong>Team</strong> is the group someone belongs to (Support
+                Team, Billing Team), picked from the teams on the Teams page — it is what the Team
+                Report filters by. <strong>Department</strong> is the part of the company they sit in,
+                and <strong>Designation</strong> is their job title (Support Executive, CTO). Changing
+                someone&apos;s team keeps their past work with the team they were in at the time.
               </p>
             </HelpSection>
             <HelpSection title="Disable vs. Delete">
@@ -80,7 +94,7 @@ export default async function TeamMembersPage() {
       {canManage ? (
         <Card className="mb-6">
           <SectionHeader title="Add Team Member" />
-          <AddTeamMemberForm />
+          <AddTeamMemberForm options={options} />
         </Card>
       ) : null}
 

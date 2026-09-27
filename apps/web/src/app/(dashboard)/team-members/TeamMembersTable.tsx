@@ -14,6 +14,7 @@ export interface TeamMemberRow {
   role: string;
   department: string | null;
   status: string;
+  team: { id: string; name: string; status: string } | null;
 }
 
 type DialogState = { kind: "delete" | "toggle"; member: TeamMemberRow } | null;
@@ -45,7 +46,8 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
           <tr>
             <Th>Name</Th>
             <Th>Phone</Th>
-            <Th>Role</Th>
+            <Th>Team</Th>
+            <Th>Designation</Th>
             <Th>Department</Th>
             <Th>Status</Th>
             <Th>Actions</Th>
@@ -65,6 +67,18 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
                       <Badge color="yellow">Needs phone number</Badge>
                     </span>
                   </Tooltip>
+                ) : null}
+              </Td>
+              <Td>
+                {m.team ? (
+                  <Link className="link" href={`/teams/${m.team.id}`}>
+                    {m.team.name}
+                  </Link>
+                ) : (
+                  <span className="text-[color:var(--color-subtle-foreground)]">No team</span>
+                )}
+                {m.team?.status === "DISABLED" ? (
+                  <span className="ml-1.5 text-[11px] text-[color:var(--color-subtle-foreground)]">(disabled)</span>
                 ) : null}
               </Td>
               <Td>{m.role}</Td>

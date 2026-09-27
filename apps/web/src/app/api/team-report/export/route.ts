@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { sanitizeExcelRow } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
-import { bucketLabel, loadTeamReport, memberLabel, parseTeamReportFilters } from "@/server/teamReport";
+import { bucketLabel, loadTeamReport, memberLabel, parseTeamReportFilters, scopeLabel } from "@/server/teamReport";
 
 /**
  * Team Report export. A Route Handler because a file download cannot come from a Server Action —
@@ -37,6 +37,12 @@ const WAIT_RESULT: Record<string, string> = {
   PENDING: "Still within time",
 };
 
+/** A download name with spaces and non-ASCII (Bangla team names) intact where browsers support it. */
+function contentDisposition(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
 function toCsv(rows: Array<Record<string, unknown>>): string {
   if (rows.length === 0) return "";
   const headers = Object.keys(rows[0]!);
@@ -52,9 +58,12 @@ export async function GET(request: NextRequest) {
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
   const format = params.format === "xlsx" ? "xlsx" : "csv";
   const now = new Date();
-  const filters = parseTeamReportFilters(params, now);
-  const { range, result, memberNames, groups, rules } = await loadTeamReport(filters, now);
-  const scope = filters.memberId ? memberLabel(filters.memberId, memberNames) : "All team members";
+  const { filters, range, result, memberNames, groups, rules, teamName } = await loadTeamReport(
+    parseTeamReportFilters(params, now),
+    now,
+  );
+  const memberName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
+  const scope = scopeLabel(teamName, memberName);
   const groupName = (key: string) => groups.get(key)?.name ?? key;
 
   const groupRows = result.groups.map((row) =>
@@ -79,13 +88,16 @@ export async function GET(request: NextRequest) {
     }),
   );
 
-  const slug = `${range.start.toISOString().slice(0, 10)}_${filters.period}${filters.memberId ? "_member" : ""}`;
+  // "Team Report - Support Team - September 2026": the file says what it is once it has left the page.
+  // Only characters every filesystem accepts, so a team called "Sales/Retail" still downloads.
+  const safe = (text: string) => text.replace(/[^\p{L}\p{N} .–_-]+/gu, " ").replace(/\s+/g, " ").trim();
+  const slug = [teamName, memberName, range.label].filter(Boolean).map((part) => safe(part!)).join(" - ");
 
   if (format === "csv") {
     return new NextResponse(toCsv(groupRows), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="team-report-groups_${slug}.csv"`,
+        "Content-Disposition": contentDisposition(`Team Report groups - ${slug}.csv`),
       },
     });
   }
@@ -93,6 +105,9 @@ export async function GET(request: NextRequest) {
   const { summary } = result;
   const summaryRows = [
     { Metric: "Report", Value: `${scope} · ${range.label}` },
+    { Metric: "Team", Value: teamName ?? "All teams" },
+    { Metric: "Team member", Value: memberName ?? "All" },
+    { Metric: "Breakdown", Value: filters.granularity },
     { Metric: "Period start (Asia/Dhaka)", Value: iso(range.start.getTime()) },
     { Metric: "Period end (Asia/Dhaka, exclusive)", Value: iso(range.end.getTime()) },
     { Metric: "Groups supported", Value: summary.groupsSupported },
@@ -145,9 +160,7 @@ export async function GET(request: NextRequest) {
   );
 
   // Every wait that went past its threshold — the rows behind the Missed and Recall figures.
-  const missedRows = result.waits
-    .filter((w) => w.status === "RECALLED" || w.status === "MISSED")
-    .map((w) =>
+  const missedRows = result.countedMissedWaits.map((w) =>
       sanitizeExcelRow({
         Group: groupName(w.groupKey),
         "Group ID": w.groupKey,
@@ -174,7 +187,7 @@ export async function GET(request: NextRequest) {
   return new NextResponse(buffer as unknown as BodyInit, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="team-report_${slug}.xlsx"`,
+      "Content-Disposition": contentDisposition(`Team Report - ${slug}.xlsx`),
     },
   });
 }

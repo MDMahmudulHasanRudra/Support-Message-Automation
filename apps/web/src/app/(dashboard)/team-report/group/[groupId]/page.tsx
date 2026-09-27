@@ -54,11 +54,15 @@ export default async function TeamReportGroupPage({
   if (!group) notFound();
 
   const now = new Date();
-  const filters = parseTeamReportFilters(query, now);
-  const { range, result, memberNames, rules } = await loadTeamReport(filters, now, group.whatsappGroupId);
+  const { filters, range, result, memberNames, rules, teamName } = await loadTeamReport(
+    parseTeamReportFilters(query, now),
+    now,
+    group.whatsappGroupId,
+  );
   const row = result.groups.find((g) => g.groupKey === group.whatsappGroupId) ?? null;
   const backHref = `/team-report?${teamReportQuery(filters)}`;
-  const scopedName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
+  // One member, or a Team: whose replies and time the figures below are.
+  const scopedName = filters.memberId ? memberLabel(filters.memberId, memberNames) : teamName;
   const waits = result.waits.slice(0, MAX_WAIT_ROWS);
 
   return (
