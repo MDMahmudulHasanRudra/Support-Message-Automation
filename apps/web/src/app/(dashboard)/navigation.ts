@@ -179,6 +179,53 @@ export function settingsSectionsFor(granted: ReadonlySet<string>): SettingsSecti
   })).filter((section) => section.links.length > 0);
 }
 
+/**
+ * Every report, reached from one "All Reports" page instead of a link at the end of each module.
+ *
+ * Reports were split by the module that produced them — Support Activity's Reports under one group,
+ * Team Management's Duty History under another — so somebody looking for "the report" had to know
+ * which department owned it. The pages did not move; `/reports` lists them as cards, and the one
+ * sidebar entry stays lit while either is open. Add a report here, not at the end of its module.
+ */
+export interface ReportPage extends NavLink {
+  /** The module that produces it, shown on its card. */
+  module: string;
+  description: string;
+}
+
+export const REPORT_PAGES: ReportPage[] = [
+  {
+    href: "/support-activity/reports",
+    label: "Support Activity",
+    icon: Activity,
+    module: "Support Activity",
+    description: "Support activity and session history by WhatsApp group, for any date range, with CSV and Excel export.",
+  },
+  {
+    href: "/team-management/attendance",
+    label: "Duty History",
+    icon: CalendarDays,
+    module: "Team Management",
+    description: "Each person's scheduled shift against the hours and messages actually recorded, by day.",
+  },
+];
+
+export const REPORTS_LINK: NavLink = { href: "/reports", label: "All Reports", icon: BarChart3 };
+
+/** Whether a path is the reports hub or one of the reports it lists (or anything beneath one). */
+export function isReportPath(pathname: string): boolean {
+  if (pathname === REPORTS_LINK.href) return true;
+  return REPORT_PAGES.some((page) => pathname === page.href || pathname.startsWith(`${page.href}/`));
+}
+
+/** The reports this role can open. */
+export function reportPagesFor(granted: ReadonlySet<string>): ReportPage[] {
+  return REPORT_PAGES.filter((page) => {
+    const key = navPermissionFor(page.href);
+    return key === null || granted.has(key);
+  });
+}
+
 // Ordered for day-to-day frequency: live/operational areas checked constantly (messages,
 // escalations, team activity) first, setup/config areas checked occasionally next, advanced
 // analytical modules and system admin — checked rarely — last.
@@ -206,7 +253,6 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/support-activity/team", label: "Team Performance", icon: Users },
       { href: "/support-activity", label: "Activity Feed", icon: Activity },
-      { href: "/support-activity/reports", label: "Reports", icon: BarChart3 },
     ],
   },
   {
@@ -219,8 +265,12 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/team-management", label: "Today", icon: Users },
       { href: "/team-management/schedule", label: "Roster", icon: CalendarDays },
       { href: "/team-management/leave", label: "Leave", icon: ClipboardList },
-      { href: "/team-management/attendance", label: "Duty History", icon: BarChart3 },
     ],
+  },
+  {
+    section: "Support Operations",
+    label: "Reports",
+    links: [REPORTS_LINK],
   },
   {
     section: "Channels & Integrations",
@@ -368,10 +418,12 @@ export function navGroupsFor(granted: ReadonlySet<string>): NavGroup[] {
   // Settings is shown whenever the role can open ANY settings page, and opens the first one it can:
   // a role with AI access but no general settings access must still find its way to AI Settings.
   const firstSettingsPage = settingsSectionsFor(granted)[0]?.links[0] ?? null;
+  const canOpenAnyReport = reportPagesFor(granted).length > 0;
   return NAV_GROUPS.map((group) => ({
     ...group,
     links: group.links.flatMap((link) => {
       if (link === SETTINGS_LINK) return firstSettingsPage ? [{ ...SETTINGS_LINK, href: firstSettingsPage.href }] : [];
+      if (link === REPORTS_LINK) return canOpenAnyReport ? [link] : [];
       const key = navPermissionFor(link.href);
       return key === null || granted.has(key) ? [link] : [];
     }),
@@ -381,6 +433,7 @@ export function navGroupsFor(granted: ReadonlySet<string>): NavGroup[] {
 export function isNavActive(pathname: string, search: URLSearchParams, href: string, label?: string) {
   // The one Settings entry stands for the whole module, so it stays lit on every settings page.
   if (label === SETTINGS_LINK.label && isSettingsPath(href.split("?")[0]!)) return isSettingsPath(pathname);
+  if (href === REPORTS_LINK.href) return isReportPath(pathname);
   const [hrefPath, hrefQuery = ""] = href.split("?");
   if (hrefPath !== pathname) return false;
   const hrefDecision = new URLSearchParams(hrefQuery).get("decision");
@@ -396,6 +449,7 @@ export const ALL_NAV_LINKS: Array<NavLink & { group: string }> = [
   // No longer in the sidebar one by one, but still a keystroke away in the command palette, and the
   // breadcrumb reads "Settings > AI Providers" rather than nothing.
   ...SETTINGS_SECTIONS.flatMap((section) => section.links.map((link) => ({ ...link, group: "Settings" }))),
+  ...REPORT_PAGES.map(({ href, label, icon }) => ({ href, label, icon, group: "Reports" })),
 ];
 
 /**

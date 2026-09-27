@@ -12,6 +12,7 @@ import {
 } from "@/lib/groupFilters";
 import { GroupsTable, type GroupRow } from "./GroupsTable";
 import { SyncGroupsButton } from "./SyncGroupsButton";
+import { AccountFilter } from "./AccountFilter";
 
 const PAGE_SIZE_OPTIONS = [10, 50, 100, 500, 1000] as const;
 const DEFAULT_PAGE_SIZE = 50;
@@ -214,25 +215,23 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
             Search
           </Button>
         </form>
-        {/* One click per account, not a dropdown plus a Search press: switching numbers is the most
-            common thing done here once there is more than one. Only shown when there is a choice. */}
-        {accounts.length > 1 ? (
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Account">
-            <FilterChip
-              href={buildHref(search, filter, 1, PAGE_SIZE, "")}
-              active={!accountId}
-              label={`All accounts (${groupsPerAccount.reduce((sum, row) => sum + row._count._all, 0)})`}
-            />
-            {accounts.map((a) => (
-              <FilterChip
-                key={a.id}
-                href={buildHref(search, filter, 1, PAGE_SIZE, a.id)}
-                active={accountId === a.id}
-                label={`${a.label}${a.isPrimary ? " · Primary" : ""} (${groupsPerAccount.find((row) => row.accountId === a.id)?._count._all ?? 0})`}
-              />
-            ))}
-          </div>
-        ) : null}
+        {/* Right after Search, always visible — even with one number, it says which account's
+            groups these are. Applies on change; see AccountFilter. */}
+        <AccountFilter
+          value={accountId ?? ""}
+          options={[
+            {
+              value: "",
+              label: `All accounts (${groupsPerAccount.reduce((sum, row) => sum + row._count._all, 0)})`,
+              href: buildHref(search, filter, 1, PAGE_SIZE, ""),
+            },
+            ...accounts.map((a) => ({
+              value: a.id,
+              label: `${a.label}${a.isPrimary ? " · Primary" : ""} (${groupsPerAccount.find((row) => row.accountId === a.id)?._count._all ?? 0})`,
+              href: buildHref(search, filter, 1, PAGE_SIZE, a.id),
+            })),
+          ]}
+        />
         <div className="flex flex-wrap gap-1.5">
           <FilterChip href={buildHref(search, "all", 1, PAGE_SIZE, accountId ?? "")} active={filter === "all"} label={`All (${allCount})`} />
           <FilterChip
