@@ -18,6 +18,7 @@ import { expandQueryTerms } from "./queryExpansion.js";
 import { loadConversationContext } from "./conversationContext.js";
 import { recordUnansweredQuestion } from "../forge/forgeResearchJob.js";
 import { mentionTeamForHandover } from "./mentionTeam.js";
+import { sendUnableToUnderstandReply } from "./unableToUnderstandReply.js";
 import { researchForCustomerQuestion } from "./deepAnswer.js";
 import { getApprovedStyleGuidance } from "../knowledge/communicationStyleJob.js";
 import { recordAiSupportActivity } from "../supportActivity/recordAiSupport.js";
@@ -176,6 +177,34 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
         });
       } catch (err) {
         console.error("[aiFallback] could not link the handover alert to its decision", err);
+      }
+    }
+
+    // Tell the CUSTOMER too, when that is switched on and the AI genuinely had nothing reliable to
+    // say — "we could not understand this, the support team will follow up". Runs only on the pass
+    // that claimed the decision above, so a re-run can never send it twice; the throttle-caused
+    // handovers never qualify (see packages/shared/src/unableToUnderstand.ts).
+    const holdingReplyId = await sendUnableToUnderstandReply({
+      reason,
+      aiSettings,
+      automationSettings: params.automationSettings,
+      accountId: params.accountId,
+      groupId: params.group?.id ?? null,
+      chatId: params.chatId,
+      toPhone: params.toPhone,
+      incomingMessageId: params.message.id,
+      messageBody: params.message.body,
+      testMode: params.group?.testModeEnabled ?? false,
+      correlationId: params.correlationId ?? null,
+    });
+    if (holdingReplyId) {
+      try {
+        await prisma.aiFallbackDecision.update({
+          where: { id: decision.id },
+          data: { holdingReplyOutboundMessageId: holdingReplyId },
+        });
+      } catch (err) {
+        console.error("[aiFallback] could not link the holding reply to its decision", err);
       }
     }
 

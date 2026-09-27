@@ -2,7 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
-import { FALLBACK_REPLY_LANGUAGE } from "@support-automation/shared";
+import {
+  clampRepeatMinutes,
+  FALLBACK_REPLY_LANGUAGE,
+  UNABLE_TO_UNDERSTAND_REPEAT_DEFAULT,
+  validateUnableToUnderstandReply,
+} from "@support-automation/shared";
 import { checkPermission } from "@/server/authorize";
 import { isAiResponseMode } from "@/lib/aiResponseModes";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -53,6 +58,10 @@ export async function updateAiSettings(
   const responseMode = isAiResponseMode(rawMode) ? rawMode : "STRICT_KNOWLEDGE_ONLY";
   // One WhatsApp group id per line, blanks dropped — the same shape the general notification
   // group field already uses.
+  // The customer reads this exact text, so it is checked here and not only in the browser: blank
+  // (or the default itself) is stored as null = "use the default", never as an empty message.
+  const unableReply = validateUnableToUnderstandReply(String(formData.get("unableToUnderstandReplyText") ?? ""));
+  if (!unableReply.ok) return { error: unableReply.error };
   const takeoverNotifyGroupIds = String(formData.get("takeoverNotifyGroupIds") ?? "")
     .split(/[\r\n,]+/)
     .map((value) => value.trim())
@@ -79,6 +88,11 @@ export async function updateAiSettings(
       aiAutomationScope: scope,
       aiRuleGenerationEnabled: flag("aiRuleGenerationEnabled"),
       mentionTeamOnHandover: flag("mentionTeamOnHandover"),
+      unableToUnderstandReplyEnabled: flag("unableToUnderstandReplyEnabled"),
+      unableToUnderstandReplyText: unableReply.value,
+      unableToUnderstandRepeatMinutes: clampRepeatMinutes(
+        nonNegativeInt("unableToUnderstandRepeatMinutes", UNABLE_TO_UNDERSTAND_REPEAT_DEFAULT),
+      ),
       aiRuleGenerationMinConfidence: percent("aiRuleGenerationMinConfidence", 95),
       takeoverNotifyGroupIds,
       knowledgeFromChatEnabled: flag("knowledgeFromChatEnabled"),

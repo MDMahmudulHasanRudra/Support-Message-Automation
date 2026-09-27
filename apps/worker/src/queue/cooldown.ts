@@ -1,4 +1,5 @@
 import { prisma } from "@support-automation/db";
+import { UNABLE_TO_UNDERSTAND_VARIANT } from "@support-automation/shared";
 
 /**
  * True if this client already has a reply for this rule in flight or sent
@@ -52,6 +53,11 @@ export async function isCooldownActive(params: {
       // Mentions are the only rows this path ever gives a non-empty `mentions` array, so this is
       // an exact identification of them and touches no ordinary reply.
       mentions: { isEmpty: true },
+      // The "we could not understand, the team will follow up" holding reply is the same shape of
+      // row and the same kind of thing: sent BECAUSE nothing was answered. Counting it would block
+      // the customer's next, clearer message from being answered, and cancel the handover mention
+      // queued right after it at send time. `idempotencyKey` is required, so NOT is NULL-safe here.
+      NOT: { idempotencyKey: { endsWith: `:${UNABLE_TO_UNDERSTAND_VARIANT}` } },
       status: { in: ["PENDING", "PROCESSING", "SENT"] },
       createdAt: { gte: since },
       ...(params.excludeOutboundMessageId ? { id: { not: params.excludeOutboundMessageId } } : {}),

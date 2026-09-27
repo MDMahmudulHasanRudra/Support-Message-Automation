@@ -24,6 +24,8 @@ export interface AiActivityRow {
   tokensUsed: number | null;
   /** Set when the AI's reply was actually queued — links the decision to what was sent. */
   outboundStatus: string | null;
+  /** The customer was sent the "we could not understand, the team will follow up" holding reply. */
+  holdingReplySent: boolean;
 }
 
 /**
@@ -190,6 +192,11 @@ export function AiActivityTable({ rows }: { rows: AiActivityRow[] }) {
                     </span>
                     {explainReason(row.reason) ? (
                       <span className="mt-0.5 block text-xs leading-relaxed">{explainReason(row.reason)}</span>
+                    ) : null}
+                    {row.holdingReplySent ? (
+                      <span className="mt-1 block text-xs text-[color:var(--color-muted-foreground)]">
+                        Customer was sent the “unable to understand” message.
+                      </span>
                     ) : null}
                   </>
                 ) : (

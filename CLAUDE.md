@@ -888,6 +888,33 @@ else — `OutboundMessage.mentions` carries the contact ids and the provider use
 `sendTextWithMentions` only when that array is non-empty, so no ordinary reply changes send path to
 serve this.
 
+**Telling the customer when AI could not answer** (`aiFallback/unableToUnderstandReply.ts`,
+`packages/shared/src/unableToUnderstand.ts`, `AiSettings.unableToUnderstandReply*`, off by default).
+On a handover, send the customer an admin-editable holding reply ("we could not understand this, the
+support team will follow up"). Four decisions worth not undoing:
+
+- **Only handovers where the AI had no reliable answer qualify, listed explicitly**
+  (`UNABLE_TO_UNDERSTAND_REASONS`: MEDIA_ONLY_MESSAGE, NO_KNOWLEDGE*, NO_BUSINESS_KNOWLEDGE,
+  AI_DECLINED, EMPTY_RESPONSE, LOW_CONFIDENCE*, INVENTED_PROCEDURE). A handover the SYSTEM caused —
+  SAFETY_BLOCKED (the throttles protecting the number; another message there defeats them),
+  AI_UNAVAILABLE, AI_ERROR, TRUNCATED/MALFORMED — never sends, and neither does any reason added
+  later until somebody puts it on the list.
+- **A plain acknowledgement never gets it** (`isAcknowledgementOnly`: "ok vai", "thanks",
+  "ধন্যবাদ", emoji). Under the default strict mode every one of those is a NO_KNOWLEDGE handover, and
+  answering "sorry, I did not understand" to a thank-you is the false trigger the feature must not have.
+- **It is not an answer, so the AI reply cooldown ignores it** (`queue/cooldown.ts` excludes its
+  idempotency variant, exactly as it excludes the handover mention). Counting it would block the
+  customer's next, clearer message and cancel the mention queued right after it at send time.
+- **Idempotent three ways**: it runs only on the pass that claimed the `AiFallbackDecision` row; its
+  own `idempotencyVariant` ("unable-to-understand") allows one row per customer message; and
+  `unableToUnderstandRepeatMinutes` stops a burst of unclear messages getting one each. It re-runs
+  `checkAutoReplySafety` without the AI cooldown (kill switch, MANUAL_ONLY, monitored group, rate
+  limits all still decide) and goes through `enqueueOutboundMessage` — no second send path.
+  `AiFallbackDecision.holdingReplyOutboundMessageId` records it for the AI Activity log.
+
+Wording: `unableToUnderstandReplyText` null = the built-in Bangla default, so Restore is "forget my
+edit" and saving the default text stores null too — same shape as Notification Templates.
+
 ### Outbound rate limits are shaped for conversation, not for one acknowledgement
 
 The original limits assumed automation sent a single acknowledgement per customer. Once AI answers

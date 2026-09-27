@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { Alert, Button, Card, Field, GroupPicker, Input, SectionHeader, Select, SwitchField, Textarea, type PickableGroup, useToast } from "@/components/ui";
 import { ReplyLanguageField } from "./ReplyLanguageField";
+import { UnableToUnderstandFields } from "./UnableToUnderstandFields";
 import { updateAiSettings, type AiSettingsFormState } from "@/server/actions/aiSettings";
 import type { AiSettings } from "@prisma/client";
 
@@ -271,6 +272,12 @@ export function AiSettingsForm({
             description="Posts one message in the conversation itself, @mentioning the group's assigned member — or whoever opted into handover alerts if there is none. The customer sees that somebody has been called, and the person is asked where the work actually is. Off by default: it puts an extra message in front of the customer."
           />
         </div>
+
+        <UnableToUnderstandFields
+          enabled={settings.unableToUnderstandReplyEnabled}
+          text={settings.unableToUnderstandReplyText}
+          repeatMinutes={settings.unableToUnderstandRepeatMinutes}
+        />
 
         <Field label="Send takeover alerts to these WhatsApp groups">
           <GroupPicker

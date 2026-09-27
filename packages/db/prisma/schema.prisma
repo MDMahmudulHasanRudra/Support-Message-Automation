@@ -1798,27 +1798,39 @@ model AiSettings {
   /// When AI hands a conversation to a person, also post in the customer's own group tagging a
   /// team member, so the request for help appears where the conversation is rather than only in a
   /// separate alerts group. Off by default — it puts an extra message in front of the customer.
-  mentionTeamOnHandover        Boolean        @default(false)
+  mentionTeamOnHandover           Boolean        @default(false)
+  /// When AI hands a customer's message to a person because it had no reliable answer (an image
+  /// it cannot see, nothing verified to go on, low confidence, it declined), send the customer a
+  /// holding reply saying the support team will follow up. Never for a handover the SYSTEM caused
+  /// (rate limits, cooldowns, provider errors) — see packages/shared/src/unableToUnderstand.ts.
+  /// Off by default: it puts a message in front of the customer.
+  unableToUnderstandReplyEnabled  Boolean        @default(false)
+  /// The admin's wording. Null = the built-in default, so Reset forgets the edit rather than
+  /// freezing today's default into the row.
+  unableToUnderstandReplyText     String?
+  /// No second holding reply in the same conversation within this many minutes: somebody sending
+  /// five unclear messages in a row hears it once, not five times. 0 = every message.
+  unableToUnderstandRepeatMinutes Int            @default(30)
   /// WhatsApp group ids that receive "AI could not handle this, a human is needed" alerts.
   /// Empty falls back to AutomationSettings.whatsappNotificationGroupIds, so existing
   /// deployments keep alerting exactly where they already did.
-  takeoverNotifyGroupIds       String[]       @default([])
+  takeoverNotifyGroupIds          String[]       @default([])
   /// Read whole group conversations and distil them into knowledge base entries.
-  knowledgeFromChatEnabled     Boolean        @default(false)
+  knowledgeFromChatEnabled        Boolean        @default(false)
   /// A group with fewer stored messages than this is skipped by the knowledge builder —
   /// there is not enough conversation there to draw a reliable conclusion from.
-  knowledgeMinMessagesPerGroup Int            @default(25)
+  knowledgeMinMessagesPerGroup    Int            @default(25)
   /// What the AI may answer from. STRICT_KNOWLEDGE_ONLY is the default and the safe choice.
   ///
   /// Note what is deliberately NOT configurable: under either mode, a question about this
   /// company's own product, policies or accounts is answered only from verified knowledge, and
   /// otherwise goes to a person. Relaxing the mode widens what counts as answerable *general*
   /// conversation; it never lets the model invent this business's behaviour.
-  aiResponseMode               AiResponseMode @default(STRICT_KNOWLEDGE_ONLY)
+  aiResponseMode                  AiResponseMode @default(STRICT_KNOWLEDGE_ONLY)
   /// The bar for an answer given from the model's own knowledge with nothing verified behind it.
   /// Deliberately separate from, and normally higher than, autoResponseConfidenceThreshold:
   /// an ungrounded answer carries more risk than one backed by the team's own material.
-  generalAnswerMinConfidence   Int            @default(90)
+  generalAnswerMinConfidence      Int            @default(90)
 
   /// The language the AI answers in unless the customer clearly wrote in another one.
   ///
@@ -2078,10 +2090,14 @@ model AiFallbackDecision {
   /// text, same convention as SystemLog's own message field, not branched on anywhere in code.
   reason          String?
 
-  outboundMessageId String?          @unique
-  outboundMessage   OutboundMessage? @relation(fields: [outboundMessageId], references: [id], onDelete: SetNull)
-  notificationId    String?          @unique
-  notification      Notification?    @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+  outboundMessageId             String?          @unique
+  outboundMessage               OutboundMessage? @relation(fields: [outboundMessageId], references: [id], onDelete: SetNull)
+  notificationId                String?          @unique
+  notification                  Notification?    @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+  /// The "we could not understand, the team will follow up" reply sent to the customer on this
+  /// handover, if one was (AiSettings.unableToUnderstandReplyEnabled). Plain id, like the queue row
+  /// it points at, so the AI Activity log can say the customer was told.
+  holdingReplyOutboundMessageId String?
 
   tokensUsed Int?
 

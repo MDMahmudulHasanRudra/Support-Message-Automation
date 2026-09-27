@@ -125,6 +125,7 @@ export default async function AiActivityPage({
     modelId: d.modelId,
     tokensUsed: d.tokensUsed,
     outboundStatus: d.outboundMessage?.status ?? null,
+    holdingReplySent: d.holdingReplyOutboundMessageId !== null,
   }));
 
   const buildHref = (nextPage: number) => {

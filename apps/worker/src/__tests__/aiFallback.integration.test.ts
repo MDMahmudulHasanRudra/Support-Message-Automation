@@ -12,6 +12,8 @@ import { buildOutboundIdempotencyKey } from "../pipeline/idempotency.js";
 import { checkAiFallbackEligibility } from "../aiFallback/eligibility.js";
 import { parseFallbackResponse } from "../aiFallback/prompt.js";
 import { MockAiClient } from "./mockAiClient.js";
+import type { AiClient } from "@support-automation/ai-client";
+import { DEFAULT_UNABLE_TO_UNDERSTAND_REPLY } from "@support-automation/shared";
 
 /**
  * Integration tests for the Hybrid AI Automation fallback layer (apps/worker/src/aiFallback/).
@@ -80,6 +82,10 @@ async function resetAiSettings(overrides: Partial<AiSettings> = {}) {
       // SCOPE: GENERAL. The knowledge gate itself has its own tests at the end of this file.
       aiResponseMode: "KNOWLEDGE_PLUS_GENERAL",
       generalAnswerMinConfidence: 90,
+      // Off unless a test turns it on, so the holding-reply suite cannot leak into the others.
+      unableToUnderstandReplyEnabled: false,
+      unableToUnderstandReplyText: null,
+      unableToUnderstandRepeatMinutes: 30,
       ...overrides,
     },
   });
@@ -996,5 +1002,150 @@ describe("outbound idempotency key — reply vs handover mention", () => {
     expect(buildOutboundIdempotencyKey({ ...base, variant: "handover-mention" })).toBe(
       buildOutboundIdempotencyKey({ ...base, variant: "handover-mention" }),
     );
+  });
+});
+
+describe("AI unable-to-understand holding reply", () => {
+  async function ask(body: string, senderPhone: string, client: AiClient = new MockAiClient()) {
+    await processIncomingMessage(
+      {
+        accountId: account.id,
+        whatsappMessageId: randomUUID(),
+        whatsappGroupId: group.whatsappGroupId,
+        chatId: group.whatsappGroupId,
+        senderPhone,
+        direction: "INCOMING",
+        body,
+        timestampWa: new Date(),
+      },
+      client,
+    );
+    return prisma.message.findFirstOrThrow({ where: { accountId: account.id, senderPhone }, orderBy: { createdAt: "desc" } });
+  }
+
+  /** Every holding reply queued for this account — they carry the dedicated idempotency variant. */
+  const holdingReplies = () =>
+    prisma.outboundMessage.findMany({
+      where: { accountId: account.id, idempotencyKey: { endsWith: ":unable-to-understand" } },
+    });
+
+  it("OFF (the default): a handover alerts the team and sends the customer nothing", async () => {
+    await resetAiSettings({ aiResponseMode: "STRICT_KNOWLEDGE_ONLY" });
+    const message = await ask("how do I change my billing date", uniquePhone());
+    const decision = await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: message.id } });
+    expect(decision.reason).toBe("NO_KNOWLEDGE");
+    expect(decision.notificationId).not.toBeNull();
+    expect(await prisma.outboundMessage.count({ where: { accountId: account.id } })).toBe(0);
+    expect(decision.holdingReplyOutboundMessageId).toBeNull();
+  });
+
+  it("ON: nothing verified covers the question — the customer gets the default holding reply, once", async () => {
+    await resetAiSettings({ aiResponseMode: "STRICT_KNOWLEDGE_ONLY", unableToUnderstandReplyEnabled: true });
+    const message = await ask("how do I change my billing date", uniquePhone());
+    const decision = await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: message.id } });
+    const rows = await holdingReplies();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.body).toBe(DEFAULT_UNABLE_TO_UNDERSTAND_REPLY);
+    expect(rows[0]!.actionType).toBe("AUTO_REPLY");
+    expect(rows[0]!.relatedMessageId).toBe(message.id);
+    expect(decision.holdingReplyOutboundMessageId).toBe(rows[0]!.id);
+    // The team is still told: this is added to the handover, it does not replace it.
+    expect(decision.notificationId).not.toBeNull();
+  });
+
+  it("ON: sends the admin's own wording when one is saved", async () => {
+    await resetAiSettings({
+      aiResponseMode: "STRICT_KNOWLEDGE_ONLY",
+      unableToUnderstandReplyEnabled: true,
+      unableToUnderstandReplyText: "Sorry, a colleague will reply shortly.",
+    });
+    await ask("something nobody wrote down", uniquePhone());
+    expect((await holdingReplies()).map((row) => row.body)).toEqual(["Sorry, a colleague will reply shortly."]);
+  });
+
+  it("ON: an image it cannot see gets the holding reply, without an AI call", async () => {
+    await resetAiSettings({ unableToUnderstandReplyEnabled: true });
+    const client = new MockAiClient();
+    const message = await ask("[Image]", uniquePhone(), client);
+    expect((await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: message.id } })).reason).toBe("MEDIA_ONLY_MESSAGE");
+    expect(client.requests).toHaveLength(0);
+    expect(await holdingReplies()).toHaveLength(1);
+  });
+
+  it("ON: the AI declining, or being unsure, both count", async () => {
+    await resetAiSettings({ unableToUnderstandReplyEnabled: true, unableToUnderstandRepeatMinutes: 0 });
+    const declined = new MockAiClient();
+    declined.nextText = "INTENT: unclear\nSCOPE: GENERAL\nCONFIDENCE: 90\nSHOULD_REPLY: NO\nRESPONSE: NONE";
+    await ask("asdf qwer zxcv", uniquePhone(), declined);
+    const unsure = new MockAiClient();
+    unsure.nextText = "INTENT: unclear\nSCOPE: GENERAL\nCONFIDENCE: 40\nSHOULD_REPLY: YES\nRESPONSE: Maybe?";
+    await ask("what about the thing from before", uniquePhone(), unsure);
+    const reasons = (await prisma.aiFallbackDecision.findMany({ where: { accountId: account.id } })).map((d) => d.reason).sort();
+    expect(reasons).toEqual(["AI_DECLINED", "LOW_CONFIDENCE_GENERAL"]);
+    expect(await holdingReplies()).toHaveLength(2);
+  });
+
+  it("ON: a normal confident answer is sent exactly as before, with no holding reply", async () => {
+    await resetAiSettings({ unableToUnderstandReplyEnabled: true });
+    const client = new MockAiClient();
+    client.nextText = "INTENT: package change\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure, which package would you like?";
+    const message = await ask("I want to change my package", uniquePhone(), client);
+    const decision = await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: message.id } });
+    expect(decision.outcome).toBe("AI_REPLIED");
+    const outbound = await prisma.outboundMessage.findMany({ where: { accountId: account.id } });
+    expect(outbound.map((row) => row.body)).toEqual(["Sure, which package would you like?"]);
+  });
+
+  it("ON: a handover the SYSTEM caused (rate limit, provider error) never tells the customer they were not understood", async () => {
+    await resetAiSettings({ unableToUnderstandReplyEnabled: true, unableToUnderstandRepeatMinutes: 0 });
+    await resetAutomationSettings({ maxRepliesPerClientPerHour: 0 });
+    const confident = new MockAiClient();
+    confident.nextText = "INTENT: x\nSCOPE: GENERAL\nCONFIDENCE: 96\nSHOULD_REPLY: YES\nRESPONSE: Sure!";
+    const limited = await ask("package change please", uniquePhone(), confident);
+    expect((await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: limited.id } })).reason).toMatch(/^SAFETY_BLOCKED:/);
+
+    await resetAutomationSettings();
+    const failing: AiClient = {
+      complete: async () => {
+        throw new Error("529 overloaded");
+      },
+    };
+    const errored = await ask("another question", uniquePhone(), failing);
+    expect((await prisma.aiFallbackDecision.findUniqueOrThrow({ where: { messageId: errored.id } })).reason).toMatch(/^AI_ERROR/);
+    expect(await prisma.outboundMessage.count({ where: { accountId: account.id } })).toBe(0);
+  });
+
+  it("ON: 'ok vai' and a Bangla thank-you are not answered with 'I did not understand'", async () => {
+    await resetAiSettings({ aiResponseMode: "STRICT_KNOWLEDGE_ONLY", unableToUnderstandReplyEnabled: true, unableToUnderstandRepeatMinutes: 0 });
+    await ask("ok vai", uniquePhone());
+    await ask("ধন্যবাদ ভাইয়া", uniquePhone());
+    expect(await prisma.aiFallbackDecision.count({ where: { accountId: account.id } })).toBe(2);
+    expect(await holdingReplies()).toHaveLength(0);
+  });
+
+  it("ON: a burst of unclear messages in one conversation hears it once, and is not blocked from a real answer by it", async () => {
+    await resetAiSettings({
+      aiResponseMode: "STRICT_KNOWLEDGE_ONLY",
+      unableToUnderstandReplyEnabled: true,
+      aiReplyCooldownSeconds: 3600,
+    });
+    const senderPhone = uniquePhone();
+    for (const body of ["first unclear question", "second unclear question", "third unclear question"]) {
+      await ask(body, senderPhone);
+    }
+    expect(await holdingReplies()).toHaveLength(1);
+    // The holding reply is not an answer, so it must not start the AI reply cooldown: every later
+    // message still reached the knowledge gate on its own merits.
+    const reasons = (await prisma.aiFallbackDecision.findMany({ where: { accountId: account.id } })).map((d) => d.reason);
+    expect(reasons).toEqual(["NO_KNOWLEDGE", "NO_KNOWLEDGE", "NO_KNOWLEDGE"]);
+  });
+
+  it("ON: re-running a stranded message does not send a second holding reply", async () => {
+    await resetAiSettings({ aiResponseMode: "STRICT_KNOWLEDGE_ONLY", unableToUnderstandReplyEnabled: true, unableToUnderstandRepeatMinutes: 0 });
+    const message = await ask("a question nobody wrote down", uniquePhone());
+    expect(await holdingReplies()).toHaveLength(1);
+    const context = await loadStoredMessageContext(message.id);
+    await runAutomationStage(context!.raw, context!.stored, `recovery:${message.id}`, new MockAiClient());
+    expect(await holdingReplies()).toHaveLength(1);
   });
 });

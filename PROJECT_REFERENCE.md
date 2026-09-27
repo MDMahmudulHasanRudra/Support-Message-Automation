@@ -808,6 +808,17 @@ switch gates all of it.
     message), and *Send takeover alerts to these WhatsApp groups* — a searchable group picker, not
     a box for pasting raw group ids. Left empty, alerts go wherever the global notification
     destinations already point.
+  - **AI Unable-to-Understand Fallback** (off by default): when AI hands a message to a person
+    because it had no reliable answer — a media-only message it cannot see, nothing verified
+    covering the question, low confidence, the AI declining, an empty reply, invented steps — the
+    customer is sent an editable holding message (default: *"দুঃখিত ভাইয়া, আমি বিষয়টি বুঝতে
+    পারিনি। … অনুগ্রহ করে একটু সময় অপেক্ষা করুন।"*) saying the support team will follow up. A
+    textarea with a live WhatsApp-style preview, a **Restore default message** button (saving the
+    default or a blank box stores "use the default"), a 1,000-character limit, and **Don't repeat it
+    in the same conversation for (minutes)** (default 30; 0 = every message). Never sent when a rate
+    limit, cooldown, provider error, truncated or malformed reply stopped the answer, and never to a
+    plain "ok"/"thanks"/"ধন্যবাদ". The team alert and the optional tag still happen. The AI Activity
+    log notes each handover where the customer was sent it.
   - **Build knowledge from group chats** + *Minimum new messages per group* — a group with less
     conversation than this is skipped, because there is not enough there to draw a reliable
     conclusion from.
