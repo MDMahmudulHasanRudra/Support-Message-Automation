@@ -353,14 +353,27 @@ describe("suppression", () => {
 });
 
 describe("what must never alarm", () => {
-  it("says nothing about an account with no monitored groups", async () => {
+  it("says nothing about an account that is in no groups at all", async () => {
     // A spare number in nothing is supposed to be silent. Alarming here would make the alert
     // useless within a day.
     await storeMessage(LONG_AGO());
     await setStatus("AUTHENTICATION_REQUIRED");
-    await prisma.whatsAppGroup.update({ where: { id: group.id }, data: { isMonitored: false } });
+    await prisma.whatsAppGroup.update({ where: { id: group.id }, data: { isActive: false } });
 
     expect(findingsForAccount(await checkCollectionHealth(registry))).toHaveLength(0);
+
+    await prisma.whatsAppGroup.update({ where: { id: group.id }, data: { isActive: true } });
+  });
+
+  it("but DOES watch an account whose groups are active and simply not monitored", async () => {
+    // Production on 24 Sep 2026: an inbox-only deployment with zero monitored groups, silently
+    // collecting nothing for hours, skipped by the old monitored-only selection. Monitoring
+    // governs automation, not whether messages must arrive.
+    await storeMessage(LONG_AGO());
+    await setStatus("AUTHENTICATION_REQUIRED");
+    await prisma.whatsAppGroup.update({ where: { id: group.id }, data: { isMonitored: false } });
+
+    expect(findingsForAccount(await checkCollectionHealth(registry))).toHaveLength(1);
 
     await prisma.whatsAppGroup.update({ where: { id: group.id }, data: { isMonitored: true } });
   });

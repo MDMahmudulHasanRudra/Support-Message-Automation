@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { after } from "next/server";
 import { Badge } from "@/components/ui";
 import { pageAccess } from "@/server/authorize";
-import { getChatThread, getSavedReplies } from "@/server/chatInbox";
+import { getChatThread, getReplyAccounts, getSavedReplies } from "@/server/chatInbox";
 import { markChatReviewed } from "@/server/actions/chatOrganisation";
 import { Composer } from "../Composer";
 import { MarkWaitingButton } from "../MarkWaitingButton";
@@ -28,7 +28,11 @@ export default async function ChatConversationPage({
   // navigation within it, so a layout-only check would miss a role changed mid-session.
   const { canManage: canReply } = await pageAccess("messages.view", "messages.reply");
   const { groupId } = await params;
-  const [thread, savedReplies] = await Promise.all([getChatThread(groupId), getSavedReplies()]);
+  const [thread, savedReplies, replyAccounts] = await Promise.all([
+    getChatThread(groupId),
+    getSavedReplies(),
+    getReplyAccounts(groupId),
+  ]);
   if (!thread) notFound();
 
   const { group, entries, hasMore } = thread;
@@ -53,13 +57,15 @@ export default async function ChatConversationPage({
   // First, because it is about the person rather than the conversation: nothing below matters to
   // somebody whose role cannot send at all, and saying "reconnect the account" to them would send
   // them off to fix something they are not allowed to touch.
+  // Sending is only impossible when NO connected account is in this group. The conversation's own
+  // account being offline no longer blocks a reply that another account in the group could send.
   const disabledReason = !canReply
     ? "Your role can read conversations but not reply to them. Ask an administrator for Reply in WhatsApp Chat."
-    : !group.isActive
-    ? `This account is no longer a member of ${group.name}. Resync groups if you have been re-added.`
-    : group.accountStatus !== "CONNECTED"
-      ? `${group.accountLabel} is ${group.accountStatus.toLowerCase()}, so nothing can be sent right now. Reconnect it on WhatsApp Accounts.`
-      : null;
+    : replyAccounts.length > 0
+      ? null
+      : !group.isActive
+        ? `This account is no longer a member of ${group.name}. Resync groups if you have been re-added.`
+        : `${group.accountLabel} is ${group.accountStatus.toLowerCase()}, so nothing can be sent right now. Reconnect it on WhatsApp Accounts.`;
 
   return (
     <>
@@ -140,7 +146,12 @@ export default async function ChatConversationPage({
       </ThreadScroller>
 
       {group.aiAutomationEnabled ? <AiActiveNotice suppressedUntil={group.aiSuppressedUntil} /> : null}
-      <Composer groupId={group.id} disabledReason={disabledReason} savedReplies={savedReplies} />
+      <Composer
+        groupId={group.id}
+        disabledReason={disabledReason}
+        savedReplies={savedReplies}
+        replyAccounts={replyAccounts}
+      />
     </>
   );
 }

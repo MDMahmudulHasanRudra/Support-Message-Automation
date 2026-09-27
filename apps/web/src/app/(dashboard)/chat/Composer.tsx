@@ -6,6 +6,7 @@ import { Alert, Button, Textarea } from "@/components/ui";
 import { sendChatMessage, type ChatSendState } from "@/server/actions/chat";
 import { SavedReplyManager } from "./SavedReplyManager";
 import { SavedReplyPicker, type SavedReplyOption } from "./SavedReplyPicker";
+import type { ReplyAccountOption } from "@/server/chatInbox";
 
 const INITIAL: ChatSendState = {};
 
@@ -33,17 +34,26 @@ export function Composer({
   groupId,
   disabledReason,
   savedReplies,
+  replyAccounts = [],
 }: {
   groupId: string;
   /** Non-null when sending is impossible right now (account offline, group left). */
   disabledReason?: string | null;
   savedReplies: SavedReplyOption[];
+  /** Connected accounts in this group, the likeliest sender first. See `getReplyAccounts`. */
+  replyAccounts?: ReplyAccountOption[];
 }) {
   const sendToGroup = sendChatMessage.bind(null, groupId);
   const [state, formAction, pending] = useActionState(sendToGroup, INITIAL);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [managingReplies, setManagingReplies] = useState(false);
+  // Remembered only while this conversation stays open: the parent keys nothing on it, and a
+  // different conversation starts from its own likeliest sender rather than inheriting a choice
+  // made somewhere else.
+  const [sendAs, setSendAs] = useState(replyAccounts[0]?.groupRowId ?? "");
+  const chosenStillAvailable = replyAccounts.some((option) => option.groupRowId === sendAs);
+  const effectiveSendAs = chosenStillAvailable ? sendAs : (replyAccounts[0]?.groupRowId ?? "");
 
   /**
    * Grows the box to fit what is in it, up to a cap.
@@ -145,7 +155,30 @@ export function Composer({
         </div>
       ) : null}
 
+      {/* Only shown when there is a real choice. With one account in the group this is the same
+          composer as always; the value still travels so the server sends from the row offered. */}
+      {replyAccounts.length > 1 ? (
+        <div className="mb-2 flex items-center gap-2 text-[11px] text-[color:var(--color-muted-foreground)]">
+          <label htmlFor="chat-send-as">Reply as</label>
+          <select
+            id="chat-send-as"
+            value={effectiveSendAs}
+            onChange={(event) => setSendAs(event.target.value)}
+            className="h-7 cursor-pointer rounded-[var(--radius-sm)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+          >
+            {replyAccounts.map((option) => (
+              <option key={option.groupRowId} value={option.groupRowId}>
+                {option.accountLabel}
+                {option.isPrimary ? " (Primary)" : ""}
+                {option.isThisConversation ? "" : " — other account"}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+
       <form ref={formRef} action={formAction} className="flex items-end gap-2">
+        <input type="hidden" name="sendAs" value={effectiveSendAs} />
         <label htmlFor="chat-body" className="sr-only">
           Message
         </label>

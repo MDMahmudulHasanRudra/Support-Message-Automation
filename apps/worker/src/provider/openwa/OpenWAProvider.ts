@@ -91,6 +91,7 @@ function toInterfaceStatus(state: OpenWAConnectionState): ConnectionStatus {
     case "CONNECTED":
       return "CONNECTED";
     case "QR_AVAILABLE":
+    case "LINK_ABANDONED":
       return "AUTHENTICATION_REQUIRED";
     case "AUTH_FAILED":
       return "SESSION_ERROR";
@@ -1245,6 +1246,19 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   getConnectionStatus(): ConnectionStatus {
     return toInterfaceStatus(this.state);
+  }
+
+  /**
+   * Called by `connectWithRetry` once every automatic attempt has failed. Only an account whose
+   * LAST attempt ended with an unscanned code changes: a code being offered means the saved session
+   * is gone, so this needs a person, and saying so stops drop recovery relaunching the browser
+   * every five minutes for a scan that is not coming. Any other failure keeps its own state.
+   */
+  async recordLinkingGaveUp(): Promise<void> {
+    if (this.state !== "QR_EXPIRED" || this.connecting) return;
+    await this.setState("LINK_ABANDONED", {
+      reason: "No code was scanned in any automatic linking window. Request a new code when the phone is at hand.",
+    });
   }
 
   /** Consecutive health checks that found no working WhatsApp in the page. */

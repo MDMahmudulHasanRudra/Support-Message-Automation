@@ -53,18 +53,29 @@ export async function sendChatMessage(
     return { error: `That message is ${body.length} characters. WhatsApp accepts at most ${MAX_BODY_LENGTH}.` };
   }
 
-  const group = await prisma.whatsAppGroup.findUnique({
-    where: { id: groupId },
-    select: {
-      id: true,
-      name: true,
-      whatsappGroupId: true,
-      accountId: true,
-      isActive: true,
-      account: { select: { label: true, status: true } },
-    },
-  });
-  if (!group) return { error: "That conversation no longer exists." };
+  const groupSelect = {
+    id: true,
+    name: true,
+    whatsappGroupId: true,
+    accountId: true,
+    isActive: true,
+    account: { select: { label: true, status: true } },
+  } as const;
+  const thread = await prisma.whatsAppGroup.findUnique({ where: { id: groupId }, select: groupSelect });
+  if (!thread) return { error: "That conversation no longer exists." };
+
+  // "Reply as" another account in the same WhatsApp group. The form names a group ROW, and it is
+  // only honoured if it really is this same WhatsApp group — otherwise a crafted request could
+  // post into any group any account is in, under cover of an unrelated conversation.
+  const sendAs = String(formData.get("sendAs") ?? "").trim();
+  let group = thread;
+  if (sendAs && sendAs !== thread.id) {
+    const chosen = await prisma.whatsAppGroup.findUnique({ where: { id: sendAs }, select: groupSelect });
+    if (!chosen || chosen.whatsappGroupId !== thread.whatsappGroupId) {
+      return { error: "That account is not in this group. Pick another account to reply as." };
+    }
+    group = chosen;
+  }
 
   // Checked here so the operator is told immediately, in the composer, instead of watching
   // the message sit queued until the worker discovers the same thing and marks it SKIPPED.
@@ -118,11 +129,42 @@ export async function sendChatMessage(
     };
   }
 
+  // Sent from a DIFFERENT account than the conversation's own, the reply reaches that account as an
+  // ordinary incoming message from a participant it cannot recognise as ours — WhatsApp identifies
+  // group members by opaque ids, not by our other number. If that account is the one allowed to
+  // answer customers, its AI could then answer our own operator. An operator writing in the group
+  // is exactly what human takeover means, so the group's AI pauses across every account's copy for
+  // the configured cooldown — the same pause a colleague replying from their phone causes.
+  if (group.accountId !== thread.accountId) {
+    try {
+      const ai = await prisma.aiSettings.findUnique({ where: { id: "global" }, select: { humanTakeoverCooldownMinutes: true } });
+      // No settings row yet means the schema default applies, as it does for the worker.
+      const minutes = ai?.humanTakeoverCooldownMinutes ?? 30;
+      if (minutes > 0) {
+        const until = new Date(Date.now() + minutes * 60_000);
+        await prisma.whatsAppGroup.updateMany({
+          where: {
+            whatsappGroupId: thread.whatsappGroupId,
+            OR: [{ aiSuppressedUntil: null }, { aiSuppressedUntil: { lt: until } }],
+          },
+          data: { aiSuppressedUntil: until },
+        });
+      }
+    } catch (err) {
+      // The reply is already queued; failing to pause AI must not report the send as failed.
+      await logSystemEvent("WARN", "chat-inbox", "Could not pause AI after a reply from another account", {
+        error: (err as Error).message,
+        groupId: thread.id,
+      });
+    }
+  }
+
   await logSystemEvent("INFO", "chat-inbox", `Queued a manual reply to ${group.name}`, {
     groupId: group.id,
     accountId: group.accountId,
     userId: session.userId,
     length: body.length,
+    ...(group.id !== thread.id ? { repliedAsAccountOf: group.id, conversation: thread.id } : {}),
   });
 
   revalidatePath(`/chat/${groupId}`);

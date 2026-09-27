@@ -61,6 +61,14 @@ export const OPENWA_CONNECTION_STATES = [
    * attempt a few seconds later on its own.
    */
   "QR_EXPIRED",
+  /**
+   * Every automatic attempt ended with an unscanned code, so the worker has stopped trying. A code
+   * being offered at all means the saved session is gone: only somebody with the phone can fix
+   * this. Recorded as AUTHENTICATION_REQUIRED rather than DISCONNECTED on purpose — drop recovery
+   * retries DISCONNECTED every five minutes, which for this account meant relaunching Chromium and
+   * rotating a QR nobody was looking at, forever.
+   */
+  "LINK_ABANDONED",
   "CONNECTED",
   "DISCONNECTED",
   "RECONNECTING",
@@ -87,6 +95,7 @@ function toAccountStatus(state: OpenWAConnectionState): WhatsAppAccountStatus {
     case "RECONNECTING":
       return "RECONNECTING";
     case "QR_AVAILABLE":
+    case "LINK_ABANDONED":
       return "AUTHENTICATION_REQUIRED";
     case "CONNECTED":
       return "CONNECTED";
@@ -110,6 +119,7 @@ const LINK_WINDOW_CLOSED_BY = new Set<OpenWAConnectionState>([
   "CONNECTED",
   "DISCONNECTED",
   "QR_EXPIRED",
+  "LINK_ABANDONED",
   "AUTH_FAILED",
   "ERROR",
 ]);
@@ -123,7 +133,7 @@ const LINK_WINDOW_CLOSED_BY = new Set<OpenWAConnectionState>([
  * clears every QR for exactly this reason; this is the same rule applied when an attempt ends
  * rather than when the process does.
  */
-const QR_DISCARDED_BY = new Set<OpenWAConnectionState>(["DISCONNECTED", "QR_EXPIRED", "AUTH_FAILED", "ERROR"]);
+const QR_DISCARDED_BY = new Set<OpenWAConnectionState>(["DISCONNECTED", "QR_EXPIRED", "LINK_ABANDONED", "AUTH_FAILED", "ERROR"]);
 
 /**
  * Opens the linking window: the moment the current attempt will stop waiting for a scan.
@@ -143,7 +153,7 @@ export async function recordLinkWindow(accountId: string, expiresAt: Date): Prom
 
 function logLevelFor(state: OpenWAConnectionState): "INFO" | "WARN" | "ERROR" {
   if (state === "ERROR" || state === "AUTH_FAILED") return "ERROR";
-  if (state === "DISCONNECTED") return "WARN";
+  if (state === "DISCONNECTED" || state === "LINK_ABANDONED") return "WARN";
   return "INFO";
 }
 

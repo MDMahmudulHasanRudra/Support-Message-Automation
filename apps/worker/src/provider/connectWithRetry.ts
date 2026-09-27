@@ -56,7 +56,11 @@ export async function connectWithRetry(provider: WhatsAppProvider, accountId: st
         accountId,
         error: (err as Error).message,
       });
-      if (isLastAttempt) return false;
+      if (isLastAttempt) {
+        // Never allowed to change the outcome: recording the state is a courtesy to the dashboard.
+        await provider.recordLinkingGaveUp?.().catch(() => undefined);
+        return false;
+      }
       await new Promise((resolve) => setTimeout(resolve, delays[attempt - 1]));
     }
   }

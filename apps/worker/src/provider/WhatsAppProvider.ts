@@ -158,6 +158,8 @@ export interface WhatsAppProvider {
    * back. Optional: a provider that cannot tell simply does not implement it.
    */
   checkSessionHealth?(): Promise<void>;
+  /** Told when every automatic connect attempt has failed, so it can record whether that needs a person. */
+  recordLinkingGaveUp?(): Promise<void>;
   /**
    * `mentions` are contact ids ("<digits>@c.us") to tag. WhatsApp only notifies a mentioned person
    * if they are a participant of that chat; tagging someone who is not simply renders as text.

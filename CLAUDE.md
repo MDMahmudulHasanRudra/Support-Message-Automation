@@ -345,7 +345,7 @@ the deactivation sweep holds when a read would switch off more than a tenth of t
 after every connect; and `checkSessionHealth()` asks each CONNECTED page every two minutes whether
 `Store.Chat` exists — two misses record the account DISCONNECTED so `recoverIfDropped` restarts it.
 A sync on a page with no chat store fails once with `SessionNotReadyError`, never three times with
-"reading 'map'". The watchdog's monitored-only selection is unchanged and still worth widening.
+"reading 'map'". The watchdog now selects accounts with any ACTIVE group, not only monitored ones.
 
 ### Staying up, and noticing when nothing is arriving (`lifecycle.ts`, `recovery.ts`, `pipeline/messageRecovery.ts`, `health/collectionWatchdog.ts`)
 
@@ -436,7 +436,7 @@ cost three hours to establish.** Messages stopped being stored at 07:06 and nobo
 accounts were `CONNECTED` — so an account that was neither CONNECTED nor DISCONNECTED fell through
 all of them. `RECONNECTING` is that state: excluded from `recoverIfDropped`, excluded from the
 watchdog, and printed on the Accounts page as "the worker is bringing this session back up" while
-nothing was. The selection is now "has connected before, has monitored active groups", and the
+nothing was. The selection is now "has connected before, is in active groups" (monitored or not — 24 Sep 2026), and the
 status is something this *reads and reacts to* rather than something it trusts. Five findings, five
 different things to do: `NOT_COLLECTING`, `UNREADABLE`, `STUCK_RECONNECTING`, `NEEDS_HUMAN`, `DOWN`.
 The status checks run every tick — they are claims about state, not inferences from silence — and

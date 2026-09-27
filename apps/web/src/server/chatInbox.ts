@@ -419,6 +419,51 @@ export interface ChatThread {
 
 const THREAD_LIMIT = 80;
 
+/** One account that could send in a conversation — its own row for the same WhatsApp group. */
+export interface ReplyAccountOption {
+  /** The `WhatsAppGroup` row owned by this account. This, not the account id, is what is sent. */
+  groupRowId: string;
+  accountLabel: string;
+  isPrimary: boolean;
+  /** True for the account whose copy of the conversation is open. */
+  isThisConversation: boolean;
+}
+
+/**
+ * Every connected account that is still in this WhatsApp group, and so could reply to it.
+ *
+ * `WhatsAppGroup` is one row per account per group, so an operator opening a conversation opens ONE
+ * account's copy of it — and could only ever answer as that account, even with a second number in
+ * the same group and the first one offline. Only rows that are active (the account is a member) on
+ * a CONNECTED account are offered: anything else would be a choice that can only fail at the queue.
+ * The send action re-checks every one of these conditions itself; this list is for display.
+ */
+export async function getReplyAccounts(groupId: string): Promise<ReplyAccountOption[]> {
+  const thread = await prisma.whatsAppGroup.findUnique({
+    where: { id: groupId },
+    select: { whatsappGroupId: true },
+  });
+  if (!thread) return [];
+  const rows = await prisma.whatsAppGroup.findMany({
+    where: { whatsappGroupId: thread.whatsappGroupId, isActive: true, account: { status: "CONNECTED" } },
+    select: { id: true, account: { select: { label: true, isPrimary: true } } },
+  });
+  return rows
+    .map((row) => ({
+      groupRowId: row.id,
+      accountLabel: row.account.label,
+      isPrimary: row.account.isPrimary,
+      isThisConversation: row.id === groupId,
+    }))
+    // The open conversation's own account first, then Primary: the likeliest intended sender leads.
+    .sort(
+      (a, b) =>
+        Number(b.isThisConversation) - Number(a.isThisConversation) ||
+        Number(b.isPrimary) - Number(a.isPrimary) ||
+        a.accountLabel.localeCompare(b.accountLabel),
+    );
+}
+
 export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Promise<ChatThread | null> {
   const group = await prisma.whatsAppGroup.findUnique({
     where: { id: groupId },

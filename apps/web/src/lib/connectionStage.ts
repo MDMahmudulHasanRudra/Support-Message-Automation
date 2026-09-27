@@ -61,6 +61,13 @@ const STAGE_COPY: Record<string, ConnectionStageCopy> = {
     detail: "Nobody scanned within the linking window. A new code and a new window are on the way.",
     accepted: false,
   },
+  // Every automatic attempt ran out unscanned. Said plainly, because the QR_EXPIRED line promises a
+  // fresh code, and after the last attempt none is coming until somebody asks for one.
+  LINK_ABANDONED: {
+    title: "Time ran out",
+    detail: "No code was scanned in the linking windows, so automatic attempts have stopped. Press Request a new code when the phone is at hand.",
+    accepted: false,
+  },
   CONNECTED: {
     title: "Connected",
     detail: "Sending and receiving normally.",

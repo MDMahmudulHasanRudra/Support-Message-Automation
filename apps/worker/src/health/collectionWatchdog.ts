@@ -172,12 +172,18 @@ export async function checkCollectionHealth(registry: ProviderRegistry): Promise
 
   // Not "which accounts are CONNECTED" — that question is what missed the outage. This one is
   // about obligation rather than state: a number that has connected before (so it is genuinely
-  // linked, not one mid-setup) and has monitored groups (so it has something to collect) is
-  // supposed to be receiving messages, whatever it currently claims.
+  // linked, not one mid-setup) and is in groups (so it has something to collect) is supposed to be
+  // receiving messages, whatever it currently claims.
+  //
+  // ACTIVE groups, not MONITORED ones. Monitoring decides whether automation may answer; it says
+  // nothing about whether messages must be collected — the inbox, Team Performance and "waiting
+  // for a reply" all read every stored message. On 24 Sep 2026 production ran with zero monitored
+  // groups, used purely as an inbox, and this selection skipped it entirely while its page had
+  // lost WhatsApp for hours. A spare number in no groups at all still stays silent.
   const accounts = await prisma.whatsAppAccount.findMany({
     where: {
       lastConnectedAt: { not: null },
-      groups: { some: { isActive: true, isMonitored: true } },
+      groups: { some: { isActive: true } },
     },
     select: { id: true, label: true },
   });
