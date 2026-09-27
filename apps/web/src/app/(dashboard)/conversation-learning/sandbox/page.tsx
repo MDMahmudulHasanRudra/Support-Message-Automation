@@ -1,6 +1,6 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 import Link from "next/link";
-import { FlaskConical, ShieldCheck } from "lucide-react";
+import { Download, FlaskConical, ShieldCheck } from "lucide-react";
 import { prisma } from "@support-automation/db";
 import { pageAccess } from "@/server/authorize";
 import { formatDateTime } from "@/lib/date";
@@ -8,7 +8,8 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { Alert, Badge, Card, EmptyState, HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { NewSandboxSession } from "./NewSandboxSession";
 import { SandboxComposer } from "./SandboxComposer";
-import { SandboxReviewControls } from "./SandboxReviewControls";
+import { SandboxAnswer } from "./SandboxAnswer";
+import { getGrantedPermissionKeys } from "@/server/permissions";
 
 interface SearchParams {
   session?: string;
@@ -36,7 +37,9 @@ function explainReason(reason: string | null): string | null {
 }
 
 export default async function AiSandboxPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const { canManage } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
+  const { canManage, session } = await pageAccess("conversation_learning.view", "conversation_learning.manage");
+  // Saving straight as VERIFIED knowledge needs the right that verifies knowledge anywhere else.
+  const canSaveVerified = new Set(await getGrantedPermissionKeys(session)).has("ai_learning.manage");
   const { session: sessionId } = await searchParams;
 
   const [sessions, groups, aiSettings] = await Promise.all([
@@ -74,6 +77,12 @@ export default async function AiSandboxPage({ searchParams }: { searchParams: Pr
     : null;
 
   const waiting = active?.turns.some((t) => t.status === "PENDING" || t.status === "PROCESSING") ?? false;
+  const editorIds = [...new Set((active?.turns ?? []).map((t) => t.editedById).filter((id): id is string => Boolean(id)))];
+  const editors = editorIds.length
+    ? await prisma.user.findMany({ where: { id: { in: editorIds } }, select: { id: true, name: true } })
+    : [];
+  const editorName = new Map(editors.map((u) => [u.id, u.name]));
+  const verifiedCount = active?.turns.filter((t) => t.review === "APPROVED").length ?? 0;
 
   return (
     <div>
@@ -105,20 +114,28 @@ export default async function AiSandboxPage({ searchParams }: { searchParams: Pr
                   writes only to its own tables. You cannot affect a customer from this page.
                 </p>
               </HelpSection>
-              <HelpSection title="Approve, Reject, Waiting">
+              <HelpSection title="Edit, verify, make knowledge">
                 <p>
-                  Your verdict on how the AI handled the message. Approving marks it a validated
-                  learning example — it does not, on its own, teach the AI anything. Rejecting keeps
-                  it as history so you can see what was turned down. Undecided answers stay
-                  "Waiting".
+                  Correct any answer with <strong>Edit answer</strong> — or write one where the AI
+                  handed over. The original AI answer is always kept ("Show the original AI answer").
+                  <strong> Verify answer</strong> confirms the answer as it now reads; changing a
+                  verified answer puts it back to Waiting so it is verified again. Only a verified
+                  answer can become knowledge, and <strong>Make knowledge</strong> saves exactly the
+                  question and final answer you see, which you can still adjust in the form.
                 </p>
               </HelpSection>
-              <HelpSection title="Saving an answer as knowledge">
+              <HelpSection title="Verified or Pending Review">
                 <p>
-                  An approved answer can be saved into the knowledge base, where it lands{" "}
-                  <strong>unverified</strong> in Pending Review like every other machine-written
-                  entry. That second step is on purpose: "the AI handled this well" and "this is
-                  true and may be told to a customer" are different judgements.
+                  If your role can verify knowledge, you can save it as <strong>Verified</strong> and
+                  the AI may use it straight away — the same as verifying it in the knowledge base.
+                  Otherwise it goes to Pending Review for someone who can. Before saving, similar
+                  existing entries are shown; nothing existing is ever changed.
+                </p>
+              </HelpSection>
+              <HelpSection title="Export">
+                <p>
+                  Verified answers export as CSV, Excel or JSON in the Knowledge Base import format
+                  (Question, Answer, Title, Category), so a file can be imported straight back.
                 </p>
               </HelpSection>
               <HelpSection title="Handovers are not failures">
@@ -211,10 +228,27 @@ export default async function AiSandboxPage({ searchParams }: { searchParams: Pr
                     started {formatDateTime(active.createdAt)}
                   </p>
                 </div>
-                <span className="inline-flex items-center gap-1.5 text-[11px] text-[color:var(--color-muted-foreground)]">
-                  <ShieldCheck className="size-3.5 text-[color:var(--color-secondary)]" aria-hidden />
-                  Nothing here is sent to anyone
-                </span>
+                <div className="flex flex-col items-end gap-1">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-[color:var(--color-muted-foreground)]">
+                    <ShieldCheck className="size-3.5 text-[color:var(--color-secondary)]" aria-hidden />
+                    Nothing here is sent to anyone
+                  </span>
+                  {verifiedCount > 0 ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-[color:var(--color-muted-foreground)]">
+                      <Download className="size-3.5" aria-hidden />
+                      Export {verifiedCount} verified answer(s):
+                      {(["csv", "xlsx", "json"] as const).map((format) => (
+                        <a
+                          key={format}
+                          href={`/api/sandbox/export?session=${encodeURIComponent(active.id)}&format=${format}`}
+                          className="rounded px-1 font-medium text-[color:var(--color-foreground)] hover:bg-[var(--color-neutral-bg)]"
+                        >
+                          {format === "xlsx" ? "Excel" : format.toUpperCase()}
+                        </a>
+                      ))}
+                    </span>
+                  ) : null}
+                </div>
               </div>
 
               {active.turns.length === 0 ? (
@@ -262,19 +296,7 @@ export default async function AiSandboxPage({ searchParams }: { searchParams: Pr
                                 {turn.scope === "BUSINESS_SPECIFIC" ? "Business-specific" : "General"}
                               </span>
                             ) : null}
-                            {turn.review === "APPROVED" ? <Badge color="green">Approved</Badge> : null}
-                            {turn.review === "REJECTED" ? <Badge color="red">Rejected</Badge> : null}
-                            {turn.review === "WAITING" ? <Badge color="gray">Waiting</Badge> : null}
-                            {turn.promotedKnowledgeItemId ? (
-                              <Badge color="cyan">Saved to knowledge</Badge>
-                            ) : null}
                           </div>
-
-                          {turn.responseText ? (
-                            <p className="max-w-[85%] rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3.5 py-2.5 text-[13px] whitespace-pre-wrap text-[color:var(--color-foreground)]">
-                              {turn.responseText}
-                            </p>
-                          ) : null}
 
                           {turn.outcome === "HUMAN_FALLBACK" ? (
                             <p className="text-[12px] leading-relaxed text-[color:var(--color-muted-foreground)]">
@@ -288,12 +310,19 @@ export default async function AiSandboxPage({ searchParams }: { searchParams: Pr
                             </p>
                           ) : null}
 
-                          <SandboxReviewControls
+                          <SandboxAnswer
                             turnId={turn.id}
+                            sessionId={active.id}
+                            question={turn.userMessage}
+                            aiAnswer={turn.responseText}
+                            editedAnswer={turn.editedResponseText}
+                            editedByName={turn.editedById ? (editorName.get(turn.editedById) ?? null) : null}
                             review={turn.review}
-                            canPromote={Boolean(turn.responseText)}
-                            promoted={Boolean(turn.promotedKnowledgeItemId)}
+                            savedKnowledgeId={turn.promotedKnowledgeItemId}
                             suggestedTitle={turn.intent ?? turn.userMessage.slice(0, 60)}
+                            scope={turn.scope}
+                            canManage={canManage}
+                            canSaveVerified={canSaveVerified}
                           />
                         </div>
                       )}

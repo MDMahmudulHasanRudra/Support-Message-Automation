@@ -2,17 +2,44 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@support-automation/db";
+import { DUPLICATE_QUESTION_THRESHOLD, deriveQueryTerms, questionSimilarity } from "@support-automation/engine";
+import {
+  applySandboxEdit,
+  canEditSandboxAnswer,
+  canMakeSandboxKnowledge,
+  canSetSandboxReview,
+  knowledgeContentHash,
+  sandboxFinalAnswer,
+} from "@support-automation/shared";
 import { checkPermission } from "@/server/authorize";
+import { logSystemEvent } from "@/server/logSystemEvent";
+import { getGrantedPermissionKeys } from "@/server/permissions";
 
 /**
  * The AI Sandbox's web side. Every action here writes to SandboxSession/SandboxTurn and
- * nothing else — the one deliberate exception is `promoteSandboxAnswer`, which is the single,
- * explicit door from the sandbox into the knowledge base, and even that lands UNVERIFIED in
- * the existing review queue rather than as live knowledge. See sandboxJob.ts for the worker
- * half and for the full list of production side effects the sandbox does not perform.
+ * nothing else — the one deliberate exception is `makeKnowledgeFromSandbox`, the single,
+ * explicit door from the sandbox into the knowledge base. Nothing here writes a Message, an
+ * OutboundMessage or a Notification, so no sandbox action can reach a customer or a group. See
+ * sandboxJob.ts for the worker half.
+ *
+ * THE WORKFLOW, and the rules enforced here rather than only hidden in the UI:
+ *   ask -> AI answers -> (edit) -> Verify -> Make Knowledge
+ *   1. The FINAL answer is `editedResponseText ?? responseText`. Verify and Make Knowledge use
+ *      only that; the original AI answer is kept, never overwritten, as the audit trail.
+ *   2. Only a VERIFIED (APPROVED) answer can become knowledge.
+ *   3. A REJECTED answer cannot be edited or saved — it has to be reopened first.
+ *   4. Saving an edit to a verified answer returns it to Waiting: the verification was of the
+ *      old words, and must be given again for the new ones.
+ *   5. Before creating, similar existing knowledge is looked for and shown; nothing existing is
+ *      ever modified, and creating anyway is the admin's explicit choice.
  */
 
 const MAX_MESSAGE_LENGTH = 2000;
+/** The knowledge base's own answer limit (MAX_KNOWLEDGE_ANSWER_LENGTH), so a saved edit always fits. */
+const MAX_ANSWER_LENGTH = 8000;
+
+/** The one definition of "the answer" for a turn — packages/shared/src/sandboxWorkflow.ts, rule 1. */
+const finalAnswer = sandboxFinalAnswer;
 
 export interface SandboxActionResult {
   ok: boolean;
@@ -104,10 +131,11 @@ export async function setSandboxReview(
 
   const turn = await prisma.sandboxTurn.findUnique({
     where: { id: turnId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, review: true, responseText: true, editedResponseText: true, promotedKnowledgeItemId: true },
   });
   if (!turn) return { ok: false, error: "That answer no longer exists." };
-  if (turn.status !== "COMPLETE") return { ok: false, error: "This turn has no answer to review yet." };
+  const allowed = canSetSandboxReview(turn, review);
+  if (!allowed.ok) return { ok: false, error: allowed.reason };
 
   await prisma.sandboxTurn.update({
     where: { id: turnId },
@@ -126,29 +154,133 @@ export async function setSandboxReview(
 }
 
 /**
- * The one door from the sandbox into the knowledge base, and it is deliberately narrow.
- *
- * Only an APPROVED turn that actually produced an answer can go through, it can only go
- * through once, and what it creates is `humanVerified: false` — so it lands in the SAME
- * pending-review queue every machine-written entry goes through
- * (/ai-learning/knowledge-base/review) rather than becoming something the AI can quote at a
- * customer straight away.
- *
- * That second review is not redundant bureaucracy: approving an answer in a sandbox means
- * "the AI handled this well", while verifying a knowledge entry means "this is true and the
- * assistant may state it to a customer". They are different judgements, and a testing tool
- * must not be able to make the second one.
+ * Saves an admin's correction to an answer — or the admin's own answer, for a turn the AI handed
+ * over without drafting one. `responseText` is never touched. Saving the AI's own words back
+ * unchanged clears the edit rather than recording a correction that is not one.
  */
-export async function promoteSandboxAnswer(
+export async function saveSandboxEdit(
   turnId: string,
-  input: { title: string; category?: string },
-): Promise<{ ok: boolean; knowledgeItemId?: string; error?: string }> {
+  text: string,
+): Promise<{ ok: boolean; error?: string; reverified?: boolean }> {
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { ok: false, error: granted.denied };
+  const session = granted.session;
+
+  const answer = text.trim();
+  if (!answer) return { ok: false, error: "The answer cannot be empty." };
+  if (answer.length > MAX_ANSWER_LENGTH) {
+    return { ok: false, error: `Keep the answer under ${MAX_ANSWER_LENGTH} characters — the knowledge base's own limit.` };
+  }
+
+  const turn = await prisma.sandboxTurn.findUnique({
+    where: { id: turnId },
+    select: { id: true, status: true, review: true, responseText: true, editedResponseText: true, promotedKnowledgeItemId: true },
+  });
+  if (!turn) return { ok: false, error: "That answer no longer exists." };
+  const allowed = canEditSandboxAnswer(turn);
+  if (!allowed.ok) return { ok: false, error: allowed.reason };
+
+  // Rule 4 lives in applySandboxEdit: a verification applies to the words that were verified.
+  const applied = applySandboxEdit(turn, answer);
+  const isEdit = applied.editedResponseText !== null;
+  await prisma.sandboxTurn.update({
+    where: { id: turnId },
+    data: {
+      editedResponseText: applied.editedResponseText,
+      editedById: isEdit ? session.userId : null,
+      editedAt: isEdit ? new Date() : null,
+      ...(applied.verificationWithdrawn ? { review: "WAITING" as const, reviewedById: null, reviewedAt: null } : {}),
+    },
+  });
+
+  revalidatePath("/conversation-learning/sandbox");
+  return { ok: true, reverified: applied.verificationWithdrawn };
+}
+
+export interface SimilarKnowledge {
+  id: string;
+  title: string;
+  question: string | null;
+  humanVerified: boolean;
+  status: string;
+}
+
+/**
+ * Knowledge entries that may already answer this question. Narrowed in SQL by the question's own
+ * content words (the terms knowledge retrieval reads), then scored with `questionSimilarity` — so a
+ * "duplicate" here is an entry that would compete with the new one for the same customer message.
+ * Archived entries are left out; nothing is ever changed.
+ */
+async function findSimilarKnowledge(question: string): Promise<SimilarKnowledge[]> {
+  const terms = deriveQueryTerms(question, 6);
+  if (terms.length === 0) return [];
+  const candidates = await prisma.aiKnowledgeItem.findMany({
+    where: {
+      status: { not: "ARCHIVED" },
+      OR: terms.flatMap((term) => [
+        { question: { contains: term, mode: "insensitive" as const } },
+        { title: { contains: term, mode: "insensitive" as const } },
+      ]),
+    },
+    select: { id: true, title: true, question: true, humanVerified: true, status: true },
+    take: 300,
+  });
+  return candidates
+    .map((item) => ({ item, score: questionSimilarity(question, item.question ?? item.title) }))
+    .filter(({ score }) => score >= DUPLICATE_QUESTION_THRESHOLD)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map(({ item }) => item);
+}
+
+export interface MakeKnowledgeResult {
+  ok: boolean;
+  error?: string;
+  knowledgeItemId?: string;
+  /** True when it was saved as verified; false when it went to Pending Review. */
+  verified?: boolean;
+  /** Possible duplicates — returned INSTEAD of creating, until the admin chooses to create anyway. */
+  similar?: SimilarKnowledge[];
+}
+
+/**
+ * The one door from the sandbox into the knowledge base.
+ *
+ * Only a VERIFIED turn goes through, only once, and it saves the question and answer as the admin
+ * finally wrote them in the form — which default to the test question and the final answer. If the
+ * admin changes the answer in the form, that becomes the turn's edited answer too, so the sandbox
+ * and the knowledge entry never disagree about what was saved.
+ *
+ * VERIFIED OR PENDING REVIEW. Saving straight as verified knowledge (which the AI may then quote to
+ * customers) needs `ai_learning.manage` — the same right that lets somebody type a verified entry on
+ * the knowledge form or verify one in Pending Review. Without it the entry still lands, unverified,
+ * in Pending Review, exactly as sandbox answers always did. A sandbox cannot grant a trust level the
+ * user does not otherwise have.
+ */
+export async function makeKnowledgeFromSandbox(
+  turnId: string,
+  input: {
+    title: string;
+    category: string;
+    question: string;
+    answer: string;
+    saveAsVerified: boolean;
+    /** Set on the second press, after the admin has seen the similar entries. */
+    allowDuplicate?: boolean;
+  },
+): Promise<MakeKnowledgeResult> {
   const granted = await checkPermission("conversation_learning.manage");
   if ("denied" in granted) return { ok: false, error: granted.denied };
   const session = granted.session;
 
   const title = input.title?.trim();
+  const question = input.question?.trim();
+  const answer = input.answer?.trim();
   if (!title) return { ok: false, error: "Give the knowledge entry a title." };
+  if (!question) return { ok: false, error: "The question cannot be empty." };
+  if (!answer) return { ok: false, error: "The answer cannot be empty." };
+  if (answer.length > MAX_ANSWER_LENGTH) return { ok: false, error: `Keep the answer under ${MAX_ANSWER_LENGTH} characters.` };
+  const category = isKnowledgeCategory(input.category) ? input.category : "FAQ";
 
   const turn = await prisma.sandboxTurn.findUnique({
     where: { id: turnId },
@@ -156,48 +288,94 @@ export async function promoteSandboxAnswer(
       id: true,
       userMessage: true,
       responseText: true,
+      editedResponseText: true,
       review: true,
       confidenceScore: true,
       promotedKnowledgeItemId: true,
+      status: true,
+      sessionId: true,
       session: { select: { groupId: true } },
     },
   });
   if (!turn) return { ok: false, error: "That answer no longer exists." };
-  if (turn.review !== "APPROVED") return { ok: false, error: "Approve the answer before saving it as knowledge." };
-  if (!turn.responseText) return { ok: false, error: "This turn produced no answer to save." };
-  if (turn.promotedKnowledgeItemId) {
-    return { ok: false, error: "This answer has already been saved to the knowledge base." };
+  const allowed = canMakeSandboxKnowledge(turn);
+  if (!allowed.ok) return { ok: false, error: allowed.reason };
+
+  if (!input.allowDuplicate) {
+    const similar = await findSimilarKnowledge(question);
+    if (similar.length > 0) return { ok: false, similar };
   }
 
-  const category = isKnowledgeCategory(input.category) ? input.category : "FAQ";
+  const granted2 = new Set(await getGrantedPermissionKeys(session));
+  const verified = input.saveAsVerified && granted2.has("ai_learning.manage");
 
-  const item = await prisma.aiKnowledgeItem.create({
-    data: {
-      title,
-      category,
-      question: turn.userMessage,
-      answer: turn.responseText,
-      // Sandbox-authored, machine-drafted, and explicitly NOT verified — the whole point of
-      // the gate described in this function's doc comment.
-      source: "SANDBOX",
-      sourceLabel: "Approved in AI Sandbox",
-      sourceGroupId: turn.session.groupId,
-      confidence: turn.confidenceScore,
-      aiGenerated: true,
-      humanVerified: false,
-      createdById: session.userId,
-    },
-    select: { id: true },
+  const aiAnswer = turn.responseText?.trim() ?? "";
+  const editedByAdmin = answer !== aiAnswer;
+  const now = new Date();
+
+  const item = await prisma.$transaction(async (tx) => {
+    const created = await tx.aiKnowledgeItem.create({
+      data: {
+        title,
+        category,
+        question,
+        answer,
+        source: "SANDBOX",
+        sourceLabel: editedByAdmin ? "AI Sandbox — answer written or corrected by an admin" : "AI Sandbox — AI answer verified by an admin",
+        sourceGroupId: turn.session.groupId,
+        confidence: editedByAdmin ? null : turn.confidenceScore,
+        // Honest about authorship: an answer the admin rewrote is theirs, not the model's.
+        aiGenerated: !editedByAdmin,
+        humanVerified: verified,
+        verifiedById: verified ? session.userId : null,
+        verifiedAt: verified ? now : null,
+        scope: "GLOBAL",
+        contentHash: knowledgeContentHash({ title, question, answer, procedure: null, module: null }),
+        currentVersion: 1,
+        createdById: session.userId,
+        versions: {
+          create: {
+            version: 1,
+            title,
+            category,
+            question,
+            answer,
+            changeSummary: editedByAdmin
+              ? `Created from AI Sandbox (test conversation ${turn.sessionId}). Answer written or corrected by an admin; the original AI answer is kept on the sandbox turn.`
+              : `Created from AI Sandbox (test conversation ${turn.sessionId}). AI answer verified by an admin without changes.`,
+            createdById: session.userId,
+          },
+        },
+      },
+      select: { id: true },
+    });
+    await tx.sandboxTurn.update({
+      where: { id: turnId },
+      data: {
+        promotedKnowledgeItemId: created.id,
+        // The form's answer is the final answer now; record it on the turn so the two agree.
+        ...(answer !== finalAnswer(turn)
+          ? editedByAdmin
+            ? { editedResponseText: answer, editedById: session.userId, editedAt: now }
+            : { editedResponseText: null, editedById: null, editedAt: null }
+          : {}),
+      },
+    });
+    return created;
   });
 
-  await prisma.sandboxTurn.update({
-    where: { id: turnId },
-    data: { promotedKnowledgeItemId: item.id },
-  });
+  await logSystemEvent(
+    "INFO",
+    "ai-learning",
+    `Knowledge "${title}" created from the AI Sandbox${verified ? " as verified" : " for review"}`,
+    { itemId: item.id, sandboxTurnId: turnId, editedByAdmin, verified },
+    { actorUserId: session.userId, targetType: "AiKnowledgeItem", targetId: item.id },
+  );
 
   revalidatePath("/conversation-learning/sandbox");
+  revalidatePath("/ai-learning/knowledge-base");
   revalidatePath("/ai-learning/knowledge-base/review");
-  return { ok: true, knowledgeItemId: item.id };
+  return { ok: true, knowledgeItemId: item.id, verified };
 }
 
 export async function deleteSandboxSession(sessionId: string): Promise<SandboxActionResult> {

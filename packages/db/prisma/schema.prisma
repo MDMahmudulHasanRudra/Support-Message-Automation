@@ -3679,6 +3679,17 @@ model SandboxTurn {
   /// from a HUMAN_FALLBACK outcome, which is the system working correctly.
   error           String?
 
+  /// --- The admin's correction ----------------------------------------------
+  /// The answer as an admin rewrote it. `responseText` is never overwritten, so the
+  /// original AI answer stays readable beside the correction — that pair is the audit
+  /// trail. Null means unedited. The FINAL answer is always `editedResponseText ??
+  /// responseText`, and it is the only text Verify and Make Knowledge ever use. Also how
+  /// an admin writes the answer to a turn the AI handed over and drafted nothing for.
+  editedResponseText String?
+  /// Plain ids, not relations — same reasoning as promotedKnowledgeItemId below.
+  editedById         String?
+  editedAt           DateTime?
+
   /// --- The admin's review -------------------------------------------------
   review       SandboxReviewStatus @default(WAITING)
   reviewedById String?

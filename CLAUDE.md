@@ -1517,6 +1517,35 @@ deliberately **not** to the outcome filter, so filtering to handoffs cannot repo
 off". Before this existed, AI decisions could only be read one message at a time, which made the
 first week of running AI automation effectively unobservable.
 
+### AI Sandbox — edit, verify, make knowledge (`(dashboard)/conversation-learning/sandbox/`, `server/actions/sandbox.ts`)
+
+An isolated place to ask the AI a customer-style question, correct its answer, verify it and turn the
+final Question + Answer into knowledge. Isolation is structural: its actions write only
+`SandboxSession`/`SandboxTurn` (plus an `AiKnowledgeItem` through Make Knowledge) — never a Message,
+OutboundMessage, Notification or WorkerCommand.
+
+**The review rules are pure and tested** (`packages/shared/src/sandboxWorkflow.ts`), and the server
+actions call them rather than restating them: the FINAL answer is `editedResponseText ?? responseText`
+and is the only text Verify, Make Knowledge and Export use; `responseText` (the original AI answer) is
+never overwritten, which is the audit trail; only an APPROVED turn becomes knowledge, once; a REJECTED
+turn must be reopened before it can be edited; editing a verified answer returns it to WAITING; once
+saved, the knowledge entry is what gets edited. An admin can also write the answer to a turn the AI
+handed over without drafting one.
+
+**Verified or Pending Review is a permission, not a checkbox.** Make Knowledge saves straight as
+`humanVerified: true` only for a role with `ai_learning.manage` — the same right that creates a
+verified entry on the knowledge form or verifies one in Pending Review. Everyone else's entry lands
+unverified in Pending Review, as sandbox answers always did; a testing tool cannot grant a trust
+level the user does not otherwise have. Before creating, `findSimilarKnowledge` shows entries whose
+question scores ≥ `DUPLICATE_QUESTION_THRESHOLD` on `questionSimilarity` (packages/engine — the
+overlap of `deriveQueryTerms`, the words retrieval itself reads); nothing existing is changed and
+"Create anyway" is the admin's explicit second press. The knowledge row records `source: SANDBOX`,
+`aiGenerated: false` when the admin rewrote it, the verifier, and a version-1 change summary naming
+the test conversation. Export (`/api/sandbox/export`, one turn or the whole conversation, CSV/Excel/
+JSON) writes the Knowledge Base import columns (`KNOWLEDGE_ROW_COLUMN_LABELS`) so a file re-imports
+unchanged. Follow-up questions in the same conversation still see the ORIGINAL AI answers in their
+transcript — the worker was deliberately left untouched.
+
 ### Knowledge from group conversations (`apps/worker/src/knowledge/`)
 
 `startGroupKnowledgeProcessor` (hourly, one group per tick, oldest-first) reads a monitored
