@@ -107,7 +107,6 @@ export const RELEASE_NOTE_MODULE_TAGS: readonly string[] = [
   "Escalations",
   "Support Activity",
   "Team Management",
-  "Teams Integration",
   "WhatsApp Accounts & Groups",
   "Automation Rules",
   "Bulk Messaging",

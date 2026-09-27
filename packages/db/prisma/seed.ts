@@ -180,6 +180,17 @@ async function main() {
   }
   console.log(`Synced ${PERMISSIONS.length} permissions`);
 
+  // Keys whose feature was removed. Named one by one rather than "anything not in the catalogue":
+  // a blanket delete would wipe a NEWER deploy's keys if an older seed ever ran during a rollback.
+  // Their role assignments go with them (the join table cascades).
+  const RETIRED_PERMISSION_KEYS = [
+    // Microsoft Teams Integration, removed 27 Sep 2026.
+    "teams_integration.view",
+    "teams_integration.manage",
+  ];
+  const retired = await prisma.permission.deleteMany({ where: { key: { in: RETIRED_PERMISSION_KEYS } } });
+  if (retired.count > 0) console.log(`Removed ${retired.count} retired permission(s)`);
+
   const allPermissionKeys = PERMISSIONS.map((p) => p.key);
   const defaultModules: Array<{ name: string; description: string; keys: readonly string[] }> = [
     { name: "Administrator", description: "Full access to every module.", keys: allPermissionKeys },

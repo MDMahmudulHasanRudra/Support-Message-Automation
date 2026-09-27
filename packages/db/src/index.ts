@@ -364,7 +364,6 @@ export interface AccountHistoryImpact {
   aiDecisions: number;
   escalationCases: number;
   conversationSessions: number;
-  supportIssues: number;
   /** TeamAttendanceGroup rows — the ones whose loss leaves a duty row claiming messages that are gone. */
   attendanceEvidence: number;
   total: number;
@@ -380,7 +379,6 @@ export async function countAccountHistory(accountId: string): Promise<AccountHis
     aiDecisions,
     escalationCases,
     conversationSessions,
-    supportIssues,
     attendanceEvidence,
   ] = await prisma.$transaction([
     prisma.message.count({ where: { accountId } }),
@@ -390,7 +388,6 @@ export async function countAccountHistory(accountId: string): Promise<AccountHis
     prisma.aiFallbackDecision.count({ where: { accountId } }),
     prisma.supportEscalationCase.count({ where: { accountId } }),
     prisma.conversationSession.count({ where: { accountId } }),
-    prisma.supportIssue.count({ where: { accountId } }),
     prisma.teamAttendanceGroup.count({ where: { accountId } }),
   ]);
 
@@ -402,7 +399,6 @@ export async function countAccountHistory(accountId: string): Promise<AccountHis
     aiDecisions +
     escalationCases +
     conversationSessions +
-    supportIssues +
     attendanceEvidence;
 
   return {
@@ -413,7 +409,6 @@ export async function countAccountHistory(accountId: string): Promise<AccountHis
     aiDecisions,
     escalationCases,
     conversationSessions,
-    supportIssues,
     attendanceEvidence,
     total,
     hasHistory: total > 0,

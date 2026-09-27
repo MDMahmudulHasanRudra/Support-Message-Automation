@@ -30,7 +30,6 @@ import { startKnowledgeImportProcessor } from "./knowledge/knowledgeImportProces
 import { startCommunicationStyleProcessor } from "./knowledge/communicationStyleProcessor.js";
 import { startSandboxProcessor } from "./sandbox/sandboxProcessor.js";
 import { startConversationAnalysisProcessor } from "./knowledge/conversationAnalysisProcessor.js";
-import { startTeamsSyncProcessor, resolveTeamsSyncIntervalMs } from "./teams/teamsSyncProcessor.js";
 import {
   ensureForgeSettings,
   startForgeKnowledgeProcessor,
@@ -147,14 +146,9 @@ async function main() {
     // selected and proposes candidates; never writes the scheduled builder's watermark and never
     // creates a knowledge entry on its own. No-ops every tick unless a run is queued.
     startConversationAnalysisProcessor(),
-    // Microsoft Teams Integration — polling sync, always registered but a no-op every tick until
-    // MICROSOFT_CLIENT_ID/SECRET/TENANT_ID/REDIRECT_URI are configured AND an admin completes the
-    // OAuth connect flow (see getValidTeamsAccessToken()'s doc comment), same zero-effect-until-
-    // configured convention as Conversation Learning above.
-    startTeamsSyncProcessor(await resolveTeamsSyncIntervalMs()),
     // Softify Forge — learns ISPDIGITAL's own documentation and modules into the knowledge base.
     // Registered unconditionally; both loops return immediately unless FORGE_API_KEY/FORGE_API_URL
-    // are set AND an admin enabled the integration, same convention as Teams above.
+    // are set AND an admin enabled the integration, same convention as Conversation Learning above.
     startForgeKnowledgeProcessor(),
     startForgeResearchProcessor(),
     startCommandProcessor(registry),

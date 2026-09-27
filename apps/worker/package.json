@@ -19,7 +19,6 @@
     "@support-automation/engine": "workspace:*",
     "@support-automation/forge-client": "workspace:*",
     "@support-automation/shared": "workspace:*",
-    "@support-automation/teams-client": "workspace:*",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

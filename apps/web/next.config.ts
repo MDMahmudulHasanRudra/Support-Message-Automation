@@ -11,7 +11,6 @@ const nextConfig: NextConfig = {
     "@support-automation/db",
     "@support-automation/engine",
     "@support-automation/shared",
-    "@support-automation/teams-client",
     "@support-automation/forge-client",
   ],
   experimental: {

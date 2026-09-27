@@ -235,23 +235,6 @@ export async function getSupportActivityDashboardSummary(nowMs: number) {
   return { enabled: settings.enabled, todayActivities, todaySupportedGroups };
 }
 
-export async function getTeamsIntegrationSummary(nowMs: number) {
-  // Dhaka, like every other "today" on this dashboard — setHours() would have used the
-  // container's own timezone, so the same page could report two different days at once.
-  const todayStart = getDhakaDayRange(new Date(nowMs)).start;
-  const [account, openIssueCount, resolvedTodayCount] = await Promise.all([
-    prisma.teamsAccount.findUnique({ where: { id: "global" } }),
-    prisma.supportIssue.count({ where: { status: { notIn: ["RESOLVED", "CLOSED"] } } }),
-    prisma.supportIssue.count({ where: { status: "RESOLVED", resolvedAt: { gte: todayStart } } }),
-  ]);
-
-  return {
-    status: account?.status ?? "DISCONNECTED",
-    openIssueCount,
-    resolvedTodayCount,
-  };
-}
-
 /**
  * Whether the worker process is alive at all.
  *

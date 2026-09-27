@@ -52,8 +52,6 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "team_management.view", label: "View Schedule, Leave & Attendance", category: "Team Management" },
   { key: "team_management.manage", label: "Manage Schedule, Leave & Coverage", category: "Team Management" },
 
-  { key: "teams_integration.view", label: "View Teams Integration", category: "Teams Integration" },
-  { key: "teams_integration.manage", label: "Manage Teams Integration", category: "Teams Integration" },
 
   // Covers WhatsApp Accounts, Groups, and Internal Team Members as one category.
   { key: "whatsapp.view", label: "View WhatsApp Accounts, Groups & Team Members", category: "WhatsApp" },

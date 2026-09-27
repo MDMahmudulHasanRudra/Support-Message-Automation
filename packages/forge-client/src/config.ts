@@ -1,8 +1,8 @@
 import type { ForgeClientConfig } from "./types.js";
 
 /**
- * Reads the two Forge values from the environment, the same way packages/teams-client reads its
- * Azure config: once, here, rather than duplicated in every caller.
+ * Reads the two Forge values from the environment once, here, rather than duplicated in every
+ * caller.
  *
  * `.env` on Windows is routinely saved with CRLF, and a trailing `\r` on a URL produces a request
  * to a host that does not exist and an error that names neither the file nor the cause. Trimming

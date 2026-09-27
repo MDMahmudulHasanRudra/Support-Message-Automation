@@ -131,7 +131,6 @@ packages/db    Prisma schema, migrations, seed, PrismaClient singleton — raw T
 packages/engine   pure rule-evaluation engine (matchers, priority, regex safety) — one implementation, imported by both apps
 packages/ai-client   text-only, no-tools completion client (Anthropic + one OpenAI-compatible client covering OpenAI/OpenRouter/Ollama/Google) — used by every worker-side AI job: the AI fallback, deep answers, both Forge jobs, all three knowledge builders, and Conversation Learning analysis. The text-only-no-tools contract is a safety invariant; the AI Admin Assistant needs tool-calling and therefore does NOT use this package
 packages/forge-client   thin Softify Forge REST wrapper (plain fetch) + the disclosure gate that decides what a customer may be told — used by apps/worker's Forge jobs and apps/web's Forge settings page
-packages/teams-client   thin Microsoft OAuth + Graph API wrapper (plain fetch, no SDK) — used by apps/web's Teams connect/callback routes and apps/worker's sync job
 packages/shared   canonical enum/type definitions (engine can't depend on @prisma/client, so these are the source of truth; Prisma schema enums are kept in sync by convention, not tooling)
 ```
 
@@ -183,7 +182,6 @@ since `setInterval` doesn't await its callback)
 | `startAiAnalysisProcessor` | 6h | optional AI-assisted rescoring via `packages/ai-client` (gated on `AiSettings.aiEngineEnabled` + `.learningEnabled`; also triggerable on-demand via an `AI_ANALYSIS_BATCH` WorkerCommand) |
 | `startGroupKnowledgeProcessor` | 1h | distils one monitored group's stored conversation into knowledge entries (gated on `aiEngineEnabled` + `knowledgeFromChatEnabled`) |
 | `startCommunicationStyleProcessor` | 12h | rebuilds `CommunicationStyleProfile` from the team's own replies — manner, never fact (gated on `aiEngineEnabled` + `communicationStyleLearningEnabled`) |
-| `startTeamsSyncProcessor` | 3min (admin-configurable) | polls Microsoft Graph for joined teams/channels/messages, scoped to channels linked to an open `SupportIssue`; runs resolution-keyword matching on each new message (no-ops until Microsoft OAuth env vars are set **and** an admin completes the connect flow; also triggerable on-demand via a `TEAMS_SYNC_NOW` WorkerCommand) |
 | `startForgeKnowledgeProcessor` | 6h | reads ISPDIGITAL's own docs + module source through Softify Forge into the knowledge base (no-op until `FORGE_API_KEY`/`FORGE_API_URL` are set **and** an admin enables it; on-demand via a `FORGE_SYNC_NOW` WorkerCommand) |
 | `startForgeResearchProcessor` | 2min | works through customer questions verified knowledge could not answer, researching each against the product's source (same gate, plus `ForgeSettings.researchUnanswered`, off by default) |
 | heartbeat | 15s | health state + DB connectivity log |
@@ -232,8 +230,8 @@ flight is never published; and an attempt ending clears its stored QR.
 
 **A customer reply always goes out on the account that received the message** — `runAiFallback` is
 handed `accountId: raw.accountId` and never calls `resolveWhatsAppAccount()`. Primary and Account
-Routing govern only the four *notification* service keys (`NOTIFY_WHATSAPP`, `PRIORITY_SUPPORT`,
-`CONVERSATION_LEARNING`, `TEAMS_RESOLUTION_NOTIFY`); none of them is "reply to a customer", and
+Routing govern only the *notification* service keys (`NOTIFY_WHATSAPP`, `PRIORITY_SUPPORT`,
+`CONVERSATION_LEARNING`; `TEAMS_RESOLUTION_NOTIFY` is retired); none of them is "reply to a customer", and
 none could be — the send would fail `verifyGroupMembership` from an account that is not in the
 group. Setting an account Primary does not move existing conversations onto it.
 
@@ -951,54 +949,23 @@ The customer-facing template also flags a **language mismatch**: it ships in Eng
 language change. Auto is not treated as a mismatch — there is no single language for it to disagree
 with.
 
-### Microsoft Teams Integration (`apps/worker/src/teams/`, `apps/web/src/server/teamsAuth/`,
-`apps/web/src/app/(dashboard)/integrations/teams/`, `apps/web/src/app/(dashboard)/issues/`)
+### Microsoft Teams Integration — REMOVED (27 Sep 2026)
 
-Links a developer's Microsoft Teams conversation to an open customer WhatsApp conversation via a
-manually-created `SupportIssue` (admin picks the WhatsApp group + customer phone + a Teams
-channel/optional exact thread — **not** auto-detected from message content, unlike Support Activity
-Tracking's rule-based detection, to avoid a second heuristic-detection system in this slice).
-`packages/teams-client` wraps the Microsoft identity platform's OAuth 2.0 endpoints and the Graph
-REST API directly via `fetch` (no `@azure/msal-node`/`@microsoft/microsoft-graph-client`
-dependency — see that package's own doc comments for why). OAuth tokens are encrypted at rest via
-the **existing** `encryptSecret`/`decryptSecret` (`AI_CREDENTIALS_ENCRYPTION_KEY`) on the singleton
-`TeamsAccount` row — no second encryption mechanism, and the customer's Microsoft password never
-touches this application at all (real OAuth redirect only — see `TEAMS_SETUP.md`'s "Customer
-setup"). `TeamsAccountStatus` is `DISCONNECTED`/`CONNECTED`/`SYNCING`/`ERROR`/`REAUTH_REQUIRED` —
-`packages/teams-client`'s pure, unit-tested `classifyTokenError()` decides which of the latter two a
-refresh failure gets (`invalid_grant`/`interaction_required`/`consent_required` →
-`REAUTH_REQUIRED`, only fixable by the customer reconnecting; anything else → `ERROR`, retried
-automatically). A successful OAuth callback immediately enqueues a `TEAMS_SYNC_NOW`
-`WorkerCommand` (never blocking the callback itself) so Teams/channels appear within moments.
-`graphSync.ts` polls (default every 3 minutes, `TeamsIntegrationSettings.pollingIntervalMinutes`),
-always discovering every joined team/channel (cheap, powers the "Manage Teams & Channels" page) but
-only pulling message bodies when `isChannelInAutomationScope()` says so — both
-`TeamsTeam`/`TeamsChannel.isEnabledForAutomation` (default true) enabled, OR an open `SupportIssue`
-explicitly linked to that exact channel (an Issue link always wins over the coarser toggle) — and
-stores `TeamsTeam`/`TeamsChannel`/`TeamsMessage` idempotently (insert-and-catch-`P2002`, same
-pattern as `Message`). `resolutionEngine.ts` matches each newly
-stored message against active `TeamsResolutionRule`s using `packages/engine`'s
-`matchSupportKeyword()` **as-is** (reused, not reimplemented) — a match inserts an
-`IssueResolutionEvent` (idempotency + audit trail via `@@unique([issueId, teamsMessageId])`,
-exact same pattern as `SupportEscalationEvent`), and — only if
-`TeamsIntegrationSettings.enableCustomerNotification` is explicitly on (default **off**) — queues a
-WhatsApp message to the customer via a direct `OutboundMessage` insert (not
-`pipeline/enqueueOutbound.ts`'s `enqueueOutboundMessage()`, which is shaped for the incoming-message
-pipeline's non-null-`incomingMessageId` + rule-cooldown contract that doesn't apply here), routed
-through `resolveWhatsAppAccount("TEAMS_RESOLUTION_NOTIFY")`. `TEAMS_SETUP.md` has the exact Azure
-App Registration steps — real OAuth credentials cannot be fabricated and must come from the user.
+The Graph/OAuth integration (Issues, Connection, Teams & Channels, Resolution Rules/Keywords, its
+settings, the worker's Teams sync loop and `packages/teams-client`) was removed at Rudra's request;
+its Manage page showed no Teams discovered when it went. Do not confuse it with the **Teams webhook** alert channel
+(`TEAMS_WEBHOOK_URL`, `NotificationType.TEAMS`, `RULE_NOTIFY_TEAMS`), which is separate and stays.
 
-Of that phase, **CSV/xlsx export shipped** (`apps/web/src/app/api/teams/export/route.ts`: Issues
-with resolution timing, or the synced channel messages — mirroring the Support Activity export,
-including why a Route Handler is the justified exception here). Issue rows carry **minutes**
-to resolve, not seconds: these are conversations between people over hours or days, and
-second-level precision would imply an accuracy that polling every few minutes cannot have. The
-other two remain unbuilt for different reasons. **Real-time webhooks are blocked by topology, not
-effort** — Graph change notifications need a publicly reachable HTTPS endpoint to deliver to, and
-this runs behind Docker on a private port, so the subscription code would register and never
-receive, which is worse than nothing because it looks finished. **Session/duration analytics have
-nothing to compute from** (0 Teams messages, 0 channels, no connected account); numbers derived
-from an empty table are a page of zeroes that implies a working integration.
+Deliberately **non-destructive**: the Prisma models were removed but **no migration drops their
+tables** (`SupportIssue`, `Teams*`, `IssueResolutionEvent`, `TeamsIntegrationSettings`), so any rows
+that existed remain in the database. Every FK from those tables cascades or sets null, so deleting
+an account or group still works with them present. A later `prisma migrate dev` will propose
+dropping them — that is the intended cleanup, once Rudra confirms nothing is needed from them.
+`WorkerCommandType.TEAMS_SYNC_NOW` and `WhatsAppServiceKey.TEAMS_RESOLUTION_NOTIFY` stay in the
+schema, marked retired, because Prisma throws on reading a row whose enum value it no longer lists;
+a leftover queued `TEAMS_SYNC_NOW` is closed as FAILED with a "removed" message. The seed deletes
+the two `teams_integration.*` permission keys by name. `InternalTeamMember.microsoftEmail` is an
+unused column now, left in place for the same reason as the tables.
 
 ### AI Admin Assistant (`apps/web/src/server/aiAdmin/`)
 
@@ -1021,8 +988,8 @@ are always fresh regardless of what the client claims happened earlier.
 A WhatsApp-Web-style two-pane inbox: conversation list (layout-level, so it keeps scroll/search
 across navigations) plus thread and composer. Reads only what the app already stores — it never
 asks the worker for history, so a thread goes back to whenever monitoring began. Sending writes
-one `OutboundMessage` with `actionType: MANUAL_REPLY` and stops there (same DB-mediated hand-off
-as the Teams resolution notifier); the worker sends it. `MANUAL_REPLY` is the one action type the
+one `OutboundMessage` with `actionType: MANUAL_REPLY` and stops there (the same DB-mediated hand-off
+every sender uses); the worker sends it. `MANUAL_REPLY` is the one action type the
 queue treats differently: **the automation kill switch does not cancel it** (the switch stops the
 robot, not the operator) and an account rate limit **defers** it rather than discarding it, since
 silently dropping something a person typed is not acceptable. It still gets the same live
@@ -1633,15 +1600,15 @@ a narrower window: the "wait" definition must stay identical to Team Performance
 
 Nav lives in one place — `(dashboard)/navigation.ts`. Groups, top to bottom (a pinned
 "Overview" link sits above all of them; Messages leads with the WhatsApp Chat inbox): Messages,
-Escalations, Support Activity, Teams Integration, WhatsApp, Automation, Bulk Messaging, AI Learning,
+Escalations, Support Activity, Team Management, WhatsApp, Automation, Bulk Messaging, AI Learning,
 Conversation Learning, System, Users & Permissions — ordered by day-to-day check frequency, not by
 when each feature shipped. See `PROJECT_REFERENCE.md` for every link in every group.
 
 **Configuration lives in one Settings module** (`SETTINGS_SECTIONS` in `navigation.ts`, 27 Sep 2026).
-Twenty configuration pages that used to sit at the end of ten different groups (AI Settings,
-Providers, Models, Product Knowledge, Notification Center/Templates, Account Routing, the two bulk
-limits pages, Escalation Policies, Support Activity Setup, Shifts, Team Settings, the five Teams
-pages, Security, and `/settings` itself, now titled "Automation & Safety") are offered through a
+The configuration pages that used to sit at the end of their own groups (AI Settings, Providers,
+Models, Product Knowledge, Conversation Learning settings, Notification Center/Templates, Account
+Routing, the two bulk limits pages, Escalation Policies, Support Activity Setup, Shifts, Team
+Settings, Security, and `/settings` itself, now titled "Automation & Safety") are offered through a
 single sidebar **Settings** link. **Their routes did not move** — every page, form, save action and
 permission gate is untouched, so bookmarks and in-page links keep working. `DashboardShell` draws
 `SettingsNav` beside any path `isSettingsPath()` claims (exact or child), because the pages live under
@@ -1649,7 +1616,7 @@ different route segments and no Next layout could wrap them. The rail and the si
 permission-filtered (`settingsSectionsFor`); the link opens the first settings page the role can
 reach. ⌘K and the breadcrumb still resolve every settings page via `ALL_NAV_LINKS`. Left out on
 purpose: Automation Control (operational kill switch), WhatsApp Accounts, Groups, Team Members,
-Users, Permission Modules, Issues and the notification delivery log — places you work in, not
+Users, Permission Modules and the notification delivery log — places you work in, not
 preferences. A new configuration page belongs in `SETTINGS_SECTIONS`, not at the end of its group.
 
 **Every settings column should have a control, and the audit that closed the last gaps is worth

@@ -5,7 +5,6 @@ import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { processOneGroupKnowledgeBuild } from "../knowledge/groupKnowledgeJob.js";
 import { processOneAiAnalysisBatch } from "../learning/aiAnalysisJob.js";
-import { runTeamsSync } from "../teams/graphSync.js";
 import { runForgeKnowledgeSync } from "../forge/forgeKnowledgeJob.js";
 import { buildCommunicationStyleProfile } from "../knowledge/communicationStyleJob.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
@@ -396,7 +395,7 @@ export async function processOneCommand(accountId: string, provider: WhatsAppPro
     return true;
   }
   if (command.type === "TEAMS_SYNC_NOW") {
-    await executeTeamsSyncNowCommand(command);
+    await closeRetiredTeamsCommand(command);
     return true;
   }
   if (command.type === "BUILD_GROUP_KNOWLEDGE") {
@@ -424,10 +423,11 @@ export async function processOneCommandViaRegistry(registry: ProviderRegistry): 
     return true;
   }
 
-  // Also account-agnostic: there is at most one connected TeamsAccount, and Graph API calls need
-  // no WhatsApp session either.
+  // Retired with the Microsoft Teams Integration module. Only an old queued row can still carry
+  // it, and it carries no account — so it is closed here, before the account check below would fail
+  // it with a message about a missing account that has nothing to do with the real reason.
   if (command.type === "TEAMS_SYNC_NOW") {
-    await executeTeamsSyncNowCommand(command);
+    await closeRetiredTeamsCommand(command);
     return true;
   }
 
@@ -517,21 +517,16 @@ async function executeBuildGroupKnowledgeCommand(command: ClaimedCommand): Promi
   }
 }
 
-/** The dashboard's Teams Integration "Sync Now" button — runs one sync pass immediately instead
- * of waiting for startTeamsSyncProcessor's own interval. Never touches a WhatsApp provider/account. */
-async function executeTeamsSyncNowCommand(command: ClaimedCommand): Promise<void> {
-  try {
-    const result = await runTeamsSync();
-    await prisma.workerCommand.update({
-      where: { id: command.id },
-      data: { status: "DONE", processedAt: new Date(), result: { ...result } },
-    });
-  } catch (err) {
-    await prisma.workerCommand.update({
-      where: { id: command.id },
-      data: { status: "FAILED", processedAt: new Date(), result: { error: (err as Error).message } },
-    });
-  }
+/** Closes a queued Teams sync left over from before the Microsoft Teams Integration was removed. */
+async function closeRetiredTeamsCommand(command: ClaimedCommand): Promise<void> {
+  await prisma.workerCommand.update({
+    where: { id: command.id },
+    data: {
+      status: "FAILED",
+      processedAt: new Date(),
+      result: { error: "Microsoft Teams Integration has been removed from Softify Assist." },
+    },
+  });
 }
 
 /**

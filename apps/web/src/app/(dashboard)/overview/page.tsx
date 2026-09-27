@@ -57,7 +57,6 @@ import {
   getRecentMessageActivity,
   getSupportActivityDashboardSummary,
   getSystemLogsSummary,
-  getTeamsIntegrationSummary,
   getWorkerLivenessSummary,
 } from "@/server/actions/dashboardSummary";
 import {
@@ -115,7 +114,6 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
     systemLogs,
     supportActivity,
     recentActivity,
-    teamsIntegration,
     messageLoad,
     decisionMix,
     deliveryOutcomes,
@@ -138,7 +136,6 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
     getSystemLogsSummary(nowMs),
     getSupportActivityDashboardSummary(nowMs),
     getRecentMessageActivity(nowMs),
-    getTeamsIntegrationSummary(nowMs),
     getMessageLoadSeries(nowMs),
     getDecisionMix(nowMs),
     getDeliveryOutcomes(nowMs),
@@ -182,12 +179,6 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
     bulkMessaging: "OPERATIONAL",
     notifications: notifications.failed24h > 0 ? "ATTENTION" : "OPERATIONAL",
     supportActivity: supportActivity.enabled ? "OPERATIONAL" : "OFF",
-    teamsIntegration:
-      teamsIntegration.status === "DISCONNECTED"
-        ? "OFF"
-        : teamsIntegration.status === "REAUTH_REQUIRED" || teamsIntegration.status === "ERROR"
-          ? "ATTENTION"
-          : "OPERATIONAL",
     systemLogs: systemLogs.errors24h > 0 || systemLogs.warnings24h > 0 ? "ATTENTION" : "OPERATIONAL",
   };
   const modulesNeedingAttention = Object.values(moduleStatus).filter(
@@ -776,36 +767,6 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           <ModuleCardRow label="Today's supported groups">{supportActivity.todaySupportedGroups}</ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard
-          title="Teams Integration"
-          icon={Link2}
-          href="/integrations/teams"
-          status={moduleStatus.teamsIntegration}
-          secondaryLink={{ href: "/issues", label: "View issues" }}
-        >
-          <ModuleCardRow label="Connection">
-            <Badge
-              color={
-                teamsIntegration.status === "CONNECTED" || teamsIntegration.status === "SYNCING"
-                  ? "green"
-                  : teamsIntegration.status === "REAUTH_REQUIRED"
-                    ? "yellow"
-                    : teamsIntegration.status === "ERROR"
-                      ? "red"
-                      : "gray"
-              }
-              dot
-            >
-              {teamsIntegration.status}
-            </Badge>
-          </ModuleCardRow>
-          <ModuleCardRow label="Open issues">
-            <Badge color={teamsIntegration.openIssueCount > 0 ? "yellow" : "gray"} dot>
-              {teamsIntegration.openIssueCount}
-            </Badge>
-          </ModuleCardRow>
-          <ModuleCardRow label="Resolved today">{teamsIntegration.resolvedTodayCount}</ModuleCardRow>
-        </DashboardModuleCard>
 
         <DashboardModuleCard title="System Logs" icon={ConsoleIcon} href="/logs" status={moduleStatus.systemLogs}>
           <ModuleCardRow label="Errors (24h)">

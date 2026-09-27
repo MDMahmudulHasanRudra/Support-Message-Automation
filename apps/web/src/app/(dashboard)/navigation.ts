@@ -152,17 +152,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       { href: "/team-management/settings", label: "Team Settings", icon: CalendarDays },
     ],
   },
-  {
-    label: "Microsoft Teams",
-    description: "The connection, which channels are read, and how issues resolve.",
-    links: [
-      { href: "/integrations/teams", label: "Connection", icon: Link2 },
-      { href: "/integrations/teams/manage", label: "Teams & Channels", icon: Users },
-      { href: "/integrations/teams/rules", label: "Resolution Rules", icon: ClipboardList },
-      { href: "/integrations/teams/keywords", label: "Resolution Keywords", icon: Tag },
-      { href: "/integrations/teams/settings", label: "Teams Settings", icon: SettingsIcon },
-    ],
-  },
 ];
 
 const SETTINGS_PATHS = SETTINGS_SECTIONS.flatMap((section) => section.links.map((link) => link.href));
@@ -221,7 +210,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    // After Support Activity, before Teams Integration: this group is checked daily (who is on,
+    // After Support Activity: this group is checked daily (who is on,
     // who is short) which is what `navigation.ts` orders by. Internal Team Members deliberately
     // stays under WhatsApp — one roster, linked to from here, never a second copy of it.
     section: "Support Operations",
@@ -231,13 +220,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/team-management/schedule", label: "Roster", icon: CalendarDays },
       { href: "/team-management/leave", label: "Leave", icon: ClipboardList },
       { href: "/team-management/attendance", label: "Duty History", icon: BarChart3 },
-    ],
-  },
-  {
-    section: "Support Operations",
-    label: "Teams Integration",
-    links: [
-      { href: "/issues", label: "Issues", icon: Link2 },
     ],
   },
   {
@@ -351,8 +333,6 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/support-escalation", "escalations.view"],
   ["/support-activity", "support_activity.view"],
   ["/team-management", "team_management.view"],
-  ["/issues", "teams_integration.view"],
-  ["/integrations/teams", "teams_integration.view"],
   ["/accounts", "whatsapp.view"],
   ["/groups", "whatsapp.view"],
   ["/team-members", "whatsapp.view"],

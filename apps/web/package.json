@@ -16,7 +16,6 @@
     "@support-automation/engine": "workspace:*",
     "@support-automation/forge-client": "workspace:*",
     "@support-automation/shared": "workspace:*",
-    "@support-automation/teams-client": "workspace:*",
     "lucide-react": "^1.31.0",
     "mammoth": "^1.12.2",
     "next": "16.3.0",

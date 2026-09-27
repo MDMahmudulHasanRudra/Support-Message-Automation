@@ -9,9 +9,8 @@ import type {
 } from "./types.js";
 
 /**
- * Read-only client for the Softify Forge REST API, written with plain `fetch` for the same reason
- * packages/teams-client avoids the Microsoft SDKs: the surface used here is a handful of GETs, and
- * a dependency would cost more in supply chain and build weight than it saves in code.
+ * Read-only client for the Softify Forge REST API, written with plain `fetch`: the surface used
+ * here is a handful of GETs, and a dependency would cost more in supply chain and build weight than it saves in code.
  *
  * **This client is deliberately read-only.** Forge can create tasks, post comments and submit
  * daily logs; none of that is exposed here. A customer-support system that can silently write to

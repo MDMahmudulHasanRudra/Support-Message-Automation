@@ -72,9 +72,6 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
-      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
-      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
-      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
       # Softify Forge — product knowledge from the ISPDIGITAL repository. Both apps read these:
       # the worker to do the reading, the dashboard for its settings page. Unset means the
       # integration is simply absent, which is the documented default (see FORGE_SETUP.md).
@@ -133,10 +130,6 @@ services:
       # Needed by packages/ai-client's resolveAiClient() to decrypt a stored AiProvider API key
       # before calling it — same key apps/web already uses, so the two must always match.
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
-      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
-      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
-      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
-      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
       # Softify Forge — the worker does the reading (see FORGE_SETUP.md). Unset means the
       # integration is absent, and both Forge loops return immediately every tick.
       FORGE_API_KEY: ${FORGE_API_KEY}
