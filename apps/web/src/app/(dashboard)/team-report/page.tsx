@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Download } from "lucide-react";
 import {
   Alert,
@@ -8,12 +7,7 @@ import {
   HelpButton,
   HelpSection,
   PageHeader,
-  Pagination,
-  SectionHeader,
   StatTile,
-  Table,
-  Td,
-  Th,
 } from "@/components/ui";
 import { ChartCard, ColumnChart, StackedBar } from "@/components/charts";
 import { requireAccess } from "@/server/authorize";
@@ -28,11 +22,9 @@ import {
 } from "@/server/teamReport";
 import { TeamReportFilters } from "./TeamReportFilters";
 import { ReportDataTable } from "./ReportDataTable";
-import { buildBucketsTable, buildMembersTable } from "@/server/teamReportTables";
+import { buildBucketsTable, buildGroupsTable, buildMembersTable } from "@/server/teamReportTables";
 
 export const metadata = { title: "Team Report" };
-
-const GROUPS_PER_PAGE = 50;
 
 const when = (ms: number | null) =>
   ms === null
@@ -59,7 +51,7 @@ export default async function TeamReportPage({
   const now = new Date();
   const requested = parseTeamReportFilters(params, now);
   const report = await loadTeamReport(requested, now);
-  const { filters, range, result, memberNames, members, groups, rules, teams, teamMemberIds, teamName, filterNote } = report;
+  const { filters, range, result, memberNames, members, rules, teams, teamMemberIds, teamName, filterNote } = report;
   const { summary } = result;
 
   const scopedName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
@@ -67,8 +59,6 @@ export default async function TeamReportPage({
   const teamOnly = Boolean(filters.teamId && !filters.memberId);
   const PERIOD_NAMES: Record<string, string> = { day: "Daily", week: "Weekly", month: "Monthly", custom: "Custom range" };
   const query = teamReportQuery(filters);
-  const page = Math.max(1, Number(params.page ?? "1") || 1);
-  const pagedGroups = result.groups.slice((page - 1) * GROUPS_PER_PAGE, page * GROUPS_PER_PAGE);
 
   const activitySeries = result.buckets.map((b) => ({
     label: bucketLabel(b.key, filters.granularity),
@@ -243,7 +233,10 @@ export default async function TeamReportPage({
           </Card>
 
           <Card>
-            <SectionHeader
+            <ReportDataTable
+              table={buildGroupsTable(report)}
+              query={query}
+              noun={{ singular: "group", plural: "groups" }}
               title={`Groups (${count(result.groups.length)})`}
               description={
                 filters.memberId || filters.teamId
@@ -251,63 +244,6 @@ export default async function TeamReportPage({
                   : "Every group with a message in the period, busiest first. Select a group to see every wait behind its numbers."
               }
             />
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Group</Th>
-                  <Th>Assigned</Th>
-                  <Th>Messages</Th>
-                  <Th>Customer</Th>
-                  <Th>Replies</Th>
-                  <Th>Missed</Th>
-                  <Th>Recall</Th>
-                  <Th>First – last support</Th>
-                  <Th>Support time</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagedGroups.map((row) => {
-                  const meta = groups.get(row.groupKey);
-                  return (
-                    <tr key={row.groupKey}>
-                      <Td>
-                        {meta ? (
-                          <Link className="link" href={`/team-report/group/${meta.id}?${query}`}>
-                            {meta.name}
-                          </Link>
-                        ) : (
-                          row.groupKey
-                        )}
-                        <span className="block text-[11px] text-[color:var(--color-subtle-foreground)]">{row.groupKey}</span>
-                      </Td>
-                      <Td>{meta?.assignedMemberId ? memberLabel(meta.assignedMemberId, memberNames) : "—"}</Td>
-                      <Td className="tabular">{count(row.totalMessages)}</Td>
-                      <Td className="tabular">{count(row.customerMessages)}</Td>
-                      <Td className="tabular">
-                        {count(row.memberReplies)}
-                        {row.businessReplies > 0 ? (
-                          <span className="block text-[11px] text-[color:var(--color-subtle-foreground)]">+{count(row.businessReplies)} business</span>
-                        ) : null}
-                      </Td>
-                      <Td className="tabular">{count(row.missed)}</Td>
-                      <Td className="tabular">{count(row.recalled)}</Td>
-                      <Td className="tabular text-[color:var(--color-muted-foreground)]">
-                        {row.firstActivityAt ? `${when(row.firstActivityAt)} – ${when(row.lastActivityAt)}` : "—"}
-                      </Td>
-                      <Td className="tabular">{duration(row.activeSeconds)}</Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </Table>
-            {result.groups.length > GROUPS_PER_PAGE ? (
-              <Pagination
-                page={page}
-                pageSize={GROUPS_PER_PAGE}
-                total={result.groups.length}
-                buildHref={(p) => `/team-report?${teamReportQuery(filters, { page: p })}`}
-              />
-            ) : null}
           </Card>
         </>
       )}

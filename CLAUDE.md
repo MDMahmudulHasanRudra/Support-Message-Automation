@@ -748,16 +748,20 @@ with a note, never an empty report. `team=none` is "members in no Team". Exports
 the file name and Summary sheet, and the Missed & Recall sheet lists `countedMissedWaits` — exactly
 the waits behind the scoped figures. A Team is never deleted once any membership points at it.
 
-**The Team members and By day tables are selectable and exportable** (`ReportDataTable.tsx`,
+**The Team members, By day and Groups tables are selectable and exportable** (`ReportDataTable.tsx`,
 `server/teamReportTables.ts`, `POST /api/team-report/table-export`). Row checkboxes (header = this
 page), search on the first column, sortable headers, 50–1,000 rows per page, sticky header and footer
 inside the table's own scroll box, and Export → Selected / Current page / All filtered × Excel / CSV.
 Paging is client-side ON PURPOSE: the report must read every message in the period to compute any
-figure, so these rows are already-computed aggregates (one per member, at most 92 days) and paging on
+figure, so these rows are already-computed aggregates (one per member, at most 92 days, one per
+group — a couple of thousand at most; Groups used to page on the server by re-running the whole
+report per page) and paging on
 the server would re-run the whole report per page. The export posts the row KEYS in on-screen order;
 the server recomputes the report and builds the rows with the same `buildMembersTable`/
 `buildBucketsTable` the page rendered, so the file has the table's columns, names, order and values
-(durations as the displayed text, counts as numbers) and never the checkbox column.
+(durations as the displayed text, counts as numbers) and never the checkbox column. Text shown UNDER
+a cell (a group's WhatsApp id, "+3 business") is `ReportTableRow.sub` — presentation, not a column,
+so it is not exported; search matches the group id through it.
 
 The dashboard's content column carries `min-w-0` (`DashboardShell.tsx`). Without it a wide table
 inside `overflow-x-auto` still widened the whole column — `main` measured 882–995px at a 390px

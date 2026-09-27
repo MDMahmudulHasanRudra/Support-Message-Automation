@@ -6,7 +6,7 @@ import { loadTeamReport, memberLabel, parseTeamReportFilters } from "@/server/te
 import { buildReportTable, type TeamReportTableId } from "@/server/teamReportTables";
 
 /**
- * Exports ONE Team Report table — Team members or By day — exactly as it appears on the page.
+ * Exports ONE Team Report table — Team members, By day or Groups — exactly as it appears on the page.
  *
  * The browser sends the report's filters (query string) and the keys of the rows to export, in the
  * order it shows them: the selected rows, the current page, or everything the search left. This
@@ -17,7 +17,7 @@ import { buildReportTable, type TeamReportTableId } from "@/server/teamReportTab
  * The full multi-sheet report export stays at /api/team-report/export.
  */
 
-const TABLES: Record<TeamReportTableId, string> = { members: "Team members", days: "By day" };
+const TABLES: Record<TeamReportTableId, string> = { members: "Team members", days: "By day", groups: "Groups" };
 const MAX_KEYS = 5000;
 
 function contentDisposition(filename: string): string {
@@ -42,7 +42,8 @@ export async function POST(request: NextRequest) {
   } catch {
     return new NextResponse("The export request was not readable.", { status: 400 });
   }
-  const tableId = body.table === "members" || body.table === "days" ? body.table : null;
+  const tableId =
+    typeof body.table === "string" && body.table in TABLES ? (body.table as TeamReportTableId) : null;
   if (!tableId) return new NextResponse("Unknown table.", { status: 400 });
   const format = body.format === "csv" ? "csv" : "xlsx";
   const keys = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").slice(0, MAX_KEYS) : [];

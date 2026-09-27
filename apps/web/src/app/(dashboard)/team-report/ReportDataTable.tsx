@@ -7,12 +7,13 @@ import { Button, Checkbox, Input, Select, useToast } from "@/components/ui";
 import type { ReportTableData } from "@/server/teamReportTables";
 
 /**
- * One of the Team Report's selectable tables (Team members, By day): row checkboxes, search,
+ * One of the Team Report's selectable tables (Team members, By day, Groups): row checkboxes, search,
  * sortable columns, page size and pages, sticky header and footer, and an Export menu.
  *
  * All rows arrive with the page. That is deliberate rather than a shortcut: the report has to read
  * every message in the period to compute ANY of its figures, so by the time these tables exist
- * their rows are already computed aggregates — one per team member, one per day (at most 92).
+ * their rows are already computed aggregates — one per team member, one per day (at most 92), one
+ * per group (a couple of thousand at most).
  * Paging them on the server would re-run the whole report per page for rows the browser could
  * hold anyway. The file is built on the server, so the heavy spreadsheet library never reaches
  * the browser and the UI stays responsive while it is written.
@@ -56,7 +57,10 @@ export function ReportDataTable({
   // Search, then sort: "All filtered" and the page both come from this list.
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    const rows = needle ? table.rows.filter((row) => String(row.cells[0]).toLowerCase().includes(needle)) : table.rows;
+    // The first column, plus the text under it (a group's WhatsApp id), so a pasted id finds its group.
+    const rows = needle
+      ? table.rows.filter((row) => `${row.cells[0]} ${row.sub?.[0] ?? ""}`.toLowerCase().includes(needle))
+      : table.rows;
     if (!sort) return rows;
     const sign = sort.direction === "asc" ? 1 : -1;
     return [...rows].sort((a, b) => sign * compare(a.sort[sort.column]!, b.sort[sort.column]!));
@@ -279,7 +283,7 @@ export function ReportDataTable({
                                 : "text-[color:var(--color-foreground)]"
                               : table.columns[index]?.numeric
                                 ? "tabular text-[color:var(--color-foreground)]"
-                                : index === table.columns.length - 1 && table.id === "members"
+                                : table.columns[index]?.muted
                                   ? "tabular text-[color:var(--color-muted-foreground)]"
                                   : "tabular text-[color:var(--color-foreground)]"
                           }`}
@@ -293,6 +297,9 @@ export function ReportDataTable({
                           ) : (
                             cell
                           )}
+                          {row.sub?.[index] ? (
+                            <span className="block text-[11px] text-[color:var(--color-subtle-foreground)]">{row.sub[index]}</span>
+                          ) : null}
                         </td>
                       ))}
                     </tr>

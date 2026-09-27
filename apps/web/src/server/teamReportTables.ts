@@ -2,7 +2,7 @@ import { formatDurationShort } from "@/lib/duration";
 import { bucketLabel, memberLabel, teamReportQuery, type TeamReportData } from "@/server/teamReport";
 
 /**
- * The Team Report's two selectable tables — Team members and By day — as plain data: columns plus
+ * The Team Report's three selectable tables — Team members, By day and Groups — as plain data: columns plus
  * rows of cell values. The page renders exactly these rows and the table export writes exactly these
  * rows, so a downloaded file has the same columns, names, order and values as the table it came from.
  *
@@ -11,12 +11,14 @@ import { bucketLabel, memberLabel, teamReportQuery, type TeamReportData } from "
  * value behind each cell, so "3d 15h" sorts as a duration rather than as text.
  */
 
-export type TeamReportTableId = "members" | "days";
+export type TeamReportTableId = "members" | "days" | "groups";
 export type CellValue = string | number;
 
 export interface ReportTableColumn {
   label: string;
   numeric?: boolean;
+  /** Shown in the quieter text colour (date ranges), as the original tables did. */
+  muted?: boolean;
 }
 
 export interface ReportTableRow {
@@ -28,6 +30,11 @@ export interface ReportTableRow {
   href?: string | null;
   /** A row that is not a person (Unassigned groups), shown quieter. */
   muted?: boolean;
+  /**
+   * Small secondary text shown under a cell on screen (a group's WhatsApp id, "+3 business"). Part
+   * of the cell's presentation, not a column, so it is not exported as one.
+   */
+  sub?: Array<string | null>;
 }
 
 export interface ReportTableData {
@@ -62,7 +69,7 @@ export function buildMembersTable(data: TeamReportData): ReportTableData {
       { label: "Missed", numeric: true },
       { label: "Recall", numeric: true },
       { label: "Support time" },
-      { label: "First – last" },
+      { label: "First – last", muted: true },
     ],
     rows: result.members.map((row) => {
       const unassigned = row.memberId === "UNASSIGNED";
@@ -130,6 +137,59 @@ export function buildBucketsTable(data: TeamReportData): ReportTableData {
   };
 }
 
+export function buildGroupsTable(data: TeamReportData): ReportTableData {
+  const { result, groups, memberNames } = data;
+  const query = teamReportQuery(data.filters);
+  return {
+    id: "groups",
+    columns: [
+      { label: "Group" },
+      { label: "Assigned" },
+      { label: "Messages", numeric: true },
+      { label: "Customer", numeric: true },
+      { label: "Replies", numeric: true },
+      { label: "Missed", numeric: true },
+      { label: "Recall", numeric: true },
+      { label: "First – last support", muted: true },
+      { label: "Support time" },
+    ],
+    rows: result.groups.map((row) => {
+      const meta = groups.get(row.groupKey);
+      const name = meta?.name ?? row.groupKey;
+      const assigned = meta?.assignedMemberId ? memberLabel(meta.assignedMemberId, memberNames) : "—";
+      return {
+        key: row.groupKey,
+        cells: [
+          name,
+          assigned,
+          row.totalMessages,
+          row.customerMessages,
+          row.memberReplies,
+          row.missed,
+          row.recalled,
+          row.firstActivityAt ? `${formatWhen(row.firstActivityAt)} – ${formatWhen(row.lastActivityAt)}` : "—",
+          formatDuration(row.activeSeconds),
+        ],
+        sort: [
+          name.toLowerCase(),
+          assigned === "—" ? "~" : assigned.toLowerCase(),
+          row.totalMessages,
+          row.customerMessages,
+          row.memberReplies,
+          row.missed,
+          row.recalled,
+          row.firstActivityAt ?? 0,
+          row.activeSeconds,
+        ],
+        href: meta ? `/team-report/group/${meta.id}?${query}` : null,
+        sub: [row.groupKey, null, null, null, row.businessReplies > 0 ? `+${row.businessReplies.toLocaleString("en-US")} business` : null],
+      };
+    }),
+  };
+}
+
 export function buildReportTable(id: TeamReportTableId, data: TeamReportData): ReportTableData {
-  return id === "members" ? buildMembersTable(data) : buildBucketsTable(data);
+  if (id === "members") return buildMembersTable(data);
+  if (id === "days") return buildBucketsTable(data);
+  return buildGroupsTable(data);
 }
