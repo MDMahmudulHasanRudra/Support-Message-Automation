@@ -60,7 +60,7 @@ export async function recordUnansweredQuestion(input: {
   if (trimmed.length < 12) return;
 
   const settings = await getForgeSettings();
-  if (!settings.enabled || !settings.researchUnanswered || !settings.projectId) return;
+  if (!settings.enabled || !settings.researchUnanswered || !settings.forgeProjectId) return;
 
   // `patternKey` is the stable, word-order-independent key — the same one the pattern detector
   // and AI rule drafting already deduplicate on, so "how do I void an invoice" asked in fifty
@@ -115,7 +115,7 @@ export async function processOneResearchTask(clientOverride?: AiClient): Promise
   if (!isForgeConfigured()) return { ran: false, skipped: "FORGE_NOT_CONFIGURED" };
 
   const settings = await getForgeSettings();
-  if (!settings.enabled || !settings.researchUnanswered || !settings.projectId) {
+  if (!settings.enabled || !settings.researchUnanswered || !settings.forgeProjectId) {
     return { ran: false, skipped: "RESEARCH_DISABLED" };
   }
 
@@ -131,7 +131,7 @@ export async function processOneResearchTask(clientOverride?: AiClient): Promise
     return { ran: true, taskId: task.id, skipped: "AI_UNAVAILABLE" };
   }
 
-  const projectId = settings.projectId;
+  const projectId = settings.forgeProjectId;
   const forge = new ForgeClient(loadForgeConfigFromEnv());
 
   try {

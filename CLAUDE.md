@@ -155,6 +155,28 @@ in this package before, and it caused a real production outage. Any new function
 alongside `resolveWhatsAppAccount()`/`encryptSecret()`/etc. goes in the same file, not a sibling
 module reached by `./`.
 
+### Multi-project (in progress — `MULTI_PROJECT_PLAN.md` is the reference)
+
+The platform is becoming multi-project: the original installation is the project **ISP Digital**
+(`proj_isp_digital`, slug `isp-digital`). **Phase 1 (database foundation) only has landed**:
+`Project`, `ProjectAccess`, `ProjectFeature`, and a `projectId` on the 70 project-scoped tables
+(`NOT NULL DEFAULT 'proj_isp_digital'`, so every existing write still lands in ISP Digital with no
+code change) plus a nullable one on `SystemLog`. Composite `(projectId, …)` uniques sit NEXT TO the
+old install-wide ones, which stay until Phase 2 moves lookups onto the composite ones. Nothing reads
+any of it yet.
+
+Two rules that hold from here on:
+- **Project access ≠ permission.** `ProjectAccess` says which projects a user may enter, nothing
+  more. What they may do inside is the EXISTING permission system, unchanged, the same in every
+  project. Never add a role or permission column to `ProjectAccess`.
+- **`projectId` means the platform project, everywhere.** ForgeSettings' own Forge-repository
+  project is `forgeProjectId`/`forgeProjectName` (renamed in the Phase 1 migration) so the two
+  cannot be confused.
+
+The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
+migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
+lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.
+
 ### Web ⇄ Worker: no direct HTTP
 
 All coordination goes through Postgres:

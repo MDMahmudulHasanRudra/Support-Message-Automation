@@ -144,8 +144,8 @@ export default async function ForgeIntegrationPage() {
         configured={configured}
         settings={{
           enabled: settings.enabled,
-          projectId: settings.projectId,
-          projectName: settings.projectName,
+          projectId: settings.forgeProjectId,
+          projectName: settings.forgeProjectName,
           syncUserGuides: settings.syncUserGuides,
           syncModuleGuides: settings.syncModuleGuides,
           researchUnanswered: settings.researchUnanswered,

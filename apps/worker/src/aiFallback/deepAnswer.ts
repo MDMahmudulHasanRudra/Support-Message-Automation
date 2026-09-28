@@ -72,14 +72,14 @@ export async function researchForCustomerQuestion(params: {
     // Deliberately requires the Forge integration to be enabled and pointed at a project. This
     // reads that project's source; turning on a deep-answer switch should not quietly start
     // reading a repository the admin never connected.
-    if (!settings.enabled || !settings.projectId) return { snippets: [], reason: "FORGE_DISABLED" };
+    if (!settings.enabled || !settings.forgeProjectId) return { snippets: [], reason: "FORGE_DISABLED" };
 
     const forge = new ForgeClient(loadForgeConfigFromEnv());
-    const modules = await forge.listKnowledgeModules(settings.projectId);
+    const modules = await forge.listKnowledgeModules(settings.forgeProjectId);
     const module = selectModuleForQuestion(params.question, modules);
     if (!module) return { snippets: [], reason: "NO_MATCHING_MODULE" };
 
-    const sources = await readModuleSources(forge, settings.projectId, module);
+    const sources = await readModuleSources(forge, settings.forgeProjectId, module);
     // A module whose paths do not resolve produces nothing, deliberately: given a name and no
     // source, the model invents a plausible guide. That has been observed.
     if (sources.length === 0) return { snippets: [], reason: "NO_READABLE_SOURCE" };

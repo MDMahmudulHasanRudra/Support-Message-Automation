@@ -30,7 +30,7 @@ afterEach(async () => {
   await prisma.aiKnowledgeItem.deleteMany({ where: { source: "DEEP_ANSWER" } });
   await prisma.forgeSettings.update({
     where: { id: "global" },
-    data: { enabled: false, projectId: null },
+    data: { enabled: false, forgeProjectId: null },
   });
 });
 
@@ -44,7 +44,7 @@ describe("it does not run unless it is meant to", () => {
     // connected — the source it reads belongs to a project an admin chose.
     await prisma.forgeSettings.update({
       where: { id: "global" },
-      data: { enabled: false, projectId: "some-project" },
+      data: { enabled: false, forgeProjectId: "some-project" },
     });
 
     const result = await researchForCustomerQuestion({
@@ -62,7 +62,7 @@ describe("it does not run unless it is meant to", () => {
   });
 
   it("does nothing when no project has been chosen", async () => {
-    await prisma.forgeSettings.update({ where: { id: "global" }, data: { enabled: true, projectId: null } });
+    await prisma.forgeSettings.update({ where: { id: "global" }, data: { enabled: true, forgeProjectId: null } });
 
     const result = await researchForCustomerQuestion({
       question: "How do I void an invoice?",
@@ -91,7 +91,7 @@ describe("it never returns unreachable Forge as an error to the customer", () =>
     // intact, not surface as an error.
     await prisma.forgeSettings.update({
       where: { id: "global" },
-      data: { enabled: true, projectId: "definitely-not-a-real-project" },
+      data: { enabled: true, forgeProjectId: "definitely-not-a-real-project" },
     });
 
     const result = await researchForCustomerQuestion({

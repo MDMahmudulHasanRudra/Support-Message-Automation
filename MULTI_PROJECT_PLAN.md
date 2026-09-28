@@ -1,6 +1,7 @@
 # Multi-Project Softify Assist: Audit and Plan
 
-Status: **approved to start Phase 1 (database foundation) only.** This document is the audit the
+Status: **Phase 1 (database foundation) implemented and verified locally, 28 Sep 2026: not
+pushed, not deployed.** Phase 2 has not started. This document is the audit the
 spec asks for before any code: the Global vs Project-Scoped Entity Map, the Existing Data Migration
 Plan and the Project Context Plan. It also covers project access, feature flags, phasing and the
 decisions taken.
@@ -226,6 +227,11 @@ Incoming message → accountId → account.projectId (cached, invalidated on cha
   - `findRelevantKnowledge` retrieves only this project's verified knowledge;
   - `resolveAiClient(job)` resolves this project's model assignment;
   - `resolveWhatsAppAccount(serviceKey)` finds this project's Primary.
+- **"Only the Primary account replies" becomes per project.** `processIncomingMessage` suppresses
+  automation on any account that is not THE Primary (`findFirst({ isPrimary: true })`). Left global,
+  every Bizify message would be silenced because ISP Digital's Primary is not Bizify's account. This
+  was found while verifying Phase 1: a stray Primary account in the test database silenced the whole
+  AI suite.
 - **Queue drainers** (outbound, participant adds, notifications, commands, escalations, knowledge
   imports, Forge research). They stay one global loop each, since one worker drains everything,
   and load the **row's** project settings per row. Per-account rate limits are already per
@@ -468,6 +474,12 @@ in the sidebar header and prefixed to the breadcrumb (`ISP Digital › WhatsApp 
 exposes a way to create a second project. Until then a second project cannot exist, so there is
 nothing to leak.
 
+**Phase 2 must also grant access on user creation.** A user created after Phase 1 has no
+`ProjectAccess` row; nothing reads it yet, but the moment Phase 2 enforces access they would be
+locked out. The Users page must grant ISP Digital access on create until the Main Admin Portal
+assigns it explicitly, and Phase 2 re-runs the Phase 1 backfill for anyone created in between. The
+seed already grants its admin access, idempotently.
+
 ### 10.1 Phase 1, reviewed after the 28 Sep correction
 
 What Phase 1 does, precisely, and what it deliberately leaves alone.
@@ -494,7 +506,11 @@ What Phase 1 does, precisely, and what it deliberately leaves alone.
 
 - touch `User`, `PermissionModule`, `Permission`, `PermissionModulePermission` or any role
   assignment;
-- change a single query, page, action, route or worker path;
+- change a single query, page, action, route or worker path, with one exception: Forge's own
+  `projectId`/`projectName` on `ForgeSettings` (the Forge repository it learns from) are renamed
+  to `forgeProjectId`/`forgeProjectName`, a column rename plus 19 field references. The name
+  `projectId` must mean the platform project everywhere, and Prisma would otherwise have read the
+  Forge column as the new tenant column and overwritten it;
 - drop any column, constraint or default;
 - add the `projects.*` permission keys (Phase 4, with the portal that uses them).
 

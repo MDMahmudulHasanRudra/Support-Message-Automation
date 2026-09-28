@@ -100,7 +100,7 @@ export async function ensureForgeSettings(): Promise<void> {
     update: {},
     create: { id: "global" },
   });
-  if (settings.projectId) return;
+  if (settings.forgeProjectId) return;
 
   try {
     const { ForgeClient, loadForgeConfigFromEnv } = await import("@support-automation/forge-client");
@@ -108,7 +108,7 @@ export async function ensureForgeSettings(): Promise<void> {
     if (projects.length !== 1) return;
     await prisma.forgeSettings.update({
       where: { id: "global" },
-      data: { projectId: projects[0]!.id, projectName: projects[0]!.name },
+      data: { forgeProjectId: projects[0]!.id, forgeProjectName: projects[0]!.name },
     });
     console.log(`[forge] linked to project "${projects[0]!.name}"`);
   } catch (err) {

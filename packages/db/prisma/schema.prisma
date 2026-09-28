@@ -258,6 +258,10 @@ enum NotificationEvent {
 /// somebody wants escalations at 2am and does not want unknown-pattern suggestions ever.
 model TeamMemberNotificationPreference {
   teamMemberId String
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId    String             @default("proj_isp_digital")
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
   event        NotificationEvent
 
@@ -280,7 +284,11 @@ model TeamMemberNotificationPreference {
 /// `key` is a plain string rather than an enum on purpose: the catalogue is defined in code and
 /// validated against it, so adding a template is a code change with no migration attached.
 model NotificationTemplate {
-  key String @id
+  key       String  @id
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   /// The custom wording, with {{placeholder}} variables. Validated against the key's declared
   /// variables before it is written — an unknown placeholder is refused at save time rather than
@@ -291,10 +299,16 @@ model NotificationTemplate {
   updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
   updatedAt   DateTime @updatedAt
   createdAt   DateTime @default(now())
+
+  @@unique([projectId, key])
 }
 
 model NotificationEventSetting {
-  event NotificationEvent @id
+  event     NotificationEvent @id
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String            @default("proj_isp_digital")
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   /// Off means the event raises nothing at all. The point of the module: a team drowning in
   /// unknown-pattern alerts can silence that one without losing escalation alerts.
@@ -311,6 +325,8 @@ model NotificationEventSetting {
   whatsappGroupIds String[] @default([])
 
   updatedAt DateTime @updatedAt
+
+  @@unique([projectId, event])
 }
 
 enum NotificationStatus {
@@ -472,6 +488,130 @@ enum LogLevel {
 // Models
 // ---------------------------------------------------------------------------
 
+enum ProjectStatus {
+  SETUP
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+/// One isolated project on the platform — ISP Digital (the original installation, id
+/// `proj_isp_digital`) and any created later. Everything project-scoped carries its `projectId`.
+/// See MULTI_PROJECT_PLAN.md. A status change never deletes data.
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  slug        String        @unique
+  description String?
+  status      ProjectStatus @default(SETUP)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  access   ProjectAccess[]
+  features ProjectFeature[]
+
+  whatsAppAccountRows                  WhatsAppAccount[]
+  whatsAppServiceRouteRows             WhatsAppServiceRoute[]
+  internalTeamMemberRows               InternalTeamMember[]
+  teamRows                             Team[]
+  teamMembershipRows                   TeamMembership[]
+  automationRuleRows                   AutomationRule[]
+  aiProviderRows                       AiProvider[]
+  aiModelConfigRows                    AiModelConfig[]
+  aiKnowledgeItemRows                  AiKnowledgeItem[]
+  aiKnowledgeVersionRows               AiKnowledgeVersion[]
+  knowledgeImportRows                  KnowledgeImport[]
+  supportPriorityPolicyRows            SupportPriorityPolicy[]
+  supportKeywordRows                   SupportKeyword[]
+  supportRuleRows                      SupportRule[]
+  supportRuleKeywordRows               SupportRuleKeyword[]
+  supportRuleGroupRows                 SupportRuleGroup[]
+  supportRuleTeamMemberRows            SupportRuleTeamMember[]
+  shiftTemplateRows                    ShiftTemplate[]
+  leaveTypeRows                        LeaveType[]
+  holidayRows                          Holiday[]
+  weeklyScheduleEntryRows              WeeklyScheduleEntry[]
+  dutyAssignmentRows                   DutyAssignment[]
+  dutyAssignmentChangeRows             DutyAssignmentChange[]
+  leaveRequestRows                     LeaveRequest[]
+  chatCategoryRows                     ChatCategory[]
+  savedGroupSetRows                    SavedGroupSet[]
+  savedReplyRows                       SavedReply[]
+  notificationTemplateRows             NotificationTemplate[]
+  notificationEventSettingRows         NotificationEventSetting[]
+  teamMemberNotificationPreferenceRows TeamMemberNotificationPreference[]
+  patternCandidateRows                 PatternCandidate[]
+  patternCandidateEvidenceRows         PatternCandidateEvidence[]
+  ruleProposalRows                     RuleProposal[]
+  learningBatchJobRows                 LearningBatchJob[]
+  conversationAnalysisRunRows          ConversationAnalysisRun[]
+  conversationCandidateRows            ConversationCandidate[]
+  forgeResearchTaskRows                ForgeResearchTask[]
+  sandboxSessionRows                   SandboxSession[]
+  sandboxTurnRows                      SandboxTurn[]
+  messageRows                          Message[]
+  outboundMessageRows                  OutboundMessage[]
+  whatsAppGroupRows                    WhatsAppGroup[]
+  automationExecutionRows              AutomationExecution[]
+  notificationRows                     Notification[]
+  workerCommandRows                    WorkerCommand[]
+  processingCheckpointRows             ProcessingCheckpoint[]
+  messageDropCounterRows               MessageDropCounter[]
+  groupBroadcastJobRows                GroupBroadcastJob[]
+  groupParticipantAddJobRows           GroupParticipantAddJob[]
+  groupParticipantAddItemRows          GroupParticipantAddItem[]
+  aiFallbackDecisionRows               AiFallbackDecision[]
+  aiEvidenceSnapshotRows               AiEvidenceSnapshot[]
+  aiEvidenceItemRows                   AiEvidenceItem[]
+  supportEscalationCaseRows            SupportEscalationCase[]
+  supportEscalationEventRows           SupportEscalationEvent[]
+  conversationSessionRows              ConversationSession[]
+  supportActivityRows                  SupportActivity[]
+  supportSessionRows                   SupportSession[]
+  teamAttendanceDayRows                TeamAttendanceDay[]
+  teamAttendanceGroupRows              TeamAttendanceGroup[]
+  systemLogRows                        SystemLog[]
+  automationSettings                   AutomationSettings?
+  aiSettings                           AiSettings?
+  groupBroadcastSettings               GroupBroadcastSettings?
+  groupParticipantAddSettings          GroupParticipantAddSettings?
+  supportEscalationSettings            SupportEscalationSettings?
+  learningSettings                     LearningSettings?
+  supportActivitySettings              SupportActivitySettings?
+  forgeSettings                        ForgeSettings?
+  teamManagementSettings               TeamManagementSettings?
+  communicationStyleProfile            CommunicationStyleProfile?
+}
+
+/// Which projects a user may ENTER — nothing else. What they may do inside a project is decided by
+/// the existing permission system (their existing role), unchanged, the same in every project they
+/// can access. Deliberately no role or permission column here: project access and module
+/// permission are separate questions (MULTI_PROJECT_PLAN.md §7).
+model ProjectAccess {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+/// A project's entitlement to one feature. Absent row = the feature catalogue's default, so adding a
+/// feature needs no migration. Read by nothing until Phase 5.
+model ProjectFeature {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  key       String
+  enabled   Boolean
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, key])
+}
+
 model User {
   id           String  @id @default(cuid())
   username     String  @unique
@@ -538,6 +678,8 @@ model User {
   reviewedConversationCandidates ConversationCandidate[]
   knowledgeVerified              AiKnowledgeItem[]         @relation("AiKnowledgeVerifier")
   systemLogs                     SystemLog[]
+
+  projectAccess ProjectAccess[]
 }
 
 // ---------------------------------------------------------------------------
@@ -624,6 +766,10 @@ model SecuritySettings {
 
 model WhatsAppAccount {
   id              String                @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId       String                @default("proj_isp_digital")
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
   label           String
   phoneNumber     String?
   status          WhatsAppAccountStatus @default(DISCONNECTED)
@@ -720,11 +866,17 @@ model WhatsAppAccount {
 /// a specific account for a service.
 model WhatsAppServiceRoute {
   serviceKey     WhatsAppServiceKey     @id
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId      String                 @default("proj_isp_digital")
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId      String?
   account        WhatsAppAccount?       @relation(fields: [accountId], references: [id], onDelete: SetNull)
   fallbackPolicy WhatsAppFallbackPolicy @default(PRIMARY_FALLBACK)
   enabled        Boolean                @default(true)
   updatedAt      DateTime               @updatedAt
+
+  @@unique([projectId, serviceKey])
 }
 
 /// A folder in the chat inbox — "Billing", "VIP clients", "Escalated", whatever the team needs.
@@ -752,8 +904,12 @@ model WhatsAppServiceRoute {
 /// The cost of a snapshot is that it goes stale, so loading one reports what no longer resolves
 /// rather than silently sending to fewer groups than the name implies.
 model SavedGroupSet {
-  id   String @id @default(cuid())
-  name String @unique
+  id        String  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name      String  @unique
 
   /// WhatsAppGroup ids. Not a relation: a set survives a group being deleted or resynced away,
   /// and reports the gap at load time instead of quietly shrinking through a cascade.
@@ -763,12 +919,18 @@ model SavedGroupSet {
   createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, name])
 }
 
 model SavedReply {
-  id    String @id @default(cuid())
+  id        String  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// What it is called in the picker — short, since it is scanned rather than read.
-  title String
+  title     String
 
   /// The text inserted into the composer. Never sent on its own: it lands in the box for the
   /// operator to adjust and send, because a saved reply is a starting point and the last word on
@@ -791,9 +953,13 @@ model SavedReply {
 }
 
 model ChatCategory {
-  id   String @id @default(cuid())
+  id        String  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// Unique so two people cannot create "Billing" twice and split the same groups across both.
-  name String @unique
+  name      String  @unique
 
   /// One of a fixed palette (see packages/shared/src/chatCategories.ts). A colour rather than an
   /// icon because the list is scanned down the left edge, where a 10px dot reads and a glyph does not.
@@ -808,11 +974,16 @@ model ChatCategory {
 
   groups WhatsAppGroup[]
 
+  @@unique([projectId, name])
   @@index([position])
 }
 
 model WhatsAppGroup {
   id                          String              @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId                   String              @default("proj_isp_digital")
+  project                     Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId                   String
   account                     WhatsAppAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
   whatsappGroupId             String // WhatsApp chat id, e.g. "1234567890-1234567890@g.us"
@@ -933,6 +1104,10 @@ model WhatsAppGroup {
 
 model InternalTeamMember {
   id              String           @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId       String           @default("proj_isp_digital")
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
   name            String
   phoneNumber     String           @unique
   /// The opaque identifier WhatsApp actually puts on this person's messages.
@@ -991,6 +1166,9 @@ model InternalTeamMember {
   leaveRequests         LeaveRequest[]
   attendanceDays        TeamAttendanceDay[]
 
+  @@unique([projectId, phoneNumber])
+  @@unique([projectId, whatsappId])
+  @@unique([projectId, microsoftEmail])
   @@index([teamId])
 }
 
@@ -1001,6 +1179,10 @@ model InternalTeamMember {
 /// what lets last month's report still say who was in Support last month. Disable it instead.
 model Team {
   id          String     @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId   String     @default("proj_isp_digital")
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Restrict)
   name        String     @unique
   code        String?    @unique
   description String?
@@ -1010,6 +1192,9 @@ model Team {
 
   members     InternalTeamMember[]
   memberships TeamMembership[]
+
+  @@unique([projectId, name])
+  @@unique([projectId, code])
 }
 
 /// One stretch of a person belonging to a Team. Changing someone's Team closes their open row
@@ -1024,6 +1209,10 @@ model Team {
 /// today the app keeps at most one open row per person.
 model TeamMembership {
   id           String             @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId    String             @default("proj_isp_digital")
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   teamMemberId String
   teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
   teamId       String
@@ -1038,6 +1227,10 @@ model TeamMembership {
 
 model Message {
   id                String           @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId         String           @default("proj_isp_digital")
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId         String
   account           WhatsAppAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   groupId           String?
@@ -1113,6 +1306,10 @@ model Message {
 
 model AutomationRule {
   id              String     @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId       String     @default("proj_isp_digital")
+  project         Project    @relation(fields: [projectId], references: [id], onDelete: Restrict)
   name            String
   description     String?
   type            RuleType
@@ -1144,6 +1341,10 @@ model AutomationRule {
 
 model AutomationExecution {
   id              String          @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId       String          @default("proj_isp_digital")
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
   messageId       String
   message         Message         @relation(fields: [messageId], references: [id], onDelete: Cascade)
   ruleId          String?
@@ -1161,6 +1362,10 @@ model AutomationExecution {
 
 model OutboundMessage {
   id               String                @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId        String                @default("proj_isp_digital")
+  project          Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId        String
   account          WhatsAppAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
   chatId           String
@@ -1226,6 +1431,10 @@ model OutboundMessage {
 /// configuration it was queued under, and its own stop/kill-switch state.
 model GroupBroadcastJob {
   id                  String                  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId           String                  @default("proj_isp_digital")
+  project             Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId           String
   account             WhatsAppAccount         @relation(fields: [accountId], references: [id], onDelete: Cascade)
   createdById         String?
@@ -1267,6 +1476,10 @@ model GroupBroadcastJob {
 /// tuning bulk-send safety never touches automation's own limits.
 model GroupBroadcastSettings {
   id                            String   @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId                     String   @unique @default("proj_isp_digital")
+  project                       Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
   delayMinMs                    Int      @default(5000)
   delayMaxMs                    Int      @default(15000)
   maxPerMinute                  Int      @default(6)
@@ -1287,6 +1500,10 @@ model GroupBroadcastSettings {
 /// throttling must be tunable independently (see GroupParticipantAddSettings).
 model GroupParticipantAddJob {
   id                  String                       @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId           String                       @default("proj_isp_digital")
+  project             Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId           String
   account             WhatsAppAccount              @relation(fields: [accountId], references: [id], onDelete: Cascade)
   createdById         String?
@@ -1322,6 +1539,10 @@ model GroupParticipantAddJob {
 
 model GroupParticipantAddItem {
   id                String                        @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId         String                        @default("proj_isp_digital")
+  project           Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
   jobId             String
   job               GroupParticipantAddJob        @relation(fields: [jobId], references: [id], onDelete: Cascade)
   groupId           String
@@ -1367,6 +1588,10 @@ model GroupParticipantAddItem {
 /// bulk messaging.
 model GroupParticipantAddSettings {
   id               String   @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId        String   @unique @default("proj_isp_digital")
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
   delayMinMs       Int      @default(10000)
   delayMaxMs       Int      @default(30000)
   /// Adds per minute across EVERY running job, not per job. It was per job, which meant the
@@ -1383,6 +1608,10 @@ model GroupParticipantAddSettings {
 
 model Notification {
   /// Why this was sent. Nullable because rows written before the Notification Center existed have
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId                 String             @default("proj_isp_digital")
+  project                   Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// no event to attribute, and guessing one from the payload would be a fabrication.
   event                     NotificationEvent?
   id                        String             @id @default(cuid())
@@ -1421,6 +1650,10 @@ model Notification {
 
 model WorkerCommand {
   id          String              @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId   String              @default("proj_isp_digital")
+  project     Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
   type        WorkerCommandType
   /// Nullable so pre-multi-account historical rows (created before this column existed) remain
   /// valid, and so account-agnostic command types (AI_ANALYSIS_BATCH) can omit it entirely — every
@@ -1482,6 +1715,10 @@ model WorkerHealthSnapshot {
 
 model ProcessingCheckpoint {
   id                       String          @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId                String          @default("proj_isp_digital")
+  project                  Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId                String          @unique
   account                  WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   lastProcessedTimestampWa DateTime?
@@ -1513,6 +1750,10 @@ enum MessageDropReason {
 /// It also makes "received" derivable rather than in-memory: received = stored + dropped.
 model MessageDropCounter {
   accountId String
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String            @default("proj_isp_digital")
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   account   WhatsAppAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
   /// The Dhaka calendar day, matching every other daily figure in this product.
   day       DateTime          @db.Date
@@ -1527,6 +1768,10 @@ model MessageDropCounter {
 /// Singleton row (id is always the literal string "global").
 model AutomationSettings {
   id                           String         @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId                    String         @unique @default("proj_isp_digital")
+  project                      Project        @relation(fields: [projectId], references: [id], onDelete: Restrict)
   mode                         AutomationMode @default(SAFE_AUTO_REPLY)
   automationEnabled            Boolean        @default(true)
   /// Per-conversation ceilings. Every message this system sends automatically is a REPLY to an
@@ -1556,11 +1801,14 @@ model AutomationSettings {
 }
 
 model SystemLog {
-  id       String   @id @default(cuid())
-  level    LogLevel
-  scope    String
-  message  String
-  metadata Json?
+  id        String   @id @default(cuid())
+  /// Set for a project's operational events; null for platform events (worker boot, a login).
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  level     LogLevel
+  scope     String
+  message   String
+  metadata  Json?
 
   /// WHO did it, TO WHAT, and as part of which request.
   ///
@@ -1724,6 +1972,10 @@ enum KnowledgeImportSourceType {
 
 model KnowledgeImport {
   id             String                    @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId      String                    @default("proj_isp_digital")
+  project        Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// What this came from, in the operator's words — a file name, or a title they typed.
   /// Copied onto every entry it produces so a reviewer can see the origin without a join.
   label          String
@@ -1768,6 +2020,10 @@ enum AiKnowledgeStatus {
 /// pipelines they're meant to control don't exist until a later phase.
 model AiSettings {
   id                              String            @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId                       String            @unique @default("proj_isp_digital")
+  project                         Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   aiEngineEnabled                 Boolean           @default(false)
   learningEnabled                 Boolean           @default(false)
   autoResponseEnabled             Boolean           @default(false)
@@ -1865,6 +2121,10 @@ model AiSettings {
 /// never touches the database or, past the initial form submit, the browser.
 model AiProvider {
   id               String           @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId        String           @default("proj_isp_digital")
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
   name             String
   kind             AiProviderKind
   apiUrl           String?
@@ -1891,12 +2151,18 @@ model AiProvider {
 /// job instead of a fixed "global" id.
 model AiModelConfig {
   id         String     @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId  String     @default("proj_isp_digital")
+  project    Project    @relation(fields: [projectId], references: [id], onDelete: Restrict)
   job        AiModelJob @unique
   providerId String
   provider   AiProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
   modelId    String
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
+
+  @@unique([projectId, job])
 }
 
 /// The application's permanent knowledge store (spec section 9). In Phase 1
@@ -1926,6 +2192,10 @@ enum AiKnowledgeScope {
 
 model AiKnowledgeItem {
   id              String              @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId       String              @default("proj_isp_digital")
+  project         Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
   title           String
   category        AiKnowledgeCategory
   question        String?
@@ -2020,6 +2290,10 @@ model AiKnowledgeItem {
 /// every subsequent edit adds a new row rather than mutating history.
 model AiKnowledgeVersion {
   id              String              @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId       String              @default("proj_isp_digital")
+  project         Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
   itemId          String
   item            AiKnowledgeItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
   version         Int
@@ -2069,6 +2343,10 @@ enum EvidenceResponseSource {
 /// apps/worker/src/aiFallback/eligibility.ts's doc comment.
 model AiFallbackDecision {
   id        String          @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String          @default("proj_isp_digital")
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
   messageId String          @unique
   message   Message         @relation(fields: [messageId], references: [id], onDelete: Cascade)
   accountId String
@@ -2152,6 +2430,10 @@ model AiFallbackDecision {
 /// Only the operational structure that makes an answer traceable.
 model AiEvidenceSnapshot {
   id         String             @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId  String             @default("proj_isp_digital")
+  project    Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   decisionId String             @unique
   decision   AiFallbackDecision @relation(fields: [decisionId], references: [id], onDelete: Cascade)
 
@@ -2181,6 +2463,10 @@ model AiEvidenceSnapshot {
 /// One piece of evidence, as it was at the moment it was used.
 model AiEvidenceItem {
   snapshotId String
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId  String             @default("proj_isp_digital")
+  project    Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   snapshot   AiEvidenceSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   /// SetNull rather than Cascade: deleting a knowledge item must not erase the record that it once
@@ -2215,6 +2501,10 @@ model AiEvidenceItem {
 /// SupportEscalationCase at creation time, so editing a policy never rewrites an in-flight case.
 model SupportPriorityPolicy {
   id                      String          @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId               String          @default("proj_isp_digital")
+  project                 Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
   priority                SupportPriority @unique
   firstAlertMinutes       Int
   secondAlertMinutes      Int
@@ -2223,11 +2513,17 @@ model SupportPriorityPolicy {
   followUpIntervalMinutes Int
   maxEscalations          Int
   updatedAt               DateTime        @updatedAt
+
+  @@unique([projectId, priority])
 }
 
 /// Singleton row (id is always the literal string "global").
 model SupportEscalationSettings {
   id                String              @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId         String              @unique @default("proj_isp_digital")
+  project           Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
   enabled           Boolean             @default(true)
   escalationAdminId String?
   escalationAdmin   InternalTeamMember? @relation(fields: [escalationAdminId], references: [id], onDelete: SetNull)
@@ -2240,6 +2536,10 @@ model SupportEscalationSettings {
 /// than opening a duplicate one — see escalationQueue.ts).
 model SupportEscalationCase {
   id          String           @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId   String           @default("proj_isp_digital")
+  project     Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId   String
   account     WhatsAppAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   groupId     String
@@ -2292,6 +2592,10 @@ model SupportEscalationCase {
 /// as "already handled, skip."
 model SupportEscalationEvent {
   id             String                  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId      String                  @default("proj_isp_digital")
+  project        Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
   caseId         String
   case           SupportEscalationCase   @relation(fields: [caseId], references: [id], onDelete: Cascade)
   level          Int
@@ -2354,6 +2658,10 @@ enum LearningBatchJobTrigger {
 /// sessionSegmentation.ts), never by the message pipeline itself.
 model ConversationSession {
   id                String                    @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId         String                    @default("proj_isp_digital")
+  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId         String
   account           WhatsAppAccount           @relation(fields: [accountId], references: [id], onDelete: Cascade)
   chatId            String
@@ -2382,6 +2690,10 @@ model ConversationSession {
 /// than on AiSettings — this is deliberately not an "AI settings" table.
 model LearningSettings {
   id                                 String   @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId                          String   @unique @default("proj_isp_digital")
+  project                            Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// The one kill switch for this entire feature — false means the segmentation/pattern-detection
   /// jobs no-op on every tick, and zero rows are written anywhere under this section.
   conversationLearningEnabled        Boolean  @default(false)
@@ -2419,6 +2731,10 @@ model LearningSettings {
 /// for AI_ANALYSIS specifically, the cost-visibility record referenced from the dashboard hub.
 model LearningBatchJob {
   id                   String                  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId            String                  @default("proj_isp_digital")
+  project              Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
   jobType              LearningBatchJobType
   trigger              LearningBatchJobTrigger
   status               LearningBatchJobStatus  @default(QUEUED)
@@ -2469,6 +2785,10 @@ enum PatternCandidateStatus {
 /// here, but it can never become visible or actionable.
 model PatternCandidate {
   id                      String    @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId               String    @default("proj_isp_digital")
+  project                 Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// Deterministic signature (sorted distinctive-keyword set) — the same recurring intent always
   /// hashes to the same key, order-independent. See packages/engine/src/patternDetection.ts.
   patternKey              String    @unique
@@ -2527,6 +2847,7 @@ model PatternCandidate {
   evidence PatternCandidateEvidence[]
   proposal RuleProposal?
 
+  @@unique([projectId, patternKey])
   @@index([status, confidenceScore])
   @@index([lastSeenAt])
   @@index([unhandledCount, lastSeenAt])
@@ -2537,6 +2858,10 @@ model PatternCandidate {
 /// session already linked to this candidate is never counted or linked twice.
 model PatternCandidateEvidence {
   id                    String                 @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId             String                 @default("proj_isp_digital")
+  project               Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
   patternCandidateId    String
   patternCandidate      PatternCandidate       @relation(fields: [patternCandidateId], references: [id], onDelete: Cascade)
   conversationSessionId String
@@ -2598,6 +2923,10 @@ enum RuleProposalSource {
 
 model RuleProposal {
   id                 String            @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId          String            @default("proj_isp_digital")
+  project            Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// Null for an AI_REPLY proposal, which has no recurring pattern behind it. Postgres
   /// permits many NULLs under a unique index, so one-candidate-one-proposal still holds.
   patternCandidateId String?           @unique
@@ -2642,6 +2971,7 @@ model RuleProposal {
   createdAt               DateTime           @default(now())
   updatedAt               DateTime           @updatedAt
 
+  @@unique([projectId, sourceSignature])
   @@index([status, confidenceScoreSnapshot])
 }
 
@@ -2717,6 +3047,10 @@ enum SupportSessionStatus {
 /// countingPeriod are global, not per-rule, by explicit requirement.
 model SupportActivitySettings {
   id                      String                        @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId               String                        @unique @default("proj_isp_digital")
+  project                 Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
   enabled                 Boolean                       @default(false)
   countingPeriod          SupportActivityCountingPeriod @default(DAILY)
   updatedAt               DateTime                      @updatedAt
@@ -2741,6 +3075,10 @@ model SupportActivitySettings {
 /// are independently CRUD-able (add/edit/delete/enable-disable) and reused across rules.
 model SupportKeyword {
   id              String                  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId       String                  @default("proj_isp_digital")
+  project         Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
   value           String
   matchMode       SupportKeywordMatchMode @default(CONTAINS)
   /// Default false (case-insensitive) — matches every existing text-matching convention in this
@@ -2765,6 +3103,10 @@ model SupportKeyword {
 /// false — the minimal shape for this, not a JSON id array (which is harder to index/join safely).
 model SupportRule {
   id                      String                     @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId               String                     @default("proj_isp_digital")
+  project                 Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
   name                    String
   description             String?
   triggerType             SupportActivityTriggerType @default(KEYWORD_MATCH)
@@ -2788,6 +3130,10 @@ model SupportRule {
 
 model SupportRuleKeyword {
   ruleId    String
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String         @default("proj_isp_digital")
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Restrict)
   rule      SupportRule    @relation(fields: [ruleId], references: [id], onDelete: Cascade)
   keywordId String
   keyword   SupportKeyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
@@ -2798,6 +3144,10 @@ model SupportRuleKeyword {
 
 model SupportRuleGroup {
   ruleId    String
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String        @default("proj_isp_digital")
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
   rule      SupportRule   @relation(fields: [ruleId], references: [id], onDelete: Cascade)
   groupId   String
   group     WhatsAppGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -2808,6 +3158,10 @@ model SupportRuleGroup {
 
 model SupportRuleTeamMember {
   ruleId       String
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId    String             @default("proj_isp_digital")
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   rule         SupportRule        @relation(fields: [ruleId], references: [id], onDelete: Cascade)
   teamMemberId String
   teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
@@ -2822,6 +3176,10 @@ model SupportRuleTeamMember {
 /// countingPeriod retroactively reinterprets all existing history correctly.
 model SupportActivity {
   id           String               @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId    String               @default("proj_isp_digital")
+  project      Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId    String
   account      WhatsAppAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
   groupId      String
@@ -2883,6 +3241,10 @@ model SupportActivity {
 /// getGroupSessionHistory in apps/web/src/server/supportActivityReports.ts), never a stored status.
 model SupportSession {
   id        String               @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String               @default("proj_isp_digital")
+  project   Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
   accountId String
   account   WhatsAppAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
   groupId   String
@@ -2950,7 +3312,11 @@ model SupportSession {
 /// friends. Everything defaults off: an install with no Forge credentials must behave exactly as
 /// it did before this integration existed.
 model ForgeSettings {
-  id String @id @default("global")
+  id        String  @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @unique @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   /// Master switch. Off means every Forge job is a no-op regardless of credentials.
   enabled Boolean @default(false)
@@ -2958,8 +3324,8 @@ model ForgeSettings {
   /// The Forge project whose repository this deployment learns from. Discovered via
   /// `GET /projects` and chosen by an admin — never guessed, because a key can be in scope for
   /// several projects and learning from the wrong one is silent and wrong.
-  projectId   String?
-  projectName String?
+  forgeProjectId   String?
+  forgeProjectName String?
 
   /// Tier 1: hand-written, customer-facing documents (docs/user-guides/**, product overviews).
   /// Authoritative by definition — a guide the team wrote FOR customers.
@@ -2997,7 +3363,11 @@ model ForgeSettings {
 /// raw source into the same prompt that drafts a customer reply. The answer it produces goes to
 /// the review queue, so the NEXT customer to ask gets it instantly and safely.
 model ForgeResearchTask {
-  id String @id @default(cuid())
+  id        String  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   /// The customer's question, verbatim, as the thing to research.
   question String
@@ -3034,6 +3404,7 @@ model ForgeResearchTask {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
+  @@unique([projectId, signature])
   @@index([status, scheduledAt])
   @@index([askedCount])
 }
@@ -3061,7 +3432,11 @@ enum ForgeResearchStatus {
 /// knowledge entry produces one wrong answer; wrong style guidance shapes EVERY answer, so
 /// guidance is applied to nothing until a person has read it. Rebuilding always clears it.
 model CommunicationStyleProfile {
-  id String @id @default("global")
+  id        String  @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @unique @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   /// The distilled guidance, in prose, as it will be given to the model. Null until first built.
   guidance String?
@@ -3167,8 +3542,12 @@ enum AttendanceOverride {
 /// on the name "Morning" or on 10:00-19:00; the entire point is that an operator can add a night
 /// shift, a weekend shift or a 09:00-18:00 from the UI without a code change.
 model ShiftTemplate {
-  id          String @id @default(cuid())
-  name        String @unique
+  id          String  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId   String  @default("proj_isp_digital")
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name        String  @unique
   /// Minutes from local midnight, 0-1439.
   startMinute Int
   /// Minutes from local midnight. Less than or equal to `startMinute` means it ends the next day.
@@ -3203,6 +3582,7 @@ model ShiftTemplate {
   weeklyEntries     WeeklyScheduleEntry[]
   dutyAssignments   DutyAssignment[]
 
+  @@unique([projectId, name])
   @@index([isActive, position])
 }
 
@@ -3219,6 +3599,10 @@ model ShiftTemplate {
 /// exists; see that model's own comment.
 model WeeklyScheduleEntry {
   id           String             @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId    String             @default("proj_isp_digital")
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   teamMemberId String
   teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
   /// 0 = Sunday .. 6 = Saturday.
@@ -3258,6 +3642,10 @@ model WeeklyScheduleEntry {
 /// the coverage path creates rather than upserts and lets the unique violation be the guard.
 model DutyAssignment {
   id           String             @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId    String             @default("proj_isp_digital")
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   teamMemberId String
   teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
   /// The Dhaka calendar day. A cross-midnight shift belongs to the day it STARTS.
@@ -3298,6 +3686,10 @@ model DutyAssignment {
 /// on the shift he vacated is ONE manager decision, and two unrelated rows would not say so.
 model DutyAssignmentChange {
   id           String             @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId    String             @default("proj_isp_digital")
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   teamMemberId String
   teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
   dutyDate     DateTime           @db.Date
@@ -3328,6 +3720,10 @@ model DutyAssignmentChange {
 /// software is not entitled to make.
 model LeaveType {
   id                  String  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId           String  @default("proj_isp_digital")
+  project             Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
   name                String  @unique
   /// Null means no allowance is tracked for this type, which is different from an allowance of 0.
   annualAllowanceDays Int?
@@ -3340,6 +3736,7 @@ model LeaveType {
 
   requests LeaveRequest[]
 
+  @@unique([projectId, name])
   @@index([isActive, position])
 }
 
@@ -3350,6 +3747,10 @@ model LeaveType {
 /// column later would leave every existing row silently claiming the wrong person asked.
 model LeaveRequest {
   id           String             @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId    String             @default("proj_isp_digital")
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   teamMemberId String
   teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
   leaveTypeId  String
@@ -3383,12 +3784,18 @@ model LeaveRequest {
 /// An organisation holiday. Never hardcoded — no national or religious calendar is assumed.
 model Holiday {
   id          String   @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId   String   @default("proj_isp_digital")
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
   name        String
   date        DateTime @unique @db.Date
   description String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([projectId, date])
 }
 
 /// How much lateness this organisation is willing to call on time.
@@ -3407,7 +3814,11 @@ model Holiday {
 ///
 /// A singleton, `id = "global"`, like every other settings row in this schema.
 model TeamManagementSettings {
-  id String @id @default("global")
+  id        String  @id @default("global")
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @unique @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   /// Minutes past the scheduled start before a first message counts as a late start. A smaller
   /// overrun is still SHOWN — "+8m" is visible on the row — it is simply not called late, which is
@@ -3444,6 +3855,10 @@ model TeamManagementSettings {
 /// "the manager says he worked, and there were no messages" stays readable as exactly that.
 model TeamAttendanceDay {
   id           String             @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId    String             @default("proj_isp_digital")
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
   teamMemberId String
   teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
   /// Dhaka calendar day.
@@ -3483,6 +3898,10 @@ model TeamAttendanceDay {
 /// than to whichever number happened to receive them.
 model TeamAttendanceGroup {
   attendanceDayId String
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId       String            @default("proj_isp_digital")
+  project         Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   attendanceDay   TeamAttendanceDay @relation(fields: [attendanceDayId], references: [id], onDelete: Cascade)
   groupId         String
   group           WhatsAppGroup     @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -3700,9 +4119,13 @@ enum SandboxReviewStatus {
 }
 
 model SandboxSession {
-  id    String  @id @default(cuid())
+  id        String  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// Optional name for the scenario being tested ("billing question, no client id").
-  label String?
+  label     String?
 
   /// Optional: answer as though the message arrived in this group. Affects only the
   /// group name in the prompt and the same-group tie-break in knowledge ranking —
@@ -3724,6 +4147,10 @@ model SandboxSession {
 
 model SandboxTurn {
   id        String         @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String         @default("proj_isp_digital")
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Restrict)
   sessionId String
   session   SandboxSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
@@ -3833,8 +4260,12 @@ enum ConversationCandidateStatus {
 }
 
 model ConversationAnalysisRun {
-  id    String  @id @default(cuid())
-  label String?
+  id        String  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String  @default("proj_isp_digital")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  label     String?
 
   /// Snapshot of the selection, in the order it will be worked through. A plain
   /// array rather than a join table: it is an immutable record of what was asked
@@ -3868,9 +4299,13 @@ model ConversationAnalysisRun {
 }
 
 model ConversationCandidate {
-  id    String                  @id @default(cuid())
-  runId String
-  run   ConversationAnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  id        String                  @id @default(cuid())
+  /// The project this row belongs to. Defaults to ISP Digital until Phase 2 of MULTI_PROJECT_PLAN.md
+  /// makes every write name its project explicitly.
+  projectId String                  @default("proj_isp_digital")
+  project   Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  runId     String
+  run       ConversationAnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   groupId   String?
   group     WhatsAppGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)

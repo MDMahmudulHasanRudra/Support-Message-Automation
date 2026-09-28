@@ -35,6 +35,22 @@ async function main() {
   });
   console.log(`Seeded admin user: ${admin.username}`);
 
+  // Multi-project (MULTI_PROJECT_PLAN.md): the original installation is the project ISP Digital,
+  // created by the 20260928150000_projects_foundation migration. On a fresh install the seeded
+  // admin is created AFTER that migration ran, so it would have no project access — give it access
+  // to ISP Digital. Access only: what the admin may do is still its existing role, set below.
+  // Idempotent, and never removes anyone's access.
+  await prisma.project.upsert({
+    where: { id: "proj_isp_digital" },
+    update: {},
+    create: { id: "proj_isp_digital", name: "ISP Digital", slug: "isp-digital", status: "ACTIVE" },
+  });
+  await prisma.projectAccess.upsert({
+    where: { projectId_userId: { projectId: "proj_isp_digital", userId: admin.id } },
+    update: {},
+    create: { projectId: "proj_isp_digital", userId: admin.id },
+  });
+
   const exampleTeamMembers = [
     {
       name: "Support Executive 1",

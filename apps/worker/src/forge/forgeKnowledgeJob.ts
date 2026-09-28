@@ -73,7 +73,7 @@ export interface ForgeSyncResult {
 
 export interface ForgeSettingsRow {
   enabled: boolean;
-  projectId: string | null;
+  forgeProjectId: string | null;
   syncUserGuides: boolean;
   syncModuleGuides: boolean;
   autoVerifyUserGuides: boolean;
@@ -278,7 +278,7 @@ export async function runForgeKnowledgeSync(clientOverride?: AiClient): Promise<
 
   const settings = await getForgeSettings();
   if (!settings.enabled) return { ran: false, skipped: "FORGE_DISABLED" };
-  if (!settings.projectId) return { ran: false, skipped: "NO_PROJECT_SELECTED" };
+  if (!settings.forgeProjectId) return { ran: false, skipped: "NO_PROJECT_SELECTED" };
 
   const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
@@ -287,7 +287,7 @@ export async function runForgeKnowledgeSync(clientOverride?: AiClient): Promise<
   if (!ai) return { ran: false, skipped: "AI_UNAVAILABLE" };
 
   const forge = new ForgeClient(loadForgeConfigFromEnv());
-  const projectId = settings.projectId;
+  const projectId = settings.forgeProjectId;
 
   await prisma.forgeSettings.update({
     where: { id: "global" },

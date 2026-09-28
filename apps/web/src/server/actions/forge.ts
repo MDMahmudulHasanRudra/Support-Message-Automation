@@ -40,7 +40,7 @@ export async function updateForgeSettings(formData: FormData): Promise<void> {
       syncModuleGuides: formData.get("syncModuleGuides") === "on",
       researchUnanswered: formData.get("researchUnanswered") === "on",
       autoVerifyUserGuides: formData.get("autoVerifyUserGuides") === "on",
-      ...(projectId ? { projectId, projectName } : {}),
+      ...(projectId ? { forgeProjectId: projectId, forgeProjectName: projectName } : {}),
     },
   });
   revalidate();
@@ -92,7 +92,7 @@ export async function requestForgeSync(): Promise<ForgeSyncRequest> {
   if ("denied" in granted) return { queued: false, error: granted.denied };
   const settings = await getOrCreate();
   if (!settings.enabled) return { queued: false, error: "Turn the integration on first." };
-  if (!settings.projectId) return { queued: false, error: "Choose which Forge project to learn from first." };
+  if (!settings.forgeProjectId) return { queued: false, error: "Choose which Forge project to learn from first." };
 
   const inFlight = await prisma.workerCommand.findFirst({
     where: { type: "FORGE_SYNC_NOW", status: { in: ["PENDING", "PROCESSING"] } },
