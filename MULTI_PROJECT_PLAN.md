@@ -453,23 +453,20 @@ rule and knowledge. Each test is confirmed to fail with its scope deliberately r
 
 ---
 
-## 12. Decisions needed from Rudra before P3
+## 12. Decisions
 
-- **D1: first project's name and slug.** The spec's example is "SP Digital" / `sp-digital`, and
-  the Forge integration reads ISPDIGITAL. Confirm the exact name.
-- **D2: can one person be a team member in two projects?** Recommended: **yes**. The phone-number
-  uniqueness becomes per project, and the same colleague can be on both rosters, with separate
-  activity per project. The alternative, one person in one project only, breaks the moment
-  somebody supports both.
-- **D3: AI providers per project, or a shared provider list?** Recommended: **per project**, as the
-  spec asks (§11). Each project owns its providers, credentials and model assignments. A platform
-  admin can copy a provider into another project without retyping the key. The worker's
-  `OPENROUTER_API_KEY` bootstrap provisions only the first project.
-- **D4: roles.** Recommended: the existing Permission Modules stay **shared role definitions**,
-  and each project membership picks one. The alternative is roles defined separately per project,
-  which duplicates every role for every project.
-- **D5: can one WhatsApp number serve two projects?** Recommended: **no**. An account belongs to
-  exactly one project; this is the boundary everything else rests on. Two projects each having
-  their own number in the *same* group is supported, and each sees only its own copy.
-- **D6: routing.** Recommended: project in the URL (`/p/sp-digital/...`, §4.1), for the two-tab
-  safety reason. A cookie-only design is smaller to build and is not safe.
+Answered by Rudra on 28 Sep 2026:
+
+| # | Decision | Answer |
+|---|---|---|
+| D1 | First project | **SP Digital**, slug `sp-digital` |
+| D2 | Same person on two projects' rosters | **Yes**: phone-number uniqueness becomes per project; activity is counted separately per project |
+| D3 | AI providers | **Each project has its own** providers, credentials and model assignments; a platform admin can copy one across |
+| D6 | Routing | **Project in the URL** (`/p/sp-digital/...`); legacy URLs redirect |
+
+Taken as recommended unless Rudra says otherwise:
+
+| # | Decision | Assumed |
+|---|---|---|
+| D4 | Roles | Permission Modules stay shared role definitions; each project membership picks one |
+| D5 | One WhatsApp number in two projects | No: an account belongs to exactly one project. Two projects each with their own number in the same group is supported. |
