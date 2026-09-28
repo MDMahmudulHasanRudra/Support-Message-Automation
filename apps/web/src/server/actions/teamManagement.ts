@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+
 import type { DutyStatus, Prisma } from "@prisma/client";
 import { parseDhakaDayFromInput, toDhakaDateOnly } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
@@ -44,13 +46,13 @@ export interface TeamManagementResult {
 
 const MINUTES_IN_DAY = 24 * 60;
 
-function revalidateModule() {
-  revalidatePath("/team-management");
-  revalidatePath("/team-management/schedule");
-  revalidatePath("/team-management/shifts");
-  revalidatePath("/team-management/leave");
-  revalidatePath("/team-management/attendance");
-  revalidatePath("/team-management/settings");
+async function revalidateModule() {
+  revalidatePath(await projectPath("/team-management"));
+  revalidatePath(await projectPath("/team-management/schedule"));
+  revalidatePath(await projectPath("/team-management/shifts"));
+  revalidatePath(await projectPath("/team-management/leave"));
+  revalidatePath(await projectPath("/team-management/attendance"));
+  revalidatePath(await projectPath("/team-management/settings"));
 }
 
 /** `.manage` or nothing. Actions return a typed error rather than redirecting — a form needs a reason. */
@@ -144,7 +146,7 @@ export async function saveShiftTemplate(formData: FormData): Promise<TeamManagem
     throw err;
   }
 
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 
@@ -168,7 +170,7 @@ export async function setShiftTemplateActive(id: string, isActive: boolean): Pro
     userId: auth.userId,
     shiftTemplateId: id,
   });
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 
@@ -188,7 +190,7 @@ export async function setMemberDefaultShift(
   if (member.defaultShiftTemplateId === shiftTemplateId) return { unchanged: 1 };
 
   await prisma.internalTeamMember.update({ where: { id: teamMemberId }, data: { defaultShiftTemplateId: shiftTemplateId } });
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 
@@ -216,7 +218,7 @@ export async function setWeeklyScheduleEntry(
 
   if (value === "CLEAR") {
     const deleted = await prisma.weeklyScheduleEntry.deleteMany({ where: { teamMemberId, weekday } });
-    revalidateModule();
+    await revalidateModule();
     return deleted.count > 0 ? { updated: 1 } : { unchanged: 1 };
   }
 
@@ -232,7 +234,7 @@ export async function setWeeklyScheduleEntry(
     update: { shiftTemplateId },
   });
 
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 
@@ -383,7 +385,7 @@ export async function setDutyAssignment(formData: FormData): Promise<TeamManagem
     });
   });
 
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 
@@ -487,7 +489,7 @@ export async function materialiseRosterForDate(dateValue: string): Promise<TeamM
     }
   }
 
-  revalidateModule();
+  await revalidateModule();
   return { updated, unchanged };
 }
 
@@ -544,7 +546,7 @@ export async function createLeaveRequest(formData: FormData): Promise<TeamManage
     select: { id: true },
   });
 
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1, id: created.id };
 }
 
@@ -613,7 +615,7 @@ export async function decideLeaveRequest(
     teamMemberId: request.teamMemberId,
   });
 
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 
@@ -649,7 +651,7 @@ export async function cancelLeaveRequest(requestId: string): Promise<TeamManagem
 
   await logSystemEvent("INFO", "team-management", "LEAVE_CANCELLED", { userId: auth.userId, requestId });
 
-  revalidateModule();
+  await revalidateModule();
   return {
     updated: 1,
     message: "Leave cancelled. Their duty rows still read LEAVE — set them back on the roster if they are working.",
@@ -878,7 +880,7 @@ export async function applyShiftChange(input: {
     throw err;
   }
 
-  revalidateModule();
+  await revalidateModule();
   return { updated: input.replacementTeamMemberId ? 2 : 1, id: changeGroupId };
 }
 
@@ -928,7 +930,7 @@ export async function setAttendanceOverride(
     override,
   });
 
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 
@@ -964,7 +966,7 @@ export async function saveLeaveType(formData: FormData): Promise<TeamManagementR
     throw err;
   }
 
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 
@@ -988,7 +990,7 @@ export async function saveHoliday(formData: FormData): Promise<TeamManagementRes
     update: { name, description },
   });
 
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 
@@ -998,7 +1000,7 @@ export async function deleteHoliday(id: string): Promise<TeamManagementResult> {
 
   // Deleted by somebody else already is the expected outcome, not an error worth an error boundary.
   const removed = await prisma.holiday.deleteMany({ where: { id } });
-  revalidateModule();
+  await revalidateModule();
   return removed.count > 0 ? { updated: 1 } : { unchanged: 1 };
 }
 
@@ -1044,7 +1046,7 @@ export async function saveTeamManagementSettings(formData: FormData): Promise<Te
     where: { id: "global" },
     data: { latenessGraceMinutes, earlyDepartureGraceMinutes },
   });
-  revalidateModule();
+  await revalidateModule();
   return { updated: 1 };
 }
 

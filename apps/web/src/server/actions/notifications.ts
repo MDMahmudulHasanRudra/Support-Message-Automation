@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkPermission, requireAccess } from "@/server/authorize";
 
 export async function retryNotification(id: string): Promise<void> {
@@ -10,7 +12,7 @@ export async function retryNotification(id: string): Promise<void> {
     where: { id },
     data: { status: "PENDING", failureReason: null },
   });
-  revalidatePath("/notifications");
+  revalidatePath(await projectPath("/notifications"));
 }
 
 export interface BulkRetryResult {
@@ -49,7 +51,7 @@ export async function bulkRetryFailedNotifications(ids: string[]): Promise<BulkR
     data: { status: "PENDING", failureReason: null },
   });
 
-  revalidatePath("/notifications");
+  revalidatePath(await projectPath("/notifications"));
   return { requeued: count, notFailed: existing.length - count };
 }
 
@@ -68,7 +70,7 @@ export async function retryAllFailedNotifications(): Promise<BulkRetryResult> {
     where: { status: "FAILED" },
     data: { status: "PENDING", failureReason: null },
   });
-  revalidatePath("/notifications");
+  revalidatePath(await projectPath("/notifications"));
   return { requeued: count, notFailed: 0 };
 }
 
@@ -95,6 +97,6 @@ export async function sendTestNotification(_prevState: TestNotificationState, fo
       },
     },
   });
-  revalidatePath("/notifications");
+  revalidatePath(await projectPath("/notifications"));
   return { success: true };
 }

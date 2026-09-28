@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
 import type { Prisma } from "@prisma/client";
 import type { RuleAction, RuleConditions } from "@support-automation/shared";
 import { checkPermission, requireAccess } from "@/server/authorize";
@@ -134,8 +136,8 @@ export async function createRule(_prevState: RuleFormState, formData: FormData):
       actions: actions as unknown as Prisma.InputJsonValue },
   });
 
-  revalidatePath("/rules");
-  redirect("/rules");
+  revalidatePath(await projectPath("/rules"));
+  redirect(await projectPath("/rules"));
 }
 
 export async function updateRule(id: string, _prevState: RuleFormState, formData: FormData): Promise<RuleFormState> {
@@ -163,20 +165,20 @@ export async function updateRule(id: string, _prevState: RuleFormState, formData
       actions: actions as unknown as Prisma.InputJsonValue },
   });
 
-  revalidatePath("/rules");
-  redirect("/rules");
+  revalidatePath(await projectPath("/rules"));
+  redirect(await projectPath("/rules"));
 }
 
 export async function setRuleStatus(id: string, status: "ACTIVE" | "DISABLED" | "ARCHIVED"): Promise<void> {
   await requireAccess("automation_rules.activate");
   await prisma.automationRule.update({ where: { id }, data: { status } });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
 }
 
 export async function deleteRule(id: string): Promise<void> {
   await requireAccess("automation_rules.delete");
   await prisma.automationRule.delete({ where: { id } });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
 }
 
 export async function duplicateRule(id: string): Promise<void> {
@@ -200,11 +202,11 @@ export async function duplicateRule(id: string): Promise<void> {
       replyDelayMaxMs: original.replyDelayMaxMs,
     },
   });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
 }
 
 export async function updatePriority(id: string, priority: number): Promise<void> {
   await requireAccess("automation_rules.edit");
   await prisma.automationRule.update({ where: { id }, data: { priority } });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
 }

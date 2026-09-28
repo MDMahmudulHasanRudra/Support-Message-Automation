@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { SupportActivityCountingPeriod } from "@prisma/client";
 import { requireAccess } from "@/server/authorize";
 
@@ -15,10 +17,10 @@ export async function setSupportActivityEnabled(enabled: boolean): Promise<void>
   await requireAccess("support_activity.manage");
   await getOrCreateSupportActivitySettings();
   await prisma.supportActivitySettings.update({ where: { id: "global" }, data: { enabled } });
-  revalidatePath("/support-activity");
-  revalidatePath("/support-activity/settings");
-  revalidatePath("/team-report");
-  revalidatePath("/overview");
+  revalidatePath(await projectPath("/support-activity"));
+  revalidatePath(await projectPath("/support-activity/settings"));
+  revalidatePath(await projectPath("/team-report"));
+  revalidatePath(await projectPath("/overview"));
 }
 
 export async function updateSupportActivitySettings(formData: FormData): Promise<void> {
@@ -53,8 +55,8 @@ export async function updateSupportActivitySettings(formData: FormData): Promise
       countingPeriod: countingPeriod as SupportActivityCountingPeriod,
     },
   });
-  revalidatePath("/support-activity");
-  revalidatePath("/support-activity/team");
-  revalidatePath("/support-activity/settings");
-  revalidatePath("/overview");
+  revalidatePath(await projectPath("/support-activity"));
+  revalidatePath(await projectPath("/support-activity/team"));
+  revalidatePath(await projectPath("/support-activity/settings"));
+  revalidatePath(await projectPath("/overview"));
 }

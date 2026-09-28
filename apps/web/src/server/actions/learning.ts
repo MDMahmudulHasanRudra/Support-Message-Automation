@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkPermission, requireAccess } from "@/server/authorize";
 
 /**
@@ -20,7 +22,7 @@ export async function triggerAiAnalysisBatch(): Promise<void> {
     await prisma.workerCommand.create({ data: { type: "AI_ANALYSIS_BATCH" } });
   }
 
-  revalidatePath("/conversation-learning");
+  revalidatePath(await projectPath("/conversation-learning"));
 }
 
 export interface LearningSettingsFormState {
@@ -74,7 +76,7 @@ export async function updateLearningSettings(
     create: { id: "global" },
   });
 
-  revalidatePath("/conversation-learning/settings");
-  revalidatePath("/conversation-learning");
+  revalidatePath(await projectPath("/conversation-learning/settings"));
+  revalidatePath(await projectPath("/conversation-learning"));
   return { success: true };
 }

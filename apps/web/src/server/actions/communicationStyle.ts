@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkPermission, requireAccess } from "@/server/authorize";
 
 /**
@@ -13,9 +15,9 @@ import { checkPermission, requireAccess } from "@/server/authorize";
  * per-answer review to fall back on.
  */
 
-function revalidate() {
-  revalidatePath("/ai-learning/communication-style");
-  revalidatePath("/ai-learning");
+async function revalidate() {
+  revalidatePath(await projectPath("/ai-learning/communication-style"));
+  revalidatePath(await projectPath("/ai-learning"));
 }
 
 export async function getCommunicationStyleProfile() {
@@ -40,7 +42,7 @@ export async function approveCommunicationStyle(): Promise<{ error?: string }> {
     where: { id: "global" },
     data: { humanApproved: true, approvedAt: new Date(), approvedById: session.userId },
   });
-  revalidate();
+  await revalidate();
   return {};
 }
 
@@ -56,7 +58,7 @@ export async function unapproveCommunicationStyle(): Promise<void> {
     where: { id: "global" },
     data: { humanApproved: false, approvedAt: null, approvedById: null },
   });
-  revalidate();
+  await revalidate();
 }
 
 /**
@@ -82,7 +84,7 @@ export async function saveCommunicationStyle(formData: FormData): Promise<{ erro
       lastError: null,
     },
   });
-  revalidate();
+  await revalidate();
   return {};
 }
 
@@ -100,7 +102,7 @@ export async function discardCommunicationStyle(): Promise<void> {
       // guidance, not a request to re-read months of history on the next build.
     },
   });
-  revalidate();
+  await revalidate();
 }
 
 export interface StyleRebuildRequest {
@@ -124,7 +126,7 @@ export async function requestStyleRebuild(): Promise<StyleRebuildRequest> {
   if (inFlight) return { queued: true };
 
   await prisma.workerCommand.create({ data: { type: "BUILD_COMMUNICATION_STYLE" } });
-  revalidate();
+  await revalidate();
   return { queued: true };
 }
 

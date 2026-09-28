@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { NotificationEvent } from "@prisma/client";
 import { requireAccess } from "@/server/authorize";
 import { isNotificationEvent } from "@/lib/notificationEvents";
@@ -32,8 +34,8 @@ export async function updateNotificationEvent(formData: FormData): Promise<void>
     create: { event, enabled, sendToTeams, sendToWhatsApp, whatsappGroupIds },
   });
 
-  revalidatePath("/notifications/events");
-  revalidatePath("/notifications");
+  revalidatePath(await projectPath("/notifications/events"));
+  revalidatePath(await projectPath("/notifications"));
 }
 
 /** One switch, for the mute/unmute button on each row — the action people reach for most. */
@@ -47,8 +49,8 @@ export async function setNotificationEventEnabled(event: string, enabled: boolea
     create: { event, enabled },
   });
 
-  revalidatePath("/notifications/events");
-  revalidatePath("/notifications");
+  revalidatePath(await projectPath("/notifications/events"));
+  revalidatePath(await projectPath("/notifications"));
 }
 
 /**
@@ -77,6 +79,6 @@ export async function updateMemberNotificationPreferences(
     }),
   ]);
 
-  revalidatePath(`/team-members/${teamMemberId}/edit`);
-  revalidatePath("/notifications/events");
+  revalidatePath(await projectPath(`/team-members/${teamMemberId}/edit`));
+  revalidatePath(await projectPath("/notifications/events"));
 }

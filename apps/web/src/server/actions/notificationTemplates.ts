@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import {
   getTemplateDefinition,
   isNotificationTemplateKey,
@@ -59,7 +61,7 @@ export async function updateNotificationTemplate(
     editedBy: session.username,
   });
 
-  revalidatePath("/notifications/templates");
+  revalidatePath(await projectPath("/notifications/templates"));
   return { saved: true };
 }
 
@@ -79,7 +81,7 @@ export async function resetNotificationTemplate(key: string): Promise<TemplateAc
     });
   }
 
-  revalidatePath("/notifications/templates");
+  revalidatePath(await projectPath("/notifications/templates"));
   return { saved: true };
 }
 

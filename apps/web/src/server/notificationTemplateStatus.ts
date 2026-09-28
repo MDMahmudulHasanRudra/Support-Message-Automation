@@ -1,4 +1,5 @@
-import { prisma } from "@support-automation/db";
+
+import { prisma } from "@/server/db";
 import { NOTIFICATION_TEMPLATES } from "@support-automation/shared";
 
 /**

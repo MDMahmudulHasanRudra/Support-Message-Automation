@@ -1,10 +1,7 @@
 # Multi-Project Softify Assist: Audit and Plan
 
-Status: **Phase 1 (database foundation) implemented and verified locally, 28 Sep 2026: not
-pushed, not deployed.** Phase 2 has not started. This document is the audit the
-spec asks for before any code: the Global vs Project-Scoped Entity Map, the Existing Data Migration
-Plan and the Project Context Plan. It also covers project access, feature flags, phasing and the
-decisions taken.
+Status: **Phases 1 and 2 implemented and verified locally, 28 Sep 2026: not pushed, not
+deployed.** Phase 3 has not started. See §10.2 for what Phase 2 did and left for later.
 
 > **The existing permission system and existing portal functionality remain unchanged and are
 > reused inside every project. Project access determines which projects a user can enter; existing
@@ -479,6 +476,44 @@ nothing to leak.
 locked out. The Users page must grant ISP Digital access on create until the Main Admin Portal
 assigns it explicitly, and Phase 2 re-runs the Phase 1 backfill for anyone created in between. The
 seed already grants its admin access, idempotently.
+
+### 10.2 Phase 2 as delivered (28 Sep 2026)
+
+- **Project from the URL.** Every page lives under `/p/<slug>/…` (`app/p/[project]/`), including
+  the 9 export and import-template routes (`/p/<slug>/api/…`); `/api/health` stays global.
+  - `proxy.ts` forwards the URL's slug in `x-softify-project` and always discards a
+    client-supplied copy.
+  - Project-less URLs go to `/open`, which continues into the last project opened (cookie, used
+    for nothing else) or the first accessible one.
+  - Routing moved forward from Phase 4 because Rudra required the URL in Phase 2. The portal and
+    the switcher stay in Phase 4.
+- **Authorization order.** `checkPermission`, `requireAccess` and `pageAccess` now run session →
+  project access (`ProjectAccess`) → the existing permission check, unchanged. The dashboard
+  layout makes the project check too.
+  - A project the user cannot enter is a 404, disclosing nothing.
+  - An action refuses with "You do not have access to this project."
+- **Scoped client.** `apps/web/src/server/db.ts` exports `prisma` as
+  `createProjectScopedPrisma(...)` (packages/db). It scopes every query on the 70 tables (where,
+  data, nested writes, connects, list includes, `_count`), fails closed with no project, and
+  refuses a query naming another project.
+  - All 132 web modules that used Prisma now import it; only `auth.ts` and the project resolver
+    keep the platform client.
+  - Settings singletons keep their `id: "global"` call sites: the scope reads that as "this
+    project's row".
+- **Raw SQL.** The 14 `$queryRaw` queries each add `"projectId" = ${await activeProjectId()}`.
+- **Links and redirects.** Rendered links go through `@/components/ProjectLink` (and
+  `ButtonLink`), `useRouter` through `useProjectRouter`, and redirects/revalidations through
+  `projectPath()`. All of these resolve "/rules" inside the current project.
+- **Deferred to Phase 3, deliberately.** Both are needed while the worker is still unscoped.
+  - The `projectId` DB defaults stay: the worker writes without a project.
+  - The old install-wide uniques and the two key-as-primary-key tables stay: the worker looks
+    rows up by them.
+
+  The consequence: until then, a second project cannot save a value that collides with ISP
+  Digital's under those constraints (a team or shift with the same name, a notification template
+  key, a notification event setting, an AI model job slot). Such a write fails loudly; it never
+  lands in or reads from the wrong project. No second project can be created from the UI before
+  Phase 4.
 
 ### 10.1 Phase 1, reviewed after the 28 Sep correction
 

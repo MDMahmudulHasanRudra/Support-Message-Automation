@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { checkPermission } from "@/server/authorize";
@@ -42,7 +44,7 @@ export async function createSavedReply(formData: FormData): Promise<SavedReplyRe
     data: { title, body, position: (last?.position ?? 0) + 1, createdById: session.userId },
   });
 
-  revalidatePath("/chat", "layout");
+  revalidatePath(await projectPath("/chat"), "layout");
   return {};
 }
 
@@ -65,7 +67,7 @@ export async function updateSavedReply(id: string, formData: FormData): Promise<
     throw err;
   }
 
-  revalidatePath("/chat", "layout");
+  revalidatePath(await projectPath("/chat"), "layout");
   return {};
 }
 
@@ -74,7 +76,7 @@ export async function deleteSavedReply(id: string): Promise<SavedReplyResult> {
   if ("denied" in granted) return { error: granted.denied };
   // deleteMany so removing one somebody else already deleted is a no-op rather than an error.
   await prisma.savedReply.deleteMany({ where: { id } });
-  revalidatePath("/chat", "layout");
+  revalidatePath(await projectPath("/chat"), "layout");
   return {};
 }
 

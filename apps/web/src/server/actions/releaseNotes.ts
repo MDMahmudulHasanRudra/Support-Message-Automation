@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { Prisma, ReleaseNoteStatus, ReleaseNoteType } from "@prisma/client";
 import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
@@ -42,12 +44,12 @@ async function requireManage(): Promise<{ userId: string } | { error: string }> 
   return { userId: session.userId };
 }
 
-function revalidateReleaseNotes(id?: string) {
-  revalidatePath("/release-notes");
-  revalidatePath("/release-notes/manage");
+async function revalidateReleaseNotes(id?: string) {
+  revalidatePath(await projectPath("/release-notes"));
+  revalidatePath(await projectPath("/release-notes/manage"));
   if (id) {
-    revalidatePath(`/release-notes/${id}`);
-    revalidatePath(`/release-notes/manage/${id}/edit`);
+    revalidatePath(await projectPath(`/release-notes/${id}`));
+    revalidatePath(await projectPath(`/release-notes/manage/${id}/edit`));
   }
 }
 
@@ -167,11 +169,11 @@ export async function createReleaseNoteDraft(
     releaseNoteId: created.id,
   });
 
-  revalidateReleaseNotes();
+  await revalidateReleaseNotes();
   // Straight to the edit page, not the list: a fresh draft with seven empty sections is rarely
   // finished in one submission, unlike RuleForm's single-pass form — landing back on the list would
   // just make the very next click "open it again to keep writing."
-  redirect(`/release-notes/manage/${created.id}/edit`);
+  redirect(await projectPath(`/release-notes/manage/${created.id}/edit`));
 }
 
 // ---------------------------------------------------------------------------------------- update
@@ -234,8 +236,8 @@ export async function updateReleaseNote(
     wroteRevision: isPublic,
   });
 
-  revalidateReleaseNotes(id);
-  redirect("/release-notes/manage");
+  await revalidateReleaseNotes(id);
+  redirect(await projectPath("/release-notes/manage"));
 }
 
 // ----------------------------------------------------------------------------------- transitions
@@ -336,7 +338,7 @@ export async function transitionReleaseNoteStatus(
     releaseNoteId: id,
   });
 
-  revalidateReleaseNotes(id);
+  await revalidateReleaseNotes(id);
   return { updated: true };
 }
 
@@ -372,6 +374,6 @@ export async function deleteReleaseNoteDraft(id: string): Promise<DeleteResult> 
     releaseNoteId: id,
   });
 
-  revalidateReleaseNotes();
+  await revalidateReleaseNotes();
   return { deleted: true };
 }

@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma, createRuleProposalFromCandidate, approveRuleProposalById } from "@support-automation/db";
+import { createRuleProposalFromCandidate, approveRuleProposalById } from "@support-automation/db";
 import { checkPermission, requireAccess } from "@/server/authorize";
 
 /**
@@ -15,12 +17,12 @@ import { checkPermission, requireAccess } from "@/server/authorize";
 export async function createRuleProposal(candidateId: string): Promise<{ id: string } | { error: string }> {
   const granted = await checkPermission("conversation_learning.manage");
   if ("denied" in granted) return { error: granted.denied };
-  const result = await createRuleProposalFromCandidate(candidateId);
+  const result = await createRuleProposalFromCandidate(candidateId, prisma);
 
   if ("id" in result) {
-    revalidatePath("/conversation-learning/pattern-candidates");
-    revalidatePath(`/conversation-learning/pattern-candidates/${candidateId}`);
-    revalidatePath("/conversation-learning/rule-proposals");
+    revalidatePath(await projectPath("/conversation-learning/pattern-candidates"));
+    revalidatePath(await projectPath(`/conversation-learning/pattern-candidates/${candidateId}`));
+    revalidatePath(await projectPath("/conversation-learning/rule-proposals"));
   }
   return result;
 }
@@ -29,14 +31,14 @@ export async function approveRuleProposal(id: string): Promise<{ error?: string 
   const granted = await checkPermission("conversation_learning.manage");
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
-  const result = await approveRuleProposalById({ proposalId: id, reviewedById: session.userId, autoApproved: false });
+  const result = await approveRuleProposalById({ proposalId: id, reviewedById: session.userId, autoApproved: false }, prisma);
 
   if ("error" in result) return { error: result.error };
 
-  revalidatePath("/rules");
-  revalidatePath("/conversation-learning/rule-proposals");
-  revalidatePath(`/conversation-learning/rule-proposals/${id}`);
-  revalidatePath("/conversation-learning/pattern-candidates");
+  revalidatePath(await projectPath("/rules"));
+  revalidatePath(await projectPath("/conversation-learning/rule-proposals"));
+  revalidatePath(await projectPath(`/conversation-learning/rule-proposals/${id}`));
+  revalidatePath(await projectPath("/conversation-learning/pattern-candidates"));
   return {};
 }
 
@@ -57,9 +59,9 @@ export async function rejectRuleProposal(id: string, reviewNote: string | null):
       : []),
   ]);
 
-  revalidatePath("/conversation-learning/rule-proposals");
-  revalidatePath(`/conversation-learning/rule-proposals/${id}`);
-  revalidatePath("/conversation-learning/pattern-candidates");
+  revalidatePath(await projectPath("/conversation-learning/rule-proposals"));
+  revalidatePath(await projectPath(`/conversation-learning/rule-proposals/${id}`));
+  revalidatePath(await projectPath("/conversation-learning/pattern-candidates"));
 }
 
 export async function withdrawRuleProposal(id: string): Promise<void> {
@@ -72,6 +74,6 @@ export async function withdrawRuleProposal(id: string): Promise<void> {
     data: { status: "WITHDRAWN", reviewedById: session.userId, reviewedAt: new Date() },
   });
 
-  revalidatePath("/conversation-learning/rule-proposals");
-  revalidatePath(`/conversation-learning/rule-proposals/${id}`);
+  revalidatePath(await projectPath("/conversation-learning/rule-proposals"));
+  revalidatePath(await projectPath(`/conversation-learning/rule-proposals/${id}`));
 }

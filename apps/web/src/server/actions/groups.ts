@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { SupportPriority } from "@prisma/client";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { buildGroupWhere, isGroupFilterKey, type GroupFilterKey } from "@/lib/groupFilters";
@@ -30,14 +32,14 @@ export async function setGroupPriority(
       escalationMonitoringEnabled,
     },
   });
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/groups"));
 }
 
 export async function toggleGroupMonitoring(id: string): Promise<void> {
   await requireAccess("whatsapp.manage");
   const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
   await prisma.whatsAppGroup.update({ where: { id }, data: { isMonitored: !group.isMonitored } });
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/groups"));
 }
 
 /**
@@ -51,7 +53,7 @@ export async function toggleGroupAiAutomation(id: string): Promise<void> {
   await requireAccess("whatsapp.manage");
   const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
   await prisma.whatsAppGroup.update({ where: { id }, data: { aiAutomationEnabled: !group.aiAutomationEnabled } });
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/groups"));
 }
 
 /**
@@ -73,7 +75,7 @@ export async function toggleGroupTestMode(id: string): Promise<void> {
   await requireAccess("whatsapp.manage");
   const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
   await prisma.whatsAppGroup.update({ where: { id }, data: { testModeEnabled: !group.testModeEnabled } });
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/groups"));
 }
 
 /**
@@ -86,7 +88,7 @@ export async function toggleGroupAiExcluded(id: string): Promise<void> {
   await requireAccess("whatsapp.manage");
   const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
   await prisma.whatsAppGroup.update({ where: { id }, data: { aiAutomationExcluded: !group.aiAutomationExcluded } });
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/groups"));
 }
 
 /**
@@ -114,7 +116,7 @@ export async function requestGroupKnowledgeBuild(id: string): Promise<void> {
     await prisma.workerCommand.create({ data: { type: "BUILD_GROUP_KNOWLEDGE", payload: { groupId: id } } });
   }
 
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/groups"));
 }
 
 export interface BulkMonitoringResult {
@@ -167,7 +169,7 @@ export async function bulkSetMonitoring(groupIds: string[], enabled: boolean): P
     updated = result.count;
   }
 
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/groups"));
   return { requested: dedupedIds.length, updated, alreadyInTargetState, notFound };
 }
 
@@ -216,7 +218,7 @@ export async function bulkSetAiAutomation(groupIds: string[], enabled: boolean):
     updated = result.count;
   }
 
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/groups"));
   return {
     requested: dedupedIds.length,
     updated,
@@ -293,5 +295,5 @@ export async function requestGroupParticipantCount(groupId: string): Promise<voi
   await prisma.workerCommand.create({
     data: { type: "GET_GROUP_PARTICIPANT_COUNT", payload: { groupId } },
   });
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/groups"));
 }

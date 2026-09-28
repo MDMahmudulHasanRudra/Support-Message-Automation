@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
 import type { SupportActivityTriggerType } from "@prisma/client";
 import { requireAccess } from "@/server/authorize";
 
@@ -85,9 +87,9 @@ export async function enableCountEveryTeamMemberMessage(): Promise<EnsureRuleRes
       update: { enabled: true },
       create: { id: "global", enabled: true },
     });
-    revalidatePath("/support-activity");
-    revalidatePath("/support-activity/rules");
-    revalidatePath("/support-activity/settings");
+    revalidatePath(await projectPath("/support-activity"));
+    revalidatePath(await projectPath("/support-activity/rules"));
+    revalidatePath(await projectPath("/support-activity/settings"));
     return { created: false, reactivated };
   }
 
@@ -111,9 +113,9 @@ export async function enableCountEveryTeamMemberMessage(): Promise<EnsureRuleRes
     create: { id: "global", enabled: true },
   });
 
-  revalidatePath("/support-activity");
-  revalidatePath("/support-activity/rules");
-  revalidatePath("/support-activity/settings");
+  revalidatePath(await projectPath("/support-activity"));
+  revalidatePath(await projectPath("/support-activity/rules"));
+  revalidatePath(await projectPath("/support-activity/settings"));
   return { created: true, reactivated: false };
 }
 
@@ -145,8 +147,8 @@ export async function createSupportRule(formData: FormData): Promise<void> {
     }
   });
 
-  revalidatePath("/support-activity/rules");
-  redirect("/support-activity/rules");
+  revalidatePath(await projectPath("/support-activity/rules"));
+  redirect(await projectPath("/support-activity/rules"));
 }
 
 export async function updateSupportRule(id: string, formData: FormData): Promise<void> {
@@ -186,19 +188,19 @@ export async function updateSupportRule(id: string, formData: FormData): Promise
     }
   });
 
-  revalidatePath("/support-activity/rules");
-  redirect("/support-activity/rules");
+  revalidatePath(await projectPath("/support-activity/rules"));
+  redirect(await projectPath("/support-activity/rules"));
 }
 
 export async function toggleSupportRuleActive(id: string): Promise<void> {
   await requireAccess("support_activity.manage");
   const rule = await prisma.supportRule.findUniqueOrThrow({ where: { id } });
   await prisma.supportRule.update({ where: { id }, data: { isActive: !rule.isActive } });
-  revalidatePath("/support-activity/rules");
+  revalidatePath(await projectPath("/support-activity/rules"));
 }
 
 export async function deleteSupportRule(id: string): Promise<void> {
   await requireAccess("support_activity.manage");
   await prisma.supportRule.delete({ where: { id } }); // cascades its join-table rows
-  revalidatePath("/support-activity/rules");
+  revalidatePath(await projectPath("/support-activity/rules"));
 }

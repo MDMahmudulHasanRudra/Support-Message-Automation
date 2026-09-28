@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import * as XLSX from "xlsx";
-import { prisma } from "@support-automation/db";
+
 import type { Prisma } from "@prisma/client";
 import {
   MAX_EXCEL_FILE_SIZE_BYTES,
@@ -210,7 +212,7 @@ export async function createGroupBroadcastJob(input: CreateBroadcastJobInput): P
     });
   }
 
-  revalidatePath("/group-message-sender/history");
+  revalidatePath(await projectPath("/group-message-sender/history"));
   return { jobId: job.id };
 }
 
@@ -225,8 +227,8 @@ export async function cancelBroadcastJob(jobId: string): Promise<void> {
     where: { id: jobId, status: { notIn: ["CANCELLED", "STOPPED_KILL_SWITCH", "COMPLETED"] } },
     data: { status: "CANCELLED", cancelledAt: new Date() },
   });
-  revalidatePath(`/group-message-sender/jobs/${jobId}`);
-  revalidatePath("/group-message-sender/history");
+  revalidatePath(await projectPath(`/group-message-sender/jobs/${jobId}`));
+  revalidatePath(await projectPath("/group-message-sender/history"));
 }
 
 /**
@@ -254,7 +256,7 @@ export async function retryFailedBroadcastMessages(jobId: string): Promise<void>
     await prisma.groupBroadcastJob.update({ where: { id: jobId }, data: { status: "RUNNING", completedAt: null } });
   }
 
-  revalidatePath(`/group-message-sender/jobs/${jobId}`);
+  revalidatePath(await projectPath(`/group-message-sender/jobs/${jobId}`));
 }
 
 function dedupeByGroupId(targets: BroadcastTargetInput[]): BroadcastTargetInput[] {

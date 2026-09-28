@@ -1,5 +1,7 @@
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
 import { isPermissionKey, type PermissionKey } from "@support-automation/shared";
 import type { Session } from "@/server/auth";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -19,7 +21,7 @@ import { logSystemEvent } from "@/server/logSystemEvent";
 export async function requirePermission(session: Session, key: PermissionKey): Promise<void> {
   if (!isPermissionKey(key)) {
     await logSystemEvent("WARN", "permissions", "PERMISSION_DENIED_UNKNOWN_KEY", { userId: session.userId, key });
-    redirect("/overview");
+    redirect(await projectPath("/overview"));
   }
 
   const user = await prisma.user.findUnique({
@@ -34,7 +36,7 @@ export async function requirePermission(session: Session, key: PermissionKey): P
 
   if (!user || !user.isActive) {
     await logSystemEvent("WARN", "permissions", "PERMISSION_DENIED_INACTIVE_USER", { userId: session.userId, key });
-    redirect("/login");
+    redirect(await projectPath("/login"));
   }
 
   const grantedKeys = new Set(user.permissionModule?.permissions.map((p) => p.permission.key) ?? []);
@@ -42,7 +44,7 @@ export async function requirePermission(session: Session, key: PermissionKey): P
     await logSystemEvent("WARN", "permissions", "PERMISSION_DENIED", { userId: session.userId, key });
     // Carries the key so the Overview can say what was refused. A bare redirect dropped somebody on
     // the dashboard with no idea why their click went nowhere — which reads as a broken button.
-    redirect(`/overview?denied=${encodeURIComponent(key)}`);
+    redirect(await projectPath(`/overview?denied=${encodeURIComponent(key)}`));
   }
 }
 

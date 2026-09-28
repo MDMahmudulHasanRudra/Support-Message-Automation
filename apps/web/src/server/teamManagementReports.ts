@@ -1,4 +1,5 @@
-import { prisma } from "@support-automation/db";
+
+import { prisma } from "@/server/db";
 import type { AttendanceOverride, DutyStatus, LeaveStatus, Prisma } from "@prisma/client";
 import { computePunctuality, getDhakaDayRange, toDhakaDateOnly, type Punctuality } from "@support-automation/shared";
 import type { DerivedDutyState } from "@/lib/dutyState";

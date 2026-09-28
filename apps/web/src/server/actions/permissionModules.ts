@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
 import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -50,8 +52,8 @@ export async function createPermissionModule(
     permissionModuleId: created.id,
     name,
   });
-  revalidatePath("/permissions");
-  redirect("/permissions");
+  revalidatePath(await projectPath("/permissions"));
+  redirect(await projectPath("/permissions"));
 }
 
 export async function updatePermissionModule(
@@ -98,8 +100,8 @@ export async function updatePermissionModule(
     actorId: session.userId,
     permissionModuleId: id,
   });
-  revalidatePath("/permissions");
-  redirect("/permissions");
+  revalidatePath(await projectPath("/permissions"));
+  redirect(await projectPath("/permissions"));
 }
 
 export async function deletePermissionModule(id: string): Promise<{ error?: string }> {
@@ -127,6 +129,6 @@ export async function deletePermissionModule(id: string): Promise<{ error?: stri
     permissionModuleId: id,
     name: target.name,
   });
-  revalidatePath("/permissions");
+  revalidatePath(await projectPath("/permissions"));
   return {};
 }

@@ -1,4 +1,6 @@
-import { prisma } from "@support-automation/db";
+
+import { activeProjectId } from "@/server/projectContext";
+import { prisma } from "@/server/db";
 import { Prisma } from "@prisma/client";
 
 /**
@@ -23,7 +25,8 @@ import { Prisma } from "@prisma/client";
  * existed the browser could only filter what had been loaded, which made a quiet group on a
  * 1,856-group account literally unfindable.
  */
-export const CONVERSATION_LIST_LIMIT = 300;
+export { CONVERSATION_LIST_LIMIT } from "@/lib/chatInboxLimits";
+import { CONVERSATION_LIST_LIMIT } from "@/lib/chatInboxLimits";
 
 /** Statuses meaning "written, but not yet confirmed on WhatsApp". */
 const UNSETTLED_OUTBOUND: Prisma.OutboundMessageWhereInput["status"] = {
@@ -161,6 +164,7 @@ export async function getChatConversations(search?: string): Promise<Conversatio
       LIMIT 1
     ) last ON true
     WHERE g."isActive" = true
+      AND g."projectId" = ${await activeProjectId()}
       AND g."chatArchivedAt" IS NULL
       ${trimmed ? Prisma.sql`AND g."name" ILIKE ${`%${trimmed}%`}` : Prisma.empty}
     ORDER BY
@@ -220,6 +224,7 @@ export async function getChatConversations(search?: string): Promise<Conversatio
         LIMIT 1
       ) l
       WHERE g."id" IN (${Prisma.join(groupIds)})
+        AND g."projectId" = ${await activeProjectId()}
     `,
     prisma.outboundMessage.groupBy({
       by: ["chatId"],

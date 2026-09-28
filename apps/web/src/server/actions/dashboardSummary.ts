@@ -1,4 +1,5 @@
-import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { prisma } from "@/server/db";
+import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import type { EscalationStatus, PatternCandidateStatus, WhatsAppServiceKey } from "@prisma/client";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 import { getEveryActivityCount, getUniqueGroupCount } from "@/server/supportActivityReports";
@@ -21,7 +22,7 @@ export async function getAccountsRoutingSummary() {
   const [accounts, pendingWorkerCommands, ...resolutions] = await Promise.all([
     prisma.whatsAppAccount.findMany({ select: { id: true, label: true, status: true } }),
     prisma.workerCommand.count({ where: { status: { in: ["PENDING", "PROCESSING"] } } }),
-    ...ROUTED_SERVICES.map((key) => resolveWhatsAppAccount(key)),
+    ...ROUTED_SERVICES.map((key) => resolveWhatsAppAccount(key, prisma)),
   ]);
 
   const connectedCount = accounts.filter((a) => a.status === "CONNECTED").length;

@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { SupportKeywordMatchMode } from "@prisma/client";
 import { requireAccess } from "@/server/authorize";
 
@@ -15,7 +17,7 @@ export async function createSupportKeyword(formData: FormData): Promise<void> {
   if (!value) throw new Error("Keyword value is required.");
 
   await prisma.supportKeyword.create({ data: { value, matchMode, caseSensitive, marksCompletion, isActive: true } });
-  revalidatePath("/support-activity/keywords");
+  revalidatePath(await projectPath("/support-activity/keywords"));
 }
 
 export async function updateSupportKeyword(id: string, formData: FormData): Promise<void> {
@@ -28,18 +30,18 @@ export async function updateSupportKeyword(id: string, formData: FormData): Prom
   if (!value) throw new Error("Keyword value is required.");
 
   await prisma.supportKeyword.update({ where: { id }, data: { value, matchMode, caseSensitive, marksCompletion } });
-  revalidatePath("/support-activity/keywords");
+  revalidatePath(await projectPath("/support-activity/keywords"));
 }
 
 export async function toggleSupportKeywordActive(id: string): Promise<void> {
   await requireAccess("support_activity.manage");
   const keyword = await prisma.supportKeyword.findUniqueOrThrow({ where: { id } });
   await prisma.supportKeyword.update({ where: { id }, data: { isActive: !keyword.isActive } });
-  revalidatePath("/support-activity/keywords");
+  revalidatePath(await projectPath("/support-activity/keywords"));
 }
 
 export async function deleteSupportKeyword(id: string): Promise<void> {
   await requireAccess("support_activity.manage");
   await prisma.supportKeyword.delete({ where: { id } });
-  revalidatePath("/support-activity/keywords");
+  revalidatePath(await projectPath("/support-activity/keywords"));
 }

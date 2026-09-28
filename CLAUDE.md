@@ -173,6 +173,18 @@ Two rules that hold from here on:
   project is `forgeProjectId`/`forgeProjectName` (renamed in the Phase 1 migration) so the two
   cannot be confused.
 
+**Phase 2 (web isolation) has landed too.** In apps/web the project comes from the URL
+(`/p/<slug>/…`; `proxy.ts` sets `x-softify-project` from the path and strips any client copy), and
+`import { prisma } from "@/server/db"` is a PROJECT-SCOPED client: every query on a project-owned
+table is confined to that project, fails closed with no project, and refuses one naming another.
+Never import `prisma` from `@support-automation/db` in web code; only `server/auth.ts` and
+`server/projectContext.ts` use the platform client. `$queryRaw` is NOT covered: every raw query must
+add `"projectId" = ${await activeProjectId()}`. Write links project-relative ("/rules") through
+`@/components/ProjectLink` / `ButtonLink` / `useProjectRouter`, and pass server paths through
+`await projectPath("/rules")` before `redirect`/`revalidatePath`. Work in `after()` must be wrapped in
+`runWithProject(project, …)`, because it has no request headers. The worker is NOT scoped yet (Phase
+3); the DB defaults and old install-wide uniques stay until it is.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.

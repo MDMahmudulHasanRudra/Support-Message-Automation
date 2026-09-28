@@ -1,5 +1,6 @@
+import { prisma } from "@/server/db";
 import Anthropic from "@anthropic-ai/sdk";
-import { prisma, decryptSecret } from "@support-automation/db";
+import { decryptSecret } from "@support-automation/db";
 
 /**
  * Bounds one Anthropic request. The chat loop runs up to MAX_ITERATIONS (chat.ts) requests inside

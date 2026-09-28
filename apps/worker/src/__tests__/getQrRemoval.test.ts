@@ -121,7 +121,7 @@ describe("the real QR lifecycle is untouched", () => {
   });
 
   it("the dashboard still reads the QR straight off the account row", () => {
-    const page = readRepo("apps/web/src/app/(dashboard)/accounts/page.tsx");
+    const page = readRepo("apps/web/src/app/p/[project]/(dashboard)/accounts/page.tsx");
     expect(page).toContain("qrCode: account.qrCode");
     // ...and never by asking the worker for it.
     expect(page).not.toContain("GET_QR");

@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import Link from "next/link";
+import Link from "@/components/ProjectLink";
 import type { ReactNode } from "react";
 
 export function Pagination({

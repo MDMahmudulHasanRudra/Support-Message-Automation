@@ -1,4 +1,6 @@
-import { prisma } from "@support-automation/db";
+
+import { activeProjectId } from "@/server/projectContext";
+import { prisma } from "@/server/db";
 import {
   computeTeamReport,
   DHAKA_OFFSET_MS,
@@ -217,6 +219,7 @@ export async function loadTeamReport(
           FROM "Message" m
           JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
           WHERE g."whatsappGroupId" = ${onlyWhatsappGroupId}
+            AND m."projectId" = ${await activeProjectId()}
             AND m."timestampWa" >= ${range.start} AND m."timestampWa" < ${lookaheadEnd}
           ORDER BY m."whatsappMessageId", m."timestampWa", m."id"`
       : prisma.$queryRaw<Array<{ wgid: string; ts: Date; direction: string; fromTeam: boolean; sender: string }>>`
@@ -226,6 +229,7 @@ export async function loadTeamReport(
           FROM "Message" m
           JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
           WHERE m."timestampWa" >= ${range.start} AND m."timestampWa" < ${lookaheadEnd}
+            AND m."projectId" = ${await activeProjectId()}
           ORDER BY g."whatsappGroupId", m."whatsappMessageId", m."timestampWa", m."id"`,
   ]);
 

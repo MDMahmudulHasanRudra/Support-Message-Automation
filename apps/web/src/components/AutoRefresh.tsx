@@ -1,7 +1,8 @@
 "use client";
 
+import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+
 
 /**
  * Polls the server component tree via router.refresh() so the QR code and

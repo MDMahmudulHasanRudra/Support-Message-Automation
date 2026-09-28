@@ -1,12 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import {
-  prisma,
-  encryptSecret,
-  countAccountHistory,
-  reconcileAttendanceAfterAccountRemoval,
-} from "@support-automation/db";
+import { encryptSecret, countAccountHistory, reconcileAttendanceAfterAccountRemoval } from "@support-automation/db";
 import type { AccountHistoryImpact } from "@support-automation/db";
 import type { Prisma } from "@prisma/client";
 import { normalizePhoneNumber } from "@support-automation/shared";
@@ -51,14 +48,14 @@ export async function requestReconnect(accountId: string): Promise<void> {
   });
 
   await enqueueCommand("RECONNECT", accountId);
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
 }
 
 export async function requestGroupResync(accountId: string): Promise<void> {
   await requireAccess("whatsapp.manage");
   await enqueueCommand("RESYNC_GROUPS", accountId);
-  revalidatePath("/accounts");
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/accounts"));
+  revalidatePath(await projectPath("/groups"));
 }
 
 export interface SyncAllGroupsResult {
@@ -77,8 +74,8 @@ export async function requestSyncAllGroups(): Promise<SyncAllGroupsResult> {
   for (const account of accounts) {
     await enqueueCommand("RESYNC_GROUPS", account.id);
   }
-  revalidatePath("/accounts");
-  revalidatePath("/groups");
+  revalidatePath(await projectPath("/accounts"));
+  revalidatePath(await projectPath("/groups"));
   return { accountsQueued: accounts.length };
 }
 
@@ -86,7 +83,7 @@ export async function requestSyncAllGroups(): Promise<SyncAllGroupsResult> {
 export async function requestLogout(accountId: string): Promise<void> {
   await requireAccess("whatsapp.manage");
   await enqueueCommand("LOGOUT", accountId);
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
 }
 
 /** Everything the linking dialog needs to narrate an attempt, and nothing else. */
@@ -180,7 +177,7 @@ export async function addWhatsAppAccount(formData: FormData): Promise<AddAccount
 
   const account = await prisma.whatsAppAccount.create({ data: { label, status: "DISCONNECTED" } });
   await logSystemEvent("INFO", "accounts", `WhatsApp account "${label}" added`, { accountId: account.id });
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
   return {};
 }
 
@@ -208,7 +205,7 @@ export async function setPrimaryAccount(accountId: string): Promise<void> {
     previousPrimaryLabel: previousPrimary?.label ?? null,
     changedBy: session.username,
   });
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
 }
 
 /**
@@ -227,7 +224,7 @@ export async function removePrimaryAccount(accountId: string): Promise<void> {
     accountId,
     changedBy: session.username,
   });
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
 }
 
 export interface DeleteAccountResult {
@@ -248,7 +245,7 @@ export interface DeleteAccountResult {
  */
 export async function getAccountDeletionImpact(accountId: string): Promise<AccountHistoryImpact> {
   await requireAccess("whatsapp.manage");
-  return countAccountHistory(accountId);
+  return countAccountHistory(accountId, prisma);
 }
 
 export async function deleteWhatsAppAccount(
@@ -273,7 +270,7 @@ export async function deleteWhatsAppAccount(
     return { error: "This account is Primary. Set a different account as Primary first." };
   }
 
-  const impact = await countAccountHistory(accountId);
+  const impact = await countAccountHistory(accountId, prisma);
   if (impact.hasHistory && !confirmDestroyHistory) {
     // Not a hard refusal — the operator may genuinely be retiring a number — but it does not
     // happen on one click, and the caller has to have seen the figures to get past this.
@@ -295,7 +292,7 @@ export async function deleteWhatsAppAccount(
 
   // The day rows survive the cascade holding totals that counted the evidence just destroyed.
   // Recomputing them is what stops a duty row claiming messages nothing can show.
-  const reconciledDays = await reconcileAttendanceAfterAccountRemoval(affectedAttendanceDays);
+  const reconciledDays = await reconcileAttendanceAfterAccountRemoval(affectedAttendanceDays, prisma);
 
   await logSystemEvent("WARN", "accounts", `WhatsApp account "${target.label}" deleted`, {
     accountId,
@@ -303,8 +300,8 @@ export async function deleteWhatsAppAccount(
     destroyed: impact,
     reconciledAttendanceDays: reconciledDays,
   });
-  revalidatePath("/accounts");
-  revalidatePath("/team-management/attendance");
+  revalidatePath(await projectPath("/accounts"));
+  revalidatePath(await projectPath("/team-management/attendance"));
   return { destroyed: impact };
 }
 
@@ -469,9 +466,9 @@ export async function adoptGroupSetupFromAccount(
     copiedBy: session.username,
   });
 
-  revalidatePath("/accounts");
-  revalidatePath("/groups");
-  revalidatePath("/chat");
+  revalidatePath(await projectPath("/accounts"));
+  revalidatePath(await projectPath("/groups"));
+  revalidatePath(await projectPath("/chat"));
   return { updated, notShared };
 }
 
@@ -542,7 +539,7 @@ export async function setPairingMethod(
   });
 
   await enqueueCommand("RECONNECT", accountId);
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
   return {};
 }
 
@@ -617,7 +614,7 @@ export async function requestCreateGroup(
   await prisma.workerCommand.create({
     data: { type: "CREATE_GROUP", accountId, payload: { groupName: trimmedName, contactPhoneNumbers: digits } },
   });
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
   return {};
 }
 
@@ -645,7 +642,7 @@ export async function requestJoinGroup(accountId: string, inviteLink: string): P
   if (existing) return { error: "Already trying to join a group with this account." };
 
   await prisma.workerCommand.create({ data: { type: "JOIN_GROUP", accountId, payload: { inviteLink: trimmed } } });
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
   return {};
 }
 
@@ -681,7 +678,7 @@ export async function requestUpdateProfile(
   if (existing) return { error: "A profile update is already in progress for this account." };
 
   await prisma.workerCommand.create({ data: { type: "UPDATE_PROFILE", accountId, payload } });
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
   return {};
 }
 
@@ -718,7 +715,7 @@ export async function saveAccountProxy(
       data: { proxyAddress: null, proxyProtocol: null, proxyUsername: null, proxyPasswordCiphertext: null },
     });
     await enqueueCommand("RECONNECT", accountId);
-    revalidatePath("/accounts");
+    revalidatePath(await projectPath("/accounts"));
     return { success: true };
   }
 
@@ -737,6 +734,6 @@ export async function saveAccountProxy(
     },
   });
   await enqueueCommand("RECONNECT", accountId);
-  revalidatePath("/accounts");
+  revalidatePath(await projectPath("/accounts"));
   return { success: true };
 }

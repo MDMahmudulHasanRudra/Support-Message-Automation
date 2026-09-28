@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import Link from "next/link";
+import Link from "@/components/ProjectLink";
 import { ArrowRight, type LucideIcon } from "lucide-react";
 import { Card } from "./Card";
 import { Badge, type BadgeColor } from "./Badge";

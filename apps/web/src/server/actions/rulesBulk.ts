@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import * as XLSX from "xlsx";
-import { prisma } from "@support-automation/db";
+
 import type { Prisma, RuleStatus } from "@prisma/client";
 import {
   MAX_EXCEL_FILE_SIZE_BYTES,
@@ -76,7 +78,7 @@ export async function bulkSetRuleStatus(ruleIds: string[], status: "ACTIVE" | "D
     alreadyInTargetState,
     notFound,
   });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
   return { requested: dedupedIds.length, updated, alreadyInTargetState, notFound };
 }
 
@@ -124,7 +126,7 @@ export async function bulkDeleteRules(ruleIds: string[]): Promise<BulkDeleteRule
     deleted,
     notFound,
   });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
   return { requested: dedupedIds.length, deleted, notFound };
 }
 
@@ -360,6 +362,6 @@ export async function confirmRuleImport(rows: Array<{ rowNumber: number; row: Ru
     skipped,
     failed,
   });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
   return { created, skipped, failed, details };
 }

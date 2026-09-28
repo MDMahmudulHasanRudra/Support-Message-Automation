@@ -1,6 +1,7 @@
 "use server";
 
-import { prisma } from "@support-automation/db";
+
+import { prisma } from "@/server/db";
 import { evaluate, type EngineRule } from "@support-automation/engine";
 import { isRuleActionArray, isRuleConditions } from "@support-automation/shared";
 import { checkPermission } from "@/server/authorize";

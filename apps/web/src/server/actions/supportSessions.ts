@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkPermission } from "@/server/authorize";
 
 export interface CloseSupportSessionResult {
@@ -54,9 +56,9 @@ export async function closeSupportSessionManually(sessionId: string): Promise<Cl
     return { ok: false, alreadyClosed: true };
   }
 
-  revalidatePath("/support-activity/reports");
-  revalidatePath("/support-activity");
-  revalidatePath("/support-activity/team");
+  revalidatePath(await projectPath("/support-activity/reports"));
+  revalidatePath(await projectPath("/support-activity"));
+  revalidatePath(await projectPath("/support-activity/team"));
   return { ok: true };
 }
 
@@ -127,9 +129,9 @@ export async function closeSupportSessionsBulk(sessionIds: string[]): Promise<Bu
   }
 
   if (closed > 0) {
-    revalidatePath("/support-activity/reports");
-    revalidatePath("/support-activity");
-    revalidatePath("/support-activity/team");
+    revalidatePath(await projectPath("/support-activity/reports"));
+    revalidatePath(await projectPath("/support-activity"));
+    revalidatePath(await projectPath("/support-activity/team"));
   }
 
   return { requested: dedupedIds.length, closed, alreadyClosed, notFound };

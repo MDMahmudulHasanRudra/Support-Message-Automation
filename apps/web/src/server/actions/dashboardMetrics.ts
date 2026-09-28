@@ -1,4 +1,6 @@
-import { prisma } from "@support-automation/db";
+
+import { activeProjectId } from "@/server/projectContext";
+import { prisma } from "@/server/db";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 
 /**
@@ -69,6 +71,7 @@ export async function getMessageLoadSeries(nowMs: number) {
     SELECT date_trunc('hour', m."createdAt") AS "bucketStart", COUNT(*) AS "messageCount"
     FROM "Message" m
     WHERE m."direction" = 'INCOMING'::"MessageDirection"
+      AND m."projectId" = ${await activeProjectId()}
       AND m."createdAt" >= ${new Date(dayWindowStartMs)}
     GROUP BY 1
   `;
@@ -259,7 +262,8 @@ export async function getAiOutcomeSeries(nowMs: number) {
       d."outcome"::text                                          AS outcome,
       COUNT(*)                                                   AS count
     FROM "AiFallbackDecision" d
-    WHERE d."createdAt" >= ${new Date(windowStartMs)}
+    WHERE d."projectId" = ${await activeProjectId()}
+      AND d."createdAt" >= ${new Date(windowStartMs)}
     GROUP BY bucket, d."outcome"
     ORDER BY bucket
   `;
@@ -339,6 +343,7 @@ export async function getResponseTimeSeries(nowMs: number) {
       FROM "Message" m
       JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
       WHERE m."groupId" IS NOT NULL
+        AND m."projectId" = ${await activeProjectId()}
         AND g."isMonitored" = true
         AND m."timestampWa" >= ${new Date(windowStartMs)}
     ),

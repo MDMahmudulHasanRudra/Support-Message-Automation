@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/components/ProjectLink";
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
 

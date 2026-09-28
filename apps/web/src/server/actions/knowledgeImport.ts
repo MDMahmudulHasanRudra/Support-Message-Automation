@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import * as XLSX from "xlsx";
-import { prisma } from "@support-automation/db";
+
 import type { KnowledgeImportSourceType, Prisma } from "@prisma/client";
 import { parseKnowledgeImportRows, validateImportUrl } from "@support-automation/shared";
 import { checkPermission, requireAccess } from "@/server/authorize";
@@ -181,7 +183,7 @@ export async function queueKnowledgeImport(
     userId: session.userId,
   });
 
-  revalidatePath("/ai-learning/knowledge-base/import");
+  revalidatePath(await projectPath("/ai-learning/knowledge-base/import"));
   return { queuedId: created.id };
 }
 
@@ -336,9 +338,9 @@ async function importKnowledgeSpreadsheet({
     userId,
   });
 
-  revalidatePath("/ai-learning/knowledge-base/import");
-  revalidatePath("/ai-learning/knowledge-base/review");
-  revalidatePath("/ai-learning/knowledge-base");
+  revalidatePath(await projectPath("/ai-learning/knowledge-base/import"));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base/review"));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
   return { spreadsheet: { created, skipped, rows } };
 }
 
@@ -352,5 +354,5 @@ export async function retryKnowledgeImport(id: string): Promise<void> {
     where: { id, status: { in: ["FAILED", "PARTIAL", "COMPLETED"] }, sourceType: { not: "SPREADSHEET" } },
     data: { status: "PENDING", error: null, chunksDone: 0, startedAt: null, completedAt: null },
   });
-  revalidatePath("/ai-learning/knowledge-base/import");
+  revalidatePath(await projectPath("/ai-learning/knowledge-base/import"));
 }

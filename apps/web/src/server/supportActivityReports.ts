@@ -1,4 +1,6 @@
-import { prisma } from "@support-automation/db";
+
+import { activeProjectId } from "@/server/projectContext";
+import { prisma } from "@/server/db";
 import type { SupportActivityActor } from "@prisma/client";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 
@@ -191,7 +193,8 @@ export async function getActivityTrend(days = 30): Promise<number[]> {
       ) AS day,
       COUNT(*) AS total
     FROM "SupportActivity" a
-    WHERE a."occurredAt" >= ${oldest.start} AND a."occurredAt" < ${newest.end}
+    WHERE a."projectId" = ${await activeProjectId()}
+      AND a."occurredAt" >= ${oldest.start} AND a."occurredAt" < ${newest.end}
     GROUP BY 1
   `;
 
@@ -355,6 +358,7 @@ export async function getExecutiveWorkload(
         a."groupId"      AS group_id
       FROM "SupportActivity" a
       WHERE a."actor" = 'TEAM_MEMBER'
+        AND a."projectId" = ${await activeProjectId()}
         AND a."teamMemberId" IS NOT NULL
         AND a."occurredAt" >= ${range.start}
         AND a."occurredAt" < ${range.end}
@@ -738,6 +742,7 @@ export async function getGroupsAwaitingReply(now: Date = new Date()): Promise<Aw
     ) l
     WHERE g."isMonitored" = true
       AND g."isActive" = true
+      AND g."projectId" = ${await activeProjectId()}
       -- The newest message being an inbound non-team one IS the definition of unanswered: any
       -- reply would be newer and would have taken this row instead.
       AND l.direction = 'INCOMING'
@@ -798,6 +803,7 @@ export async function getFirstResponseStats(range: DateRange): Promise<FirstResp
       FROM "Message" m
       JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
       WHERE m."groupId" IS NOT NULL
+        AND m."projectId" = ${await activeProjectId()}
         AND g."isMonitored" = true
         AND m."timestampWa" >= ${range.start}
         AND m."timestampWa" < ${range.end}

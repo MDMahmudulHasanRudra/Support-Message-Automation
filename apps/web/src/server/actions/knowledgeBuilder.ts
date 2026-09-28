@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { createKnowledgeItem, prisma } from "@support-automation/db";
+import { createKnowledgeItem } from "@support-automation/db";
 import { checkPermission } from "@/server/authorize";
 
 /**
@@ -98,7 +100,7 @@ export async function startConversationAnalysis(input: {
     select: { id: true },
   });
 
-  revalidatePath("/conversation-learning/knowledge-builder");
+  revalidatePath(await projectPath("/conversation-learning/knowledge-builder"));
   return { ok: true, runId: run.id };
 }
 
@@ -155,7 +157,7 @@ export async function approveConversationCandidate(candidateId: string): Promise
     createdById: session.userId,
     verifiedById: session.userId,
     changeSummary: "Approved from a conversation candidate.",
-  });
+  }, prisma);
 
   await prisma.conversationCandidate.update({
     where: { id: candidateId },
@@ -167,8 +169,8 @@ export async function approveConversationCandidate(candidateId: string): Promise
     },
   });
 
-  revalidatePath("/conversation-learning/knowledge-builder");
-  revalidatePath("/ai-learning/knowledge-base");
+  revalidatePath(await projectPath("/conversation-learning/knowledge-builder"));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
   return { ok: true };
 }
 
@@ -196,7 +198,7 @@ export async function rejectConversationCandidate(candidateId: string): Promise<
     data: { status: "REJECTED", reviewedById: session.userId, reviewedAt: new Date() },
   });
 
-  revalidatePath("/conversation-learning/knowledge-builder");
+  revalidatePath(await projectPath("/conversation-learning/knowledge-builder"));
   return { ok: true };
 }
 
@@ -231,7 +233,7 @@ export async function updateConversationCandidate(
     data: { title, question: input.question?.trim() || null, answer },
   });
 
-  revalidatePath("/conversation-learning/knowledge-builder");
+  revalidatePath(await projectPath("/conversation-learning/knowledge-builder"));
   return { ok: true };
 }
 
@@ -241,7 +243,7 @@ export async function deleteConversationAnalysisRun(runId: string): Promise<Cand
   const granted = await checkPermission("conversation_learning.manage");
   if ("denied" in granted) return { ok: false, error: granted.denied };
   await prisma.conversationAnalysisRun.deleteMany({ where: { id: runId } });
-  revalidatePath("/conversation-learning/knowledge-builder");
+  revalidatePath(await projectPath("/conversation-learning/knowledge-builder"));
   return { ok: true };
 }
 

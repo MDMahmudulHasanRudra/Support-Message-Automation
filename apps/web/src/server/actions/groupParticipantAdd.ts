@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { Prisma } from "@prisma/client";
 import { normalizePhoneNumber, randomDelayMs } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
@@ -160,7 +162,7 @@ export async function createGroupParticipantAddJob(
     { actorUserId: session.userId, targetType: "GroupParticipantAddJob", targetId: job.id },
   );
 
-  revalidatePath("/group-member-adder");
+  revalidatePath(await projectPath("/group-member-adder"));
   return { jobId: job.id };
 }
 
@@ -248,7 +250,7 @@ export async function confirmParticipantAddSelection(
     { actorUserId: session.userId, targetType: "GroupParticipantAddJob", targetId: jobId },
   );
 
-  revalidatePath(`/group-member-adder/jobs/${jobId}`);
+  revalidatePath(await projectPath(`/group-member-adder/jobs/${jobId}`));
   return { queued: eligible.length, skipped: unique.length - eligible.length };
 }
 
@@ -291,7 +293,7 @@ export async function recheckParticipantAddItems(jobId: string): Promise<{ reche
     { actorUserId: session.userId, targetType: "GroupParticipantAddJob", targetId: jobId },
   );
 
-  revalidatePath(`/group-member-adder/jobs/${jobId}`);
+  revalidatePath(await projectPath(`/group-member-adder/jobs/${jobId}`));
   return { rechecked: count };
 }
 
@@ -306,7 +308,7 @@ export async function cancelParticipantAddJob(jobId: string): Promise<void> {
     where: { id: jobId, status: { notIn: ["CANCELLED", "STOPPED_KILL_SWITCH", "COMPLETED"] } },
     data: { status: "CANCELLED", cancelledAt: new Date() },
   });
-  revalidatePath(`/group-member-adder/jobs/${jobId}`);
+  revalidatePath(await projectPath(`/group-member-adder/jobs/${jobId}`));
 }
 
 /**
@@ -331,7 +333,7 @@ export async function retryFailedParticipantAddItems(jobId: string): Promise<voi
     await prisma.groupParticipantAddJob.update({ where: { id: jobId }, data: { status: "RUNNING", completedAt: null } });
   }
 
-  revalidatePath(`/group-member-adder/jobs/${jobId}`);
+  revalidatePath(await projectPath(`/group-member-adder/jobs/${jobId}`));
 }
 
 function dedupeByGroupId(targets: ParticipantAddTargetInput[]): ParticipantAddTargetInput[] {

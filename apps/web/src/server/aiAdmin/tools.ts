@@ -1,5 +1,6 @@
+import { prisma } from "@/server/db";
 import type Anthropic from "@anthropic-ai/sdk";
-import { prisma } from "@support-automation/db";
+
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 import {
   getEveryActivityCount,

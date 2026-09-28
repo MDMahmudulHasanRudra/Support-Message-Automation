@@ -1,9 +1,11 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import Anthropic from "@anthropic-ai/sdk";
-import { prisma } from "@support-automation/db";
+
 import type { AiProviderKind } from "@prisma/client";
 import {
   SELECTABLE_AI_PROVIDER_KINDS,
@@ -85,8 +87,8 @@ export async function createAiProvider(
   });
 
   await logSystemEvent("INFO", "ai-learning", `AI provider "${name}" (${kindRaw}) added`, { providerId: provider.id });
-  revalidatePath("/ai-learning/providers");
-  redirect("/ai-learning/providers");
+  revalidatePath(await projectPath("/ai-learning/providers"));
+  redirect(await projectPath("/ai-learning/providers"));
 }
 
 export async function updateAiProvider(
@@ -149,8 +151,8 @@ export async function updateAiProvider(
   });
 
   await logSystemEvent("INFO", "ai-learning", `AI provider "${name}" updated`, { providerId: id });
-  revalidatePath("/ai-learning/providers");
-  redirect("/ai-learning/providers");
+  revalidatePath(await projectPath("/ai-learning/providers"));
+  redirect(await projectPath("/ai-learning/providers"));
 }
 
 export async function toggleAiProviderStatus(id: string): Promise<void> {
@@ -161,7 +163,7 @@ export async function toggleAiProviderStatus(id: string): Promise<void> {
     where: { id },
     data: { status: provider.status === "ACTIVE" ? "INACTIVE" : "ACTIVE" },
   });
-  revalidatePath("/ai-learning/providers");
+  revalidatePath(await projectPath("/ai-learning/providers"));
 }
 
 export async function deleteAiProvider(id: string): Promise<void> {
@@ -170,7 +172,7 @@ export async function deleteAiProvider(id: string): Promise<void> {
   if (!provider) return;
   await prisma.aiProvider.delete({ where: { id } });
   await logSystemEvent("INFO", "ai-learning", `AI provider "${provider.name}" deleted`, { providerId: id });
-  revalidatePath("/ai-learning/providers");
+  revalidatePath(await projectPath("/ai-learning/providers"));
 }
 
 export interface TestConnectionResult {
@@ -191,7 +193,7 @@ async function recordProviderTestResult(id: string, name: string, ok: boolean, e
   } else {
     await logSystemEvent("WARN", "ai-learning", `Connection test failed for "${name}"`, { providerId: id, error });
   }
-  revalidatePath("/ai-learning/providers");
+  revalidatePath(await projectPath("/ai-learning/providers"));
 }
 
 /**

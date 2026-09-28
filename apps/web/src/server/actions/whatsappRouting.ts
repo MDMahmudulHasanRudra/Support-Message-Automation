@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { WhatsAppFallbackPolicy, WhatsAppServiceKey } from "@prisma/client";
 import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -51,6 +53,6 @@ export async function updateServiceRoute(
     changedBy: session.username,
   });
 
-  revalidatePath("/accounts/routing");
+  revalidatePath(await projectPath("/accounts/routing"));
   return { success: true };
 }

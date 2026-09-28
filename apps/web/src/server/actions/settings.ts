@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkPermission, requireAccess } from "@/server/authorize";
 
 async function getOrCreateSettings() {
@@ -34,17 +36,17 @@ export async function setAutomationEnabled(enabled: boolean): Promise<void> {
         data: { status: "STOPPED_KILL_SWITCH", cancelledAt: new Date() },
       });
     }
-    revalidatePath("/group-message-sender");
+    revalidatePath(await projectPath("/group-message-sender"));
   }
 
-  revalidatePath("/automation-control");
+  revalidatePath(await projectPath("/automation-control"));
 }
 
 export async function setAutomationMode(mode: "MANUAL_ONLY" | "SAFE_AUTO_REPLY" | "FULL_RULE_AUTOMATION"): Promise<void> {
   await requireAccess("settings.edit");
   await getOrCreateSettings();
   await prisma.automationSettings.update({ where: { id: "global" }, data: { mode } });
-  revalidatePath("/automation-control");
+  revalidatePath(await projectPath("/automation-control"));
 }
 
 export interface SettingsFormState {
@@ -118,6 +120,6 @@ export async function updateSafetySettings(_prevState: SettingsFormState, formDa
     },
   });
 
-  revalidatePath("/settings");
+  revalidatePath(await projectPath("/settings"));
   return { success: true };
 }

@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { ForgeClient, isForgeConfigured, loadForgeConfigFromEnv } from "@support-automation/forge-client";
 import { checkPermission, requireAccess } from "@/server/authorize";
 
@@ -17,10 +19,10 @@ async function getOrCreate() {
   return prisma.forgeSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
 }
 
-function revalidate() {
-  revalidatePath("/integrations/forge");
-  revalidatePath("/ai-learning");
-  revalidatePath("/ai-learning/knowledge-base/review");
+async function revalidate() {
+  revalidatePath(await projectPath("/integrations/forge"));
+  revalidatePath(await projectPath("/ai-learning"));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base/review"));
 }
 
 export async function updateForgeSettings(formData: FormData): Promise<void> {
@@ -43,7 +45,7 @@ export async function updateForgeSettings(formData: FormData): Promise<void> {
       ...(projectId ? { forgeProjectId: projectId, forgeProjectName: projectName } : {}),
     },
   });
-  revalidate();
+  await revalidate();
 }
 
 export interface ForgeConnectionCheck {
@@ -100,7 +102,7 @@ export async function requestForgeSync(): Promise<ForgeSyncRequest> {
   if (inFlight) return { queued: true };
 
   await prisma.workerCommand.create({ data: { type: "FORGE_SYNC_NOW" } });
-  revalidate();
+  await revalidate();
   return { queued: true };
 }
 

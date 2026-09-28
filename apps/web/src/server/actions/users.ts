@@ -1,9 +1,11 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
 import { requireSession, hashPassword } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -60,8 +62,8 @@ export async function createUser(_prevState: UserFormState, formData: FormData):
   }
 
   await logSystemEvent("INFO", "users", "USER_CREATED", { actorId: session.userId, targetUserId: created.id, username });
-  revalidatePath("/users");
-  redirect("/users");
+  revalidatePath(await projectPath("/users"));
+  redirect(await projectPath("/users"));
 }
 
 export async function updateUser(id: string, _prevState: UserFormState, formData: FormData): Promise<UserFormState> {
@@ -94,8 +96,8 @@ export async function updateUser(id: string, _prevState: UserFormState, formData
   }
 
   await logSystemEvent("INFO", "users", "USER_UPDATED", { actorId: session.userId, targetUserId: id });
-  revalidatePath("/users");
-  redirect("/users");
+  revalidatePath(await projectPath("/users"));
+  redirect(await projectPath("/users"));
 }
 
 export async function setUserActive(id: string, isActive: boolean): Promise<{ error?: string }> {
@@ -126,7 +128,7 @@ export async function setUserActive(id: string, isActive: boolean): Promise<{ er
     actorId: session.userId,
     targetUserId: id,
   });
-  revalidatePath("/users");
+  revalidatePath(await projectPath("/users"));
   return {};
 }
 
@@ -151,6 +153,6 @@ export async function resetUserPassword(id: string, newPassword: string): Promis
   });
 
   await logSystemEvent("WARN", "users", "PASSWORD_RESET", { actorId: session.userId, targetUserId: id });
-  revalidatePath("/users");
+  revalidatePath(await projectPath("/users"));
   return {};
 }

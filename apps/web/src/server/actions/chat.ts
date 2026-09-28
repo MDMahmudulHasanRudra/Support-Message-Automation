@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -110,7 +112,7 @@ export async function sendChatMessage(
     // A P2002 here is the idempotency window doing its job on a double-submit: the first
     // write already queued this exact text, so report success rather than a scary error.
     if ((err as { code?: string }).code === "P2002") {
-      revalidatePath(`/chat/${groupId}`);
+      revalidatePath(await projectPath(`/chat/${groupId}`));
       return { sentAt: Date.now() };
     }
 
@@ -167,8 +169,8 @@ export async function sendChatMessage(
     ...(group.id !== thread.id ? { repliedAsAccountOf: group.id, conversation: thread.id } : {}),
   });
 
-  revalidatePath(`/chat/${groupId}`);
-  revalidatePath("/chat");
+  revalidatePath(await projectPath(`/chat/${groupId}`));
+  revalidatePath(await projectPath("/chat"));
   return { sentAt: Date.now() };
 }
 
@@ -183,7 +185,7 @@ export async function cancelQueuedChatMessage(outboundId: string, groupId: strin
     where: { id: outboundId, actionType: "MANUAL_REPLY", status: "PENDING" },
     data: { status: "CANCELLED", failureReason: "Cancelled from the chat inbox before sending." },
   });
-  revalidatePath(`/chat/${groupId}`);
+  revalidatePath(await projectPath(`/chat/${groupId}`));
 }
 
 export interface MessageActionResult {
@@ -215,7 +217,7 @@ export async function reactToChatMessage(messageId: string, emoji: string): Prom
       payload: { whatsappMessageId: message.whatsappMessageId, emoji },
     },
   });
-  if (message.groupId) revalidatePath(`/chat/${message.groupId}`);
+  if (message.groupId) revalidatePath(await projectPath(`/chat/${message.groupId}`));
   return {};
 }
 
@@ -252,6 +254,6 @@ export async function editChatMessage(messageId: string, newBody: string): Promi
       payload: { whatsappMessageId: message.whatsappMessageId, newBody: trimmed },
     },
   });
-  if (message.groupId) revalidatePath(`/chat/${message.groupId}`);
+  if (message.groupId) revalidatePath(await projectPath(`/chat/${message.groupId}`));
   return {};
 }

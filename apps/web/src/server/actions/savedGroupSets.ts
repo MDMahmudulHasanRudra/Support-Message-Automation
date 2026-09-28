@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -41,7 +43,7 @@ export async function createSavedGroupSet(name: string, groupIds: string[]): Pro
       groups: ids.length,
       createdBy: session.username,
     });
-    revalidatePath("/group-message-sender");
+    revalidatePath(await projectPath("/group-message-sender"));
     return { id: created.id };
   } catch (err) {
     if ((err as { code?: string }).code === "P2002") {
@@ -66,7 +68,7 @@ export async function replaceSavedGroupSet(id: string, groupIds: string[]): Prom
     throw err;
   }
 
-  revalidatePath("/group-message-sender");
+  revalidatePath(await projectPath("/group-message-sender"));
   return { id };
 }
 
@@ -74,7 +76,7 @@ export async function deleteSavedGroupSet(id: string): Promise<SavedGroupSetResu
   const granted = await checkPermission("bulk_messaging.manage");
   if ("denied" in granted) return { error: granted.denied };
   await prisma.savedGroupSet.deleteMany({ where: { id } });
-  revalidatePath("/group-message-sender");
+  revalidatePath(await projectPath("/group-message-sender"));
   return {};
 }
 

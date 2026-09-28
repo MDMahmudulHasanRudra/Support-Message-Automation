@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import {
   clampRepeatMinutes,
   FALLBACK_REPLY_LANGUAGE,
@@ -112,7 +114,7 @@ export async function updateAiSettings(
   });
 
   await logSystemEvent("INFO", "ai-learning", "AI Settings updated");
-  revalidatePath("/ai-learning/settings");
-  revalidatePath("/ai-learning");
+  revalidatePath(await projectPath("/ai-learning/settings"));
+  revalidatePath(await projectPath("/ai-learning"));
   return { success: true };
 }

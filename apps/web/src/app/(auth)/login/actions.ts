@@ -1,8 +1,9 @@
 "use server";
 
+import { prisma } from "@/server/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
 import { createSession, verifyPassword } from "@/server/auth";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -78,5 +79,6 @@ export async function login(_prevState: LoginState, formData: FormData): Promise
   const meta = await readRequestMeta();
   await createSession(user.id, meta);
   await logSystemEvent("INFO", "auth", "LOGIN_SUCCESS", { username });
-  redirect("/overview");
+  // Into the project the user last opened (or their only one) — /open decides.
+  redirect("/open");
 }

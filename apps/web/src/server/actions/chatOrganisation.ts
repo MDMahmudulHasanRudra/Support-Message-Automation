@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkChatCategoryName, isChatCategoryColor } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
@@ -29,9 +31,9 @@ export interface ChatOrganisationResult {
   unchanged?: number;
 }
 
-function revalidateInbox() {
-  revalidatePath("/chat");
-  revalidatePath("/chat", "layout");
+async function revalidateInbox() {
+  revalidatePath(await projectPath("/chat"));
+  revalidatePath(await projectPath("/chat"), "layout");
 }
 
 /** Shared guard: a bulk action over an empty selection is a no-op, not a failure. */
@@ -71,7 +73,7 @@ export async function createChatCategory(formData: FormData): Promise<ChatOrgani
   await logSystemEvent("INFO", "chat-inbox", `Chat category "${check.name}" created`, {
     createdBy: session.username,
   });
-  revalidateInbox();
+  await revalidateInbox();
   return {};
 }
 
@@ -94,7 +96,7 @@ export async function renameChatCategory(id: string, formData: FormData): Promis
     throw err;
   }
 
-  revalidateInbox();
+  await revalidateInbox();
   return {};
 }
 
@@ -117,7 +119,7 @@ export async function deleteChatCategory(id: string): Promise<ChatOrganisationRe
     groupsUncategorised: category._count.groups,
     deletedBy: session.username,
   });
-  revalidateInbox();
+  await revalidateInbox();
   return { updated: category._count.groups };
 }
 
@@ -165,7 +167,7 @@ export async function setChatCategory(
     data: { chatCategoryId: categoryId },
   });
 
-  revalidateInbox();
+  await revalidateInbox();
   return { updated: count, unchanged: alreadyThere };
 }
 
@@ -186,7 +188,7 @@ export async function setChatPinned(groupIds: string[], pinned: boolean): Promis
     data: { chatPinnedAt: pinned ? new Date() : null },
   });
 
-  revalidateInbox();
+  await revalidateInbox();
   return { updated: count, unchanged: alreadyThere };
 }
 
@@ -211,7 +213,7 @@ export async function setChatArchived(groupIds: string[], archived: boolean): Pr
     },
   });
 
-  revalidateInbox();
+  await revalidateInbox();
   return { updated: count, unchanged: alreadyThere };
 }
 
@@ -307,7 +309,7 @@ export async function setChatReviewed(groupIds: string[], reviewed: boolean): Pr
       where: { id: { in: ids }, chatReviewedAt: { not: null } },
       data: { chatReviewedAt: null },
     });
-    revalidateInbox();
+    await revalidateInbox();
     return { updated: count, unchanged: alreadyWaiting };
   }
 
@@ -321,7 +323,7 @@ export async function setChatReviewed(groupIds: string[], reviewed: boolean): Pr
     data: { chatReviewedAt: new Date() },
   });
 
-  revalidateInbox();
+  await revalidateInbox();
   return { updated: count };
 }
 

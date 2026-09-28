@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { DUPLICATE_QUESTION_THRESHOLD, deriveQueryTerms, questionSimilarity } from "@support-automation/engine";
 import {
   applySandboxEdit,
@@ -69,7 +71,7 @@ export async function createSandboxSession(input: {
     select: { id: true },
   });
 
-  revalidatePath("/conversation-learning/sandbox");
+  revalidatePath(await projectPath("/conversation-learning/sandbox"));
   return { ok: true, sessionId: created.id };
 }
 
@@ -110,7 +112,7 @@ export async function sendSandboxMessage(
     select: { id: true },
   });
 
-  revalidatePath("/conversation-learning/sandbox");
+  revalidatePath(await projectPath("/conversation-learning/sandbox"));
   return { ok: true, turnId: turn.id };
 }
 
@@ -149,7 +151,7 @@ export async function setSandboxReview(
     },
   });
 
-  revalidatePath("/conversation-learning/sandbox");
+  revalidatePath(await projectPath("/conversation-learning/sandbox"));
   return { ok: true };
 }
 
@@ -193,7 +195,7 @@ export async function saveSandboxEdit(
     },
   });
 
-  revalidatePath("/conversation-learning/sandbox");
+  revalidatePath(await projectPath("/conversation-learning/sandbox"));
   return { ok: true, reverified: applied.verificationWithdrawn };
 }
 
@@ -372,9 +374,9 @@ export async function makeKnowledgeFromSandbox(
     { actorUserId: session.userId, targetType: "AiKnowledgeItem", targetId: item.id },
   );
 
-  revalidatePath("/conversation-learning/sandbox");
-  revalidatePath("/ai-learning/knowledge-base");
-  revalidatePath("/ai-learning/knowledge-base/review");
+  revalidatePath(await projectPath("/conversation-learning/sandbox"));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base/review"));
   return { ok: true, knowledgeItemId: item.id, verified };
 }
 
@@ -384,7 +386,7 @@ export async function deleteSandboxSession(sessionId: string): Promise<SandboxAc
   // Turns cascade with the session (schema-level), and nothing outside these two tables
   // references either, so this genuinely deletes only test data.
   await prisma.sandboxSession.deleteMany({ where: { id: sessionId } });
-  revalidatePath("/conversation-learning/sandbox");
+  revalidatePath(await projectPath("/conversation-learning/sandbox"));
   return { ok: true };
 }
 

@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
 import type { AiKnowledgeCategory, AiKnowledgeStatus } from "@prisma/client";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -142,8 +144,8 @@ export async function createKnowledgeItem(
     { itemId: item.id },
     { actorUserId: session.userId, targetType: "AiKnowledgeItem", targetId: item.id },
   );
-  revalidatePath("/ai-learning/knowledge-base");
-  redirect(`/ai-learning/knowledge-base/${item.id}`);
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
+  redirect(await projectPath(`/ai-learning/knowledge-base/${item.id}`));
 }
 
 export async function updateKnowledgeItem(
@@ -196,9 +198,9 @@ export async function updateKnowledgeItem(
     { itemId: id, version: nextVersion },
     { actorUserId: session.userId, targetType: "AiKnowledgeItem", targetId: id },
   );
-  revalidatePath(`/ai-learning/knowledge-base/${id}`);
-  revalidatePath("/ai-learning/knowledge-base");
-  redirect(`/ai-learning/knowledge-base/${id}`);
+  revalidatePath(await projectPath(`/ai-learning/knowledge-base/${id}`));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
+  redirect(await projectPath(`/ai-learning/knowledge-base/${id}`));
 }
 
 /**
@@ -235,8 +237,8 @@ export async function setKnowledgeVerified(id: string, verified: boolean): Promi
     { actorUserId: session.userId, targetType: "AiKnowledgeItem", targetId: id },
   );
 
-  revalidatePath("/ai-learning/knowledge-base");
-  revalidatePath(`/ai-learning/knowledge-base/${id}`);
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
+  revalidatePath(await projectPath(`/ai-learning/knowledge-base/${id}`));
 }
 
 /**
@@ -346,8 +348,8 @@ export async function bulkSetKnowledgeVerified(ids: string[]): Promise<BulkKnowl
     // answer.
     { actorUserId: session.userId, targetType: "AiKnowledgeItem" },
   );
-  revalidatePath("/ai-learning/knowledge-base/review");
-  revalidatePath("/ai-learning/knowledge-base");
+  revalidatePath(await projectPath("/ai-learning/knowledge-base/review"));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
   return { updated: count, alreadyInTargetState, notFound, skippedArchived };
 }
 
@@ -378,8 +380,8 @@ export async function bulkArchiveKnowledge(ids: string[]): Promise<BulkKnowledge
     itemIds: checked.ids,
     userId: session.userId,
   });
-  revalidatePath("/ai-learning/knowledge-base/review");
-  revalidatePath("/ai-learning/knowledge-base");
+  revalidatePath(await projectPath("/ai-learning/knowledge-base/review"));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
   return { updated: count, alreadyInTargetState, notFound };
 }
 
@@ -387,8 +389,8 @@ export async function setKnowledgeStatus(id: string, status: AiKnowledgeStatus):
   await requireAccess("ai_learning.manage");
   const item = await prisma.aiKnowledgeItem.update({ where: { id }, data: { status } });
   await logSystemEvent("INFO", "ai-learning", `Knowledge item "${item.title}" set to ${status}`, { itemId: id });
-  revalidatePath(`/ai-learning/knowledge-base/${id}`);
-  revalidatePath("/ai-learning/knowledge-base");
+  revalidatePath(await projectPath(`/ai-learning/knowledge-base/${id}`));
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
 }
 
 /**
@@ -433,7 +435,7 @@ export async function bulkSetKnowledgeStatus(ids: string[], status: AiKnowledgeS
     );
   }
 
-  revalidatePath("/ai-learning/knowledge-base");
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
   return { updated, alreadyInTargetState, notFound };
 }
 
@@ -474,7 +476,7 @@ export async function bulkDeleteKnowledge(ids: string[]): Promise<BulkKnowledgeR
     { actorUserId: session.userId, targetType: "AiKnowledgeItem" },
   );
 
-  revalidatePath("/ai-learning/knowledge-base");
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
   return { updated: count, notFound };
 }
 
@@ -522,7 +524,7 @@ export async function restoreKnowledgeVersion(itemId: string, version: number): 
   await logSystemEvent("INFO", "ai-learning", `Knowledge item "${target.title}" restored from v${version}`, {
     itemId,
   });
-  revalidatePath(`/ai-learning/knowledge-base/${itemId}`);
+  revalidatePath(await projectPath(`/ai-learning/knowledge-base/${itemId}`));
 }
 
 /**
@@ -579,7 +581,7 @@ export async function setKnowledgeScope(
     { actorUserId: session.userId, targetType: "AiKnowledgeItem", targetId: id },
   );
 
-  revalidatePath("/ai-learning/knowledge-base");
-  revalidatePath(`/ai-learning/knowledge-base/${id}`);
+  revalidatePath(await projectPath("/ai-learning/knowledge-base"));
+  revalidatePath(await projectPath(`/ai-learning/knowledge-base/${id}`));
   return {};
 }

@@ -1,9 +1,11 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { cookies } from "next/headers";
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -50,7 +52,7 @@ export async function revokeSession(sessionId: string): Promise<{ error?: string
     targetUserId: target.userId,
     sessionId,
   });
-  revalidatePath(`/users/${target.userId}/sessions`);
+  revalidatePath(await projectPath(`/users/${target.userId}/sessions`));
   return {};
 }
 
@@ -74,7 +76,7 @@ export async function revokeAllOtherSessions(userId: string): Promise<{ error?: 
     targetUserId: userId,
     revokedCount: result.count,
   });
-  revalidatePath(`/users/${userId}/sessions`);
+  revalidatePath(await projectPath(`/users/${userId}/sessions`));
   return {};
 }
 
@@ -103,7 +105,7 @@ export async function revokeAllSessionsExceptMine(): Promise<{ error?: string }>
     revokedCount: result.count,
     includedCaller: false,
   });
-  revalidatePath("/users");
+  revalidatePath(await projectPath("/users"));
   return {};
 }
 
@@ -122,6 +124,6 @@ export async function revokeAllSessionsGlobally(): Promise<{ error?: string }> {
     revokedCount: result.count,
     includedCaller: true,
   });
-  revalidatePath("/users");
+  revalidatePath(await projectPath("/users"));
   return {};
 }

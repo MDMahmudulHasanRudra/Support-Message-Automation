@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma, type Prisma } from "@support-automation/db";
+import { type Prisma } from "@support-automation/db";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { normalizePhoneNumber } from "@support-automation/shared";
@@ -129,7 +131,7 @@ export async function createTeamMember(_prev: TeamMemberFormState, formData: For
     if (isUniqueViolation(err)) return { error: "Someone already has that number." };
     throw err;
   }
-  revalidatePath("/team-members");
+  revalidatePath(await projectPath("/team-members"));
   return { success: true };
 }
 
@@ -399,7 +401,7 @@ export async function addTeamMembersFromGroup(
     return created;
   });
 
-  revalidatePath("/team-members");
+  revalidatePath(await projectPath("/team-members"));
   return { addedCount: result.count };
 }
 
@@ -432,8 +434,8 @@ export async function updateTeamMember(
     if (isUniqueViolation(err)) return { error: "Someone already has that number." };
     throw err;
   }
-  revalidatePath("/team-members");
-  redirect("/team-members");
+  revalidatePath(await projectPath("/team-members"));
+  redirect(await projectPath("/team-members"));
 }
 
 export async function toggleTeamMemberStatus(id: string): Promise<void> {
@@ -443,7 +445,7 @@ export async function toggleTeamMemberStatus(id: string): Promise<void> {
     where: { id },
     data: { status: member.status === "ACTIVE" ? "INACTIVE" : "ACTIVE" },
   });
-  revalidatePath("/team-members");
+  revalidatePath(await projectPath("/team-members"));
 }
 
 export interface DeleteTeamMemberResult {
@@ -471,12 +473,12 @@ export async function deleteTeamMember(id: string): Promise<DeleteTeamMemberResu
   const activityCount = await prisma.supportActivity.count({ where: { teamMemberId: id } });
   if (activityCount > 0) {
     await prisma.internalTeamMember.update({ where: { id }, data: { status: "INACTIVE" } });
-    revalidatePath("/team-members");
-    revalidatePath("/support-activity");
+    revalidatePath(await projectPath("/team-members"));
+    revalidatePath(await projectPath("/support-activity"));
     return { deactivated: true };
   }
 
   await prisma.internalTeamMember.delete({ where: { id } });
-  revalidatePath("/team-members");
+  revalidatePath(await projectPath("/team-members"));
   return { deactivated: false };
 }

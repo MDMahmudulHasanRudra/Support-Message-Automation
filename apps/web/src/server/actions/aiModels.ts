@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { AiModelJob } from "@prisma/client";
 import { aiProviderProfile } from "@support-automation/shared";
 import { checkPermission, requireAccess } from "@/server/authorize";
@@ -53,7 +55,7 @@ export async function setAiModelConfig(_prevState: AiModelFormState, formData: F
   });
 
   await logSystemEvent("INFO", "ai-learning", `${jobRaw} model set to "${modelId}" on "${provider.name}"`);
-  revalidatePath("/ai-learning/models");
+  revalidatePath(await projectPath("/ai-learning/models"));
   return { success: true };
 }
 
@@ -61,5 +63,5 @@ export async function clearAiModelConfig(job: string): Promise<void> {
   await requireAccess("ai_settings.edit");
   if (!isModelJob(job)) return;
   await prisma.aiModelConfig.deleteMany({ where: { job } });
-  revalidatePath("/ai-learning/models");
+  revalidatePath(await projectPath("/ai-learning/models"));
 }

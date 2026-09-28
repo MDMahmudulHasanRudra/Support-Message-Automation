@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
-import type { AiFallbackOutcome, Prisma, WhatsAppServiceKey } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
+import type { AiFallbackOutcome, WhatsAppServiceKey } from "@prisma/client";
 import { derivePatternSignature, validateRegexSafety } from "@support-automation/engine";
 import { knowledgeContentHash } from "@support-automation/shared";
 import type { RuleAction } from "@support-automation/shared";
@@ -85,6 +85,360 @@ export async function checkDatabaseConnection(): Promise<boolean> {
 
 export { Prisma, PrismaClient } from "@prisma/client";
 
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// Multi-project scoping (MULTI_PROJECT_PLAN.md §5, Phase 2)
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//
+// `createProjectScopedPrisma(base, resolveProjectId)` returns a client that adds the active project
+// to every query on a project-scoped model: to every `where`, to every created row (nested creates
+// included), to list relations reached through `include`/`select`/`_count`, and to every nested
+// `connect`, so a row can only be linked to a row of the same project. It FAILS CLOSED: a scoped
+// query with no project context throws `ProjectScopeError` instead of reading every project — the
+// resolver throws, and nothing here ever falls back to "all projects". A `projectId` in a query that
+// differs from the active one also throws: nothing may reach into another project by naming it.
+//
+// Unscoped (platform) models — users, sessions, roles, permissions, security settings, worker
+// health, release notes — pass straight through, and do not even resolve a project unless they
+// reach a scoped relation. `$queryRaw` is NOT covered (Prisma gives an extension no way into raw
+// SQL); every raw query must add its own `"projectId" = ${projectId}`.
+//
+// The settings singletons keep their `id: "global"` call sites: for them a `where: { id: "global" }`
+// is read as "this project's row" (`projectId` is unique on each), and a create of `id: "global"`
+// keeps that id only for the original project and uses the project's own id otherwise — so ISP
+// Digital's existing rows keep their identity and every other project gets its own row.
+//
+// Kept in this file on purpose: packages/db/src has no relative imports (see the rule at the top).
+
+/** The original installation. Every row that existed before multi-project belongs to it. */
+export const ORIGINAL_PROJECT_ID = "proj_isp_digital";
+
+/** Models whose rows belong to exactly one project (the 70 of MULTI_PROJECT_PLAN.md §3). */
+export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
+  // roots
+  "WhatsAppAccount", "WhatsAppServiceRoute", "InternalTeamMember", "Team", "TeamMembership", "AutomationRule",
+  "AiProvider", "AiModelConfig", "AiKnowledgeItem", "AiKnowledgeVersion", "KnowledgeImport", "SupportPriorityPolicy",
+  "SupportKeyword", "SupportRule", "SupportRuleKeyword", "SupportRuleGroup", "SupportRuleTeamMember", "ShiftTemplate",
+  "LeaveType", "Holiday", "WeeklyScheduleEntry", "DutyAssignment", "DutyAssignmentChange", "LeaveRequest",
+  "ChatCategory", "SavedGroupSet", "SavedReply", "NotificationTemplate", "NotificationEventSetting",
+  "TeamMemberNotificationPreference", "PatternCandidate", "PatternCandidateEvidence", "RuleProposal",
+  "LearningBatchJob", "ConversationAnalysisRun", "ConversationCandidate", "ForgeResearchTask", "SandboxSession",
+  "SandboxTurn",
+  // settings singletons
+  "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
+  "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
+  "TeamManagementSettings", "CommunicationStyleProfile",
+  // descendants
+  "Message", "OutboundMessage", "WhatsAppGroup", "AutomationExecution", "Notification", "WorkerCommand",
+  "ProcessingCheckpoint", "MessageDropCounter", "GroupBroadcastJob", "GroupParticipantAddJob",
+  "GroupParticipantAddItem", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
+  "SupportEscalationEvent", "ConversationSession", "SupportActivity", "SupportSession", "TeamAttendanceDay",
+  "TeamAttendanceGroup",
+]);
+
+export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
+  "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
+  "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
+  "TeamManagementSettings", "CommunicationStyleProfile",
+]);
+
+/** `SystemLog.projectId` is optional: a project's operational events carry one, platform events do not. */
+const OPTIONALLY_SCOPED_MODELS: ReadonlySet<string> = new Set(["SystemLog"]);
+
+export class ProjectScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProjectScopeError";
+  }
+}
+
+interface RelationInfo {
+  model: string;
+  isList: boolean;
+  /** This side holds the foreign key (a to-one "owner" relation such as `account`). */
+  ownsForeignKey: boolean;
+}
+
+let relationCache: Map<string, Map<string, RelationInfo>> | null = null;
+function relationsOf(model: string): Map<string, RelationInfo> {
+  if (!relationCache) {
+    relationCache = new Map();
+    for (const m of Prisma.dmmf.datamodel.models) {
+      const fields = new Map<string, RelationInfo>();
+      for (const f of m.fields) {
+        if (f.kind !== "object") continue;
+        fields.set(f.name, {
+          model: f.type,
+          isList: f.isList,
+          ownsForeignKey: (f.relationFromFields?.length ?? 0) > 0,
+        });
+      }
+      relationCache.set(m.name, fields);
+    }
+  }
+  return relationCache.get(model) ?? new Map();
+}
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date);
+
+function assertSameProject(value: unknown, projectId: string, where: string): void {
+  if (value !== undefined && value !== projectId) {
+    throw new ProjectScopeError(`A query named another project (${where}); refused.`);
+  }
+}
+
+/** `where` for a scoped model: the active project added, a conflicting one refused. */
+function scopeWhere(model: string, where: unknown, projectId: string): Obj {
+  const base: Obj = isObj(where) ? { ...where } : {};
+  if (PROJECT_SINGLETON_MODELS.has(model) && base.id === "global") {
+    // "this project's settings row" — projectId is unique on every singleton.
+    delete base.id;
+  }
+  assertSameProject(base.projectId, projectId, `${model}.where`);
+  base.projectId = projectId;
+  return base;
+}
+
+/** A row about to be created in a scoped model: stamped with the project, nested writes scoped too. */
+function scopeCreateData(model: string, data: unknown, projectId: string): Obj {
+  const out: Obj = isObj(data) ? { ...data } : {};
+  if (PROJECT_SINGLETON_MODELS.has(model) && out.id === "global" && projectId !== ORIGINAL_PROJECT_ID) {
+    out.id = projectId;
+  }
+  assertSameProject(out.projectId, projectId, `${model}.data`);
+  const relations = relationsOf(model);
+  // Checked input (a to-one relation given as `account: { connect }`) cannot also take a scalar
+  // foreign key, so the project goes in the same style the caller used.
+  const checked = Object.keys(out).some((key) => relations.get(key)?.ownsForeignKey && isObj(out[key]));
+  if (checked) {
+    const project = out.project;
+    if (isObj(project) && isObj(project.connect)) assertSameProject(project.connect.id, projectId, `${model}.project`);
+    out.project = { connect: { id: projectId } };
+    delete out.projectId;
+  } else {
+    out.projectId = projectId;
+  }
+  return scopeNestedWrites(model, out, projectId);
+}
+
+/** Nested relation writes inside `data`: creates stamped, connects/updates/deletes confined to the project. */
+function scopeNestedWrites(model: string, data: Obj, projectId: string): Obj {
+  const relations = relationsOf(model);
+  for (const [key, value] of Object.entries(data)) {
+    const rel = relations.get(key);
+    if (!rel || !isObj(value)) continue;
+    const target = rel.model;
+    if (!PROJECT_SCOPED_MODELS.has(target)) continue;
+    const ops: Obj = { ...value };
+    const each = (v: unknown, fn: (x: unknown) => unknown) => (Array.isArray(v) ? v.map(fn) : fn(v));
+    if (ops.create !== undefined) ops.create = each(ops.create, (x) => scopeCreateData(target, x, projectId));
+    if (isObj(ops.createMany) && ops.createMany.data !== undefined) {
+      ops.createMany = { ...ops.createMany, data: each(ops.createMany.data, (x) => ({ ...(x as Obj), projectId })) };
+    }
+    if (ops.connectOrCreate !== undefined) {
+      ops.connectOrCreate = each(ops.connectOrCreate, (x) => {
+        const c = x as Obj;
+        return { ...c, where: scopeWhere(target, c.where, projectId), create: scopeCreateData(target, c.create, projectId) };
+      });
+    }
+    if (ops.upsert !== undefined) {
+      ops.upsert = each(ops.upsert, (x) => {
+        const u = x as Obj;
+        return {
+          ...u,
+          ...(u.where !== undefined ? { where: scopeWhere(target, u.where, projectId) } : {}),
+          create: scopeCreateData(target, u.create, projectId),
+          update: isObj(u.update) ? scopeNestedWrites(target, u.update, projectId) : u.update,
+        };
+      });
+    }
+    for (const op of ["connect", "set", "disconnect", "delete"] as const) {
+      if (ops[op] !== undefined && typeof ops[op] !== "boolean") {
+        ops[op] = each(ops[op], (x) => scopeWhere(target, x, projectId));
+      }
+    }
+    for (const op of ["update", "updateMany"] as const) {
+      if (ops[op] === undefined) continue;
+      ops[op] = each(ops[op], (x) => {
+        const u = x as Obj;
+        if (!("data" in u)) return isObj(u) ? scopeNestedWrites(target, u, projectId) : u; // to-one: { field: value }
+        return {
+          ...u,
+          ...(u.where !== undefined ? { where: scopeWhere(target, u.where, projectId) } : {}),
+          data: isObj(u.data) ? scopeNestedWrites(target, u.data, projectId) : u.data,
+        };
+      });
+    }
+    if (ops.deleteMany !== undefined) ops.deleteMany = each(ops.deleteMany, (x) => scopeWhere(target, x, projectId));
+    data[key] = ops;
+  }
+  return data;
+}
+
+/** `include`/`select`: list relations into scoped models filtered to the project, recursively. */
+function scopeReads(model: string, args: Obj, projectId: string): void {
+  for (const key of ["include", "select"] as const) {
+    const tree = args[key];
+    if (!isObj(tree)) continue;
+    const relations = relationsOf(model);
+    const next: Obj = { ...tree };
+    for (const [field, value] of Object.entries(tree)) {
+      if (field === "_count") {
+        next._count = scopeCount(model, value, projectId);
+        continue;
+      }
+      const rel = relations.get(field);
+      if (!rel || value === false || value === undefined) continue;
+      const scoped = PROJECT_SCOPED_MODELS.has(rel.model);
+      const sub: Obj = isObj(value) ? { ...value } : {};
+      if (rel.isList && scoped) {
+        assertSameProject(isObj(sub.where) ? sub.where.projectId : undefined, projectId, `${model}.${field}`);
+        sub.where = { ...(isObj(sub.where) ? sub.where : {}), projectId };
+      }
+      scopeReads(rel.model, sub, projectId);
+      next[field] = Object.keys(sub).length === 0 && !(rel.isList && scoped) ? value : sub;
+    }
+    args[key] = next;
+  }
+}
+
+function scopeCount(model: string, value: unknown, projectId: string): unknown {
+  const relations = relationsOf(model);
+  const listFields = [...relations.entries()].filter(([, r]) => r.isList);
+  let selection: Obj;
+  if (value === true) selection = Object.fromEntries(listFields.map(([name]) => [name, true]));
+  else if (isObj(value) && isObj(value.select)) selection = { ...value.select };
+  else return value;
+  for (const [field, v] of Object.entries(selection)) {
+    const rel = relations.get(field);
+    if (!rel || !PROJECT_SCOPED_MODELS.has(rel.model) || v === false) continue;
+    const sub: Obj = isObj(v) ? { ...v } : {};
+    sub.where = { ...(isObj(sub.where) ? sub.where : {}), projectId };
+    selection[field] = sub;
+  }
+  return { select: selection };
+}
+
+/** Whether a query on an unscoped model reaches a scoped relation, and so needs the project. */
+function touchesScopedRelation(model: string, args: unknown, depth = 0): boolean {
+  if (!isObj(args) || depth > 6) return false;
+  const relations = relationsOf(model);
+  for (const key of ["include", "select"] as const) {
+    const tree = args[key];
+    if (!isObj(tree)) continue;
+    for (const [field, value] of Object.entries(tree)) {
+      if (field === "_count") {
+        if (listRelationsIntoScoped(model)) return true;
+        continue;
+      }
+      const rel = relations.get(field);
+      if (!rel || !value) continue;
+      if (PROJECT_SCOPED_MODELS.has(rel.model)) return true;
+      if (touchesScopedRelation(rel.model, value, depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
+const listRelationsIntoScoped = (model: string) =>
+  [...relationsOf(model).values()].some((r) => r.isList && PROJECT_SCOPED_MODELS.has(r.model));
+
+const WHERE_OPERATIONS = new Set([
+  "findUnique", "findUniqueOrThrow", "findFirst", "findFirstOrThrow", "findMany", "count", "aggregate", "groupBy",
+  "update", "updateMany", "delete", "deleteMany",
+]);
+
+/** Pure: the query arguments for `operation` on `model`, confined to `projectId`. Exported for tests. */
+export function scopeQueryArgs(model: string, operation: string, args: unknown, projectId: string): Obj {
+  const out: Obj = isObj(args) ? { ...args } : {};
+  const scoped = PROJECT_SCOPED_MODELS.has(model);
+  if (scoped) {
+    if (WHERE_OPERATIONS.has(operation)) out.where = scopeWhere(model, out.where, projectId);
+    if (operation === "create") out.data = scopeCreateData(model, out.data, projectId);
+    if (operation === "createMany" || operation === "createManyAndReturn") {
+      const rows = Array.isArray(out.data) ? out.data : [out.data];
+      out.data = rows.map((row) => {
+        const r: Obj = isObj(row) ? { ...row } : {};
+        if (PROJECT_SINGLETON_MODELS.has(model) && r.id === "global" && projectId !== ORIGINAL_PROJECT_ID) r.id = projectId;
+        assertSameProject(r.projectId, projectId, `${model}.createMany`);
+        r.projectId = projectId;
+        return r;
+      });
+    }
+    if (operation === "upsert") {
+      out.where = scopeWhere(model, out.where, projectId);
+      out.create = scopeCreateData(model, out.create, projectId);
+      if (isObj(out.update)) {
+        assertSameProject(out.update.projectId, projectId, `${model}.update`);
+        out.update = scopeNestedWrites(model, { ...out.update }, projectId);
+      }
+    }
+    if ((operation === "update" || operation === "updateMany") && isObj(out.data)) {
+      assertSameProject(out.data.projectId, projectId, `${model}.data`);
+      out.data = scopeNestedWrites(model, { ...out.data }, projectId);
+    }
+  } else if (OPTIONALLY_SCOPED_MODELS.has(model)) {
+    // SystemLog: a project's reader sees its own events plus platform events (null project), and a
+    // new event is attributed to the project it happened in.
+    if (["findMany", "findFirst", "findFirstOrThrow", "count", "aggregate", "groupBy"].includes(operation)) {
+      const where: Obj = isObj(out.where) ? { ...out.where } : {};
+      out.where = { AND: [where, { OR: [{ projectId }, { projectId: null }] }] };
+    }
+    if (operation === "create" && isObj(out.data) && out.data.projectId === undefined) {
+      out.data = { ...out.data, projectId };
+    }
+  }
+  scopeReads(model, out, projectId);
+  return out;
+}
+
+/**
+ * The project-scoped client. `resolveProjectId` must return the active project's id or THROW —
+ * it is only called for queries that need a project, so platform queries (login, sessions,
+ * permissions) never trigger it.
+ */
+export function createProjectScopedPrisma(base: PrismaClient, resolveProjectId: () => Promise<string>): PrismaClient {
+  const extended = base.$extends({
+    name: "project-scope",
+    query: {
+      $allModels: {
+        async $allOperations({ model, operation, args, query }) {
+          const needsProject =
+            PROJECT_SCOPED_MODELS.has(model) ||
+            OPTIONALLY_SCOPED_MODELS.has(model) ||
+            touchesScopedRelation(model, args);
+          if (!needsProject) return query(args);
+          if (OPTIONALLY_SCOPED_MODELS.has(model) && !PROJECT_SCOPED_MODELS.has(model) && !touchesScopedRelation(model, args)) {
+            // SystemLog outside a project (sign-in, a platform event): a platform entry, readable
+            // only as platform entries. Inside one, attributed to and filtered by the project.
+            let optionalProjectId: string | null = null;
+            try {
+              optionalProjectId = await resolveProjectId();
+            } catch (err) {
+              if (!(err instanceof ProjectScopeError)) throw err;
+            }
+            if (!optionalProjectId) {
+              const rawArgs: unknown = args;
+              const platformOnly: Obj = isObj(rawArgs) ? { ...rawArgs } : {};
+              if (["findMany", "findFirst", "findFirstOrThrow", "count", "aggregate", "groupBy"].includes(operation)) {
+                platformOnly.where = { AND: [isObj(platformOnly.where) ? platformOnly.where : {}, { projectId: null }] };
+              }
+              return query(platformOnly as typeof args);
+            }
+            return query(scopeQueryArgs(model, operation, args, optionalProjectId) as typeof args);
+          }
+          const projectId = await resolveProjectId();
+          if (!projectId) throw new ProjectScopeError(`No active project for ${model}.${operation}; refused.`);
+          return query(scopeQueryArgs(model, operation, args, projectId) as typeof args);
+        },
+      },
+    },
+  });
+  // Query-only extension: the model API is unchanged, so the cast is sound and lets every existing
+  // call site (and every helper that takes a PrismaClient) use the scoped client as-is.
+  return extended as unknown as PrismaClient;
+}
+
 export interface ResolvedWhatsAppAccount {
   accountId: string;
   accountLabel: string;
@@ -124,10 +478,13 @@ export function isResolutionError(result: WhatsAppAccountResolution): result is 
  * (worker, plain `node`) than by Next.js's Turbopack (web) — neither an extensionless nor a `.js`
  * specifier satisfies both at once. Zero relative imports sidesteps the incompatibility entirely.
  */
-export async function resolveWhatsAppAccount(serviceKey: WhatsAppServiceKey): Promise<WhatsAppAccountResolution> {
+export async function resolveWhatsAppAccount(
+  serviceKey: WhatsAppServiceKey,
+  db: PrismaClient = prisma,
+): Promise<WhatsAppAccountResolution> {
   const [route, primary] = await Promise.all([
-    prisma.whatsAppServiceRoute.findUnique({ where: { serviceKey } }),
-    prisma.whatsAppAccount.findFirst({ where: { isPrimary: true } }),
+    db.whatsAppServiceRoute.findUnique({ where: { serviceKey } }),
+    db.whatsAppAccount.findFirst({ where: { isPrimary: true } }),
   ]);
 
   const usePrimary = (source: "PRIMARY_DEFAULT" | "PRIMARY_FALLBACK"): WhatsAppAccountResolution => {
@@ -144,7 +501,7 @@ export async function resolveWhatsAppAccount(serviceKey: WhatsAppServiceKey): Pr
     return usePrimary("PRIMARY_DEFAULT");
   }
 
-  const configured = await prisma.whatsAppAccount.findUnique({ where: { id: route.accountId } });
+  const configured = await db.whatsAppAccount.findUnique({ where: { id: route.accountId } });
   if (configured && configured.status === "CONNECTED") {
     return { accountId: configured.id, accountLabel: configured.label, source: "CONFIGURED" };
   }
@@ -370,7 +727,7 @@ export interface AccountHistoryImpact {
   hasHistory: boolean;
 }
 
-export async function countAccountHistory(accountId: string): Promise<AccountHistoryImpact> {
+export async function countAccountHistory(accountId: string, db: PrismaClient = prisma): Promise<AccountHistoryImpact> {
   const [
     messages,
     groups,
@@ -380,15 +737,15 @@ export async function countAccountHistory(accountId: string): Promise<AccountHis
     escalationCases,
     conversationSessions,
     attendanceEvidence,
-  ] = await prisma.$transaction([
-    prisma.message.count({ where: { accountId } }),
-    prisma.whatsAppGroup.count({ where: { accountId } }),
-    prisma.supportActivity.count({ where: { accountId } }),
-    prisma.supportSession.count({ where: { accountId } }),
-    prisma.aiFallbackDecision.count({ where: { accountId } }),
-    prisma.supportEscalationCase.count({ where: { accountId } }),
-    prisma.conversationSession.count({ where: { accountId } }),
-    prisma.teamAttendanceGroup.count({ where: { accountId } }),
+  ] = await db.$transaction([
+    db.message.count({ where: { accountId } }),
+    db.whatsAppGroup.count({ where: { accountId } }),
+    db.supportActivity.count({ where: { accountId } }),
+    db.supportSession.count({ where: { accountId } }),
+    db.aiFallbackDecision.count({ where: { accountId } }),
+    db.supportEscalationCase.count({ where: { accountId } }),
+    db.conversationSession.count({ where: { accountId } }),
+    db.teamAttendanceGroup.count({ where: { accountId } }),
   ]);
 
   const total =
@@ -433,13 +790,16 @@ export async function countAccountHistory(accountId: string): Promise<AccountHis
  * `AttendanceOverride`, which is a manager's explicit verdict rather than evidence, and this is
  * not entitled to throw that away.
  */
-export async function reconcileAttendanceAfterAccountRemoval(attendanceDayIds: string[]): Promise<number> {
+export async function reconcileAttendanceAfterAccountRemoval(
+  attendanceDayIds: string[],
+  db: PrismaClient = prisma,
+): Promise<number> {
   const ids = [...new Set(attendanceDayIds)].filter(Boolean);
   if (!ids.length) return 0;
 
   let updated = 0;
   for (const attendanceDayId of ids) {
-    const remaining = await prisma.teamAttendanceGroup.findMany({
+    const remaining = await db.teamAttendanceGroup.findMany({
       where: { attendanceDayId },
       select: { messageCount: true, firstAt: true, lastAt: true },
     });
@@ -453,7 +813,7 @@ export async function reconcileAttendanceAfterAccountRemoval(attendanceDayIds: s
       : null;
 
     // The day may itself have gone — the member could have been removed in the same breath.
-    const result = await prisma.teamAttendanceDay.updateMany({
+    const result = await db.teamAttendanceDay.updateMany({
       where: { id: attendanceDayId },
       data: { messageCount, uniqueGroupCount: remaining.length, firstActivityAt, lastActivityAt },
     });
@@ -488,15 +848,18 @@ export type CreateRuleProposalResult = { id: string } | { error: string };
  * Same no-relative-imports reasoning as resolveWhatsAppAccount()/encryptSecret() above applies to
  * why this is in this file directly rather than a sibling module.
  */
-export async function createRuleProposalFromCandidate(candidateId: string): Promise<CreateRuleProposalResult> {
-  const candidate = await prisma.patternCandidate.findUnique({
+export async function createRuleProposalFromCandidate(
+  candidateId: string,
+  db: PrismaClient = prisma,
+): Promise<CreateRuleProposalResult> {
+  const candidate = await db.patternCandidate.findUnique({
     where: { id: candidateId },
     include: { proposal: true },
   });
   if (!candidate) return { error: "Pattern candidate not found." };
   if (candidate.proposal) return { error: "A proposal already exists for this pattern." };
 
-  const proposal = await prisma.ruleProposal.create({
+  const proposal = await db.ruleProposal.create({
     data: {
       patternCandidateId: candidate.id,
       name: deriveProposalName(candidate.suggestedKeywords),
@@ -597,8 +960,8 @@ export async function approveRuleProposalById(params: {
   proposalId: string;
   reviewedById: string | null;
   autoApproved: boolean;
-}): Promise<ApproveRuleProposalResult> {
-  const proposal = await prisma.ruleProposal.findUnique({ where: { id: params.proposalId } });
+}, db: PrismaClient = prisma): Promise<ApproveRuleProposalResult> {
+  const proposal = await db.ruleProposal.findUnique({ where: { id: params.proposalId } });
   if (!proposal) return { error: "Rule proposal not found." };
   if (proposal.status !== "PENDING_REVIEW") {
     return { error: "This proposal has already been reviewed." };
@@ -613,7 +976,7 @@ export async function approveRuleProposalById(params: {
     if (!check.safe) return { error: `Regex rejected: ${check.reason}` };
   }
 
-  const createdRule = await prisma.$transaction(async (tx) => {
+  const createdRule = await db.$transaction(async (tx) => {
     const rule = await tx.automationRule.create({
       data: {
         name: proposal.name,
@@ -795,7 +1158,10 @@ export function deriveKnowledgeScope(input: {
   return input.sourceGroupId ? "GROUP" : "GLOBAL";
 }
 
-export async function createKnowledgeItem(input: CreateKnowledgeItemInput): Promise<{ id: string }> {
+export async function createKnowledgeItem(
+  input: CreateKnowledgeItemInput,
+  db: PrismaClient = prisma,
+): Promise<{ id: string }> {
   const scope = deriveKnowledgeScope(input);
   const contentHash = knowledgeContentHash({
     title: input.title,
@@ -816,7 +1182,7 @@ export async function createKnowledgeItem(input: CreateKnowledgeItemInput): Prom
     softwareVersion: input.softwareVersion ?? null,
   };
 
-  const created = await prisma.aiKnowledgeItem.create({
+  const created = await db.aiKnowledgeItem.create({
     data: {
       ...content,
       source: input.source,
@@ -861,8 +1227,8 @@ export async function createKnowledgeItem(input: CreateKnowledgeItemInput): Prom
  * destroy a distinct procedure and silently widen its scope. Similarity is a reason for a person
  * to look, not an instruction to the database.
  */
-export async function findKnowledgeDuplicates(contentHash: string, excludeId?: string) {
-  return prisma.aiKnowledgeItem.findMany({
+export async function findKnowledgeDuplicates(contentHash: string, excludeId?: string, db: PrismaClient = prisma) {
+  return db.aiKnowledgeItem.findMany({
     where: { contentHash, ...(excludeId ? { id: { not: excludeId } } : {}) },
     select: { id: true, title: true, scope: true, sourceGroupId: true, humanVerified: true, createdAt: true },
     orderBy: { createdAt: "asc" },

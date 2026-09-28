@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkPermission } from "@/server/authorize";
 
 /**
@@ -83,7 +85,7 @@ export async function updateGroupBroadcastSettings(
     },
   });
 
-  revalidatePath("/group-message-sender");
-  revalidatePath("/group-message-sender/settings");
+  revalidatePath(await projectPath("/group-message-sender"));
+  revalidatePath(await projectPath("/group-message-sender/settings"));
   return { saved: true };
 }

@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { SupportPriority } from "@prisma/client";
 import { checkPermission, requireAccess } from "@/server/authorize";
 
@@ -45,7 +47,7 @@ export async function updatePriorityPolicy(
     },
   });
 
-  revalidatePath("/support-escalation/policies");
+  revalidatePath(await projectPath("/support-escalation/policies"));
   return { success: true };
 }
 
@@ -64,7 +66,7 @@ export async function updateEscalationSettings(
     create: { id: "global", enabled, escalationAdminId },
   });
 
-  revalidatePath("/support-escalation/policies");
+  revalidatePath(await projectPath("/support-escalation/policies"));
   return { success: true };
 }
 
@@ -108,8 +110,8 @@ export async function pauseCase(caseId: string): Promise<void> {
   // so this is a plain follow-up update.
   await prisma.supportEscalationCase.update({ where: { id: caseId }, data: { status: "PAUSED" } });
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 /** Resumes a paused case right where it left off — status reverts to whatever it was before pausing, due immediately. */
@@ -152,8 +154,8 @@ export async function resumeCase(caseId: string): Promise<void> {
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 /** Forces the next tier to fire on the very next worker tick, skipping the rest of the current wait. */
@@ -176,8 +178,8 @@ export async function escalateNow(caseId: string): Promise<void> {
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 export async function reassignCase(caseId: string, teamMemberId: string | null): Promise<void> {
@@ -201,7 +203,7 @@ export async function reassignCase(caseId: string, teamMemberId: string | null):
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
 }
 
 /**
@@ -266,7 +268,7 @@ async function runBulkCaseAction(
     await apply(row.id);
   }
 
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath("/support-escalation"));
   return { changed: actionable.length, alreadyClosed: existing.length - actionable.length, notFound };
 }
 
@@ -287,8 +289,8 @@ export async function stopEscalation(caseId: string): Promise<void> {
   if (!caseRow || ["HUMAN_REPLIED", "RESOLVED", "CANCELLED"].includes(caseRow.status)) return;
 
   await prisma.supportEscalationCase.update({ where: { id: caseId }, data: { status: "CANCELLED" } });
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 /** Clears escalation progress back to the start without discarding history — same idea as retrying a failed job. */
@@ -314,8 +316,8 @@ export async function resetEscalation(caseId: string): Promise<void> {
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 export async function markResolved(caseId: string): Promise<void> {
@@ -340,6 +342,6 @@ export async function markResolved(caseId: string): Promise<void> {
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }

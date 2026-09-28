@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -80,7 +82,7 @@ export async function updateGroupParticipantAddSettings(
   });
 
   await logSystemEvent("WARN", "settings", "Add-to-groups limits changed", { changedBy: session.username });
-  revalidatePath("/group-member-adder/settings");
-  revalidatePath("/group-member-adder");
+  revalidatePath(await projectPath("/group-member-adder/settings"));
+  revalidatePath(await projectPath("/group-member-adder"));
   return { saved: true };
 }

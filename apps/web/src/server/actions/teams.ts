@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { checkPermission } from "@/server/authorize";
 
@@ -73,7 +75,7 @@ export async function createTeam(_prev: TeamFormState, formData: FormData): Prom
     if (isUniqueViolation(err)) return { error: "A team with that name or code already exists." };
     throw err;
   }
-  revalidatePath("/teams");
+  revalidatePath(await projectPath("/teams"));
   return { success: true };
 }
 
@@ -90,9 +92,9 @@ export async function updateTeam(id: string, _prev: TeamFormState, formData: For
     if (isUniqueViolation(err)) return { error: "A team with that name or code already exists." };
     throw err;
   }
-  revalidatePath("/teams");
-  revalidatePath("/team-members");
-  redirect(`/teams/${id}`);
+  revalidatePath(await projectPath("/teams"));
+  revalidatePath(await projectPath("/team-members"));
+  redirect(await projectPath(`/teams/${id}`));
 }
 
 export interface TeamActionResult {
@@ -108,8 +110,8 @@ export async function setTeamStatus(id: string, status: "ACTIVE" | "DISABLED"): 
   const granted = await checkPermission("whatsapp.manage");
   if ("denied" in granted) return { ok: false, message: granted.denied };
   const team = await prisma.team.update({ where: { id }, data: { status }, select: { name: true } });
-  revalidatePath("/teams");
-  revalidatePath("/team-members");
+  revalidatePath(await projectPath("/teams"));
+  revalidatePath(await projectPath("/team-members"));
   return {
     ok: true,
     message:
@@ -148,6 +150,6 @@ export async function deleteTeam(id: string): Promise<TeamActionResult> {
     };
   }
   await prisma.team.delete({ where: { id } });
-  revalidatePath("/teams");
+  revalidatePath(await projectPath("/teams"));
   return { ok: true, message: `${team.name} deleted.` };
 }
