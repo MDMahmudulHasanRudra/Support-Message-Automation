@@ -1,9 +1,16 @@
 # Multi-Project Softify Assist: Audit and Plan
 
-Status: **plan for review. No implementation has started.** This is the Phase 1–2 deliverable the spec
-asks for before any code: the Global vs Project-Scoped Entity Map, the Existing Data Migration Plan
-and the Project Context Plan. It also covers the access model, feature flags, phasing, and the
-decisions that need Rudra's answer before Phase 3 begins.
+Status: **approved to start Phase 1 (database foundation) only.** This document is the audit the
+spec asks for before any code: the Global vs Project-Scoped Entity Map, the Existing Data Migration
+Plan and the Project Context Plan. It also covers project access, feature flags, phasing and the
+decisions taken.
+
+> **The existing permission system and existing portal functionality remain unchanged and are
+> reused inside every project. Project access determines which projects a user can enter; existing
+> permissions determine what they can do within each accessible project.**
+>
+> The current installation becomes the project **ISP Digital** (slug `isp-digital`), with all of
+> its data and behaviour intact.
 
 Audited on 28 Sep 2026 against branch `rudra` at `1306b90`.
 
@@ -50,8 +57,8 @@ Four structural facts shape the plan.
 ## 2. The recommendation, in one paragraph
 
 Add a `Project` table and a `projectId` column on every project-scoped table. Backfill every
-existing row to a first project (the current installation, e.g. "SP Digital"). Put the project in
-the URL (`/p/sp-digital/rules`) so that two browser tabs on two projects can never write into each
+existing row to the first project, **ISP Digital** (the current installation). Put the project in
+the URL (`/p/isp-digital/rules`) so that two browser tabs on two projects can never write into each
 other. Resolve and **authorize** the project server-side in the three existing permission helpers,
 and have them hand back a Prisma client that **injects `projectId` into every query and fails
 closed** if a scoped model is queried without one. The worker takes the project from the account,
@@ -79,10 +86,10 @@ Risk: **H** = large table or hot path; **M** = unique/semantic change; **L** = a
 
 | Entity | Why global |
 |---|---|
-| `User` | One login across projects. Access to a project is granted by a new `ProjectMember` row (§7). |
+| `User` | One login across projects, keeping its existing role (`permissionModuleId`). Which projects it may enter is a new `ProjectAccess` row per project (§7). |
 | `UserSession` | Sessions belong to people, not projects. |
 | `Permission` | The catalogue of permission keys is code, identical everywhere. |
-| `PermissionModule` | Role *definitions* ("Support Agent", "Read Only") are reused across projects and assigned per project via `ProjectMember`. See decision D4. |
+| `PermissionModule` | **Unchanged.** A user's existing role applies, as it is today, inside every project they can access (§7). |
 | `PermissionModulePermission` | Child of the role definition. |
 | `SecuritySettings` | Login and session policy is a platform concern. |
 | `WorkerHealthSnapshot` | There is one worker process. Per-loop liveness is about the process, not a project. |
@@ -90,7 +97,7 @@ Risk: **H** = large table or hot path; **M** = unique/semantic change; **L** = a
 
 `SystemLog` is **mixed**: a nullable `projectId` is set for operational events (a group sync, an AI
 handover) and left null for platform events (worker boot, a login). The System Logs page filters to
-the current project, plus platform events for platform admins only.
+the current project, plus platform events for Main Admins only.
 
 ### 3.2 Project-scoped roots: have no project today
 
@@ -152,8 +159,9 @@ the current project, plus platform events for platform admins only.
 
 **Total: 9 global, 70 project-scoped (39 roots, 10 singletons, 21 descendants), plus `SystemLog` with an optional project.** Also needed:
 
-- **3 new tables:** `Project`, `ProjectMember`, `ProjectFeature`.
-- **1 new column on `User`:** `isPlatformAdmin`.
+- **3 new tables:** `Project`, `ProjectAccess` (which projects a user may enter, nothing else),
+  `ProjectFeature`.
+- **No change to `User`, `PermissionModule`, `Permission` or `PermissionModulePermission`.**
 
 ---
 
@@ -171,7 +179,7 @@ the current project, plus platform events for platform admins only.
 ```
 
 **Why the URL and not a cookie.** A cookie holding the "current project" is shared by every tab.
-With SP Digital open in one tab and Bizify in another, switching project in the second tab would
+With ISP Digital open in one tab and Bizify in another, switching project in the second tab would
 silently send the first tab's next form submit into Bizify: an isolation failure that no permission
 check catches, because the user is allowed in both. The URL is per tab. Server Actions POST to the
 page's own URL, so the project travels with every write automatically.
@@ -191,14 +199,15 @@ page's own URL, so the project travels with every write automatically.
   `pageAccess` gain the project step:
   1. read the slug from the route;
   2. load the project;
-  3. confirm the user is a `ProjectMember` (or a platform admin);
+  3. **project access:** confirm the user has `ProjectAccess` to it (or is a Main Admin, §7);
   4. confirm the project is not Suspended or Archived (read-only when Suspended, §8);
-  5. check the permission key **against the user's role in that project**;
+  5. **existing permission:** run the permission check exactly as today, against the user's
+     existing role. It is unchanged and the same in every project;
   6. check the feature flag if the page or action names one.
 
   They return `{ session, project, db }`, where `db` is the scoped client (§5).
-- **Changing the slug proves nothing.** Every request is re-authorized against `ProjectMember`,
-  so a hand-edited URL (`/p/bizify/...`) from an SP-Digital-only user is refused server-side. The
+- **Changing the slug proves nothing.** Every request is re-authorized against `ProjectAccess`,
+  so a hand-edited URL (`/p/bizify/...`) from an ISP-Digital-only user is refused server-side. The
   sidebar never shows it either.
 
 ### 4.2 Worker: the project comes from the account, and only from there
@@ -260,45 +269,51 @@ Every step is additive, and the app keeps working with one project after each st
 
 ### 6.1 Order (one migration per step, each deployable alone)
 
-1. **Create the tables.** `Project`, `ProjectMember`, `ProjectFeature`, and `User.isPlatformAdmin`.
-   Insert the first project with a **fixed id** (`proj_default`) so every later step can reference
-   it in plain SQL:
-   - name: D1;
-   - slug: e.g. `sp-digital`;
+1. **Create the tables.** `Project`, `ProjectAccess`, `ProjectFeature`. Insert the first project
+   with a **fixed id** (`proj_isp_digital`) so every later step can reference it in plain SQL:
+   - name: **ISP Digital**;
+   - slug: `isp-digital`;
    - status: `ACTIVE`.
 2. **Grant access.**
-   - Every existing user becomes a `ProjectMember` of the first project, with the role they have
-     today (`User.permissionModuleId` carried over).
-   - The Administrator-role users become platform admins.
-   - No one loses or gains access on deploy.
+   - Every existing user gets `ProjectAccess` to ISP Digital.
+   - Their role, permissions and permission assignments are untouched: nothing in the permission
+     tables is written.
+   - Nobody loses or gains a single ability on deploy.
 3. **Add `projectId` to the 70 scoped tables** (and a nullable one to `SystemLog`):
-   `ADD COLUMN "projectId" TEXT NOT NULL DEFAULT 'proj_default'`, then `DROP DEFAULT`.
+   `ADD COLUMN "projectId" TEXT NOT NULL DEFAULT 'proj_isp_digital'`. The default stays in place
+   until Phase 2 (§10), so every existing write keeps landing in ISP Digital with no code change.
 4. **Add indexes and foreign keys.**
-   - Add the FK to `Project`.
-   - Add a `projectId`-leading index where a table is filtered by it. On `Message` and
+   - Add the FK to `Project`, `NOT VALID` first and validated in a separate migration (§6.2).
+   - Add a `projectId`-leading index where a table is filtered by it. These arrive with the
+     queries that use them (Phase 2), not before. On `Message` and
      `OutboundMessage` these are built `CONCURRENTLY` using the escape-hatch pattern already
      documented in `20260902091844_knowledge_sources_and_query_indexes`, because a plain
      `CREATE INDEX` there blocks writes.
-5. **Make the unique constraints per project** (the 19 in §3.2). Create the new composite
-   unique first, then drop the old single-column one. With one project the data is identical, so
-   no row can conflict.
-6. **Singletons.** Add `projectId @unique` and set it to `proj_default` on the existing `"global"`
+5. **Make the unique constraints per project** (the 19 in §3.2). Phase 1 adds the composite
+   `(projectId, …)` unique **next to** the old single-column one; Phase 2 drops the old one once no
+   code looks rows up by it. With one project the data is identical, so no row can conflict.
+6. **Singletons.** Add `projectId @unique` and set it to `proj_isp_digital` on the existing `"global"`
    rows.
 7. **Composite consistency FKs** (§6.5). Added last, once the data is verifiably consistent.
 
 ### 6.2 Why the big tables are safe
 
 On Postgres 11 and later, `ADD COLUMN … NOT NULL DEFAULT <constant>` is **metadata-only**: it does
-not rewrite `Message`, however many rows it has, and completes in milliseconds. The `DROP DEFAULT`
-afterwards leaves existing rows reading the value. Only the indexes take time, and those are
-concurrent. This is the same class of change as the `isPrimary` partial index, and it gets the same
-care.
+not rewrite `Message`, however many rows it has, and completes in milliseconds. When the default is
+later dropped (Phase 2), existing rows keep reading the value.
+
+A foreign key is the one part that reads the whole table. `ADD CONSTRAINT … FOREIGN KEY` checks
+every row while holding a lock that blocks writes, and Prisma runs each migration in a transaction.
+So every new FK is added **`NOT VALID`** (instant, no scan), and validated in a **second,
+separate migration** with `VALIDATE CONSTRAINT`. That takes a lock that does not block inserts, so
+the worker keeps storing messages while `Message` is checked. The `projectId` indexes (Phase 2) are
+the only other slow part, and those are built concurrently.
 
 ### 6.3 Verification after the migration (run before any code uses it)
 
 ```sql
 -- Every scoped row belongs to a project, and it is the first one
-SELECT '<table>', count(*) FROM "<table>" WHERE "projectId" <> 'proj_default';   -- expect 0 each
+SELECT '<table>', count(*) FROM "<table>" WHERE "projectId" <> 'proj_isp_digital';   -- expect 0 each
 -- Children agree with their parents
 SELECT count(*) FROM "Message" m JOIN "WhatsAppAccount" a ON a.id = m."accountId"
  WHERE m."projectId" <> a."projectId";                                              -- expect 0
@@ -325,24 +340,51 @@ the bug no test anticipated. It is added in step 7, once step 3's data is verifi
 
 ---
 
-## 7. Users and access
+## 7. Users, project access and the existing permission system
 
-| Role | Can |
-|---|---|
-| Platform admin (`User.isPlatformAdmin`) | Everything in the Main Admin Portal: create, suspend and archive projects, set features, add members. Can open any project, as that project's Administrator. |
-| Project member (`ProjectMember { userId, projectId, permissionModuleId }`) | Opens only the projects they are a member of, with the permissions of *their role in that project*. The same person can be an Administrator in SP Digital and Read Only in Bizify. |
+**Two separate checks, in this order, and neither replaces the other:**
 
-- **Permission checks change underneath.** `hasPermission(session, key)` becomes
-  `hasPermission(session, project, key)`; the call sites do not change, because the helpers already
-  wrap it.
-- **Admin lock-out protection carries over.** The seed's existing guarantee that the Administrator
-  role holds every key is unchanged, and it also ensures every platform admin can reach every
-  project.
-- **Where users land after login.** A user with one project goes straight into it, exactly as
-  today. A platform admin, or a user with several projects, lands on the Main Admin Portal
-  (platform admins) or a project picker (everyone else).
+```text
+User → Project access check (new: which projects may they enter?)
+     → Existing permission check (unchanged: what may they do in there?)
+     → Existing functionality
+```
 
----
+| Concept | Where it lives | Answers |
+|---|---|---|
+| Project access | `ProjectAccess { userId, projectId }`: one row per project a user may enter; nothing else is stored on it | "Can this user enter ISP Digital? Bizify?" |
+| Existing permissions | `User.permissionModuleId` → `PermissionModule` → `Permission`, **exactly as today** | "Can this user manage rules, broadcast, edit AI settings…?" |
+
+- **The existing permission system is not redesigned, simplified or restructured.** `hasPermission`,
+  `checkPermission`, `requireAccess`, `pageAccess`, every permission key, every module, every page
+  gate and every action gate keep their current logic.
+- **The user's existing role applies in every project they can access.** Someone who can manage
+  WhatsApp, Automation, AI and Settings today can do exactly that inside ISP Digital, and inside
+  Bizify too if given access. The project layer only adds the question in front of it.
+- **Not being a Main Admin removes nothing.** A user with access only to ISP Digital, and the
+  existing Administrator role, keeps full Administrator control inside ISP Digital.
+- **One user, several projects.** A user can have access to one project or several. With several,
+  the project switcher lists exactly those; with one, they go straight into it after login, as today.
+- **Without access, a project does not exist for that user.** It is absent from the switcher and
+  the project list, and every URL, action, export and API call for it is refused server-side,
+  including a hand-edited slug.
+
+**Main Admin.** Managing projects needs a permission that does not exist yet, so it is **added to
+the existing catalogue**, not built as a parallel system:
+
+- **`projects.view` / `projects.manage`:** two new keys in `packages/shared/src/permissions.ts`,
+  alongside the existing ones. The seed already re-syncs the Administrator module to every key on
+  each deploy, so current Administrators get them automatically and nobody else does.
+- **What they allow:** a user whose role holds `projects.manage` is a Main Admin. They can:
+  - use the Main Admin Portal;
+  - create, suspend and archive projects;
+  - set each project's features;
+  - grant and revoke users' project access;
+  - enter any project.
+
+  Inside a project they are still governed by the same existing permissions as everyone else.
+
+This lands with the portal (Phase 4). In Phase 1 nothing reads it.
 
 ## 8. Project lifecycle, creation defaults and the Main Admin Portal
 
@@ -366,7 +408,7 @@ transaction that creates:
 - default `ProjectFeature` rows from the catalogue;
 - the default notification event settings;
 - the three default shift templates the seed already creates;
-- a `ProjectMember` row for the creator.
+- `ProjectAccess` for the creator.
 
 It deliberately does **not** create a WhatsApp account, AI provider, rules or knowledge. Those are
 set up inside the project, through the pages that already exist for them.
@@ -380,9 +422,9 @@ set up inside the project, through the pages that already exist for them.
 - **Create New Project**.
 
 Each card links into the project's existing Overview, which becomes that project's Overview. The
-**project switcher** (`SP Digital ▾` at the top of the sidebar) lists the user's projects, with
-"All projects" for platform admins, plus "Create project". The project name is shown in the
-sidebar header and prefixed to the breadcrumb (`SP Digital › WhatsApp › Accounts`).
+**project switcher** (`ISP Digital ▾` at the top of the sidebar) lists exactly the projects the user
+has access to, with "All projects" and "Create project" for Main Admins. The project name is shown
+in the sidebar header and prefixed to the breadcrumb (`ISP Digital › WhatsApp › Accounts`).
 
 ---
 
@@ -396,7 +438,7 @@ sidebar header and prefixed to the breadcrumb (`SP Digital › WhatsApp › Acco
   default, the same shape as `NotificationEventSetting`, so adding a feature needs no migration and
   no backfill. The first project gets every feature it uses today, so nothing disappears on deploy.
 - **A feature is an entitlement; the existing settings are a choice.** `AI_REPLY` off means the
-  project *cannot* use AI replies (a platform admin's decision). `AiSettings.aiEngineEnabled` is the
+  project *cannot* use AI replies (a Main Admin's decision). `AiSettings.aiEngineEnabled` is the
   project's own switch *within* that entitlement. Both must be on for AI to reply.
 - **One check, four places:**
   - `navGroupsFor()` hides the module;
@@ -414,31 +456,66 @@ sidebar header and prefixed to the breadcrumb (`SP Digital › WhatsApp › Acco
 
 | Phase | Delivers | Size | Main risk |
 |---|---|---|---|
-| **P3 Schema foundation** | Tables, `projectId` on 70 tables, backfill, per-project uniques, singleton `projectId`. Code still reads the first project. | L | Migration on large tables: concurrent indexes and the verification queries in §6.3 |
-| **P4 Scoped data layer** | `scopedPrisma`, fail-closed guard, `getProjectSettings`, project-aware permission helpers; web server code converted page by page to `db` | XL | 740 call sites. The guard makes a missed one loud rather than leaky. |
-| **P5 Worker context** | Account → project in the pipeline, project settings per queue row, scanners iterate projects | L | The hot path; covered by the existing 791-test isolated suite plus new two-project tests |
-| **P6 Routing and portal** | `/p/[project]` move, link codemod, `proxy.ts` redirects, Main Admin Portal, create project, switcher, lifecycle | L | Broken links. The codemod plus a crawl of every nav link, like the 27 Sep nav check. |
-| **P7 Feature flags** | Catalogue, `ProjectFeature`, the four checks, a Features tab per project | M | |
-| **P8 Isolation test suite** | Two-project fixtures (SP Digital / Bizify) asserting §11 end to end | M | Each test must fail against an unscoped query first, per CLAUDE.md |
-| **P9 DB hardening** | Composite consistency FKs (§6.5) | M | |
+| **1 Database foundation** | `Project`, `ProjectAccess`, `ProjectFeature`; ISP Digital created; every user given access to it; `projectId` on the 70 scoped tables (default = ISP Digital); per-project composite uniques **alongside** the existing ones; singleton `projectId`; FKs added `NOT VALID` then validated. **No application code changes.** | L | Migration on large tables: metadata-only columns, `NOT VALID` FKs, verification in §6.3 |
+| **2 Scoped data layer** | `scopedPrisma`, fail-closed guard, `getProjectSettings`, the project-access step in the permission helpers; web server code converted page by page to `db`; the `projectId` defaults dropped; the old install-wide uniques dropped once code uses the composite ones; `projectId` indexes | XL | 740 call sites. The guard makes a missed one loud rather than leaky. |
+| **3 Worker context** | Account → project in the pipeline, project settings per queue row, scanners iterate projects | L | The hot path; covered by the existing 791-test isolated suite plus new two-project tests |
+| **4 Routing and portal** | `/p/[project]` move, link codemod, `proxy.ts` redirects, Main Admin Portal, `projects.*` keys, create project, access assignment, switcher, lifecycle | L | Broken links. The codemod plus a crawl of every nav link, like the 27 Sep nav check. |
+| **5 Feature flags** | Catalogue, `ProjectFeature` checks in the four places, a Features tab per project | M | |
+| **6 Isolation test suite** | Two-project fixtures (ISP Digital / Bizify) asserting §11 end to end | M | Each test must fail against an unscoped query first, per CLAUDE.md |
+| **7 DB hardening** | Composite consistency FKs (§6.5) | M | |
 
-**Order is not negotiable in one place:** P4 and P5 (enforcement) finish before P6 exposes a way to
-create a second project. Until then a second project cannot exist, so there is nothing to leak.
+**Order is not negotiable in one place:** Phases 2 and 3 (enforcement) finish before Phase 4
+exposes a way to create a second project. Until then a second project cannot exist, so there is
+nothing to leak.
 
----
+### 10.1 Phase 1, reviewed after the 28 Sep correction
 
-## 11. Acceptance: the isolation tests P8 must contain
+What Phase 1 does, precisely, and what it deliberately leaves alone.
 
-Each test uses two projects, **SP Digital** and **Bizify**, each with its own account, group, team,
+**Does:**
+
+- **Three new tables.** Create `Project`, `ProjectAccess` and `ProjectFeature`. Insert **ISP
+  Digital** (`proj_isp_digital`, `isp-digital`, ACTIVE).
+- **Access.** Insert one `ProjectAccess` row per existing user for ISP Digital.
+- **`projectId` on the 70 scoped tables**, `NOT NULL DEFAULT 'proj_isp_digital'` with a foreign key
+  to `Project`, and a nullable one on `SystemLog` (existing rows are left null = platform, and
+  Phase 2 decides what is operational).
+  - The FKs are added `NOT VALID`.
+  - A separate migration validates them.
+- **Per-project composite uniques.** Add `(projectId, …)` for the 19 constraints in §3.2, **next
+  to** the existing single-column ones, which stay until Phase 2 moves the code onto the composite
+  ones. The Primary account gets a per-project partial unique next to the existing one.
+- **Singletons.** The 10 settings singletons get `projectId @unique` (existing `"global"` rows
+  pointed at ISP Digital).
+- **Verification.** Run the §6.3 checks on the isolated test database, plus the full worker suite
+  and all builds, to prove behaviour is unchanged.
+
+**Does not:**
+
+- touch `User`, `PermissionModule`, `Permission`, `PermissionModulePermission` or any role
+  assignment;
+- change a single query, page, action, route or worker path;
+- drop any column, constraint or default;
+- add the `projects.*` permission keys (Phase 4, with the portal that uses them).
+
+**Why the defaults and the old uniques stay for now.** With the default in place, every existing
+`create()` still writes into ISP Digital without being edited. With the old uniques in place, every
+existing `findUnique({ where: { job } })` or `upsert` by name still compiles and behaves the same.
+Phase 1 therefore changes the database and nothing else, and can be deployed and verified on its
+own. Phase 2 removes both deliberately, once no code depends on them.
+
+## 11. Acceptance: the isolation tests Phase 6 must contain
+
+Each test uses two projects, **ISP Digital** and **Bizify**, each with its own account, group, team,
 rule and knowledge. Each test is confirmed to fail with its scope deliberately removed.
 
-- **WhatsApp:** Bizify's accounts, groups and messages never appear in any SP Digital list, count,
+- **WhatsApp:** Bizify's accounts, groups and messages never appear in any ISP Digital list, count,
   search, inbox or export.
-- **Knowledge:** an SP Digital customer's question retrieves only SP Digital's verified knowledge,
+- **Knowledge:** an ISP Digital customer's question retrieves only ISP Digital's verified knowledge,
   even when Bizify has an exact-match entry.
 - **AI:** each project's reply uses its own model assignment and credentials.
-- **Rules:** a Bizify rule never matches an SP Digital message.
-- **Team:** an SP Digital team member's message in an SP Digital group is recognised as staff; a
+- **Rules:** a Bizify rule never matches an ISP Digital message.
+- **Team:** an ISP Digital team member's message in an ISP Digital group is recognised as staff; a
   Bizify-only person in the same group is a customer.
 - **Reports:** Team Report, Overview charts and Support Activity totals equal the sum of that
   project's own rows.
@@ -446,8 +523,11 @@ rule and knowledge. Each test is confirmed to fail with its scope deliberately r
 - **Notifications:** alerts go only to the project's own destinations and its own members' DMs.
 - **Worker:** an event on Bizify's account is processed with Bizify's settings, and its reply goes
   out on Bizify's account.
-- **Access:** a user who is only in SP Digital gets a refusal (not an empty page) on every Bizify
-  URL, action and export, including hand-edited slugs.
+- **Access:** a user with access only to ISP Digital gets a refusal (not an empty page) on every Bizify
+  URL, action and export, including hand-edited slugs, and never sees Bizify in the switcher or list.
+- **Existing permissions:** a user's existing role grants exactly the same pages and actions inside
+  each project they can access as it does today. This compares the permission-filtered navigation
+  and gates before and after, like the 323-role-set check done for the 27 Sep navigation change.
 - **Lifecycle:** a Suspended project sends nothing and accepts no writes, and still stores incoming
   messages.
 
@@ -459,14 +539,14 @@ Answered by Rudra on 28 Sep 2026:
 
 | # | Decision | Answer |
 |---|---|---|
-| D1 | First project | **SP Digital**, slug `sp-digital` |
+| D1 | First project | **ISP Digital**, slug `isp-digital` (corrected 28 Sep; not "SP Digital") |
 | D2 | Same person on two projects' rosters | **Yes**: phone-number uniqueness becomes per project; activity is counted separately per project |
-| D3 | AI providers | **Each project has its own** providers, credentials and model assignments; a platform admin can copy one across |
-| D6 | Routing | **Project in the URL** (`/p/sp-digital/...`); legacy URLs redirect |
+| D3 | AI providers | **Each project has its own** providers, credentials and model assignments; a Main Admin can copy one across |
+| D6 | Routing | **Project in the URL** (`/p/isp-digital/...`); legacy URLs redirect |
 
 Taken as recommended unless Rudra says otherwise:
 
 | # | Decision | Assumed |
 |---|---|---|
-| D4 | Roles | Permission Modules stay shared role definitions; each project membership picks one |
+| D4 | Permissions | **Decided by Rudra, 28 Sep: the existing permission system is unchanged.** A user's existing role applies inside every project they have access to; project access is a separate yes/no per project (§7). Supersedes the earlier "role per project membership" idea. |
 | D5 | One WhatsApp number in two projects | No: an account belongs to exactly one project. Two projects each with their own number in the same group is supported. |
