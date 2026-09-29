@@ -9,7 +9,8 @@ import { ConversationList } from "./ConversationList";
  * thing that separates a chat client from a list of links.
  *
  * The height is pinned to the viewport (minus the dashboard header and the page padding
- * around it) so each pane scrolls on its own, the way a mail or chat client does, instead
+ * around it — `--chat-inset`, which the Main Admin Workspace raises to make room for its project
+ * tabs) so each pane scrolls on its own, the way a mail or chat client does, instead
  * of the whole page growing with the longest conversation.
  *
  * Below `md` the sidebar is hidden and the two views become separate screens: /chat is the
@@ -21,7 +22,7 @@ export default async function ChatLayout({ children }: { children: React.ReactNo
   const [conversations, categories] = await Promise.all([getChatConversations(), getChatCategories()]);
 
   return (
-    <div className="flex h-[calc(100dvh-6.75rem)] min-h-[30rem] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] sm:h-[calc(100dvh-8.25rem)]">
+    <div className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] min-h-[30rem] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">
       {/* Polls the server tree so new messages and delivery-state changes appear without a
           manual reload. Four seconds sits close enough to the outbound queue's own 2s tick
           that a reply's queued → sent transition is visible almost immediately. */}

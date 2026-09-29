@@ -237,6 +237,16 @@ project-owned tables needs its own `<Child>_<column>_same_project` trigger in it
 corrupt data in a test, disable that one trigger around the insert (see `createPastTheDatabase` in
 `projectIsolation.integration.test.ts`). See `MULTI_PROJECT_PLAN.md` §10.7.
 
+**The Main Admin Workspace** (`/admin/workspace/<module>/<slug>/…`, `MAIN_ADMIN_WORKSPACE.md`) opens an
+EXISTING project module with the viewer's projects as tabs. `proxy.ts` sets the SAME project headers
+from that path as from `/p/<slug>/…` (plus `x-softify-workspace-module`), so a workspace page is the
+project's page and every check runs unchanged; the route files under `app/admin/workspace/` only
+re-export the portal's pages. Tabs = may enter → feature on → existing permission
+(`server/workspace.ts`), and can only remove. Never re-implement a module there, and never add a
+module to `WORKSPACE_MODULES` whose `projectPath` is not one of its feature's routes (the unit test
+refuses it). WhatsApp Chat is the only module so far; access levels, Departments/Job Titles/Employees
+and the aggregate dashboard are designed in that file, not built.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.

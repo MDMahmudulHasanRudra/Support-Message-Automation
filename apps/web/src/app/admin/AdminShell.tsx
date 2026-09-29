@@ -2,21 +2,39 @@
 
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, FolderKanban, LayoutDashboard, LogOut } from "lucide-react";
+import { ChevronRight, FolderKanban, LayoutDashboard, LogOut, MessagesSquare } from "lucide-react";
 import type { ReactNode } from "react";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
+import { WORKSPACE_BASE, WORKSPACE_MODULES, type WorkspaceModuleKey } from "@/lib/workspace";
 
 /**
  * The Main Admin Portal's frame. Deliberately small, and deliberately the same visual language as
  * the project portal (DashboardShell + Sidebar): the same sidebar surface, the same nav item, the
- * same header — only two destinations. It is a management layer ABOVE the projects, not a second
- * copy of their modules; everything operational stays inside a project.
+ * same header. It is a management layer ABOVE the projects, not a second copy of their modules:
+ * the Workspace entries open a project's OWN module, with the projects as tabs (lib/workspace.ts).
  */
-const NAV = [
-  { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
-  { href: "/admin/projects", label: "Projects", icon: FolderKanban, exact: false },
+const WORKSPACE_ICONS: Record<WorkspaceModuleKey, typeof MessagesSquare> = { "whatsapp-chat": MessagesSquare };
+
+const NAV_SECTIONS = [
+  {
+    title: "Main Admin",
+    items: [
+      { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
+      { href: "/admin/projects", label: "Projects", icon: FolderKanban, exact: false },
+    ],
+  },
+  {
+    title: "Workspace",
+    items: WORKSPACE_MODULES.map((mod) => ({
+      href: `${WORKSPACE_BASE}/${mod.key}`,
+      label: mod.label,
+      icon: WORKSPACE_ICONS[mod.key],
+      exact: false,
+    })),
+  },
 ];
+const NAV = NAV_SECTIONS.flatMap((section) => section.items);
 
 function isActive(pathname: string, href: string, exact: boolean): boolean {
   return exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
@@ -47,35 +65,39 @@ export function AdminShell({
         <div className="flex items-center gap-2.5 px-4 py-4">
           <ProjectSwitcher current={null} projects={projects} canViewAdmin canCreate={canCreate} />
         </div>
-        <nav aria-label="Main Admin" className="flex gap-0.5 px-2.5 pb-3 lg:flex-1 lg:flex-col lg:pb-6">
-          <p className="hidden px-3 pt-1 pb-2 text-[10px] font-semibold tracking-[0.06em] text-[color:var(--color-subtle-foreground)] uppercase lg:block">
-            Main Admin
-          </p>
-          {NAV.map((item) => {
-            const active = isActive(pathname, item.href, item.exact);
-            const Icon = item.icon;
-            return (
-              <NextLink
-                key={item.href}
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                className={`group relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2.5 pl-3 text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
-                  active
-                    ? "bg-[var(--color-neutral-bg)] font-medium text-[color:var(--color-foreground)]"
-                    : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]/60 hover:text-[color:var(--color-foreground)]"
-                }`}
-              >
-                <span
-                  aria-hidden
-                  className={`absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-[var(--color-accent)] transition-transform duration-[var(--duration-base)] ${
-                    active ? "scale-y-100" : "scale-y-0"
-                  }`}
-                />
-                <Icon className={`size-4 shrink-0 ${active ? "text-[color:var(--color-accent)]" : "text-[color:var(--color-subtle-foreground)]"}`} aria-hidden />
-                <span className="truncate">{item.label}</span>
-              </NextLink>
-            );
-          })}
+        <nav aria-label="Main Admin" className="flex gap-0.5 overflow-x-auto px-2.5 pb-3 lg:flex-1 lg:flex-col lg:overflow-visible lg:pb-6">
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.title} className="flex shrink-0 gap-0.5 lg:flex-col lg:pb-3">
+              <p className="hidden px-3 pt-1 pb-2 text-[10px] font-semibold tracking-[0.06em] text-[color:var(--color-subtle-foreground)] uppercase lg:block">
+                {section.title}
+              </p>
+              {section.items.map((item) => {
+                const active = isActive(pathname, item.href, item.exact);
+                const Icon = item.icon;
+                return (
+                  <NextLink
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    className={`group relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2.5 pl-3 text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
+                      active
+                        ? "bg-[var(--color-neutral-bg)] font-medium text-[color:var(--color-foreground)]"
+                        : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]/60 hover:text-[color:var(--color-foreground)]"
+                    }`}
+                  >
+                    <span
+                      aria-hidden
+                      className={`absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-[var(--color-accent)] transition-transform duration-[var(--duration-base)] ${
+                        active ? "scale-y-100" : "scale-y-0"
+                      }`}
+                    />
+                    <Icon className={`size-4 shrink-0 ${active ? "text-[color:var(--color-accent)]" : "text-[color:var(--color-subtle-foreground)]"}`} aria-hidden />
+                    <span className="truncate">{item.label}</span>
+                  </NextLink>
+                );
+              })}
+            </div>
+          ))}
         </nav>
         <div className="hidden space-y-2.5 border-t border-[var(--color-border)] p-3 lg:block">
           <ThemeToggle />
