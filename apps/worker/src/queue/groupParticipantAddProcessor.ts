@@ -1,6 +1,6 @@
 import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
-import { accountInCurrentProject, withProject } from "../project/context.js";
+import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import type { GroupParticipantAddItem } from "@prisma/client";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
@@ -38,7 +38,7 @@ export async function recoverStuckParticipantAddItems(): Promise<number> {
 async function claimNextItem() {
   // One shared queue in one global order; the work itself runs in the claimed item's project.
   const candidate = await platformPrisma.groupParticipantAddItem.findFirst({
-    where: { status: "PENDING", scheduledAt: { lte: new Date() } },
+    where: { status: "PENDING", scheduledAt: { lte: new Date() }, project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
     orderBy: { scheduledAt: "asc" },
   });
   if (!candidate) return null;

@@ -94,7 +94,9 @@ export async function assignSessionForAccount(account: WhatsAppAccount): Promise
  */
 export async function findConnectableAccounts(): Promise<WhatsAppAccount[]> {
   return platformPrisma.whatsAppAccount.findMany({
-    where: { sessionDataPath: { not: null }, sessionId: { not: null } },
+    // An ARCHIVED project's accounts are disconnected and stay so (§8); nothing is logged out, so
+    // its sessions are intact on disk.
+    where: { sessionDataPath: { not: null }, sessionId: { not: null }, project: { status: { not: "ARCHIVED" } } },
     orderBy: { createdAt: "asc" },
   });
 }

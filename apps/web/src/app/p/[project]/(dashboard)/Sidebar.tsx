@@ -1,6 +1,7 @@
 "use client";
 
-import { Badge, BrandMark } from "@/components/ui";
+import { Badge } from "@/components/ui";
+import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
 import { ChevronDown, ChevronsLeft, ChevronsRight, LogOut, X } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -138,15 +139,21 @@ function NavItem({ link, active, collapsed }: { link: NavLink; active: boolean; 
 }
 
 export function Sidebar({
-  username,
   automationEnabled,
   automationMode,
   onLogout,
   mobileOpen,
   onMobileClose,
   navGroups,
+  project,
+  switchableProjects,
+  canViewAdmin,
+  canCreateProject,
 }: {
-  username: string;
+  project: SwitcherProject;
+  switchableProjects: SwitcherProject[];
+  canViewAdmin: boolean;
+  canCreateProject: boolean;
   automationEnabled: boolean;
   automationMode: string;
   onLogout: () => Promise<void>;
@@ -178,15 +185,16 @@ export function Sidebar({
         }`}
       >
         <div className={`flex items-center gap-2.5 px-4 py-4 ${collapsed ? "justify-center px-2" : ""}`}>
-          <BrandMark className="size-8 shrink-0" />
-          {collapsed ? null : (
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-semibold leading-tight tracking-[-0.01em] text-[color:var(--color-foreground)]">
-                Softify Assist
-              </p>
-              <p className="truncate text-[11px] text-[color:var(--color-muted-foreground)]">{username}</p>
-            </div>
-          )}
+          {/* The project switcher IS the sidebar header: the name at the top of every page is the
+              project being worked on, and the menu under it lists exactly the projects this user
+              may enter. The signed-in user stays in the header's own profile menu. */}
+          <ProjectSwitcher
+            current={project}
+            projects={switchableProjects}
+            canViewAdmin={canViewAdmin}
+            canCreate={canCreateProject}
+            collapsed={collapsed}
+          />
           <button
             type="button"
             onClick={onMobileClose}

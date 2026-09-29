@@ -17,3 +17,5 @@ export * from "./contentHash.js";
 export * from "./teamReport.js";
 export * from "./unableToUnderstand.js";
 export * from "./sandboxWorkflow.js";
+export * from "./projects.js";
+export * from "./projectFeatures.js";

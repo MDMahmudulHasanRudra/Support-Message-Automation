@@ -1,7 +1,7 @@
 # Multi-Project Softify Assist: Audit and Plan
 
-Status: **Phases 1, 2 and 3 implemented and verified locally, 28–29 Sep 2026: not pushed, not
-deployed.** Phase 4 has not started. See §10.2 for Phase 2 and §10.3 for Phase 3.
+Status: **Phases 1–4 implemented and verified locally, 28–29 Sep 2026: not pushed, not
+deployed.** Phase 5 has not started. See §10.2–§10.4 for what each delivered.
 
 > **The existing permission system and existing portal functionality remain unchanged and are
 > reused inside every project. Project access determines which projects a user can enter; existing
@@ -514,6 +514,91 @@ seed already grants its admin access, idempotently.
   key, a notification event setting, an AI model job slot). Such a write fails loudly; it never
   lands in or reads from the wrong project. No second project can be created from the UI before
   Phase 4.
+
+### 10.4 Phase 4 as delivered (29 Sep 2026): Main Admin Portal and project management
+
+- **Routes** (all outside any project; `/admin` is in `lib/projectPaths.ts`'s outside-project list,
+  so links to it are never prefixed):
+  - `/admin`: Overview. Totals by status, a "needs attention" line per project, and one row per
+    project with its status, WhatsApp state, monitored groups, messages today, open escalations
+    and users with access.
+  - `/admin/projects`: one card per project, with **Open project** and **Manage**. A dashed card
+    offers **Create new project**; "Show archived" includes archived projects.
+  - `/admin/projects/new`: the create form (name, slug, description, status).
+  - `/admin/projects/[id]`: status and lifecycle, the project's ten settings rows, its features
+    and its members (project access).
+
+  The portal uses the project portal's own components and sidebar style, with two nav entries.
+  Everything operational stays inside the project: the portal only counts rows
+  (`server/mainAdmin.ts`, platform client) and never shows a message, group or customer.
+- **Permissions: two new keys, nothing else changed.**
+  - `projects.view` opens the portal read-only; `projects.manage` makes a Main Admin, who can
+    create projects, change their status, grant or revoke access, and enter any project.
+  - The seed re-syncs Administrator to every key, so Administrators get both.
+  - `READ_ONLY_PERMISSION_KEYS` now excludes the Main Admin category. It is otherwise "every
+    `.view` key", and the seed re-syncs it on each deploy, so without this every Read Only user
+    would have been shown every project. Support Manager and Support Agent are unchanged, and a
+    unit test pins all of this.
+  - Without `projects.view` the portal is a 404. Every portal action checks `projects.manage`
+    itself.
+  - Inside a project, a Main Admin is governed by their existing role exactly like anyone else.
+- **Creating a project** (`createProjectWithDefaults`, packages/db) runs one transaction. It creates:
+  - the Project row;
+  - its ten settings rows, with the schema defaults except automation OFF;
+  - a feature row per catalogue entry;
+  - a notification event row per event;
+  - the three default shifts, now shared with the seed through `DEFAULT_SHIFT_TEMPLATES`;
+  - the creator's access.
+
+  Nothing is copied from another project, and no WhatsApp account, AI provider, rule, team or
+  knowledge is created.
+  - Name and slug use the shared validators in `packages/shared/src/projects.ts`: lower-case
+    letters, digits and single hyphens, 2–48 characters, and not a reserved word.
+  - Names are unique case-insensitively; the slug is unique in the database.
+  - ISP Digital is displayed and never re-created.
+- **Project access.** A yes/no switch per user on the project's page (`setProjectAccess`). Each user's
+  existing role is shown beside it and never changed. A Main Admin is marked "enters every project".
+  Every access or status change clears this process's access cache at once. Another web process
+  may honour a cached decision for up to 5 s.
+- **Switcher and context.**
+  - The sidebar header is the project switcher (`components/ProjectSwitcher.tsx`). It lists exactly
+    `accessibleProjects(userId)`: the user's `ProjectAccess` rows, or every non-archived project
+    for a Main Admin.
+  - Main Admin and Create project appear only for `projects.view` / `projects.manage`.
+  - Switching goes to the other project's Overview.
+  - The breadcrumb now starts with the project name on every page.
+- **Lifecycle** (§8), with transitions in the shared `canTransitionProject`:
+  SETUP → ACTIVE | ARCHIVED, ACTIVE ⇄ SUSPENDED, → ARCHIVED (final from the portal).
+  - **Web:** a SUSPENDED or ARCHIVED project is read-only.
+    - `checkPermission` refuses non-view keys with a sentence.
+    - The web client refuses every write on a project-owned table as a backstop, except the
+      empty-update upsert pages use to read a settings row.
+    - A banner on every page says so.
+  - **Worker:** outbound messages, alerts, group adds and escalation cases of a non-operating
+    project are HELD (left pending, not cancelled), and the scanners skip it. Incoming messages are
+    still stored, without automation. An ARCHIVED project's accounts are not connected, and a held
+    session is released (disconnected, never logged out).
+- **Tests.**
+  - `packages/shared` `projects.test.ts` (12): slugs, names, lifecycle, the Main Admin keys and the
+    default roles, and features.
+  - `apps/worker` `projectLifecycle.integration.test.ts` (7): clean creation (every project-owned
+    table counted, ISP Digital unchanged), all-or-nothing creation, held queues, storing without
+    automation while suspended, scanners, and archived accounts. Mutation-checked: removing each
+    guard fails its test. The two incoming-message guards (live path and recovery path) fail only
+    when both are removed; that is defence in depth.
+  - Browser, 55 checks: Main Admin, User A (ISP Digital only), User B (both), Read Only, a
+    `projects.view`-only role, creation, clean project, validation, switching, URL and
+    server-action replay attacks, suspend/read-only, and access revocation.
+- **Still open.**
+  - Feature flags are displayed but not enforced or editable: that is Phase 5.
+  - Held outbound rows and escalation timers resume when a project is reactivated, so a long
+    suspension can release late replies. The plan's "held, not cancelled" was followed literally;
+    cancelling stale rows on reactivation would be a small follow-up.
+  - Archived is final from the portal, by design.
+  - Forge credentials are still install-wide (§10.3).
+  - A role change takes up to 5 s to change Main Admin entry in another process.
+  - No migration was needed: permission keys are seeded, and `Project`/`ProjectFeature` came from
+    Phase 1.
 
 ### 10.3 Phase 3 as delivered (29 Sep 2026): worker and background processing
 

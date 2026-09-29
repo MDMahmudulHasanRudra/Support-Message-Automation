@@ -3,6 +3,7 @@ import type { PermissionKey } from "@support-automation/shared";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission, requirePermission } from "@/server/permissions";
 import { ProjectAccessError, requireActiveProject, type ActiveProject } from "@/server/projectContext";
+import { isReadOnlyProjectStatus } from "@support-automation/shared";
 
 /**
  * Permission checks for pages and Server Actions, in the three shapes this app needs.
@@ -53,13 +54,30 @@ export const PERMISSION_DENIED_ERROR = "You do not have permission to perform th
  */
 export async function checkPermission(key: PermissionKey): Promise<{ session: Session } | { denied: string }> {
   const session = await requireSession();
+  let project: ActiveProject;
   try {
-    await requireActiveProject();
+    project = await requireActiveProject();
   } catch (err) {
     if (err instanceof ProjectAccessError) return { denied: PROJECT_ACCESS_DENIED_ERROR };
     throw err;
   }
-  return (await hasPermission(session, key)) ? { session } : { denied: PERMISSION_DENIED_ERROR };
+  if (!(await hasPermission(session, key))) return { denied: PERMISSION_DENIED_ERROR };
+  // A suspended or archived project is read-only (MULTI_PROJECT_PLAN.md §8). Refused here, with a
+  // sentence the form can show, for every action gated on a key that changes something; the
+  // database client refuses the write itself regardless (server/db.ts), this only words it.
+  if (isReadOnlyProjectStatus(project.status) && !isReadKey(key)) return { denied: projectReadOnlyError(project) };
+  return { session };
+}
+
+/** Keys that only read: `.view` and the export keys. Everything else changes something. */
+function isReadKey(key: string): boolean {
+  return key.endsWith(".view") || key.endsWith(".bulk_export");
+}
+
+export function projectReadOnlyError(project: ActiveProject): string {
+  return project.status === "ARCHIVED"
+    ? `${project.name} is archived and read-only, so nothing was changed.`
+    : `${project.name} is suspended and read-only until a Main Admin makes it active again, so nothing was changed.`;
 }
 
 /**

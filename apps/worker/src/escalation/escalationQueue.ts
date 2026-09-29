@@ -1,6 +1,6 @@
 import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import { platformPrisma, prisma } from "../db.js";
-import { currentProjectId, withProject } from "../project/context.js";
+import { currentProjectId, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
 import { getEventDelivery } from "../notifications/eventSettings.js";
 import type { EscalationStatus, Prisma, SupportEscalationCase, SupportPriority } from "@prisma/client";
 import { buildWhatsAppContactId, hasReachablePhoneNumber, normalizePhoneNumber } from "@support-automation/shared";
@@ -167,7 +167,7 @@ async function claimNextDueCase(): Promise<SupportEscalationCase | null> {
   // Due cases across every project in one order; each is then worked inside its own project, so
   // its policy, settings, account and alerts are that project's (MULTI_PROJECT_PLAN.md Phase 3).
   const candidate = await platformPrisma.supportEscalationCase.findFirst({
-    where: { status: { in: ACTIVE_STATUSES }, nextCheckAt: { lte: new Date() } },
+    where: { status: { in: ACTIVE_STATUSES }, nextCheckAt: { lte: new Date() }, project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
     orderBy: { nextCheckAt: "asc" },
   });
   if (!candidate) return null;

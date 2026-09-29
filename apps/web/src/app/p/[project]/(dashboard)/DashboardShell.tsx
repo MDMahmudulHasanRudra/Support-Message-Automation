@@ -10,6 +10,8 @@ import { isSettingsPath, navGroupsFor, navPermissionFor, resolveNavLocation, set
 import { SubNavTabs } from "./SubNavTabs";
 import { SettingsNav } from "./SettingsNav";
 import { Sidebar } from "./Sidebar";
+import type { SwitcherProject } from "@/components/ProjectSwitcher";
+import { Alert } from "@/components/ui";
 
 /** First one or two letters of a username, for the header identity chip — "rudra" → "RU". */
 function userInitials(username: string): string {
@@ -98,8 +100,14 @@ export function DashboardShell({
   automationMode,
   onLogout,
   grantedKeys,
+  project,
+  switchableProjects,
 }: {
   children: ReactNode;
+  /** The project this page belongs to — named in the sidebar and the breadcrumb on every page. */
+  project: SwitcherProject;
+  /** Exactly the projects this user may enter (server-computed). */
+  switchableProjects: SwitcherProject[];
   username: string;
   automationEnabled: boolean;
   automationMode: string;
@@ -152,11 +160,14 @@ export function DashboardShell({
       </a>
 
       <Sidebar
-        username={username}
         automationEnabled={automationEnabled}
         automationMode={automationMode}
         onLogout={onLogout}
         navGroups={navGroups}
+        project={project}
+        switchableProjects={switchableProjects}
+        canViewAdmin={granted.has("projects.view")}
+        canCreateProject={granted.has("projects.manage")}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
       />
@@ -175,6 +186,10 @@ export function DashboardShell({
           {/* Where am I — resolved from the nav tree, so detail routes still show
               the module they belong to instead of an empty bar. */}
           <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[13px]">
+            {/* The project first, on every page: nobody should have to wonder whether they are
+                changing ISP Digital or another project. */}
+            <span className="max-w-[10rem] shrink-0 truncate font-medium text-[color:var(--color-accent)]">{project.name}</span>
+            <ChevronRight className="size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)]" aria-hidden />
             {location && location.group !== "Dashboard" ? (
               <>
                 <span className="hidden truncate text-[color:var(--color-muted-foreground)] sm:inline">
@@ -213,6 +228,14 @@ export function DashboardShell({
             key={pathname}
             className="mx-auto w-full max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9"
           >
+            {project.status === "SUSPENDED" || project.status === "ARCHIVED" ? (
+              <div className="mb-5">
+                <Alert tone="warning" title={`${project.name} is ${project.status === "ARCHIVED" ? "archived" : "suspended"} — read-only`}>
+                  You can look at everything, but changes are not saved
+                  {project.status === "SUSPENDED" ? " and nothing is sent until a Main Admin makes the project active again." : "."}
+                </Alert>
+              </div>
+            ) : null}
             {tabSet ? <SubNavTabs tabs={tabSet.tabs} activeHref={tabSet.activeHref} /> : null}
             {/* Every configuration page gets the Settings rail beside it, whatever route it lives
                 at, so the module reads as one place. See SettingsNav. */}

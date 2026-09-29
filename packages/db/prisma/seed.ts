@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { randomBytes, scryptSync } from "node:crypto";
 import {
+  DEFAULT_SHIFT_TEMPLATES,
   PERMISSIONS,
   READ_ONLY_PERMISSION_KEYS,
   SUPPORT_MANAGER_PERMISSION_KEYS,
@@ -180,11 +181,9 @@ async function main() {
   // `update: {}` so re-seeding never overwrites times somebody has since corrected — the same
   // create-once discipline the default Permission Modules below use for `isSystem`. Minutes are
   // measured from local midnight.
-  const DEFAULT_SHIFTS = [
-    { name: "Morning", startMinute: 10 * 60, endMinute: 19 * 60, requiredHeadcount: 2, colourSlot: 1, position: 1 },
-    { name: "Mid", startMinute: 12 * 60, endMinute: 21 * 60, requiredHeadcount: 2, colourSlot: 2, position: 2 },
-    { name: "Late", startMinute: 13 * 60, endMinute: 22 * 60, requiredHeadcount: 1, colourSlot: 3, position: 3 },
-  ];
+  // Shared with project creation (packages/shared/src/projects.ts), so a new project starts with
+  // exactly the shifts ISP Digital was given.
+  const DEFAULT_SHIFTS = DEFAULT_SHIFT_TEMPLATES;
   for (const shift of DEFAULT_SHIFTS) {
     await prisma.shiftTemplate.upsert({
       where: { projectId_name: { projectId: ISP_DIGITAL, name: shift.name } },

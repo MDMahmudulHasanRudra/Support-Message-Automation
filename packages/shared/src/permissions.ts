@@ -16,6 +16,9 @@
  * gained `messages.reply` once the chat inbox could send — see its entry.
  */
 
+/** The Main Admin Portal's keys. Platform-level, and never part of a default role except Administrator. */
+export const MAIN_ADMIN_CATEGORY = "Main Admin";
+
 export interface PermissionDefinition {
   key: string;
   label: string;
@@ -94,6 +97,13 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "permissions.delete", label: "Delete Permission Modules", category: "Users & Permissions" },
   { key: "security_settings.view", label: "View Security Settings", category: "Users & Permissions" },
   { key: "security_settings.edit", label: "Edit Security Settings", category: "Users & Permissions" },
+
+  // Main Admin Portal (MULTI_PROJECT_PLAN.md §7). Platform-level, not a module inside a project:
+  // `projects.view` opens the portal read-only; `projects.manage` makes someone a Main Admin, who can
+  // create projects, change their status, grant and revoke project access, and enter any project.
+  // Inside a project a Main Admin is governed by the same keys above as everybody else.
+  { key: "projects.view", label: "View Main Admin Portal", category: MAIN_ADMIN_CATEGORY },
+  { key: "projects.manage", label: "Manage Projects and Project Access", category: MAIN_ADMIN_CATEGORY },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number]["key"];
@@ -104,10 +114,15 @@ export function isPermissionKey(value: string): value is PermissionKey {
   return ALL_KEYS.includes(value);
 }
 
-/** Every `.view`-suffixed key — the entire "Read Only" default Permission Module. */
-export const READ_ONLY_PERMISSION_KEYS: readonly string[] = PERMISSIONS.filter((p) => p.key.endsWith(".view")).map(
-  (p) => p.key,
-);
+/**
+ * Every `.view`-suffixed key — the entire "Read Only" default Permission Module — EXCEPT the Main
+ * Admin Portal's. The seed re-syncs this module on every deploy, so without the exclusion adding
+ * `projects.view` would have quietly shown every project on the platform to every Read Only user.
+ * Read Only stays exactly what it was: view-only inside the projects it can enter.
+ */
+export const READ_ONLY_PERMISSION_KEYS: readonly string[] = PERMISSIONS.filter(
+  (p) => p.key.endsWith(".view") && p.category !== MAIN_ADMIN_CATEGORY,
+).map((p) => p.key);
 
 /** Matches the spec's own illustrative example for this default module verbatim. */
 export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [

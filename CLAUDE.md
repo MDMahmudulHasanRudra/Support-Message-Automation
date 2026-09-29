@@ -198,6 +198,16 @@ the row's project. The database has no default project any more: `projectId` def
 `__tests__/helpers/projectFixtures.ts` (ISP Digital outside a context) and wrap project-wide jobs in
 `inIsp(...)`. See `MULTI_PROJECT_PLAN.md` §10.3.
 
+**Phase 4 (Main Admin Portal) has landed.** `/admin` (outside every project) lists projects, creates
+them and manages who may enter each one; the sidebar header is the project switcher, and the
+breadcrumb starts with the project name. Gated by two new keys, `projects.view` / `projects.manage`
+(a Main Admin, who may also enter every project); `READ_ONLY_PERMISSION_KEYS` deliberately excludes
+them, so Read Only did not change. A project is created only through `createProjectWithDefaults()`
+(packages/db) — one transaction, its own default rows, automation off, nothing copied. SUSPENDED and
+ARCHIVED projects are read-only in the web (checkPermission words it, `server/db.ts` enforces it) and
+held in the worker (queues skip them, scanners skip them, incoming messages stored without
+automation; archived accounts are not connected). See `MULTI_PROJECT_PLAN.md` §10.4.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.

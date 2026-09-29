@@ -1,7 +1,7 @@
 import { countMetric } from "../health/metrics.js";
 import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
-import { currentProjectId, projectIdForAccount, withProject } from "../project/context.js";
+import { currentProjectId, OPERATING_PROJECT_STATUSES, projectIdForAccount, withProject } from "../project/context.js";
 import type { OutboundMessage } from "@prisma/client";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { isCooldownActive } from "./cooldown.js";
@@ -70,7 +70,8 @@ export async function recoverStuckOutboundMessages(): Promise<number> {
  */
 async function claimNextOutboundMessage() {
   const candidate = await platformPrisma.outboundMessage.findFirst({
-    where: { status: "PENDING", scheduledAt: { lte: new Date() } },
+    // A suspended or archived project's rows are HELD — left PENDING, never cancelled (§8).
+    where: { status: "PENDING", scheduledAt: { lte: new Date() }, project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
     orderBy: { scheduledAt: "asc" },
   });
   if (!candidate) return null;

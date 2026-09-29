@@ -13,8 +13,18 @@ export const PROJECT_HEADER = "x-softify-project";
 /** Remembers the last project opened, ONLY so `/open` can continue there. Never decides reads or writes. */
 export const LAST_PROJECT_COOKIE = "softify-last-project";
 
-/** Paths that are not inside a project: sign-in, the project chooser, health, framework assets. */
-const OUTSIDE_PROJECT = [/^\/login(\/|$|\?)/, /^\/open(\/|$|\?)/, /^\/api\/health(\/|$|\?)/, /^\/p\//, /^\/_next\//];
+/**
+ * Paths that are not inside a project: sign-in, the project chooser, the Main Admin Portal, health,
+ * framework assets. A link to one of these is never prefixed with the current project.
+ */
+const OUTSIDE_PROJECT = [
+  /^\/login(\/|$|\?)/,
+  /^\/open(\/|$|\?)/,
+  /^\/admin(\/|$|\?)/,
+  /^\/api\/health(\/|$|\?)/,
+  /^\/p\//,
+  /^\/_next\//,
+];
 
 export function isOutsideProject(path: string): boolean {
   return OUTSIDE_PROJECT.some((re) => re.test(path));

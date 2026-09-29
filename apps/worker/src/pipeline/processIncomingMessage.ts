@@ -22,7 +22,7 @@ import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
 import { recordTeamAttendance } from "../teamManagement/attendance.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { countDroppedMessage } from "./dropCounter.js";
-import { withAccountProject } from "../project/context.js";
+import { currentProjectId, projectIsOperating, withAccountProject } from "../project/context.js";
 
 interface ActionExecutionRecord {
   type: RuleAction["type"];
@@ -85,6 +85,15 @@ async function processIncomingMessageInProject(raw: RawIncomingMessage, aiClient
     bodyPreview: raw.body.slice(0, 80),
   });
 
+  // A suspended or archived project (§8) still STORES every message — collection is a push, and a
+  // message not stored now is gone — but runs no rules and no AI, exactly like a message recovered
+  // too late to answer. Nothing is queued to be sent when it is reactivated.
+  if (!(await projectIsOperating(currentProjectId()))) {
+    traceStage(traceId, "PROJECT_NOT_OPERATING");
+    await storeMissedMessageInProject(raw);
+    return;
+  }
+
   const stored = await persistIncomingMessage(raw, "PENDING", traceId);
   if (!stored) return; // duplicate WhatsApp event — already processed
 
@@ -122,6 +131,12 @@ async function runAutomationStageInProject(
   aiClientOverride?: AiClient,
 ): Promise<void> {
   const { message, group, isFromTeamMember, quotedMessage, previous } = stored;
+
+  // The recovery path reaches here directly; the same rule as the live path applies.
+  if (!(await projectIsOperating(currentProjectId()))) {
+    await prisma.message.update({ where: { id: message.id }, data: { processingStatus: "IGNORED" } });
+    return;
+  }
 
   // Everything from here to the processingStatus settle below runs AFTER the Message row exists,
   // because that row is this pipeline's dedupe guard and has to be written before any work that

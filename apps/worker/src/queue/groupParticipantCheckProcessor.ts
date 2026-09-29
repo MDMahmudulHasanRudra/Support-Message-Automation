@@ -1,6 +1,6 @@
 import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
-import { accountInCurrentProject, withProject } from "../project/context.js";
+import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
 import { normalizePhoneNumber } from "@support-automation/shared";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
@@ -46,7 +46,7 @@ export async function recoverStuckParticipantChecks(): Promise<number> {
 async function claimNextCheckingJob() {
   // Across projects, oldest first; the job is then worked inside its own project.
   return platformPrisma.groupParticipantAddJob.findFirst({
-    where: { status: "CHECKING" },
+    where: { status: "CHECKING", project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
     orderBy: { createdAt: "asc" },
     select: { id: true, accountId: true, projectId: true },
   });

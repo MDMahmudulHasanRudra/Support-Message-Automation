@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { prisma as platformPrisma, ProjectScopeError } from "@support-automation/db";
 import { PROJECT_HEADER } from "@/lib/projectPaths";
 import { getSession } from "@/server/auth";
+import { isReadOnlyProjectStatus, type ProjectStatusValue } from "@support-automation/shared";
 
 /**
  * The active project for this request, and whether the signed-in user may be in it.
@@ -21,6 +22,8 @@ export interface ActiveProject {
   id: string;
   slug: string;
   name: string;
+  /** SUSPENDED and ARCHIVED projects are read-only (server/db.ts refuses their writes). */
+  status: ProjectStatusValue;
 }
 
 export type ProjectAccessFailure = "NO_PROJECT_IN_URL" | "NO_SESSION" | "UNKNOWN_PROJECT" | "NO_ACCESS";
@@ -60,17 +63,42 @@ export async function activeProjectSlug(): Promise<string | null> {
 /**
  * Access decisions, cached for a few seconds per user and project. Every Prisma query on a
  * project-owned table asks for the project, and a page issues dozens; without this each would
- * cost two extra lookups. The cost is that a revoked access takes up to this long to bite.
+ * cost two extra lookups. The cost is that a change made in ANOTHER process takes up to this long
+ * to bite; a change made through the Main Admin Portal clears the cache of the process that made it
+ * at once (`forgetProjectAccessDecisions`).
  */
 const ACCESS_TTL_MS = 5_000;
 const accessCache = new Map<string, { at: number; project: ActiveProject | null; reason?: ProjectAccessFailure }>();
+
+/** Called after any change to project access, a project's status or a user's role. */
+export function forgetProjectAccessDecisions(): void {
+  accessCache.clear();
+}
+
+const PROJECT_SELECT = { id: true, slug: true, name: true, status: true } as const;
+
+/**
+ * Whether this user is a Main Admin: their EXISTING role holds `projects.manage` (§7). Read from the
+ * same role → permission rows as every other permission check; nothing about the user is stored on
+ * a project. Inactive users are never Main Admins.
+ */
+export async function isMainAdmin(userId: string): Promise<boolean> {
+  const user = await platformPrisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      isActive: true,
+      permissionModule: { select: { permissions: { where: { permission: { key: "projects.manage" } }, select: { permissionId: true } } } },
+    },
+  });
+  return Boolean(user?.isActive && user.permissionModule && user.permissionModule.permissions.length > 0);
+}
 
 async function decideAccess(userId: string, slug: string): Promise<{ project: ActiveProject | null; reason?: ProjectAccessFailure }> {
   const key = `${userId} ${slug}`;
   const cached = accessCache.get(key);
   if (cached && Date.now() - cached.at < ACCESS_TTL_MS) return cached;
 
-  const project = await platformPrisma.project.findUnique({ where: { slug }, select: { id: true, slug: true, name: true } });
+  const project = await platformPrisma.project.findUnique({ where: { slug }, select: PROJECT_SELECT });
   let decision: { project: ActiveProject | null; reason?: ProjectAccessFailure };
   if (!project) {
     decision = { project: null, reason: "UNKNOWN_PROJECT" };
@@ -79,7 +107,10 @@ async function decideAccess(userId: string, slug: string): Promise<{ project: Ac
       where: { projectId_userId: { projectId: project.id, userId } },
       select: { id: true },
     });
-    decision = access ? { project } : { project: null, reason: "NO_ACCESS" };
+    // A Main Admin may enter any project (§7). Inside it they are governed by their existing
+    // permissions exactly like anyone else — this only answers "may they come in".
+    const allowed = Boolean(access) || (await isMainAdmin(userId));
+    decision = allowed ? { project } : { project: null, reason: "NO_ACCESS" };
   }
   if (accessCache.size > 5_000) accessCache.clear();
   accessCache.set(key, { at: Date.now(), ...decision });
@@ -107,14 +138,23 @@ export async function activeProjectId(): Promise<string> {
   return (await requireActiveProject()).id;
 }
 
-/** The projects a user may enter, oldest first — what `/open` chooses between. */
+/**
+ * The projects a user may enter, oldest first: the ones they have been given access to, plus every
+ * project for a Main Admin. What `/open` chooses between and what the project switcher lists — never
+ * a project merely because it exists. Archived projects are left out (§8: hidden from the switcher);
+ * they remain reachable from the Main Admin Portal.
+ */
 export async function accessibleProjects(userId: string): Promise<ActiveProject[]> {
-  const rows = await platformPrisma.projectAccess.findMany({
-    where: { userId },
-    select: { project: { select: { id: true, slug: true, name: true, createdAt: true } } },
+  const mainAdmin = await isMainAdmin(userId);
+  const rows = await platformPrisma.project.findMany({
+    where: { status: { not: "ARCHIVED" }, ...(mainAdmin ? {} : { access: { some: { userId } } }) },
+    select: { ...PROJECT_SELECT, createdAt: true },
+    orderBy: { createdAt: "asc" },
   });
-  return rows
-    .map((row) => row.project)
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-    .map(({ id, slug, name }) => ({ id, slug, name }));
+  return rows.map(({ id, slug, name, status }) => ({ id, slug, name, status }));
+}
+
+/** Whether the active project refuses writes (SUSPENDED / ARCHIVED). */
+export async function activeProjectIsReadOnly(): Promise<boolean> {
+  return isReadOnlyProjectStatus((await requireActiveProject()).status);
 }

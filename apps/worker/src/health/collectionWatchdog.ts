@@ -188,6 +188,8 @@ export async function checkCollectionHealth(registry: ProviderRegistry): Promise
     where: {
       lastConnectedAt: { not: null },
       groups: { some: { isActive: true } },
+      // An archived project's accounts are disconnected on purpose; that is not an outage.
+      project: { status: { not: "ARCHIVED" } },
     },
     select: { id: true, label: true },
   });

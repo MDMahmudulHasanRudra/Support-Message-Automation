@@ -77,16 +77,23 @@ export async function withAccountProject<T>(accountId: string, fn: () => Promise
 }
 
 /**
- * The projects background work runs for: every one not ARCHIVED, oldest first. Cached briefly
- * because the 2-second queue loops ask on every tick; a project created in the dashboard is picked
- * up within PROJECT_LIST_TTL_MS.
+ * The statuses in which the worker does outward or background work for a project (§8): a SUSPENDED
+ * project stops sending and its scanners stop; an ARCHIVED one also has its accounts disconnected.
+ * Incoming messages are stored in every status — collection is a push, and anything missed is gone.
+ */
+export const OPERATING_PROJECT_STATUSES = ["SETUP", "ACTIVE"] as const;
+
+/**
+ * The projects background work runs for: every SETUP or ACTIVE one, oldest first. Cached briefly
+ * because the 2-second queue loops ask on every tick; a project created, suspended or reactivated
+ * in the dashboard is picked up within PROJECT_LIST_TTL_MS.
  */
 const PROJECT_LIST_TTL_MS = 30_000;
 let projectList: { at: number; ids: string[] } | null = null;
 export async function activeProjectIds(): Promise<string[]> {
   if (projectList && Date.now() - projectList.at < PROJECT_LIST_TTL_MS) return projectList.ids;
   const projects = await platformPrisma.project.findMany({
-    where: { status: { not: "ARCHIVED" } },
+    where: { status: { in: [...OPERATING_PROJECT_STATUSES] } },
     select: { id: true },
     orderBy: { createdAt: "asc" },
   });
@@ -99,8 +106,7 @@ export async function activeProjectIds(): Promise<string[]> {
  * used to read the whole database (queues, learning, knowledge, Forge). Each project's settings,
  * kill switch and data are therefore read separately, exactly as a single-project install read
  * its own. A project whose run throws is logged and the next one still runs: one project's
- * failure must not starve the others. Archived projects are skipped; project lifecycle beyond that
- * is Phase 4.
+ * failure must not starve the others. Suspended and archived projects are skipped.
  */
 export async function forEachProject(label: string, fn: (projectId: string) => Promise<unknown>): Promise<void> {
   for (const id of await activeProjectIds()) {
@@ -112,10 +118,26 @@ export async function forEachProject(label: string, fn: (projectId: string) => P
   }
 }
 
+/**
+ * Whether the worker should act for this project right now — send, automate, scan. Cached like the
+ * project list, so a suspension takes effect within PROJECT_LIST_TTL_MS; an unknown project is not
+ * operating.
+ */
+const operatingCache = new Map<string, { at: number; operating: boolean }>();
+export async function projectIsOperating(projectId: string): Promise<boolean> {
+  const cached = operatingCache.get(projectId);
+  if (cached && Date.now() - cached.at < PROJECT_LIST_TTL_MS) return cached.operating;
+  const project = await platformPrisma.project.findUnique({ where: { id: projectId }, select: { status: true } });
+  const operating = Boolean(project && (OPERATING_PROJECT_STATUSES as readonly string[]).includes(project.status));
+  operatingCache.set(projectId, { at: Date.now(), operating });
+  return operating;
+}
+
 /** Test seam: forget cached project/account lookups (fixtures create and delete projects). */
 export function resetProjectCachesForTests(): void {
   knownProjects.clear();
   accountProjects.clear();
+  operatingCache.clear();
   projectList = null;
 }
 

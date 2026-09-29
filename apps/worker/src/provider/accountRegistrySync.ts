@@ -56,8 +56,10 @@ export async function releaseDeletedAccounts(registry: ProviderRegistry): Promis
   if (!held.length) return;
 
   // Across every project: the registry holds every project's sessions.
+  // An account whose project was ARCHIVED is released the same way as a deleted one (§8):
+  // disconnected, never logged out.
   const live = await platformPrisma.whatsAppAccount.findMany({
-    where: { id: { in: held } },
+    where: { id: { in: held }, project: { status: { not: "ARCHIVED" } } },
     select: { id: true },
   });
   const liveIds = new Set(live.map((row) => row.id));
@@ -69,7 +71,7 @@ export async function releaseDeletedAccounts(registry: ProviderRegistry): Promis
     // the same class of leak this function exists to close.
     lastRecoveryAttempt.delete(accountId);
     if (!released) continue;
-    console.log(`[registry] account ${accountId} no longer exists — released its session`);
+    console.log(`[registry] account ${accountId} no longer exists or its project is archived — released its session`);
     await logSystemEvent("INFO", "provider", "Released the session of a deleted account", { accountId }).catch(
       () => undefined,
     );

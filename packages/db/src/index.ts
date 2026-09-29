@@ -1,8 +1,9 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
-import type { AiFallbackOutcome, WhatsAppServiceKey } from "@prisma/client";
+import { NotificationEvent } from "@prisma/client";
+import type { AiFallbackOutcome, ProjectStatus, WhatsAppServiceKey } from "@prisma/client";
 import { derivePatternSignature, validateRegexSafety } from "@support-automation/engine";
-import { knowledgeContentHash } from "@support-automation/shared";
+import { DEFAULT_SHIFT_TEMPLATES, knowledgeContentHash, PROJECT_FEATURES } from "@support-automation/shared";
 import type { RuleAction } from "@support-automation/shared";
 
 // Standard Next.js/Node singleton pattern: avoids exhausting Postgres
@@ -1238,5 +1239,69 @@ export async function findKnowledgeDuplicates(contentHash: string, db: PrismaCli
     select: { id: true, title: true, scope: true, sourceGroupId: true, humanVerified: true, createdAt: true },
     orderBy: { createdAt: "asc" },
     take: 10,
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Creating a project (MULTI_PROJECT_PLAN.md §8)
+
+export interface CreateProjectInput {
+  name: string;
+  slug: string;
+  description?: string | null;
+  status: Extract<ProjectStatus, "SETUP" | "ACTIVE">;
+  /** Given access to the new project, so whoever created it can go straight in. */
+  creatorUserId: string;
+}
+
+/**
+ * Creates a project and everything it needs to be configured, in ONE transaction: the Project row,
+ * its 10 settings rows, its default feature rows, its default notification event settings, the
+ * default shift templates and the creator's project access.
+ *
+ * It copies NOTHING from any other project. Settings come from the schema's own defaults — with
+ * automation switched OFF, the one default that differs, because a project nobody has configured
+ * must not start answering customers the moment a number is linked. No WhatsApp account, AI
+ * provider, rule, team or knowledge is created: those are set up inside the project through the
+ * pages that already exist for them.
+ *
+ * Takes the PLATFORM client and names the project on every row explicitly; there is no project
+ * context yet for a scoped client to resolve. Each singleton's id is the project's id, the same
+ * convention the scoped client uses for every project but the original one.
+ */
+export async function createProjectWithDefaults(input: CreateProjectInput, db: PrismaClient): Promise<{ id: string; slug: string }> {
+  return db.$transaction(async (tx) => {
+    const project = await tx.project.create({
+      data: { name: input.name, slug: input.slug, description: input.description ?? null, status: input.status },
+      select: { id: true, slug: true },
+    });
+    const own = { id: project.id, projectId: project.id };
+
+    await tx.automationSettings.create({ data: { ...own, automationEnabled: false } });
+    await tx.aiSettings.create({ data: own });
+    await tx.groupBroadcastSettings.create({ data: own });
+    await tx.groupParticipantAddSettings.create({ data: own });
+    await tx.supportEscalationSettings.create({ data: own });
+    await tx.learningSettings.create({ data: own });
+    await tx.supportActivitySettings.create({ data: own });
+    await tx.forgeSettings.create({ data: own });
+    await tx.teamManagementSettings.create({ data: own });
+    await tx.communicationStyleProfile.create({ data: own });
+
+    await tx.projectFeature.createMany({
+      data: PROJECT_FEATURES.map((feature) => ({ projectId: project.id, key: feature.key, enabled: feature.defaultEnabled })),
+    });
+    // Every event on, both channels, no groups of its own (so it inherits the project's global
+    // destinations) — exactly what an absent row means, written down so the project starts with
+    // a row for each alert it can raise.
+    await tx.notificationEventSetting.createMany({
+      data: Object.values(NotificationEvent).map((event) => ({ projectId: project.id, event })),
+    });
+    await tx.shiftTemplate.createMany({
+      data: DEFAULT_SHIFT_TEMPLATES.map((shift) => ({ ...shift, projectId: project.id })),
+    });
+    await tx.projectAccess.create({ data: { projectId: project.id, userId: input.creatorUserId } });
+
+    return project;
   });
 }
