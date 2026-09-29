@@ -1,39 +1,54 @@
-import type { ProjectStatusValue } from "@support-automation/shared";
+import { cookies } from "next/headers";
+import { featureForPath, isPermissionKey } from "@support-automation/shared";
 import type { Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { accessibleProjects } from "@/server/projectContext";
 import { disabledFeaturesFor } from "@/server/projectFeatures";
-import type { WorkspaceModuleDefinition } from "@/lib/workspace";
+import { navPermissionFor } from "@/app/p/[project]/(dashboard)/navigation";
+import { WORKSPACE_PROJECT_COOKIE, workspaceTabsFor, type WorkspaceProject } from "@/lib/workspace";
 
 /**
- * Which projects a Main Admin Workspace module shows as tabs (MAIN_ADMIN_WORKSPACE.md §3).
+ * The Main Admin Workspace's projects (MAIN_ADMIN_WORKSPACE.md §3):
  *
- *     user → may enter the project → the project has the module's feature → the existing permission
+ *     user → may enter the project → the page's feature is on there → the existing permission
  *
- * Each step can only remove a tab, and none of them is new: `accessibleProjects` is what the project
- * switcher lists, `disabledFeaturesFor` is what hides a module's nav link, `hasPermission` is the
- * permission check every page makes. The tabs are presentation. Opening one still runs the module's
- * own page checks in that project, so a tab that should not exist would still refuse.
+ * `accessibleProjects` is exactly what the project switcher lists (access rows, or every project for
+ * a Main Admin; never an archived one), and `disabledFeaturesFor` is what already hides a module's
+ * nav link. Nothing here is new authority: it decides which tabs are DRAWN. Opening one runs the
+ * project page's own checks in that project.
  */
-
-export interface WorkspaceTab {
-  slug: string;
-  name: string;
-  status: ProjectStatusValue;
+export async function workspaceProjects(session: Session): Promise<WorkspaceProject[]> {
+  const projects = await accessibleProjects(session.userId);
+  return Promise.all(
+    projects.map(async (project) => ({
+      slug: project.slug,
+      name: project.name,
+      status: project.status,
+      disabledFeatures: [...(await disabledFeaturesFor(project.id))],
+    })),
+  );
 }
 
-export type WorkspaceTabs =
-  | { ok: true; tabs: WorkspaceTab[] }
-  /** The viewer's role does not include the module's permission — in any project, since roles are not per project. */
-  | { ok: false; reason: "NO_PERMISSION" };
+/**
+ * Which project a workspace page opens in when the Main Admin sidebar asks for it: the remembered
+ * project if this page can open there, otherwise the first project that can. Null when none can —
+ * the role lacks the page's permission, or no project the viewer may enter has the module on.
+ */
+export async function chooseWorkspaceProject(session: Session, projectPath: string): Promise<WorkspaceProject | null> {
+  const key = navPermissionFor(projectPath);
+  if (key && isPermissionKey(key) && !(await hasPermission(session, key))) return null;
+  const projects = await workspaceProjects(session);
+  // A global page opens in any project the viewer may enter: its data is the same in all of them.
+  const candidates = featureForPath(projectPath) ? workspaceTabsFor(projects, projectPath) : projects;
+  if (candidates.length === 0) return null;
+  const remembered = await rememberedProject();
+  return candidates.find((p) => p.slug === remembered) ?? candidates[0]!;
+}
 
-export async function workspaceTabs(session: Session, mod: WorkspaceModuleDefinition): Promise<WorkspaceTabs> {
-  if (!(await hasPermission(session, mod.permission))) return { ok: false, reason: "NO_PERMISSION" };
-  const projects = await accessibleProjects(session.userId);
-  const tabs: WorkspaceTab[] = [];
-  for (const project of projects) {
-    if ((await disabledFeaturesFor(project.id)).has(mod.feature)) continue;
-    tabs.push({ slug: project.slug, name: project.name, status: project.status });
+async function rememberedProject(): Promise<string | undefined> {
+  try {
+    return (await cookies()).get(WORKSPACE_PROJECT_COOKIE)?.value;
+  } catch {
+    return undefined; // no request (tests): nothing remembered
   }
-  return { ok: true, tabs };
 }

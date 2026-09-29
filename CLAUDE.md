@@ -237,15 +237,15 @@ project-owned tables needs its own `<Child>_<column>_same_project` trigger in it
 corrupt data in a test, disable that one trigger around the insert (see `createPastTheDatabase` in
 `projectIsolation.integration.test.ts`). See `MULTI_PROJECT_PLAN.md` §10.7.
 
-**The Main Admin Workspace** (`/admin/workspace/<module>/<slug>/…`, `MAIN_ADMIN_WORKSPACE.md`) opens an
-EXISTING project module with the viewer's projects as tabs. `proxy.ts` sets the SAME project headers
-from that path as from `/p/<slug>/…` (plus `x-softify-workspace-module`), so a workspace page is the
-project's page and every check runs unchanged; the route files under `app/admin/workspace/` only
-re-export the portal's pages. Tabs = may enter → feature on → existing permission
-(`server/workspace.ts`), and can only remove. Never re-implement a module there, and never add a
-module to `WORKSPACE_MODULES` whose `projectPath` is not one of its feature's routes (the unit test
-refuses it). WhatsApp Chat is the only module so far; access levels, Departments/Job Titles/Employees
-and the aggregate dashboard are designed in that file, not built.
+**The Main Admin Workspace** (`/admin/workspace/<slug>/<any project page>`, `MAIN_ADMIN_WORKSPACE.md`)
+opens EVERY project module with the viewer's projects as tabs. `proxy.ts` rewrites it to
+`/p/<slug>~ws/…` with the SAME project headers taken from the path (plus `x-softify-workspace`), so the
+portal's own layout and page render and every check runs unchanged; the dashboard layout only swaps
+the chrome (`DashboardShell` workspace mode + `WorkspaceTabs`). Never add a per-module workspace route
+or copy a page. Tabs are `workspaceTabsFor` (may enter → page's feature on) and can only remove; the
+page's own permission check stays final. A page whose data carries no `projectId` belongs in
+`GLOBAL_PAGE_PREFIXES` (no tabs). The `~ws` segment marker exists so the router re-renders the layout
+between workspace and portal; it is never authority, and a direct `/p/<slug>~ws/…` is a 404.
 
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking

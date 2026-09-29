@@ -3,10 +3,24 @@
 import { ChevronRight, LogOut, Menu, Search } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import NextLink from "next/link";
+import { WorkspaceModeContext } from "@/components/ProjectLink";
+import { featuresOffEverywhere, isGlobalPage, workspaceOpenHref, type WorkspaceProject } from "@/lib/workspace";
+import { featureForPath } from "@support-automation/shared";
+import { WorkspaceTabs } from "./WorkspaceTabs";
 import { CommandPalette } from "./CommandPalette";
 import { FloatingAiChat } from "./FloatingAiChat";
-import { isSettingsPath, navGroupsFor, navPermissionFor, resolveNavLocation, settingsSectionsFor, tabsForLocation, ALL_NAV_LINKS } from "./navigation";
+import {
+  isSettingsPath,
+  navGroupsFor,
+  navPermissionFor,
+  resolveNavLocation,
+  settingsSectionsFor,
+  tabsForLocation,
+  ALL_NAV_LINKS,
+  type NavGroup,
+} from "./navigation";
 import { SubNavTabs } from "./SubNavTabs";
 import { SettingsNav } from "./SettingsNav";
 import { Sidebar } from "./Sidebar";
@@ -104,8 +118,15 @@ export function DashboardShell({
   project,
   switchableProjects,
   disabledFeatures,
+  workspaceProjects,
 }: {
   children: ReactNode;
+  /**
+   * Set when the page is shown in the Main Admin Workspace (MAIN_ADMIN_WORKSPACE.md): the projects
+   * the viewer may enter, each with its switched-off features, for the project tabs. The same page,
+   * the same checks — only this chrome differs.
+   */
+  workspaceProjects?: WorkspaceProject[] | null;
   /** The project this page belongs to — named in the sidebar and the breadcrumb on every page. */
   project: SwitcherProject;
   /** Exactly the projects this user may enter (server-computed). */
@@ -121,7 +142,22 @@ export function DashboardShell({
 }) {
   const granted = useMemo(() => new Set(grantedKeys), [grantedKeys]);
   const featuresOff = useMemo(() => new Set(disabledFeatures), [disabledFeatures]);
-  const navGroups = useMemo(() => navGroupsFor(granted, featuresOff), [granted, featuresOff]);
+  const inWorkspace = Boolean(workspaceProjects);
+  // In the workspace the sidebar offers every module that is on in ANY of the viewer's projects; one
+  // that is off in THIS project opens in a project that has it (lib/workspace.ts workspaceOpenHref).
+  // Global modules (Users & Permissions, Release Notes) move up to the Main Admin section.
+  const { navGroups, globalGroups } = useMemo(() => {
+    if (!workspaceProjects) return { navGroups: navGroupsFor(granted, featuresOff), globalGroups: [] as NavGroup[] };
+    const groups = navGroupsFor(granted, new Set(featuresOffEverywhere(workspaceProjects))).map((group) => ({
+      ...group,
+      links: group.links.map((link) => {
+        const feature = featureForPath(link.href);
+        return feature && featuresOff.has(feature) ? { ...link, href: workspaceOpenHref(link.href), tabs: undefined } : link;
+      }),
+    }));
+    const isGlobal = (group: NavGroup) => group.links.every((link) => isGlobalPage(link.href));
+    return { navGroups: groups.filter((g) => !isGlobal(g)), globalGroups: groups.filter(isGlobal) };
+  }, [granted, featuresOff, workspaceProjects]);
   const settingsSections = useMemo(() => settingsSectionsFor(granted, featuresOff), [granted, featuresOff]);
   const paletteLinks = useMemo(
     () =>
@@ -157,8 +193,10 @@ export function DashboardShell({
   }, []);
 
   const closePalette = useCallback(() => setPaletteOpen(false), []);
+  const workspaceCurrent = workspaceProjects?.find((p) => p.slug === project.slug) ?? null;
 
   return (
+    <WorkspaceModeContext.Provider value={inWorkspace}>
     <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">
       <a href="#main-content" className="skip-link">
         Skip to content
@@ -175,6 +213,7 @@ export function DashboardShell({
         canCreateProject={granted.has("projects.manage")}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
+        workspace={inWorkspace ? { globalGroups } : null}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -193,7 +232,13 @@ export function DashboardShell({
           <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[13px]">
             {/* The project first, on every page: nobody should have to wonder whether they are
                 changing ISP Digital or another project. */}
-            <span className="max-w-[10rem] shrink-0 truncate font-medium text-[color:var(--color-accent)]">{project.name}</span>
+            {inWorkspace ? (
+              <NextLink href="/admin" className="shrink-0 font-medium text-[color:var(--color-accent)] hover:underline">
+                Main Admin
+              </NextLink>
+            ) : (
+              <span className="max-w-[10rem] shrink-0 truncate font-medium text-[color:var(--color-accent)]">{project.name}</span>
+            )}
             <ChevronRight className="size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)]" aria-hidden />
             {location && location.group !== "Dashboard" ? (
               <>
@@ -231,8 +276,14 @@ export function DashboardShell({
         <main id="main-content" className="min-h-0 flex-1 overflow-y-auto">
           <div
             key={pathname}
+            // In the workspace the project tabs sit above the page: full-height pages (the chat
+            // inbox) read this to leave room for them.
+            style={inWorkspace ? ({ "--chat-inset": "10rem", "--chat-inset-sm": "11.5rem" } as CSSProperties) : undefined}
             className="mx-auto w-full max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9"
           >
+            {workspaceProjects && workspaceCurrent ? (
+              <WorkspaceTabs projects={workspaceProjects} current={workspaceCurrent} pathname={pathname} search={searchParams} />
+            ) : null}
             {project.status === "SUSPENDED" || project.status === "ARCHIVED" ? (
               <div className="mb-5">
                 <Alert tone="warning" title={`${project.name} is ${project.status === "ARCHIVED" ? "archived" : "suspended"} — read-only`}>
@@ -264,5 +315,6 @@ export function DashboardShell({
           floating button on every page that always answers "not allowed" is worse than none. */}
       {granted.has("ai_learning.view") ? <FloatingAiChat /> : null}
     </div>
+    </WorkspaceModeContext.Provider>
   );
 }

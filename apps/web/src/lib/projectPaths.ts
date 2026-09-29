@@ -20,11 +20,12 @@ export const PROJECT_HEADER = "x-softify-project";
 export const PROJECT_PATH_HEADER = "x-softify-project-path";
 
 /**
- * Request header naming the Main Admin Workspace module a request came through (lib/workspace.ts),
- * so a `redirect`/`revalidatePath` inside the module stays in the workspace. Set ONLY by proxy.ts,
- * which strips any incoming copy. It changes which URL a path is written as — never the project.
+ * Request header saying the request came through the Main Admin Workspace (lib/workspace.ts), so the
+ * dashboard layout draws the workspace chrome and a `redirect` stays in the workspace. Set ONLY by
+ * proxy.ts, which strips any incoming copy. It changes which chrome and which URL shape — never the
+ * project, which still comes from the same URL segment.
  */
-export const WORKSPACE_MODULE_HEADER = "x-softify-workspace-module";
+export const WORKSPACE_HEADER = "x-softify-workspace";
 
 /** Remembers the last project opened, ONLY so `/open` can continue there. Never decides reads or writes. */
 export const LAST_PROJECT_COOKIE = "softify-last-project";
@@ -56,22 +57,19 @@ export function slugFromPath(path: string): string | null {
 /**
  * `/rules` → `/p/isp-digital/rules`. Leaves external, relative, hash and outside-project URLs alone.
  *
- * Inside a Main Admin Workspace module (`workspaceModuleKey`), the module's own paths are written as
- * workspace URLs instead (`/chat/abc` → `/admin/workspace/whatsapp-chat/isp-digital/abc`); every
- * other path still opens in the same project's portal.
+ * Inside the Main Admin Workspace (`inWorkspace`) the same path is written as a workspace URL of the
+ * same project (`/chat/abc` → `/admin/workspace/isp-digital/chat/abc`), so moving between modules
+ * keeps both the workspace and the selected project.
  */
-export function projectHref(href: string, slug: string | null | undefined, workspaceModuleKey?: string | null): string {
+export function projectHref(href: string, slug: string | null | undefined, inWorkspace = false): string {
   if (!slug || !href.startsWith("/") || href.startsWith("//") || isOutsideProject(href)) return href;
-  if (workspaceModuleKey) {
-    const inWorkspace = workspaceHref(href, slug, workspaceModuleKey);
-    if (inWorkspace) return inWorkspace;
-  }
+  if (inWorkspace) return workspaceHref(href, slug);
   return `/p/${slug}${href === "/" ? "" : href}`;
 }
 
 /**
  * `/p/isp-digital/rules/42` → `/rules/42`: what the navigation's active-state logic compares against.
- * A workspace URL gives the module's path inside its project (`/admin/workspace/whatsapp-chat/isp-digital/abc` → `/chat/abc`).
+ * A workspace URL gives the page inside its project (`/admin/workspace/isp-digital/chat/abc` → `/chat/abc`).
  */
 export function stripProjectPrefix(pathname: string): string {
   const workspace = parseWorkspacePath(pathname);

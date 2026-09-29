@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
-import { ChevronDown, ChevronsLeft, ChevronsRight, LogOut, X } from "lucide-react";
+import { ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, LayoutDashboard, LogOut, X } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
@@ -138,6 +138,21 @@ function NavItem({ link, active, collapsed }: { link: NavLink; active: boolean; 
   );
 }
 
+/** The Main Admin Portal's own pages, at the top of the sidebar when a page is shown in the workspace. */
+const MAIN_ADMIN_LINKS: NavLink[] = [
+  { href: "/admin", label: "Admin Overview", icon: LayoutDashboard },
+  { href: "/admin/projects", label: "Projects", icon: FolderKanban },
+];
+
+function SectionLabel({ children, collapsed }: { children: string; collapsed: boolean }) {
+  if (collapsed) return <div className="mx-2 my-1.5 border-t border-[var(--color-border)]" />;
+  return (
+    <p className="px-3 pt-2 pb-1.5 text-[10px] font-semibold tracking-[0.06em] text-[color:var(--color-subtle-foreground)] uppercase">
+      {children}
+    </p>
+  );
+}
+
 export function Sidebar({
   automationEnabled,
   automationMode,
@@ -149,7 +164,14 @@ export function Sidebar({
   switchableProjects,
   canViewAdmin,
   canCreateProject,
+  workspace,
 }: {
+  /**
+   * Set in the Main Admin Workspace: the sidebar becomes the Main Admin's — its own pages and the
+   * global modules first, then every project module under WORKSPACE. One sidebar; the project is
+   * chosen by the tabs above the page, not by a second navigation.
+   */
+  workspace?: { globalGroups: NavGroup[] } | null;
   project: SwitcherProject;
   switchableProjects: SwitcherProject[];
   canViewAdmin: boolean;
@@ -168,6 +190,73 @@ export function Sidebar({
   const toggleCollapsed = useCallback(() => writeCollapse(!collapseSnapshot()), []);
   const openGroupsRaw = useSyncExternalStore(subscribeOpenGroups, openGroupsSnapshot, openGroupsServerSnapshot);
   const openGroups = useMemo(() => parseOpenGroups(openGroupsRaw), [openGroupsRaw]);
+
+  const renderGroups = (groups: NavGroup[], offset: number) =>
+    groups.map((group, groupIndex) => {
+      const index = groupIndex + offset;
+      // Icon rail: every page as an icon, a hairline between modules. Opening and closing
+      // parents means nothing when there is no room for their names.
+      if (collapsed) {
+        return (
+          <div key={group.label} className={index > 0 ? "mt-1.5 border-t border-[var(--color-border)] pt-1.5" : ""}>
+            {group.links.map((link) => (
+              <NavItem key={link.href} link={link} active={isLinkActive(pathname, searchParams, link)} collapsed />
+            ))}
+          </div>
+        );
+      }
+
+      // A module holding one page is that page — a parent row above a single child would be
+      // a click that leads nowhere new.
+      if (group.links.length === 1) {
+        const only = group.links[0]!;
+        return (
+          <NavItem key={group.label} link={only} active={isLinkActive(pathname, searchParams, only)} collapsed={false} />
+        );
+      }
+
+      const containsCurrentPage = isGroupActive(pathname, searchParams, group);
+      const open = containsCurrentPage || openGroups.has(group.label);
+      const Icon = group.icon;
+      const panelId = `nav-group-${index}`;
+      return (
+        <div key={group.label}>
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={panelId}
+            // The module you are in stays open: closing it would hide the very page you are on.
+            onClick={containsCurrentPage ? undefined : () => toggleOpenGroup(group.label)}
+            className={`group flex w-full items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-left text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
+              containsCurrentPage
+                ? "cursor-default font-medium text-[color:var(--color-foreground)]"
+                : "cursor-pointer text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]/60 hover:text-[color:var(--color-foreground)]"
+            }`}
+          >
+            <Icon
+              className={`size-4 shrink-0 ${containsCurrentPage ? "text-[color:var(--color-accent)]" : "text-[color:var(--color-subtle-foreground)]"}`}
+              aria-hidden
+            />
+            <span className="min-w-0 flex-1 truncate">{group.label}</span>
+            {containsCurrentPage ? null : (
+              <ChevronDown
+                className={`size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)] transition-transform duration-[var(--duration-fast)] ${
+                  open ? "rotate-180" : ""
+                }`}
+                aria-hidden
+              />
+            )}
+          </button>
+          {open ? (
+            <div id={panelId} className="mt-px mb-1.5 ml-[1.1rem] space-y-px border-l border-[var(--color-border)] pl-1.5">
+              {group.links.map((link) => (
+                <NavItem key={link.href} link={link} active={isLinkActive(pathname, searchParams, link)} collapsed={false} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      );
+    });
 
   return (
     <>
@@ -189,7 +278,7 @@ export function Sidebar({
               project being worked on, and the menu under it lists exactly the projects this user
               may enter. The signed-in user stays in the header's own profile menu. */}
           <ProjectSwitcher
-            current={project}
+            current={workspace ? null : project}
             projects={switchableProjects}
             canViewAdmin={canViewAdmin}
             canCreate={canCreateProject}
@@ -206,75 +295,26 @@ export function Sidebar({
         </div>
 
         <nav aria-label="Main" className="flex min-h-0 flex-1 flex-col">
+          {workspace ? (
+            <div className="px-2.5 pb-1">
+              <SectionLabel collapsed={collapsed}>Main Admin</SectionLabel>
+              {MAIN_ADMIN_LINKS.map((link) => (
+                <NavItem key={link.href} link={link} active={false} collapsed={collapsed} />
+              ))}
+              <div className="space-y-0.5">{renderGroups(workspace.globalGroups, 100)}</div>
+              <SectionLabel collapsed={collapsed}>Workspace</SectionLabel>
+            </div>
+          ) : null}
           <div className="px-2.5 pb-1">
-            <NavItem link={OVERVIEW_LINK} active={isNavActive(pathname, searchParams, OVERVIEW_LINK.href)} collapsed={collapsed} />
+            <NavItem
+              link={workspace ? { ...OVERVIEW_LINK, label: "Project Overview" } : OVERVIEW_LINK}
+              active={isNavActive(pathname, searchParams, OVERVIEW_LINK.href)}
+              collapsed={collapsed}
+            />
           </div>
 
           <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pt-3 pb-6">
-            {navGroups.map((group, index) => {
-              // Icon rail: every page as an icon, a hairline between modules. Opening and closing
-              // parents means nothing when there is no room for their names.
-              if (collapsed) {
-                return (
-                  <div key={group.label} className={index > 0 ? "mt-1.5 border-t border-[var(--color-border)] pt-1.5" : ""}>
-                    {group.links.map((link) => (
-                      <NavItem key={link.href} link={link} active={isLinkActive(pathname, searchParams, link)} collapsed />
-                    ))}
-                  </div>
-                );
-              }
-
-              // A module holding one page is that page — a parent row above a single child would be
-              // a click that leads nowhere new.
-              if (group.links.length === 1) {
-                const only = group.links[0]!;
-                return (
-                  <NavItem key={group.label} link={only} active={isLinkActive(pathname, searchParams, only)} collapsed={false} />
-                );
-              }
-
-              const containsCurrentPage = isGroupActive(pathname, searchParams, group);
-              const open = containsCurrentPage || openGroups.has(group.label);
-              const Icon = group.icon;
-              const panelId = `nav-group-${index}`;
-              return (
-                <div key={group.label}>
-                  <button
-                    type="button"
-                    aria-expanded={open}
-                    aria-controls={panelId}
-                    // The module you are in stays open: closing it would hide the very page you are on.
-                    onClick={containsCurrentPage ? undefined : () => toggleOpenGroup(group.label)}
-                    className={`group flex w-full items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-left text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
-                      containsCurrentPage
-                        ? "cursor-default font-medium text-[color:var(--color-foreground)]"
-                        : "cursor-pointer text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]/60 hover:text-[color:var(--color-foreground)]"
-                    }`}
-                  >
-                    <Icon
-                      className={`size-4 shrink-0 ${containsCurrentPage ? "text-[color:var(--color-accent)]" : "text-[color:var(--color-subtle-foreground)]"}`}
-                      aria-hidden
-                    />
-                    <span className="min-w-0 flex-1 truncate">{group.label}</span>
-                    {containsCurrentPage ? null : (
-                      <ChevronDown
-                        className={`size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)] transition-transform duration-[var(--duration-fast)] ${
-                          open ? "rotate-180" : ""
-                        }`}
-                        aria-hidden
-                      />
-                    )}
-                  </button>
-                  {open ? (
-                    <div id={panelId} className="mt-px mb-1.5 ml-[1.1rem] space-y-px border-l border-[var(--color-border)] pl-1.5">
-                      {group.links.map((link) => (
-                        <NavItem key={link.href} link={link} active={isLinkActive(pathname, searchParams, link)} collapsed={false} />
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+            {renderGroups(navGroups, 0)}
           </div>
         </nav>
 

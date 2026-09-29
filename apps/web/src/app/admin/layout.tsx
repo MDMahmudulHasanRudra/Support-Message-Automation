@@ -1,5 +1,6 @@
 import { requireMainAdminPage } from "@/server/mainAdmin";
 import { accessibleProjects } from "@/server/projectContext";
+import { getGrantedPermissionKeys } from "@/server/permissions";
 import { logout } from "@/server/actions/session";
 import { AdminShell } from "./AdminShell";
 
@@ -11,12 +12,13 @@ export const metadata = { title: { default: "Main Admin", template: "%s · Main 
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const { session, canManage } = await requireMainAdminPage();
-  const projects = await accessibleProjects(session.userId);
+  const [projects, grantedKeys] = await Promise.all([accessibleProjects(session.userId), getGrantedPermissionKeys(session)]);
   return (
     <AdminShell
       username={session.username}
       projects={projects.map(({ name, slug, status }) => ({ name, slug, status }))}
       canCreate={canManage}
+      grantedKeys={grantedKeys}
       onLogout={logout}
     >
       {children}
