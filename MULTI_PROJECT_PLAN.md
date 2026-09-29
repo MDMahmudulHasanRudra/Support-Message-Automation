@@ -1,7 +1,7 @@
 # Multi-Project Softify Assist: Audit and Plan
 
-Status: **Phases 1–5 implemented and verified locally, 28–29 Sep 2026: not pushed, not
-deployed.** Phase 6 has not started. See §10.2–§10.5 for what each delivered.
+Status: **Phases 1–6 implemented and verified locally, 28–29 Sep 2026: not pushed, not
+deployed.** Phase 7 has not started. See §10.2–§10.6 for what each delivered.
 
 > **The existing permission system and existing portal functionality remain unchanged and are
 > reused inside every project. Project access determines which projects a user can enter; existing
@@ -514,6 +514,53 @@ seed already grants its admin access, idempotently.
   key, a notification event setting, an AI model job slot). Such a write fails loudly; it never
   lands in or reads from the wrong project. No second project can be created from the UI before
   Phase 4.
+
+### 10.6 Phase 6 as delivered (29 Sep 2026): the isolation test suite
+
+Every §11 item now has a test using two projects, ISP Digital and Bizify, each with its own account,
+group, team member, rule, knowledge, AI model and alert settings. Each test was confirmed to fail
+with its scope deliberately removed.
+
+| §11 item | Where | Confirmed to fail when |
+|---|---|---|
+| WhatsApp (lists, counts, search, inbox, exports) | web `projectReports.integration.test.ts` | a raw query's filter is removed (10 of 11 caught; see below), or the scoped client stops filtering reads (12 fail) |
+| Reports (Team Report, Overview charts, Support Activity) | same file | same |
+| Knowledge (even against an exact-match Bizify entry) | worker `projectAcceptance.integration.test.ts` | the worker's reads are unscoped |
+| AI (own model assignment and credentials) | same | same |
+| Rules (a Bizify rule never matches ISP Digital) | same, plus `projectIsolation` for the reverse | same |
+| Team (staff vs. a Bizify-only person in the same group) | same | same |
+| Learning (no sessions or candidates cross) | same, plus `projectIsolation` | same |
+| Notifications (own destinations, own members' DMs) | same | same |
+| Worker (Bizify's settings and Bizify's account; ISP Digital's kill switch does not stop Bizify) | same | same |
+| Access | browser suites for Phases 2 and 4 (User A/B, Read Only, `projects.view`, URL/API/action replay) | — |
+| Existing permissions (323 role sets) | web `navigationPermissions.test.ts` | a nav gate is loosened |
+| Lifecycle | worker `projectLifecycle.integration.test.ts` | each hold is removed |
+
+- **The web app has a test suite now.**
+  - `apps/web` has vitest and `test:isolated`, pointed at the throwaway database and guarded by the
+    same `requireTestDatabase`.
+  - The tests call the real server modules inside `runWithProject(...)`: the scoped client and the
+    raw SQL, exactly as a page runs them.
+- **Method for reports.**
+  - Take ISP Digital's figures. Fill Bizify with the same kind of data, reusing the SAME WhatsApp
+    group id (the realistic case: both numbers are in one group) but with a different reply
+    timing. Also fill a third project with 305 fresher conversations.
+  - Take ISP Digital's figures again: all 19 must be identical.
+  - Bizify's own figures must be exactly its own rows.
+
+  The crowd project exists to catch the inbox's ranking query. Without its filter, other projects'
+  conversations take all 300 slots and the project's own list comes back empty.
+- **A static guard**, `rawSqlProjectFilter.test.ts` in both apps, using `packages/shared` `rawSqlGuard`.
+  Every `$queryRaw`/`$executeRaw` on a project-owned table must name `"projectId"`. A new unscoped
+  report fails the build. Checked by removing a filter in each app.
+- **Not caught, by construction.** Removing the project filter from the inbox's second query
+  (`chatInbox.ts`, last-message lookup) changes nothing observable, because that query is already
+  restricted to group ids returned by a scoped query. It is defence in depth; the static guard
+  keeps it from disappearing.
+- **Not covered by the report test:** the two raw queries that live inside page components
+  (`support-activity/page.tsx`, `conversation-learning/unknown-patterns/page.tsx`). The static guard
+  covers them; the behaviour test cannot call a page without a request.
+- **Results:** worker 856/856, web 35/35, browser 55/55 (Phase 4 suite) and 19/19 (Phase 5 suite).
 
 ### 10.5 Phase 5 as delivered (29 Sep 2026): project feature flags
 

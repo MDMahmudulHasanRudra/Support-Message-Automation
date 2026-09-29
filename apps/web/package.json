@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:isolated": "cross-env \"DATABASE_URL=postgresql://support_automation_test:support_automation_test@localhost:5433/support_automation_test?schema=public&connection_limit=5&pool_timeout=30&connect_timeout=30\" vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
@@ -29,9 +31,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^7.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "2.1.9"
   }
 }

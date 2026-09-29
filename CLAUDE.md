@@ -61,8 +61,10 @@ docker compose ps    # postgres, app (:8668 on the host), worker (no published p
 
 ### Testing
 
-Vitest is used in `packages/engine`, `packages/shared`, `packages/ai-client`, and `apps/worker`.
-**`apps/web` and `packages/db` have no test suite.** `apps/web` has `lint`/`typecheck` only.
+Vitest is used in `packages/engine`, `packages/shared`, `packages/ai-client`, `apps/worker` and — since
+multi-project Phase 6 — `apps/web`. **`packages/db` has no test suite.** The web tests call server
+modules directly inside `runWithProject(...)`; its integration files run only through
+`pnpm --filter @support-automation/web test:isolated` (same throwaway DB and guard as the worker).
 
 ```bash
 pnpm --filter @support-automation/engine test                 # unit tests, no DB needed
@@ -217,6 +219,14 @@ by page path, exclusive key, or an explicit `checkPermission(key, "FEATURE")` fo
 modules), and the worker (`projectHasFeature` beside each setting check). A new page belongs in a
 feature's `routes` if it is that module's; a new action in a shared-key module passes its feature.
 Never compare a project's name or slug in code. See `MULTI_PROJECT_PLAN.md` §10.5.
+
+**Phase 6 (isolation test suite) has landed.** Every §11 acceptance item has a two-project test,
+each confirmed to fail with its scope removed: web `projectReports.integration.test.ts` (every list
+and report — ISP Digital's figures must not move when Bizify and a 305-conversation third project
+fill up), web `navigationPermissions.test.ts` (323 role sets), worker
+`projectAcceptance.integration.test.ts`, and `rawSqlProjectFilter.test.ts` in BOTH apps, which fails
+the build if any `$queryRaw`/`$executeRaw` on a project-owned table does not name `"projectId"`.
+A new report or raw query belongs in those tests. See `MULTI_PROJECT_PLAN.md` §10.6.
 
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
