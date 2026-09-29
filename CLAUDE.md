@@ -859,6 +859,12 @@ the server recomputes the report and builds the rows with the same `buildMembers
 a cell (a group's WhatsApp id, "+3 business") is `ReportTableRow.sub` — presentation, not a column,
 so it is not exported; search matches the group id through it.
 
+**Element-level rules in `globals.css` belong in `@layer base`.** Tailwind's utilities live in a
+layer, and ANY unlayered style beats ANY layered one regardless of specificity: the default
+`* { border-color }` sat unlayered until 30 Sep 2026, so every border-colour utility in the app
+(`border-[var(--color-accent)]`, `border-transparent`, hover/focus border colours, `divide-*`)
+silently rendered as the default grey.
+
 The dashboard's content column carries `min-w-0` (`DashboardShell.tsx`). Without it a wide table
 inside `overflow-x-auto` still widened the whole column — `main` measured 882–995px at a 390px
 viewport on Team Members, Teams and Team Report — because a flex child cannot shrink below its

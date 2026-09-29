@@ -218,7 +218,10 @@ export async function getBusiestGroups(nowMs: number) {
     by: ["groupId"],
     where: { direction: "INCOMING", createdAt: { gte: since }, groupId: { not: null } },
     _count: { groupId: true },
-    orderBy: { _count: { groupId: "desc" } },
+    // The group id breaks ties. Without it Postgres returns equal counts in whatever order its plan
+    // produces, so the chart could reorder, and at the cut-off swap WHICH groups it shows, between
+    // two refreshes with no new messages.
+    orderBy: [{ _count: { groupId: "desc" } }, { groupId: "asc" }],
     take: BUSIEST_GROUP_LIMIT,
   });
 

@@ -340,8 +340,16 @@
   --texture-opacity: 0.35;
 }
 
-* {
-  border-color: var(--color-border);
+/* The default border colour, in the base layer ON PURPOSE. Unlayered, this rule outranked every
+   Tailwind border-colour utility (utilities live in a layer, and any unlayered style beats any
+   layered one, whatever its specificity), so `border-[var(--color-danger-border)]`,
+   `border-[var(--color-accent)]`, `border-transparent`, `hover:`/`focus-visible:` border colours
+   and `divide-*` colours all rendered as this grey. In `@layer base` it still sets the default for
+   every element with no colour of its own, and any utility now wins over it. */
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
 }
 
 dialog:not([open]) {

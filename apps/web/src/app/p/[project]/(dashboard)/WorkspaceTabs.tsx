@@ -60,8 +60,7 @@ export function WorkspaceTabs({
                   : "text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
               }`}
             >
-              {/* A filled bar rather than a coloured border: globals.css sets every element's
-                  border-color outside a layer, which outranks a border-colour utility. */}
+              {/* The active tab's underline, as a filled bar inside the tab. */}
               <span
                 aria-hidden
                 className={`absolute inset-x-0 bottom-0 h-[2px] rounded-full transition-colors duration-[var(--duration-fast)] ${
