@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { ActionType, AutomationSettings } from "@prisma/client";
 import { buildOutboundIdempotencyKey } from "./idempotency.js";
 

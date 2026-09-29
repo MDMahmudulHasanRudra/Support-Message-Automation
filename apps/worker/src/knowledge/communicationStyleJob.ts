@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import {
@@ -176,7 +176,7 @@ export async function buildCommunicationStyleProfile(clientOverride?: AiClient):
     };
   }
 
-  const ai = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const ai = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!ai) return { ran: false, skipped: "AI_UNAVAILABLE" };
 
   const prompt = buildStyleProfilePrompt({

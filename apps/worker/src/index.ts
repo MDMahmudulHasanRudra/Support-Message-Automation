@@ -1,4 +1,5 @@
-import { checkDatabaseConnection, prisma } from "@support-automation/db";
+import { checkDatabaseConnection } from "@support-automation/db";
+import { platformPrisma } from "./db.js";
 import type { Prisma } from "@prisma/client";
 import { startHealthServer, type WorkerHealthState } from "./health/server.js";
 import { ProviderRegistry } from "./provider/ProviderRegistry.js";
@@ -213,7 +214,7 @@ function startHeartbeat(state: WorkerHealthState, registry: ProviderRegistry): N
         // It stays an updateMany rather than a per-account loop because the stamp has to land on
         // every account the dashboard might be looking at, and one statement is one round trip.
         const heldAccountIds = registry.allAccountIds();
-        await prisma.whatsAppAccount
+        await platformPrisma.whatsAppAccount
           .updateMany({
             where: {
               OR: [
@@ -233,7 +234,7 @@ function startHeartbeat(state: WorkerHealthState, registry: ProviderRegistry): N
         // meaning "this one timer fires". Written here rather than by each loop because the
         // command processor ticks every 1.5s, and a write per tick would be tens of thousands of
         // rows a day to report that nothing is wrong. One row, one upsert, fifteen seconds.
-        await prisma.workerHealthSnapshot
+        await platformPrisma.workerHealthSnapshot
           .upsert({
             where: { id: "global" },
             update: { loops: (readLoops() as unknown as Prisma.InputJsonValue), startedAt: new Date(state.startedAt) },

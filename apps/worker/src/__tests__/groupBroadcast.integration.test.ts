@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import { buildGroupBroadcastIdempotencyKey } from "@support-automation/shared";
 import type { AutomationSettings, GroupBroadcastSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processOne, recoverStuckOutboundMessages } from "../queue/outboundQueueProcessor.js";

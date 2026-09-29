@@ -1,4 +1,4 @@
-import { prisma, decryptSecret } from "@support-automation/db";
+import { decryptSecret, type PrismaClient } from "@support-automation/db";
 import { AI_PROVIDER_PROFILES, isOpenAiCompatibleKind, openRouterAttributionHeaders } from "@support-automation/shared";
 import type { AiModelJob } from "@prisma/client";
 import { AnthropicClient } from "./AnthropicClient.js";
@@ -55,8 +55,13 @@ const lastLoggedAt = new Map<string, number>();
  * Kept as the bare-null signature every existing caller already uses. New callers that want to
  * record or display WHY should call resolveAiClientResult() instead.
  */
-export async function resolveAiClient(job: AiModelJob): Promise<AiClient | null> {
-  const resolution = await resolveAiClientResult(job);
+/**
+ * `db` is the caller's database client — the worker passes its project-scoped one, so the AI
+ * settings, model assignment and provider credentials read are the CURRENT project's and never
+ * another's (MULTI_PROJECT_PLAN.md). Required, so no caller can fall back to an unscoped read.
+ */
+export async function resolveAiClient(job: AiModelJob, db: PrismaClient): Promise<AiClient | null> {
+  const resolution = await resolveAiClientResult(job, db);
   return resolution.client;
 }
 
@@ -76,28 +81,28 @@ export async function resolveAiClient(job: AiModelJob): Promise<AiClient | null>
  * unimplemented enum values; a provider configured with either resolves to no client here, same as
  * any other "not ready" state.
  */
-export async function resolveAiClientResult(job: AiModelJob): Promise<AiClientResolution> {
-  const settings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+export async function resolveAiClientResult(job: AiModelJob, db: PrismaClient): Promise<AiClientResolution> {
+  const settings = await db.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   if (!settings.aiEngineEnabled) {
-    return unavailable(job, "ENGINE_DISABLED", "The AI engine master switch is off (AI Settings).", null);
+    return unavailable(db, job, "ENGINE_DISABLED", "The AI engine master switch is off (AI Settings).", null);
   }
 
-  const modelConfig = await prisma.aiModelConfig.findUnique({ where: { job }, include: { provider: true } });
+  const modelConfig = await db.aiModelConfig.findFirst({ where: { job }, include: { provider: true } });
   if (!modelConfig) {
-    return unavailable(job, "NO_MODEL_CONFIGURED", `No provider/model is assigned to the ${job} job (AI Models).`, null);
+    return unavailable(db, job, "NO_MODEL_CONFIGURED", `No provider/model is assigned to the ${job} job (AI Models).`, null);
   }
 
   const provider = modelConfig.provider;
   if (provider.status !== "ACTIVE") {
-    return unavailable(job, "PROVIDER_INACTIVE", `Provider "${provider.name}" is disabled.`, provider.id);
+    return unavailable(db, job, "PROVIDER_INACTIVE", `Provider "${provider.name}" is disabled.`, provider.id);
   }
 
   const profile = AI_PROVIDER_PROFILES[provider.kind as keyof typeof AI_PROVIDER_PROFILES];
   if (!profile) {
-    return unavailable(job, "PROVIDER_KIND_UNKNOWN", `Provider "${provider.name}" has an unrecognised type.`, provider.id);
+    return unavailable(db, job, "PROVIDER_KIND_UNKNOWN", `Provider "${provider.name}" has an unrecognised type.`, provider.id);
   }
   if (!profile.implemented) {
-    return unavailable(
+    return unavailable(db,
       job,
       "PROVIDER_KIND_UNIMPLEMENTED",
       `${profile.label} is not implemented yet — reassign the ${job} job to a supported provider.`,
@@ -109,10 +114,10 @@ export async function resolveAiClientResult(job: AiModelJob): Promise<AiClientRe
   // misconfiguration, not a reason to fire off an unauthenticated request.
   const apiKey = provider.apiKeyCiphertext ? decryptSecret(provider.apiKeyCiphertext) : null;
   if (profile.requiresApiKey && !apiKey) {
-    return unavailable(job, "API_KEY_MISSING", `Provider "${provider.name}" has no API key saved.`, provider.id);
+    return unavailable(db, job, "API_KEY_MISSING", `Provider "${provider.name}" has no API key saved.`, provider.id);
   }
 
-  const onOutcome = (outcome: AiCallOutcome) => reportProviderCallOutcome(provider.id, outcome);
+  const onOutcome = (outcome: AiCallOutcome) => reportProviderCallOutcome(db, provider.id, outcome);
 
   if (provider.kind === "ANTHROPIC") {
     return {
@@ -144,21 +149,23 @@ export async function resolveAiClientResult(job: AiModelJob): Promise<AiClientRe
     };
   }
 
-  return unavailable(job, "NO_CLIENT_FOR_KIND", `No client implementation exists for ${provider.kind}.`, provider.id);
+  return unavailable(db, job, "NO_CLIENT_FOR_KIND", `No client implementation exists for ${provider.kind}.`, provider.id);
 }
 
 function unavailable(
+  db: PrismaClient,
   job: AiModelJob,
   reason: AiClientUnavailableReason,
   detail: string,
   providerId: string | null,
 ): AiClientResolution {
-  logUnavailable(job, reason, detail, providerId);
+  logUnavailable(db, job, reason, detail, providerId);
   return { client: null, reason, detail, providerId };
 }
 
 /** Fire-and-forget, throttled: the point is an admin can find the cause, not a log flood. */
 function logUnavailable(
+  db: PrismaClient,
   job: AiModelJob,
   reason: AiClientUnavailableReason,
   detail: string,
@@ -169,7 +176,7 @@ function logUnavailable(
   if (previous && Date.now() - previous < LOG_THROTTLE_MS) return;
   lastLoggedAt.set(key, Date.now());
 
-  void prisma.systemLog
+  void db.systemLog
     .create({
       data: {
         level: REASON_IS_EXPECTED[reason] ? "INFO" : "WARN",

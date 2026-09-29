@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { evidenceFingerprint } from "@support-automation/shared";
 import type { AnswerPlan } from "./answerPlan.js";
 import type { KnowledgeSnippet } from "./knowledgeContext.js";

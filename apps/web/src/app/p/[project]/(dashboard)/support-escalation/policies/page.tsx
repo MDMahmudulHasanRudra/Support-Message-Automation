@@ -1,3 +1,4 @@
+import { activeProjectId } from "@/server/projectContext";
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 
 import { prisma } from "@/server/db";
@@ -15,11 +16,12 @@ const PRIORITY_DEFAULTS = {
 export default async function SupportEscalationPoliciesPage() {
   const { canManage } = await pageAccess("escalations.view", "escalations.manage");
 
+  const projectId = await activeProjectId();
   const [policies, escalationSettings, teamMembers] = await Promise.all([
     Promise.all(
       (["P1", "P2", "P3"] as const).map((priority) =>
         prisma.supportPriorityPolicy.upsert({
-          where: { priority },
+          where: { projectId_priority: { projectId, priority } },
           update: {},
           create: { priority, ...PRIORITY_DEFAULTS[priority] },
         }),

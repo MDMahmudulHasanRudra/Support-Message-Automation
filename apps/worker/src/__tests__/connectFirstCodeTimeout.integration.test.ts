@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 
 /**
  * An attempt that never produces a code must fail fast, not hold the queue.

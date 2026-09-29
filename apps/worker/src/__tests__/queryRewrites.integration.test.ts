@@ -1,7 +1,8 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { Prisma, prisma } from "@support-automation/db";
+import { Prisma } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { WhatsAppAccount } from "@prisma/client";
 import { getGlobalRateLimitUsage, getPerClientLimitUsage } from "../queue/rateLimiter.js";
 
@@ -231,7 +232,7 @@ describe("rate limits: five COUNTs vs two conditional aggregates", () => {
       countSentOldWay(DAY_MS),
     ]);
 
-    expect(await getGlobalRateLimitUsage(account.id)).toEqual({ perMinute, perHour, perDay });
+    expect(await inIsp(() => getGlobalRateLimitUsage(account.id))).toEqual({ perMinute, perHour, perDay });
     // The fixture has to actually exercise the windows, or this asserts 0 === 0.
     expect(perMinute).toBe(1);
     expect(perHour).toBe(2);
@@ -244,7 +245,7 @@ describe("rate limits: five COUNTs vs two conditional aggregates", () => {
       countSentOldWay(DAY_MS, "8801777777777"),
     ]);
 
-    expect(await getPerClientLimitUsage(account.id, "8801777777777")).toEqual({ perHour, perDay });
-    expect(await getPerClientLimitUsage(account.id, "8801000000000")).toEqual({ perHour: 0, perDay: 0 });
+    expect(await inIsp(() => getPerClientLimitUsage(account.id, "8801777777777"))).toEqual({ perHour, perDay });
+    expect(await inIsp(() => getPerClientLimitUsage(account.id, "8801000000000"))).toEqual({ perHour: 0, perDay: 0 });
   });
 });

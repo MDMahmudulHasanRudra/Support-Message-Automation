@@ -1,5 +1,6 @@
 import { countMetric } from "../health/metrics.js";
-import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { Prisma } from "@prisma/client";
 import { evaluate, type EngineRule } from "@support-automation/engine";
 import type { RuleAction } from "@support-automation/shared";
@@ -21,6 +22,7 @@ import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
 import { recordTeamAttendance } from "../teamManagement/attendance.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { countDroppedMessage } from "./dropCounter.js";
+import { withAccountProject } from "../project/context.js";
 
 interface ActionExecutionRecord {
   type: RuleAction["type"];
@@ -50,6 +52,12 @@ function traceStage(traceId: string, stage: string, details?: Record<string, unk
 
 /** `aiClientOverride` is a test-only seam (mirrors processOneAiAnalysisBatch's clientOverride) — production's sole caller never passes it. */
 export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOverride?: AiClient): Promise<void> {
+  // The project is the receiving account's — the authoritative link (MULTI_PROJECT_PLAN.md §4.2).
+  // Nothing in the message itself can choose it, and an unknown account is refused, not defaulted.
+  return withAccountProject(raw.accountId, () => processIncomingMessageInProject(raw, aiClientOverride));
+}
+
+async function processIncomingMessageInProject(raw: RawIncomingMessage, aiClientOverride?: AiClient): Promise<void> {
   const traceId = `${raw.accountId}:${raw.whatsappMessageId}`;
 
   if (!raw.body || raw.body.trim().length === 0) {
@@ -99,6 +107,15 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
  * `SupportActivity.messageId` is insert-and-catch.
  */
 export async function runAutomationStage(
+  raw: RawIncomingMessage,
+  stored: StoredIncomingMessage,
+  traceId: string,
+  aiClientOverride?: AiClient,
+): Promise<void> {
+  return withAccountProject(raw.accountId, () => runAutomationStageInProject(raw, stored, traceId, aiClientOverride));
+}
+
+async function runAutomationStageInProject(
   raw: RawIncomingMessage,
   stored: StoredIncomingMessage,
   traceId: string,
@@ -537,6 +554,10 @@ async function persistIncomingMessage(
  * only ever CLOSES a case, and a reply that really happened should close one whenever we learn of it.
  */
 export async function storeMissedMessage(raw: RawIncomingMessage): Promise<boolean> {
+  return withAccountProject(raw.accountId, () => storeMissedMessageInProject(raw));
+}
+
+async function storeMissedMessageInProject(raw: RawIncomingMessage): Promise<boolean> {
   if (!raw.body || raw.body.trim().length === 0) return false;
 
   if (raw.direction !== "INCOMING") {
@@ -713,6 +734,10 @@ const RESOLVED_GROUP_SELECT = {
  * Create-and-catch rather than upsert, so the common case (a known, active group) stays one read.
  */
 export async function resolveGroup(raw: RawIncomingMessage) {
+  return withAccountProject(raw.accountId, () => resolveGroupInProject(raw));
+}
+
+async function resolveGroupInProject(raw: RawIncomingMessage) {
   if (!raw.whatsappGroupId) return null;
   const where = {
     accountId_whatsappGroupId: { accountId: raw.accountId, whatsappGroupId: raw.whatsappGroupId },
@@ -914,7 +939,7 @@ async function executeAction(params: {
       // Centralized account resolution — never scattered. See resolveWhatsAppAccount()'s own doc
       // comment for the decision tree; a resolution failure means a clear error, never a silent
       // send through some other connected account.
-      const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP");
+      const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP", prisma);
       if (isResolutionError(resolution)) {
         return { type: "NOTIFY_WHATSAPP", executed: false, reason: resolution.error };
       }

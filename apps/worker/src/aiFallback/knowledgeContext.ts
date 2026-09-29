@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { containsWholeWord, derivePatternSignature, deriveQueryTerms, normalizeText } from "@support-automation/engine";
 import { bandByRelevance, rankByBm25 } from "./bm25.js";
 

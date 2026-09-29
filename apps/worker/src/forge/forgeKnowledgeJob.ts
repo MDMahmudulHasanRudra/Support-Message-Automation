@@ -1,4 +1,5 @@
-import { createKnowledgeItem, prisma } from "@support-automation/db";
+import { createKnowledgeItem } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import {
   ForgeClient,
@@ -239,7 +240,7 @@ async function storeEntries(params: {
       // more harm than the gap it fills. It still gets stored; it just has to be read by a person
       // first, which is what the admin's setting was always promising for the ones worth trusting.
       humanVerified: params.humanVerified && checkKnowledgeEntrySubstance(entry).substantive,
-    });
+    }, prisma);
   }
 
   const withheld = params.humanVerified
@@ -283,7 +284,7 @@ export async function runForgeKnowledgeSync(clientOverride?: AiClient): Promise<
   const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
 
-  const ai = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const ai = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!ai) return { ran: false, skipped: "AI_UNAVAILABLE" };
 
   const forge = new ForgeClient(loadForgeConfigFromEnv());

@@ -19,6 +19,12 @@ vi.mock("../logging/logSystemEvent.js", () => ({
   }),
 }));
 
+// No database: the account's project is taken as given rather than looked up (see project/context.ts).
+vi.mock("../project/context.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../project/context.js")>()),
+  withAccountProject: async <T,>(_accountId: string, fn: () => Promise<T>) => fn(),
+}));
+
 afterEach(() => {
   logged.length = 0;
   vi.useRealTimers();

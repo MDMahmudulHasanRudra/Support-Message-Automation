@@ -33,7 +33,17 @@ const prismaStub = {
     }),
   },
 };
-vi.mock("@support-automation/db", () => ({ prisma: prismaStub }));
+vi.mock("@support-automation/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@support-automation/db")>()),
+  prisma: prismaStub,
+}));
+// The worker's own client (src/db.ts) is what the modules under test read; with no database the
+// project is taken as given rather than looked up from the account row.
+vi.mock("../db.js", () => ({ prisma: prismaStub, platformPrisma: prismaStub }));
+vi.mock("../project/context.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../project/context.js")>()),
+  withAccountProject: async <T,>(_accountId: string, fn: () => Promise<T>) => fn(),
+}));
 
 const recordedStates: string[] = [];
 vi.mock("../provider/openwa/connectionState.js", () => ({

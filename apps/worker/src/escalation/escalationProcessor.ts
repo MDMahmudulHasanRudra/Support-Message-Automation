@@ -18,6 +18,7 @@ export function startEscalationProcessor(intervalMs = 15_000): NodeJS.Timeout {
   return setInterval(() => {
     if (processing) return;
     processing = true;
+    // Self-contained: claims the next due case in any project and works it inside that project.
     processOneCase()
       .catch((err) => {
         console.error("[escalation] unexpected error processing a support escalation case", err);

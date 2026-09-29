@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import {
   getTemplateDefinition,
   renderNotificationTemplate,
@@ -38,7 +38,7 @@ export async function renderNotification(
   let body = definition.defaultBody;
 
   try {
-    const custom = await prisma.notificationTemplate.findUnique({ where: { key } });
+    const custom = await prisma.notificationTemplate.findFirst({ where: { key } });
     if (custom) {
       const verdict = validateTemplateBody(key, custom.body);
       if (verdict.error) {

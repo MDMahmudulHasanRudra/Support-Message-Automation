@@ -1,3 +1,4 @@
+import { forEachProject } from "../project/context.js";
 import { processOneSegmentationBatch } from "./sessionSegmentation.js";
 
 /**
@@ -12,7 +13,8 @@ export function startSessionSegmentationProcessor(intervalMs = 5 * 60_000): Node
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOneSegmentationBatch()
+    // One pass per project, each in its own project context (MULTI_PROJECT_PLAN.md Phase 3).
+    forEachProject("conversation-learning", () => processOneSegmentationBatch())
       .catch((err) => {
         console.error("[conversation-learning] unexpected error in session segmentation batch", err);
       })

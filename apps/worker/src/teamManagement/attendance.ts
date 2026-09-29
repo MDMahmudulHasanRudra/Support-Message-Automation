@@ -1,4 +1,5 @@
-import { prisma } from "@support-automation/db";
+import { currentProjectId } from "../project/context.js";
+import { prisma } from "../db.js";
 import { getDhakaDayRange, normalizePhoneNumber, toDhakaDateOnly } from "@support-automation/shared";
 import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
 
@@ -101,7 +102,10 @@ export async function recordTeamAttendance(input: {
         MIN(m."timestampWa") AS "firstAt",
         MAX(m."timestampWa") AS "lastAt"
       FROM "Message" m
-      WHERE m."senderPhone" = ANY(${identifiers})
+      WHERE m."projectId" = ${currentProjectId()}
+        -- Raw SQL is not scoped by the client, so the project is stated here: the same person can
+        -- be on two projects' rosters, and one project's attendance must never count the other's.
+        AND m."senderPhone" = ANY(${identifiers})
         -- INCOMING only. An executive typing from the business phone produces an OUTGOING row
         -- carrying the ACCOUNT's number, not theirs, so it cannot be attributed to a person at all
         -- — and counting it would credit whoever happens to be on the roster with the AI's replies.

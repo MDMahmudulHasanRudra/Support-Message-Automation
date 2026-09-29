@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import type { AiClient } from "@support-automation/ai-client";
 import { researchForCustomerQuestion } from "../aiFallback/deepAnswer.js";
 

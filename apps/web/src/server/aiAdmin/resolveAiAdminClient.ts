@@ -45,7 +45,7 @@ export async function resolveAiAdminClient(): Promise<AiAdminClientResolution> {
     return unavailable("ENGINE_DISABLED", "The AI Engine master switch is off. Turn it on in AI Settings.");
   }
 
-  const modelConfig = await prisma.aiModelConfig.findUnique({
+  const modelConfig = await prisma.aiModelConfig.findFirst({
     where: { job: "ADMIN_ASSISTANT" },
     include: { provider: true },
   });

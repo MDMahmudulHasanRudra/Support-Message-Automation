@@ -1,6 +1,7 @@
 import { countMetric } from "../health/metrics.js";
 import { trackTick } from "../lifecycle.js";
-import { prisma } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { currentProjectId, projectIdForAccount, withProject } from "../project/context.js";
 import type { OutboundMessage } from "@prisma/client";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { isCooldownActive } from "./cooldown.js";
@@ -50,28 +51,71 @@ const MAX_RATE_LIMIT_DEFERRALS = 20;
 /** Crash recovery: rows left in PROCESSING by a worker that died mid-send go back to PENDING. */
 export async function recoverStuckOutboundMessages(): Promise<number> {
   const cutoff = new Date(Date.now() - STUCK_PROCESSING_TIMEOUT_MS);
-  const result = await prisma.outboundMessage.updateMany({
+  // Install-wide on purpose: releases this worker's own stranded claims, status only.
+  const result = await platformPrisma.outboundMessage.updateMany({
     where: { status: "PROCESSING", updatedAt: { lt: cutoff } },
     data: { status: "PENDING" },
   });
   return result.count;
 }
 
-/** Atomically claims exactly one due PENDING row, or null if none are ready. */
+/**
+ * Atomically claims exactly one due PENDING row, or null if none are ready.
+ *
+ * The queue is shared by every project and drained in one global order — one send per tick, exactly
+ * as before projects existed — so the claim reads across projects (`platformPrisma`). Everything
+ * after it runs inside the claimed row's own project (`withProject(row.projectId)`), which is the
+ * project that created it; `processClaimedMessage` then refuses to send through an account that
+ * belongs to any other project.
+ */
 async function claimNextOutboundMessage() {
-  const candidate = await prisma.outboundMessage.findFirst({
+  const candidate = await platformPrisma.outboundMessage.findFirst({
     where: { status: "PENDING", scheduledAt: { lte: new Date() } },
     orderBy: { scheduledAt: "asc" },
   });
   if (!candidate) return null;
 
-  const claim = await prisma.outboundMessage.updateMany({
+  const claim = await platformPrisma.outboundMessage.updateMany({
     where: { id: candidate.id, status: "PENDING" },
     data: { status: "PROCESSING", lastAttemptAt: new Date() },
   });
   if (claim.count === 0) return null; // lost the race (shouldn't happen with a single worker, but defensive)
 
-  return prisma.outboundMessage.findUniqueOrThrow({ where: { id: candidate.id } });
+  return platformPrisma.outboundMessage.findUniqueOrThrow({ where: { id: candidate.id } });
+}
+
+/**
+ * The outbound safety check (MULTI_PROJECT_PLAN.md Phase 3): the account a row would be sent from
+ * must belong to the project that created the row. A mismatch — only reachable through corrupted or
+ * forged data, since every writer stamps both from one project — is failed, logged and never sent:
+ * sending one project's words from another project's WhatsApp number is the one cross-project leak
+ * a customer would actually see. A missing account fails the same way rather than guessing.
+ */
+async function outboundAccountBelongsToProject(message: OutboundMessage): Promise<boolean> {
+  let accountProjectId: string | null = null;
+  try {
+    accountProjectId = await projectIdForAccount(message.accountId);
+  } catch {
+    accountProjectId = null;
+  }
+  if (accountProjectId === currentProjectId()) return true;
+
+  await prisma.outboundMessage.update({
+    where: { id: message.id },
+    data: {
+      status: "FAILED",
+      failureReason: accountProjectId
+        ? "The sending WhatsApp account belongs to a different project, so the message was not sent."
+        : "The sending WhatsApp account no longer exists, so the message was not sent.",
+    },
+  });
+  await logSystemEvent("ERROR", "queue", "Refused to send a message through an account outside its project", {
+    outboundMessageId: message.id,
+    accountId: message.accountId,
+    messageProjectId: message.projectId,
+    accountProjectId,
+  }).catch(() => undefined);
+  return false;
 }
 
 /**
@@ -152,7 +196,7 @@ async function handleBroadcastPreSendChecks(message: OutboundMessage): Promise<"
 export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
   const message = await claimNextOutboundMessage();
   if (!message) return false;
-  await processClaimedMessage(message, provider);
+  await withProject(message.projectId, () => processClaimedMessage(message, provider));
   return true;
 }
 
@@ -168,22 +212,26 @@ export async function processOneViaRegistry(registry: import("../provider/Provid
   const message = await claimNextOutboundMessage();
   if (!message) return false;
 
-  const provider = registry.get(message.accountId);
-  if (!provider) {
-    // Release back to PENDING rather than fail — no send was attempted, so this must not count
-    // against attemptCount/retry budget.
-    await prisma.outboundMessage.update({
-      where: { id: message.id },
-      data: { status: "PENDING", scheduledAt: new Date(Date.now() + ACCOUNT_NOT_READY_DEFER_MS) },
-    });
-    return true;
-  }
-
-  await processClaimedMessage(message, provider);
+  await withProject(message.projectId, async () => {
+    if (!(await outboundAccountBelongsToProject(message))) return;
+    const provider = registry.get(message.accountId);
+    if (!provider) {
+      // Release back to PENDING rather than fail — no send was attempted, so this must not count
+      // against attemptCount/retry budget.
+      await prisma.outboundMessage.update({
+        where: { id: message.id },
+        data: { status: "PENDING", scheduledAt: new Date(Date.now() + ACCOUNT_NOT_READY_DEFER_MS) },
+      });
+      return;
+    }
+    await processClaimedMessage(message, provider);
+  });
   return true;
 }
 
 async function processClaimedMessage(message: OutboundMessage, provider: WhatsAppProvider): Promise<void> {
+  // Checked again here (cached lookup) so the injected-provider path is covered too.
+  if (!(await outboundAccountBelongsToProject(message))) return;
   const isBroadcast = message.actionType === "GROUP_BROADCAST" && Boolean(message.broadcastJobId);
   // A person typed this in the WhatsApp Chat inbox and pressed send. It rides the same single
   // outbound queue as everything else — there is still exactly one send path — but two of the

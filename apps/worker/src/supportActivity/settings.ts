@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { SupportActivitySettings } from "@prisma/client";
 
 /** Guarantees the singleton settings row exists, defaulting to disabled (opt-in feature). */

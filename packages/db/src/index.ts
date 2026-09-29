@@ -195,6 +195,10 @@ function scopeWhere(model: string, where: unknown, projectId: string): Obj {
     delete base.id;
   }
   assertSameProject(base.projectId, projectId, `${model}.where`);
+  // A compound unique (`projectId_name: { projectId, name }`) names a project too.
+  for (const [key, value] of Object.entries(base)) {
+    if (key.startsWith("projectId_") && isObj(value)) assertSameProject(value.projectId, projectId, `${model}.${key}`);
+  }
   base.projectId = projectId;
   return base;
 }
@@ -480,10 +484,10 @@ export function isResolutionError(result: WhatsAppAccountResolution): result is 
  */
 export async function resolveWhatsAppAccount(
   serviceKey: WhatsAppServiceKey,
-  db: PrismaClient = prisma,
+  db: PrismaClient,
 ): Promise<WhatsAppAccountResolution> {
   const [route, primary] = await Promise.all([
-    db.whatsAppServiceRoute.findUnique({ where: { serviceKey } }),
+    db.whatsAppServiceRoute.findFirst({ where: { serviceKey } }),
     db.whatsAppAccount.findFirst({ where: { isPrimary: true } }),
   ]);
 
@@ -727,7 +731,7 @@ export interface AccountHistoryImpact {
   hasHistory: boolean;
 }
 
-export async function countAccountHistory(accountId: string, db: PrismaClient = prisma): Promise<AccountHistoryImpact> {
+export async function countAccountHistory(accountId: string, db: PrismaClient): Promise<AccountHistoryImpact> {
   const [
     messages,
     groups,
@@ -792,7 +796,7 @@ export async function countAccountHistory(accountId: string, db: PrismaClient = 
  */
 export async function reconcileAttendanceAfterAccountRemoval(
   attendanceDayIds: string[],
-  db: PrismaClient = prisma,
+  db: PrismaClient,
 ): Promise<number> {
   const ids = [...new Set(attendanceDayIds)].filter(Boolean);
   if (!ids.length) return 0;
@@ -850,7 +854,7 @@ export type CreateRuleProposalResult = { id: string } | { error: string };
  */
 export async function createRuleProposalFromCandidate(
   candidateId: string,
-  db: PrismaClient = prisma,
+  db: PrismaClient,
 ): Promise<CreateRuleProposalResult> {
   const candidate = await db.patternCandidate.findUnique({
     where: { id: candidateId },
@@ -909,7 +913,7 @@ export async function createRuleProposalFromAiReply(params: {
   intent: string | null;
   sourceMessageId: string;
   groupName: string | null;
-}): Promise<DraftRuleFromAiReplyResult> {
+}, db: PrismaClient): Promise<DraftRuleFromAiReplyResult> {
   const signature = derivePatternSignature(params.customerMessage);
   if (signature.keywords.length < MIN_SIGNATURE_KEYWORDS_FOR_DRAFT) {
     return { created: false, reason: "TOO_GENERIC" };
@@ -918,7 +922,7 @@ export async function createRuleProposalFromAiReply(params: {
   const label = params.intent?.trim() || signature.keywords.slice(0, 4).join(", ");
 
   try {
-    const proposal = await prisma.ruleProposal.create({
+    const proposal = await db.ruleProposal.create({
       data: {
         source: "AI_REPLY",
         sourceSignature: signature.patternKey,
@@ -960,7 +964,7 @@ export async function approveRuleProposalById(params: {
   proposalId: string;
   reviewedById: string | null;
   autoApproved: boolean;
-}, db: PrismaClient = prisma): Promise<ApproveRuleProposalResult> {
+}, db: PrismaClient): Promise<ApproveRuleProposalResult> {
   const proposal = await db.ruleProposal.findUnique({ where: { id: params.proposalId } });
   if (!proposal) return { error: "Rule proposal not found." };
   if (proposal.status !== "PENDING_REVIEW") {
@@ -1061,9 +1065,10 @@ export type CreateAiFallbackDecisionResult = { id: string } | { error: string };
  */
 export async function createAiFallbackDecision(
   input: CreateAiFallbackDecisionInput,
+  db: PrismaClient,
 ): Promise<CreateAiFallbackDecisionResult> {
   try {
-    const created = await prisma.aiFallbackDecision.create({
+    const created = await db.aiFallbackDecision.create({
       data: {
         messageId: input.messageId,
         accountId: input.accountId,
@@ -1160,7 +1165,7 @@ export function deriveKnowledgeScope(input: {
 
 export async function createKnowledgeItem(
   input: CreateKnowledgeItemInput,
-  db: PrismaClient = prisma,
+  db: PrismaClient,
 ): Promise<{ id: string }> {
   const scope = deriveKnowledgeScope(input);
   const contentHash = knowledgeContentHash({
@@ -1227,7 +1232,7 @@ export async function createKnowledgeItem(
  * destroy a distinct procedure and silently widen its scope. Similarity is a reason for a person
  * to look, not an instruction to the database.
  */
-export async function findKnowledgeDuplicates(contentHash: string, excludeId?: string, db: PrismaClient = prisma) {
+export async function findKnowledgeDuplicates(contentHash: string, db: PrismaClient, excludeId?: string) {
   return db.aiKnowledgeItem.findMany({
     where: { contentHash, ...(excludeId ? { id: { not: excludeId } } : {}) },
     select: { id: true, title: true, scope: true, sourceGroupId: true, humanVerified: true, createdAt: true },

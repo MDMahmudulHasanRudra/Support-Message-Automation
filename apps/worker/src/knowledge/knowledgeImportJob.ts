@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { parseKnowledgeRecords, type ExtractedKnowledge } from "./groupKnowledgePrompt.js";
@@ -67,7 +67,7 @@ export async function processOneKnowledgeImport(clientOverride?: AiClient): Prom
   const job = await claimNextImport();
   if (!job) return { ran: false, skipped: "NOTHING_QUEUED" };
 
-  const client = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const client = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!client) {
     await failImport(job.id, "No AI provider is configured for the LEARNING job. Assign one on AI Models, then retry.");
     return { ran: false, importId: job.id, skipped: "NO_AI_CLIENT" };

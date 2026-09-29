@@ -1,3 +1,5 @@
+import { forEachProject } from "./project/context.js";
+
 /**
  * Boot-time catch-up for the slow background loops.
  *
@@ -35,6 +37,29 @@ export interface StartupCatchUpOptions {
   run: () => Promise<unknown>;
   /** How long after boot to check. Stagger this across callers. */
   delayMs?: number;
+}
+
+/**
+ * The same catch-up, decided separately for every project (MULTI_PROJECT_PLAN.md Phase 3):
+ * `lastRunAt` and `run` both execute inside that project's context, so one project being overdue
+ * never re-runs — and re-bills — another that is not.
+ */
+export function scheduleStartupCatchUpPerProject(options: StartupCatchUpOptions): NodeJS.Timeout {
+  const timer = setTimeout(() => {
+    void forEachProject(`scheduler:${options.name}`, async (projectId) => {
+      const lastRunAt = await options.lastRunAt();
+      const overdueBy = lastRunAt ? Date.now() - lastRunAt.getTime() : null;
+      if (overdueBy !== null && overdueBy < options.intervalMs) return;
+      console.log(
+        `[scheduler] ${options.name} is overdue in project ${projectId} (` +
+          (lastRunAt ? `last completed ${Math.round((overdueBy ?? 0) / 60_000)} minutes ago` : "never completed") +
+          `) — running it now rather than waiting for the next tick`,
+      );
+      await options.run();
+    });
+  }, options.delayMs ?? DEFAULT_DELAY_MS);
+  timer.unref?.();
+  return timer;
 }
 
 const DEFAULT_DELAY_MS = 60_000;

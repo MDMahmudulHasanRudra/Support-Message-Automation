@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 
 /**
  * The few messages before this one, so a follow-up question can be understood as a follow-up.

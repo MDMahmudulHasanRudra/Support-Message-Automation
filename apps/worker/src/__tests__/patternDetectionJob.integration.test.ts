@@ -1,7 +1,8 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma, createAiFallbackDecision } from "@support-automation/db";
+import { createAiFallbackDecision } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AiSettings, LearningSettings, Message, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processOnePatternDetectionBatch } from "../learning/patternDetectionJob.js";
 import { getLearningSettings } from "../learning/sessionSegmentation.js";
@@ -88,7 +89,7 @@ beforeAll(async () => {
   account =
     (await prisma.whatsAppAccount.findFirst()) ??
     (await prisma.whatsAppAccount.create({ data: { label: "Test Account (isolated DB fallback)", status: "CONNECTED" } }));
-  originalLearningSettings = await getLearningSettings();
+  originalLearningSettings = await inIsp(() => getLearningSettings());
   const aiSettings: AiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   originalHumanReviewThreshold = aiSettings.humanReviewThreshold;
 });
@@ -122,7 +123,7 @@ describe("pattern detection — feature disabled (default)", () => {
       messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: "internet is slow today", timestampWa: new Date() }],
     });
 
-    const didWork = await processOnePatternDetectionBatch();
+    const didWork = await inIsp(() => processOnePatternDetectionBatch());
     expect(didWork).toBe(false);
   });
 });
@@ -141,7 +142,7 @@ describe("pattern detection — feature enabled", () => {
       messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: "internet connection speed problem", timestampWa: new Date() }],
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({
       where: { suggestedKeywords: { hasSome: ["internet", "connection"] } },
@@ -179,7 +180,7 @@ describe("pattern detection — feature enabled", () => {
       ],
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({
       where: { suggestedKeywords: { hasSome: ["internet", "connection"] } },
@@ -199,7 +200,7 @@ describe("pattern detection — feature enabled", () => {
       messages: [{ senderPhone: "+8809999999999", isFromTeamMember: true, body: "staff-only coordination message", timestampWa: new Date() }],
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidates = await prisma.patternCandidate.findMany({
       where: { suggestedKeywords: { hasSome: ["staff", "coordination"] } },
@@ -215,7 +216,7 @@ describe("pattern detection — feature enabled", () => {
       messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: "payment failed retry", timestampWa: new Date() }],
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const job = await prisma.learningBatchJob.findFirstOrThrow({
       where: { jobType: "PATTERN_DETECTION" },
@@ -239,7 +240,7 @@ describe("Hybrid AI Automation (Slice 2) — responseSource wiring", () => {
       ],
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { hasSome: ["payment", "balance"] } } });
     const evidence = await prisma.patternCandidateEvidence.findFirstOrThrow({ where: { patternCandidateId: candidate.id } });
@@ -262,10 +263,10 @@ describe("Hybrid AI Automation (Slice 2) — responseSource wiring", () => {
       accountId: account.id,
       outcome: "AI_REPLIED",
       responseText: "Your connection is being checked by our support team now.",
-    });
+    }, prisma);
     expect("id" in decisionResult).toBe(true);
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { hasSome: ["slow", "khub"] } } });
     const evidence = await prisma.patternCandidateEvidence.findFirstOrThrow({ where: { patternCandidateId: candidate.id } });
@@ -282,7 +283,7 @@ describe("Hybrid AI Automation (Slice 2) — responseSource wiring", () => {
       messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: "still waiting for a reply here", timestampWa: new Date() }],
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { hasSome: ["waiting", "reply"] } } });
     const evidence = await prisma.patternCandidateEvidence.findFirstOrThrow({ where: { patternCandidateId: candidate.id } });
@@ -316,7 +317,7 @@ describe("Hybrid AI Automation (Slice 2) — responseSource wiring", () => {
       },
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { hasSome: ["existing", "handles"] } } });
     const evidence = await prisma.patternCandidateEvidence.findFirstOrThrow({ where: { patternCandidateId: candidate.id } });

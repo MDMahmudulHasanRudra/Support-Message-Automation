@@ -1,4 +1,6 @@
-import { prisma, encryptSecret } from "@support-automation/db";
+import { encryptSecret, ORIGINAL_PROJECT_ID } from "@support-automation/db";
+import { withProject } from "../project/context.js";
+import { prisma } from "../db.js";
 import { AI_PROVIDER_PROFILES } from "@support-automation/shared";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 
@@ -27,6 +29,13 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 const JOBS_TO_FILL = ["LEARNING", "RESPONSE"] as const;
 
 export async function provisionAiProviderFromEnv(): Promise<void> {
+  // The environment is this install's, which predates projects: what it configures belongs to ISP
+  // Digital, the project every pre-multi-project row was migrated into. No other project is ever
+  // given a provider it did not configure itself (MULTI_PROJECT_PLAN.md Phase 3).
+  return withProject(ORIGINAL_PROJECT_ID, provisionInOriginalProject);
+}
+
+async function provisionInOriginalProject(): Promise<void> {
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   const modelId = process.env.OPENROUTER_MODEL?.trim();
   if (!apiKey || !modelId) return;
@@ -75,13 +84,13 @@ async function ensureModelConfigs(providerId: string, modelId: string): Promise<
   const kindNames = new Set(Object.keys(AI_PROVIDER_PROFILES));
 
   for (const job of JOBS_TO_FILL) {
-    const claimed = await prisma.aiModelConfig.findUnique({ where: { job } });
+    const claimed = await prisma.aiModelConfig.findFirst({ where: { job } });
     if (!claimed) {
       await prisma.aiModelConfig.create({ data: { job, providerId, modelId } });
       continue;
     }
     if (kindNames.has(claimed.modelId.trim().toUpperCase())) {
-      await prisma.aiModelConfig.update({ where: { job }, data: { modelId } });
+      await prisma.aiModelConfig.update({ where: { id: claimed.id }, data: { modelId } });
       console.warn(
         `[bootstrap] repaired ${job}: "${claimed.modelId}" is a provider kind, not a model id — set to "${modelId}"`,
       );

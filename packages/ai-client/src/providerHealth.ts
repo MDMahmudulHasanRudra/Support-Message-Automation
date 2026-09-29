@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import type { PrismaClient } from "@support-automation/db";
 import type { AiCallOutcome } from "./types.js";
 
 /**
@@ -30,19 +30,19 @@ const lastWrite = new Map<string, { at: number; ok: boolean }>();
  * Fire-and-forget by design: this describes a call that has already happened, and must never
  * change that call's own outcome or add latency to a message's pipeline pass.
  */
-export function reportProviderCallOutcome(providerId: string, outcome: AiCallOutcome): void {
-  void persist(providerId, outcome).catch((err) => {
+export function reportProviderCallOutcome(db: PrismaClient, providerId: string, outcome: AiCallOutcome): void {
+  void persist(db, providerId, outcome).catch((err) => {
     console.error("[ai-client] failed to record provider health", err);
   });
 }
 
-async function persist(providerId: string, outcome: AiCallOutcome): Promise<void> {
+async function persist(db: PrismaClient, providerId: string, outcome: AiCallOutcome): Promise<void> {
   if (outcome.ok) {
     const previous = lastWrite.get(providerId);
     const stale = !previous || !previous.ok || Date.now() - previous.at > SUCCESS_REFRESH_MS;
     if (!stale) return;
     lastWrite.set(providerId, { at: Date.now(), ok: true });
-    await prisma.aiProvider.update({
+    await db.aiProvider.update({
       where: { id: providerId },
       data: { lastTestedAt: new Date(), lastTestOk: true, lastTestError: null },
     });
@@ -50,26 +50,27 @@ async function persist(providerId: string, outcome: AiCallOutcome): Promise<void
   }
 
   if (outcome.transient) {
-    await logProviderEvent("WARN", providerId, `AI call failed temporarily: ${outcome.message}`, { transient: true });
+    await logProviderEvent(db, "WARN", providerId, `AI call failed temporarily: ${outcome.message}`, { transient: true });
     return;
   }
 
   lastWrite.set(providerId, { at: Date.now(), ok: false });
-  await prisma.aiProvider.update({
+  await db.aiProvider.update({
     where: { id: providerId },
     data: { lastTestedAt: new Date(), lastTestOk: false, lastTestError: outcome.message },
   });
-  await logProviderEvent("WARN", providerId, `AI call failed: ${outcome.message}`, { transient: false });
+  await logProviderEvent(db, "WARN", providerId, `AI call failed: ${outcome.message}`, { transient: false });
 }
 
 async function logProviderEvent(
+  db: PrismaClient,
   level: "WARN",
   providerId: string,
   message: string,
   extra: Record<string, unknown>,
 ): Promise<void> {
   try {
-    await prisma.systemLog.create({
+    await db.systemLog.create({
       data: {
         level,
         scope: PROVIDER_HEALTH_LOG_SCOPE,

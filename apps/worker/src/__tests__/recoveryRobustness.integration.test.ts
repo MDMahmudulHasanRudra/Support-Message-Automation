@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import { recoverStuckCommands } from "../commands/commandProcessor.js";
 import { withTimeout } from "../util/withTimeout.js";
 

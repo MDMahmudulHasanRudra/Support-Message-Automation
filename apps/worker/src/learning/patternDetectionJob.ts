@@ -1,10 +1,6 @@
-import {
-  approveRuleProposalById,
-  createRuleProposalFromCandidate,
-  isResolutionError,
-  prisma,
-  resolveWhatsAppAccount,
-} from "@support-automation/db";
+import { currentProjectId } from "../project/context.js";
+import { approveRuleProposalById, createRuleProposalFromCandidate, isResolutionError, resolveWhatsAppAccount } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { EvidenceResponseSource, LearningSettings, PatternCandidateStatus } from "@prisma/client";
 import { derivePatternSignature, meetsCandidateFloor, scorePatternCandidate } from "@support-automation/engine";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -156,7 +152,7 @@ async function linkClosedSessionsToCandidates(): Promise<{ sessionsLinked: numbe
           : "UNRESOLVED";
 
     const candidate = await prisma.patternCandidate.upsert({
-      where: { patternKey },
+      where: { projectId_patternKey: { projectId: currentProjectId(), patternKey } },
       update: {},
       create: {
         patternKey,
@@ -305,13 +301,13 @@ export async function rescoreCandidate(
   // safety gate — auto-approval only ever skips the human's click, never the validation, and never
   // the separate manual activation step on the Rules page.
   if (status === "PENDING_REVIEW" && settings.autoApprovalEnabled && scores.confidenceScore >= settings.autoApprovalMinConfidence) {
-    const proposalResult = await createRuleProposalFromCandidate(candidateId);
+    const proposalResult = await createRuleProposalFromCandidate(candidateId, prisma);
     if ("id" in proposalResult) {
       const approveResult = await approveRuleProposalById({
         proposalId: proposalResult.id,
         reviewedById: null,
         autoApproved: true,
-      });
+      }, prisma);
       if (!("error" in approveResult)) {
         status = "APPROVED";
       }
@@ -390,7 +386,7 @@ async function sendUnknownPatternAlert(
   const automationSettings = await getAutomationSettings();
   if (automationSettings.whatsappNotificationGroupIds.length === 0) return false;
 
-  const resolution = await resolveWhatsAppAccount("CONVERSATION_LEARNING");
+  const resolution = await resolveWhatsAppAccount("CONVERSATION_LEARNING", prisma);
   if (isResolutionError(resolution)) {
     await logSystemEvent("WARN", "conversation-learning", "Unknown Pattern alert skipped — no WhatsApp account available", {
       patternCandidateId: candidate.id,

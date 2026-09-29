@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { ISP_DIGITAL, prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { WhatsAppAccount } from "@prisma/client";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
 import { getDirectRecipients, getEventDelivery, resolveWhatsAppDestinations } from "../notifications/eventSettings.js";
@@ -43,20 +43,20 @@ async function configure(
 ) {
   touchedEvents.push(event);
   await prisma.notificationEventSetting.upsert({
-    where: { event },
+    where: { projectId_event: { projectId: ISP_DIGITAL, event } },
     update: data,
     create: { event, ...data },
   });
 }
 
 const raise = (event: "UNKNOWN_PATTERN" | "SUPPORT_ESCALATION" | "AI_HUMAN_FALLBACK", type: "WHATSAPP" | "TEAMS" = "WHATSAPP") =>
-  enqueueNotification({
+  inIsp(() => enqueueNotification({
     type,
     event,
     destination: type === "WHATSAPP" ? "123@g.us" : "https://example.invalid/hook",
     accountId: type === "WHATSAPP" ? account.id : null,
     payload: { body: "test" },
-  });
+  }));
 
 describe("an event with no settings row behaves exactly as before the Notification Center", () => {
   it("is delivered", async () => {
@@ -67,7 +67,7 @@ describe("an event with no settings row behaves exactly as before the Notificati
   });
 
   it("falls back to the global destinations", async () => {
-    const delivery = await getEventDelivery("UNKNOWN_PATTERN");
+    const delivery = await inIsp(() => getEventDelivery("UNKNOWN_PATTERN"));
     expect(resolveWhatsAppDestinations(delivery, ["global-a@g.us", "global-b@g.us"])).toEqual([
       "global-a@g.us",
       "global-b@g.us",
@@ -121,7 +121,7 @@ describe("per-channel switches", () => {
 describe("per-event routing", () => {
   it("uses the event's own groups when it has them", async () => {
     await configure("SUPPORT_ESCALATION", { whatsappGroupIds: ["escalations@g.us"] });
-    const delivery = await getEventDelivery("SUPPORT_ESCALATION");
+    const delivery = await inIsp(() => getEventDelivery("SUPPORT_ESCALATION"));
 
     expect(resolveWhatsAppDestinations(delivery, ["global@g.us"])).toEqual(["escalations@g.us"]);
   });
@@ -130,7 +130,7 @@ describe("per-event routing", () => {
     // Those are different intentions and only the first should inherit. Reading an empty array as
     // "deliver to no one" would silently break every event an admin merely opened and saved.
     await configure("SUPPORT_ESCALATION", { whatsappGroupIds: [] });
-    const delivery = await getEventDelivery("SUPPORT_ESCALATION");
+    const delivery = await inIsp(() => getEventDelivery("SUPPORT_ESCALATION"));
 
     expect(delivery.whatsappGroupIds).toBeNull();
     expect(resolveWhatsAppDestinations(delivery, ["global@g.us"])).toEqual(["global@g.us"]);
@@ -172,7 +172,7 @@ describe("direct alerts to individual team members", () => {
 
   it("includes a member who opted in and has a real number", async () => {
     const member = await optIn("+8801700000501", null);
-    const recipients = await getDirectRecipients("SUPPORT_ESCALATION");
+    const recipients = await inIsp(() => getDirectRecipients("SUPPORT_ESCALATION"));
 
     expect(recipients.map((r) => r.teamMemberId)).toContain(member.id);
     expect(recipients.find((r) => r.teamMemberId === member.id)?.chatId).toBe("8801700000501@c.us");
@@ -182,14 +182,14 @@ describe("direct alerts to individual team members", () => {
     // Recognised in groups, unreachable by DM. Skipped silently here and surfaced on Team Members
     // instead, so an escalation is not accompanied by a delivery failure on every single alert.
     const member = await optIn("161679983804516", "161679983804516");
-    const recipients = await getDirectRecipients("SUPPORT_ESCALATION");
+    const recipients = await inIsp(() => getDirectRecipients("SUPPORT_ESCALATION"));
 
     expect(recipients.map((r) => r.teamMemberId)).not.toContain(member.id);
   });
 
   it("does not include a member who opted into a different event", async () => {
     const member = await optIn("+8801700000502", null);
-    const recipients = await getDirectRecipients("UNKNOWN_PATTERN");
+    const recipients = await inIsp(() => getDirectRecipients("UNKNOWN_PATTERN"));
 
     expect(recipients.map((r) => r.teamMemberId)).not.toContain(member.id);
   });
@@ -198,7 +198,7 @@ describe("direct alerts to individual team members", () => {
     const member = await optIn("+8801700000503", null);
     await prisma.internalTeamMember.update({ where: { id: member.id }, data: { status: "INACTIVE" } });
 
-    const recipients = await getDirectRecipients("SUPPORT_ESCALATION");
+    const recipients = await inIsp(() => getDirectRecipients("SUPPORT_ESCALATION"));
     expect(recipients.map((r) => r.teamMemberId)).not.toContain(member.id);
   });
 
@@ -216,13 +216,13 @@ describe("direct alerts to individual team members", () => {
 
   it("does not send twice when the destination is already that person's chat", async () => {
     await optIn("+8801700000505", null);
-    await enqueueNotification({
+    await inIsp(() => enqueueNotification({
       type: "WHATSAPP",
       event: "SUPPORT_ESCALATION",
       destination: "8801700000505@c.us",
       accountId: account.id,
       payload: { body: "test" },
-    });
+    }));
 
     const rows = await prisma.notification.findMany({
       where: { event: "SUPPORT_ESCALATION", destination: "8801700000505@c.us" },

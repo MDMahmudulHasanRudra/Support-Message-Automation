@@ -1,3 +1,4 @@
+import { forEachProject } from "../project/context.js";
 import { processOneGroupKnowledgeBuild } from "./groupKnowledgeJob.js";
 
 /**
@@ -18,7 +19,8 @@ export function startGroupKnowledgeProcessor(intervalMs = 60 * 60_000): NodeJS.T
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOneGroupKnowledgeBuild()
+    // One pass per project, each in its own project context (MULTI_PROJECT_PLAN.md Phase 3).
+    forEachProject("knowledge-builder", () => processOneGroupKnowledgeBuild())
       .catch((err) => {
         console.error("[knowledge-builder] unexpected error building group knowledge", err);
       })

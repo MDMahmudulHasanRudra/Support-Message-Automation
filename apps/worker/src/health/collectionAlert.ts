@@ -1,3 +1,4 @@
+import { prisma } from "../db.js";
 import { resolveWhatsAppAccount } from "@support-automation/db";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
@@ -143,7 +144,7 @@ async function pickSendingAccount(registry: ProviderRegistry, brokenAccountId: s
   const isPreferred = (accountId: string): boolean => accountId !== brokenAccountId && isConnected(accountId);
 
   try {
-    const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP");
+    const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP", prisma);
     if (!("error" in resolution) && isPreferred(resolution.accountId)) return resolution.accountId;
   } catch {
     // Fall through to the registry scan — an unreadable routing table must not cost the alert.

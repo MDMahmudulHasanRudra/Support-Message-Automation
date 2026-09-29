@@ -1,6 +1,7 @@
 import { countMetric } from "../health/metrics.js";
 import { AUTOMATION_WINDOW_MS } from "./catchUpMissedMessages.js";
-import { prisma } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { withProject } from "../project/context.js";
 import { loadStoredMessageContext, runAutomationStage } from "./processIncomingMessage.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { trackTick } from "../lifecycle.js";
@@ -60,7 +61,9 @@ export async function recoverStrandedMessages(batchSize = BATCH_SIZE): Promise<M
   const now = Date.now();
   const result: MessageRecoveryResult = { found: 0, recovered: 0, failed: 0, settledWithoutAutomation: 0 };
 
-  const stranded = await prisma.message.findMany({
+  // Across every project (this worker's own stranded work); each row is then finished inside its
+  // own project, and runAutomationStage re-derives that project from the receiving account.
+  const stranded = await platformPrisma.message.findMany({
     where: {
       direction: "INCOMING",
       processingStatus: "PENDING",
@@ -68,44 +71,46 @@ export async function recoverStrandedMessages(batchSize = BATCH_SIZE): Promise<M
     },
     orderBy: { timestampWa: "asc" },
     take: batchSize,
-    select: { id: true, timestampWa: true },
+    select: { id: true, timestampWa: true, projectId: true },
   });
 
   result.found = stranded.length;
   if (stranded.length === 0) return result;
 
-  for (const { id, timestampWa } of stranded) {
+  for (const { id, timestampWa, projectId } of stranded) {
     try {
-      /**
-       * Old enough that answering it now would be worse than not answering.
-       *
-       * This sweep used to run the FULL pipeline — rules, AI reply and all — on anything up to
-       * TOO_OLD_MS (six hours), while claiming in its own comment to share "the same reasoning as
-       * the catch-up sweep's automation window, and the same conclusion". It did not: that window
-       * is fifteen minutes. So a worker that died at 09:00 and came back at 13:30 had the AI
-       * answer the morning's questions at lunchtime, which is the precise behaviour the catch-up
-       * sweep refuses and which this product's anti-spam philosophy rules out.
-       *
-       * The row is still settled rather than left PENDING forever — it is stored, it shows in the
-       * inbox, it counts in reporting, and it will surface as awaiting a reply if nobody answered
-       * it. What it does not get is an automated answer to a question that has moved on.
-       *
-       * The two sweeps now read one exported constant, so they cannot drift apart again.
-       */
-      if (timestampWa.getTime() < now - AUTOMATION_WINDOW_MS) {
-        await prisma.message.update({
-          where: { id },
-          data: { processingStatus: "IGNORED" },
-        });
-        result.settledWithoutAutomation += 1;
-        continue;
-      }
+      await withProject(projectId, async () => {
+        /**
+         * Old enough that answering it now would be worse than not answering.
+         *
+         * This sweep used to run the FULL pipeline — rules, AI reply and all — on anything up to
+         * TOO_OLD_MS (six hours), while claiming in its own comment to share "the same reasoning as
+         * the catch-up sweep's automation window, and the same conclusion". It did not: that window
+         * is fifteen minutes. So a worker that died at 09:00 and came back at 13:30 had the AI
+         * answer the morning's questions at lunchtime, which is the precise behaviour the catch-up
+         * sweep refuses and which this product's anti-spam philosophy rules out.
+         *
+         * The row is still settled rather than left PENDING forever — it is stored, it shows in the
+         * inbox, it counts in reporting, and it will surface as awaiting a reply if nobody answered
+         * it. What it does not get is an automated answer to a question that has moved on.
+         *
+         * The two sweeps now read one exported constant, so they cannot drift apart again.
+         */
+        if (timestampWa.getTime() < now - AUTOMATION_WINDOW_MS) {
+          await prisma.message.update({
+            where: { id },
+            data: { processingStatus: "IGNORED" },
+          });
+          result.settledWithoutAutomation += 1;
+          return;
+        }
 
-      const context = await loadStoredMessageContext(id);
-      if (!context) continue; // deleted between the query and now
-      await runAutomationStage(context.raw, context.stored, `recovery:${id}`);
-      result.recovered += 1;
-      countMetric("retried");
+        const context = await loadStoredMessageContext(id);
+        if (!context) return; // deleted between the query and now
+        await runAutomationStage(context.raw, context.stored, `recovery:${id}`);
+        result.recovered += 1;
+        countMetric("retried");
+      });
     } catch (err) {
       // runAutomationStage already marked the row FAILED and logged the detail. FAILED is not
       // picked up again, so a message that cannot be processed is retried exactly once and then
@@ -116,6 +121,7 @@ export async function recoverStrandedMessages(batchSize = BATCH_SIZE): Promise<M
   }
 
   console.warn(`[message-recovery] ${JSON.stringify(result)}`);
+  // A platform-level entry: one sweep can span several projects.
   await logSystemEvent(
     result.failed > 0 ? "ERROR" : "WARN",
     "pipeline",

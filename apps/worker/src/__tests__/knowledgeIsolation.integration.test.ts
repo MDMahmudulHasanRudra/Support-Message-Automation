@@ -1,7 +1,8 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createKnowledgeItem, deriveKnowledgeScope, prisma } from "@support-automation/db";
+import { createKnowledgeItem, deriveKnowledgeScope } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { findRelevantKnowledge } from "../aiFallback/knowledgeContext.js";
 
@@ -46,7 +47,7 @@ async function knowledge(over: {
     scopeAccountId: over.scopeAccountId ?? null,
     aiGenerated: false,
     humanVerified: over.humanVerified ?? true,
-  });
+  }, prisma);
   createdItemIds.push(item.id);
   return item;
 }
@@ -78,7 +79,7 @@ describe("GROUP knowledge never leaves its group", () => {
   it("is retrievable in the group it came from", async () => {
     await knowledge({ title: `${MARKER} in Group A`, sourceGroupId: groupA.id });
 
-    const found = await findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id, accountId: account.id });
+    const found = await inIsp(() => findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id, accountId: account.id }));
     expect(titles(found)).toEqual([`${MARKER} in Group A`]);
   });
 
@@ -86,7 +87,7 @@ describe("GROUP knowledge never leaves its group", () => {
     // The assertion this whole change exists for.
     await knowledge({ title: `${MARKER} in Group A`, sourceGroupId: groupA.id });
 
-    const found = await findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupB.id, accountId: account.id });
+    const found = await inIsp(() => findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupB.id, accountId: account.id }));
     expect(found).toEqual([]);
   });
 
@@ -95,7 +96,7 @@ describe("GROUP knowledge never leaves its group", () => {
     // would make a scope filter that holds in production and leaks in a test harness.
     await knowledge({ title: `${MARKER} in Group A`, sourceGroupId: groupA.id });
 
-    expect(await findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: null })).toEqual([]);
+    expect(await inIsp(() => findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: null }))).toEqual([]);
   });
 });
 
@@ -106,7 +107,7 @@ describe("GLOBAL knowledge reaches every group", () => {
     await knowledge({ title: `${MARKER} everywhere`, sourceGroupId: null });
 
     for (const scope of [{ groupId: groupA.id }, { groupId: groupB.id }, { groupId: null }]) {
-      const found = await findRelevantKnowledge(`tell me about ${MARKER}`, scope);
+      const found = await inIsp(() => findRelevantKnowledge(`tell me about ${MARKER}`, scope));
       expect(titles(found), JSON.stringify(scope)).toEqual([`${MARKER} everywhere`]);
     }
   });
@@ -116,7 +117,7 @@ describe("GLOBAL knowledge reaches every group", () => {
     await knowledge({ title: `${MARKER} for A`, sourceGroupId: groupA.id });
     await knowledge({ title: `${MARKER} for B`, sourceGroupId: groupB.id });
 
-    expect(titles(await findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id }, 10))).toEqual([
+    expect(titles(await inIsp(() => findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id }, 10)))).toEqual([
       `${MARKER} everywhere`,
       `${MARKER} for A`,
     ]);
@@ -132,11 +133,11 @@ describe("ACCOUNT knowledge is narrowed to its account", () => {
     });
 
     expect(
-      titles(await findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id, accountId: account.id })),
+      titles(await inIsp(() => findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id, accountId: account.id }))),
     ).toEqual([`${MARKER} for this account`]);
 
     expect(
-      await findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id, accountId: otherAccount.id }),
+      await inIsp(() => findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id, accountId: otherAccount.id })),
     ).toEqual([]);
   });
 });
@@ -149,7 +150,7 @@ describe("the unverified gate still comes first", () => {
     await knowledge({ title: `${MARKER} unverified`, sourceGroupId: groupA.id, humanVerified: false });
     await knowledge({ title: `${MARKER} unverified global`, sourceGroupId: null, humanVerified: false });
 
-    expect(await findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id })).toEqual([]);
+    expect(await inIsp(() => findRelevantKnowledge(`tell me about ${MARKER}`, { groupId: groupA.id }))).toEqual([]);
   });
 });
 

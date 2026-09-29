@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import type { LearningBatchJobTrigger } from "@prisma/client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -32,11 +32,11 @@ export async function processOneAiAnalysisBatch(
   const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled || !aiSettings.learningEnabled) return false;
 
-  const client = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const client = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!client) return false;
 
   const settings = await getLearningSettings();
-  const modelConfig = await prisma.aiModelConfig.findUnique({ where: { job: "LEARNING" } });
+  const modelConfig = await prisma.aiModelConfig.findFirst({ where: { job: "LEARNING" } });
   const humanReviewThreshold = aiSettings.humanReviewThreshold;
 
   const candidates = await prisma.patternCandidate.findMany({

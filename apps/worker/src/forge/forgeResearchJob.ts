@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { derivePatternSignature } from "@support-automation/engine";
 import {
@@ -125,7 +125,7 @@ export async function processOneResearchTask(clientOverride?: AiClient): Promise
   const task = await claimNextTask();
   if (!task) return { ran: false, skipped: "QUEUE_EMPTY" };
 
-  const ai = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const ai = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!ai) {
     await releaseForRetry(task.id, task.attemptCount, "The AI provider was unavailable.");
     return { ran: true, taskId: task.id, skipped: "AI_UNAVAILABLE" };

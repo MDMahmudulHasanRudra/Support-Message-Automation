@@ -1,3 +1,4 @@
+import { prisma } from "../db.js";
 import { createKnowledgeItem } from "@support-automation/db";
 import type { AiClient } from "@support-automation/ai-client";
 import {
@@ -138,7 +139,7 @@ export async function researchForCustomerQuestion(params: {
         confidence: entry.confidence,
         aiGenerated: true,
         humanVerified: true,
-      });
+      }, prisma);
 
       snippets.push({
         id: stored.id,

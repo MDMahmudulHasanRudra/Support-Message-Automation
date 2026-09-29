@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { buildWhatsAppContactId, hasReachablePhoneNumber, normalizePhoneNumber } from "@support-automation/shared";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";

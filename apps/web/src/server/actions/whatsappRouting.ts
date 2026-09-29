@@ -1,5 +1,6 @@
 "use server";
 
+import { activeProjectId } from "@/server/projectContext";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
@@ -32,7 +33,7 @@ export async function updateServiceRoute(
   const fallbackPolicy = formData.get("fallbackPolicy") as WhatsAppFallbackPolicy;
 
   const [previous, account] = await Promise.all([
-    prisma.whatsAppServiceRoute.findUnique({ where: { serviceKey } }),
+    prisma.whatsAppServiceRoute.findFirst({ where: { serviceKey } }),
     accountId ? prisma.whatsAppAccount.findUnique({ where: { id: accountId } }) : Promise.resolve(null),
   ]);
   if (accountId && !account) {
@@ -40,7 +41,7 @@ export async function updateServiceRoute(
   }
 
   await prisma.whatsAppServiceRoute.upsert({
-    where: { serviceKey },
+    where: { projectId_serviceKey: { projectId: await activeProjectId(), serviceKey } },
     update: { accountId, fallbackPolicy, enabled: true },
     create: { serviceKey, accountId, fallbackPolicy, enabled: true },
   });

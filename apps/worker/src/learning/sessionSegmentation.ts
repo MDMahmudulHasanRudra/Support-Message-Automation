@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { ConversationSession, LearningSettings } from "@prisma/client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 

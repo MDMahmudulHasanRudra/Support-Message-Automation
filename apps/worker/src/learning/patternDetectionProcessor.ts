@@ -1,3 +1,4 @@
+import { forEachProject } from "../project/context.js";
 import { processOnePatternDetectionBatch } from "./patternDetectionJob.js";
 
 /**
@@ -11,7 +12,8 @@ export function startPatternDetectionProcessor(intervalMs = 15 * 60_000): NodeJS
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOnePatternDetectionBatch()
+    // One pass per project, each in its own project context (MULTI_PROJECT_PLAN.md Phase 3).
+    forEachProject("conversation-learning", () => processOnePatternDetectionBatch())
       .catch((err) => {
         console.error("[conversation-learning] unexpected error in pattern detection batch", err);
       })

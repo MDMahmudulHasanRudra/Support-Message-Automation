@@ -1,6 +1,8 @@
 import { trackTick } from "../lifecycle.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
-import { prisma } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { accountInCurrentProject, withProject } from "../project/context.js";
+import type { Notification } from "@prisma/client";
 import type { NotificationProvider } from "./NotificationProvider.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 
@@ -12,7 +14,9 @@ const MAX_NOTIFICATION_ATTEMPTS = 3;
 
 export async function recoverStuckNotifications(): Promise<number> {
   const cutoff = new Date(Date.now() - STUCK_PROCESSING_TIMEOUT_MS);
-  const result = await prisma.notification.updateMany({
+  // Install-wide on purpose: it releases this worker's own stranded claims, whichever project
+  // queued them, and changes nothing but the status.
+  const result = await platformPrisma.notification.updateMany({
     where: { status: "RETRYING", updatedAt: { lt: cutoff } },
     data: { status: "PENDING" },
   });
@@ -32,19 +36,21 @@ export async function recoverStuckNotifications(): Promise<number> {
  * before the provider call.
  */
 async function claimNextNotification() {
-  const candidate = await prisma.notification.findFirst({
+  // One shared queue in one global order (see claimNextOutboundMessage); the rest of the work runs
+  // inside the claimed row's own project.
+  const candidate = await platformPrisma.notification.findFirst({
     where: { status: "PENDING" },
     orderBy: { createdAt: "asc" },
   });
   if (!candidate) return null;
 
-  const claim = await prisma.notification.updateMany({
+  const claim = await platformPrisma.notification.updateMany({
     where: { id: candidate.id, status: "PENDING" },
     data: { status: "RETRYING", lastAttemptAt: new Date(), attemptCount: { increment: 1 } },
   });
   if (claim.count === 0) return null;
 
-  return prisma.notification.findUniqueOrThrow({ where: { id: candidate.id } });
+  return platformPrisma.notification.findUniqueOrThrow({ where: { id: candidate.id } });
 }
 
 /**
@@ -52,9 +58,36 @@ async function claimNextNotification() {
  * "Continue notifying the support team if configured" applies even while
  * automatic client replies are paused.
  */
-async function processOneNotification(providers: Record<string, NotificationProvider>): Promise<boolean> {
+/** Exported for direct testing — dispatches exactly one due notification, or returns false if none. */
+export async function processOneNotification(providers: Record<string, NotificationProvider>): Promise<boolean> {
   const notification = await claimNextNotification();
   if (!notification) return false;
+  await withProject(notification.projectId, () => dispatchClaimedNotification(notification, providers));
+  return true;
+}
+
+async function dispatchClaimedNotification(
+  notification: Notification,
+  providers: Record<string, NotificationProvider>,
+): Promise<boolean> {
+  // A WhatsApp alert goes out from the account resolved at enqueue time; that account must belong
+  // to the project that raised the alert. Refused and logged otherwise — never sent from another
+  // project's number (MULTI_PROJECT_PLAN.md Phase 3).
+  if (notification.accountId && !(await accountInCurrentProject(notification.accountId))) {
+    await prisma.notification.update({
+      where: { id: notification.id },
+      data: {
+        status: "FAILED",
+        failureReason: "The sending WhatsApp account belongs to a different project, so the alert was not sent.",
+      },
+    });
+    await logSystemEvent("ERROR", "notifications", "Refused to send an alert through an account outside its project", {
+      notificationId: notification.id,
+      accountId: notification.accountId,
+      notificationProjectId: notification.projectId,
+    }).catch(() => undefined);
+    return true;
+  }
 
   const provider = providers[notification.type];
   if (!provider) {

@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AutomationSettings, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { mentionTeamForHandover } from "../aiFallback/mentionTeam.js";
 
@@ -53,7 +53,7 @@ async function runMention(): Promise<boolean> {
     },
   });
 
-  return mentionTeamForHandover({
+  return inIsp(() => mentionTeamForHandover({
     accountId: account.id,
     groupId: group.id,
     chatId: group.whatsappGroupId,
@@ -61,7 +61,7 @@ async function runMention(): Promise<boolean> {
     incomingMessageId: message.id,
     settings,
     testMode: true,
-  });
+  }));
 }
 
 beforeAll(async () => {

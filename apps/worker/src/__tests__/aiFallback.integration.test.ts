@@ -1,7 +1,8 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
-import { prisma, createAiFallbackDecision } from "@support-automation/db";
+import { createAiFallbackDecision } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AiSettings, AutomationSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import {
   loadStoredMessageContext,
@@ -295,8 +296,8 @@ describe("createAiFallbackDecision idempotency", () => {
       },
     });
 
-    const first = await createAiFallbackDecision({ messageId: message.id, accountId: account.id, outcome: "HUMAN_FALLBACK", reason: "LOW_CONFIDENCE" });
-    const second = await createAiFallbackDecision({ messageId: message.id, accountId: account.id, outcome: "HUMAN_FALLBACK", reason: "LOW_CONFIDENCE" });
+    const first = await createAiFallbackDecision({ messageId: message.id, accountId: account.id, outcome: "HUMAN_FALLBACK", reason: "LOW_CONFIDENCE" }, prisma);
+    const second = await createAiFallbackDecision({ messageId: message.id, accountId: account.id, outcome: "HUMAN_FALLBACK", reason: "LOW_CONFIDENCE" }, prisma);
 
     expect("id" in first).toBe(true);
     expect("error" in second).toBe(true);
@@ -399,7 +400,7 @@ describe("Hybrid AI Automation fallback — pipeline integration", () => {
   });
 
   it("falls back to human, without throwing, when no AI provider is configured", async () => {
-    // No clientOverride passed — exercises the real resolveAiClient("RESPONSE") path, which
+    // No clientOverride passed — exercises the real resolveAiClient("RESPONSE", prisma) path, which
     // returns null because no AiModelConfig row exists for the RESPONSE job in this test DB.
     await expect(
       processIncomingMessage({
@@ -963,7 +964,7 @@ describe("Hybrid AI Automation — handover side effects", () => {
     const mentionsAfterFirstPass = (await mentionRows()).length;
     expect(alertsAfterFirstPass).toBeGreaterThan(0);
 
-    const context = await loadStoredMessageContext(message.id);
+    const context = await inIsp(() => loadStoredMessageContext(message.id));
     expect(context).not.toBeNull();
     await runAutomationStage(context!.raw, context!.stored, `recovery:${message.id}`, new MockAiClient());
 
@@ -1144,7 +1145,7 @@ describe("AI unable-to-understand holding reply", () => {
     await resetAiSettings({ aiResponseMode: "STRICT_KNOWLEDGE_ONLY", unableToUnderstandReplyEnabled: true, unableToUnderstandRepeatMinutes: 0 });
     const message = await ask("a question nobody wrote down", uniquePhone());
     expect(await holdingReplies()).toHaveLength(1);
-    const context = await loadStoredMessageContext(message.id);
+    const context = await inIsp(() => loadStoredMessageContext(message.id));
     await runAutomationStage(context!.raw, context!.stored, `recovery:${message.id}`, new MockAiClient());
     expect(await holdingReplies()).toHaveLength(1);
   });

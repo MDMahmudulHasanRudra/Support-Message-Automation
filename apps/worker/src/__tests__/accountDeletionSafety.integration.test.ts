@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import {
   countAccountHistory,
   reconcileAttendanceAfterAccountRemoval,
@@ -56,7 +56,7 @@ afterEach(async () => {
 
 describe("counting what a delete would destroy", () => {
   it("reports zero for an account that has never been used", async () => {
-    const impact = await countAccountHistory(account.id);
+    const impact = await countAccountHistory(account.id, prisma);
     expect(impact.total).toBe(0);
     expect(impact.hasHistory).toBe(false);
   });
@@ -88,7 +88,7 @@ describe("counting what a delete would destroy", () => {
       },
     });
 
-    const impact = await countAccountHistory(account.id);
+    const impact = await countAccountHistory(account.id, prisma);
     expect(impact.hasHistory).toBe(true);
     expect(impact.messages).toBe(1);
     expect(impact.groups).toBe(1);
@@ -112,7 +112,7 @@ describe("counting what a delete would destroy", () => {
       },
     });
 
-    expect((await countAccountHistory(account.id)).total).toBe(0);
+    expect((await countAccountHistory(account.id, prisma)).total).toBe(0);
   });
 
   it("counts attendance evidence, which is the part that leaves a lie behind", async () => {
@@ -124,7 +124,7 @@ describe("counting what a delete would destroy", () => {
       data: { attendanceDayId: day.id, groupId: group.id, accountId: account.id, messageCount: 5, firstAt: new Date(), lastAt: new Date() },
     });
 
-    expect((await countAccountHistory(account.id)).attendanceEvidence).toBe(1);
+    expect((await countAccountHistory(account.id, prisma)).attendanceEvidence).toBe(1);
   });
 });
 
@@ -156,7 +156,7 @@ describe("attendance stays honest after an account is removed", () => {
       select: { attendanceDayId: true },
     });
     await prisma.whatsAppAccount.delete({ where: { id: account.id } });
-    await reconcileAttendanceAfterAccountRemoval(affected.map((row) => row.attendanceDayId));
+    await reconcileAttendanceAfterAccountRemoval(affected.map((row) => row.attendanceDayId), prisma);
 
     const after = await prisma.teamAttendanceDay.findUniqueOrThrow({ where: { id: day.id } });
     expect(after.messageCount).toBe(5);
@@ -186,7 +186,7 @@ describe("attendance stays honest after an account is removed", () => {
     });
 
     await prisma.whatsAppAccount.delete({ where: { id: account.id } });
-    await reconcileAttendanceAfterAccountRemoval([day.id]);
+    await reconcileAttendanceAfterAccountRemoval([day.id], prisma);
 
     const after = await prisma.teamAttendanceDay.findUniqueOrThrow({ where: { id: day.id } });
     expect(after.messageCount).toBe(0);
@@ -208,7 +208,7 @@ describe("attendance stays honest after an account is removed", () => {
     });
 
     // Nothing of this account's touched that day, so nothing is passed in — and nothing moves.
-    await reconcileAttendanceAfterAccountRemoval([]);
+    await reconcileAttendanceAfterAccountRemoval([], prisma);
 
     const after = await prisma.teamAttendanceDay.findUniqueOrThrow({ where: { id: day.id } });
     expect(after.messageCount).toBe(4);
@@ -224,9 +224,9 @@ describe("attendance stays honest after an account is removed", () => {
       data: { attendanceDayId: day.id, groupId: theirs.id, accountId: otherAccount.id, messageCount: 3, firstAt: new Date(), lastAt: new Date() },
     });
 
-    await reconcileAttendanceAfterAccountRemoval([day.id]);
+    await reconcileAttendanceAfterAccountRemoval([day.id], prisma);
     const once = await prisma.teamAttendanceDay.findUniqueOrThrow({ where: { id: day.id } });
-    await reconcileAttendanceAfterAccountRemoval([day.id]);
+    await reconcileAttendanceAfterAccountRemoval([day.id], prisma);
     const twice = await prisma.teamAttendanceDay.findUniqueOrThrow({ where: { id: day.id } });
 
     expect(once.messageCount).toBe(3);

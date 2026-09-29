@@ -1,4 +1,6 @@
-import { Prisma, prisma } from "@support-automation/db";
+import { currentProjectId } from "../project/context.js";
+import { Prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -30,7 +32,8 @@ async function countSentWindows(
       COUNT(*) FILTER (WHERE o."sentAt" >= ${new Date(now - (windowsMs[1] ?? widest))}) AS w1,
       COUNT(*) FILTER (WHERE o."sentAt" >= ${new Date(now - (windowsMs[2] ?? widest))}) AS w2
     FROM "OutboundMessage" o
-    WHERE o."accountId" = ${accountId}
+    WHERE o."projectId" = ${currentProjectId()}
+      AND o."accountId" = ${accountId}
       AND o."status" = 'SENT'::"OutboundMessageStatus"
       AND o."sentAt" >= ${new Date(now - widest)}
       ${toPhone ? Prisma.sql`AND o."toPhone" = ${toPhone}` : Prisma.empty}

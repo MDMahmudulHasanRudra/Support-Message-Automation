@@ -1,5 +1,6 @@
 import { trackTick } from "../lifecycle.js";
-import { prisma } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { accountInCurrentProject, withProject } from "../project/context.js";
 import { normalizePhoneNumber } from "@support-automation/shared";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
@@ -33,7 +34,8 @@ const MAX_GROUPS_PER_TICK = 25;
 
 export async function recoverStuckParticipantChecks(): Promise<number> {
   const cutoff = new Date(Date.now() - STUCK_CHECKING_TIMEOUT_MS);
-  const result = await prisma.groupParticipantAddItem.updateMany({
+  // Install-wide on purpose: releases this worker's own stranded claims, status only.
+  const result = await platformPrisma.groupParticipantAddItem.updateMany({
     where: { status: "CHECKING", updatedAt: { lt: cutoff } },
     data: { status: "PENDING_CHECK" },
   });
@@ -42,10 +44,11 @@ export async function recoverStuckParticipantChecks(): Promise<number> {
 
 /** The oldest job with checking still to do. One job at a time keeps its roster reads together. */
 async function claimNextCheckingJob() {
-  return prisma.groupParticipantAddJob.findFirst({
+  // Across projects, oldest first; the job is then worked inside its own project.
+  return platformPrisma.groupParticipantAddJob.findFirst({
     where: { status: "CHECKING" },
     orderBy: { createdAt: "asc" },
-    select: { id: true, accountId: true },
+    select: { id: true, accountId: true, projectId: true },
   });
 }
 
@@ -67,6 +70,13 @@ const VERDICT_TO_STATUS: Record<MembershipVerdict, string> = {
  * the same shape `processOne` uses in the add processor.
  */
 export async function checkOneJob(provider: WhatsAppProvider, jobId: string): Promise<number> {
+  // Runs inside the job's own project, taken from the job row itself.
+  const owner = await platformPrisma.groupParticipantAddJob.findUnique({ where: { id: jobId }, select: { projectId: true } });
+  if (!owner) return 0;
+  return withProject(owner.projectId, () => checkOneJobInProject(provider, jobId));
+}
+
+async function checkOneJobInProject(provider: WhatsAppProvider, jobId: string): Promise<number> {
   const pending = await prisma.groupParticipantAddItem.findMany({
     where: { jobId, status: "PENDING_CHECK" },
     include: { group: { select: { whatsappGroupId: true, isActive: true } } },
@@ -201,6 +211,12 @@ async function checkTick(registry: ProviderRegistry): Promise<void> {
   const provider = registry.get(job.accountId);
   if (!provider) return; // account not connected yet; the next tick will find it
 
+  // The roster is read through the job's own account, which must belong to the job's project.
+  const sameProject = await withProject(job.projectId, () => accountInCurrentProject(job.accountId));
+  if (!sameProject) {
+    console.error(`[participant-check] job ${job.id}: its account belongs to another project; not checked`);
+    return;
+  }
   await checkOneJob(provider, job.id);
 }
 

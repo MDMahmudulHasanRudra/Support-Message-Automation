@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { NotificationEvent, NotificationType, Prisma } from "@prisma/client";
 import { getDirectRecipients, getEventDelivery } from "./eventSettings.js";
 

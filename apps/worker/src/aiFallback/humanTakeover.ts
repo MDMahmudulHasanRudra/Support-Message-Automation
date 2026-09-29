@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { getAiSettings } from "../ai/settings.js";
 
 export interface HumanTakeoverGroup {

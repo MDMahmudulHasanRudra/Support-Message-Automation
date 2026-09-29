@@ -1,10 +1,5 @@
-import {
-  prisma,
-  createAiFallbackDecision,
-  createRuleProposalFromAiReply,
-  resolveWhatsAppAccount,
-  isResolutionError,
-} from "@support-automation/db";
+import { createAiFallbackDecision, createRuleProposalFromAiReply, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { isMediaOnlyBody } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
@@ -105,7 +100,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // aiAnalysisJob.ts's own pattern, and matters for correctness: AiFallbackDecision.aiProviderId
   // is a real foreign key, so it must come from a genuine AiModelConfig row, never from whatever
   // string a test double's providerId happens to be.
-  const modelConfig = await prisma.aiModelConfig.findUnique({ where: { job: "RESPONSE" } });
+  const modelConfig = await prisma.aiModelConfig.findFirst({ where: { job: "RESPONSE" } });
   const aiProviderId = modelConfig?.providerId ?? null;
 
   const recordHumanFallback = async (
@@ -149,7 +144,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
       promptVersion: PROMPT_VERSION,
       retrievalVersion: RETRIEVAL_VERSION,
       ...fields.interaction,
-    });
+    }, prisma);
     if (!("id" in decision)) return;
 
     const notificationId = await sendHumanFallbackAlert({
@@ -285,7 +280,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // stored credential, and the two gates above — a media-only message, an active cooldown or an
   // exhausted rate limit — end the turn without ever reaching a model. Doing that work first meant
   // paying for it on every sticker and every throttled message.
-  const client = params.clientOverride ?? (await resolveAiClient("RESPONSE"));
+  const client = params.clientOverride ?? (await resolveAiClient("RESPONSE", prisma));
   if (!client) {
     await recordHumanFallback("AI_UNAVAILABLE");
     return;
@@ -530,7 +525,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     retrievalVersion: RETRIEVAL_VERSION,
     evidenceFingerprint,
     correlationId: params.correlationId ?? null,
-  });
+  }, prisma);
 
   // What the answer was built on, recorded against the decision that produced it. Written after the
   // decision because it hangs off it, and never allowed to fail the interaction: the customer has
@@ -601,7 +596,7 @@ async function maybeDraftRuleFromReply(params: {
       intent: params.intent,
       sourceMessageId: params.sourceMessageId,
       groupName: params.groupName,
-    });
+    }, prisma);
   } catch (err) {
     console.error("[aiFallback] failed to draft a rule from an AI reply", err);
   }
@@ -656,7 +651,7 @@ async function sendHumanFallbackAlert(params: {
   let teamsOutcome = "NO_WEBHOOK_CONFIGURED";
 
   if (takeoverDestinations.length > 0) {
-    const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP");
+    const resolution = await resolveWhatsAppAccount("NOTIFY_WHATSAPP", prisma);
     if (isResolutionError(resolution)) {
       whatsappOutcome = `ROUTING_FAILED: ${resolution.error}`;
     }

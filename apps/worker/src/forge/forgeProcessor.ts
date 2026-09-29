@@ -1,5 +1,7 @@
-import { prisma } from "@support-automation/db";
-import { scheduleStartupCatchUp } from "../scheduling.js";
+import { prisma } from "../db.js";
+import { scheduleStartupCatchUpPerProject } from "../scheduling.js";
+import { forEachProject, withProject } from "../project/context.js";
+import { ORIGINAL_PROJECT_ID } from "@support-automation/db";
 import { isForgeConfigured } from "@support-automation/forge-client";
 import { runForgeKnowledgeSync } from "./forgeKnowledgeJob.js";
 import { processOneResearchTask } from "./forgeResearchJob.js";
@@ -21,19 +23,12 @@ import { processOneResearchTask } from "./forgeResearchJob.js";
 export function startForgeKnowledgeProcessor(intervalMs = 6 * 60 * 60_000): NodeJS.Timeout {
   let running = false;
 
-  const tick = () => {
+  // One overlap guard for the interval (every project in turn) and the boot catch-up.
+  const guarded = (work: () => Promise<unknown>) => {
     if (running) return Promise.resolve();
     if (!isForgeConfigured()) return Promise.resolve();
     running = true;
-    return runForgeKnowledgeSync()
-      .then((result) => {
-        if (result.ran && result.entriesCreated) {
-          console.log(
-            `[forge] learned ${result.entriesCreated} entries from ${result.documentsRead} document(s) and ${result.modulesRead} module(s)` +
-              (result.entriesBlocked ? `, blocked ${result.entriesBlocked}` : ""),
-          );
-        }
-      })
+    return work()
       .catch((err) => {
         console.error("[forge] unexpected error during knowledge sync", err);
       })
@@ -41,17 +36,28 @@ export function startForgeKnowledgeProcessor(intervalMs = 6 * 60 * 60_000): Node
         running = false;
       });
   };
+  // Runs inside one project: that project's ForgeSettings decide whether and what to sync.
+  const syncOne = async () => {
+    const result = await runForgeKnowledgeSync();
+    if (result.ran && result.entriesCreated) {
+      console.log(
+        `[forge] learned ${result.entriesCreated} entries from ${result.documentsRead} document(s) and ${result.modulesRead} module(s)` +
+          (result.entriesBlocked ? `, blocked ${result.entriesBlocked}` : ""),
+      );
+    }
+  };
+  const tick = () => guarded(() => forEachProject("forge", syncOne));
 
   // Six hours is longer than the gap between two deploys on a busy day, and a plain interval
   // starts from zero every restart — so without this the sync can simply never run. See
   // ../scheduling.ts; it happened, for twenty-seven hours.
-  scheduleStartupCatchUp({
+  scheduleStartupCatchUpPerProject({
     name: "Forge knowledge sync",
     intervalMs,
     lastRunAt: async () =>
       (await prisma.forgeSettings.findUnique({ where: { id: "global" }, select: { lastSyncCompletedAt: true } }))
         ?.lastSyncCompletedAt ?? null,
-    run: tick,
+    run: () => guarded(syncOne),
   });
 
   return setInterval(tick, intervalMs);
@@ -70,12 +76,12 @@ export function startForgeResearchProcessor(intervalMs = 2 * 60_000): NodeJS.Tim
     if (running) return;
     if (!isForgeConfigured()) return;
     running = true;
-    processOneResearchTask()
-      .then((result) => {
-        if (result.ran && result.outcome) {
-          console.log(`[forge] research task ${result.taskId} → ${result.outcome}`);
-        }
-      })
+    forEachProject("forge", async () => {
+      const result = await processOneResearchTask();
+      if (result.ran && result.outcome) {
+        console.log(`[forge] research task ${result.taskId} → ${result.outcome}`);
+      }
+    })
       .catch((err) => {
         console.error("[forge] unexpected error researching a question", err);
       })
@@ -94,6 +100,13 @@ export function startForgeResearchProcessor(intervalMs = 2 * 60_000): NodeJS.Tim
  * from the wrong product's repository would be silent and completely wrong.
  */
 export async function ensureForgeSettings(): Promise<void> {
+  // FORGE_API_KEY / FORGE_API_URL are this install's environment, which predates projects and
+  // belongs to ISP Digital, the project every pre-multi-project row was migrated into. Any other
+  // project sets up its own Forge link on its own settings page; nothing is auto-linked for it.
+  return withProject(ORIGINAL_PROJECT_ID, ensureForgeSettingsInProject);
+}
+
+async function ensureForgeSettingsInProject(): Promise<void> {
   if (!isForgeConfigured()) return;
   const settings = await prisma.forgeSettings.upsert({
     where: { id: "global" },

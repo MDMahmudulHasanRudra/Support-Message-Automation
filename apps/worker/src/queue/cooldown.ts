@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { UNABLE_TO_UNDERSTAND_VARIANT } from "@support-automation/shared";
 
 /**

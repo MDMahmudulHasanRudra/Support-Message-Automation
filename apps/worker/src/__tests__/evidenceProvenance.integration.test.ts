@@ -1,7 +1,8 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
-import { createKnowledgeItem, prisma } from "@support-automation/db";
+import { createKnowledgeItem } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import type { AiSettings, AutomationSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
 import { MockAiClient } from "./mockAiClient.js";
@@ -119,7 +120,7 @@ async function seedKnowledge(title: string) {
     sourceGroupId: null,
     aiGenerated: false,
     humanVerified: true,
-  });
+  }, prisma);
   createdItemIds.push(item.id);
   return item;
 }

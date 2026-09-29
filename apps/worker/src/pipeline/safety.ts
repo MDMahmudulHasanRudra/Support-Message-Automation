@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { AutomationSettings } from "@prisma/client";
 import { isCooldownActive } from "../queue/cooldown.js";
 import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from "../queue/rateLimiter.js";

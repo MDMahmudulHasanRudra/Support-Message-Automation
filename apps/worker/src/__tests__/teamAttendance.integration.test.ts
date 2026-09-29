@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AutomationSettings, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { getDhakaDayRange, toDhakaDateOnly } from "@support-automation/shared";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
@@ -208,12 +208,12 @@ describe("attendance evidence — one record per person per day", () => {
 
     // Exactly what a stranded-message re-run or a catch-up replay does.
     for (let i = 0; i < 4; i += 1) {
-      await recordTeamAttendance({
+      await inIsp(() => recordTeamAttendance({
         groupId: group.id,
         isFromTeamMember: true,
         senderPhone: member.phoneNumber,
         timestampWa: new Date(),
-      });
+      }));
     }
 
     const after = await attendanceFor(member.id, new Date());
@@ -327,12 +327,12 @@ describe("attendance evidence — concurrency", () => {
               processingStatus: "PROCESSED",
             },
           });
-          await recordTeamAttendance({
+          await inIsp(() => recordTeamAttendance({
             groupId: target.id,
             isFromTeamMember: true,
             senderPhone: member.phoneNumber,
             timestampWa: now,
-          });
+          }));
         }),
       );
 

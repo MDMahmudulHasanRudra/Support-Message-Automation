@@ -15,7 +15,7 @@ export default async function ConversationLearningPage() {
   const [learningSettings, aiSettings, learningModelConfig] = await Promise.all([
     prisma.learningSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
     prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } }),
-    prisma.aiModelConfig.findUnique({ where: { job: "LEARNING" }, include: { provider: true } }),
+    prisma.aiModelConfig.findFirst({ where: { job: "LEARNING" }, include: { provider: true } }),
   ]);
   const aiAnalysisAvailable =
     aiSettings.aiEngineEnabled && aiSettings.learningEnabled && learningModelConfig?.provider.status === "ACTIVE";

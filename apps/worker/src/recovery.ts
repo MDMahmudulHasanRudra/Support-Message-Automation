@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { platformPrisma } from "./db.js";
 import { recoverStuckOutboundMessages } from "./queue/outboundQueueProcessor.js";
 import { recoverStuckParticipantAddItems } from "./queue/groupParticipantAddProcessor.js";
 import { recoverStuckParticipantChecks } from "./queue/groupParticipantCheckProcessor.js";
@@ -116,7 +116,9 @@ export function startStuckWorkRecoveryProcessor(intervalMs = RECOVERY_INTERVAL_M
  * data, it is a code that cannot work, and somebody will stand there scanning it.
  */
 export async function reconcileAccountStatusesOnBoot(): Promise<number> {
-  const stale = await prisma.whatsAppAccount.updateMany({
+  // Install-wide on purpose: this process holds every project's sessions, and none of them
+  // survived its restart. Only live-session columns are touched.
+  const stale = await platformPrisma.whatsAppAccount.updateMany({
     // OUTBOUND_PAUSED and RATE_LIMITED used to be listed here too. They are gone from the enum
     // entirely: nothing ever wrote them, and they described a per-account throttling mechanism
     // that does not exist while being rendered on the Accounts page as real states.
@@ -124,7 +126,7 @@ export async function reconcileAccountStatusesOnBoot(): Promise<number> {
     data: { status: "DISCONNECTED" },
   });
 
-  await prisma.whatsAppAccount.updateMany({
+  await platformPrisma.whatsAppAccount.updateMany({
     where: { qrCode: { not: null } },
     data: { qrCode: null, qrUpdatedAt: null },
   });
@@ -134,14 +136,14 @@ export async function reconcileAccountStatusesOnBoot(): Promise<number> {
   // link — getting the session ready" about a session that died mid-sentence, which is the single
   // most misleading thing this column could say. Separate from the QR sweep above because a stage
   // outlives the code — an attempt that authenticated has already had its QR cleared.
-  await prisma.whatsAppAccount.updateMany({
+  await platformPrisma.whatsAppAccount.updateMany({
     where: { connectionStage: { not: null } },
     data: { connectionStage: null },
   });
 
   // And its countdown. A deadline belonging to an attempt that died with the last process would
   // show somebody minutes left to scan a code that no longer exists.
-  await prisma.whatsAppAccount.updateMany({
+  await platformPrisma.whatsAppAccount.updateMany({
     where: { linkExpiresAt: { not: null } },
     data: { linkExpiresAt: null },
   });

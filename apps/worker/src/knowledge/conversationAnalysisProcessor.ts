@@ -1,3 +1,4 @@
+import { forEachProject } from "../project/context.js";
 import { processOneConversationAnalysisStep } from "./conversationAnalysisJob.js";
 
 /**
@@ -14,7 +15,8 @@ export function startConversationAnalysisProcessor(intervalMs = 5_000): NodeJS.T
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOneConversationAnalysisStep()
+    // One pass per project, each in its own project context (MULTI_PROJECT_PLAN.md Phase 3).
+    forEachProject("knowledge-builder", () => processOneConversationAnalysisStep())
       .catch((err) => {
         console.error("[knowledge-builder] unexpected error in a conversation analysis step", err);
       })

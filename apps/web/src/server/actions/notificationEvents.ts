@@ -1,5 +1,6 @@
 "use server";
 
+import { activeProjectId } from "@/server/projectContext";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
@@ -29,7 +30,7 @@ export async function updateNotificationEvent(formData: FormData): Promise<void>
   const whatsappGroupIds = formData.getAll("whatsappGroupIds").map(String).filter(Boolean);
 
   await prisma.notificationEventSetting.upsert({
-    where: { event },
+    where: { projectId_event: { projectId: await activeProjectId(), event } },
     update: { enabled, sendToTeams, sendToWhatsApp, whatsappGroupIds },
     create: { event, enabled, sendToTeams, sendToWhatsApp, whatsappGroupIds },
   });
@@ -44,7 +45,7 @@ export async function setNotificationEventEnabled(event: string, enabled: boolea
   if (!isNotificationEvent(event)) throw new Error("Unknown notification event.");
 
   await prisma.notificationEventSetting.upsert({
-    where: { event },
+    where: { projectId_event: { projectId: await activeProjectId(), event } },
     update: { enabled },
     create: { event, enabled },
   });

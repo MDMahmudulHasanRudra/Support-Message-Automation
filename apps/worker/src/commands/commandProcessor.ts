@@ -1,5 +1,6 @@
 import { trackTick } from "../lifecycle.js";
-import { prisma } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { accountInCurrentProject, withAccountProject, withProject } from "../project/context.js";
 import { SessionNotReadyError, type WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -28,6 +29,11 @@ const LOOP_NAME = "command-processor";
  * real guarantee of that, exactly as it was when this was written as a per-group upsert.
  */
 export async function syncGroups(accountId: string, provider: WhatsAppProvider): Promise<number> {
+  // Groups belong to the account's project, and only that project's rows are read or written.
+  return withAccountProject(accountId, () => syncGroupsInProject(accountId, provider));
+}
+
+async function syncGroupsInProject(accountId: string, provider: WhatsAppProvider): Promise<number> {
   const groups = await provider.getGroups();
   const syncedAt = new Date();
 
@@ -174,7 +180,7 @@ export async function syncGroupsWithTimeoutAndRetry(
     return alreadyRunning;
   }
 
-  const run = runSyncWithRetry(accountId, provider);
+  const run = withAccountProject(accountId, () => runSyncWithRetry(accountId, provider));
   syncInFlight.set(accountId, run);
   try {
     return await run;
@@ -250,7 +256,15 @@ export function resyncAndCatchUpAfterConnect(
   provider: WhatsAppProvider,
   source: string,
 ): void {
-  syncGroupsWithTimeoutAndRetry(accountId, provider)
+  // The whole chain — sync, catch-up and the follow-up timers it schedules — runs as the account's
+  // project, so its log lines and rows are attributed there.
+  void withAccountProject(accountId, async () => resyncAndCatchUpInProject(accountId, provider, source)).catch((err) => {
+    console.error(`[worker] could not start the post-connect sync for account ${accountId}`, err);
+  });
+}
+
+function resyncAndCatchUpInProject(accountId: string, provider: WhatsAppProvider, source: string): Promise<unknown> {
+  return syncGroupsWithTimeoutAndRetry(accountId, provider)
     .then((groupCount) => {
       console.log(`[worker] synced ${groupCount} group(s) for account ${accountId} after ${source}`);
     })
@@ -341,7 +355,8 @@ const COMMAND_STUCK_TIMEOUT_MS = Number(process.env.COMMAND_STUCK_TIMEOUT_MINUTE
  * one click to retry instead.
  */
 export async function recoverStuckCommands(options: { atBoot?: boolean } = {}): Promise<number> {
-  const result = await prisma.workerCommand.updateMany({
+  // Install-wide on purpose: this worker process's own stranded claims, whichever project queued them.
+  const result = await platformPrisma.workerCommand.updateMany({
     where: options.atBoot
       ? { status: "PROCESSING" }
       : { status: "PROCESSING", startedAt: { lt: new Date(Date.now() - COMMAND_STUCK_TIMEOUT_MS) } },
@@ -359,13 +374,15 @@ export async function recoverStuckCommands(options: { atBoot?: boolean } = {}): 
 }
 
 async function claimNextCommand() {
-  const candidate = await prisma.workerCommand.findFirst({
+  // One shared queue, strictly serial, in one global order; each command then runs inside the
+  // project that queued it (withProject(command.projectId)).
+  const candidate = await platformPrisma.workerCommand.findFirst({
     where: { status: "PENDING" },
     orderBy: { createdAt: "asc" },
   });
   if (!candidate) return null;
 
-  const claim = await prisma.workerCommand.updateMany({
+  const claim = await platformPrisma.workerCommand.updateMany({
     where: { id: candidate.id, status: "PENDING" },
     // Stamped in the same write that claims the row, so a command is never PROCESSING without a
     // time to age it from. This is what lets the periodic sweep leave live work alone.
@@ -373,7 +390,7 @@ async function claimNextCommand() {
   });
   if (claim.count === 0) return null;
 
-  return prisma.workerCommand.findUniqueOrThrow({ where: { id: candidate.id } });
+  return platformPrisma.workerCommand.findUniqueOrThrow({ where: { id: candidate.id } });
 }
 
 /**
@@ -390,6 +407,11 @@ async function claimNextCommand() {
 export async function processOneCommand(accountId: string, provider: WhatsAppProvider): Promise<boolean> {
   const command = await claimNextCommand();
   if (!command) return false;
+  await withProject(command.projectId, () => runClaimedCommandWithProvider(command, accountId, provider));
+  return true;
+}
+
+async function runClaimedCommandWithProvider(command: ClaimedCommand, accountId: string, provider: WhatsAppProvider): Promise<boolean> {
   if (command.type === "AI_ANALYSIS_BATCH") {
     await executeAiAnalysisBatchCommand(command);
     return true;
@@ -402,8 +424,33 @@ export async function processOneCommand(accountId: string, provider: WhatsAppPro
     await executeBuildGroupKnowledgeCommand(command);
     return true;
   }
+  if (!(await refuseForeignAccount(command, accountId))) return true;
   await executeClaimedCommand(command, accountId, provider);
   return true;
+}
+
+/**
+ * A command acts on a WhatsApp account, and that account must belong to the project that queued
+ * the command (MULTI_PROJECT_PLAN.md Phase 3). Returns false after failing and logging the command
+ * otherwise — a RECONNECT, LOGOUT or live test send is never run against another project's number.
+ */
+async function refuseForeignAccount(command: ClaimedCommand, accountId: string): Promise<boolean> {
+  if (await accountInCurrentProject(accountId)) return true;
+  await prisma.workerCommand.update({
+    where: { id: command.id },
+    data: {
+      status: "FAILED",
+      processedAt: new Date(),
+      result: { error: "This command names a WhatsApp account outside its project, so it was not run." },
+    },
+  });
+  await logSystemEvent("ERROR", "worker", "Refused a command against an account outside its project", {
+    commandId: command.id,
+    type: command.type,
+    accountId,
+    commandProjectId: command.projectId,
+  }).catch(() => undefined);
+  return false;
 }
 
 /**
@@ -415,6 +462,11 @@ export async function processOneCommand(accountId: string, provider: WhatsAppPro
 export async function processOneCommandViaRegistry(registry: ProviderRegistry): Promise<boolean> {
   const command = await claimNextCommand();
   if (!command) return false;
+  await withProject(command.projectId, () => runClaimedCommandViaRegistry(command, registry));
+  return true;
+}
+
+async function runClaimedCommandViaRegistry(command: ClaimedCommand, registry: ProviderRegistry): Promise<boolean> {
 
   // Account-agnostic: scans PatternCandidate rows globally, needs no WhatsApp session at all —
   // must be handled before the accountId-required check just below.
@@ -457,6 +509,8 @@ export async function processOneCommandViaRegistry(registry: ProviderRegistry): 
     });
     return true;
   }
+
+  if (!(await refuseForeignAccount(command, command.accountId))) return true;
 
   const provider = registry.get(command.accountId);
   if (!provider) {

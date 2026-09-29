@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import { readPairingPreference } from "../provider/openwa/connectionState.js";
 import { processOneCommand } from "../commands/commandProcessor.js";
 import { MockProvider } from "./mockProvider.js";

@@ -1,6 +1,7 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { buildCommunicationStyleProfile } from "./communicationStyleJob.js";
-import { scheduleStartupCatchUp } from "../scheduling.js";
+import { scheduleStartupCatchUpPerProject } from "../scheduling.js";
+import { forEachProject } from "../project/context.js";
 
 /**
  * Rebuilds the communication-style profile on a slow cadence.
@@ -17,15 +18,11 @@ import { scheduleStartupCatchUp } from "../scheduling.js";
 export function startCommunicationStyleProcessor(intervalMs = 12 * 60 * 60_000): NodeJS.Timeout {
   let running = false;
 
-  const tick = () => {
+  // One overlap guard for the interval (every project in turn) and the boot catch-up.
+  const guarded = (work: () => Promise<unknown>) => {
     if (running) return Promise.resolve();
     running = true;
-    return buildCommunicationStyleProfile()
-      .then((result) => {
-        if (result.ran && result.guidanceChanged) {
-          console.log(`[style] rebuilt from ${result.repliesAnalyzed} replies — awaiting approval`);
-        }
-      })
+    return work()
       .catch((err) => {
         console.error("[style] unexpected error building the communication style profile", err);
       })
@@ -33,18 +30,25 @@ export function startCommunicationStyleProcessor(intervalMs = 12 * 60 * 60_000):
         running = false;
       });
   };
+  const buildOne = async () => {
+    const result = await buildCommunicationStyleProfile();
+    if (result.ran && result.guidanceChanged) {
+      console.log(`[style] rebuilt from ${result.repliesAnalyzed} replies — awaiting approval`);
+    }
+  };
+  const tick = () => guarded(() => forEachProject("style", buildOne));
 
   // Twelve hours is the longest interval in this worker and therefore the easiest to starve
   // entirely — see ../scheduling.ts. Last in the stagger, since a style rebuild is the least
   // urgent of the three and its output waits on human approval anyway.
-  scheduleStartupCatchUp({
+  scheduleStartupCatchUpPerProject({
     name: "Communication style rebuild",
     intervalMs,
     delayMs: 240_000,
     lastRunAt: async () =>
       (await prisma.communicationStyleProfile.findUnique({ where: { id: "global" }, select: { lastBuiltAt: true } }))
         ?.lastBuiltAt ?? null,
-    run: tick,
+    run: () => guarded(buildOne),
   });
 
   return setInterval(tick, intervalMs);

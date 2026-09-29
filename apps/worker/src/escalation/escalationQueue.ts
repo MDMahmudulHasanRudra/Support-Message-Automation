@@ -1,4 +1,6 @@
-import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { currentProjectId, withProject } from "../project/context.js";
 import { getEventDelivery } from "../notifications/eventSettings.js";
 import type { EscalationStatus, Prisma, SupportEscalationCase, SupportPriority } from "@prisma/client";
 import { buildWhatsAppContactId, hasReachablePhoneNumber, normalizePhoneNumber } from "@support-automation/shared";
@@ -47,7 +49,7 @@ export async function getSupportPriorityPolicies(): Promise<Record<SupportPriori
       : await Promise.all(
           priorities.map((priority) =>
             prisma.supportPriorityPolicy.upsert({
-              where: { priority },
+              where: { projectId_priority: { projectId: currentProjectId(), priority } },
               update: {},
               create: { priority, ...PRIORITY_POLICY_DEFAULTS[priority] },
             }),
@@ -162,19 +164,21 @@ function addMinutes(date: Date, minutes: number): Date {
 
 /** Atomically claims exactly one due case, or null if none are ready. Uses a claim-lease on nextCheckAt rather than a transient status, since `status` carries real business meaning here. */
 async function claimNextDueCase(): Promise<SupportEscalationCase | null> {
-  const candidate = await prisma.supportEscalationCase.findFirst({
+  // Due cases across every project in one order; each is then worked inside its own project, so
+  // its policy, settings, account and alerts are that project's (MULTI_PROJECT_PLAN.md Phase 3).
+  const candidate = await platformPrisma.supportEscalationCase.findFirst({
     where: { status: { in: ACTIVE_STATUSES }, nextCheckAt: { lte: new Date() } },
     orderBy: { nextCheckAt: "asc" },
   });
   if (!candidate) return null;
 
-  const claim = await prisma.supportEscalationCase.updateMany({
+  const claim = await platformPrisma.supportEscalationCase.updateMany({
     where: { id: candidate.id, nextCheckAt: candidate.nextCheckAt },
     data: { nextCheckAt: new Date(Date.now() + CLAIM_LEASE_MS) },
   });
   if (claim.count === 0) return null; // lost the race
 
-  return prisma.supportEscalationCase.findUniqueOrThrow({ where: { id: candidate.id } });
+  return platformPrisma.supportEscalationCase.findUniqueOrThrow({ where: { id: candidate.id } });
 }
 
 /**
@@ -365,6 +369,10 @@ async function fireAdminTier(
 export async function processOneCase(): Promise<boolean> {
   const caseRow = await claimNextDueCase();
   if (!caseRow) return false;
+  return withProject(caseRow.projectId, () => processClaimedCase(caseRow));
+}
+
+async function processClaimedCase(caseRow: SupportEscalationCase): Promise<boolean> {
 
   const settings = await getSupportEscalationSettings();
   if (!settings.enabled) {
@@ -387,7 +395,7 @@ export async function processOneCase(): Promise<boolean> {
   // Centralized account resolution — never scattered, and re-resolved fresh every tick (never
   // snapshotted like the SLA minutes) since a case can sit open for hours, long enough for the
   // configured account to reconnect/disconnect/change underneath it.
-  const resolution = await resolveWhatsAppAccount("PRIORITY_SUPPORT");
+  const resolution = await resolveWhatsAppAccount("PRIORITY_SUPPORT", prisma);
   if (isResolutionError(resolution)) {
     await logSystemEvent("WARN", "support-escalation", "WhatsApp account unavailable — tick deferred", {
       caseId: caseRow.id,

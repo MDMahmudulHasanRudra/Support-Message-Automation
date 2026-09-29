@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import { isActiveTeamMember, resolveActiveTeamMember } from "../pipeline/teamFilter.js";
 
 /**
@@ -50,54 +50,54 @@ describe("team member matching — sender formats WhatsApp actually delivers", (
   it("matches a bare JID against a roster number stored with a plus", async () => {
     // The exact combination that was broken in production.
     const member = await makeMember("+8801700000123");
-    expect(await resolveActiveTeamMember("8801700000123@c.us")).toMatchObject({ id: member.id });
+    expect(await inIsp(() => resolveActiveTeamMember("8801700000123@c.us"))).toMatchObject({ id: member.id });
   });
 
   it("matches a plain digits-only sender", async () => {
     const member = await makeMember("+8801700000123");
-    expect(await resolveActiveTeamMember("8801700000123")).toMatchObject({ id: member.id });
+    expect(await inIsp(() => resolveActiveTeamMember("8801700000123"))).toMatchObject({ id: member.id });
   });
 
   it("matches a group JID form (@g.us) as well as a contact one", async () => {
     const member = await makeMember("8801700000123");
-    expect(await resolveActiveTeamMember("8801700000123@g.us")).toMatchObject({ id: member.id });
+    expect(await inIsp(() => resolveActiveTeamMember("8801700000123@g.us"))).toMatchObject({ id: member.id });
   });
 
   it("matches when the roster number was typed with spaces and dashes", async () => {
     const member = await makeMember("+880 170-000 0123");
-    expect(await resolveActiveTeamMember("8801700000123@c.us")).toMatchObject({ id: member.id });
+    expect(await inIsp(() => resolveActiveTeamMember("8801700000123@c.us"))).toMatchObject({ id: member.id });
   });
 
   it("matches when the roster number has no plus and the sender does", async () => {
     const member = await makeMember("8801700000123");
-    expect(await resolveActiveTeamMember("+8801700000123")).toMatchObject({ id: member.id });
+    expect(await inIsp(() => resolveActiveTeamMember("+8801700000123"))).toMatchObject({ id: member.id });
   });
 });
 
 describe("team member matching — who must NOT match", () => {
   it("does not match a different number", async () => {
     await makeMember("+8801700000123");
-    expect(await resolveActiveTeamMember("8801700000999@c.us")).toBeNull();
+    expect(await inIsp(() => resolveActiveTeamMember("8801700000999@c.us"))).toBeNull();
   });
 
   it("does not match an INACTIVE member", async () => {
     // Deactivating someone has to actually stop them counting as staff, or a departed colleague
     // keeps suppressing automation.
     await makeMember("+8801700000123", "INACTIVE");
-    expect(await resolveActiveTeamMember("8801700000123@c.us")).toBeNull();
+    expect(await inIsp(() => resolveActiveTeamMember("8801700000123@c.us"))).toBeNull();
   });
 
   it("does not match a number that only shares a suffix", async () => {
     // Digits-only comparison must stay an equality, never a contains — otherwise a customer
     // whose number ends the same way would be treated as staff.
     await makeMember("+8801700000123");
-    expect(await resolveActiveTeamMember("447700000123@c.us")).toBeNull();
+    expect(await inIsp(() => resolveActiveTeamMember("447700000123@c.us"))).toBeNull();
   });
 
   it("returns null for junk input rather than throwing", async () => {
     await makeMember("+8801700000123");
     for (const junk of ["", "@c.us", "not-a-number", "12"]) {
-      expect(await resolveActiveTeamMember(junk)).toBeNull();
+      expect(await inIsp(() => resolveActiveTeamMember(junk))).toBeNull();
     }
   });
 });
@@ -112,12 +112,12 @@ describe("WhatsApp LID senders", () => {
    */
   it("matches a member by the identifier WhatsApp actually sends", async () => {
     const member = await makeMember("+8801894431222", "ACTIVE", "161679983804516");
-    expect(await resolveActiveTeamMember("161679983804516")).toMatchObject({ id: member.id });
+    expect(await inIsp(() => resolveActiveTeamMember("161679983804516"))).toMatchObject({ id: member.id });
   });
 
   it("still matches that member by phone number, so nothing regresses", async () => {
     const member = await makeMember("+8801894431222", "ACTIVE", "161679983804516");
-    expect(await resolveActiveTeamMember("8801894431222@c.us")).toMatchObject({ id: member.id });
+    expect(await inIsp(() => resolveActiveTeamMember("8801894431222@c.us"))).toMatchObject({ id: member.id });
   });
 
   it("keeps matching after an admin corrects the phone number to the real one", async () => {
@@ -128,36 +128,36 @@ describe("WhatsApp LID senders", () => {
       where: { id: member.id },
       data: { phoneNumber: "+8801894431222" },
     });
-    expect(await resolveActiveTeamMember("161679983804516")).toMatchObject({ id: member.id });
+    expect(await inIsp(() => resolveActiveTeamMember("161679983804516"))).toMatchObject({ id: member.id });
   });
 
   it("does not match a different LID", async () => {
     await makeMember("+8801894431222", "ACTIVE", "161679983804516");
-    expect(await resolveActiveTeamMember("222200183419092")).toBeNull();
+    expect(await inIsp(() => resolveActiveTeamMember("222200183419092"))).toBeNull();
   });
 
   it("does not match an INACTIVE member by their LID either", async () => {
     await makeMember("+8801894431222", "INACTIVE", "161679983804516");
-    expect(await resolveActiveTeamMember("161679983804516")).toBeNull();
+    expect(await inIsp(() => resolveActiveTeamMember("161679983804516"))).toBeNull();
   });
 
   it("compares a LID exactly, never by digits", async () => {
     // A LID is opaque — there is no format a person could have typed wrongly, and loose matching
     // would risk colliding with a real phone number that shares its digits.
     await makeMember("+8801894431222", "ACTIVE", "161679983804516");
-    expect(await resolveActiveTeamMember("+16167998380 4516")).toBeNull();
+    expect(await inIsp(() => resolveActiveTeamMember("+16167998380 4516"))).toBeNull();
   });
 
   it("ignores an empty whatsappId rather than matching everything", async () => {
     await makeMember("+8801700000123");
-    expect(await resolveActiveTeamMember("")).toBeNull();
+    expect(await inIsp(() => resolveActiveTeamMember(""))).toBeNull();
   });
 });
 
 describe("isActiveTeamMember", () => {
   it("agrees with resolveActiveTeamMember", async () => {
     await makeMember("+8801700000123");
-    expect(await isActiveTeamMember("8801700000123@c.us")).toBe(true);
-    expect(await isActiveTeamMember("8801700000999@c.us")).toBe(false);
+    expect(await inIsp(() => isActiveTeamMember("8801700000123@c.us"))).toBe(true);
+    expect(await inIsp(() => isActiveTeamMember("8801700000999@c.us"))).toBe(false);
   });
 });

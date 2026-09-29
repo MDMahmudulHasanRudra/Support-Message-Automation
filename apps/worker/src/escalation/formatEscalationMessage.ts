@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { SupportEscalationCase } from "@prisma/client";
 import { renderNotification } from "../notifications/templates.js";
 

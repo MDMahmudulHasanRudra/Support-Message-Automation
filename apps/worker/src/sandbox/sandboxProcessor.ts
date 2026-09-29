@@ -1,3 +1,4 @@
+import { forEachProject } from "../project/context.js";
 import { processOneSandboxTurn } from "./sandboxJob.js";
 
 /**
@@ -21,7 +22,8 @@ export function startSandboxProcessor(intervalMs = 2_000): NodeJS.Timeout {
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOneSandboxTurn()
+    // One pass per project, each in its own project context (MULTI_PROJECT_PLAN.md Phase 3).
+    forEachProject("sandbox", () => processOneSandboxTurn())
       .catch((err) => {
         console.error("[sandbox] unexpected error processing a turn", err);
       })

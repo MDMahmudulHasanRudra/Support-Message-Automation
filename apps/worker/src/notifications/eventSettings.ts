@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { NotificationEvent, NotificationType } from "@prisma/client";
 import { buildWhatsAppContactId, hasReachablePhoneNumber, normalizePhoneNumber } from "@support-automation/shared";
 
@@ -37,7 +37,7 @@ const ALLOW_EVERYTHING: EventDelivery = {
 
 export async function getEventDelivery(event: NotificationEvent): Promise<EventDelivery> {
   try {
-    const setting = await prisma.notificationEventSetting.findUnique({ where: { event } });
+    const setting = await prisma.notificationEventSetting.findFirst({ where: { event } });
     // No row means never configured, which must behave exactly as it did before the Notification
     // Center existed. Rows are created only when an admin saves something.
     if (!setting) return ALLOW_EVERYTHING;

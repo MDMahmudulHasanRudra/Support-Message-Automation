@@ -1,4 +1,6 @@
-import { decryptSecret, prisma } from "@support-automation/db";
+import { projectIdForAccount, withProject } from "../../project/context.js";
+import { decryptSecret } from "@support-automation/db";
+import { prisma } from "../../db.js";
 import type { WhatsAppAccountStatus } from "@prisma/client";
 
 /**
@@ -136,6 +138,23 @@ const LINK_WINDOW_CLOSED_BY = new Set<OpenWAConnectionState>([
 const QR_DISCARDED_BY = new Set<OpenWAConnectionState>(["DISCONNECTED", "QR_EXPIRED", "LINK_ABANDONED", "AUTH_FAILED", "ERROR"]);
 
 /**
+ * Runs a connection-state read or write as the account's project. Every function in this file is
+ * never-throw by design (a connect attempt must not fail over a bookkeeping write), so an account
+ * that no longer exists — a connect racing a deletion — gets the function's own fallback rather
+ * than an exception. Its project is never guessed.
+ */
+async function asAccountProject<T>(accountId: string, fallback: T, fn: () => Promise<T>): Promise<T> {
+  let projectId: string;
+  try {
+    projectId = await projectIdForAccount(accountId);
+  } catch (err) {
+    console.warn(`[openwa] account ${accountId} has no project (${(err as Error).message}); skipped`);
+    return fallback;
+  }
+  return withProject(projectId, fn);
+}
+
+/**
  * Opens the linking window: the moment the current attempt will stop waiting for a scan.
  *
  * Separate from `recordConnectionState` because it is not a state transition — the attempt is still
@@ -144,6 +163,10 @@ const QR_DISCARDED_BY = new Set<OpenWAConnectionState>(["DISCONNECTED", "QR_EXPI
  * take down the connection attempt it describes.
  */
 export async function recordLinkWindow(accountId: string, expiresAt: Date): Promise<void> {
+  return asAccountProject(accountId, undefined, () => recordLinkWindowInProject(accountId, expiresAt));
+}
+
+async function recordLinkWindowInProject(accountId: string, expiresAt: Date): Promise<void> {
   try {
     await prisma.whatsAppAccount.update({ where: { id: accountId }, data: { linkExpiresAt: expiresAt } });
   } catch (err) {
@@ -170,6 +193,13 @@ function logLevelFor(state: OpenWAConnectionState): "INFO" | "WARN" | "ERROR" {
  * only once genuinely authenticated, never speculatively.
  */
 export async function recordAccountMetadata(
+  accountId: string,
+  info: { phoneNumber: string | null; pushName: string | null },
+): Promise<void> {
+  return asAccountProject(accountId, undefined, () => recordAccountMetadataInProject(accountId, info));
+}
+
+async function recordAccountMetadataInProject(
   accountId: string,
   info: { phoneNumber: string | null; pushName: string | null },
 ): Promise<void> {
@@ -202,6 +232,15 @@ export async function recordConnectionState(
   // Kept out of `metadata`/SystemLog on purpose: the QR data URL is tens of
   // KB and WhatsApp Web regenerates it every ~20-30s (see accounts/page.tsx),
   // so logging it to SystemLog on every refresh would bloat that table fast.
+  qrCode?: string,
+): Promise<void> {
+  return asAccountProject(accountId, undefined, () => recordConnectionStateInProject(accountId, state, metadata, qrCode));
+}
+
+async function recordConnectionStateInProject(
+  accountId: string,
+  state: OpenWAConnectionState,
+  metadata?: Record<string, unknown>,
   qrCode?: string,
 ): Promise<void> {
   const message = `WhatsApp connection: ${state}`;
@@ -272,6 +311,12 @@ export async function recordConnectionState(
 export async function readPairingPreference(
   accountId: string,
 ): Promise<{ method: "QR_CODE" | "PHONE_CODE"; linkCodeNumber?: string }> {
+  return asAccountProject(accountId, { method: "QR_CODE" as const }, () => readPairingPreferenceInProject(accountId));
+}
+
+async function readPairingPreferenceInProject(
+  accountId: string,
+): Promise<{ method: "QR_CODE" | "PHONE_CODE"; linkCodeNumber?: string }> {
   try {
     const account = await prisma.whatsAppAccount.findUnique({
       where: { id: accountId },
@@ -307,6 +352,12 @@ export async function readPairingPreference(
  * always a safe fallback, unlike the pairing method, where the two fallbacks are not equivalent.
  */
 export async function readProxyConfig(
+  accountId: string,
+): Promise<{ address: string; protocol?: string; username?: string; password?: string } | null> {
+  return asAccountProject(accountId, null, () => readProxyConfigInProject(accountId));
+}
+
+async function readProxyConfigInProject(
   accountId: string,
 ): Promise<{ address: string; protocol?: string; username?: string; password?: string } | null> {
   try {

@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AiClient } from "@support-automation/ai-client";
 import { buildCommunicationStyleProfile } from "../knowledge/communicationStyleJob.js";
 
@@ -105,7 +105,7 @@ describe("which replies the style builder reads", () => {
       await makeReply(account.id, null, `Thank you for reaching out about this, reply number ${i}.`);
     }
 
-    const result = await buildCommunicationStyleProfile(stubClient());
+    const result = await inIsp(() => buildCommunicationStyleProfile(stubClient()));
     expect(result.ran).toBe(true);
     expect(result.repliesAnalyzed).toBeGreaterThanOrEqual(30);
   });
@@ -124,7 +124,7 @@ describe("which replies the style builder reads", () => {
       await makeReply(account.id, notifyGroup.id, `Machine written alert number ${i} for the team.`);
     }
 
-    const result = await buildCommunicationStyleProfile(stubClient());
+    const result = await inIsp(() => buildCommunicationStyleProfile(stubClient()));
     expect(result.skipped).toBe("NOT_ENOUGH_REPLIES");
 
     await prisma.automationSettings.update({
@@ -156,7 +156,7 @@ describe("which replies the style builder reads", () => {
       });
     }
 
-    const result = await buildCommunicationStyleProfile(stubClient());
+    const result = await inIsp(() => buildCommunicationStyleProfile(stubClient()));
     expect(result.skipped).toBe("NOT_ENOUGH_REPLIES");
   });
 
@@ -165,7 +165,7 @@ describe("which replies the style builder reads", () => {
       where: { id: "global" },
       data: { communicationStyleLearningEnabled: false },
     });
-    const result = await buildCommunicationStyleProfile(stubClient());
+    const result = await inIsp(() => buildCommunicationStyleProfile(stubClient()));
     expect(result).toMatchObject({ ran: false, skipped: "STYLE_LEARNING_DISABLED" });
   });
 
@@ -176,7 +176,7 @@ describe("which replies the style builder reads", () => {
       await makeReply(account.id, null, `A perfectly ordinary support reply, number ${i}.`);
     }
 
-    await buildCommunicationStyleProfile(stubClient());
+    await inIsp(() => buildCommunicationStyleProfile(stubClient()));
     const profile = await prisma.communicationStyleProfile.findUniqueOrThrow({ where: { id: "global" } });
     expect(profile.guidance).toContain("Greet the customer");
     expect(profile.humanApproved).toBe(false);

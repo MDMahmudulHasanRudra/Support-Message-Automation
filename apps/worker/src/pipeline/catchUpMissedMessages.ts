@@ -1,5 +1,6 @@
+import { withAccountProject } from "../project/context.js";
 import { countMetric } from "../health/metrics.js";
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { processIncomingMessage, storeMissedMessage } from "./processIncomingMessage.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -103,6 +104,10 @@ const nothingToDo = (): CatchUpResult => ({ gapSeconds: null, offered: 0, automa
  * trying to fill it is worse.
  */
 export async function catchUpMissedMessages(accountId: string, provider: WhatsAppProvider): Promise<CatchUpResult> {
+  return withAccountProject(accountId, () => catchUpMissedMessagesInProject(accountId, provider));
+}
+
+async function catchUpMissedMessagesInProject(accountId: string, provider: WhatsAppProvider): Promise<CatchUpResult> {
   try {
     const checkpoint = await prisma.processingCheckpoint.findUnique({
       where: { accountId },

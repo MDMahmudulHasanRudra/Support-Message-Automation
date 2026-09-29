@@ -1,5 +1,6 @@
 "use server";
 
+import { activeProjectId } from "@/server/projectContext";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
@@ -410,7 +411,7 @@ export async function materialiseRosterForDate(dateValue: string): Promise<TeamM
     prisma.internalTeamMember.findMany({ where: { status: "ACTIVE" }, select: { id: true } }),
     prisma.weeklyScheduleEntry.findMany({ where: { weekday } }),
     prisma.dutyAssignment.findMany({ where: { dutyDate }, select: { teamMemberId: true } }),
-    prisma.holiday.findUnique({ where: { date: dutyDate }, select: { name: true } }),
+    prisma.holiday.findFirst({ where: { date: dutyDate }, select: { name: true } }),
     // Fetched once rather than per member. This used to resolve the snapshot inside the loop, which
     // was one extra round trip for every person on the roster to re-read the same handful of rows.
     prisma.shiftTemplate.findMany({ where: { isActive: true } }),
@@ -985,7 +986,7 @@ export async function saveHoliday(formData: FormData): Promise<TeamManagementRes
   // Declaring a holiday does NOT rewrite dates already on the roster. It changes what
   // `materialiseRosterForDate` produces from here on; a date somebody already scheduled is theirs.
   await prisma.holiday.upsert({
-    where: { date },
+    where: { projectId_date: { projectId: await activeProjectId(), date } },
     create: { name, date, description },
     update: { name, description },
   });

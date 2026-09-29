@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import type { AutomationSettings, WhatsAppAccount } from "@prisma/client";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
 import type { RawIncomingMessage } from "../pipeline/types.js";

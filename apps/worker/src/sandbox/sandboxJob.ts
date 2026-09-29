@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { buildFallbackPrompt, parseFallbackResponse } from "../aiFallback/prompt.js";
 import { findRelevantKnowledge } from "../aiFallback/knowledgeContext.js";
@@ -121,7 +121,7 @@ async function answerTurn(turnId: string): Promise<void> {
 
   let client: AiClient | null;
   try {
-    client = await resolveAiClient("RESPONSE");
+    client = await resolveAiClient("RESPONSE", prisma);
   } catch (err) {
     await finish({ outcome: "HUMAN_FALLBACK", reason: `AI_UNAVAILABLE: ${(err as Error).message}` });
     return;

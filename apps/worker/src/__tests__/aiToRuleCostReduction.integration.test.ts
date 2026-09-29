@@ -1,7 +1,8 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
-import { prisma, createRuleProposalFromCandidate, approveRuleProposalById } from "@support-automation/db";
+import { createRuleProposalFromCandidate, approveRuleProposalById } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AiSettings, AutomationSettings, LearningSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
 import { processOnePatternDetectionBatch } from "../learning/patternDetectionJob.js";
@@ -96,7 +97,7 @@ async function closeMessageIntoOwnSession(message: { id: string; accountId: stri
 beforeAll(async () => {
   originalAutomationSettings = await prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   originalAiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
-  originalLearningSettings = await getLearningSettings();
+  originalLearningSettings = await inIsp(() => getLearningSettings());
 
   preExistingActiveRuleIds = (
     await prisma.automationRule.findMany({ where: { status: "ACTIVE" }, select: { id: true } })
@@ -194,7 +195,7 @@ describe("AI-handled pattern → Rule Proposal → activated rule → AI never c
     }
 
     // Pattern detection turns that evidence into a floor-clearing, AI-sourced candidate.
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
     const candidate = await prisma.patternCandidate.findFirstOrThrow({
       where: { suggestedKeywords: { hasSome: ["internet", "connection"] } },
     });
@@ -212,9 +213,9 @@ describe("AI-handled pattern → Rule Proposal → activated rule → AI never c
 
     // Human review: create the proposal, approve it — reusing the exact same shared functions the
     // dashboard's manual "Create Proposal"/"Approve" buttons call.
-    const proposalResult = await createRuleProposalFromCandidate(candidate.id);
+    const proposalResult = await createRuleProposalFromCandidate(candidate.id, prisma);
     if (!("id" in proposalResult)) throw new Error(proposalResult.error);
-    const approveResult = await approveRuleProposalById({ proposalId: proposalResult.id, reviewedById: null, autoApproved: false });
+    const approveResult = await approveRuleProposalById({ proposalId: proposalResult.id, reviewedById: null, autoApproved: false }, prisma);
     if (!("ruleId" in approveResult)) throw new Error(approveResult.error);
     createdRuleIds.push(approveResult.ruleId);
 

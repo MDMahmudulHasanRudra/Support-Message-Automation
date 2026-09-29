@@ -1,5 +1,6 @@
 "use server";
 
+import { activeProjectId } from "@/server/projectContext";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { randomUUID } from "node:crypto";
@@ -27,7 +28,7 @@ export async function updatePriorityPolicy(
   };
 
   await prisma.supportPriorityPolicy.upsert({
-    where: { priority },
+    where: { projectId_priority: { projectId: await activeProjectId(), priority } },
     update: {
       firstAlertMinutes: int("firstAlertMinutes"),
       secondAlertMinutes: int("secondAlertMinutes"),

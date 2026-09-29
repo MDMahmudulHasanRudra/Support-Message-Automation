@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import {
@@ -86,7 +86,7 @@ export async function processOneGroupKnowledgeBuild(
     return { ran: false, groupId: group.id, skipped: "NOT_ENOUGH_MESSAGES" };
   }
 
-  const client = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const client = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!client) return { ran: false, skipped: "NO_AI_CLIENT" };
 
   const prompt = buildGroupKnowledgePrompt({

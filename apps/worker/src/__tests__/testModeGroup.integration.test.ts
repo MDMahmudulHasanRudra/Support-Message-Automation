@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AutomationSettings, WhatsAppAccount } from "@prisma/client";
 import { checkAutoReplySafety } from "../pipeline/safety.js";
 
@@ -86,20 +86,20 @@ afterAll(async () => {
 describe("test mode lifts the throttles", () => {
   it("allows a reply when every rate limit is already exhausted", async () => {
     const group = await makeGroup(true);
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: uniquePhone(),
       groupId: group.id,
       rule: null,
       cooldownSeconds: null,
       settings: throttledSettings(),
-    });
+    }));
     expect(result.allowed, result.reason).toBe(true);
   });
 
   it("ignores an active cooldown", async () => {
     const group = await makeGroup(true);
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: uniquePhone(),
       groupId: group.id,
@@ -107,7 +107,7 @@ describe("test mode lifts the throttles", () => {
       // An hour-long cooldown would make testing anything twice impossible.
       cooldownSeconds: 3600,
       settings: throttledSettings(),
-    });
+    }));
     expect(result.allowed, result.reason).toBe(true);
   });
 
@@ -115,14 +115,14 @@ describe("test mode lifts the throttles", () => {
     // Without this, most rule types can never be exercised at all — which is the whole point of
     // having a test group.
     const group = await makeGroup(true);
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: uniquePhone(),
       groupId: group.id,
       rule: { id: "r1", type: "GENERIC" } as never,
       cooldownSeconds: null,
       settings: throttledSettings({ mode: "SAFE_AUTO_REPLY" }),
-    });
+    }));
     expect(result.allowed, result.reason).toBe(true);
   });
 });
@@ -130,14 +130,14 @@ describe("test mode lifts the throttles", () => {
 describe("test mode does not lift anything that protects the account", () => {
   it("still obeys the kill switch", async () => {
     const group = await makeGroup(true);
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: uniquePhone(),
       groupId: group.id,
       rule: null,
       cooldownSeconds: null,
       settings: throttledSettings({ automationEnabled: false }),
-    });
+    }));
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/kill switch/i);
   });
@@ -145,14 +145,14 @@ describe("test mode does not lift anything that protects the account", () => {
   it("still obeys MANUAL_ONLY", async () => {
     // MANUAL_ONLY is an operator saying "send nothing" — a kill switch, not a throttle.
     const group = await makeGroup(true);
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: uniquePhone(),
       groupId: group.id,
       rule: null,
       cooldownSeconds: null,
       settings: throttledSettings({ mode: "MANUAL_ONLY" }),
-    });
+    }));
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/MANUAL_ONLY/i);
   });
@@ -161,28 +161,28 @@ describe("test mode does not lift anything that protects the account", () => {
     // Being unmonitored means this system was never invited to automate the conversation. That is
     // a different thing from a throttle, and marking a group as a test group must not override it.
     const group = await makeGroup(true, false);
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: uniquePhone(),
       groupId: group.id,
       rule: null,
       cooldownSeconds: null,
       settings: throttledSettings(),
-    });
+    }));
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/not a monitored conversation/i);
   });
 
   it("still requires a destination", async () => {
     const group = await makeGroup(true);
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: "",
       groupId: group.id,
       rule: null,
       cooldownSeconds: null,
       settings: throttledSettings(),
-    });
+    }));
     expect(result.allowed).toBe(false);
   });
 });
@@ -191,28 +191,28 @@ describe("an ordinary group is unaffected", () => {
   it("is still blocked by an exhausted rate limit", async () => {
     // The exemption must be scoped to the flagged group, never leak into normal traffic.
     const group = await makeGroup(false);
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: uniquePhone(),
       groupId: group.id,
       rule: null,
       cooldownSeconds: null,
       settings: throttledSettings(),
-    });
+    }));
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/limit reached/i);
   });
 
   it("is still blocked by SAFE_AUTO_REPLY for an ineligible rule type", async () => {
     const group = await makeGroup(false);
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: uniquePhone(),
       groupId: group.id,
       rule: { id: "r1", type: "GENERIC" } as never,
       cooldownSeconds: null,
       settings: { ...throttledSettings(), rateLimitingEnabled: false },
-    });
+    }));
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/SAFE_AUTO_REPLY/i);
   });
@@ -220,14 +220,14 @@ describe("an ordinary group is unaffected", () => {
   it("a direct message with no group is still rate limited", async () => {
     // No group means no flag to read, so the throttles must apply — the absence of a group must
     // never be mistaken for an exemption.
-    const result = await checkAutoReplySafety({
+    const result = await inIsp(() => checkAutoReplySafety({
       accountId: account.id,
       toPhone: uniquePhone(),
       groupId: null,
       rule: null,
       cooldownSeconds: null,
       settings: throttledSettings(),
-    });
+    }));
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/limit reached/i);
   });

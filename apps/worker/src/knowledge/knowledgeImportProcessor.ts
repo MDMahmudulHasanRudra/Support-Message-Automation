@@ -1,3 +1,4 @@
+import { forEachProject } from "../project/context.js";
 import { processOneKnowledgeImport } from "./knowledgeImportJob.js";
 
 /**
@@ -14,7 +15,8 @@ export function startKnowledgeImportProcessor(intervalMs = 15_000): NodeJS.Timeo
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    processOneKnowledgeImport()
+    // One pass per project, each in its own project context (MULTI_PROJECT_PLAN.md Phase 3).
+    forEachProject("knowledge-import", () => processOneKnowledgeImport())
       .catch((err) => {
         console.error("[knowledge-import] unexpected error processing an import", err);
       })

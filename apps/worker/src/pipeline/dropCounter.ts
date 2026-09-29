@@ -1,4 +1,5 @@
-import { prisma } from "@support-automation/db";
+import { withAccountProject } from "../project/context.js";
+import { prisma } from "../db.js";
 import type { MessageDropReason } from "@prisma/client";
 import { toDhakaDateOnly } from "@support-automation/shared";
 
@@ -25,6 +26,10 @@ export function countDroppedMessage(accountId: string, reason: MessageDropReason
 }
 
 async function recordDrop(accountId: string, reason: MessageDropReason): Promise<void> {
+  return withAccountProject(accountId, () => recordDropInProject(accountId, reason));
+}
+
+async function recordDropInProject(accountId: string, reason: MessageDropReason): Promise<void> {
   // Dhaka day, matching every other daily figure in this product — a UTC midnight falls at 06:00
   // local and would split a morning's drops across two days.
   const day = toDhakaDateOnly(new Date());

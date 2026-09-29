@@ -1,5 +1,6 @@
 "use server";
 
+import { activeProjectId } from "@/server/projectContext";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
@@ -49,7 +50,7 @@ export async function setAiModelConfig(_prevState: AiModelFormState, formData: F
   }
 
   await prisma.aiModelConfig.upsert({
-    where: { job: jobRaw },
+    where: { projectId_job: { projectId: await activeProjectId(), job: jobRaw } },
     update: { providerId, modelId },
     create: { job: jobRaw, providerId, modelId },
   });

@@ -1,5 +1,7 @@
 import { trackTick } from "../lifecycle.js";
-import { prisma } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { accountInCurrentProject, withProject } from "../project/context.js";
+import { logSystemEvent } from "../logging/logSystemEvent.js";
 import type { GroupParticipantAddItem } from "@prisma/client";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { normalizePhoneNumber } from "@support-automation/shared";
@@ -24,7 +26,8 @@ const RETRY_DELAY_MS = 60_000;
 /** Crash recovery: items left in PROCESSING by a worker that died mid-add go back to PENDING. */
 export async function recoverStuckParticipantAddItems(): Promise<number> {
   const cutoff = new Date(Date.now() - STUCK_PROCESSING_TIMEOUT_MS);
-  const result = await prisma.groupParticipantAddItem.updateMany({
+  // Install-wide on purpose: releases this worker's own stranded claims, status only.
+  const result = await platformPrisma.groupParticipantAddItem.updateMany({
     where: { status: "PROCESSING", updatedAt: { lt: cutoff } },
     data: { status: "PENDING" },
   });
@@ -33,19 +36,20 @@ export async function recoverStuckParticipantAddItems(): Promise<number> {
 
 /** Atomically claims exactly one due PENDING item, or null if none are ready. */
 async function claimNextItem() {
-  const candidate = await prisma.groupParticipantAddItem.findFirst({
+  // One shared queue in one global order; the work itself runs in the claimed item's project.
+  const candidate = await platformPrisma.groupParticipantAddItem.findFirst({
     where: { status: "PENDING", scheduledAt: { lte: new Date() } },
     orderBy: { scheduledAt: "asc" },
   });
   if (!candidate) return null;
 
-  const claim = await prisma.groupParticipantAddItem.updateMany({
+  const claim = await platformPrisma.groupParticipantAddItem.updateMany({
     where: { id: candidate.id, status: "PENDING" },
     data: { status: "PROCESSING" },
   });
   if (claim.count === 0) return null; // lost the race (shouldn't happen with a single worker, but defensive)
 
-  return prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: candidate.id } });
+  return platformPrisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: candidate.id } });
 }
 
 /**
@@ -89,7 +93,7 @@ async function handlePreAddChecks(item: GroupParticipantAddItem): Promise<"STOP_
 export async function processOne(provider: WhatsAppProvider): Promise<boolean> {
   const item = await claimNextItem();
   if (!item) return false;
-  await processClaimedItem(item, provider);
+  await withProject(item.projectId, () => processClaimedItem(item, provider));
   return true;
 }
 
@@ -105,23 +109,40 @@ export async function processOneViaRegistry(registry: import("../provider/Provid
   const item = await claimNextItem();
   if (!item) return false;
 
-  const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: item.jobId }, select: { accountId: true } });
-  const provider = job ? registry.get(job.accountId) : undefined;
-  if (!provider) {
-    // Release back to PENDING rather than fail — no add attempt was made, so this must not count
-    // against attemptCount/retry budget.
-    await prisma.groupParticipantAddItem.update({
-      where: { id: item.id },
-      data: { status: "PENDING", scheduledAt: new Date(Date.now() + ACCOUNT_NOT_READY_DEFER_MS) },
-    });
-    return true;
-  }
-
-  await processClaimedItem(item, provider);
+  await withProject(item.projectId, async () => {
+    const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: item.jobId }, select: { accountId: true } });
+    const provider = job ? registry.get(job.accountId) : undefined;
+    if (!provider) {
+      // Release back to PENDING rather than fail — no add attempt was made, so this must not count
+      // against attemptCount/retry budget.
+      await prisma.groupParticipantAddItem.update({
+        where: { id: item.id },
+        data: { status: "PENDING", scheduledAt: new Date(Date.now() + ACCOUNT_NOT_READY_DEFER_MS) },
+      });
+      return;
+    }
+    await processClaimedItem(item, provider);
+  });
   return true;
 }
 
 async function processClaimedItem(item: GroupParticipantAddItem, provider: WhatsAppProvider): Promise<void> {
+  // The job's account must belong to the item's project (MULTI_PROJECT_PLAN.md Phase 3): failed and
+  // logged otherwise, never added from another project's number. A job that no longer exists falls
+  // through to the ordinary cancelled-job handling below.
+  const owner = await prisma.groupParticipantAddJob.findUnique({ where: { id: item.jobId }, select: { accountId: true } });
+  if (owner && !(await accountInCurrentProject(owner.accountId))) {
+    await prisma.groupParticipantAddItem.update({
+      where: { id: item.id },
+      data: { status: "FAILED", failureReason: "The job's WhatsApp account belongs to a different project, so nothing was done." },
+    });
+    await logSystemEvent("ERROR", "queue", "Refused a group add through an account outside its project", {
+      itemId: item.id,
+      accountId: owner.accountId,
+      itemProjectId: item.projectId,
+    }).catch(() => undefined);
+    return;
+  }
   const settings = await getAutomationSettings();
   if (!settings.automationEnabled) {
     await prisma.groupParticipantAddItem.update({

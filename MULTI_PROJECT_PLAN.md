@@ -1,7 +1,7 @@
 # Multi-Project Softify Assist: Audit and Plan
 
-Status: **Phases 1 and 2 implemented and verified locally, 28 Sep 2026: not pushed, not
-deployed.** Phase 3 has not started. See §10.2 for what Phase 2 did and left for later.
+Status: **Phases 1, 2 and 3 implemented and verified locally, 28–29 Sep 2026: not pushed, not
+deployed.** Phase 4 has not started. See §10.2 for Phase 2 and §10.3 for Phase 3.
 
 > **The existing permission system and existing portal functionality remain unchanged and are
 > reused inside every project. Project access determines which projects a user can enter; existing
@@ -514,6 +514,89 @@ seed already grants its admin access, idempotently.
   key, a notification event setting, an AI model job slot). Such a write fails loudly; it never
   lands in or reads from the wrong project. No second project can be created from the UI before
   Phase 4.
+
+### 10.3 Phase 3 as delivered (29 Sep 2026): worker and background processing
+
+- **Where the project comes from.** `apps/worker/src/project/context.ts` holds it in an
+  `AsyncLocalStorage`.
+  - `withAccountProject(accountId, …)` takes it from the `WhatsAppAccount` row, the authoritative
+    link (cached 60 s).
+  - Rows the web app queued (outbound, notifications, commands, group adds, escalation cases) use
+    their own `projectId`.
+  - Nothing reads it from a message body or a payload.
+  - An unknown account, an empty or unknown project, and a nested switch to a different project all
+    throw `ProjectScopeError`.
+  - `withProject` awaits inside the context. A Prisma query is a lazy thenable, so returning it bare
+    ran the query outside the project. The new tests caught this before it shipped.
+- **One scoped client.** `apps/worker/src/db.ts` exports `prisma`: the Phase 2 extension, with the
+  worker's context as its resolver. All 56 worker modules use it, and it throws outside a context.
+  - `platformPrisma` (unscoped) is used only to claim the next row of a shared queue, list accounts
+    to connect, watch or heartbeat, release stranded claims, and reconcile status at boot. Each of
+    these then enters the row's or account's own project.
+  - The worker's two raw SQL queries (rate limiter, attendance) state `"projectId"` explicitly.
+- **Entry points and loops.**
+  - Message path: these run as the receiving account's project: `processIncomingMessage`,
+    `runAutomationStage`, `storeMissedMessage`, `resolveGroup`, `catchUpMissedMessages`, the drop
+    counter, group sync and every connection-state write. The connection-state wrappers keep their
+    never-throw contract when an account has been deleted.
+  - Shared queues (outbound, notifications, commands, group adds, participant checks, escalation,
+    stranded-message recovery) keep ONE global claim order and one item per tick. Each row is then
+    worked inside its own project.
+  - Per-project scanners use `forEachProject`: segmentation, pattern detection, AI analysis, group
+    knowledge, style, knowledge imports, conversation analysis, sandbox and both Forge loops.
+    - Each project runs in turn, with its own settings and kill switch.
+    - One project's failure is logged, and the next project still runs.
+    - The 6 h and 12 h catch-ups decide per project whether they are overdue.
+  - Boot: the legacy session account, the env AI provider (`OPENROUTER_*`) and the Forge auto-link
+    belong to ISP Digital only, because the environment predates projects. Nothing is provisioned
+    for another project that it did not configure itself.
+- **Primary per project.**
+  - The install-wide `WhatsAppAccount_isPrimary_unique` is dropped; Phase 1's per-project partial
+    unique remains.
+  - `resolveWhatsAppAccount` reads through the scoped client.
+  - `ensurePrimaryAccountExists` heals each project from its own accounts.
+- **Outbound safety.** Before any send, the outbound queue checks that the sending account belongs
+  to the row's project.
+  - A mismatch or a missing account is marked FAILED with a plain reason, logged to SystemLog, and
+    never sent.
+  - The notification dispatcher, the command processor and the group-add and participant-check
+    processors apply the same check.
+- **Migration `20260928170000_projects_worker_isolation`** (local only, not deployed):
+  - The 70 `DEFAULT 'proj_isp_digital'` become `DEFAULT project_id_required()`. That function
+    raises, so a write naming no project fails at the database instead of joining ISP Digital. A
+    plain `DROP DEFAULT` would have made `projectId` a required input in every generated Prisma type.
+  - The 15 install-wide uniques that stood next to Phase 1's composites are dropped.
+  - `NotificationTemplate`, `NotificationEventSetting` and `WhatsAppServiceRoute` are re-keyed on
+    `(projectId, key)`.
+  - The install-wide Primary partial unique is dropped.
+
+  It is metadata-only on the large tables, and the removed Teams tables are still not dropped. Code
+  that used the old keys now uses `findFirst` (scoped) or the compound `projectId_*` key. The seed
+  names ISP Digital explicitly.
+- **Tests.** `projectIsolation.integration.test.ts` has 19 tests across two projects. They cover:
+  - messages and group registration;
+  - a missing or unknown project, and project switching;
+  - cross-project reads, updates and creates;
+  - knowledge, and the AI provider and model;
+  - rules, and the Primary account;
+  - outbound, alert and command mismatches, and alert muting;
+  - segmentation and `forEachProject`.
+
+  Every guarded behaviour was mutation-checked: removing it, or restoring the old index, fails the
+  matching test. Fixtures use a test client that acts as ISP Digital outside a context
+  (`helpers/projectFixtures.ts`); production code has no such fallback.
+- **Still open (not solved by Phase 3).**
+  - `$queryRaw` stays outside the scoped client in both apps. Every raw query must name its
+    project; all current ones do.
+  - Forge credentials are install-wide env, so a second project that enables Forge would read
+    through the same API key. Per-project Forge credentials are Phase 4/5 work.
+  - `OutboundMessage.idempotencyKey` and `AutomationExecution.idempotencyKey` stay install-wide
+    uniques. Both are derived from row ids, so they cannot collide across projects.
+  - Global rate limits are counted per project per account. That is per number, since an account
+    belongs to exactly one project.
+  - Composite consistency FKs (a row's `projectId` matching its parent's) remain Phase 7. Today the
+    scoped clients and the send-time account check enforce it.
+  - Nothing in the UI can create a project yet (Phase 4).
 
 ### 10.1 Phase 1, reviewed after the 28 Sep correction
 

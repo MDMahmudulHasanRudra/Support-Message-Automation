@@ -1,5 +1,6 @@
 import { countMetric } from "./metrics.js";
-import { prisma } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { withAccountProject } from "../project/context.js";
 import type { ConnectionStatus } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
@@ -180,7 +181,10 @@ export async function checkCollectionHealth(registry: ProviderRegistry): Promise
   // for a reply" all read every stored message. On 24 Sep 2026 production ran with zero monitored
   // groups, used purely as an inbox, and this selection skipped it entirely while its page had
   // lost WhatsApp for hours. A spare number in no groups at all still stays silent.
-  const accounts = await prisma.whatsAppAccount.findMany({
+  //
+  // Across every project (this worker holds all their sessions); each account is then checked —
+  // and alerted on — inside its own project.
+  const accounts = await platformPrisma.whatsAppAccount.findMany({
     where: {
       lastConnectedAt: { not: null },
       groups: { some: { isActive: true } },
@@ -197,7 +201,7 @@ export async function checkCollectionHealth(registry: ProviderRegistry): Promise
 
   for (const account of accounts) {
     try {
-      const finding = await checkOneAccount(registry, account);
+      const finding = await withAccountProject(account.id, () => checkOneAccount(registry, account));
       if (finding) findings.push(finding);
     } catch (err) {
       // One account's check failing must not stop the others being checked — the whole point is

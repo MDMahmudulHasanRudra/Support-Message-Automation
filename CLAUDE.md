@@ -158,12 +158,10 @@ module reached by `./`.
 ### Multi-project (in progress — `MULTI_PROJECT_PLAN.md` is the reference)
 
 The platform is becoming multi-project: the original installation is the project **ISP Digital**
-(`proj_isp_digital`, slug `isp-digital`). **Phase 1 (database foundation) only has landed**:
-`Project`, `ProjectAccess`, `ProjectFeature`, and a `projectId` on the 70 project-scoped tables
-(`NOT NULL DEFAULT 'proj_isp_digital'`, so every existing write still lands in ISP Digital with no
-code change) plus a nullable one on `SystemLog`. Composite `(projectId, …)` uniques sit NEXT TO the
-old install-wide ones, which stay until Phase 2 moves lookups onto the composite ones. Nothing reads
-any of it yet.
+(`proj_isp_digital`, slug `isp-digital`). **Phase 1 (database foundation)**: `Project`,
+`ProjectAccess`, `ProjectFeature`, a `projectId` on the 70 project-scoped tables plus a nullable one
+on `SystemLog`, and composite `(projectId, …)` uniques. Its temporary ISP Digital default and the old
+install-wide uniques were removed in Phase 3 (below).
 
 Two rules that hold from here on:
 - **Project access ≠ permission.** `ProjectAccess` says which projects a user may enter, nothing
@@ -182,8 +180,23 @@ Never import `prisma` from `@support-automation/db` in web code; only `server/au
 add `"projectId" = ${await activeProjectId()}`. Write links project-relative ("/rules") through
 `@/components/ProjectLink` / `ButtonLink` / `useProjectRouter`, and pass server paths through
 `await projectPath("/rules")` before `redirect`/`revalidatePath`. Work in `after()` must be wrapped in
-`runWithProject(project, …)`, because it has no request headers. The worker is NOT scoped yet (Phase
-3); the DB defaults and old install-wide uniques stay until it is.
+`runWithProject(project, …)`, because it has no request headers.
+
+**Phase 3 (worker isolation) has landed too.** Worker code imports `prisma` from `src/db.ts`: the
+same scoped client, resolving the project from `project/context.ts`'s `AsyncLocalStorage`, and
+throwing outside a project. Work enters a project in exactly three ways: `withAccountProject(accountId)`
+(the account row is the authority: the message path, group sync, connection state), a shared queue
+row's own `projectId` after a global claim through `platformPrisma` (outbound, notifications,
+commands, group adds, escalation, stranded messages), or `forEachProject` for the per-project
+scanners. Never take a project from a message or payload, never default one, and never call a
+self-entering function (`processOne`, `processOneCase`, `processIncomingMessage`…) from inside a
+DIFFERENT project — a nested switch throws. Every send checks that the sending account belongs to
+the row's project. The database has no default project any more: `projectId` defaults to
+`project_id_required()`, which raises, and the old install-wide uniques are gone — use `findFirst`
+(scoped) or the compound `projectId_*` key (`await activeProjectId()` in the web,
+`currentProjectId()` in the worker). Worker tests write fixtures through
+`__tests__/helpers/projectFixtures.ts` (ISP Digital outside a context) and wrap project-wide jobs in
+`inIsp(...)`. See `MULTI_PROJECT_PLAN.md` §10.3.
 
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking

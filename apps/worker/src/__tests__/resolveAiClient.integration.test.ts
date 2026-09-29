@@ -1,7 +1,8 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma, encryptSecret } from "@support-automation/db";
+import { encryptSecret } from "@support-automation/db";
+import { ISP_DIGITAL, prisma } from "./helpers/projectFixtures.js";
 import { resolveAiClient, AnthropicClient, OpenAiCompatibleClient } from "@support-automation/ai-client";
 import type { AiSettings } from "@prisma/client";
 
@@ -36,7 +37,7 @@ async function makeProvider(
 
 async function assignResponseModel(providerId: string) {
   await prisma.aiModelConfig.upsert({
-    where: { job: "RESPONSE" },
+    where: { projectId_job: { projectId: ISP_DIGITAL, job: "RESPONSE" } },
     update: { providerId, modelId: "test-model" },
     create: { job: "RESPONSE", providerId, modelId: "test-model" },
   });
@@ -64,7 +65,7 @@ describe("resolveAiClient — provider kind resolution", () => {
     const provider = await makeProvider("ANTHROPIC");
     await assignResponseModel(provider.id);
 
-    const client = await resolveAiClient("RESPONSE");
+    const client = await resolveAiClient("RESPONSE", prisma);
     expect(client).toBeInstanceOf(AnthropicClient);
   });
 
@@ -72,7 +73,7 @@ describe("resolveAiClient — provider kind resolution", () => {
     const provider = await makeProvider("OPENAI");
     await assignResponseModel(provider.id);
 
-    const client = await resolveAiClient("RESPONSE");
+    const client = await resolveAiClient("RESPONSE", prisma);
     expect(client).toBeInstanceOf(OpenAiCompatibleClient);
   });
 
@@ -80,7 +81,7 @@ describe("resolveAiClient — provider kind resolution", () => {
     const provider = await makeProvider("OPENROUTER");
     await assignResponseModel(provider.id);
 
-    const client = await resolveAiClient("RESPONSE");
+    const client = await resolveAiClient("RESPONSE", prisma);
     expect(client).toBeInstanceOf(OpenAiCompatibleClient);
   });
 
@@ -91,7 +92,7 @@ describe("resolveAiClient — provider kind resolution", () => {
     });
     await assignResponseModel(provider.id);
 
-    const client = await resolveAiClient("RESPONSE");
+    const client = await resolveAiClient("RESPONSE", prisma);
     expect(client).toBeInstanceOf(OpenAiCompatibleClient);
   });
 
@@ -99,7 +100,7 @@ describe("resolveAiClient — provider kind resolution", () => {
     const provider = await makeProvider("OPENROUTER", { apiKeyCiphertext: null });
     await assignResponseModel(provider.id);
 
-    expect(await resolveAiClient("RESPONSE")).toBeNull();
+    expect(await resolveAiClient("RESPONSE", prisma)).toBeNull();
   });
 
   it("resolves a GOOGLE provider to OpenAiCompatibleClient", async () => {
@@ -109,7 +110,7 @@ describe("resolveAiClient — provider kind resolution", () => {
     const provider = await makeProvider("GOOGLE");
     await assignResponseModel(provider.id);
 
-    const client = await resolveAiClient("RESPONSE");
+    const client = await resolveAiClient("RESPONSE", prisma);
     expect(client).toBeInstanceOf(OpenAiCompatibleClient);
   });
 
@@ -120,12 +121,12 @@ describe("resolveAiClient — provider kind resolution", () => {
     const provider = await makeProvider("CUSTOM");
     await assignResponseModel(provider.id);
 
-    const client = await resolveAiClient("RESPONSE");
+    const client = await resolveAiClient("RESPONSE", prisma);
     expect(client).toBeNull();
   });
 
   it("resolves to null when no AiModelConfig exists for the job at all", async () => {
-    const client = await resolveAiClient("RESPONSE");
+    const client = await resolveAiClient("RESPONSE", prisma);
     expect(client).toBeNull();
   });
 
@@ -140,7 +141,7 @@ describe("resolveAiClient — provider kind resolution", () => {
     await prisma.aiSettings.update({ where: { id: "global" }, data: { learningEnabled: false } });
 
     try {
-      const client = await resolveAiClient("RESPONSE");
+      const client = await resolveAiClient("RESPONSE", prisma);
       expect(client).toBeInstanceOf(AnthropicClient);
     } finally {
       await prisma.aiSettings.update({ where: { id: "global" }, data: { learningEnabled: true } });
@@ -153,8 +154,8 @@ describe("resolveAiClient — provider kind resolution", () => {
     await prisma.aiSettings.update({ where: { id: "global" }, data: { aiEngineEnabled: false } });
 
     try {
-      expect(await resolveAiClient("RESPONSE")).toBeNull();
-      expect(await resolveAiClient("LEARNING")).toBeNull();
+      expect(await resolveAiClient("RESPONSE", prisma)).toBeNull();
+      expect(await resolveAiClient("LEARNING", prisma)).toBeNull();
     } finally {
       await prisma.aiSettings.update({ where: { id: "global" }, data: { aiEngineEnabled: true } });
     }
@@ -164,7 +165,7 @@ describe("resolveAiClient — provider kind resolution", () => {
     const provider = await makeProvider("ANTHROPIC");
     await assignResponseModel(provider.id);
 
-    const client = await resolveAiClient("RESPONSE");
+    const client = await resolveAiClient("RESPONSE", prisma);
     // A shallow own-property check, not a deep JSON.stringify — the underlying Anthropic SDK
     // client object is internally circular (an SDK implementation detail, not a security
     // concern), so a deep serialization isn't the right tool here. The real guarantee —

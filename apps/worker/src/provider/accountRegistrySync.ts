@@ -1,4 +1,5 @@
-import { prisma } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { withAccountProject } from "../project/context.js";
 import type { WhatsAppAccount } from "@prisma/client";
 import type { ProviderRegistry } from "./ProviderRegistry.js";
 import { assignSessionForAccount, findConnectableAccounts, findUnprovisionedAccounts } from "./accountProvisioning.js";
@@ -54,7 +55,8 @@ export async function releaseDeletedAccounts(registry: ProviderRegistry): Promis
   const held = registry.allAccountIds();
   if (!held.length) return;
 
-  const live = await prisma.whatsAppAccount.findMany({
+  // Across every project: the registry holds every project's sessions.
+  const live = await platformPrisma.whatsAppAccount.findMany({
     where: { id: { in: held } },
     select: { id: true },
   });
@@ -144,6 +146,11 @@ async function syncOnce(registry: ProviderRegistry): Promise<void> {
  * spare number, rotating a QR code nobody is looking at, forever.
  */
 async function recoverIfDropped(registry: ProviderRegistry, account: WhatsAppAccount): Promise<void> {
+  // Everything below — the pending-command check, the log lines — is the account's own project's.
+  return withAccountProject(account.id, () => recoverIfDroppedInProject(registry, account));
+}
+
+async function recoverIfDroppedInProject(registry: ProviderRegistry, account: WhatsAppAccount): Promise<void> {
   const accountId = account.id;
   const provider = registry.get(accountId);
   if (!provider) return;

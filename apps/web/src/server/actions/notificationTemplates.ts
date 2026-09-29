@@ -1,5 +1,6 @@
 "use server";
 
+import { activeProjectId } from "@/server/projectContext";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
@@ -49,7 +50,7 @@ export async function updateNotificationTemplate(
   if (verdict.error) return { error: verdict.error };
 
   await prisma.notificationTemplate.upsert({
-    where: { key },
+    where: { projectId_key: { projectId: await activeProjectId(), key } },
     update: { body: body.trim(), updatedById: session.userId },
     create: { key, body: body.trim(), updatedById: session.userId },
   });
@@ -131,7 +132,7 @@ export async function sendTemplateTestMessage(key: string, groupId: string): Pro
     return { error: `${group.account.label} is ${group.account.status.toLowerCase()}. Reconnect it first.` };
   }
 
-  const override = await prisma.notificationTemplate.findUnique({ where: { key } });
+  const override = await prisma.notificationTemplate.findFirst({ where: { key } });
   const body = renderNotificationTemplate(
     override?.body ?? definition.defaultBody,
     Object.fromEntries(definition.variables.map((v) => [v.name, v.sample])),

@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { buildGroupKnowledgePrompt, parseKnowledgeRecords } from "./groupKnowledgePrompt.js";
@@ -82,7 +82,7 @@ export async function processOneConversationAnalysisStep(
     return { ran: false, runId: run.id, skipped: "AI_ENGINE_DISABLED" };
   }
 
-  const client = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const client = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!client) {
     await failRun(run.id, "No provider is assigned to the Learning job, or it is disabled.");
     return { ran: false, runId: run.id, skipped: "NO_AI_CLIENT" };

@@ -9,6 +9,13 @@ import {
 
 const prisma = new PrismaClient();
 
+/**
+ * Everything project-scoped this script creates belongs to ISP Digital, the original installation
+ * (MULTI_PROJECT_PLAN.md). Named explicitly on every write: since Phase 3 the database has no
+ * default project, so a row that does not name one is refused.
+ */
+const ISP_DIGITAL = "proj_isp_digital";
+
 function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
   const hash = scryptSync(password, salt, 64).toString("hex");
@@ -41,9 +48,9 @@ async function main() {
   // to ISP Digital. Access only: what the admin may do is still its existing role, set below.
   // Idempotent, and never removes anyone's access.
   await prisma.project.upsert({
-    where: { id: "proj_isp_digital" },
+    where: { id: ISP_DIGITAL },
     update: {},
-    create: { id: "proj_isp_digital", name: "ISP Digital", slug: "isp-digital", status: "ACTIVE" },
+    create: { id: ISP_DIGITAL, name: "ISP Digital", slug: "isp-digital", status: "ACTIVE" },
   });
   await prisma.projectAccess.upsert({
     where: { projectId_userId: { projectId: "proj_isp_digital", userId: admin.id } },
@@ -71,13 +78,13 @@ async function main() {
   // every `docker compose up` re-runs this script: two fake "Support Executive" rows reappeared in
   // a live roster the day Team Management shipped, where they would sit in schedules, attendance
   // and duty planning as if they were staff. An empty roster is the only one that gets them.
-  const existingTeamMembers = await prisma.internalTeamMember.count();
+  const existingTeamMembers = await prisma.internalTeamMember.count({ where: { projectId: ISP_DIGITAL } });
   if (existingTeamMembers === 0) {
     for (const member of exampleTeamMembers) {
       await prisma.internalTeamMember.upsert({
-        where: { phoneNumber: member.phoneNumber },
+        where: { projectId_phoneNumber: { projectId: ISP_DIGITAL, phoneNumber: member.phoneNumber } },
         update: {},
-        create: { ...member, status: "ACTIVE" },
+        create: { ...member, status: "ACTIVE", projectId: ISP_DIGITAL },
       });
     }
     console.log(`Seeded ${exampleTeamMembers.length} example internal team members`);
@@ -96,10 +103,11 @@ async function main() {
   ];
 
   for (const rule of defaultIgnoreRules) {
-    const existing = await prisma.automationRule.findFirst({ where: { name: rule.name } });
+    const existing = await prisma.automationRule.findFirst({ where: { projectId: ISP_DIGITAL, name: rule.name } });
     if (existing) continue;
     await prisma.automationRule.create({
       data: {
+        projectId: ISP_DIGITAL,
         name: rule.name,
         description: "Seeded default-ignore rule for a known system/confirmation message.",
         type: "DEFAULT_IGNORE",
@@ -115,10 +123,11 @@ async function main() {
   console.log(`Seeded ${defaultIgnoreRules.length} default-ignore rules`);
 
   const greetingRuleName = "Auto Reply: Greeting";
-  const existingGreeting = await prisma.automationRule.findFirst({ where: { name: greetingRuleName } });
+  const existingGreeting = await prisma.automationRule.findFirst({ where: { projectId: ISP_DIGITAL, name: greetingRuleName } });
   if (!existingGreeting) {
     await prisma.automationRule.create({
       data: {
+        projectId: ISP_DIGITAL,
         name: greetingRuleName,
         description: "Seeded example SAFE_AUTO_REPLY acknowledgement for a plain greeting.",
         type: "AUTO_REPLY",
@@ -143,6 +152,7 @@ async function main() {
     update: {},
     create: {
       id: "global",
+      projectId: ISP_DIGITAL,
       mode: "SAFE_AUTO_REPLY",
       automationEnabled: true,
     },
@@ -152,7 +162,7 @@ async function main() {
   await prisma.groupBroadcastSettings.upsert({
     where: { id: "global" },
     update: {},
-    create: { id: "global" },
+    create: { id: "global", projectId: ISP_DIGITAL },
   });
   console.log("Seeded conservative default Group Message Sender settings");
 
@@ -177,9 +187,9 @@ async function main() {
   ];
   for (const shift of DEFAULT_SHIFTS) {
     await prisma.shiftTemplate.upsert({
-      where: { name: shift.name },
+      where: { projectId_name: { projectId: ISP_DIGITAL, name: shift.name } },
       update: {},
-      create: shift,
+      create: { ...shift, projectId: ISP_DIGITAL },
     });
   }
   console.log(`Seeded ${DEFAULT_SHIFTS.length} default shift templates`);

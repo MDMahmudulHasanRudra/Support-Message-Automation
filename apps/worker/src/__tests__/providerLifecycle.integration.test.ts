@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { releaseDeletedAccounts } from "../provider/accountRegistrySync.js";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
