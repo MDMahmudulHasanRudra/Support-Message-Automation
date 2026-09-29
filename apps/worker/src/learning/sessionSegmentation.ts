@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import type { ConversationSession, LearningSettings } from "@prisma/client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -31,6 +32,7 @@ export async function getLearningSettings(): Promise<LearningSettings> {
 export async function processOneSegmentationBatch(): Promise<boolean> {
   const settings = await getLearningSettings();
   if (!settings.conversationLearningEnabled) return false;
+  if (!(await projectHasFeature("CONVERSATION_LEARNING"))) return false; // entitlement, MULTI_PROJECT_PLAN.md §9
 
   const job = await prisma.learningBatchJob.create({
     data: { jobType: "CONVERSATION_SEGMENTATION", trigger: "SCHEDULED", status: "RUNNING", startedAt: new Date() },

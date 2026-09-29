@@ -76,7 +76,7 @@ export async function createKnowledgeItem(
   _prevState: KnowledgeFormState,
   formData: FormData,
 ): Promise<KnowledgeFormState> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
   const parsed = parseFields(formData);
@@ -153,7 +153,7 @@ export async function updateKnowledgeItem(
   _prevState: KnowledgeFormState,
   formData: FormData,
 ): Promise<KnowledgeFormState> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
   const item = await prisma.aiKnowledgeItem.findUnique({ where: { id } });
@@ -215,7 +215,7 @@ export async function updateKnowledgeItem(
  * nobody has confirmed it), or verified and INACTIVE (checked, but deliberately not in play).
  */
 export async function setKnowledgeVerified(id: string, verified: boolean): Promise<void> {
-  const session = await requireAccess("ai_learning.manage");
+  const session = await requireAccess("ai_learning.manage", "AI_LEARNING");
   const item = await prisma.aiKnowledgeItem.update({
     where: { id },
     data: {
@@ -310,7 +310,7 @@ const STATUS_LIMIT_HINT = "Narrow the filters, or use a smaller page size, and r
  * discarded entry nor inflate the reported count.
  */
 export async function bulkSetKnowledgeVerified(ids: string[]): Promise<BulkKnowledgeResult> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { updated: 0, error: granted.denied };
   const session = granted.session;
   const checked = checkBulkIds(ids, MAX_BULK_VERIFY_IDS, VERIFY_LIMIT_HINT);
@@ -355,7 +355,7 @@ export async function bulkSetKnowledgeVerified(ids: string[]): Promise<BulkKnowl
 
 /** Discards several entries at once — archived, never deleted, exactly like the single-entry path. */
 export async function bulkArchiveKnowledge(ids: string[]): Promise<BulkKnowledgeResult> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { updated: 0, error: granted.denied };
   const session = granted.session;
   const checked = checkBulkIds(ids, MAX_BULK_STATUS_IDS, STATUS_LIMIT_HINT);
@@ -386,7 +386,7 @@ export async function bulkArchiveKnowledge(ids: string[]): Promise<BulkKnowledge
 }
 
 export async function setKnowledgeStatus(id: string, status: AiKnowledgeStatus): Promise<void> {
-  await requireAccess("ai_learning.manage");
+  await requireAccess("ai_learning.manage", "AI_LEARNING");
   const item = await prisma.aiKnowledgeItem.update({ where: { id }, data: { status } });
   await logSystemEvent("INFO", "ai-learning", `Knowledge item "${item.title}" set to ${status}`, { itemId: id });
   revalidatePath(await projectPath(`/ai-learning/knowledge-base/${id}`));
@@ -403,7 +403,7 @@ export async function setKnowledgeStatus(id: string, status: AiKnowledgeStatus):
  * tell "genuinely changed" from "already there", per ENGINEERING_STANDARDS.md's bulk-action rule.
  */
 export async function bulkSetKnowledgeStatus(ids: string[], status: AiKnowledgeStatus): Promise<BulkKnowledgeResult> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { updated: 0, error: granted.denied };
   const session = granted.session;
   const checked = checkBulkIds(ids, MAX_BULK_STATUS_IDS, STATUS_LIMIT_HINT);
@@ -449,7 +449,7 @@ export async function bulkSetKnowledgeStatus(ids: string[], status: AiKnowledgeS
  * because the entry it cited was.
  */
 export async function bulkDeleteKnowledge(ids: string[]): Promise<BulkKnowledgeResult> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { updated: 0, error: granted.denied };
   const session = granted.session;
   const checked = checkBulkIds(ids, MAX_BULK_STATUS_IDS, STATUS_LIMIT_HINT);
@@ -482,7 +482,7 @@ export async function bulkDeleteKnowledge(ids: string[]): Promise<BulkKnowledgeR
 
 /** Restoring never deletes history — it adds a new version copying the old one's content, same as any other edit. */
 export async function restoreKnowledgeVersion(itemId: string, version: number): Promise<void> {
-  const session = await requireAccess("ai_learning.manage");
+  const session = await requireAccess("ai_learning.manage", "AI_LEARNING");
   const item = await prisma.aiKnowledgeItem.findUnique({ where: { id: itemId } });
   const target = await prisma.aiKnowledgeVersion.findUnique({ where: { itemId_version: { itemId, version } } });
   if (!item || !target) return;
@@ -545,7 +545,7 @@ export async function setKnowledgeScope(
   scope: "GLOBAL" | "GROUP" | "ACCOUNT",
   scopeAccountId?: string | null,
 ): Promise<{ error?: string }> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
 

@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import type { LearningBatchJobTrigger } from "@prisma/client";
@@ -31,6 +32,7 @@ export async function processOneAiAnalysisBatch(
 ): Promise<boolean> {
   const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled || !aiSettings.learningEnabled) return false;
+  if (!(await projectHasFeature("CONVERSATION_LEARNING"))) return false; // entitlement, MULTI_PROJECT_PLAN.md §9
 
   const client = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!client) return false;

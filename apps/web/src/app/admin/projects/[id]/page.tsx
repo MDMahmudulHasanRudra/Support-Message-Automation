@@ -5,7 +5,7 @@ import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader } from "@/com
 import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
 import { getProjectDetail, requireMainAdminPage } from "@/server/mainAdmin";
 import { whatsappLine } from "../../ProjectCard";
-import { ProjectAccessList, ProjectStatusControl } from "./ProjectControls";
+import { ProjectAccessList, ProjectFeatureList, ProjectStatusControl } from "./ProjectControls";
 
 export const metadata = { title: "Project" };
 
@@ -106,21 +106,13 @@ export default async function ProjectDetailPage({
       <div className="mt-8">
         <SectionHeader
           title="Features"
-          description="What this project is entitled to. Every project currently has every feature; switching one off for a project arrives in the next phase."
+          description="What this project is entitled to use. Off means the module is hidden and refused in this project, whatever anyone's role allows; its own settings are kept for when it is switched back on."
         />
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {features.map((feature) => (
-            <li key={feature.key} className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[13px] font-medium text-[color:var(--color-foreground)]">{feature.label}</span>
-                <Badge color={feature.enabled ? "green" : "gray"} dot>
-                  {feature.enabled ? "On" : "Off"}
-                </Badge>
-              </div>
-              <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">{feature.description}</p>
-            </li>
-          ))}
-        </ul>
+        <ProjectFeatureList
+          projectId={project.id}
+          canManage={canManage}
+          features={features.map(({ key, label, description, workerEffect, enabled }) => ({ key, label, description, workerEffect, enabled }))}
+        />
       </div>
 
       <div className="mt-8">

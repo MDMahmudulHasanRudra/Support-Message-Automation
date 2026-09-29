@@ -3,7 +3,10 @@ import type { PermissionKey } from "@support-automation/shared";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission, requirePermission } from "@/server/permissions";
 import { ProjectAccessError, requireActiveProject, type ActiveProject } from "@/server/projectContext";
-import { isReadOnlyProjectStatus } from "@support-automation/shared";
+import { isReadOnlyProjectStatus, type ProjectFeatureKey } from "@support-automation/shared";
+import { redirect } from "next/navigation";
+import { blockedFeature, featureUnavailableError } from "@/server/projectFeatures";
+import { projectPath } from "@/server/projectPaths";
 
 /**
  * Permission checks for pages and Server Actions, in the three shapes this app needs.
@@ -32,8 +35,9 @@ export const PROJECT_ACCESS_DENIED_ERROR = "You do not have access to this proje
  * indistinguishable from one that does not exist — nothing about it is disclosed.
  */
 export async function requireProjectPage(): Promise<ActiveProject> {
+  let project: ActiveProject;
   try {
-    return await requireActiveProject();
+    project = await requireActiveProject();
   } catch (err) {
     if (err instanceof ProjectAccessError) {
       if (err.reason === "NO_SESSION") await requireSession(); // → /login
@@ -41,6 +45,12 @@ export async function requireProjectPage(): Promise<ActiveProject> {
     }
     throw err;
   }
+  // The feature step (MULTI_PROJECT_PLAN.md §9): a page belonging to a feature this project is not
+  // entitled to does not open. It goes to the Overview, which says which feature, rather than a 404
+  // — the project exists and the user may be in it; this one module is switched off.
+  const blocked = await blockedFeature();
+  if (blocked) redirect(await projectPath(`/overview?unavailable=${blocked}`));
+  return project;
 }
 
 export const PERMISSION_DENIED_ERROR = "You do not have permission to perform this action.";
@@ -52,7 +62,11 @@ export const PERMISSION_DENIED_ERROR = "You do not have permission to perform th
  *     const access = await checkPermission("whatsapp.manage");
  *     if ("denied" in access) return { error: access.denied };
  */
-export async function checkPermission(key: PermissionKey): Promise<{ session: Session } | { denied: string }> {
+export async function checkPermission(
+  key: PermissionKey,
+  /** For an action whose key is shared with other modules: the feature it serves. */
+  feature?: ProjectFeatureKey,
+): Promise<{ session: Session } | { denied: string }> {
   const session = await requireSession();
   let project: ActiveProject;
   try {
@@ -62,6 +76,8 @@ export async function checkPermission(key: PermissionKey): Promise<{ session: Se
     throw err;
   }
   if (!(await hasPermission(session, key))) return { denied: PERMISSION_DENIED_ERROR };
+  const blocked = await blockedFeature({ key, feature });
+  if (blocked) return { denied: featureUnavailableError(blocked) };
   // A suspended or archived project is read-only (MULTI_PROJECT_PLAN.md §8). Refused here, with a
   // sentence the form can show, for every action gated on a key that changes something; the
   // database client refuses the write itself regardless (server/db.ts), this only words it.
@@ -88,10 +104,12 @@ export function projectReadOnlyError(project: ActiveProject): string {
  * the error boundary; returning silently would let the caller show a success toast for something
  * that did not happen. A redirect is neither, and it is what pages already do on a denial.
  */
-export async function requireAccess(key: PermissionKey): Promise<Session> {
+export async function requireAccess(key: PermissionKey, feature?: ProjectFeatureKey): Promise<Session> {
   const session = await requireSession();
   await requireProjectPage();
   await requirePermission(session, key);
+  const blocked = await blockedFeature({ key, feature });
+  if (blocked) redirect(await projectPath(`/overview?unavailable=${blocked}`));
   return session;
 }
 
@@ -100,7 +118,11 @@ export async function requireAccess(key: PermissionKey): Promise<Session> {
  * so the page can say it is view-only rather than letting somebody find out one refused click at a
  * time.
  */
-export async function pageAccess(viewKey: PermissionKey, manageKey: PermissionKey): Promise<{ session: Session; canManage: boolean }> {
-  const session = await requireAccess(viewKey);
+export async function pageAccess(
+  viewKey: PermissionKey,
+  manageKey: PermissionKey,
+  feature?: ProjectFeatureKey,
+): Promise<{ session: Session; canManage: boolean }> {
+  const session = await requireAccess(viewKey, feature);
   return { session, canManage: await hasPermission(session, manageKey) };
 }

@@ -14,7 +14,7 @@ async function getOrCreateSupportActivitySettings() {
 }
 
 export async function setSupportActivityEnabled(enabled: boolean): Promise<void> {
-  await requireAccess("support_activity.manage");
+  await requireAccess("support_activity.manage", "SUPPORT_ACTIVITY");
   await getOrCreateSupportActivitySettings();
   await prisma.supportActivitySettings.update({ where: { id: "global" }, data: { enabled } });
   revalidatePath(await projectPath("/support-activity"));
@@ -24,7 +24,7 @@ export async function setSupportActivityEnabled(enabled: boolean): Promise<void>
 }
 
 export async function updateSupportActivitySettings(formData: FormData): Promise<void> {
-  await requireAccess("support_activity.manage");
+  await requireAccess("support_activity.manage", "SUPPORT_ACTIVITY");
   const enabled = formData.get("enabled") === "on";
   // Clamped rather than rejected: this is a tuning number, and bouncing the whole form over it
   // would discard the other fields somebody had just set.

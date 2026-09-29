@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { derivePatternSignature } from "@support-automation/engine";
@@ -61,6 +62,7 @@ export async function recordUnansweredQuestion(input: {
 
   const settings = await getForgeSettings();
   if (!settings.enabled || !settings.researchUnanswered || !settings.forgeProjectId) return;
+  if (!(await projectHasFeature("PRODUCT_KNOWLEDGE_FORGE"))) return; // entitlement, MULTI_PROJECT_PLAN.md §9
 
   // `patternKey` is the stable, word-order-independent key — the same one the pattern detector
   // and AI rule drafting already deduplicate on, so "how do I void an invoice" asked in fifty
@@ -115,7 +117,7 @@ export async function processOneResearchTask(clientOverride?: AiClient): Promise
   if (!isForgeConfigured()) return { ran: false, skipped: "FORGE_NOT_CONFIGURED" };
 
   const settings = await getForgeSettings();
-  if (!settings.enabled || !settings.researchUnanswered || !settings.forgeProjectId) {
+  if (!settings.enabled || !settings.researchUnanswered || !settings.forgeProjectId || !(await projectHasFeature("PRODUCT_KNOWLEDGE_FORGE"))) {
     return { ran: false, skipped: "RESEARCH_DISABLED" };
   }
 

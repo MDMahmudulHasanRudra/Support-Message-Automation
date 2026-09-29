@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import { createKnowledgeItem } from "@support-automation/db";
 import type { AiClient } from "@support-automation/ai-client";
@@ -74,6 +75,7 @@ export async function researchForCustomerQuestion(params: {
     // reads that project's source; turning on a deep-answer switch should not quietly start
     // reading a repository the admin never connected.
     if (!settings.enabled || !settings.forgeProjectId) return { snippets: [], reason: "FORGE_DISABLED" };
+    if (!(await projectHasFeature("PRODUCT_KNOWLEDGE_FORGE"))) return { snippets: [], reason: "FORGE_DISABLED" }; // entitlement, MULTI_PROJECT_PLAN.md §9
 
     const forge = new ForgeClient(loadForgeConfigFromEnv());
     const modules = await forge.listKnowledgeModules(settings.forgeProjectId);

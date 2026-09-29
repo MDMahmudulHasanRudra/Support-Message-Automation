@@ -8,7 +8,7 @@ import {
   type ProjectStatusValue,
 } from "@support-automation/shared";
 import { Badge, Button, ConfirmDialog, Switch, useToast } from "@/components/ui";
-import { setProjectAccess, setProjectStatus } from "@/server/actions/projects";
+import { setProjectAccess, setProjectFeature, setProjectStatus } from "@/server/actions/projects";
 
 const VERB: Record<ProjectStatusValue, string> = {
   SETUP: "Move back to setup",
@@ -136,3 +136,65 @@ export function ProjectAccessList({ projectId, users, canManage }: { projectId: 
   );
 }
 
+
+export interface FeatureRow {
+  key: string;
+  label: string;
+  description: string;
+  workerEffect: string;
+  enabled: boolean;
+}
+
+/**
+ * The project's feature entitlements. A switch per feature for a Main Admin; read-only otherwise.
+ * Switching one off hides and refuses its pages and actions in this project and stops its background
+ * work — said beside the switch, so nobody finds out from a missing module.
+ */
+export function ProjectFeatureList({ projectId, features, canManage }: { projectId: string; features: FeatureRow[]; canManage: boolean }) {
+  const router = useRouter();
+  const { showToast } = useToast();
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
+
+  function toggle(feature: FeatureRow, enabled: boolean) {
+    setPendingKey(feature.key);
+    startTransition(async () => {
+      const result = await setProjectFeature(projectId, feature.key, enabled);
+      setPendingKey(null);
+      if (result.error) showToast({ tone: "danger", title: result.error });
+      else {
+        showToast({ tone: "success", title: result.success ?? "Saved" });
+        router.refresh();
+      }
+    });
+  }
+
+  return (
+    <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      {features.map((feature) => (
+        <li key={feature.key} className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[13px] font-medium text-[color:var(--color-foreground)]">{feature.label}</span>
+            {canManage ? (
+              <Switch
+                checked={feature.enabled}
+                disabled={pendingKey === feature.key}
+                onChange={(event) => toggle(feature, event.target.checked)}
+                aria-label={`${feature.label} enabled for this project`}
+                data-feature={feature.key}
+              />
+            ) : (
+              <Badge color={feature.enabled ? "green" : "gray"} dot>
+                {feature.enabled ? "On" : "Off"}
+              </Badge>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">{feature.description}</p>
+          {feature.enabled ? null : (
+            <p className="mt-1.5 text-xs text-[color:var(--color-warning-fg)]">Off: its pages are hidden and refused. {feature.workerEffect}</p>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}

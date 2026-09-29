@@ -10,6 +10,13 @@
 /** Request header carrying the URL's project slug. Set ONLY by proxy.ts, which strips any incoming copy. */
 export const PROJECT_HEADER = "x-softify-project";
 
+/**
+ * Request header carrying the path INSIDE the project ("/chat/abc"), so the server can tell which
+ * project feature a page or a Server Action belongs to (MULTI_PROJECT_PLAN.md §9). Set ONLY by
+ * proxy.ts, which strips any incoming copy. Deciding by it can only ever REFUSE more.
+ */
+export const PROJECT_PATH_HEADER = "x-softify-project-path";
+
 /** Remembers the last project opened, ONLY so `/open` can continue there. Never decides reads or writes. */
 export const LAST_PROJECT_COOKIE = "softify-last-project";
 

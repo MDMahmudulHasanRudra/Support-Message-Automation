@@ -1,3 +1,4 @@
+import { pathAllowedByFeatures } from "@support-automation/shared";
 import {
   Activity,
   AlertCircle,
@@ -43,6 +44,9 @@ import {
   Waypoints,
   type LucideIcon,
 } from "lucide-react";
+
+/** No project features switched off — the default for every caller that does not pass a set. */
+const NO_FEATURES_OFF: ReadonlySet<string> = new Set();
 
 /**
  * The single source of truth for dashboard navigation. Lives outside Sidebar.tsx
@@ -175,14 +179,21 @@ export function isSettingsPath(pathname: string): boolean {
   return SETTINGS_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
+/**
+ * Whether a link is offered: the role holds the page's key AND the project is entitled to the
+ * feature the page belongs to (MULTI_PROJECT_PLAN.md §9). Presentation only — the page and its
+ * actions make both checks themselves.
+ */
+function canOffer(href: string, granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string>): boolean {
+  const key = navPermissionFor(href);
+  return (key === null || granted.has(key)) && pathAllowedByFeatures(href, disabledFeatures);
+}
+
 /** The Settings sections reduced to the pages this role can open. Empty sections are dropped. */
-export function settingsSectionsFor(granted: ReadonlySet<string>): SettingsSection[] {
+export function settingsSectionsFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF): SettingsSection[] {
   return SETTINGS_SECTIONS.map((section) => ({
     ...section,
-    links: section.links.filter((link) => {
-      const key = navPermissionFor(link.href);
-      return key === null || granted.has(key);
-    }),
+    links: section.links.filter((link) => canOffer(link.href, granted, disabledFeatures)),
   })).filter((section) => section.links.length > 0);
 }
 
@@ -236,11 +247,8 @@ export function isReportPath(pathname: string): boolean {
 }
 
 /** The reports this role can open. */
-export function reportPagesFor(granted: ReadonlySet<string>): ReportPage[] {
-  return REPORT_PAGES.filter((page) => {
-    const key = navPermissionFor(page.href);
-    return key === null || granted.has(key);
-  });
+export function reportPagesFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF): ReportPage[] {
+  return REPORT_PAGES.filter((page) => canOffer(page.href, granted, disabledFeatures));
 }
 
 // Ordered for day-to-day frequency: live/operational areas checked constantly (messages,
@@ -456,20 +464,17 @@ export function navPermissionFor(href: string): string | null {
 }
 
 /** The nav, reduced to what a role can open. Groups left empty are dropped rather than shown bare. */
-export function navGroupsFor(granted: ReadonlySet<string>): NavGroup[] {
+export function navGroupsFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF): NavGroup[] {
   // Settings is shown whenever the role can open ANY settings page, and opens the first one it can:
   // a role with AI access but no general settings access must still find its way to AI Settings.
-  const firstSettingsPage = settingsSectionsFor(granted)[0]?.links[0] ?? null;
-  const canOpenAnyReport = reportPagesFor(granted).length > 0;
+  const firstSettingsPage = settingsSectionsFor(granted, disabledFeatures)[0]?.links[0] ?? null;
+  const canOpenAnyReport = reportPagesFor(granted, disabledFeatures).length > 0;
   return NAV_GROUPS.map((group) => ({
     ...group,
     links: group.links.flatMap((link) => {
       if (link === SETTINGS_LINK) return firstSettingsPage ? [{ ...SETTINGS_LINK, href: firstSettingsPage.href }] : [];
       if (link === REPORTS_LINK) return canOpenAnyReport ? [link] : [];
-      const permitted = (candidate: NavLink) => {
-        const key = navPermissionFor(candidate.href);
-        return key === null || granted.has(key);
-      };
+      const permitted = (candidate: NavLink) => canOffer(candidate.href, granted, disabledFeatures);
       if (link.tabs) {
         // Shown when ANY tab opens for this role, pointing at the first one that does — a role
         // that can read Broadcast history but not send one still finds its way in.

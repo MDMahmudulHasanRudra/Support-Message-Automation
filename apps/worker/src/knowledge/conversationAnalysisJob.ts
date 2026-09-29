@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -48,6 +49,9 @@ export interface ConversationAnalysisTickResult {
 export async function processOneConversationAnalysisStep(
   clientOverride?: AiClient,
 ): Promise<ConversationAnalysisTickResult> {
+  // Entitlement (MULTI_PROJECT_PLAN.md section 9): queued runs wait, untouched, until it is back on.
+  if (!(await projectHasFeature("CONVERSATION_LEARNING"))) return { ran: false, skipped: "FEATURE_DISABLED" };
+
   // Oldest first, and RUNNING before QUEUED is unnecessary — createdAt ordering already keeps a
   // run that has started ahead of one queued after it, so runs finish in the order they were asked for.
   const run = await prisma.conversationAnalysisRun.findFirst({

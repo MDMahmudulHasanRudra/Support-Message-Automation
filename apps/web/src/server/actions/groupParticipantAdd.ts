@@ -6,9 +6,7 @@ import { revalidatePath } from "next/cache";
 
 import type { Prisma } from "@prisma/client";
 import { normalizePhoneNumber, randomDelayMs } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
 import { requireAccess } from "@/server/authorize";
-import { requirePermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 export interface ParticipantAddTargetInput {
@@ -38,10 +36,10 @@ export interface CreateParticipantAddJobResult {
 export async function createGroupParticipantAddJob(
   input: CreateParticipantAddJobInput,
 ): Promise<CreateParticipantAddJobResult> {
-  const session = await requireSession();
   // Enforced on the server, not by hiding a button: this queues real WhatsApp operations against
-  // the number that also serves every customer.
-  await requirePermission(session, "bulk_messaging.manage");
+  // the number that also serves every customer. requireAccess adds the project steps (access,
+  // read-only project, the Bulk Messaging entitlement) in front of the same permission check.
+  const session = await requireAccess("bulk_messaging.manage");
 
   const account = await prisma.whatsAppAccount.findUnique({ where: { id: input.accountId } });
   if (!account) return { error: "WhatsApp account not found." };
@@ -191,8 +189,7 @@ export async function confirmParticipantAddSelection(
   jobId: string,
   itemIds: string[],
 ): Promise<ConfirmParticipantAddResult> {
-  const session = await requireSession();
-  await requirePermission(session, "bulk_messaging.manage");
+  const session = await requireAccess("bulk_messaging.manage");
 
   const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: jobId } });
   if (!job) return { queued: 0, skipped: 0, error: "That job no longer exists." };
@@ -263,8 +260,7 @@ export async function confirmParticipantAddSelection(
  * WhatsApp call at all.
  */
 export async function recheckParticipantAddItems(jobId: string): Promise<{ rechecked: number; error?: string }> {
-  const session = await requireSession();
-  await requirePermission(session, "bulk_messaging.manage");
+  const session = await requireAccess("bulk_messaging.manage");
 
   const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: jobId } });
   if (!job) return { rechecked: 0, error: "That job no longer exists." };

@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -140,6 +141,7 @@ export async function buildCommunicationStyleProfile(clientOverride?: AiClient):
   const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
   if (!aiSettings.communicationStyleLearningEnabled) return { ran: false, skipped: "STYLE_LEARNING_DISABLED" };
+  if (!(await projectHasFeature("AI_LEARNING"))) return { ran: false, skipped: "STYLE_LEARNING_DISABLED" }; // entitlement, MULTI_PROJECT_PLAN.md §9
 
   const profile = await getStyleProfile();
   const messages = await collectSupportReplies(profile.builtThroughAt);

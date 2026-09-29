@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -50,6 +51,7 @@ export async function processOneGroupKnowledgeBuild(
   // client still exercises the real rule rather than bypassing it.
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
   if (!aiSettings.knowledgeFromChatEnabled) return { ran: false, skipped: "KNOWLEDGE_DISABLED" };
+  if (!(await projectHasFeature("AI_LEARNING"))) return { ran: false, skipped: "KNOWLEDGE_DISABLED" }; // entitlement, MULTI_PROJECT_PLAN.md §9
 
   const group = groupIdOverride
     ? await prisma.whatsAppGroup.findUnique({

@@ -17,6 +17,8 @@ export interface AiFallbackEligibilityContext {
   /** Real wall-clock time, passed explicitly to keep this function pure/testable — never a
    * message-derived timestamp, which could be backdated on a replayed/retried event. */
   now: Date;
+  /** The project's AI_REPLY entitlement (MULTI_PROJECT_PLAN.md §9). Absent means entitled. */
+  aiReplyEntitled?: boolean;
 }
 
 export type AiFallbackEligibility = { eligible: true } | { eligible: false; reason: string };
@@ -65,6 +67,9 @@ export function checkAiFallbackEligibility(ctx: AiFallbackEligibilityContext): A
   }
   if (!ctx.aiEngineEnabled) {
     return { eligible: false, reason: "AI Engine is disabled in AI Settings." };
+  }
+  if (ctx.aiReplyEntitled === false) {
+    return { eligible: false, reason: "AI replies are not enabled for this project." };
   }
   if (!ctx.autoResponseEnabled) {
     return { eligible: false, reason: "AI auto-response is disabled in AI Settings." };

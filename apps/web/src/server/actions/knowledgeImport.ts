@@ -85,7 +85,7 @@ export async function queueKnowledgeImport(
   _prevState: KnowledgeImportState,
   formData: FormData,
 ): Promise<KnowledgeImportState> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
 
@@ -346,7 +346,7 @@ async function importKnowledgeSpreadsheet({
 
 /** Re-queues a failed or disappointing import against the text it already holds. */
 export async function retryKnowledgeImport(id: string): Promise<void> {
-  await requireAccess("ai_learning.manage");
+  await requireAccess("ai_learning.manage", "AI_LEARNING");
   await prisma.knowledgeImport.updateMany({
     // Only a finished import can be retried; one mid-flight would be claimed twice. A SPREADSHEET
     // import is excluded outright: its rawText is CSV that was never meant for a model, and its

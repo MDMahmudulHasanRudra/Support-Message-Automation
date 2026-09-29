@@ -71,7 +71,7 @@ export interface EnsureRuleResult {
  * duplicates that would each match every message.
  */
 export async function enableCountEveryTeamMemberMessage(): Promise<EnsureRuleResult> {
-  await requireAccess("support_activity.manage");
+  await requireAccess("support_activity.manage", "SUPPORT_ACTIVITY");
 
   const existing = await prisma.supportRule.findFirst({
     where: { name: COUNT_EVERY_MESSAGE_RULE_NAME, triggerType: "ANY_MESSAGE" },
@@ -120,7 +120,7 @@ export async function enableCountEveryTeamMemberMessage(): Promise<EnsureRuleRes
 }
 
 export async function createSupportRule(formData: FormData): Promise<void> {
-  await requireAccess("support_activity.manage");
+  await requireAccess("support_activity.manage", "SUPPORT_ACTIVITY");
   const parsed = parseRuleForm(formData);
 
   await prisma.$transaction(async (tx) => {
@@ -152,7 +152,7 @@ export async function createSupportRule(formData: FormData): Promise<void> {
 }
 
 export async function updateSupportRule(id: string, formData: FormData): Promise<void> {
-  await requireAccess("support_activity.manage");
+  await requireAccess("support_activity.manage", "SUPPORT_ACTIVITY");
   const parsed = parseRuleForm(formData);
 
   await prisma.$transaction(async (tx) => {
@@ -193,14 +193,14 @@ export async function updateSupportRule(id: string, formData: FormData): Promise
 }
 
 export async function toggleSupportRuleActive(id: string): Promise<void> {
-  await requireAccess("support_activity.manage");
+  await requireAccess("support_activity.manage", "SUPPORT_ACTIVITY");
   const rule = await prisma.supportRule.findUniqueOrThrow({ where: { id } });
   await prisma.supportRule.update({ where: { id }, data: { isActive: !rule.isActive } });
   revalidatePath(await projectPath("/support-activity/rules"));
 }
 
 export async function deleteSupportRule(id: string): Promise<void> {
-  await requireAccess("support_activity.manage");
+  await requireAccess("support_activity.manage", "SUPPORT_ACTIVITY");
   await prisma.supportRule.delete({ where: { id } }); // cascades its join-table rows
   revalidatePath(await projectPath("/support-activity/rules"));
 }

@@ -13,7 +13,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import { requireSession } from "@/server/auth";
-import { PERMISSIONS } from "@support-automation/shared";
+import { isProjectFeatureKey, PERMISSIONS, projectFeatureDefinition } from "@support-automation/shared";
 import { formatDateTime } from "@/lib/date";
 import {
   Alert,
@@ -92,11 +92,14 @@ function formatAgeShort(ms: number): string {
   return `${minutes}m`;
 }
 
-export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ denied?: string }> }) {
+export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ denied?: string; unavailable?: string }> }) {
   await requireSession();
   // Set by requirePermission when a page or an action refused this user. Only a known key is
   // named, so a hand-edited URL cannot put arbitrary text into the banner.
   const deniedParam = (await searchParams).denied ?? "";
+  // A page of a feature this project is not entitled to sends people here (MULTI_PROJECT_PLAN.md §9).
+  const unavailableParam = (await searchParams).unavailable;
+  const unavailable = isProjectFeatureKey(unavailableParam) ? projectFeatureDefinition(unavailableParam) : null;
   const denied = PERMISSIONS.find((p) => p.key === deniedParam) ?? null;
 
   // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
@@ -347,6 +350,15 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           <Alert tone="warning" title="Your role does not allow that">
             You were sent here because {denied.label.charAt(0).toLowerCase() + denied.label.slice(1)} is not part
             of your Permission Module. Ask an administrator to add it if you need it.
+          </Alert>
+        </div>
+      ) : null}
+
+      {unavailable ? (
+        <div className="mb-5">
+          <Alert tone="info" title={`${unavailable.label} is not enabled for this project`}>
+            That page belongs to {unavailable.label}, which this project is not set up to use. A Main Admin can turn it on
+            in the Main Admin Portal.
           </Alert>
         </div>
       ) : null}

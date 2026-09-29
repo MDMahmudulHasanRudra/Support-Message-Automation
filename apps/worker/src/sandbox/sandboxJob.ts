@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { buildFallbackPrompt, parseFallbackResponse } from "../aiFallback/prompt.js";
@@ -38,6 +39,8 @@ import { getAiSettings } from "../ai/settings.js";
  * the admin can read, not an exception that kills a background loop.
  */
 export async function processOneSandboxTurn(): Promise<void> {
+  // Entitlement (MULTI_PROJECT_PLAN.md §9): pending turns wait, untouched, until it is back on.
+  if (!(await projectHasFeature("CONVERSATION_LEARNING"))) return;
   // Claim-style: exactly one worker tick can move a turn out of PENDING, the same guard
   // the outbound queue and the knowledge importer use.
   const pending = await prisma.sandboxTurn.findFirst({

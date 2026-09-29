@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { createKnowledgeItem } from "@support-automation/db";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
@@ -279,6 +280,7 @@ export async function runForgeKnowledgeSync(clientOverride?: AiClient): Promise<
 
   const settings = await getForgeSettings();
   if (!settings.enabled) return { ran: false, skipped: "FORGE_DISABLED" };
+  if (!(await projectHasFeature("PRODUCT_KNOWLEDGE_FORGE"))) return { ran: false, skipped: "FORGE_DISABLED" }; // entitlement, MULTI_PROJECT_PLAN.md §9
   if (!settings.forgeProjectId) return { ran: false, skipped: "NO_PROJECT_SELECTED" };
 
   const aiSettings = await getAiSettings();

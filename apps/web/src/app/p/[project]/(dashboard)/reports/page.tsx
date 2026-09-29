@@ -4,6 +4,7 @@ import { EmptyState, PageHeader } from "@/components/ui";
 import { requireSession } from "@/server/auth";
 import { getGrantedPermissionKeys } from "@/server/permissions";
 import { reportPagesFor } from "../navigation";
+import { activeDisabledFeatures } from "@/server/projectFeatures";
 
 export const metadata = { title: "All Reports" };
 
@@ -18,7 +19,7 @@ export const metadata = { title: "All Reports" };
 export default async function AllReportsPage() {
   const session = await requireSession();
   const granted = new Set(await getGrantedPermissionKeys(session));
-  const reports = reportPagesFor(granted);
+  const reports = reportPagesFor(granted, await activeDisabledFeatures());
 
   return (
     <div>

@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import { platformPrisma, prisma } from "../db.js";
 import { currentProjectId, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
@@ -90,6 +91,9 @@ export async function openOrContinueCase(params: {
   triggerMessageId: string;
   timestampWa: Date;
 }): Promise<void> {
+  // Project entitlement (MULTI_PROJECT_PLAN.md §9), checked beside the module's own setting: both must be on.
+  if (!(await projectHasFeature("ESCALATIONS"))) return;
+
   // Read outside the transaction on purpose: everything inside runs on the transaction's own
   // connection, and reaching for a second one from in there would hold two connections per
   // concurrent message. Cheap now that this is a plain read after the first call seeds the rows.
@@ -375,7 +379,7 @@ export async function processOneCase(): Promise<boolean> {
 async function processClaimedCase(caseRow: SupportEscalationCase): Promise<boolean> {
 
   const settings = await getSupportEscalationSettings();
-  if (!settings.enabled) {
+  if (!settings.enabled || !(await projectHasFeature("ESCALATIONS"))) {
     // Feature-wide pause: defer, don't cancel — resuming the switch should pick up right where it left off.
     await prisma.supportEscalationCase.update({
       where: { id: caseRow.id },

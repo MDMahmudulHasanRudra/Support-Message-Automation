@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -63,6 +64,8 @@ export async function processOneKnowledgeImport(clientOverride?: AiClient): Prom
   // knowledgeFromChatEnabled: importing your own documentation is an explicit, human-initiated
   // act, not the automatic observation of customer chats that flag governs.
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
+  // Entitlement (MULTI_PROJECT_PLAN.md §9): a queued import waits, untouched, until it is back on.
+  if (!(await projectHasFeature("AI_LEARNING"))) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
 
   const job = await claimNextImport();
   if (!job) return { ran: false, skipped: "NOTHING_QUEUED" };

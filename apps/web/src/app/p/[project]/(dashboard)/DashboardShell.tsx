@@ -12,6 +12,7 @@ import { SettingsNav } from "./SettingsNav";
 import { Sidebar } from "./Sidebar";
 import type { SwitcherProject } from "@/components/ProjectSwitcher";
 import { Alert } from "@/components/ui";
+import { pathAllowedByFeatures } from "@support-automation/shared";
 
 /** First one or two letters of a username, for the header identity chip — "rudra" → "RU". */
 function userInitials(username: string): string {
@@ -102,12 +103,15 @@ export function DashboardShell({
   grantedKeys,
   project,
   switchableProjects,
+  disabledFeatures,
 }: {
   children: ReactNode;
   /** The project this page belongs to — named in the sidebar and the breadcrumb on every page. */
   project: SwitcherProject;
   /** Exactly the projects this user may enter (server-computed). */
   switchableProjects: SwitcherProject[];
+  /** Features this project is not entitled to: their pages are not offered anywhere in the shell. */
+  disabledFeatures: string[];
   username: string;
   automationEnabled: boolean;
   automationMode: string;
@@ -116,15 +120,16 @@ export function DashboardShell({
   grantedKeys: string[];
 }) {
   const granted = useMemo(() => new Set(grantedKeys), [grantedKeys]);
-  const navGroups = useMemo(() => navGroupsFor(granted), [granted]);
-  const settingsSections = useMemo(() => settingsSectionsFor(granted), [granted]);
+  const featuresOff = useMemo(() => new Set(disabledFeatures), [disabledFeatures]);
+  const navGroups = useMemo(() => navGroupsFor(granted, featuresOff), [granted, featuresOff]);
+  const settingsSections = useMemo(() => settingsSectionsFor(granted, featuresOff), [granted, featuresOff]);
   const paletteLinks = useMemo(
     () =>
       ALL_NAV_LINKS.filter((link) => {
         const key = navPermissionFor(link.href);
-        return key === null || granted.has(key);
+        return (key === null || granted.has(key)) && pathAllowedByFeatures(link.href, featuresOff);
       }),
-    [granted],
+    [granted, featuresOff],
   );
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);

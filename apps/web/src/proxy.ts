@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { isOutsideProject, LAST_PROJECT_COOKIE, PROJECT_HEADER, slugFromPath } from "@/lib/projectPaths";
+import { isOutsideProject, LAST_PROJECT_COOKIE, PROJECT_HEADER, PROJECT_PATH_HEADER, slugFromPath, stripProjectPrefix } from "@/lib/projectPaths";
 
 /**
  * Carries the URL's project to the server, and keeps old URLs working (MULTI_PROJECT_PLAN.md §4.1).
@@ -19,10 +19,12 @@ export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const forwarded = new Headers(request.headers);
   forwarded.delete(PROJECT_HEADER);
+  forwarded.delete(PROJECT_PATH_HEADER);
 
   const slug = slugFromPath(pathname);
   if (slug) {
     forwarded.set(PROJECT_HEADER, slug);
+    forwarded.set(PROJECT_PATH_HEADER, stripProjectPrefix(pathname));
     const response = NextResponse.next({ request: { headers: forwarded } });
     if (request.cookies.get(LAST_PROJECT_COOKIE)?.value !== slug) {
       response.cookies.set(LAST_PROJECT_COOKIE, slug, { path: "/", sameSite: "lax", httpOnly: true, maxAge: 60 * 60 * 24 * 365 });

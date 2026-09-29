@@ -208,6 +208,16 @@ ARCHIVED projects are read-only in the web (checkPermission words it, `server/db
 held in the worker (queues skip them, scanners skip them, incoming messages stored without
 automation; archived accounts are not connected). See `MULTI_PROJECT_PLAN.md` §10.4.
 
+**Phase 5 (project feature flags) has landed.** `packages/shared/src/projectFeatures.ts` is the
+catalogue: each feature's routes, the permission keys only it uses, and what switching it off stops.
+A feature is an ENTITLEMENT set by a Main Admin; the module's own settings stay the project's choice
+within it, and both must be on. Enforced in four places — nav (`navGroupsFor(granted, disabled)`),
+pages (`requireProjectPage` via the proxy's `x-softify-project-path`), actions (`checkPermission`,
+by page path, exclusive key, or an explicit `checkPermission(key, "FEATURE")` for shared-key
+modules), and the worker (`projectHasFeature` beside each setting check). A new page belongs in a
+feature's `routes` if it is that module's; a new action in a shared-key module passes its feature.
+Never compare a project's name or slug in code. See `MULTI_PROJECT_PLAN.md` §10.5.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.

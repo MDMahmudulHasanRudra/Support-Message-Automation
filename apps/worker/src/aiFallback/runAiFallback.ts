@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { createAiFallbackDecision, createRuleProposalFromAiReply, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
@@ -93,6 +94,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     autoResponseEnabled: aiSettings.autoResponseEnabled,
     scope: aiSettings.aiAutomationScope,
     now: new Date(),
+    aiReplyEntitled: await projectHasFeature("AI_REPLY"),
   });
   if (!eligibility.eligible) return;
 

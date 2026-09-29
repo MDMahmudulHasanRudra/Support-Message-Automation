@@ -6,6 +6,8 @@ import { createProjectWithDefaults } from "@support-automation/db";
 import {
   canTransitionProject,
   CREATABLE_PROJECT_STATUSES,
+  isProjectFeatureKey,
+  projectFeatureDefinition,
   isProjectStatus,
   normalizeProjectName,
   PROJECT_STATUS_LABELS,
@@ -16,6 +18,7 @@ import { platformPrisma } from "@/server/db";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { forgetProjectAccessDecisions } from "@/server/projectContext";
+import { forgetProjectFeatureStates } from "@/server/projectFeatures";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 
@@ -158,4 +161,35 @@ export async function setProjectAccess(projectId: string, userId: string, grante
   });
   revalidatePath(`/admin/projects/${projectId}`);
   return { success: granted ? `${user.username} can now enter ${project.name}.` : `${user.username} can no longer enter ${project.name}.` };
+}
+
+/**
+ * Switch one feature on or off for one project (MULTI_PROJECT_PLAN.md §9). An entitlement, not a
+ * setting: off means the project cannot use the module at all — its pages and actions refuse and the
+ * worker skips its background work. The project's own settings for the module are left exactly as
+ * they are, so switching it back on resumes where it stopped. Nothing is deleted.
+ */
+export async function setProjectFeature(projectId: string, keyRaw: string, enabled: boolean): Promise<ProjectActionResult> {
+  const access = await requireManage();
+  if ("denied" in access) return { error: access.denied };
+  if (!isProjectFeatureKey(keyRaw)) return { error: "Unknown feature." };
+  const project = await platformPrisma.project.findUnique({ where: { id: projectId }, select: { id: true, name: true } });
+  if (!project) return { error: "That project no longer exists." };
+
+  await platformPrisma.projectFeature.upsert({
+    where: { projectId_key: { projectId, key: keyRaw } },
+    update: { enabled },
+    create: { projectId, key: keyRaw, enabled },
+  });
+
+  forgetProjectFeatureStates();
+  const label = projectFeatureDefinition(keyRaw).label;
+  await logSystemEvent("WARN", "projects", `${label} ${enabled ? "enabled" : "disabled"} for "${project.name}"`, {
+    projectId,
+    feature: keyRaw,
+    enabled,
+    changedBy: access.session.username,
+  });
+  revalidatePath(`/admin/projects/${projectId}`);
+  return { success: `${label} is now ${enabled ? "on" : "off"} for ${project.name}.` };
 }

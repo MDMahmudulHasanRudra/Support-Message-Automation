@@ -8,8 +8,7 @@ import { randomUUID } from "node:crypto";
 
 import type { DutyStatus, Prisma } from "@prisma/client";
 import { parseDhakaDayFromInput, toDhakaDateOnly } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
-import { hasPermission } from "@/server/permissions";
+import { checkPermission, PERMISSION_DENIED_ERROR } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { getDutyGroupEvidence } from "@/server/teamManagementReports";
 
@@ -58,11 +57,13 @@ async function revalidateModule() {
 
 /** `.manage` or nothing. Actions return a typed error rather than redirecting — a form needs a reason. */
 async function requireManage(): Promise<{ userId: string } | { error: string }> {
-  const session = await requireSession();
-  if (!(await hasPermission(session, "team_management.manage"))) {
-    return { error: "You do not have permission to change the schedule." };
+  // Through checkPermission, so the project steps apply here too: project access, a read-only
+  // (suspended/archived) project, and the project's Team Management entitlement.
+  const access = await checkPermission("team_management.manage");
+  if ("denied" in access) {
+    return { error: access.denied === PERMISSION_DENIED_ERROR ? "You do not have permission to change the schedule." : access.denied };
   }
-  return { userId: session.userId };
+  return { userId: access.session.userId };
 }
 
 /**
@@ -687,9 +688,9 @@ export async function previewShiftChange(
   dateValue: string,
   newShiftTemplateId: string,
 ): Promise<ShiftChangePreview> {
-  const session = await requireSession();
-  if (!(await hasPermission(session, "team_management.view"))) {
-    return { error: "You do not have permission to view the schedule." };
+  const viewAccess = await checkPermission("team_management.view");
+  if ("denied" in viewAccess) {
+    return { error: viewAccess.denied === PERMISSION_DENIED_ERROR ? "You do not have permission to view the schedule." : viewAccess.denied };
   }
 
   const day = parseDhakaDayFromInput(dateValue);
@@ -1066,9 +1067,9 @@ export async function loadDutyGroupEvidence(
   teamMemberId: string,
   dutyDateIso: string,
 ): Promise<{ error?: string; rows?: Array<{ groupId: string; groupName: string; messageCount: number; firstAt: string; lastAt: string }> }> {
-  const session = await requireSession();
-  if (!(await hasPermission(session, "team_management.view"))) {
-    return { error: "You do not have permission to view duty history." };
+  const viewAccess = await checkPermission("team_management.view");
+  if ("denied" in viewAccess) {
+    return { error: viewAccess.denied === PERMISSION_DENIED_ERROR ? "You do not have permission to view duty history." : viewAccess.denied };
   }
 
   const dutyDate = new Date(dutyDateIso);

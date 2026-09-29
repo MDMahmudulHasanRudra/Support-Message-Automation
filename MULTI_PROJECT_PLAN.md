@@ -1,7 +1,7 @@
 # Multi-Project Softify Assist: Audit and Plan
 
-Status: **Phases 1–4 implemented and verified locally, 28–29 Sep 2026: not pushed, not
-deployed.** Phase 5 has not started. See §10.2–§10.4 for what each delivered.
+Status: **Phases 1–5 implemented and verified locally, 28–29 Sep 2026: not pushed, not
+deployed.** Phase 6 has not started. See §10.2–§10.5 for what each delivered.
 
 > **The existing permission system and existing portal functionality remain unchanged and are
 > reused inside every project. Project access determines which projects a user can enter; existing
@@ -514,6 +514,77 @@ seed already grants its admin access, idempotently.
   key, a notification event setting, an AI model job slot). Such a write fails loudly; it never
   lands in or reads from the wrong project. No second project can be created from the UI before
   Phase 4.
+
+### 10.5 Phase 5 as delivered (29 Sep 2026): project feature flags
+
+- **Catalogue** (`packages/shared/src/projectFeatures.ts`). Each of the 10 features declares:
+  - its default (on);
+  - `routes`: the project-relative path prefixes of its pages and export routes;
+  - `permissionKeys`: keys ONLY it uses;
+  - `workerEffect`: what switching it off stops, in plain words.
+
+  `featureForPath` resolves by longest prefix, so `/support-activity/team` is Team reports rather
+  than Support Activity. Unit tests pin that no route or key belongs to two features, and that the
+  core product always stays reachable: Overview, Messages, Accounts, Groups, Rules, Settings and AI
+  Settings belong to no feature.
+- **Storage.** `ProjectFeature` rows; an absent row means the default. ISP Digital has no rows,
+  so it keeps every feature exactly as before.
+- **An entitlement, not a setting.** Off means the project cannot use the module at all. The module's
+  own settings (for example `LearningSettings.conversationLearningEnabled`) are kept untouched, so
+  switching it back on resumes where it stopped. Both must be on.
+- **One check, four places:**
+  1. **Nav.** `navGroupsFor`, `settingsSectionsFor`, `reportPagesFor` and the ⌘K list take the
+     project's disabled set. A link shows only when the role holds its key AND the project is
+     entitled to its feature.
+  2. **Pages.** `proxy.ts` now also forwards the in-project path (`x-softify-project-path`, client
+     copy stripped). `requireProjectPage` runs in the project layout for every page and route, and
+     sends a page of a disabled feature to `/overview?unavailable=<KEY>`, which names the feature.
+     `requireAccess` does the same, which covers the export routes.
+  3. **Actions.** `checkPermission` refuses with "<Feature> is not enabled for this project…" when:
+     - the page the action was posted from belongs to a disabled feature; or
+     - the key checked belongs only to a disabled feature; or
+     - the action names its feature. Support Activity, AI Learning and Forge actions pass their
+       feature explicitly, because their keys are shared with other modules.
+
+     Three places that did their own permission lookup now go through the same steps: Team
+     Management's actions, its export route, and the group-add actions. This also closed a gap:
+     those three had skipped the Phase 2 project-access step and the Phase 4 read-only wording.
+  4. **Worker** (`project/features.ts`, cached 30 s). The check sits beside each module's own
+     setting check:
+     - the AI fallback eligibility gate (AI_REPLY);
+     - opening and advancing escalation cases;
+     - support activity detection;
+     - attendance;
+     - segmentation, pattern detection, AI analysis, the knowledge builder and sandbox turns
+       (CONVERSATION_LEARNING);
+     - knowledge import, group knowledge and style (AI_LEARNING);
+     - the Forge sync, research and live deep answers.
+
+     Queued work of a switched-off feature waits, untouched.
+- **Main Admin Portal.** A switch per feature on the project page (`projects.manage`; read-only for
+  `projects.view`). Each off switch says what stops. Every change is logged, and it clears the web
+  process's feature cache at once; the worker picks it up within 30 s.
+- **Tests.**
+  - `packages/shared` `projects.test.ts`: +5 on routing and keys.
+  - `apps/worker` `projectFeatures.integration.test.ts` (7). Each worker gate runs with the
+    module's own settings ON, first entitled and then not. Mutation-checked: removing each gate
+    fails its test.
+  - Browser, 19 checks. Bizify with WhatsApp Chat and Team Management off:
+    - both are gone from the nav, the Settings rail and the Reports hub;
+    - their pages redirect to the Overview with the reason;
+    - the export route returns 403;
+    - a Team Management action replayed against Bizify is refused with the feature reason;
+    - ISP Digital is unchanged;
+    - switching a feature back on restores it;
+    - `projects.view` sees the features read-only.
+- **Still open.**
+  - Three features have no worker work to stop: WhatsApp Chat, Team reports and Bulk messaging.
+    Bulk messaging's already-queued rows still send; only starting new jobs is refused.
+  - A Server Action posted from a page OTHER than its own was refused in testing before any of this
+    code ran: Next forwards it to the page that owns the action, and that forwarded request carries
+    no project. Refusal is still the outcome, but it depends on Next's forwarding.
+  - Forge credentials are still install-wide.
+  - No migration was needed.
 
 ### 10.4 Phase 4 as delivered (29 Sep 2026): Main Admin Portal and project management
 

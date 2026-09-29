@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { currentProjectId } from "../project/context.js";
 import { approveRuleProposalById, createRuleProposalFromCandidate, isResolutionError, resolveWhatsAppAccount } from "@support-automation/db";
 import { prisma } from "../db.js";
@@ -51,6 +52,7 @@ const SESSION_BATCH_SIZE = 200;
 export async function processOnePatternDetectionBatch(): Promise<boolean> {
   const settings = await getLearningSettings();
   if (!settings.conversationLearningEnabled) return false;
+  if (!(await projectHasFeature("CONVERSATION_LEARNING"))) return false; // entitlement, MULTI_PROJECT_PLAN.md §9
 
   const job = await prisma.learningBatchJob.create({
     data: { jobType: "PATTERN_DETECTION", trigger: "SCHEDULED", status: "RUNNING", startedAt: new Date() },

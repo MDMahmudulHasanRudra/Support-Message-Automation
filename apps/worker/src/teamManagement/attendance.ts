@@ -1,3 +1,4 @@
+import { projectHasFeature } from "../project/features.js";
 import { currentProjectId } from "../project/context.js";
 import { prisma } from "../db.js";
 import { getDhakaDayRange, normalizePhoneNumber, toDhakaDateOnly } from "@support-automation/shared";
@@ -60,6 +61,7 @@ export async function recordTeamAttendance(input: {
   // ordering the support-activity detector uses and for the same reason.
   if (!input.groupId) return; // a 1:1 chat is not group work
   if (!input.isFromTeamMember) return; // a customer
+  if (!(await projectHasFeature("TEAM_MANAGEMENT"))) return; // not entitled (MULTI_PROJECT_PLAN.md §9)
 
   const member = await resolveActiveTeamMember(input.senderPhone);
   if (!member) return; // no longer on the roster, or deactivated

@@ -5,8 +5,7 @@ import {
   getDhakaDayRange,
   sanitizeExcelRow,
 } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
-import { hasPermission } from "@/server/permissions";
+import { checkPermission, PERMISSION_DENIED_ERROR } from "@/server/authorize";
 import { DUTY_STATE_LABEL } from "@/lib/dutyState";
 import {
   formatShiftRange,
@@ -52,9 +51,14 @@ function fileResponse(body: string | Buffer, filename: string, contentType: stri
 }
 
 export async function GET(request: NextRequest) {
-  const session = await requireSession();
-  if (!(await hasPermission(session, "team_management.view"))) {
-    return NextResponse.json({ error: "You do not have permission to export duty history." }, { status: 403 });
+  // checkPermission, not a bare permission lookup: it also applies project access and the
+  // project's Team Management entitlement (MULTI_PROJECT_PLAN.md §9).
+  const access = await checkPermission("team_management.view");
+  if ("denied" in access) {
+    return NextResponse.json(
+      { error: access.denied === PERMISSION_DENIED_ERROR ? "You do not have permission to export duty history." : access.denied },
+      { status: 403 },
+    );
   }
 
   const params = request.nextUrl.searchParams;

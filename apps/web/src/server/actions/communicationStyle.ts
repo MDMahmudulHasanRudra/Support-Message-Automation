@@ -21,7 +21,7 @@ async function revalidate() {
 }
 
 export async function getCommunicationStyleProfile() {
-  await requireAccess("ai_learning.view");
+  await requireAccess("ai_learning.view", "AI_LEARNING");
   return prisma.communicationStyleProfile.upsert({
     where: { id: "global" },
     update: {},
@@ -30,7 +30,7 @@ export async function getCommunicationStyleProfile() {
 }
 
 export async function approveCommunicationStyle(): Promise<{ error?: string }> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
   const profile = await prisma.communicationStyleProfile.findUnique({ where: { id: "global" } });
@@ -53,7 +53,7 @@ export async function approveCommunicationStyle(): Promise<{ error?: string }> {
  * and can re-approve it if they turned it off by mistake.
  */
 export async function unapproveCommunicationStyle(): Promise<void> {
-  await requireAccess("ai_learning.manage");
+  await requireAccess("ai_learning.manage", "AI_LEARNING");
   await prisma.communicationStyleProfile.update({
     where: { id: "global" },
     data: { humanApproved: false, approvedAt: null, approvedById: null },
@@ -67,7 +67,7 @@ export async function unapproveCommunicationStyle(): Promise<void> {
  * Editing counts as approving — a person who just typed the text has, by definition, read it.
  */
 export async function saveCommunicationStyle(formData: FormData): Promise<{ error?: string }> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
   const guidance = String(formData.get("guidance") ?? "").trim();
@@ -89,7 +89,7 @@ export async function saveCommunicationStyle(formData: FormData): Promise<{ erro
 }
 
 export async function discardCommunicationStyle(): Promise<void> {
-  await requireAccess("ai_learning.manage");
+  await requireAccess("ai_learning.manage", "AI_LEARNING");
   await prisma.communicationStyleProfile.update({
     where: { id: "global" },
     data: {
@@ -112,7 +112,7 @@ export interface StyleRebuildRequest {
 
 /** Queues an immediate rebuild — the worker does the reading, as with every other worker action. */
 export async function requestStyleRebuild(): Promise<StyleRebuildRequest> {
-  const granted = await checkPermission("ai_learning.manage");
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
   if ("denied" in granted) return { queued: false, error: granted.denied };
   const settings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   if (!settings.aiEngineEnabled) return { queued: false, error: "Turn the AI engine on first." };
@@ -139,7 +139,7 @@ export interface StyleRebuildStatus {
 
 /** Polled by the page while a rebuild runs, the same shape the Forge sync uses. */
 export async function readStyleRebuildStatus(): Promise<StyleRebuildStatus> {
-  const granted = await checkPermission("ai_learning.view");
+  const granted = await checkPermission("ai_learning.view", "AI_LEARNING");
   if ("denied" in granted) return { status: "FAILED", error: granted.denied };
   const command = await prisma.workerCommand.findFirst({
     where: { type: "BUILD_COMMUNICATION_STYLE" },
