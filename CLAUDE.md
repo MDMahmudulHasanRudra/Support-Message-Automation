@@ -228,6 +228,15 @@ fill up), web `navigationPermissions.test.ts` (323 role sets), worker
 the build if any `$queryRaw`/`$executeRaw` on a project-owned table does not name `"projectId"`.
 A new report or raw query belongs in those tests. See `MULTI_PROJECT_PLAN.md` §10.6.
 
+**Phase 7 (database integrity) has landed.** PostgreSQL itself refuses a row whose parent is in
+another project (96 constraint triggers, `enforce_same_project()`) and refuses to change any row's
+`projectId` (`enforce_project_immutable()`), for Prisma and raw SQL alike. Triggers, not composite
+FKs, because Prisma would propose dropping FKs it does not model. **A new relation between two
+project-owned tables needs its own `<Child>_<column>_same_project` trigger in its migration** —
+`projectIntegrity.integration.test.ts` compares the catalog and fails until it exists. To simulate
+corrupt data in a test, disable that one trigger around the insert (see `createPastTheDatabase` in
+`projectIsolation.integration.test.ts`). See `MULTI_PROJECT_PLAN.md` §10.7.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.

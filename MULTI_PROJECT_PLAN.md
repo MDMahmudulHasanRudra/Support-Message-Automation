@@ -1,7 +1,8 @@
 # Multi-Project Softify Assist: Audit and Plan
 
-Status: **Phases 1–6 implemented and verified locally, 28–29 Sep 2026: not pushed, not
-deployed.** Phase 7 has not started. See §10.2–§10.6 for what each delivered.
+Status: **All seven phases implemented and verified locally, 28–29 Sep 2026: not pushed, not
+deployed.** See §10.2–§10.7 for what each delivered. Four multi-project migrations await deployment — Phase 1's two, Phase 3's one and Phase 7's one —
+alongside whatever was already pending (§10.7 says how to recover if Phase 7's verification finds bad rows).
 
 > **The existing permission system and existing portal functionality remain unchanged and are
 > reused inside every project. Project access determines which projects a user can enter; existing
@@ -514,6 +515,48 @@ seed already grants its admin access, idempotently.
   key, a notification event setting, an AI model job slot). Such a write fails loudly; it never
   lands in or reads from the wrong project. No second project can be created from the UI before
   Phase 4.
+
+### 10.7 Phase 7 as delivered (29 Sep 2026): parent/child project integrity in PostgreSQL
+
+- **Migration `20260929120000_projects_integrity`** (local only, not deployed):
+  1. **Verifies the data first.** For every single-column foreign key between two project-owned
+     tables, any row whose parent is in another project stops the migration. The error names the
+     table, the column and the count, for example "1 row(s) of WhatsAppGroup.accountId reference a
+     WhatsAppAccount in another project". Nothing is changed unless the check passes. Confirmed on a
+     database seeded with one bad row: the migration aborted and created no trigger.
+  2. **Adds a consistency trigger on each of the 96 such references.** Inserting or updating a row
+     whose parent is in another project raises `foreign_key_violation`. This holds for Prisma and
+     raw SQL alike.
+  3. **Makes `projectId` immutable** on all 72 tables that carry one: the 70 project-scoped tables,
+     plus `ProjectAccess` and `ProjectFeature`.
+- **Triggers instead of the composite foreign keys sketched in §6.5.** The guarantee is the same:
+  a row physically cannot reference another project's parent. There are two reasons for the change:
+  - **Prisma owns this schema's foreign keys.** A composite key it does not model would be
+    proposed for DROP by the next `prisma migrate dev`. Prisma does not introspect triggers, and
+    `migrate diff` still shows no drift beyond the retained Teams tables.
+  - **The existing ON DELETE rules stay exactly as they are.** A `SET NULL` on a composite key would
+    also try to null `projectId`, which is NOT NULL.
+
+  The references are read from the catalog, so the set matches the schema exactly. A relation added
+  later needs a trigger of its own, and the catalog test fails until it has one.
+- **Cost.** Deploying reads each child table once to verify it (`Message` several times, once per
+  reference); the rest is metadata only. After that, each insert or update pays one primary-key
+  lookup per non-null reference.
+- **Tests.**
+  - `projectIntegrity.integration.test.ts` (9):
+    - the catalog has a trigger for every reference and an immutability trigger on every table;
+    - Bizify rows pointing at ISP Digital's account or group are refused;
+    - re-pointing an existing row, raw SQL inserts, and moving a row between projects are refused;
+    - SET NULL on delete and same-project updates still work.
+
+    Mutation-checked: dropping four triggers fails 7 of the 9.
+  - The Phase 3 mismatch tests (outbound, alert and command) now first show the database refuses the
+    corrupt row, then create it with that one trigger disabled, to prove the worker's own check still
+    refuses to send. Each layer is tested on its own.
+- **Deploying.** If verification finds bad rows on a real database, the migration stops and Prisma
+  marks it failed. Fix the rows it names, run `prisma migrate resolve --rolled-back
+  20260929120000_projects_integrity`, then deploy again. On the current single-project database no
+  row can mismatch: every row belongs to ISP Digital.
 
 ### 10.6 Phase 6 as delivered (29 Sep 2026): the isolation test suite
 

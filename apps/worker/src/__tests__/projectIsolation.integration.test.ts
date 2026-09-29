@@ -45,6 +45,24 @@ let bizGroup: WhatsAppGroup;
 let ispPrimaryIdsBefore: string[] = [];
 const cleanupIsp: Array<() => Promise<unknown>> = [];
 
+/**
+ * Since Phase 7 the database itself refuses a row whose account is in another project, so these
+ * tests first prove that, then create the corrupt row with that one integrity trigger switched off
+ * — standing for data that got past the database (written before Phase 7, or by a restore) — to
+ * prove the worker's own send-time check still refuses it. Defence in depth: each layer is tested
+ * on its own.
+ */
+async function createPastTheDatabase<T>(table: string, create: () => Promise<T>): Promise<T> {
+  await expect(create()).rejects.toThrow();
+  const trigger = `${table}_accountId_same_project`;
+  await rawPrisma.$executeRawUnsafe(`ALTER TABLE "${table}" DISABLE TRIGGER "${trigger}"`);
+  try {
+    return await create();
+  } finally {
+    await rawPrisma.$executeRawUnsafe(`ALTER TABLE "${table}" ENABLE TRIGGER "${trigger}"`);
+  }
+}
+
 function raw(accountId: string, body: string, whatsappGroupId: string | null, direction: "INCOMING" | "OUTGOING" = "INCOMING") {
   return {
     accountId,
@@ -263,12 +281,15 @@ describe("Primary WhatsApp is per project", () => {
 describe("outbound messages, alerts and commands never cross projects", () => {
   it("refuses to send a Bizify message through an ISP Digital account, and says why", async () => {
     const provider = new MockProvider();
-    const row = await rawPrisma.outboundMessage.create({
-      data: {
-        projectId: BIZIFY, accountId: ispAccount.id, chatId: ispGroup.whatsappGroupId, toPhone: ispGroup.whatsappGroupId,
-        body: "cross-project", actionType: "MANUAL_REPLY", idempotencyKey: randomUUID(), status: "PENDING", scheduledAt: epoch,
-      },
-    });
+    const key = randomUUID();
+    const row = await createPastTheDatabase("OutboundMessage", () =>
+      rawPrisma.outboundMessage.create({
+        data: {
+          projectId: BIZIFY, accountId: ispAccount.id, chatId: ispGroup.whatsappGroupId, toPhone: ispGroup.whatsappGroupId,
+          body: "cross-project", actionType: "MANUAL_REPLY", idempotencyKey: key, status: "PENDING", scheduledAt: epoch,
+        },
+      }),
+    );
     expect(await processOne(provider)).toBe(true);
     const after = await rawPrisma.outboundMessage.findUniqueOrThrow({ where: { id: row.id } });
     expect(after.status).toBe("FAILED");
@@ -302,12 +323,14 @@ describe("outbound messages, alerts and commands never cross projects", () => {
         return { success: true };
       },
     } as NotificationProvider;
-    const row = await rawPrisma.notification.create({
-      data: {
-        projectId: BIZIFY, accountId: ispAccount.id, type: "WHATSAPP", destination: ispGroup.whatsappGroupId,
-        payload: {}, status: "PENDING", createdAt: epoch,
-      },
-    });
+    const row = await createPastTheDatabase("Notification", () =>
+      rawPrisma.notification.create({
+        data: {
+          projectId: BIZIFY, accountId: ispAccount.id, type: "WHATSAPP", destination: ispGroup.whatsappGroupId,
+          payload: {}, status: "PENDING", createdAt: epoch,
+        },
+      }),
+    );
     expect(await processOneNotification({ WHATSAPP: whatsapp })).toBe(true);
     const after = await rawPrisma.notification.findUniqueOrThrow({ where: { id: row.id } });
     expect(after.status).toBe("FAILED");
@@ -317,9 +340,11 @@ describe("outbound messages, alerts and commands never cross projects", () => {
 
   it("refuses a Bizify command aimed at an ISP Digital account", async () => {
     const provider = new MockProvider();
-    const row = await rawPrisma.workerCommand.create({
-      data: { projectId: BIZIFY, accountId: ispAccount.id, type: "LOGOUT", status: "PENDING", createdAt: epoch },
-    });
+    const row = await createPastTheDatabase("WorkerCommand", () =>
+      rawPrisma.workerCommand.create({
+        data: { projectId: BIZIFY, accountId: ispAccount.id, type: "LOGOUT", status: "PENDING", createdAt: epoch },
+      }),
+    );
     await processOneCommand(ispAccount.id, provider);
     const after = await rawPrisma.workerCommand.findUniqueOrThrow({ where: { id: row.id } });
     expect(after.status).toBe("FAILED");
