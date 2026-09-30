@@ -381,13 +381,18 @@ body::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
 }
 
-/* Never orphan a word in a heading or a paragraph of prose. */
-h1, h2, h3 {
-  text-wrap: balance;
-}
+/* Never orphan a word in a heading or a paragraph of prose. In the base layer for the same reason
+   as the border colour above: unlayered, `text-wrap` also set the wrap MODE and outranked
+   `truncate` / `whitespace-nowrap`, so a truncated heading (the chat thread's group name) wrapped
+   instead of ending in an ellipsis. */
+@layer base {
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
 
-p {
-  text-wrap: pretty;
+  p {
+    text-wrap: pretty;
+  }
 }
 
 ::selection {
@@ -395,10 +400,16 @@ p {
   color: #ffffff;
 }
 
-:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 2px;
-  border-radius: 3px;
+/* The default keyboard-focus ring, in the base layer: unlayered, it outranked every
+   `focus-visible:` utility — components that draw their own ring still got this outline on top,
+   and its 3px radius replaced their rounded corners while focused. Elements with no focus style
+   of their own still get it. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
 }
 
 /* Keyboard users get a way past the 40-plus-link sidebar on every page. */

@@ -2,7 +2,7 @@
 
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, FolderKanban, LayoutDashboard, LogOut } from "lucide-react";
+import { Building2, ChevronRight, FolderKanban, LayoutDashboard, LogOut, ShieldCheck } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
@@ -39,7 +39,12 @@ function buildSections(granted: ReadonlySet<string>): Array<{ title: string; ite
       items: [
         { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
         { href: "/admin/projects", label: "Projects", icon: FolderKanban, exact: false },
-        ...groups.filter((g) => isGlobal(g.links)).map((g) => ({ ...open(g.links[0]!, g.label), icon: g.icon })),
+        ...(granted.has("configuration.view") ? [{ href: "/admin/configuration", label: "Configuration", icon: Building2, exact: false }] : []),
+        ...(granted.has("users.view") ? [{ href: "/admin/users", label: "Users & Permissions", icon: ShieldCheck, exact: false }] : []),
+        // The other global modules (Release Notes) are the project portal's own pages, opened without tabs.
+        ...groups
+          .filter((g) => isGlobal(g.links) && g.label !== "Users & Permissions")
+          .map((g) => ({ ...open(g.links[0]!, g.label), icon: g.icon })),
       ],
     },
     {

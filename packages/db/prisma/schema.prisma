@@ -488,6 +488,13 @@ enum LogLevel {
 // Models
 // ---------------------------------------------------------------------------
 
+/// See ProjectAccess.level. Null on a row means FULL.
+enum ProjectAccessLevel {
+  READ
+  WRITE
+  FULL
+}
+
 enum ProjectStatus {
   SETUP
   ACTIVE
@@ -588,12 +595,17 @@ model Project {
 /// can access. Deliberately no role or permission column here: project access and module
 /// permission are separate questions (MULTI_PROJECT_PLAN.md §7).
 model ProjectAccess {
-  id        String   @id @default(cuid())
+  id        String              @id @default(cuid())
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  project   Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// How much of their EXISTING role this user may use in this project (MAIN_ADMIN_WORKSPACE.md §4).
+  /// It only ever takes rights away: READ keeps the role's read keys, WRITE also keeps its day-to-day
+  /// write keys, FULL (and null, which every row predating the column has) keeps the whole role.
+  /// It never grants a key the role does not hold — `packages/shared/src/projectAccessLevels.ts`.
+  level     ProjectAccessLevel?
+  createdAt DateTime            @default(now())
 
   @@unique([projectId, userId])
   @@index([userId])
@@ -680,6 +692,8 @@ model User {
   systemLogs                     SystemLog[]
 
   projectAccess ProjectAccess[]
+  /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
+  employee      Employee?
 }
 
 // ---------------------------------------------------------------------------
@@ -4338,4 +4352,67 @@ model ConversationCandidate {
 
   @@index([runId, createdAt])
   @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Main Admin Configuration (MAIN_ADMIN_WORKSPACE.md §5): the organisation, platform-wide.
+//
+// None of these carries a projectId: a department, a job title or a person belongs to the company,
+// not to one project. They are deliberately NOT the WhatsApp support `Team` (per project, with
+// TeamMembership history used by Team Report) and NOT a permission role (`PermissionModule`, what a
+// login may do). A job title grants nothing.
+// ---------------------------------------------------------------------------------------------
+
+/// A department of the organisation. Deactivated rather than deleted once an employee uses it.
+model Department {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  /// Optional short code ("SUP", "BILL"), unique when given.
+  code        String?    @unique
+  description String?
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  employees   Employee[]
+}
+
+/// A job title ("Support Executive"). A label for a person — never a permission.
+model JobTitle {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String?
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  employees   Employee[]
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// A person in the organisation — separate from their login (`User`), which they may or may not
+/// have, and from their WhatsApp roster entries (`InternalTeamMember`, one per project).
+model Employee {
+  id           String         @id @default(cuid())
+  /// "EMP-000123": assigned once, from the `employee_code_seq` sequence, never reused or edited.
+  employeeCode String         @unique
+  fullName     String
+  email        String?        @unique
+  phone        String?
+  departmentId String?
+  department   Department?    @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  jobTitleId   String?
+  jobTitle     JobTitle?      @relation(fields: [jobTitleId], references: [id], onDelete: Restrict)
+  /// Their login, if they have one. One login per person and one person per login.
+  userId       String?        @unique
+  user         User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  status       EmployeeStatus @default(ACTIVE)
+  joinedOn     DateTime?      @db.Date
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([departmentId])
+  @@index([jobTitleId])
 }

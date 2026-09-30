@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { prisma as platformPrisma, ProjectScopeError } from "@support-automation/db";
 import { PROJECT_HEADER } from "@/lib/projectPaths";
 import { getSession } from "@/server/auth";
-import { isReadOnlyProjectStatus, type ProjectStatusValue } from "@support-automation/shared";
+import { isReadOnlyProjectStatus, type ProjectAccessLevelValue, type ProjectStatusValue } from "@support-automation/shared";
 
 /**
  * The active project for this request, and whether the signed-in user may be in it.
@@ -24,6 +24,11 @@ export interface ActiveProject {
   name: string;
   /** SUSPENDED and ARCHIVED projects are read-only (server/db.ts refuses their writes). */
   status: ProjectStatusValue;
+  /**
+   * How much of their role this user may use here (ProjectAccess.level; MAIN_ADMIN_WORKSPACE.md §4).
+   * Absent means FULL — a Main Admin with no access row, and every row written before levels existed.
+   */
+  accessLevel?: ProjectAccessLevelValue;
 }
 
 export type ProjectAccessFailure = "NO_PROJECT_IN_URL" | "NO_SESSION" | "UNKNOWN_PROJECT" | "NO_ACCESS";
@@ -105,12 +110,15 @@ async function decideAccess(userId: string, slug: string): Promise<{ project: Ac
   } else {
     const access = await platformPrisma.projectAccess.findUnique({
       where: { projectId_userId: { projectId: project.id, userId } },
-      select: { id: true },
+      select: { id: true, level: true },
     });
     // A Main Admin may enter any project (§7). Inside it they are governed by their existing
-    // permissions exactly like anyone else — this only answers "may they come in".
+    // permissions exactly like anyone else — this only answers "may they come in". A level on their
+    // own access row still applies to them: FULL is never a bypass, and the narrower rule wins.
     const allowed = Boolean(access) || (await isMainAdmin(userId));
-    decision = allowed ? { project } : { project: null, reason: "NO_ACCESS" };
+    decision = allowed
+      ? { project: { ...project, status: project.status as ProjectStatusValue, accessLevel: access?.level ?? "FULL" } }
+      : { project: null, reason: "NO_ACCESS" };
   }
   if (accessCache.size > 5_000) accessCache.clear();
   accessCache.set(key, { at: Date.now(), ...decision });

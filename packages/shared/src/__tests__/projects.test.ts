@@ -76,8 +76,8 @@ describe("project lifecycle", () => {
 describe("the Main Admin keys leave the existing roles exactly as they were", () => {
   const mainAdminKeys = PERMISSIONS.filter((p) => p.category === MAIN_ADMIN_CATEGORY).map((p) => p.key);
 
-  it("exist as projects.view and projects.manage", () => {
-    expect(mainAdminKeys.sort()).toEqual(["projects.manage", "projects.view"]);
+  it("exist as projects.view / projects.manage, plus Configuration's view / manage", () => {
+    expect(mainAdminKeys.sort()).toEqual(["configuration.manage", "configuration.view", "projects.manage", "projects.view"]);
   });
 
   it("are not given to Read Only, Support Manager or Support Agent", () => {

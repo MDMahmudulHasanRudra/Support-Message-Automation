@@ -23,7 +23,7 @@ import {
 } from "./navigation";
 import { SubNavTabs } from "./SubNavTabs";
 import { SettingsNav } from "./SettingsNav";
-import { Sidebar } from "./Sidebar";
+import { MAIN_ADMIN_LINKS, Sidebar } from "./Sidebar";
 import type { SwitcherProject } from "@/components/ProjectSwitcher";
 import { Alert } from "@/components/ui";
 import { pathAllowedByFeatures } from "@support-automation/shared";
@@ -213,7 +213,15 @@ export function DashboardShell({
         canCreateProject={granted.has("projects.manage")}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
-        workspace={inWorkspace ? { globalGroups } : null}
+        workspace={
+          inWorkspace
+            ? {
+                // Users & Permissions is the Main Admin's own page there; Release Notes stays a global module.
+                globalGroups: globalGroups.filter((g) => g.label !== "Users & Permissions"),
+                mainAdminLinks: MAIN_ADMIN_LINKS.filter((l) => l.key === null || granted.has(l.key)).map(({ href, label, icon }) => ({ href, label, icon })),
+              }
+            : null
+        }
       />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">

@@ -13,7 +13,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import { requireSession } from "@/server/auth";
-import { isProjectFeatureKey, PERMISSIONS, projectFeatureDefinition } from "@support-automation/shared";
+import { isProjectAccessLevel, isProjectFeatureKey, PERMISSIONS, PROJECT_ACCESS_LEVEL_LABELS, projectFeatureDefinition } from "@support-automation/shared";
 import { formatDateTime } from "@/lib/date";
 import {
   Alert,
@@ -92,11 +92,13 @@ function formatAgeShort(ms: number): string {
   return `${minutes}m`;
 }
 
-export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ denied?: string; unavailable?: string }> }) {
+export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ denied?: string; unavailable?: string; level?: string }> }) {
   await requireSession();
   // Set by requirePermission when a page or an action refused this user. Only a known key is
   // named, so a hand-edited URL cannot put arbitrary text into the banner.
   const deniedParam = (await searchParams).denied ?? "";
+  // Set when the role allows the page but this project's access level does not (MAIN_ADMIN_WORKSPACE.md §4).
+  const deniedLevel = isProjectAccessLevel((await searchParams).level) ? (await searchParams).level : null;
   // A page of a feature this project is not entitled to sends people here (MULTI_PROJECT_PLAN.md §9).
   const unavailableParam = (await searchParams).unavailable;
   const unavailable = isProjectFeatureKey(unavailableParam) ? projectFeatureDefinition(unavailableParam) : null;
@@ -347,10 +349,19 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
 
       {denied ? (
         <div className="mb-5">
-          <Alert tone="warning" title="Your role does not allow that">
-            You were sent here because {denied.label.charAt(0).toLowerCase() + denied.label.slice(1)} is not part
-            of your Permission Module. Ask an administrator to add it if you need it.
-          </Alert>
+          {deniedLevel ? (
+            <Alert tone="warning" title="Your access to this project does not allow that">
+              You were sent here because your access to this project is{" "}
+              {PROJECT_ACCESS_LEVEL_LABELS[deniedLevel as keyof typeof PROJECT_ACCESS_LEVEL_LABELS]}, which does not include{" "}
+              {denied.label.charAt(0).toLowerCase() + denied.label.slice(1)}. Your role does include it — a Main Admin can
+              change your access level for this project.
+            </Alert>
+          ) : (
+            <Alert tone="warning" title="Your role does not allow that">
+              You were sent here because {denied.label.charAt(0).toLowerCase() + denied.label.slice(1)} is not part
+              of your Permission Module. Ask an administrator to add it if you need it.
+            </Alert>
+          )}
         </div>
       ) : null}
 

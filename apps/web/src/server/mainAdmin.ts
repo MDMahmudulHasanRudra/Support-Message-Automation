@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getDhakaDayRange, resolveProjectFeatures, type ProjectStatusValue } from "@support-automation/shared";
+import { getDhakaDayRange, resolveProjectFeatures, type PermissionKey, type ProjectAccessLevelValue, type ProjectStatusValue } from "@support-automation/shared";
 import { platformPrisma } from "@/server/db";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
@@ -21,6 +21,18 @@ export async function requireMainAdminPage(): Promise<{ session: Session; canMan
   const session = await requireSession();
   if (!(await hasPermission(session, "projects.view"))) notFound();
   return { session, canManage: await hasPermission(session, "projects.manage") };
+}
+
+/**
+ * A Main Admin Portal page that needs one more key (Configuration, Users & Permissions). Without the
+ * portal key it is a 404 like the rest of the portal; with the portal key but not this one, the page
+ * renders `allowed: false` and says which key is missing rather than pretending not to exist.
+ */
+export async function requireAdminSection(
+  key: PermissionKey,
+): Promise<{ session: Session; allowed: boolean; can: (other: PermissionKey) => Promise<boolean> }> {
+  const { session } = await requireMainAdminPage();
+  return { session, allowed: await hasPermission(session, key), can: (other) => hasPermission(session, other) };
 }
 
 /** For a page that only a Main Admin may open (create a project). */
@@ -55,6 +67,10 @@ export interface ProjectSummary {
   teamMembers: number;
   messagesToday: number;
   openEscalations: number;
+  /** Support activity recorded today (people and AI), Dhaka day. */
+  supportActivityToday: number;
+  /** Customer questions the AI answered today, Dhaka day. */
+  aiRepliesToday: number;
   usersWithAccess: number;
   /** Plain-language reasons this project needs a Main Admin's attention, if any. */
   attention: string[];
@@ -78,7 +94,7 @@ export async function getProjectSummaries(viewerId: string, options: { includeAr
   const inProjects = { projectId: { in: ids } };
   const today = getDhakaDayRange(new Date());
 
-  const [accounts, groups, members, messages, escalations, access, viewerAccess, viewerIsMainAdmin] = await Promise.all([
+  const [accounts, groups, members, messages, escalations, access, viewerAccess, viewerIsMainAdmin, activity, aiReplies] = await Promise.all([
     platformPrisma.whatsAppAccount.findMany({ where: inProjects, select: { projectId: true, status: true } }),
     platformPrisma.whatsAppGroup.groupBy({ by: ["projectId"], where: { ...inProjects, isMonitored: true, isActive: true }, _count: { _all: true } }),
     platformPrisma.internalTeamMember.groupBy({ by: ["projectId"], where: { ...inProjects, status: "ACTIVE" }, _count: { _all: true } }),
@@ -95,6 +111,16 @@ export async function getProjectSummaries(viewerId: string, options: { includeAr
     platformPrisma.projectAccess.groupBy({ by: ["projectId"], where: inProjects, _count: { _all: true } }),
     platformPrisma.projectAccess.findMany({ where: { ...inProjects, userId: viewerId }, select: { projectId: true } }),
     isMainAdmin(viewerId),
+    platformPrisma.supportActivity.groupBy({
+      by: ["projectId"],
+      where: { ...inProjects, occurredAt: { gte: today.start, lt: today.end } },
+      _count: { _all: true },
+    }),
+    platformPrisma.aiFallbackDecision.groupBy({
+      by: ["projectId"],
+      where: { ...inProjects, outcome: "AI_REPLIED", createdAt: { gte: today.start, lt: today.end } },
+      _count: { _all: true },
+    }),
   ]);
 
   const groupCounts = countBy(groups);
@@ -102,6 +128,8 @@ export async function getProjectSummaries(viewerId: string, options: { includeAr
   const messageCounts = countBy(messages);
   const escalationCounts = countBy(escalations);
   const accessCounts = countBy(access);
+  const activityCounts = countBy(activity);
+  const aiReplyCounts = countBy(aiReplies);
   const enterable = new Set(viewerAccess.map((row) => row.projectId));
 
   return projects.map((project) => {
@@ -125,6 +153,8 @@ export async function getProjectSummaries(viewerId: string, options: { includeAr
       teamMembers: memberCounts.get(project.id) ?? 0,
       messagesToday: messageCounts.get(project.id) ?? 0,
       openEscalations: escalationCounts.get(project.id) ?? 0,
+      supportActivityToday: activityCounts.get(project.id) ?? 0,
+      aiRepliesToday: aiReplyCounts.get(project.id) ?? 0,
       usersWithAccess: accessCounts.get(project.id) ?? 0,
       attention,
       canEnter: viewerIsMainAdmin || enterable.has(project.id),
@@ -136,7 +166,16 @@ export interface ProjectDetail {
   project: ProjectSummary;
   features: ReturnType<typeof resolveProjectFeatures>;
   /** Every active user, whether they may enter this project, and their existing role — shown, never changed here. */
-  users: Array<{ id: string; username: string; name: string; role: string | null; hasAccess: boolean; isMainAdmin: boolean }>;
+  users: Array<{
+    id: string;
+    username: string;
+    name: string;
+    role: string | null;
+    hasAccess: boolean;
+    /** Their level here when they have access (MAIN_ADMIN_WORKSPACE.md §4); null stored = FULL. */
+    level: ProjectAccessLevelValue | null;
+    isMainAdmin: boolean;
+  }>;
   /** Which of the project's own settings rows exist — a new project has all ten. */
   configuration: Array<{ label: string; present: boolean }>;
 }
@@ -161,7 +200,7 @@ export async function getProjectDetail(viewerId: string, projectId: string): Pro
         },
       },
     }),
-    platformPrisma.projectAccess.findMany({ where, select: { userId: true } }),
+    platformPrisma.projectAccess.findMany({ where, select: { userId: true, level: true } }),
     platformPrisma.automationSettings.count({ where }),
     platformPrisma.aiSettings.count({ where }),
     platformPrisma.groupBroadcastSettings.count({ where }),
@@ -173,7 +212,7 @@ export async function getProjectDetail(viewerId: string, projectId: string): Pro
     platformPrisma.teamManagementSettings.count({ where }),
     platformPrisma.communicationStyleProfile.count({ where }),
   ]);
-  const withAccess = new Set(accessRows.map((row) => row.userId));
+  const withAccess = new Map(accessRows.map((row) => [row.userId, row.level ?? "FULL"] as const));
   const labels = [
     "Automation & safety",
     "AI settings",
@@ -196,8 +235,49 @@ export async function getProjectDetail(viewerId: string, projectId: string): Pro
       name: user.name,
       role: user.permissionModule?.name ?? null,
       hasAccess: withAccess.has(user.id),
+      level: withAccess.get(user.id) ?? null,
       isMainAdmin: (user.permissionModule?.permissions.length ?? 0) > 0,
     })),
     configuration: labels.map((label, index) => ({ label, present: (settings[index] as number) > 0 })),
+  };
+}
+
+/**
+ * The Main Admin Overview's combined figures (MAIN_ADMIN_WORKSPACE.md §6): the sum over the projects
+ * the viewer may ENTER — never a project they can only see listed. Every figure is a count the
+ * project's own pages also show; nothing here is a new definition. Archived projects are left out,
+ * because nothing is running in them.
+ */
+export interface CombinedKpis {
+  projects: number;
+  whatsappConnected: number;
+  whatsappTotal: number;
+  whatsappNeedsAttention: number;
+  monitoredGroups: number;
+  activeTeamMembers: number;
+  messagesToday: number;
+  supportActivityToday: number;
+  aiRepliesToday: number;
+  openEscalations: number;
+  /** Listed projects the viewer cannot enter, so the totals leave them out. */
+  excludedProjects: number;
+}
+
+export function combineKpis(projects: ProjectSummary[]): CombinedKpis {
+  const live = projects.filter((p) => p.status !== "ARCHIVED");
+  const mine = live.filter((p) => p.canEnter);
+  const sum = (pick: (p: ProjectSummary) => number) => mine.reduce((total, p) => total + pick(p), 0);
+  return {
+    projects: mine.length,
+    whatsappConnected: sum((p) => p.whatsapp.connected),
+    whatsappTotal: sum((p) => p.whatsapp.total),
+    whatsappNeedsAttention: sum((p) => p.whatsapp.needsPerson + p.whatsapp.down),
+    monitoredGroups: sum((p) => p.monitoredGroups),
+    activeTeamMembers: sum((p) => p.teamMembers),
+    messagesToday: sum((p) => p.messagesToday),
+    supportActivityToday: sum((p) => p.supportActivityToday),
+    aiRepliesToday: sum((p) => p.aiRepliesToday),
+    openEscalations: sum((p) => p.openEscalations),
+    excludedProjects: live.length - mine.length,
   };
 }

@@ -1,9 +1,12 @@
 # Main Admin Workspace
 
-**Status (30 Sep 2026):** every project module is project-tab based. This is verified locally but
-not pushed and not deployed. There is no migration. The first version (WhatsApp Chat only, 29 Sep)
-was a proof of concept, and it has been replaced by the general mechanism below. Read
-`MULTI_PROJECT_PLAN.md` first: this builds on its isolation model and changes none of it.
+**Status (30 Sep 2026):** built and verified locally, not pushed and not deployed.
+- Every project module is project-tab based (§1–§4).
+- Configuration (Departments, Job Titles, Employees), Users & Permissions, project access levels
+  and the combined Overview figures are built too (§5–§7).
+- One migration awaits deployment: `20260930120000_main_admin_configuration` (additive only).
+
+Read `MULTI_PROJECT_PLAN.md` first: this builds on its isolation model and changes none of it.
 
 ## 1. What it is
 
@@ -83,8 +86,7 @@ Tabs = `user → may enter the project → the page's feature is on there → ex
   - Suspended projects keep their tab, with a badge, and are read-only as in the portal.
   - Archived projects are not tabs.
 - **"Open in <project>"** goes to the same page in that project's normal portal.
-- **Read/Write/Full** is not introduced. It stays a design note: see git history of this file,
-  29 Sep.
+- **Read/Write/Full** access levels narrow the role inside one project; see §6.
 
 ## 4. Module classification
 
@@ -109,21 +111,95 @@ with the note "The same in every project":
 These live under MAIN ADMIN in the sidebar (`GLOBAL_PAGE_PREFIXES`).
 
 **Main Admin's own pages:**
-- Admin Overview (functional, unchanged)
+- Admin Overview, with the combined figures (§7)
 - Projects
+- Configuration (§5)
+- Users & Permissions (§5)
 
-Configuration (Departments / Job Titles / Employees) is not built, so there is no nav entry for it
-(see §5).
+## 5. Configuration and Users & Permissions
 
-## 5. Deferred
+**Configuration** (`/admin/configuration`, keys `configuration.view` / `configuration.manage`, both in
+the Main Admin category so no default role but Administrator gets them):
 
-- **Configuration:** Departments, Job Titles and Employees are new entities. They need a migration
-  and a design decision; the findings are in this file's 29 Sep version.
-- **Cross-project KPI dashboard on Admin Overview:** later task, as asked.
-- **Users & Permissions** is the existing global pages, reached through the workspace. No
-  project-access editing was added there. It still lives on each project's page under Projects.
+| Entity | What it is | Never |
+|---|---|---|
+| `Department` | a department of the organisation (name, optional code) | the WhatsApp support `Team` (per project, with membership history) |
+| `JobTitle` | a label for a person | a role — it grants nothing |
+| `Employee` | the person: name, email, phone, department, job title, joined on, optional login | the login (`User`) or a WhatsApp roster entry (`InternalTeamMember`) |
 
-## 6. Verification (30 Sep 2026)
+- All three are platform-level: no `projectId`, so no project tabs.
+- A department or job title somebody is filed under can only be deactivated. An unused one can be
+  deleted. Employees are only ever deactivated.
+- **Employee ID:** `EMP-000001` onward, from the `employee_code_seq` sequence, read in the same
+  transaction that creates the employee.
+  - Unique even for simultaneous creates.
+  - Never reused, never edited.
+  - A CHECK constraint refuses any other shape.
+- **User ID:** logins keep their existing unique `id` and `username`. The person's identifier is
+  the employee ID; the two are deliberately separate.
+
+**Users & Permissions** (`/admin/users`) shows each login with its employee, role and project access.
+Each part is changed only with the EXISTING key for that part:
+
+| Part | Key |
+|---|---|
+| create the login | `users.create` |
+| change the role | `users.edit` (never your own) |
+| project access and levels | `projects.manage` |
+| the employee record | `configuration.manage` |
+
+- **New user** creates all four in ONE transaction: the employee (new, existing, or none), the
+  login, the role and the per-project access. An invalid part saves nothing.
+- The user page edits the role, the employee link and a project × level grid.
+- Password resets, sessions and deactivation stay on the existing App Users page, linked from there.
+- Roles themselves stay on Permission Modules.
+
+## 6. Project access levels
+
+`ProjectAccess.level`: READ, WRITE, FULL, or null. **Null is FULL**, which is what every existing row
+has, so nobody's rights changed. A level only ever narrows the role:
+
+```
+may do X in project P  =  role grants X  AND  level(P) allows X
+```
+
+| Level | Allows of the role |
+|---|---|
+| Read | `.view` and `.bulk_export` keys only |
+| Write | also day-to-day work (reply, edit rules and groups, broadcasts), but not `*.delete`, `settings.edit` or `ai_settings.edit` |
+| Full | the whole role, never more |
+
+- **Global keys are not affected**, because their data belongs to no project: users, permissions,
+  security settings, release notes, and the Main Admin keys.
+- **Where it is enforced:** in `hasPermission` / `requirePermission`
+  (`apps/web/src/server/permissions.ts`), which every page, action and `checkPermission` asks. So no
+  caller can forget it.
+- **Refusals name the level:**
+  - `checkPermission` returns "Your access to X is Read, which does not include this…".
+  - A page redirect carries `&level=`, and the Overview explains it.
+- **The shell is filtered too:** `getGrantedPermissionKeys` applies the level, so the shell does not
+  offer what the level refuses. That is presentation only.
+- **Main Admins:** a Main Admin with no access row enters as FULL. A level on their own row still
+  applies, because Full is never a bypass.
+- **Where it is edited:** a project's page (level beside each user) and a user's page (project grid).
+- **Rules:** `packages/shared/src/projectAccessLevels.ts`, tested against every key in the catalogue.
+
+## 7. Combined figures on the Admin Overview
+
+"Across your projects" sums, for today:
+- WhatsApp connected / total
+- messages
+- open escalations
+- support activity
+- AI answers
+- monitored groups
+- active team members
+
+The sum covers only the projects the viewer may ENTER (`combineKpis` in `server/mainAdmin.ts`).
+Projects that are listed but that the viewer cannot enter are left out, and the page says so. Every
+figure is a count the project's own pages already show; there are no new definitions.
+
+## 8. Verification (30 Sep 2026)
 
 | Suite | Result |
 |---|---|

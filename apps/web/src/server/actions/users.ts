@@ -9,16 +9,12 @@ import { redirect } from "next/navigation";
 import { requireSession, hashPassword } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
 
-const MIN_PASSWORD_LENGTH = 12;
 const PERMISSION_DENIED_ERROR = "You do not have permission to perform this action.";
 
 export interface UserFormState {
   error?: string;
-}
-
-function normalizeUsername(raw: FormDataEntryValue | null): string {
-  return String(raw ?? "").trim().toLowerCase();
 }
 
 export async function createUser(_prevState: UserFormState, formData: FormData): Promise<UserFormState> {

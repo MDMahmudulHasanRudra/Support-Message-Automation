@@ -4,11 +4,16 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
   allowedProjectTransitions,
+  PROJECT_ACCESS_LEVEL_DESCRIPTIONS,
+  PROJECT_ACCESS_LEVEL_LABELS,
+  PROJECT_ACCESS_LEVELS,
   PROJECT_STATUS_DESCRIPTIONS,
+  type ProjectAccessLevelValue,
   type ProjectStatusValue,
 } from "@support-automation/shared";
-import { Badge, Button, ConfirmDialog, Switch, useToast } from "@/components/ui";
+import { Badge, Button, ConfirmDialog, Select, Switch, useToast } from "@/components/ui";
 import { setProjectAccess, setProjectFeature, setProjectStatus } from "@/server/actions/projects";
+import { setUserAccessLevel } from "@/server/actions/adminUsers";
 
 const VERB: Record<ProjectStatusValue, string> = {
   SETUP: "Move back to setup",
@@ -80,19 +85,33 @@ export interface AccessRow {
   name: string;
   role: string | null;
   hasAccess: boolean;
+  level: ProjectAccessLevelValue | null;
   isMainAdmin: boolean;
 }
 
 /**
- * Who may enter this project — yes or no, per user. The user's role is shown and never changed
- * here: it decides what they may do inside every project they can enter, and it stays exactly as it
- * is. A Main Admin can enter every project whatever this says, so their switch is shown as such.
+ * Who may enter this project, per user, and how much of their role they may use in it (Read, Write,
+ * Full — a level only narrows the role, never widens it). The user's role is shown and never changed
+ * here. A Main Admin can enter every project whatever this says, so their switch is shown as such.
  */
 export function ProjectAccessList({ projectId, users, canManage }: { projectId: string; users: AccessRow[]; canManage: boolean }) {
   const router = useRouter();
   const { showToast } = useToast();
   const [pendingUser, setPendingUser] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+
+  function changeLevel(user: AccessRow, level: string) {
+    setPendingUser(user.id);
+    startTransition(async () => {
+      const result = await setUserAccessLevel(user.id, projectId, level);
+      setPendingUser(null);
+      if (result.error) showToast({ tone: "danger", title: result.error });
+      else {
+        showToast({ tone: "success", title: result.success ?? "Saved" });
+        router.refresh();
+      }
+    });
+  }
 
   function toggle(user: AccessRow, granted: boolean) {
     setPendingUser(user.id);
@@ -120,6 +139,24 @@ export function ProjectAccessList({ projectId, users, canManage }: { projectId: 
             </p>
           </div>
           {user.isMainAdmin ? <Badge color="blue">Main Admin — enters every project</Badge> : null}
+          {user.hasAccess ? (
+            <div className="w-28">
+            <Select
+              aria-label={`${user.username}'s access level in this project`}
+              data-level-user={user.username}
+              value={user.level ?? "FULL"}
+              disabled={!canManage || pendingUser === user.id}
+              onChange={(event) => changeLevel(user, event.target.value)}
+              title={PROJECT_ACCESS_LEVEL_DESCRIPTIONS[user.level ?? "FULL"]}
+            >
+              {PROJECT_ACCESS_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {PROJECT_ACCESS_LEVEL_LABELS[level]}
+                </option>
+              ))}
+            </Select>
+            </div>
+          ) : null}
           <label className="flex items-center gap-2 text-[13px] text-[color:var(--color-muted-foreground)]">
             <Switch
               checked={user.hasAccess}

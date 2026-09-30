@@ -2,7 +2,8 @@ import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { redirect } from "next/navigation";
 
-import { isPermissionKey, type PermissionKey } from "@support-automation/shared";
+import { isPermissionKey, levelAllows, type PermissionKey, type ProjectAccessLevelValue } from "@support-automation/shared";
+import { activeProjectSlug, requireActiveProject } from "@/server/projectContext";
 import type { Session } from "@/server/auth";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -46,6 +47,32 @@ export async function requirePermission(session: Session, key: PermissionKey): P
     // the dashboard with no idea why their click went nowhere — which reads as a broken button.
     redirect(await projectPath(`/overview?denied=${encodeURIComponent(key)}`));
   }
+  const level = await levelInThisProject();
+  if (!levelAllows(level, key)) {
+    await logSystemEvent("WARN", "permissions", "PERMISSION_DENIED_ACCESS_LEVEL", { userId: session.userId, key, level });
+    redirect(await projectPath(`/overview?denied=${encodeURIComponent(key)}&level=${level}`));
+  }
+}
+
+/**
+ * The viewer's access level in the project this request is for (MAIN_ADMIN_WORKSPACE.md §4), or null
+ * outside a project (the Main Admin Portal), where no project's level applies. A level only narrows
+ * the role; the project step itself is `requireActiveProject`, which every page and action already
+ * runs, so a request the project refuses is refused there — this never widens anything.
+ */
+export async function levelInThisProject(): Promise<ProjectAccessLevelValue | null> {
+  if (!(await activeProjectSlug())) return null;
+  try {
+    return (await requireActiveProject()).accessLevel ?? "FULL";
+  } catch {
+    return null;
+  }
+}
+
+/** Why a key is refused here, if it is: the role lacks it, or the project's access level holds it back. */
+export async function permissionRefusal(session: Session, key: PermissionKey): Promise<"ROLE" | "LEVEL" | null> {
+  if (!(await roleGrants(session, key))) return "ROLE";
+  return levelAllows(await levelInThisProject(), key) ? null : "LEVEL";
 }
 
 /**
@@ -54,6 +81,11 @@ export async function requirePermission(session: Session, key: PermissionKey): P
  * navigation-only redirect() into a form submission.
  */
 export async function hasPermission(session: Session, key: PermissionKey): Promise<boolean> {
+  return (await permissionRefusal(session, key)) === null;
+}
+
+/** The role alone — the existing permission system, unchanged. Levels are applied on top by the callers above. */
+async function roleGrants(session: Session, key: PermissionKey): Promise<boolean> {
   if (!isPermissionKey(key)) return false;
 
   const user = await prisma.user.findUnique({
@@ -86,5 +118,9 @@ export async function getGrantedPermissionKeys(session: Session): Promise<string
     },
   });
   if (!user || !user.isActive) return [];
-  return user.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
+  const keys = user.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
+  // What the shell offers follows the project's access level too, so a Read user is not shown
+  // buttons for things the level will refuse. Presentation only — every action still checks.
+  const level = await levelInThisProject();
+  return keys.filter((key) => levelAllows(level, key));
 }

@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
 import type { PermissionKey } from "@support-automation/shared";
 import { requireSession, type Session } from "@/server/auth";
-import { hasPermission, requirePermission } from "@/server/permissions";
+import { hasPermission, permissionRefusal, requirePermission } from "@/server/permissions";
 import { ProjectAccessError, requireActiveProject, type ActiveProject } from "@/server/projectContext";
-import { isReadOnlyProjectStatus, type ProjectFeatureKey } from "@support-automation/shared";
+import { isReadOnlyProjectStatus, PROJECT_ACCESS_LEVEL_LABELS, type ProjectFeatureKey } from "@support-automation/shared";
 import { redirect } from "next/navigation";
 import { blockedFeature, featureUnavailableError } from "@/server/projectFeatures";
 import { projectPath } from "@/server/projectPaths";
@@ -75,7 +75,9 @@ export async function checkPermission(
     if (err instanceof ProjectAccessError) return { denied: PROJECT_ACCESS_DENIED_ERROR };
     throw err;
   }
-  if (!(await hasPermission(session, key))) return { denied: PERMISSION_DENIED_ERROR };
+  const refusal = await permissionRefusal(session, key);
+  if (refusal === "ROLE") return { denied: PERMISSION_DENIED_ERROR };
+  if (refusal === "LEVEL") return { denied: accessLevelError(project) };
   const blocked = await blockedFeature({ key, feature });
   if (blocked) return { denied: featureUnavailableError(blocked) };
   // A suspended or archived project is read-only (MULTI_PROJECT_PLAN.md §8). Refused here, with a
@@ -83,6 +85,15 @@ export async function checkPermission(
   // database client refuses the write itself regardless (server/db.ts), this only words it.
   if (isReadOnlyProjectStatus(project.status) && !isReadKey(key)) return { denied: projectReadOnlyError(project) };
   return { session };
+}
+
+/**
+ * The project's access level held a key back (MAIN_ADMIN_WORKSPACE.md §4). Worded apart from a role
+ * refusal: the fix is a Main Admin changing this user's level for this project, not their role.
+ */
+export function accessLevelError(project: ActiveProject): string {
+  const level = PROJECT_ACCESS_LEVEL_LABELS[project.accessLevel ?? "FULL"];
+  return `Your access to ${project.name} is ${level}, which does not include this. A Main Admin can change it under Users & Permissions.`;
 }
 
 /** Keys that only read: `.view` and the export keys. Everything else changes something. */

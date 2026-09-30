@@ -104,6 +104,11 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   // Inside a project a Main Admin is governed by the same keys above as everybody else.
   { key: "projects.view", label: "View Main Admin Portal", category: MAIN_ADMIN_CATEGORY },
   { key: "projects.manage", label: "Manage Projects and Project Access", category: MAIN_ADMIN_CATEGORY },
+  // Main Admin → Configuration: the organisation's departments, job titles and employees. Platform
+  // data, not a project's, so these sit in the Main Admin category and no default role but
+  // Administrator receives them.
+  { key: "configuration.view", label: "View Departments, Job Titles & Employees", category: MAIN_ADMIN_CATEGORY },
+  { key: "configuration.manage", label: "Manage Departments, Job Titles & Employees", category: MAIN_ADMIN_CATEGORY },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number]["key"];

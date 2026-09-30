@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import { PROJECT_STATUS_LABELS, type ProjectStatusValue } from "@support-automation/shared";
 import { Alert, Badge, ButtonLink, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
 import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
-import { getProjectSummaries, requireMainAdminPage } from "@/server/mainAdmin";
+import { combineKpis, getProjectSummaries, requireMainAdminPage } from "@/server/mainAdmin";
 import { whatsappLine } from "./ProjectCard";
 
 export const metadata = { title: "Overview" };
@@ -19,6 +19,7 @@ export default async function MainAdminOverview() {
   const count = (status: ProjectStatusValue) => projects.filter((p) => p.status === status).length;
   const needsAttention = projects.filter((p) => p.status !== "ARCHIVED" && p.attention.length > 0);
   const listed = projects.filter((p) => p.status !== "ARCHIVED");
+  const kpis = combineKpis(projects);
 
   return (
     <div>
@@ -41,6 +42,28 @@ export default async function MainAdminOverview() {
         <StatTile label={PROJECT_STATUS_LABELS.SETUP} value={count("SETUP")} />
         <StatTile label={PROJECT_STATUS_LABELS.SUSPENDED} value={count("SUSPENDED")} tone={count("SUSPENDED") > 0 ? "warning" : "neutral"} />
         <StatTile label={PROJECT_STATUS_LABELS.ARCHIVED} value={count("ARCHIVED")} href="/admin/projects?archived=1" />
+      </div>
+
+      <SectionHeader
+        title="Across your projects"
+        description={`Today, added up over the ${kpis.projects} project${kpis.projects === 1 ? "" : "s"} you can enter${
+          kpis.excludedProjects > 0 ? ` — ${kpis.excludedProjects} listed project${kpis.excludedProjects === 1 ? " is" : "s are"} left out because you cannot enter ${kpis.excludedProjects === 1 ? "it" : "them"}` : ""
+        }. Each figure is the same count the project's own pages show.`}
+      />
+      <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-4" data-kpis>
+        <StatTile
+          label="WhatsApp connected"
+          value={`${kpis.whatsappConnected} / ${kpis.whatsappTotal}`}
+          tone={kpis.whatsappNeedsAttention > 0 ? "warning" : kpis.whatsappTotal > 0 ? "success" : "neutral"}
+          hint={kpis.whatsappNeedsAttention > 0 ? `${kpis.whatsappNeedsAttention} need attention` : undefined}
+        />
+        <StatTile label="Messages today" value={kpis.messagesToday.toLocaleString()} />
+        <StatTile label="Open escalations" value={kpis.openEscalations.toLocaleString()} tone={kpis.openEscalations > 0 ? "warning" : "neutral"} />
+        <StatTile label="Support activity today" value={kpis.supportActivityToday.toLocaleString()} />
+        <StatTile label="AI answers today" value={kpis.aiRepliesToday.toLocaleString()} />
+        <StatTile label="Monitored groups" value={kpis.monitoredGroups.toLocaleString()} />
+        <StatTile label="Active team members" value={kpis.activeTeamMembers.toLocaleString()} />
+        <StatTile label="Projects you can enter" value={kpis.projects} />
       </div>
 
       {needsAttention.length > 0 ? (

@@ -247,6 +247,14 @@ page's own permission check stays final. A page whose data carries no `projectId
 `GLOBAL_PAGE_PREFIXES` (no tabs). The `~ws` segment marker exists so the router re-renders the layout
 between workspace and portal; it is never authority, and a direct `/p/<slug>~ws/…` is a 404.
 
+**Project access levels** (`ProjectAccess.level`: READ / WRITE / FULL, null = FULL) only ever NARROW
+the existing role inside one project — `packages/shared/src/projectAccessLevels.ts` is the rule, and
+it is applied inside `hasPermission`/`requirePermission`/`getGrantedPermissionKeys` so no caller can
+skip it. Never add a check that grants because of a level. **Main Admin Configuration** (`Department`,
+`JobTitle`, `Employee`, keys `configuration.*`) is platform data with no `projectId`; employee IDs come
+from the `employee_code_seq` sequence, never from a count. A job title is not a role and a department
+is not a WhatsApp `Team`. See `MAIN_ADMIN_WORKSPACE.md` §5–§7.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.

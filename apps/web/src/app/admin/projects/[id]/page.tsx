@@ -118,7 +118,7 @@ export default async function ProjectDetailPage({
       <div className="mt-8">
         <SectionHeader
           title="Project access"
-          description="Who may enter this project. Access is yes or no; what each person may do inside is their existing role, the same in every project they can enter."
+          description="Who may enter this project, and how much of their role they may use here: Read (look only), Write (day-to-day work, no deleting or settings) or Full (the whole role). A level only ever narrows the existing role — it never grants anything the role does not."
         />
         <ProjectAccessList projectId={project.id} users={users} canManage={canManage} />
       </div>

@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
-import { ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, LayoutDashboard, LogOut, X } from "lucide-react";
+import { Building2, ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, LayoutDashboard, LogOut, ShieldCheck, X } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
@@ -138,10 +138,15 @@ function NavItem({ link, active, collapsed }: { link: NavLink; active: boolean; 
   );
 }
 
-/** The Main Admin Portal's own pages, at the top of the sidebar when a page is shown in the workspace. */
-const MAIN_ADMIN_LINKS: NavLink[] = [
-  { href: "/admin", label: "Admin Overview", icon: LayoutDashboard },
-  { href: "/admin/projects", label: "Projects", icon: FolderKanban },
+/**
+ * The Main Admin Portal's own pages, at the top of the sidebar when a page is shown in the workspace.
+ * Each needs the key its page checks; the shell filters them (presentation — the pages check again).
+ */
+export const MAIN_ADMIN_LINKS: Array<NavLink & { key: string | null }> = [
+  { href: "/admin", label: "Admin Overview", icon: LayoutDashboard, key: null },
+  { href: "/admin/projects", label: "Projects", icon: FolderKanban, key: null },
+  { href: "/admin/configuration", label: "Configuration", icon: Building2, key: "configuration.view" },
+  { href: "/admin/users", label: "Users & Permissions", icon: ShieldCheck, key: "users.view" },
 ];
 
 function SectionLabel({ children, collapsed }: { children: string; collapsed: boolean }) {
@@ -171,7 +176,7 @@ export function Sidebar({
    * global modules first, then every project module under WORKSPACE. One sidebar; the project is
    * chosen by the tabs above the page, not by a second navigation.
    */
-  workspace?: { globalGroups: NavGroup[] } | null;
+  workspace?: { globalGroups: NavGroup[]; mainAdminLinks: NavLink[] } | null;
   project: SwitcherProject;
   switchableProjects: SwitcherProject[];
   canViewAdmin: boolean;
@@ -298,7 +303,7 @@ export function Sidebar({
           {workspace ? (
             <div className="px-2.5 pb-1">
               <SectionLabel collapsed={collapsed}>Main Admin</SectionLabel>
-              {MAIN_ADMIN_LINKS.map((link) => (
+              {workspace.mainAdminLinks.map((link) => (
                 <NavItem key={link.href} link={link} active={false} collapsed={collapsed} />
               ))}
               <div className="space-y-0.5">{renderGroups(workspace.globalGroups, 100)}</div>
