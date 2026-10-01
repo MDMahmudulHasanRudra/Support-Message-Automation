@@ -2,7 +2,24 @@
 
 import { useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import Link from "@/components/ProjectLink";
 import { Field, Input, Select } from "@/components/ui";
+import { GroupFilter } from "./GroupFilter";
+
+export interface PresetLink {
+  id: string;
+  label: string;
+  href: string;
+  active: boolean;
+}
+
+/** A report's own extra filter (a metric, a status): rendered as one more select in the form. */
+export interface ExtraSelect {
+  name: string;
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+}
 
 /**
  * The report's filters. A plain GET form, like every other filter in this app, so a report is a URL
@@ -12,6 +29,10 @@ import { Field, Input, Select } from "@/components/ui";
  * Team and Team member cascade: picking a Team narrows the member list to the people who were in it
  * during the period, and a member who was not is reset to "all of that Team" before submitting — so
  * the form can never ask for a combination that means nothing.
+ *
+ * Shared by the Team Report and every report at /reports/<id>. The date presets are links to ordinary
+ * period/date URLs, and Groups and WhatsApp account are two more fields; with nothing chosen they add
+ * nothing to the URL, so an existing report link means exactly what it meant.
  */
 export function TeamReportFilters({
   period,
@@ -24,6 +45,13 @@ export function TeamReportFilters({
   members,
   teams,
   teamMemberIds,
+  presets = [],
+  groupOptions,
+  groupKeys = [],
+  accounts,
+  accountId = null,
+  showGranularity = true,
+  selects = [],
 }: {
   period: string;
   date: string;
@@ -35,6 +63,15 @@ export function TeamReportFilters({
   teamId: string | null;
   teams: Array<{ id: string; name: string; status: string }>;
   teamMemberIds: Record<string, string[]>;
+  presets?: PresetLink[];
+  /** Offer the Groups filter (omit to hide it). */
+  groupOptions?: Array<{ whatsappGroupId: string; name: string; isMonitored: boolean }>;
+  groupKeys?: string[];
+  /** Offer the WhatsApp account filter (omit, or one account, to hide it). */
+  accounts?: Array<{ id: string; label: string; phoneNumber: string | null }>;
+  accountId?: string | null;
+  showGranularity?: boolean;
+  selects?: ExtraSelect[];
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [chosenPeriod, setChosenPeriod] = useState(period);
@@ -51,6 +88,25 @@ export function TeamReportFilters({
   const submit = () => formRef.current?.requestSubmit();
 
   return (
+    <div>
+      {presets.length ? (
+        <nav aria-label="Quick periods" className="mb-3 flex flex-wrap gap-1.5">
+          {presets.map((preset) => (
+            <Link
+              key={preset.id}
+              href={preset.href}
+              aria-current={preset.active ? "true" : undefined}
+              className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:outline-none ${
+                preset.active
+                  ? "border-[var(--color-primary)] bg-[var(--color-accent-bg)] text-[color:var(--color-foreground)]"
+                  : "border-[var(--color-border)] text-[color:var(--color-muted-foreground)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)]"
+              }`}
+            >
+              {preset.label}
+            </Link>
+          ))}
+        </nav>
+      ) : null}
     <form ref={formRef} method="GET" className="flex flex-wrap items-end gap-3">
       <Field label="Period">
         <Select
@@ -132,13 +188,49 @@ export function TeamReportFilters({
         </Select>
       </Field>
 
-      <Field label="Break down by">
-        <Select name="by" defaultValue={granularity} className="w-32" onChange={submit}>
-          <option value="day">Day</option>
-          <option value="week">Week</option>
-          <option value="month">Month</option>
-        </Select>
-      </Field>
+      {groupOptions ? (
+        <Field label="Groups">
+          <GroupFilter groups={groupOptions} selected={groupKeys} onApply={submit} />
+        </Field>
+      ) : null}
+
+      {accounts && (accounts.length > 1 || accountId) ? (
+        <Field label="WhatsApp account">
+          <Select name="account" defaultValue={accountId ?? ""} className="w-48" onChange={submit}>
+            <option value="">All accounts</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.label}
+                {account.phoneNumber ? ` (${account.phoneNumber})` : ""}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
+
+      {showGranularity ? (
+        <Field label="Break down by">
+          <Select name="by" defaultValue={granularity} className="w-32" onChange={submit}>
+            <option value="day">Day</option>
+            <option value="week">Week</option>
+            <option value="month">Month</option>
+          </Select>
+        </Field>
+      ) : (
+        <input type="hidden" name="by" value={granularity} />
+      )}
+
+      {selects.map((select) => (
+        <Field key={select.name} label={select.label}>
+          <Select name={select.name} defaultValue={select.value} className="w-52" onChange={submit}>
+            {select.options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ))}
 
       {/* Needed for Custom (two dates, one submit) and as the keyboard path for everything else. */}
       <button
@@ -148,5 +240,6 @@ export function TeamReportFilters({
         Apply
       </button>
     </form>
+    </div>
   );
 }

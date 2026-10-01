@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { sanitizeExcelRow } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
+import { prisma } from "@/server/db";
 import { bucketLabel, loadTeamReport, memberLabel, parseTeamReportFilters, scopeLabel } from "@/server/teamReport";
 
 /**
@@ -108,6 +109,16 @@ export async function GET(request: NextRequest) {
     { Metric: "Team", Value: teamName ?? "All teams" },
     { Metric: "Team member", Value: memberName ?? "All" },
     { Metric: "Breakdown", Value: filters.granularity },
+    // Only when chosen, so a report without them exports exactly what it always did.
+    ...(filters.groupKeys?.length ? [{ Metric: "Groups", Value: filters.groupKeys.map(groupName).join(", ") }] : []),
+    ...(filters.accountId
+      ? [
+          {
+            Metric: "WhatsApp account",
+            Value: (await prisma.whatsAppAccount.findFirst({ where: { id: filters.accountId }, select: { label: true } }))?.label ?? filters.accountId,
+          },
+        ]
+      : []),
     { Metric: "Period start (Asia/Dhaka)", Value: iso(range.start.getTime()) },
     { Metric: "Period end (Asia/Dhaka, exclusive)", Value: iso(range.end.getTime()) },
     { Metric: "Groups supported", Value: summary.groupsSupported },

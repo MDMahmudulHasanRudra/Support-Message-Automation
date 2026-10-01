@@ -37,6 +37,7 @@ export function ReportDataTable({
   description,
   query,
   noun,
+  exportUrl = "/api/team-report/table-export",
 }: {
   table: ReportTableData;
   title: string;
@@ -44,6 +45,8 @@ export function ReportDataTable({
   /** The report's current filters, so the export computes the same report. */
   query: string;
   noun: { singular: string; plural: string };
+  /** Where the table export posts — the Team Report's own route unless a report has its own. */
+  exportUrl?: string;
 }) {
   const { showToast } = useToast();
   const toProject = useProjectHref();
@@ -133,7 +136,7 @@ export function ReportDataTable({
     }
     setExporting(`${scope}-${format}`);
     try {
-      const response = await fetch(toProject(`/api/team-report/table-export?${query}`), {
+      const response = await fetch(toProject(`${exportUrl}?${query}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ table: table.id, format, keys }),

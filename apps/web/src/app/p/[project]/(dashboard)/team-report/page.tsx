@@ -23,6 +23,8 @@ import {
 import { TeamReportFilters } from "./TeamReportFilters";
 import { ReportDataTable } from "./ReportDataTable";
 import { buildBucketsTable, buildGroupsTable, buildMembersTable } from "@/server/teamReportTables";
+import { loadReportFilterOptions } from "@/server/reports/context";
+import { presetLinks } from "@/server/reports/presets";
 
 export const metadata = { title: "Team Report" };
 
@@ -50,7 +52,7 @@ export default async function TeamReportPage({
   const params = await searchParams;
   const now = new Date();
   const requested = parseTeamReportFilters(params, now);
-  const report = await loadTeamReport(requested, now);
+  const [report, filterOptions] = await Promise.all([loadTeamReport(requested, now), loadReportFilterOptions(requested.groupKeys)]);
   const { filters, range, result, memberNames, members, rules, teams, teamMemberIds, teamName, filterNote } = report;
   const { summary } = result;
 
@@ -104,6 +106,11 @@ export default async function TeamReportPage({
           members={members}
           teams={teams}
           teamMemberIds={teamMemberIds}
+          presets={presetLinks("/team-report", filters, now)}
+          groupOptions={filterOptions.groups}
+          groupKeys={filters.groupKeys}
+          accounts={filterOptions.accounts}
+          accountId={filters.accountId}
         />
       </Card>
 
@@ -115,6 +122,19 @@ export default async function TeamReportPage({
         <span>
           Period: <strong className="font-medium text-[color:var(--color-foreground)]">{PERIOD_NAMES[filters.period]} · {range.label}</strong>
         </span>
+        {filters.groupKeys?.length ? (
+          <span>
+            Groups: <strong className="font-medium text-[color:var(--color-foreground)]">{filters.groupKeys.length}</strong> (only messages in these)
+          </span>
+        ) : null}
+        {filters.accountId ? (
+          <span>
+            Account:{" "}
+            <strong className="font-medium text-[color:var(--color-foreground)]">
+              {filterOptions.accounts.find((a) => a.id === filters.accountId)?.label ?? "Unknown account"}
+            </strong>
+          </span>
+        ) : null}
         {filters.teamId ? (
           <span>
             Members in team: <strong className="font-medium text-[color:var(--color-foreground)]">{teamMemberIds[filters.teamId]?.length ?? 0}</strong>

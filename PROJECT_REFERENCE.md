@@ -28,6 +28,7 @@ matching section here in the same change.
 4. [Escalations](#escalations)
 5. [Support Activity](#support-activity)
 6. [Team Management](#team-management)
+6a. [Reports](#reports)
 7. [Teams Integration](#teams-integration)
 8. [WhatsApp](#whatsapp)
 9. [Automation](#automation)
@@ -379,6 +380,65 @@ which is a different answer from zero) and **holidays** (date, name, note). Both
 entitlement and public holidays differ by country and company, and a seeded guess quietly becomes
 policy because nobody checked it. Declaring a holiday affects days filled from the weekly schedule
 after that point; dates already rostered keep what somebody assigned them.
+
+---
+
+## Reports
+
+`REPORTS.md` is the full reference (every formula, the scope rules, the audit). This is the page list.
+
+### All Reports — `/reports`
+
+Cards grouped by category:
+
+| Category | Reports |
+|---|---|
+| Support Performance | Team Report, Support Activity |
+| Team & Employee | Employee Support Breakdown, Duty History, Duty & Workload |
+| Group / Client Health | Inactive Groups, Group Support Coverage, Group Activity Trend |
+| Response & SLA | Response SLA, Missed Support |
+| Activity & Workload | Team Workload, Support Activity Heatmap, WhatsApp Call Activity |
+| Management | Workload Distribution |
+
+- Each card shows the report's question, description and export formats.
+- A card is shown only when the role's existing key and the project feature both allow it.
+- The catalogue is `packages/shared/src/reportCatalogue.ts`.
+
+### Team Report — `/team-report`
+
+Unchanged figures. New on the page:
+- quick periods: Today, Yesterday, This week, Last week, This month, Last month, This year;
+- a **Groups** picker (search and checkboxes; submits `groups=<ids>`);
+- a **WhatsApp account** select (`account=`), shown when the project has more than one number.
+
+Both new filters are empty by default, and the exports carry them.
+
+### The reports at `/reports/<id>`
+
+Each is one generic page. It has:
+- the common filters: quick periods, period, Team, member, Groups, account, and "break down by"
+  where it means something;
+- the report's own select, where it has one (status, metric, low-activity threshold);
+- summary tiles, at most two charts, sortable and selectable tables with per-table export;
+- **CSV** (the main table) and **Excel** (Summary, Detailed and Breakdown sheets);
+- Help with every formula.
+
+| Route | What it lists | Own filter |
+|---|---|---|
+| `inactive-groups` | monitored groups: no customer activity / customer activity, no reply / low activity / active; days since the last message | show, low below |
+| `group-coverage` | per group: waits, answered, in time, late, never, coverage % | — |
+| `group-trend` | per bucket: customer messages, replies, groups with a message, groups with no reply, waits, missed | by |
+| `response-sla` | SLA %, median / average / p90 / worst response; by group, by who answered, by bucket | by |
+| `missed` | every wait: Waiting / Answered / Answered late / Never answered, with the customer's first line | show |
+| `workload` | per member: groups, replies, waits answered, support time, stretches, active days | by |
+| `distribution` | each member's share of replies, support time, groups or waits answered, with the total | share of |
+| `employee-groups` | member × group: replies, waits answered, median response, recall, time in group | — |
+| `heatmap` | weekday × hour counts of customer messages, team replies or waits started | show |
+| `calls` | messages asking for or mentioning a call, inferred from text, with a duration only when stated | — |
+| `duty-workload` | per member per day: scheduled, recorded in shift, beyond schedule, on off days, scheduled with no recorded activity; overnight shifts | — |
+
+`duty-workload` needs `team_management.view` and the Team Management feature. Every other report
+needs `support_activity.view` and the Team reports feature.
 
 ---
 

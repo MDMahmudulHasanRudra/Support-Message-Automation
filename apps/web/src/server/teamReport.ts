@@ -1,4 +1,5 @@
 
+import { Prisma } from "@prisma/client";
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
 import {
@@ -60,7 +61,17 @@ export interface TeamReportFilters {
   /** A Team id, NO_TEAM ("none") for members in no Team, or null for all Teams. */
   teamId: string | null;
   granularity: ReportGranularity;
+  /**
+   * WhatsApp group ids (`whatsappGroupId`) to restrict to; empty or absent = every group. Only the
+   * messages of these groups are read, so support time and waits are the time and waits in them.
+   */
+  groupKeys?: string[];
+  /** One WhatsApp account's stored copies only; null or absent = every account. */
+  accountId?: string | null;
 }
+
+/** At most this many groups in a filter — a URL, not a database dump. */
+export const MAX_FILTER_GROUPS = 200;
 
 export interface ResolvedRange {
   start: Date;
@@ -97,6 +108,15 @@ export function parseTeamReportFilters(params: Record<string, string | undefined
     memberId: params.member?.trim() || null,
     teamId: params.team?.trim() || null,
     granularity,
+    groupKeys: [
+      ...new Set(
+        (params.groups ?? "")
+          .split(",")
+          .map((key) => key.trim())
+          .filter((key) => key.length > 0 && key.length <= 200),
+      ),
+    ].slice(0, MAX_FILTER_GROUPS),
+    accountId: params.account?.trim() || null,
   };
 }
 
@@ -158,6 +178,13 @@ export interface TeamOption {
 export interface TeamReportData {
   /** The filters actually applied — a member outside the chosen Team is reset to all its members. */
   filters: TeamReportFilters;
+  /**
+   * The classified messages `result` was computed from (the period plus the reply look-ahead). The
+   * reports at /reports/<id> cut these another way, so they never re-decide who is a customer.
+   */
+  messages: ReportMessage[];
+  /** The Team/member scope `result` was computed with, or null for the whole team. */
+  scope: ((memberId: string, ts: number) => boolean) | null;
   range: ResolvedRange;
   result: TeamReportResult;
   memberNames: Map<string, string>;
@@ -179,7 +206,7 @@ export interface TeamReportData {
 }
 
 /** Every form a member's senderPhone may be stored in — the same set Duty History matches on. */
-function senderIdentifiers(member: { phoneNumber: string; whatsappId: string | null }): string[] {
+export function senderIdentifiers(member: { phoneNumber: string; whatsappId: string | null }): string[] {
   const candidates = [member.whatsappId, member.phoneNumber, normalizePhoneNumber(member.phoneNumber)];
   return [...new Set(candidates.filter((value): value is string => Boolean(value)))];
 }
@@ -195,6 +222,11 @@ export async function loadTeamReport(
 ): Promise<TeamReportData> {
   const range = resolveTeamReportRange(filters, now);
   const lookaheadEnd = new Date(range.end.getTime() + LOOKAHEAD_MS);
+  // Both empty by default, which leaves the query exactly as it always was.
+  const groupFilter = filters.groupKeys?.length
+    ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(filters.groupKeys)})`
+    : Prisma.empty;
+  const accountFilter = filters.accountId ? Prisma.sql`AND m."accountId" = ${filters.accountId}` : Prisma.empty;
 
   const [members, settings, policies, teams, membershipRows, rows] = await Promise.all([
     prisma.internalTeamMember.findMany({
@@ -221,6 +253,7 @@ export async function loadTeamReport(
           WHERE g."whatsappGroupId" = ${onlyWhatsappGroupId}
             AND m."projectId" = ${await activeProjectId()}
             AND m."timestampWa" >= ${range.start} AND m."timestampWa" < ${lookaheadEnd}
+            ${accountFilter}
           ORDER BY m."whatsappMessageId", m."timestampWa", m."id"`
       : prisma.$queryRaw<Array<{ wgid: string; ts: Date; direction: string; fromTeam: boolean; sender: string }>>`
           SELECT DISTINCT ON (g."whatsappGroupId", m."whatsappMessageId")
@@ -230,6 +263,8 @@ export async function loadTeamReport(
           JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
           WHERE m."timestampWa" >= ${range.start} AND m."timestampWa" < ${lookaheadEnd}
             AND m."projectId" = ${await activeProjectId()}
+            ${groupFilter}
+            ${accountFilter}
           ORDER BY g."whatsappGroupId", m."whatsappMessageId", m."timestampWa", m."id"`,
   ]);
 
@@ -342,6 +377,8 @@ export async function loadTeamReport(
 
   return {
     filters: applied,
+    messages,
+    scope,
     range,
     result,
     memberNames,
@@ -369,6 +406,8 @@ export function teamReportQuery(filters: TeamReportFilters, overrides: Partial<T
   if (merged.teamId) qs.set("team", merged.teamId);
   if (merged.memberId) qs.set("member", merged.memberId);
   qs.set("by", merged.granularity);
+  if (merged.groupKeys?.length) qs.set("groups", merged.groupKeys.join(","));
+  if (merged.accountId) qs.set("account", merged.accountId);
   if (overrides.page && overrides.page > 1) qs.set("page", String(overrides.page));
   return qs.toString();
 }

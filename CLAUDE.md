@@ -867,6 +867,24 @@ the server recomputes the report and builds the rows with the same `buildMembers
 a cell (a group's WhatsApp id, "+3 business") is `ReportTableRow.sub` — presentation, not a column,
 so it is not exported; search matches the group id through it.
 
+**The reports at `/reports/<id>` (REPORTS.md) cut the Team Report's own dataset, never a second
+one.**
+- Each builder (`apps/web/src/server/reports/`) starts from `loadTeamReport` and the pure functions
+  in `packages/shared/src/supportReports.ts`, so a wait, a missed threshold and a support time are
+  the Team Report's. One generic page and two generic export routes render whatever a builder
+  returns.
+- `loadTeamReport` takes `groups` / `account` filters, empty by default (the old SQL, figures and
+  exports unchanged). It also returns its classified `messages` and `scope`.
+- A new report is:
+  - a catalogue entry (`reportCatalogue.ts`);
+  - a builder and its EXISTING permission key (`server/reports/index.ts`);
+  - its route in a feature's `routes` (`projectFeatures.ts`);
+  - an icon (`navigation.ts`).
+
+  `reportsCatalogue.test.ts` fails until all four agree.
+- WhatsApp calls are not recorded anywhere, so the Call Activity report is inferred from text and
+  says so. Never present it as call records.
+
 **Element-level rules in `globals.css` belong in `@layer base`.** Tailwind's utilities live in a
 layer, and ANY unlayered style beats ANY layered one regardless of specificity: the default
 `* { border-color }` sat unlayered until 30 Sep 2026, so every border-colour utility in the app

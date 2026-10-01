@@ -1,7 +1,16 @@
-import { pathAllowedByFeatures } from "@support-automation/shared";
+import { pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
+  CalendarClock,
+  Grid3x3,
+  MessageSquareOff,
+  PhoneCall,
+  PieChart,
+  Timer,
+  TrendingUp,
+  UsersRound,
   BarChart3,
   Bell,
   BellRing,
@@ -209,31 +218,40 @@ export interface ReportPage extends NavLink {
   /** The module that produces it, shown on its card. */
   module: string;
   description: string;
+  /** From the shared report catalogue (packages/shared/src/reportCatalogue.ts). */
+  category: ReportCategory;
+  question: string;
+  exports: readonly ReportExportFormat[];
 }
 
-export const REPORT_PAGES: ReportPage[] = [
-  {
-    href: "/team-report",
-    label: "Team Report",
-    icon: ClipboardCheck,
-    module: "WhatsApp support",
-    description: "Groups, replies, missed and recalled customer waits, and support time per team member — from the stored WhatsApp messages, for any day, week, month or range.",
-  },
-  {
-    href: "/support-activity/reports",
-    label: "Support Activity",
-    icon: Activity,
-    module: "Support Activity",
-    description: "Support activity and session history by WhatsApp group, for any date range, with CSV and Excel export.",
-  },
-  {
-    href: "/team-management/attendance",
-    label: "Duty History",
-    icon: CalendarDays,
-    module: "Team Management",
-    description: "Each person's scheduled shift against the hours and messages actually recorded, by day.",
-  },
-];
+/** The icon and producing module of each catalogue report — the only parts that are web-only. */
+const REPORT_PRESENTATION: Record<string, { icon: LucideIcon; module: string }> = {
+  "team-report": { icon: ClipboardCheck, module: "WhatsApp support" },
+  "support-activity": { icon: Activity, module: "Support Activity" },
+  "duty-history": { icon: CalendarDays, module: "Team Management" },
+  "employee-groups": { icon: UsersRound, module: "WhatsApp support" },
+  "duty-workload": { icon: CalendarClock, module: "Team Management" },
+  "inactive-groups": { icon: MessageSquareOff, module: "WhatsApp support" },
+  "group-coverage": { icon: ShieldCheck, module: "WhatsApp support" },
+  "group-trend": { icon: TrendingUp, module: "WhatsApp support" },
+  "response-sla": { icon: Timer, module: "WhatsApp support" },
+  missed: { icon: AlertTriangle, module: "WhatsApp support" },
+  workload: { icon: Gauge, module: "WhatsApp support" },
+  heatmap: { icon: Grid3x3, module: "WhatsApp support" },
+  calls: { icon: PhoneCall, module: "WhatsApp support" },
+  distribution: { icon: PieChart, module: "WhatsApp support" },
+};
+
+export const REPORT_PAGES: ReportPage[] = REPORT_CATALOGUE.map((entry) => ({
+  href: entry.href,
+  label: entry.label,
+  description: entry.description,
+  category: entry.category,
+  question: entry.question,
+  exports: entry.exports,
+  icon: REPORT_PRESENTATION[entry.id]?.icon ?? BarChart3,
+  module: REPORT_PRESENTATION[entry.id]?.module ?? "Reports",
+}));
 
 export const REPORTS_LINK: NavLink = { href: "/reports", label: "All Reports", icon: BarChart3 };
 
@@ -431,6 +449,10 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/support-escalation", "escalations.view"],
   ["/support-activity", "support_activity.view"],
   ["/team-report", "support_activity.view"],
+  // The reports at /reports/<id> (REPORTS.md): the Team Report's key, and Duty History's for duty.
+  ...REPORT_CATALOGUE.filter((r) => r.generic).map(
+    (r) => [r.href, r.id === "duty-workload" ? "team_management.view" : "support_activity.view"] as [string, string],
+  ),
   ["/team-management", "team_management.view"],
   ["/accounts", "whatsapp.view"],
   ["/groups", "whatsapp.view"],

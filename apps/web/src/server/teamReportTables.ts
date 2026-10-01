@@ -38,7 +38,8 @@ export interface ReportTableRow {
 }
 
 export interface ReportTableData {
-  id: TeamReportTableId;
+  /** Which table: a TeamReportTableId on the Team Report, a report's own table id elsewhere. */
+  id: string;
   columns: ReportTableColumn[];
   rows: ReportTableRow[];
 }
