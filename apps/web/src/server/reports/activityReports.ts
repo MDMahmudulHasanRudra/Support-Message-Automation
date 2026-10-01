@@ -21,7 +21,7 @@ import type { BuiltReport } from "./types";
 const assignedOf = (ctx: ReportContext, groupKey: string) => ctx.data.groups.get(groupKey)?.assignedMemberId ?? null;
 
 export function buildHeatmap(ctx: ReportContext): BuiltReport {
-  const metric: HeatmapMetric = ctx.params.metric && ctx.params.metric in HEATMAP_METRICS ? (ctx.params.metric as HeatmapMetric) : "customer";
+  const metric: HeatmapMetric = ctx.params.metric && Object.prototype.hasOwnProperty.call(HEATMAP_METRICS, ctx.params.metric) ? (ctx.params.metric as HeatmapMetric) : "customer";
   const scope = ctx.data.scope;
   const grid = activityHeatmap(ctx.data.messages, waitsInScope(ctx), metric, {
     rangeStart: ctx.rangeStart,
@@ -98,9 +98,9 @@ export async function buildCalls(ctx: ReportContext): Promise<BuiltReport> {
   const [candidates, members] = await Promise.all([
     // Only messages whose text could mention a call cross to this process; detectCallMention decides.
     // DISTINCT ON collapses the copies two of our numbers store of one message, as the Team Report does.
-    prisma.$queryRaw<Array<{ wgid: string; ts: Date; direction: string; fromTeam: boolean; sender: string; body: string }>>`
+    prisma.$queryRaw<Array<{ wgid: string; wamid: string; ts: Date; direction: string; fromTeam: boolean; sender: string; body: string }>>`
       SELECT DISTINCT ON (g."whatsappGroupId", m."whatsappMessageId")
-        g."whatsappGroupId" AS wgid, m."timestampWa" AS ts, m."direction"::text AS direction,
+        g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."direction"::text AS direction,
         m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, left(m."body", 400) AS body
       FROM "Message" m
       JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
@@ -162,27 +162,31 @@ export async function buildCalls(ctx: ReportContext): Promise<BuiltReport> {
         description: "Newest first. Every row is inferred from what somebody wrote; none is a call record.",
         noun: { singular: "message", plural: "messages" },
         columns: [
-          { label: "When", muted: true },
+      // The group first: a table's search reads its first column (and the WhatsApp id under it),
+      // and "which group" is what somebody searches a list of messages by — not a timestamp.
           { label: "Group" },
+          { label: "When", muted: true },
           { label: "Written by" },
           { label: "Kind" },
           { label: "Duration" },
           { label: "Detected from" },
           { label: "Message" },
         ],
-        rows: shown.map((r, i) => ({
-          key: `${r.wgid}|${r.ms}|${i}`,
+        rows: shown.map((r) => ({
+          // The message's own identity, not its position: a selection exported after new messages
+          // arrived must still name the same rows (a position-based key would shift onto others).
+          key: `${r.wgid}|${r.wamid}`,
           cells: [
-            when(r.ms),
             ctx.groupName(r.wgid),
+            when(r.ms),
             whoLabel(r),
             CALL_KIND_LABELS[r.mention.kind],
             r.mention.statedDurationSeconds !== null ? `${duration(r.mention.statedDurationSeconds)} (stated in message)` : "Duration unavailable",
             "Inferred from message text",
             r.body.replace(/\s+/g, " ").trim(),
           ],
-          sort: [r.ms, ctx.groupName(r.wgid).toLowerCase(), whoLabel(r).toLowerCase(), r.mention.kind, r.mention.statedDurationSeconds ?? -1, "", r.body.toLowerCase()],
-          sub: [null, r.wgid],
+          sort: [ctx.groupName(r.wgid).toLowerCase(), r.ms, whoLabel(r).toLowerCase(), r.mention.kind, r.mention.statedDurationSeconds ?? -1, "", r.body.toLowerCase()],
+          sub: [r.wgid],
         })),
       },
     ],

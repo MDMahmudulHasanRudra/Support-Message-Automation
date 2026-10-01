@@ -43,6 +43,7 @@ const ids = {
   team: "",
 };
 let bizGroupName = "";
+const bizIds = { account: "", member: "" };
 let bizMemberName = "";
 
 async function seedIsp() {
@@ -131,6 +132,8 @@ async function seedBiz() {
   });
   const memberPhone = digits();
   const member = await rawPrisma.internalTeamMember.create({ data: { ...pid, name: bizMemberName, phoneNumber: memberPhone, role: "Support" } });
+  bizIds.account = account.id;
+  bizIds.member = member.id;
   const customer = digits();
   const rows: Array<[Date, string, string, "INCOMING" | "OUTGOING"]> = [
     [t(8, 0), "I got a missed call from you", customer, "INCOMING"],
@@ -393,6 +396,19 @@ describe("filters", () => {
     expect(table(inactive, "groups").rows.map((row) => row.key).sort()).toEqual([ids.wg.busy, ids.wg.quiet].sort());
   });
 
+  it("member: member reports narrow to that person alone, with no Team chosen", async () => {
+    for (const id of ["workload", "distribution"]) {
+      const r = await run(isp, id, { groups: fixtureGroups(), member: ids.m2 });
+      expect(r.tables[0]!.rows.map((row) => row.key), id).toEqual([ids.m2]);
+    }
+    const pairs = await run(isp, "employee-groups", { groups: fixtureGroups(), member: ids.m2 });
+    expect(new Set(table(pairs, "pairs").rows.map((row) => row.key.split("|")[0]))).toEqual(new Set([ids.m2]));
+    const duty = await run(isp, "duty-workload", { groups: fixtureGroups(), member: ids.m1 });
+    expect(new Set(table(duty, "days").rows.map((row) => row.key.split("|")[0]))).toEqual(new Set([ids.m1]));
+    const heat = await run(isp, "heatmap", { groups: fixtureGroups(), member: ids.m1, metric: "replies" });
+    expect(tile(heat, "Team replies")).toBe("3"); // Rina's 09:10, 11:00, 12:05 only
+  });
+
   it("member: Bipul's missed support covers his assigned group and the groups he answered in", async () => {
     const r = await run(isp, "missed", { groups: fixtureGroups(), member: ids.m2, status: "all" });
     expect(table(r, "waits").rows).toHaveLength(5); // every wait but the second number's
@@ -408,6 +424,48 @@ describe("filters", () => {
     expect(tile(r, "Customer waits")).toBe("1");
     const workload = await run(isp, "workload", { groups: fixtureGroups(), account: ids.accounts.a2 });
     expect(workload.emptyMessage).not.toBeNull();
+  });
+});
+
+describe("invalid and foreign filters degrade, never leak and never throw", () => {
+  const HOSTILE: Array<Record<string, string>> = [
+    { member: "BIZ" }, // replaced below with Bizify's real member id
+    { account: "BIZ" }, // Bizify's real account id
+    { team: "not-a-team" },
+    { groups: "nope@g.us,also-nope,,  ,'; DROP TABLE x;--" },
+    { status: "DELETE", metric: "../../etc", low: "-1" },
+    { period: "bogus", date: "2025-13-45", by: "century" },
+    { period: "custom", from: D1, to: D }, // reversed
+    { period: "custom", from: "2020-01-01", to: "2030-12-31" }, // far past the 92-day limit
+    // Names every plain object inherits: `x in obj` is true for them, so an `in` check let them through.
+    { metric: "toString", status: "constructor" },
+    { metric: "__proto__", status: "hasOwnProperty", low: "valueOf" },
+    { team: "toString" },
+    { team: "constructor", member: "BIZ" },
+    // Dates JavaScript accepts and Postgres does not.
+    { period: "custom", from: "9999-12-31", to: "9999-12-31" },
+    { period: "day", date: "9999-12-31" },
+    { period: "custom", from: "0000-01-01", to: "0000-01-02" },
+  ];
+
+  for (const params of HOSTILE) {
+    it(`every report survives ${JSON.stringify(params)}`, async () => {
+      const resolved = Object.fromEntries(
+        Object.entries(params).map(([k, v]) => [k, v === "BIZ" ? (k === "member" ? bizIds.member : bizIds.account) : v]),
+      );
+      for (const id of GENERIC_REPORT_IDS) {
+        const r = await run(isp, id, resolved);
+        const text = JSON.stringify(r);
+        for (const name of [bizGroupName, bizMemberName, "I got a missed call", "invoice please"]) expect(text, `${id} ${name}`).not.toContain(name);
+      }
+    });
+  }
+
+  it("Bizify's member or account, chosen in ISP Digital, selects nothing of ISP Digital's either", async () => {
+    const byMember = await run(isp, "workload", { groups: fixtureGroups(), member: bizIds.member });
+    expect(table(byMember, "members").rows).toHaveLength(0);
+    const byAccount = await run(isp, "response-sla", { groups: fixtureGroups(), account: bizIds.account });
+    expect(byAccount.emptyMessage).not.toBeNull();
   });
 });
 
@@ -462,6 +520,38 @@ describe("project isolation", () => {
   it("and ISP Digital's never name Bizify's", () => {
     const text = Object.values(ispAfter).join("\n");
     for (const name of [bizGroupName, bizMemberName, "I got a missed call", "invoice please"]) expect(text).not.toContain(name);
+  });
+});
+
+describe("row keys (selection and selected-row export)", () => {
+  it("are unique within every table of every report", async () => {
+    for (const id of GENERIC_REPORT_IDS) {
+      const r = await run(isp, id, { groups: fixtureGroups(), status: "all" });
+      for (const tb of r.tables) {
+        const keys = tb.rows.map((row) => row.key);
+        expect(new Set(keys).size, `${id}/${tb.id}`).toBe(keys.length);
+      }
+    }
+  });
+
+  it("name the same rows after newer data arrives (calls were keyed by position)", async () => {
+    const before = await run(isp, "calls", { groups: fixtureGroups() });
+    const g = await rawPrisma.whatsAppGroup.findFirstOrThrow({ where: { projectId: isp.id, whatsappGroupId: ids.wg.low } });
+    const newest = await rawPrisma.message.create({
+      data: {
+        projectId: isp.id, accountId: g.accountId, groupId: g.id, chatId: g.whatsappGroupId, whatsappMessageId: `wamid-${randomUUID()}`,
+        senderPhone: "8801999999999", direction: "INCOMING", body: "please call me again", normalizedBody: "please call me again",
+        timestampWa: t(20, 0), processingStatus: "PROCESSED",
+      },
+    });
+    try {
+      const after = await run(isp, "calls", { groups: fixtureGroups() });
+      const bodyOf = (r: BuiltReport, key: string) => table(r, "calls").rows.find((row) => row.key === key)?.cells[6];
+      for (const row of table(before, "calls").rows) expect(bodyOf(after, row.key)).toBe(row.cells[6]);
+      expect(table(after, "calls").rows).toHaveLength(table(before, "calls").rows.length + 1);
+    } finally {
+      await rawPrisma.message.delete({ where: { id: newest.id } });
+    }
   });
 });
 

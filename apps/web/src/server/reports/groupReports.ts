@@ -66,7 +66,7 @@ const STATUS_ORDER: GroupActivityStatus[] = ["CUSTOMER_NO_REPLY", "NO_CUSTOMER_A
 export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltReport> {
   const lowRaw = Number(ctx.params.low);
   const low = [3, 5, 10, 20].includes(lowRaw) ? lowRaw : DEFAULT_LOW_ACTIVITY_THRESHOLD;
-  const statusFilter = ctx.params.status && (ctx.params.status === "all" || ctx.params.status in GROUP_ACTIVITY_LABELS) ? ctx.params.status : "attention";
+  const statusFilter = ctx.params.status && (ctx.params.status === "all" || Object.prototype.hasOwnProperty.call(GROUP_ACTIVITY_LABELS, ctx.params.status)) ? ctx.params.status : "attention";
 
   const groups = await loadMonitoredGroups(ctx);
   const counts = groupMessageCounts(ctx.data.messages, ctx.rangeStart, ctx.rangeEnd);

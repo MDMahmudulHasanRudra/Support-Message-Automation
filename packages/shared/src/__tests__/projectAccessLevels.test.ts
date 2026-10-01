@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PERMISSIONS, MAIN_ADMIN_CATEGORY } from "../permissions.js";
-import { keysUnderLevel, levelAllows, PROJECT_ACCESS_LEVELS } from "../projectAccessLevels.js";
+import { keysUnderLevel, levelAllows, PROJECT_ACCESS_LEVEL_DESCRIPTIONS, PROJECT_ACCESS_LEVELS } from "../projectAccessLevels.js";
 
 /**
  * Project access levels only ever take rights AWAY from a role (MAIN_ADMIN_WORKSPACE.md §4). These
@@ -69,5 +69,14 @@ describe("project access levels", () => {
     }
     expect(keysUnderLevel(["messages.view", "messages.reply", "settings.edit"], "READ")).toEqual(["messages.view"]);
     expect(keysUnderLevel(["messages.view", "messages.reply", "settings.edit"], "WRITE")).toEqual(["messages.view", "messages.reply"]);
+  });
+
+  it("the Write description promises only what the rule enforces (audit MEDIUM #3)", () => {
+    // Write keeps `.manage` keys, and those keys cover removals (accounts, team members, support
+    // rules). A description claiming Write deletes nothing would be a promise the rule breaks.
+    expect(levelAllows("WRITE", "whatsapp.manage")).toBe(true);
+    expect(PROJECT_ACCESS_LEVEL_DESCRIPTIONS.WRITE).not.toMatch(/not delete anything|cannot delete|can't delete/i);
+    expect(PROJECT_ACCESS_LEVEL_DESCRIPTIONS.WRITE).toMatch(/delete permissions/i);
+    expect(PROJECT_ACCESS_LEVEL_DESCRIPTIONS.WRITE).toMatch(/need Full/);
   });
 });

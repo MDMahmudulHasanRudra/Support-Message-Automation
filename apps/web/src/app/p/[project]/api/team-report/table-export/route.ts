@@ -43,9 +43,16 @@ export async function POST(request: NextRequest) {
     return new NextResponse("The export request was not readable.", { status: 400 });
   }
   const tableId =
-    typeof body.table === "string" && body.table in TABLES ? (body.table as TeamReportTableId) : null;
+    typeof body.table === "string" && Object.prototype.hasOwnProperty.call(TABLES, body.table) ? (body.table as TeamReportTableId) : null;
   if (!tableId) return new NextResponse("Unknown table.", { status: 400 });
   const format = body.format === "csv" ? "csv" : "xlsx";
+  if (Array.isArray(body.keys) && body.keys.length > MAX_KEYS) {
+    // Refused out loud rather than cut short: a file that silently stops at row 5,000 reads as complete.
+    return new NextResponse(
+      `That is ${body.keys.length.toLocaleString("en-US")} rows; a table export takes at most ${MAX_KEYS.toLocaleString("en-US")}. Use the report's CSV or Excel button for everything, or narrow the filters.`,
+      { status: 413 },
+    );
+  }
   const keys = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").slice(0, MAX_KEYS) : [];
   if (keys.length === 0) return new NextResponse("No rows were chosen to export.", { status: 400 });
 

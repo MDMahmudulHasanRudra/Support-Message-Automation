@@ -9,6 +9,7 @@ import { forEachProject, resetProjectCachesForTests, withProject } from "../proj
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
 import { processOne } from "../queue/outboundQueueProcessor.js";
 import { processOneNotification } from "../notifications/dispatcher.js";
+import { processOneCommand } from "../commands/commandProcessor.js";
 import { findConnectableAccounts } from "../provider/accountProvisioning.js";
 import { releaseDeletedAccounts } from "../provider/accountRegistrySync.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
@@ -229,5 +230,60 @@ describe("an ARCHIVED project", () => {
     // The row, and the session it points at, are untouched.
     const after = await rawPrisma.whatsAppAccount.findUniqueOrThrow({ where: { id: account.id } });
     expect(after.sessionId).toBe(`s-${tag}`);
+  });
+});
+
+describe("commands queued before a project stopped operating (audit MEDIUM #4)", () => {
+  /** Oldest of everything pending, so this test's command is the one the global queue claims next. */
+  let order = 0;
+  const queue = (projectId: string, accountId: string, type: "SEND_LIVE_TEST" | "RESYNC_GROUPS" | "JOIN_GROUP" | "LOGOUT") =>
+    rawPrisma.workerCommand.create({
+      data: { projectId, accountId, type, payload: { chatId: `${tag}-1@g.us`, body: "should never go", inviteCode: "x" }, createdAt: new Date(++order) },
+    });
+  const result = async (id: string) => rawPrisma.workerCommand.findUniqueOrThrow({ where: { id } });
+
+  it("a SUSPENDED project's outward commands are closed with the reason, not run", async () => {
+    const project = await newProject();
+    const account = await withProject(project.id, () => prisma.whatsAppAccount.create({ data: { label: `C ${tag}`, status: "CONNECTED" } }));
+    const send = await queue(project.id, account.id, "SEND_LIVE_TEST");
+    const join = await queue(project.id, account.id, "JOIN_GROUP");
+    await setStatus(project.id, "SUSPENDED");
+    const provider = new MockProvider();
+    expect(await processOneCommand(account.id, provider)).toBe(true);
+    expect(await processOneCommand(account.id, provider)).toBe(true);
+    for (const id of [send.id, join.id]) {
+      const row = await result(id);
+      expect(row.status).toBe("FAILED");
+      expect(JSON.stringify(row.result)).toContain("suspended");
+    }
+    expect(provider.sentMessages).toHaveLength(0);
+  });
+
+  it("a SUSPENDED project's session upkeep still runs", async () => {
+    const project = await newProject();
+    const account = await withProject(project.id, () => prisma.whatsAppAccount.create({ data: { label: `C2 ${tag}`, status: "CONNECTED" } }));
+    const resync = await queue(project.id, account.id, "RESYNC_GROUPS");
+    await setStatus(project.id, "SUSPENDED");
+    await processOneCommand(account.id, new MockProvider());
+    const row = await result(resync.id);
+    expect(JSON.stringify(row.result ?? {})).not.toContain("suspended");
+    expect(row.status).not.toBe("PENDING");
+  });
+
+  it("an ARCHIVED project runs nothing but ending a session; an ACTIVE one is unaffected", async () => {
+    const archived = await newProject();
+    const account = await withProject(archived.id, () => prisma.whatsAppAccount.create({ data: { label: `C3 ${tag}`, status: "CONNECTED" } }));
+    const resync = await queue(archived.id, account.id, "RESYNC_GROUPS");
+    await setStatus(archived.id, "ARCHIVED");
+    await processOneCommand(account.id, new MockProvider());
+    expect((await result(resync.id)).status).toBe("FAILED");
+    expect(JSON.stringify((await result(resync.id)).result)).toContain("archived");
+
+    const active = await newProject();
+    const live = await withProject(active.id, () => prisma.whatsAppAccount.create({ data: { label: `C4 ${tag}`, status: "CONNECTED" } }));
+    const send = await queue(active.id, live.id, "SEND_LIVE_TEST");
+    const provider = new MockProvider();
+    await processOneCommand(live.id, provider);
+    expect(JSON.stringify((await result(send.id)).result ?? {})).not.toContain("not run");
   });
 });

@@ -166,7 +166,7 @@ may do X in project P  =  role grants X  AND  level(P) allows X
 | Level | Allows of the role |
 |---|---|
 | Read | `.view` and `.bulk_export` keys only |
-| Write | also day-to-day work (reply, edit rules and groups, broadcasts), but not `*.delete`, `settings.edit` or `ai_settings.edit` |
+| Write | also day-to-day work (reply, edit rules and groups, broadcasts), but not `*.delete`, `settings.edit` or `ai_settings.edit`. Removals covered by a `.manage` key (an account, a team member, a support rule) stay allowed; the level narrows by key, and its description says so (2 Oct 2026) |
 | Full | the whole role, never more |
 
 - **Global keys are not affected**, because their data belongs to no project: users, permissions,

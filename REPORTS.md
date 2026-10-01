@@ -214,7 +214,8 @@ replies (members + business number), or waits started.
 
 **Duty & Workload.** Per member per day. Gated on `team_management.view`, in the Team Management
 feature, as Duty History is.
-- **Scheduled** = shift length for DUTY / COVERAGE / EXTRA_DUTY rows with times.
+- **Scheduled** = the part of the shift inside the period, for DUTY / COVERAGE / EXTRA_DUTY rows with
+  times (a 22:00–06:00 shift is 2h of its own day's report and 6h of the next day's).
   - An end at or before the start crosses midnight (+24 h).
   - The shift belongs to the day it starts, as `DutyAssignment` defines.
 - **Recorded support time** = the Team Report's stretches, cut against the shift windows:
@@ -310,3 +311,31 @@ figures. It also covers:
 **Known:** an unknown report id renders the not-found page with HTTP 200 in the browser. The
 dashboard's `loading.tsx` starts streaming before the page runs, so `notFound()` cannot change the
 status. Detail pages across the app behave the same way.
+
+## 7. QA audit (2 Oct 2026)
+
+The review found these bugs. Each is fixed and has a regression test that fails with the fix removed.
+
+| Bug | Effect | Fix |
+|---|---|---|
+| A member-only filter was ignored by member reports | `?member=` with no Team still listed everyone in Team Workload, Distribution, Employee Breakdown, Duty & Workload, SLA "by who answered", the replies heatmap and Calls | `loadTeamReport` returns the scope it actually applied |
+| `?metric=toString`, `?team=toString` (any inherited name) | 500 on the page and both exports. The `team` one predates this phase and crashed the Team Report too | own-key checks instead of `in` |
+| `?date=9999-12-31` and impossible dates | 500 (past what Prisma can send), or a rolled-over date | only real dates in years 2000–2999 are accepted; anything else means today |
+| An overnight shift counted in full in two reports | "Scheduled" and "Scheduled, no recorded activity" were inflated at period edges | scheduled time is clipped to the period |
+| Bangla "সকল" ("all") read as "কল" ("call"); "pls phone number din" read as a call request | false call rows | no Bengali letter may precede a Bangla call phrase; "phone number" is excluded |
+| Table export cut off at 5,000 rows silently | a partial file that looked complete | HTTP 413 with the reason, shown as a toast (Team Report tables too) |
+| Call rows keyed by position | a selected-rows export after new messages arrived named other rows | keyed by the message's own id |
+| A member whose only reply fell in the 24h look-ahead | that wait was missing from "Waits answered" | they get a row of their own |
+| Groups picker | more than 200 groups could be ticked though only 200 are kept; ticks survived closing; Back kept a stale selection | capped with a note; closing forgets ticks; keyed on the applied selection |
+| Very large tables | every row went to the browser (Missed Support "every wait" over 92 days) | at most 5,000 rows on screen with a note; files carry all |
+| Missed Support customer line | could match a team member's same-millisecond message | customer messages only |
+| Missed Support and Call Activity searched by timestamp | a table's search reads its first column, which was the time | the group is the first column (its WhatsApp id is searchable under it) |
+
+**Open, needs a decision:** "This year" keeps the existing 92-day limit, so it shows 1 Jan to 2 Apr
+with the limit note. The cap could be raised for this preset, or the preset changed to "last 92
+days"; both change how much one request reads.
+
+**Verification after the fixes** (fresh isolated database): shared 251, engine 79, ai-client 31,
+web 172, worker 869; browser 72/72 (workspace), 37/37 (Main Admin and access levels), 77/77 (reports,
+roles, audit fixes) and 5/5 (selected / page / filtered table exports).
+

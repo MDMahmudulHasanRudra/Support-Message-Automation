@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import { requireSession, hashPassword } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { privilegeRefusal } from "@/server/privilegeGuard";
 import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
 
 const PERMISSION_DENIED_ERROR = "You do not have permission to perform this action.";
@@ -32,6 +33,9 @@ export async function createUser(_prevState: UserFormState, formData: FormData):
   if (!name) return { error: "Display name is required." };
   if (password.length < MIN_PASSWORD_LENGTH) return { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
   if (password !== confirmPassword) return { error: "Passwords do not match." };
+  // A login on a role holding Main Admin keys is a new Main Admin (server/privilegeGuard.ts).
+  const privileged = await privilegeRefusal(session.userId, { assignsRoleId: permissionModuleId });
+  if (privileged) return { error: privileged };
 
   const existing = await prisma.user.findUnique({ where: { username } });
   if (existing) return { error: `A user named "${username}" already exists.` };
@@ -74,6 +78,10 @@ export async function updateUser(id: string, _prevState: UserFormState, formData
   const permissionModuleId = String(formData.get("permissionModuleId") ?? "").trim() || null;
 
   if (!name) return { error: "Display name is required." };
+  if (permissionModuleId !== target.permissionModuleId) {
+    const privileged = await privilegeRefusal(session.userId, { assignsRoleId: permissionModuleId, targetUserId: id });
+    if (privileged) return { error: privileged };
+  }
   // Email is unique; changing it to one another user already has threw a raw P2002 that replaced
   // the page. Checked against everyone else, so saving without changing it is not a clash.
   if (email && email !== target.email) {
@@ -108,6 +116,8 @@ export async function setUserActive(id: string, isActive: boolean): Promise<{ er
   if (!isActive && id === session.userId) {
     return { error: "You cannot deactivate your own account." };
   }
+  const privileged = await privilegeRefusal(session.userId, { targetUserId: id });
+  if (privileged) return { error: privileged };
 
   await prisma.user.update({ where: { id }, data: { isActive } });
 
@@ -138,6 +148,9 @@ export async function resetUserPassword(id: string, newPassword: string): Promis
 
   const target = await prisma.user.findUnique({ where: { id } });
   if (!target) return { error: "User not found." };
+  // Setting a Main Admin's password is taking over their account.
+  const privileged = await privilegeRefusal(session.userId, { targetUserId: id });
+  if (privileged) return { error: privileged };
 
   await prisma.user.update({ where: { id }, data: { passwordHash: hashPassword(newPassword) } });
 

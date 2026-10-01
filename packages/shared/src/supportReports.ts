@@ -275,6 +275,19 @@ export function teamWorkload(
       lastAt: ts[ts.length - 1] ?? null,
     });
   }
+  // A wait asked in the period can be answered in the 24h look-ahead after it, by somebody who sent
+  // nothing inside the period. Their reply still answered it — the Team Report credits a Recall that
+  // way too — so they get a row of their own rather than vanishing from the total.
+  const listed = new Set(rows.map((r) => r.memberId));
+  const lateOnly = new Map<string, number>();
+  for (const w of waits) {
+    const replier = w.repliedBy;
+    if (!replier || replier === "BUSINESS" || listed.has(replier) || !answeredInScope(w, replier, opts.inScope)) continue;
+    lateOnly.set(replier, (lateOnly.get(replier) ?? 0) + 1);
+  }
+  for (const [memberId, waitsAnswered] of lateOnly) {
+    rows.push({ memberId, replies: 0, groups: 0, waitsAnswered, activeSeconds: 0, stretches: 0, activeDays: 0, secondsPerActiveDay: 0, firstAt: null, lastAt: null });
+  }
   return rows.sort((a, b) => b.activeSeconds - a.activeSeconds || b.replies - a.replies || a.memberId.localeCompare(b.memberId));
 }
 
@@ -560,7 +573,17 @@ export function shiftWindow(dutyDate: string, startMinute: number, endMinute: nu
 export function dutyWorkload(
   timelines: ReadonlyMap<string, readonly number[]>,
   duties: readonly DutyDayInput[],
-  opts: { idleGapMs: number },
+  opts: {
+    idleGapMs: number;
+    /**
+     * The report's period. When given, "scheduled" counts only the part of each shift inside it — a
+     * 22:00–06:00 shift is 2h of Tuesday's report and 6h of Wednesday's, never 8h of both. Recorded
+     * time is already confined to the period (the timelines are), so without this the
+     * unrecorded-scheduled figure charged hours nobody could have recorded inside the period.
+     */
+    periodStart?: number;
+    periodEnd?: number;
+  },
 ): DutyWorkloadRow[] {
   const rows = new Map<string, DutyWorkloadRow>();
   const rowFor = (memberId: string, day: string): DutyWorkloadRow => {
@@ -596,7 +619,9 @@ export function dutyWorkload(
     const window = shiftWindow(duty.dutyDate, duty.startMinute, duty.endMinute);
     row.shiftStart = window.start;
     row.shiftEnd = window.end;
-    row.scheduledSeconds = Math.round((window.end - window.start) / 1000);
+    const from = Math.max(window.start, opts.periodStart ?? -Infinity);
+    const to = Math.min(window.end, opts.periodEnd ?? Infinity);
+    row.scheduledSeconds = Math.max(0, Math.round((to - from) / 1000));
     let list = windowsByMember.get(duty.memberId);
     if (!list) windowsByMember.set(duty.memberId, (list = []));
     list.push({ day: duty.dutyDate, ...window });
@@ -651,7 +676,8 @@ export const CALL_KIND_LABELS: Record<CallKind, string> = {
  * wins). English, Banglish and Bangla, because that is how this product's customers write. A code
  * catalogue rather than a setting: making it editable would need a new settings column (REPORTS.md §1).
  * Bangla is matched as text, not with \b, because JavaScript's word boundary treats every Bengali
- * letter as a non-word character.
+ * letter as a non-word character — so each Bangla pattern refuses a Bengali letter right before it
+ * instead: without that "সকল" ("all") read as "কল" ("call"), and "সকল দিন" as a call request.
  */
 export const CALL_PHRASES: ReadonlyArray<{ kind: CallKind; patterns: readonly RegExp[] }> = [
   {
@@ -659,19 +685,20 @@ export const CALL_PHRASES: ReadonlyArray<{ kind: CallKind; patterns: readonly Re
     patterns: [
       /\bmiss(?:ed)?\s*call/i,
       /\bcall\s*(?:dhor|dhoren|dhorlen|dhorle|dhoren\s*ni|receive|recieve|pick)/i,
-      /(?:মিসড|মিস)\s*কল/,
-      /(?:কল|ফোন)\s*ধর/,
+      /(?<![\u0980-\u09FF])(?:মিসড|মিস)\s*কল/,
+      /(?<![\u0980-\u09FF])(?:কল|ফোন)\s*ধর/,
     ],
   },
   {
     kind: "CALL_REQUESTED",
     patterns: [
-      /\b(?:please|pls|plz|kindly)\s+(?:give\s+(?:me\s+)?a\s+)?(?:call|phone)\b/i,
+      // Not "pls phone number din": that asks for a number, not a call.
+      /\b(?:please|pls|plz|kindly)\s+(?:give\s+(?:me\s+)?a\s+)?(?:call|phone)\b(?!\s*(?:number|no\b|nmbr|nambar))/i,
       /\bcall\s+(?:me|koren|korun|den|din|diben|dien|dao|diyen|korben|dite\s+paren)\b/i,
       /\bgive\s+(?:me\s+)?a\s+call\b/i,
       /\bcan\s+(?:you|u)\s+(?:please\s+)?call\b/i,
       /\bphone\s+(?:den|din|diben|koren|korun|dao|korben)\b/i,
-      /(?:কল|ফোন)\s*(?:দিন|দেন|দিবেন|দিয়েন|করুন|করেন|করবেন)/,
+      /(?<![\u0980-\u09FF])(?:কল|ফোন)\s*(?:দিন|দেন|দিবেন|দিয়েন|করুন|করেন|করবেন)/,
     ],
   },
   {
@@ -684,8 +711,8 @@ export const CALL_PHRASES: ReadonlyArray<{ kind: CallKind; patterns: readonly Re
       /\b(?:will|i'll|ill|gonna|i\s+will)\s+call\b/i,
       /\b(?:on|in)\s+(?:a\s+)?call\b/i,
       /\b(?:voice|video|phone)\s*call\b/i,
-      /(?:কল|ফোন)\s*(?:দিয়েছি|দিচ্ছি|দিলাম|দিবো|দেব|করেছি|করছি|করলাম|করব|করবো)/,
-      /(?:ভয়েস|ভিডিও|ফোন)\s*কল/,
+      /(?<![\u0980-\u09FF])(?:কল|ফোন)\s*(?:দিয়েছি|দিচ্ছি|দিলাম|দিবো|দেব|করেছি|করছি|করলাম|করব|করবো)/,
+      /(?<![\u0980-\u09FF])(?:ভয়েস|ভিডিও|ফোন)\s*কল/,
     ],
   },
 ];

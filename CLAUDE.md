@@ -208,7 +208,10 @@ them, so Read Only did not change. A project is created only through `createProj
 (packages/db) — one transaction, its own default rows, automation off, nothing copied. SUSPENDED and
 ARCHIVED projects are read-only in the web (checkPermission words it, `server/db.ts` enforces it) and
 held in the worker (queues skip them, scanners skip them, incoming messages stored without
-automation; archived accounts are not connected). See `MULTI_PROJECT_PLAN.md` §10.4.
+automation; archived accounts are not connected). A `WorkerCommand` queued before the change is closed
+FAILED with the reason when claimed, except session upkeep and read-only lookups for a SUSPENDED
+project and LOGOUT for an ARCHIVED one (`refuseForHeldProject`, audit MEDIUM #4) — never left PENDING,
+since the command queue is one global oldest-first line. See `MULTI_PROJECT_PLAN.md` §10.4.
 
 **Phase 5 (project feature flags) has landed.** `packages/shared/src/projectFeatures.ts` is the
 catalogue: each feature's routes, the permission keys only it uses, and what switching it off stops.
@@ -562,7 +565,8 @@ other member describes something a customer said, so nothing could express "noth
 is arriving". It raises through `enqueueNotification` like every other alert, so Notification Center
 routing, muting and per-member DM opt-in apply unchanged — and it goes out over Teams and WhatsApp
 **independently**, because the obvious flaw in alerting about WhatsApp over WhatsApp is that the
-alert travels through the registry being reported on. `pickSendingAccount()` prefers any account
+alert travels through the registry being reported on. `pickSendingAccount()` prefers any account of the same project (another
+project's number is refused at send time, so picking one lost the alert — audit MEDIUM #5)
 that is not the broken one, and falls back to the affected number **only while it is still
 CONNECTED** — a dead listener does not stop `sendText`, and on a single-account deployment a
 possible alert beats a guaranteed silence. When no channel is reachable at all, that is itself
@@ -1982,6 +1986,19 @@ purpose is editing (new/edit forms, the two broadcast composers) need the manage
 `navigation.ts`), and the AI assistant only renders with `ai_learning.view`. That is presentation, not a
 check. The map must match each page's own gate; it was verified against all 62 nav links when written,
 and a mismatch in the safe direction (a link that then refuses) costs only a bounce.
+
+**Becoming, or taking over, a Main Admin needs a Main Admin** (`server/privilegeGuard.ts`, audit HIGH
+#1, 2 Oct 2026). `users.edit` used to let its holder put anyone, themselves included, on the
+Administrator role; `users.create` made a login on it; `permissions.edit` added `projects.manage` to
+their own role; a password reset took a Main Admin's account. Any change that gives a role or a person
+a Main Admin-category key, or changes the role, password or active state of someone who holds one, now
+calls `privilegeRefusal()` and is refused unless the ACTOR is a Main Admin. A new action that writes
+`permissionModuleId`, a role's permissions, `passwordHash` or `isActive` must call it too.
+
+**System Logs show platform entries (no project) only to a Main Admin** (`server/systemLogVisibility.ts`,
+audit MEDIUM #2). The scoped client returns a project's entries plus every platform entry, and the
+platform's are the Main Admin Portal's administration of every project. Any page that lists or counts
+System Log rows applies it.
 
 **A new action or page must gate itself.** The Administrator module is re-synced to every key by the
 seed on each deploy, so the admin login cannot be locked out by a key added later.

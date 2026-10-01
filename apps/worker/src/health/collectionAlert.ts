@@ -1,6 +1,7 @@
 import { prisma } from "../db.js";
 import { resolveWhatsAppAccount } from "@support-automation/db";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
+import { accountInCurrentProject } from "../project/context.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -127,8 +128,11 @@ async function sendOverWhatsApp(
  *
  * 1. **The configured notification account, if it is not the broken one.** Where the team already
  *    expects alerts to come from.
- * 2. **Any other connected account.** A message from an unexpected number is vastly better than
- *    no message.
+ * 2. **Any other connected account OF THIS PROJECT.** A message from an unexpected number is
+ *    vastly better than no message — but the registry holds every project's numbers, and an alert
+ *    queued on another project's account is refused at send time (the account must belong to the
+ *    row's project), so picking one LOST the alert while step 3 could still have carried it
+ *    (audit MEDIUM #5). It would also have put one project's alert on another's number.
  * 3. **The broken account itself, but only while it is still CONNECTED.** This is the deliberate
  *    concession, and it is what keeps the alert from being undeliverable on a single-account
  *    deployment — which is the common case, and the one this system actually runs as. A session
@@ -150,8 +154,9 @@ async function pickSendingAccount(registry: ProviderRegistry, brokenAccountId: s
     // Fall through to the registry scan — an unreadable routing table must not cost the alert.
   }
 
-  const other = registry.allAccountIds().find(isPreferred);
-  if (other) return other;
+  for (const other of registry.allAccountIds()) {
+    if (isPreferred(other) && (await accountInCurrentProject(other))) return other;
+  }
 
   if (isConnected(brokenAccountId)) {
     console.warn(

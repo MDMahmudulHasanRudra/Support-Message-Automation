@@ -4,6 +4,7 @@ import type { EscalationStatus, PatternCandidateStatus, WhatsAppServiceKey } fro
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 import { getEveryActivityCount, getUniqueGroupCount } from "@/server/supportActivityReports";
 import { decisionLabel } from "@/server/actions/dashboardMetrics";
+import { systemLogVisibility } from "@/server/systemLogVisibility";
 
 // Server-component-only read helpers for the /overview dashboard — no "use server" directive,
 // these are never invoked from a client event handler.
@@ -209,7 +210,8 @@ export async function getSystemLogsSummary(nowMs: number) {
   const since24h = hoursAgo(24, nowMs);
   const groups = await prisma.systemLog.groupBy({
     by: ["level"],
-    where: { createdAt: { gte: since24h } },
+    // The same entries the System Logs page shows this viewer, so the tile never counts what the page hides.
+    where: { createdAt: { gte: since24h }, ...(await systemLogVisibility()) },
     _count: { level: true },
   });
 

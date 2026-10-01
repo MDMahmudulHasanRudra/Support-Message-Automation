@@ -195,7 +195,7 @@ const OUTCOME_ORDER: SupportOutcome[] = ["NEVER_ANSWERED", "WAITING", "ANSWERED_
 const MAX_BODIES = 2000;
 
 export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltReport> {
-  const status = ctx.params.status && (ctx.params.status === "all" || ctx.params.status in SUPPORT_OUTCOME_LABELS) ? ctx.params.status : "attention";
+  const status = ctx.params.status && (ctx.params.status === "all" || Object.prototype.hasOwnProperty.call(SUPPORT_OUTCOME_LABELS, ctx.params.status)) ? ctx.params.status : "attention";
   const waits = waitsInScope(ctx);
   const shown = waits
     .filter((w) => {
@@ -220,6 +220,7 @@ export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltRepor
           AND m."timestampWa" >= ${new Date(Math.min(...wanted.map((w) => w.askedAt)))}
           AND m."timestampWa" <= ${new Date(Math.max(...wanted.map((w) => w.askedAt)))}
           AND m."direction" = 'INCOMING'
+          AND m."isFromTeamMember" = false
           AND g."whatsappGroupId" IN (${Prisma.join([...new Set(wanted.map((w) => w.groupKey))])})
           AND round(extract(epoch from m."timestampWa") * 1000)::bigint IN (${Prisma.join([...new Set(wanted.map((w) => w.askedAt))])})
           ${ctx.filters.accountId ? Prisma.sql`AND m."accountId" = ${ctx.filters.accountId}` : Prisma.empty}
@@ -235,8 +236,10 @@ export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltRepor
     description: "Newest first. The customer's message is the one that started the wait.",
     noun: { singular: "wait", plural: "waits" },
     columns: [
-      { label: "Customer asked", muted: true },
+      // The group first: a table's search reads its first column (and the WhatsApp id under it),
+      // and "which group" is what somebody searches a list of waits by — not a timestamp.
       { label: "Group" },
+      { label: "Customer asked", muted: true },
       { label: "Status" },
       { label: "Customer's message" },
       { label: "Waited" },
@@ -253,8 +256,8 @@ export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltRepor
       return {
         key: `${w.groupKey}|${w.askedAt}`,
         cells: [
-          when(w.askedAt),
           ctx.groupName(w.groupKey),
+          when(w.askedAt),
           SUPPORT_OUTCOME_LABELS[outcome],
           body ?? (index < MAX_BODIES ? "—" : "(not loaded)"),
           w.waitSeconds === null ? `${duration(waited)} so far` : duration(waited),
@@ -265,8 +268,8 @@ export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltRepor
           outcome === "ANSWERED" || outcome === "WAITING" ? "—" : ctx.memberName(assigned),
         ],
         sort: [
-          w.askedAt,
           ctx.groupName(w.groupKey).toLowerCase(),
+          w.askedAt,
           OUTCOME_ORDER.indexOf(outcome),
           (body ?? "").toLowerCase(),
           waited,
@@ -275,7 +278,7 @@ export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltRepor
           w.repliedAt ?? 0,
           ctx.memberName(assigned).toLowerCase(),
         ],
-        sub: [null, w.groupKey],
+        sub: [w.groupKey],
       };
     }),
   };

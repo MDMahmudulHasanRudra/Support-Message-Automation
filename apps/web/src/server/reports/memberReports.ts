@@ -148,7 +148,7 @@ function stripEmpty(params: Record<string, string | undefined>): Record<string, 
 // ---------------------------------------------------------------------------------------------
 
 export function buildDistribution(ctx: ReportContext): BuiltReport {
-  const metric: DistributionMetric = ctx.params.metric && ctx.params.metric in DISTRIBUTION_METRICS ? (ctx.params.metric as DistributionMetric) : "time";
+  const metric: DistributionMetric = ctx.params.metric && Object.prototype.hasOwnProperty.call(DISTRIBUTION_METRICS, ctx.params.metric) ? (ctx.params.metric as DistributionMetric) : "time";
   const meta = DISTRIBUTION_METRICS[metric];
   const rows = teamWorkload(ctx.data.messages, ctx.data.result.waits, opts(ctx));
   const { rows: shares, total } = sharesOf(rows, (r) => distributionValue(r, metric));
@@ -348,7 +348,9 @@ export async function buildDutyWorkload(ctx: ReportContext): Promise<BuiltReport
   }));
   const startKey = formatDhakaDateKey(new Date(ctx.rangeStart));
   // The carried-in evening shows only when it actually holds time inside the period.
-  const rows = dutyWorkload(timelines, duties, { idleGapMs: ctx.idleGapMs }).filter((r) => r.day >= startKey || r.inShiftSeconds > 0);
+  const rows = dutyWorkload(timelines, duties, { idleGapMs: ctx.idleGapMs, periodStart: ctx.rangeStart, periodEnd: ctx.rangeEnd }).filter(
+    (r) => r.day >= startKey || r.inShiftSeconds > 0 || r.scheduledSeconds > 0,
+  );
 
   const sum = (pick: (r: (typeof rows)[number]) => number) => rows.reduce((s, r) => s + pick(r), 0);
   const scheduled = sum((r) => r.scheduledSeconds);
@@ -473,7 +475,7 @@ export async function buildDutyWorkload(ctx: ReportContext): Promise<BuiltReport
     formulas: [
       {
         title: "Scheduled",
-        text: "The shift's length for an On duty, Coverage or Extra duty day with shift times. A shift whose end is at or before its start runs past midnight and belongs to the day it starts.",
+        text: "The part of the shift inside the period, for an On duty, Coverage or Extra duty day with shift times. A shift whose end is at or before its start runs past midnight and belongs to the day it starts, so a 22:00–06:00 shift is 2h of its own day's report and 6h of the next day's — never 8h of both.",
       },
       {
         title: "Recorded in shift",

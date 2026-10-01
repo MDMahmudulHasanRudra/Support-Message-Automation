@@ -190,7 +190,8 @@ export function TeamReportFilters({
 
       {groupOptions ? (
         <Field label="Groups">
-          <GroupFilter groups={groupOptions} selected={groupKeys} onApply={submit} />
+          {/* Keyed on the applied selection, so Back/Forward to another selection starts from it. */}
+          <GroupFilter key={groupKeys.join(",")} groups={groupOptions} selected={groupKeys} onApply={submit} />
         </Field>
       ) : null}
 

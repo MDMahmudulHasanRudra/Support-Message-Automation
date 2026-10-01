@@ -13,7 +13,11 @@ import { MAIN_ADMIN_CATEGORY, PERMISSIONS } from "./permissions.js";
  *   READ   the role's read keys only: `.view` and `.bulk_export` (the same split authorize.ts already
  *          makes for a suspended project).
  *   WRITE  day-to-day work too — replying, editing rules and groups, running broadcasts — but not
- *          deleting anything, and not changing the project's automation or AI settings.
+ *          the role's `.delete` keys (today only "Delete Automation Rules") and not the project's
+ *          automation or AI settings. Removals that the role's `.manage` keys cover (an account, a
+ *          team member, a support rule) stay allowed, as they always were under that key: the level
+ *          narrows by KEY, never by inspecting what an action does. The description below says so
+ *          (audit MEDIUM #3 — it used to promise "not delete anything", which the rule never did).
  *   FULL   the whole role.
  *
  * Keys whose data belongs to no project — users, roles, the sign-in policy, release notes and the
@@ -36,7 +40,8 @@ export const PROJECT_ACCESS_LEVEL_LABELS: Record<ProjectAccessLevelValue, string
 
 export const PROJECT_ACCESS_LEVEL_DESCRIPTIONS: Record<ProjectAccessLevelValue, string> = {
   READ: "Can look at everything their role allows, and change nothing.",
-  WRITE: "Can do their role's day-to-day work, but not delete anything or change the project's automation and AI settings.",
+  WRITE:
+    "Can do their role's day-to-day work, including what its manage permissions cover. Its delete permissions (such as deleting automation rules) and the project's automation and AI settings need Full.",
   FULL: "Can use everything their role allows. Never more than the role.",
 };
 

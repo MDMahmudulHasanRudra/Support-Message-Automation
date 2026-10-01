@@ -8,6 +8,7 @@ import { redirect } from "next/navigation";
 import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { privilegeRefusal } from "@/server/privilegeGuard";
 
 const PERMISSION_DENIED_ERROR = "You do not have permission to perform this action.";
 
@@ -31,6 +32,8 @@ export async function createPermissionModule(
   const keys = parsePermissionKeys(formData);
 
   if (!name) return { error: "Name is required." };
+  const privileged = await privilegeRefusal(session.userId, { grantsKeys: keys });
+  if (privileged) return { error: privileged };
 
   const existing = await prisma.permissionModule.findUnique({ where: { name } });
   if (existing) return { error: `A Permission Module named "${name}" already exists.` };
@@ -72,6 +75,9 @@ export async function updatePermissionModule(
   const keys = parsePermissionKeys(formData);
 
   if (!name) return { error: "Name is required." };
+  // Adding a Main Admin key to a role, or editing a role that holds one, is a Main Admin's call.
+  const privileged = await privilegeRefusal(session.userId, { grantsKeys: keys, editsRoleId: id });
+  if (privileged) return { error: privileged };
   // A system default's permission set may still change (e.g. broadening what Administrator
   // grants as new modules are added) — only its name/identity is protected, not its contents.
   if (target.isSystem && name !== target.name) {

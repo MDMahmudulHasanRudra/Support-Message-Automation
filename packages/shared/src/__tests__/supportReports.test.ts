@@ -177,6 +177,16 @@ describe("team workload", () => {
     expect(onlyRudra.map((x) => x.memberId)).toEqual(["rudra"]);
   });
 
+  it("a member whose only reply fell in the look-ahead still answered that wait", () => {
+    // Asked at 23:50 on the last day, answered at 00:10 the next morning by somebody who sent
+    // nothing inside the period.
+    const messages = [customer("A", 23 * 60 + 50), member("A", 24 * 60 + 10, "night")];
+    const r = report(messages);
+    const rows = teamWorkload(messages, r.waits, { ...RANGE, idleGapMs: 30 * MIN, inScope: null });
+    expect(rows).toEqual([expect.objectContaining({ memberId: "night", replies: 0, waitsAnswered: 1, activeSeconds: 0 })]);
+    expect(rows.reduce((sum, row) => sum + row.waitsAnswered, 0)).toBe(r.waits.filter((w) => w.repliedBy === "night").length);
+  });
+
   it("a scope that changes mid-day counts only the in-scope part", () => {
     const messages = [member("A", 600, "rudra"), member("A", 610, "rudra"), member("A", 620, "rudra")];
     const timelines = memberTimelines(messages, { ...RANGE, inScope: (_id, ts) => ts < at(615) });
@@ -319,6 +329,18 @@ describe("duty & workload", () => {
     }
   });
 
+  it("schedules only the part of a shift inside the period: an overnight shift is never counted twice", () => {
+    const night = [{ memberId: "bipul", dutyDate: DATE, status: "DUTY", shiftName: "Night", startMinute: 22 * 60, endMinute: 6 * 60 }];
+    const dayOf = (offset: number) => ({ periodStart: at(offset * 24 * 60), periodEnd: at((offset + 1) * 24 * 60) });
+    const onItsDay = dutyWorkload(new Map(), night, { idleGapMs: HOUR, ...dayOf(0) });
+    const nextDay = dutyWorkload(new Map(), night, { idleGapMs: HOUR, ...dayOf(1) });
+    expect(onItsDay[0]!.scheduledSeconds).toBe(2 * 3600);
+    expect(nextDay[0]!.scheduledSeconds).toBe(6 * 3600);
+    expect(onItsDay[0]!.unrecordedScheduledSeconds + nextDay[0]!.unrecordedScheduledSeconds).toBe(8 * 3600);
+    // A period covering both days sees the whole shift once.
+    expect(dutyWorkload(new Map(), night, { idleGapMs: HOUR, periodStart: at(0), periodEnd: at(48 * 60) })[0]!.scheduledSeconds).toBe(8 * 3600);
+  });
+
   it("leave and off days are never scheduled time", () => {
     const rows = dutyWorkload(new Map(), [{ memberId: "x", dutyDate: DATE, status: "LEAVE", shiftName: "Day", startMinute: 600, endMinute: 1140 }], {
       idleGapMs: HOUR,
@@ -342,7 +364,19 @@ describe("call activity (inferred from text)", () => {
   });
 
   it("does not see a call in ordinary support text", () => {
-    for (const text of ["What is this module called?", "সকলে বিল দিয়েছে", "bill generate korbo kivabe", "payment done", "[Image]", ""]) {
+    for (const text of [
+      "What is this module called?",
+      "সকলে বিল দিয়েছে",
+      // "সকল" is "all": its last two letters spell "কল" ("call").
+      "সকল ধরনের সমস্যা সমাধান করা হবে",
+      "সকল দিন অফিস খোলা",
+      "pls phone number din",
+      "please phone no dien",
+      "bill generate korbo kivabe",
+      "payment done",
+      "[Image]",
+      "",
+    ]) {
       expect(detectCallMention(text)).toBeNull();
     }
   });

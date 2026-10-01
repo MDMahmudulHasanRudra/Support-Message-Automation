@@ -1,7 +1,8 @@
 import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "./helpers/projectFixtures.js";
+import { prisma, rawPrisma } from "./helpers/projectFixtures.js";
+import { createProjectWithDefaults } from "@support-automation/db";
 import type { WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { checkCollectionHealth, resetWatchdogState } from "../health/collectionWatchdog.js";
@@ -302,6 +303,34 @@ describe("which number carries the alert", () => {
     await checkCollectionHealth(soloRegistry); // second strike
 
     expect(await alertAccountIds()).toEqual([account.id]);
+  });
+
+  it("never picks another project's number, which would lose the alert at send time (audit MEDIUM #5)", async () => {
+    // The registry holds every project's numbers. Another project's connected account looked like
+    // a perfect "other account" — and the dispatcher refuses an alert on an account outside its
+    // row's project, so the alert was lost while the affected number could still have carried it.
+    const creator = await rawPrisma.user.create({ data: { username: `wd_${randomUUID().slice(0, 8)}`, email: `wd_${randomUUID().slice(0, 8)}@example.test`, name: "WD", passwordHash: "x" } });
+    const other = await createProjectWithDefaults({ name: `WD other ${creator.id}`, slug: `wd-other-${creator.id.slice(-8)}`, status: "ACTIVE", creatorUserId: creator.id }, rawPrisma);
+    const foreign = await rawPrisma.whatsAppAccount.create({ data: { projectId: other.id, label: "Other project's number", status: "CONNECTED" } });
+    try {
+      const mixed = new ProviderRegistry();
+      mixed.registerForTesting(foreign.id, new MockProvider());
+      mixed.registerForTesting(account.id, provider);
+      await storeMessage(LONG_AGO());
+      provider.probeFailureReason = "Protocol error: Target closed";
+
+      await checkCollectionHealth(mixed);
+      await checkCollectionHealth(mixed); // second strike
+
+      expect(await alertAccountIds()).toEqual([account.id]);
+    } finally {
+      await rawPrisma.whatsAppAccount.delete({ where: { id: foreign.id } });
+      for (const table of ["ProjectFeature", "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings", "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings", "TeamManagementSettings", "CommunicationStyleProfile", "ProjectAccess", "SystemLog", "ShiftTemplate"]) {
+        await rawPrisma.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "projectId" = $1`, other.id).catch(() => undefined);
+      }
+      await rawPrisma.project.delete({ where: { id: other.id } }).catch(() => undefined);
+      await rawPrisma.user.delete({ where: { id: creator.id } }).catch(() => undefined);
+    }
   });
 
   it("records that nobody could be told when there is no reachable channel at all", async () => {

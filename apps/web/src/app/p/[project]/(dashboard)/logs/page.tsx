@@ -4,6 +4,7 @@ import Link from "@/components/ProjectLink";
 
 import type { LogLevel, Prisma } from "@prisma/client";
 import { requireAccess } from "@/server/authorize";
+import { systemLogVisibility } from "@/server/systemLogVisibility";
 import {
   ActiveFilters,
   Button,
@@ -77,7 +78,9 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
   const from = parseInstant(filters.from);
   const to = parseInstant(filters.to);
 
-  const where: Prisma.SystemLogWhereInput = {};
+  // Platform entries (no project) only for a Main Admin — server/systemLogVisibility.ts.
+  const visible = await systemLogVisibility();
+  const where: Prisma.SystemLogWhereInput = { ...visible };
   // Whitelisted, not cast. `filters.level as LogLevel` handed any URL value straight to Prisma, so a
   // hand-edited or stale link (`?level=error`, `?level=DEBUG`) threw a validation error and took the
   // whole page to the error boundary rather than simply showing nothing.
@@ -118,7 +121,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
       take: PAGE_SIZE,
     }),
     prisma.systemLog.count({ where }),
-    prisma.systemLog.count(),
+    prisma.systemLog.count({ where: visible }),
   ]);
 
   const buildHref = (

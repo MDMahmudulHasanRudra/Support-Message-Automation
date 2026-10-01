@@ -19,6 +19,13 @@ import { ReportDataTable } from "../../team-report/ReportDataTable";
 
 const PERIOD_NAMES: Record<string, string> = { day: "Daily", week: "Weekly", month: "Monthly", custom: "Custom range" };
 
+/**
+ * At most this many rows of one table go to the browser. Missed Support with "every wait" over a
+ * long period can hold tens of thousands, and all rows of a table are sent with the page; the files
+ * are built on the server from the full table, so CSV and Excel still carry everything.
+ */
+const DISPLAY_LIMIT = 5000;
+
 export async function generateMetadata({ params }: { params: Promise<{ report: string }> }) {
   const { report } = await params;
   return { title: reportCatalogueEntry(report)?.label ?? "Report" };
@@ -42,6 +49,8 @@ export default async function ReportPage({
   const { filters, range, members, teams, teamMemberIds, filterNote } = ctx.data;
   const query = reportQuery(ctx);
   const exportBase = `/api/reports/${id}`;
+  const tables = report.tables.map((table) => ({ ...table, rows: table.rows.slice(0, DISPLAY_LIMIT), total: table.rows.length }));
+  const truncated = tables.filter((t) => t.total > DISPLAY_LIMIT);
 
   return (
     <div>
@@ -131,7 +140,15 @@ export default async function ReportPage({
         ) : null}
       </p>
 
-      {[...(filterNote ? [{ tone: "info" as const, text: filterNote }] : []), ...(range.note ? [{ tone: "warning" as const, text: range.note }] : []), ...report.notes].map((note) => (
+      {[
+        ...(filterNote ? [{ tone: "info" as const, text: filterNote }] : []),
+        ...(range.note ? [{ tone: "warning" as const, text: range.note }] : []),
+        ...report.notes,
+        ...truncated.map((t) => ({
+          tone: "info" as const,
+          text: `"${t.title}" has ${t.total.toLocaleString("en-US")} rows; the first ${DISPLAY_LIMIT.toLocaleString("en-US")} are shown. The CSV and Excel buttons above export all of them.`,
+        })),
+      ].map((note) => (
         <div key={note.text} className="mb-4">
           <Alert tone={note.tone}>{note.text}</Alert>
         </div>
@@ -168,7 +185,7 @@ export default async function ReportPage({
             </section>
           ) : null}
 
-          {report.tables.map((table) => (
+          {tables.map((table) => (
             <Card key={table.id} className="mb-5">
               <ReportDataTable
                 table={table}

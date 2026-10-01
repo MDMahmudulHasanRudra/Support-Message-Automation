@@ -83,6 +83,20 @@ export interface ResolvedRange {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * A YYYY-MM-DD that names a real day in a year a report can mean. The shape alone let 9999-12-31
+ * through, whose period end (plus the reply look-ahead) is past the last instant Prisma can send to
+ * Postgres, so the query threw and the page went to the error boundary; 2025-13-45 rolled over to a
+ * different real date. Anything else falls back to today, as a malformed date always has.
+ */
+export function isReportDateKey(value: string | undefined): value is string {
+  if (!value || !DATE_RE.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number) as [number, number, number];
+  if (y < 2000 || y > 2999) return false;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
 /** Dhaka midnight at the start of a YYYY-MM-DD, as a real instant. */
 function dhakaMidnight(dateKey: string): Date | null {
   if (!DATE_RE.test(dateKey)) return null;
@@ -102,9 +116,9 @@ export function parseTeamReportFilters(params: Record<string, string | undefined
       : "day";
   return {
     period,
-    date: params.date && DATE_RE.test(params.date) ? params.date : today,
-    from: params.from && DATE_RE.test(params.from) ? params.from : today,
-    to: params.to && DATE_RE.test(params.to) ? params.to : today,
+    date: isReportDateKey(params.date) ? params.date : today,
+    from: isReportDateKey(params.from) ? params.from : today,
+    to: isReportDateKey(params.to) ? params.to : today,
     memberId: params.member?.trim() || null,
     teamId: params.team?.trim() || null,
     granularity,
@@ -346,7 +360,9 @@ export async function loadTeamReport(
   }
   const memberNames = new Map(members.map((m) => [m.id, m.name]));
   // An unknown Team (deleted, or a mistyped link) falls back to all Teams rather than an empty report.
-  const teamId = filters.teamId && filters.teamId in teamMemberIds ? filters.teamId : null;
+  // An OWN key only: `in` also matched "toString", "constructor" and every other inherited name, so
+  // ?team=toString reached the code below as a function and the page threw (2 Oct audit).
+  const teamId = filters.teamId && Object.prototype.hasOwnProperty.call(teamMemberIds, filters.teamId) ? filters.teamId : null;
   const teamName = teamId === null ? null : teamId === NO_TEAM ? "No team" : (teams.find((t) => t.id === teamId)?.name ?? null);
   let memberId = filters.memberId;
   let filterNote: string | null = null;
@@ -378,7 +394,10 @@ export async function loadTeamReport(
   return {
     filters: applied,
     messages,
-    scope,
+    // The scope computeTeamReport actually applied: the Team predicate, or — with only a member
+    // chosen — that member alone. Returning the Team predicate alone left every member report at
+    // /reports/<id> ignoring a member-only filter (found in the 2 Oct audit).
+    scope: scope ?? (memberId ? (id: string) => id === memberId : null),
     range,
     result,
     memberNames,

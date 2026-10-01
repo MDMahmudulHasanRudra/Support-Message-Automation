@@ -141,6 +141,11 @@ export function ReportDataTable({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ table: table.id, format, keys }),
       });
+      if (response.status === 413) {
+        // Too many rows: the server says how many and what to use instead.
+        showToast({ tone: "info", title: "Too many rows for a table export", description: await response.text() });
+        return;
+      }
       if (!response.ok) throw new Error(await response.text());
       const blob = await response.blob();
       const disposition = response.headers.get("Content-Disposition") ?? "";

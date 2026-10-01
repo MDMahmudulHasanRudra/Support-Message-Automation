@@ -25,6 +25,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   } catch {
     return new NextResponse("The export request was not readable.", { status: 400 });
   }
+  if (Array.isArray(body.keys) && body.keys.length > MAX_KEYS) {
+    // Refused out loud rather than cut short: a file that silently stops at row 5,000 reads as complete.
+    return new NextResponse(
+      `That is ${body.keys.length.toLocaleString("en-US")} rows; a table export takes at most ${MAX_KEYS.toLocaleString("en-US")}. Use the report's CSV or Excel button for everything, or narrow the filters.`,
+      { status: 413 },
+    );
+  }
   const keys = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").slice(0, MAX_KEYS) : [];
   if (keys.length === 0) return new NextResponse("No rows were chosen to export.", { status: 400 });
 

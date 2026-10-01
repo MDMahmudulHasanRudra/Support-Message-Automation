@@ -10,6 +10,7 @@ import { forgetProjectAccessDecisions } from "@/server/projectContext";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { createUserWithAccess, setUserProjectAccess, type AccessGrant, type NewUserInput } from "@/server/adminUsers";
 import { linkEmployeeToUser } from "@/server/configuration";
+import { privilegeRefusal } from "@/server/privilegeGuard";
 
 /**
  * Main Admin → Users & Permissions actions (MAIN_ADMIN_WORKSPACE.md §5). Every part is checked with
@@ -50,6 +51,10 @@ export async function createUserFromAdmin(_prev: AdminUserFormState, form: FormD
   if (access.length > 0 && !(await hasPermission(session, "projects.manage"))) {
     return { error: NEEDS("give project access (Manage Projects and Project Access)") };
   }
+
+  const roleId = String(form.get("permissionModuleId") ?? "").trim() || null;
+  const privileged = await privilegeRefusal(session.userId, { assignsRoleId: roleId });
+  if (privileged) return { error: privileged };
 
   const mode = String(form.get("employeeMode") ?? "none");
   let employee: NewUserInput["employee"] = null;
@@ -133,6 +138,8 @@ export async function setUserRole(userId: string, permissionModuleIdRaw: string)
   ]);
   if (!user) return { error: "That user no longer exists." };
   if (permissionModuleId && !role) return { error: "That role no longer exists." };
+  const privileged = await privilegeRefusal(session.userId, { assignsRoleId: permissionModuleId, targetUserId: userId });
+  if (privileged) return { error: privileged };
   await platformPrisma.user.update({ where: { id: userId }, data: { permissionModuleId } });
   // A role can make or unmake a Main Admin, which decides project entry: forget cached decisions.
   forgetProjectAccessDecisions();

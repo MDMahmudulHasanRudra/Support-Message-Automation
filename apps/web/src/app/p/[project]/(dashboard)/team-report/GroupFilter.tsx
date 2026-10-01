@@ -20,11 +20,14 @@ export function GroupFilter({
   groups,
   selected: initial,
   onApply,
+  max = 200,
 }: {
   groups: Array<{ whatsappGroupId: string; name: string; isMonitored: boolean }>;
   selected: string[];
   /** Called after the hidden field holds the new selection, to submit the form. */
   onApply: () => void;
+  /** The most groups a report accepts (the server's MAX_FILTER_GROUPS); more cannot be ticked. */
+  max?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -35,11 +38,16 @@ export function GroupFilter({
 
   useEffect(() => {
     if (!open) return;
+    /** Closing without Apply forgets the ticks: what the report shows is what was applied. */
+    const close = () => {
+      setOpen(false);
+      setSelected(new Set(applied));
+    };
     const onPointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node)) close();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") close();
     };
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -47,7 +55,7 @@ export function GroupFilter({
       document.removeEventListener("pointerdown", onPointer);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, applied]);
 
   const matches = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -71,7 +79,9 @@ export function GroupFilter({
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
-      else next.add(id);
+      // The server keeps only the first `max`; refusing the tick here says so instead of dropping
+      // groups silently after Apply.
+      else if (next.size < max) next.add(id);
       return next;
     });
   }
@@ -122,6 +132,11 @@ export function GroupFilter({
             ))}
             {matches.length === 0 ? <li className="px-2 py-3 text-[13px] text-[color:var(--color-muted-foreground)]">No group matches “{search}”.</li> : null}
           </ul>
+          {selected.size >= max ? (
+            <p className="px-2 pt-1 text-[11px] text-[color:var(--color-warning-fg)]">
+              At most {max} groups can be chosen at once. Untick one to choose another.
+            </p>
+          ) : null}
           {matches.length > RENDER_LIMIT ? (
             <p className="px-2 pt-1 text-[11px] text-[color:var(--color-subtle-foreground)]">
               Showing {RENDER_LIMIT} of {matches.length.toLocaleString("en-US")} — search to find the rest.

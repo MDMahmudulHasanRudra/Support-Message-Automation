@@ -1,6 +1,6 @@
 import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
-import { accountInCurrentProject, withAccountProject, withProject } from "../project/context.js";
+import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withAccountProject, withProject } from "../project/context.js";
 import { SessionNotReadyError, type WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -407,6 +407,7 @@ async function claimNextCommand() {
 export async function processOneCommand(accountId: string, provider: WhatsAppProvider): Promise<boolean> {
   const command = await claimNextCommand();
   if (!command) return false;
+  if (await refuseForHeldProject(command)) return true;
   await withProject(command.projectId, () => runClaimedCommandWithProvider(command, accountId, provider));
   return true;
 }
@@ -426,6 +427,50 @@ async function runClaimedCommandWithProvider(command: ClaimedCommand, accountId:
   }
   if (!(await refuseForeignAccount(command, accountId))) return true;
   await executeClaimedCommand(command, accountId, provider);
+  return true;
+}
+
+/**
+ * What a command may still do once its project is no longer operating (audit MEDIUM #4). The
+ * dashboard cannot queue anything for a suspended or archived project (it is read-only there), but
+ * a command queued BEFORE the change used to run regardless — a live test send, a group join, an AI
+ * job, all outward or background work the suspension exists to stop.
+ *
+ *   SUSPENDED  keeps the session itself healthy and readable — collection is a push and continues in
+ *              every status (§8) — so session upkeep and read-only lookups still run.
+ *   ARCHIVED   its accounts are not connected at all, so only ending a session still means anything.
+ *
+ * Everything else is closed as FAILED with the reason, never left PENDING: the queue is one global
+ * oldest-first line, and a row that is skipped but kept would be found again on every tick, ahead
+ * of every other project's commands.
+ */
+const ALLOWED_WHEN_HELD: Record<string, readonly string[]> = {
+  SUSPENDED: ["RECONNECT", "LOGOUT", "RESYNC_GROUPS", "GET_GROUP_PARTICIPANT_COUNT", "GET_GROUP_PARTICIPANTS"],
+  ARCHIVED: ["LOGOUT"],
+};
+
+/** Closes a claimed command its project's status no longer permits. True when it was refused. */
+async function refuseForHeldProject(command: ClaimedCommand): Promise<boolean> {
+  const project = await platformPrisma.project.findUnique({ where: { id: command.projectId }, select: { status: true } });
+  const status = project?.status ?? "ARCHIVED";
+  if ((OPERATING_PROJECT_STATUSES as readonly string[]).includes(status)) return false;
+  if ((ALLOWED_WHEN_HELD[status] ?? []).includes(command.type)) return false;
+  await platformPrisma.workerCommand.update({
+    where: { id: command.id },
+    data: {
+      status: "FAILED",
+      processedAt: new Date(),
+      result: { error: `The project is ${status.toLowerCase()}, so this command was not run. Reactivate the project and run it again.` },
+    },
+  });
+  // Attributed to the command's own project, so it shows on that project's System Logs page.
+  await withProject(command.projectId, () =>
+    logSystemEvent("WARN", "worker", "Closed a command queued before its project stopped operating", {
+      commandId: command.id,
+      type: command.type,
+      projectStatus: status,
+    }),
+  ).catch(() => undefined);
   return true;
 }
 
@@ -462,6 +507,7 @@ async function refuseForeignAccount(command: ClaimedCommand, accountId: string):
 export async function processOneCommandViaRegistry(registry: ProviderRegistry): Promise<boolean> {
   const command = await claimNextCommand();
   if (!command) return false;
+  if (await refuseForHeldProject(command)) return true;
   await withProject(command.projectId, () => runClaimedCommandViaRegistry(command, registry));
   return true;
 }
