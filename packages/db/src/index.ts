@@ -131,7 +131,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   // descendants
   "Message", "OutboundMessage", "WhatsAppGroup", "AutomationExecution", "Notification", "WorkerCommand",
   "ProcessingCheckpoint", "MessageDropCounter", "GroupBroadcastJob", "GroupParticipantAddJob",
-  "GroupParticipantAddItem", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
+  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
   "SupportEscalationEvent", "ConversationSession", "SupportActivity", "SupportSession", "TeamAttendanceDay",
   "TeamAttendanceGroup",
 ]);

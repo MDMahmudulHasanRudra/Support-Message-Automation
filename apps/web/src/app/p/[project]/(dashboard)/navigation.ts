@@ -329,6 +329,7 @@ export const NAV_GROUPS: NavGroup[] = [
         ],
       },
       { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
+      { href: "/group-admin-maker", label: "Groups Admin Maker", icon: UserCog },
     ],
   },
   {
@@ -462,6 +463,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/automation-control", "settings.view"],
   ["/group-message-sender", "bulk_messaging.view"],
   ["/group-member-adder", "bulk_messaging.view"],
+  ["/group-admin-maker", "bulk_messaging.view"],
   ["/ai-learning/providers", "ai_settings.view"],
   ["/ai-learning/models", "ai_settings.view"],
   ["/ai-learning/settings", "ai_settings.view"],

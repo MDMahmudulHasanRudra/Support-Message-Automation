@@ -214,6 +214,19 @@ export interface WhatsAppProvider {
    */
   getAdminGroupIds(): Promise<string[] | null>;
   /**
+   * One group's admins, by participant id exactly as WhatsApp gives it (`…@c.us` or `…@lid`).
+   * Used by the Groups Admin Maker to tell "already an admin" from "needs promoting". Returns null
+   * (never throws) when it could not be read — which must not be read as "no admins".
+   */
+  getGroupAdminIds(chatId: string): Promise<string[] | null>;
+  /**
+   * Makes an EXISTING member of the group an admin. Never adds anybody: WhatsApp answers
+   * `NOT_A_PARTICIPANT` for somebody who is not in the group. Never throws; WhatsApp's own status
+   * code (INSUFFICIENT_PERMISSIONS, NOT_A_PARTICIPANT, GROUP_DOES_NOT_EXIST, NOT_A_GROUP_CHAT) or the
+   * error text comes back in `error`.
+   */
+  promoteGroupParticipant(chatId: string, participantId: string): Promise<SendResult>;
+  /**
    * Whether a number has a WhatsApp account. A network call per number, so the check phase asks
    * once per distinct number rather than once per (number, group) pair.
    *

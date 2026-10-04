@@ -13,6 +13,13 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **WhatsApp Groups Admin Maker.** Pick a connected account and a number, and a background job
+  makes that person an admin in every group where the account is an admin. It never adds anyone:
+  - groups where they are not a member are reported, not joined;
+  - each promotion is paced and confirmed by reading the admin list back;
+  - the job survives the browser closing and pauses visibly if the connection drops.
+
+  See `GROUP_ADMIN_MAKER.md`.
 - **Release Notes.** A permanent, publishable changelog — draft, publish, unpublish, archive, with
   a full edit history kept for anything already public. Backfilled with 14 historical releases
   (`packages/db/prisma/seedReleaseNotes.ts`, run once by hand) reconstructed from real, dated

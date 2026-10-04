@@ -9,7 +9,7 @@ the sidebar.
 
 **Sidebar (27 Sep 2026):** pinned Overview, then ten collapsible modules — Support (WhatsApp Chat,
 Messages, Escalations), Team (Today, Roster, Leave, Team Performance, Activity Feed), Reports,
-WhatsApp (Accounts, Groups, Team Members, Broadcast, Add Number to Groups), Automation, AI Learning,
+WhatsApp (Accounts, Groups, Team Members, Broadcast, Add Number to Groups, Groups Admin Maker), Automation, AI Learning,
 Conversation Learning, System, Users & Permissions, Release Notes. Sections below keep their
 original order; each "Sidebar group" line names where the pages now sit. Sibling pages that share
 one entry appear as tabs across the top of each page (Messages, Broadcast, Automation Rules,
@@ -684,7 +684,8 @@ separate general Settings page, not here.
 
 ## Bulk Messaging
 
-Sidebar group: **WhatsApp** → Broadcast (tabs: New broadcast / Broadcast history), Add Number to Groups
+Sidebar group: **WhatsApp** → Broadcast (tabs: New broadcast / Broadcast history), Add Number to Groups,
+Groups Admin Maker
 
 ### Group Message Sender — `/group-message-sender`
 
@@ -738,6 +739,34 @@ group membership immediately before each add.
 
 **Job detail** (`/group-member-adder/jobs/[id]`): same progress/Stop/Retry pattern as broadcast
 jobs, with an "Added" status column instead of "Sent" and no provider-ID column.
+
+### WhatsApp Groups Admin Maker — `/group-admin-maker`
+
+Makes ONE existing member an admin in every group where the selected account is itself an admin.
+It **never adds** anybody (`GROUP_ADMIN_MAKER.md` has the full design).
+
+**Wizard** — two steps:
+1. **Select account**: connected accounts only, with their synced group counts.
+2. **Target number**: `+8801…`, `8801…` and `01…` all work.
+
+**Check groups** starts a background worker job and opens it.
+
+**Job page** (`/group-admin-maker/jobs/[id]`):
+- status, progress bar, and tiles for Checked, Promoted, Already admin, Not a member, Skipped (the
+  account is not an admin), Could not verify, Unavailable and Failed;
+- per-group results with WhatsApp's reason, filterable with Needs attention / All / per-status chips;
+- **Resume** for a job paused by a lost connection or the kill switch, and **Cancel**;
+- auto-refresh while the job is working.
+
+The list page shows active jobs, the wizard and recent jobs.
+
+**Behaviour**:
+- **One active job per account + number**: starting again opens the running job.
+- Promotions are paced 8–20s apart, and each is confirmed by reading the admin list back.
+- When WhatsApp lists members by LID and the number cannot be found, the group is **Could not
+  verify membership** and nothing is attempted.
+
+**Permissions**: `bulk_messaging.view` / `.manage`. It belongs to the `BULK_MESSAGING` feature.
 
 ### Sending Limits — `/group-message-sender/settings`
 

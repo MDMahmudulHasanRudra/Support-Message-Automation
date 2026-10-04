@@ -567,6 +567,8 @@ model Project {
   groupBroadcastJobRows                GroupBroadcastJob[]
   groupParticipantAddJobRows           GroupParticipantAddJob[]
   groupParticipantAddItemRows          GroupParticipantAddItem[]
+  groupAdminPromotionJobRows           GroupAdminPromotionJob[]
+  groupAdminPromotionItemRows          GroupAdminPromotionItem[]
   aiFallbackDecisionRows               AiFallbackDecision[]
   aiEvidenceSnapshotRows               AiEvidenceSnapshot[]
   aiEvidenceItemRows                   AiEvidenceItem[]
@@ -656,6 +658,7 @@ model User {
   createdBroadcastJobs        GroupBroadcastJob[]
   createdOutboundSends        OutboundMessage[]
   createdParticipantAddJobs   GroupParticipantAddJob[]
+  createdAdminPromotionJobs   GroupAdminPromotionJob[]
   createdKnowledgeItems       AiKnowledgeItem[]
   createdKnowledgeImports     KnowledgeImport[]
   createdKnowledgeVersions    AiKnowledgeVersion[]
@@ -860,6 +863,7 @@ model WhatsAppAccount {
   outboundMessages     OutboundMessage[]
   broadcastJobs        GroupBroadcastJob[]
   participantAddJobs   GroupParticipantAddJob[]
+  adminPromotionJobs   GroupAdminPromotionJob[]
   processingCheckpoint ProcessingCheckpoint?
   escalationCases      SupportEscalationCase[]
   workerCommands       WorkerCommand[]
@@ -1096,6 +1100,7 @@ model WhatsAppGroup {
   knowledgeItems         AiKnowledgeItem[]
   broadcastMessages      OutboundMessage[]
   participantAddItems    GroupParticipantAddItem[]
+  adminPromotionItems    GroupAdminPromotionItem[]
   escalationCases        SupportEscalationCase[]
   conversationSessions   ConversationSession[]
   supportActivities      SupportActivity[]
@@ -1593,6 +1598,116 @@ model GroupParticipantAddItem {
   /// The check loop claims by job so one job's roster reads stay together — reading a group's
   /// roster once serves every number in that job, and scattering the claims would re-read it.
   @@index([jobId, status])
+}
+
+/// WhatsApp Groups Admin Maker job lifecycle (GROUP_ADMIN_MAKER.md).
+enum GroupAdminPromotionJobStatus {
+  /// Asking WhatsApp which groups this account administers. Nothing is changed in this phase.
+  CHECKING
+  /// Working through the groups this account administers, one at a time, paced.
+  RUNNING
+  /// The account was not connected when the next group came up. Nothing is lost: the groups not
+  /// yet processed stay PENDING, and Resume carries on from there once the account is back.
+  PAUSED_DISCONNECTED
+  /// The automation kill switch was off when the next group came up — the same stop the Add Number
+  /// to Groups module honours. Resume carries on once it is back on.
+  STOPPED_KILL_SWITCH
+  COMPLETED
+  /// The job could not run at all — e.g. WhatsApp would not say which groups this account
+  /// administers, and promoting without knowing that is exactly what this feature must never do.
+  FAILED
+  CANCELLED
+}
+
+/// The result for one group. Every row of a finished job carries exactly one of these.
+enum GroupAdminPromotionItemStatus {
+  /// Not decided yet.
+  PENDING
+  /// The target was a member and is now an admin, confirmed by reading the admin list back.
+  PROMOTED
+  /// The target was already an admin; nothing was attempted.
+  ALREADY_ADMIN
+  /// The target is not a member of this group. Never added — this feature only promotes.
+  NOT_MEMBER
+  /// This account is not an admin of the group, so nothing may be attempted there.
+  NOT_ACCOUNT_ADMIN
+  /// The member list identifies some people by an internal WhatsApp id (LID) rather than a phone
+  /// number, so whether the target is a member could not be confirmed. Nothing was attempted:
+  /// promoting by phone number cannot reach a member WhatsApp only lists by LID.
+  CANNOT_VERIFY
+  /// The group is no longer active for this account, or WhatsApp says it does not exist.
+  GROUP_UNAVAILABLE
+  /// The read or the promotion failed; `reason` holds WhatsApp's answer.
+  FAILED
+}
+
+/// One run of the WhatsApp Groups Admin Maker: make ONE existing member an admin in every group
+/// where this account is an admin. It never adds anybody to a group.
+model GroupAdminPromotionJob {
+  id             String                       @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId      String                       @default(dbgenerated("project_id_required()"))
+  project        Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId      String
+  account        WhatsAppAccount              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdById    String?
+  createdBy      User?                        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  /// The member to promote, digits only with country code ("8801…").
+  phoneNumber    String
+  status         GroupAdminPromotionJobStatus @default(CHECKING)
+  /// Every active group of the account when the job was created.
+  totalGroups    Int                          @default(0)
+  /// Groups this account administers, known once CHECKING finishes.
+  adminGroups    Int?
+  /// Why the job stopped, paused or failed, in words an operator can act on.
+  statusReason   String?
+  createdAt      DateTime                     @default(now())
+  startedAt      DateTime?
+  pausedAt       DateTime?
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+  updatedAt      DateTime                     @updatedAt
+
+  items GroupAdminPromotionItem[]
+
+  @@index([accountId, phoneNumber, status])
+  @@index([status])
+}
+
+model GroupAdminPromotionItem {
+  id                String                        @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId         String                        @default(dbgenerated("project_id_required()"))
+  project           Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  jobId             String
+  job               GroupAdminPromotionJob        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  groupId           String
+  group             WhatsAppGroup                 @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupNameSnapshot String
+  status            GroupAdminPromotionItemStatus @default(PENDING)
+  /// Plain-language reason for the result; WhatsApp's own answer for a failure.
+  reason            String?
+  /// WhatsApp's status code when it gave one (INSUFFICIENT_PERMISSIONS, NOT_A_PARTICIPANT, ...).
+  failureCode       String?
+  /// Promotion attempts made. Non-zero is what lets a re-run after a crash tell "we promoted them"
+  /// from "they were already an admin".
+  attemptCount      Int                           @default(0)
+  /// Times this group was put back after a failure that may pass (a read that failed, a dropped
+  /// page). Separate from attemptCount, which counts promotions only.
+  retryCount        Int                           @default(0)
+  /// When the last promotion was attempted — the pacing between promotions on one account is read
+  /// from this, so it survives a worker restart.
+  lastAttemptAt     DateTime?
+  scheduledAt       DateTime                      @default(now())
+  processedAt       DateTime?
+  createdAt         DateTime                      @default(now())
+  updatedAt         DateTime                      @updatedAt
+
+  @@unique([jobId, groupId])
+  @@index([jobId, status])
+  @@index([status, scheduledAt])
 }
 
 /// Singleton row (id is always the literal string "global"), analogous to

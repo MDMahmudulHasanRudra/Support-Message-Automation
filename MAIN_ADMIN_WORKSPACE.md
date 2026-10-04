@@ -95,7 +95,7 @@ Tabs = `user → may enter the project → the page's feature is on there → ex
 - Support: WhatsApp Chat, Messages, Escalations
 - Team: Today, Roster, Leave, Team Performance, Activity Feed
 - Reports
-- WhatsApp: Accounts, Groups, Team Members, Teams, Broadcast, Add Number to Groups
+- WhatsApp: Accounts, Groups, Team Members, Teams, Broadcast, Add Number to Groups, Groups Admin Maker
 - Automation: Rules, Rule Tester, Automation Control
 - AI Learning
 - Conversation Learning

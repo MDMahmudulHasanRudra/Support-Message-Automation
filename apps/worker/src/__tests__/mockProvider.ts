@@ -136,6 +136,25 @@ export class MockProvider implements WhatsAppProvider {
     return this.adminGroupIdsConfigured ? this.adminGroupIds : null;
   }
 
+  /** Per-group admin ids for the Groups Admin Maker; a group not listed reads as unreadable (null). */
+  public adminIdsByChatId = new Map<string, string[] | null>();
+  async getGroupAdminIds(chatId: string): Promise<string[] | null> {
+    return this.adminIdsByChatId.has(chatId) ? this.adminIdsByChatId.get(chatId)! : null;
+  }
+
+  public promotions: Array<{ chatId: string; participantId: string }> = [];
+  /** Per-group results; a group not listed succeeds and the participant becomes an admin. */
+  public promoteResults = new Map<string, SendResult>();
+  async promoteGroupParticipant(chatId: string, participantId: string): Promise<SendResult> {
+    this.promotions.push({ chatId, participantId });
+    const result = this.promoteResults.get(chatId) ?? { success: true };
+    if (result.success) {
+      const admins = this.adminIdsByChatId.get(chatId) ?? [];
+      if (!admins.includes(participantId)) this.adminIdsByChatId.set(chatId, [...admins, participantId]);
+    }
+    return result;
+  }
+
   /** Per-number answers; anything not listed comes back as existing on WhatsApp. */
   public numberChecks = new Map<string, NumberCheckResult>();
   public defaultNumberCheck: NumberCheckResult = { ok: true, exists: true };

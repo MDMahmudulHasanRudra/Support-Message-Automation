@@ -279,6 +279,7 @@ since `setInterval` doesn't await its callback)
 |---|---|---|
 | `startOutboundQueueProcessor` | 2s | drains the outbound send queue, one message/tick |
 | `startGroupParticipantAddProcessor` | 2s | drains "Add to Groups" queue |
+| `startGroupAdminPromotionProcessor` | 3s | Groups Admin Maker: checks one job or promotes in one group per tick, paced 8–20s per account (`GROUP_ADMIN_MAKER.md`) |
 | `startCommandProcessor` | 1.5s | polls `WorkerCommand` (dashboard-issued actions), strictly serial |
 | `startNotificationDispatcher` | 3s | sends queued Teams/WhatsApp notifications |
 | `startAccountRegistrySync` | 20s | discovers new accounts, provisions + connects them one at a time |
@@ -806,6 +807,30 @@ subscription and a new table, OpenWA's `onReaction()` is gated behind an **Insid
 deployment does not have**, so the trigger would appear configured in the UI and never fire once.
 (`sendTextWithMentions`, used by the handover mention, is *not* licence-gated — the two are often
 assumed to go together.)
+
+### Groups Admin Maker (`apps/worker/src/queue/groupAdminPromotionProcessor.ts`, `(dashboard)/group-admin-maker/`)
+
+Makes one existing member an admin in every group where the chosen account is an admin.
+**`GROUP_ADMIN_MAKER.md` is the reference.** Five rules worth not undoing:
+
+- **It never adds anybody.** A number that is not a member is **NOT_MEMBER**, never a fallback add.
+  The provider's `promoteGroupParticipant` (OpenWA `promoteParticipant`) is the only write it makes.
+- **A LID roster is CANNOT_VERIFY, not NOT_MEMBER.** The number is matched only through a `@c.us`
+  id. When it is absent and the list holds LIDs, membership is unknowable, and saying "not a member"
+  would be a guess presented as a fact.
+- **PROMOTED means read back.** The group's admin list (`getGroupAdmins`) must show the number. An
+  admin set the worker cannot read is a failed read or a FAILED job, never a guess.
+- **Pacing is read from `lastAttemptAt` rows**, at least 8s apart per account, so a restart cannot
+  burst. `attemptCount` is incremented before the call, so a re-run after a crash records PROMOTED
+  rather than promoting twice.
+- **One active job per account + number** is enforced under `pg_advisory_xact_lock`, and a second
+  press opens the running job.
+
+A lost connection pauses the job (`PAUSED_DISCONNECTED`) and so does the kill switch
+(`STOPPED_KILL_SWITCH`). Both keep every result. Only a person resumes: the worker never restarts a
+paused job by itself.
+
+It reuses `bulk_messaging.*` and the `BULK_MESSAGING` feature, and adds no permission key.
 
 ### Team Report (`packages/shared/src/teamReport.ts`, `apps/web/src/server/teamReport.ts`, `(dashboard)/team-report/`)
 
@@ -1857,7 +1882,7 @@ a narrower window: the "wait" definition must stay identical to Team Performance
 Nav lives in one place — `(dashboard)/navigation.ts`. A pinned "Overview" link, then ten
 **collapsible modules** (27 Sep 2026): Support (WhatsApp Chat, Messages, Escalations), Team (Today,
 Roster, Leave, Team Performance, Activity Feed), Reports, WhatsApp (Accounts, Groups, Team Members,
-Teams, Broadcast, Add Number to Groups), Automation, AI Learning, Conversation Learning, System, Users &
+Teams, Broadcast, Add Number to Groups, Groups Admin Maker), Automation, AI Learning, Conversation Learning, System, Users &
 Permissions, Release Notes. It used to be thirteen always-expanded groups under four department
 headings — about fifty rows. **Navigation only: no route, page or permission changed**, and the
 check that proved it compared the old and new `navGroupsFor()` across 323 role sets (every single

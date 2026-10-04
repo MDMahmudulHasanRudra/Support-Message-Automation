@@ -8,6 +8,7 @@ import { startAccountRegistrySync } from "./provider/accountRegistrySync.js";
 import { startOutboundQueueProcessor } from "./queue/outboundQueueProcessor.js";
 import { startGroupParticipantAddProcessor } from "./queue/groupParticipantAddProcessor.js";
 import { startGroupParticipantCheckProcessor } from "./queue/groupParticipantCheckProcessor.js";
+import { startGroupAdminPromotionProcessor } from "./queue/groupAdminPromotionProcessor.js";
 import { startNotificationDispatcher } from "./notifications/dispatcher.js";
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
@@ -128,6 +129,7 @@ async function main() {
     startGroupParticipantAddProcessor(registry),
     // Reads rosters so an operator can see who is genuinely missing before a single add is spent.
     startGroupParticipantCheckProcessor(registry),
+    startGroupAdminPromotionProcessor(registry),
     startEscalationProcessor(),
     // Conversation Learning Phase 1 — always registered, but processOneSegmentationBatch()
     // itself no-ops on every tick until LearningSettings.conversationLearningEnabled is turned

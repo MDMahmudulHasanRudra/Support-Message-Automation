@@ -109,11 +109,11 @@ export const PROJECT_FEATURES = [
   {
     key: "BULK_MESSAGING",
     label: "Bulk messaging",
-    description: "Broadcast and Add Number to Groups.",
+    description: "Broadcast, Add Number to Groups and Groups Admin Maker.",
     defaultEnabled: true,
-    routes: ["/group-message-sender", "/group-member-adder"],
+    routes: ["/group-message-sender", "/group-member-adder", "/group-admin-maker"],
     permissionKeys: ["bulk_messaging.view", "bulk_messaging.manage"],
-    workerEffect: "No new broadcast or add job can be started.",
+    workerEffect: "No new broadcast, add or admin-maker job can be started.",
   },
   {
     key: "ESCALATIONS",

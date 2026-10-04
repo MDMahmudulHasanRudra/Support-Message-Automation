@@ -1695,6 +1695,34 @@ export class OpenWAProvider implements WhatsAppProvider {
     }
   }
 
+  /** `getGroupAdmins` — the library's public call, no Insiders licence needed. */
+  async getGroupAdminIds(chatId: string): Promise<string[] | null> {
+    if (!this.client) return null;
+    try {
+      const admins: unknown = await this.client.getGroupAdmins(chatId as GroupChatId);
+      return Array.isArray(admins) ? admins.map((id) => String(id)) : null;
+    } catch (err) {
+      console.error(`[provider] could not read admins for ${chatId}`, err);
+      return null;
+    }
+  }
+
+  /**
+   * `promoteParticipant` — public, no Insiders licence. Same return convention as `addParticipant`
+   * (see addGroupParticipant above): its declared type is `boolean`, but its own documentation says
+   * it returns a status-code string on failure, so only a literal `true` counts as success.
+   */
+  async promoteGroupParticipant(chatId: string, participantId: string): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const result = (await this.client.promoteParticipant(chatId as GroupChatId, participantId as ContactId)) as boolean | string;
+      if (result === true) return { success: true };
+      return { success: false, error: typeof result === "string" ? result : "WhatsApp did not confirm the promotion." };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   async checkNumberOnWhatsApp(phoneNumber: string): Promise<NumberCheckResult> {
     if (!this.client) return { ok: false, reason: "Provider is not connected." };
     try {

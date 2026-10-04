@@ -75,7 +75,8 @@ describe("the constraints later phases depend on", () => {
     // Singletons' own "id" default is 'global', never the project, so nothing may name it here.
     expect(defaultingToIsp.map((row) => row.table)).toEqual([]);
     const refusing = rows.filter((row) => (row.column_default ?? "").includes("project_id_required()"));
-    expect(refusing).toHaveLength(70);
+    // 70 at Phase 1, + GroupAdminPromotionJob and GroupAdminPromotionItem (Groups Admin Maker).
+    expect(refusing).toHaveLength(72);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -97,8 +98,9 @@ describe("the constraints later phases depend on", () => {
       SELECT conrelid::regclass::text AS table, convalidated AS validated
       FROM pg_constraint
       WHERE contype = 'f' AND confrelid = '"Project"'::regclass AND conname LIKE '%\\_projectId\\_fkey'`;
-    // 70 project-scoped tables + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(73);
+    // 72 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables) + SystemLog +
+    // ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(75);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 
