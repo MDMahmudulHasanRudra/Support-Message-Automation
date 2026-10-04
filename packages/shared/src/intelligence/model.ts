@@ -149,6 +149,17 @@ export function signalsOf(m: IntelMessage): MessageSignals {
   return { ...EMPTY_SIGNALS, handoff: detectHandoff(m.text), employeeResolved: detectEmployeeResolution(m.text) };
 }
 
+/**
+ * A customer message that closes rather than asks: "ok", "thanks", "yes it is working now", a
+ * thumbs-up — with no question mark and nothing saying it is still broken. It never opens a case or a
+ * human wait: nothing is waiting for an answer. (The existing Team Report wait does start on it; the
+ * Human Response SLA deliberately does not — see REPORTS.md.)
+ */
+export function isClosingRemark(m: IntelMessage, s: MessageSignals = signalsOf(m)): boolean {
+  if (m.actor !== "CUSTOMER" || !m.text || s.stillBroken || m.text.includes("?")) return false;
+  return s.acknowledgement || s.customerConfirm || s.thanks || s.praise;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Cases
 
@@ -330,9 +341,13 @@ function ownershipOf(wc: WorkingCase, resolution: CaseResolution | null): CaseOw
       reasons.push({ points: 2, text: "Took it on: said they would check or pass it to the developer/technical team" });
       if (mine.some(({ m }) => m.ts >= handoff.m.ts + 5 * 60_000)) reasons.push({ points: 2, text: "Came back to the customer after the hand-off" });
     }
-    if (mine.some(({ s }) => s.employeeResolved)) reasons.push({ points: 2, text: "Told the customer it was fixed" });
+    // A fix stated before a reopen was undone by it: it earns nothing.
+    if (mine.some(({ m, s }) => s.employeeResolved && (wc.reopenedAt === null || m.ts >= wc.reopenedAt))) reasons.push({ points: 2, text: "Told the customer it was fixed" });
+    if (wc.reopenedAt !== null && human.find(({ m }) => m.ts >= wc.reopenedAt!)?.m.memberId === id) {
+      reasons.push({ points: 2, text: "Took it on again after the customer reopened it" });
+    }
     if (lastBeforeResolution?.m.memberId === id) reasons.push({ points: 1, text: "Last employee to reply before it was resolved" });
-    if (mine.length / human.length >= 0.5 && members.length > 1) reasons.push({ points: 1, text: "Wrote most of the team's replies" });
+    if (mine.length / human.length > 0.5 && members.length > 1) reasons.push({ points: 1, text: "Wrote most of the team's replies" });
     const points = reasons.reduce((sum, r) => sum + r.points, 0);
     return { id, points, reasons, first: mine[0]!.m.ts, handoffReturned: reasons.some((r) => r.text.startsWith("Came back")), stated: reasons.some((r) => r.text.startsWith("Told")) };
   });
@@ -371,9 +386,14 @@ function complexityOf(c: Omit<SupportCase, "complexity" | "complexityReasons">):
     points += 1;
     reasons.push(`Ran for over an hour`);
   }
-  if (c.handoffs.some((h) => h.confidence !== "LOW")) {
+  // Passing it to the developer/technical team is real extra work; "I'll check and let you know" is
+  // an ordinary step that may or may not have involved anyone else, so it weighs less.
+  if (c.handoffs.some((h) => h.confidence === "HIGH")) {
     points += 2;
-    reasons.push("Needed an internal hand-off");
+    reasons.push("Passed to the developer/technical team");
+  } else if (c.handoffs.some((h) => h.confidence === "MEDIUM")) {
+    points += 1;
+    reasons.push("Needed checking before it could be answered");
   }
   if (c.memberIds.length > 1) {
     points += 1;
@@ -385,7 +405,7 @@ function complexityOf(c: Omit<SupportCase, "complexity" | "complexityReasons">):
   }
   if (c.reopened) {
     points += 1;
-    reasons.push("Reopened after a resolution");
+    reasons.push("Reopened after it was reported fixed");
   }
   return { complexity: points >= 4 ? "COMPLEX" : points >= 2 ? "MODERATE" : "SIMPLE", reasons };
 }
@@ -556,8 +576,8 @@ export function buildCases(messages: readonly IntelMessage[], measuredTo: number
             continue;
           }
         }
-        // "ok", "ji vai", a thumbs-up: nothing was asked, so nothing opens.
-        if (s.acknowledgement) continue;
+        // "ok", "thanks", "it's working now", a thumbs-up: nothing was asked, so nothing opens.
+        if (isClosingRemark(m, s)) continue;
         open = { groupKey, messages: [{ m, s }], reopenedAt: null, superseded: [] };
       } else if (open) {
         open.messages.push({ m, s });
@@ -709,8 +729,9 @@ export interface HumanWait {
 
 /**
  * Human Response SLA waits. The same shape as the Team Report's wait — a run of customer lines is
- * one wait, measured from the first — with one difference that is the whole point: only a HUMAN
- * reply ends it. A customer answered by the AI at once and by a person forty minutes later waited
+ * one wait, measured from the first — with two differences. The point of it: only a HUMAN reply ends
+ * it. And a closing remark ("thanks", "it's working now") does not start one, because nothing is
+ * waiting for an answer. A customer answered by the AI at once and by a person forty minutes later waited
  * forty minutes for a person. The existing Response SLA, where any reply counts, is unchanged.
  *
  * Only waits starting inside [rangeStart, rangeEnd) count; replies are read from what was loaded
@@ -733,7 +754,7 @@ export function humanWaits(
     const threshold = opts.thresholdMs(groupKey);
     for (const m of list) {
       if (m.actor === "CUSTOMER") {
-        if (!open) {
+        if (!open && !isClosingRemark(m)) {
           open = {
             groupKey,
             customer: m.sender,

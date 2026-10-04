@@ -74,7 +74,14 @@ describe("cases", () => {
     expect(c!.owner).toMatchObject({ memberId: "rina", confidence: "HIGH" });
     expect(c!.owner!.reasons).toEqual(expect.arrayContaining(["Came back to the customer after the hand-off", "Told the customer it was fixed"]));
     expect(c!.complexity).toBe("MODERATE");
-    expect(c!.complexityReasons).toEqual(expect.arrayContaining(["Needed an internal hand-off", "Ran for over an hour"]));
+    expect(c!.complexityReasons).toEqual(expect.arrayContaining(["Passed to the developer/technical team", "Ran for over an hour"]));
+  });
+
+  it("'I'll check and let you know' is lighter work than passing it to the developers", () => {
+    const ms = [msg("G", 0, "CUSTOMER", "bill ta ki bhul?"), msg("G", 2 * M, "MEMBER", "Ami check kore janacchi"), msg("G", 20 * M, "MEMBER", "Done, check korun")];
+    const [c] = buildCases(ms, LATER, settings);
+    expect(c!.complexity).toBe("SIMPLE");
+    expect(c!.complexityReasons).toEqual(["Needed checking before it could be answered"]);
   });
 
   it("ownership is evidence, not the last replier", () => {
@@ -181,6 +188,41 @@ describe("cases", () => {
     expect(open[0]!.state).toBe("ESCALATED");
   });
 
+  it("a reopened case is owned by whoever took it on again — the undone fix earns nothing", () => {
+    const ms = [
+      msg("G", 0, "CUSTOMER", "router light off"),
+      msg("G", 5 * M, "MEMBER", "Done vai, ekhon check korun", { memberId: "bipul" }),
+      msg("G", 14 * H, "CUSTOMER", "still not working"),
+      msg("G", 14 * H + 20 * M, "MEMBER", "I have forwarded this to the technical team", { memberId: "rina" }),
+    ];
+    const [c] = buildCases(ms, T0 + 14 * H + 30 * M, settings);
+    expect(c!.owner!.memberId).toBe("rina");
+    expect(c!.owner!.reasons).toContain("Took it on again after the customer reopened it");
+  });
+
+  it("a fix stated before the reopen earns nothing — it did not hold", () => {
+    const ms = [
+      msg("G", 0, "CUSTOMER", "router light off"),
+      msg("G", 5 * M, "MEMBER", "Done vai, ekhon check korun", { memberId: "bipul" }),
+      msg("G", 14 * H, "CUSTOMER", "still not working"),
+      msg("G", 14 * H + 20 * M, "MEMBER", null, { memberId: "rina" }),
+    ];
+    const [c] = buildCases(ms, T0 + 14 * H + 30 * M, settings);
+    expect(c!.owner!.memberId).toBe("rina");
+    expect(c!.owner!.reasons).not.toContain("Told the customer it was fixed");
+  });
+
+  it("an even split of replies is not 'most of the replies' for either", () => {
+    const ms = [msg("G", 0, "CUSTOMER", null), msg("G", 5 * M, "MEMBER", null, { memberId: "rina" }), msg("G", 6 * M, "MEMBER", null, { memberId: "bipul" })];
+    const [c] = buildCases(ms, LATER, settings);
+    expect(c!.owner!.reasons).not.toContain("Wrote most of the team's replies");
+  });
+
+  it("a closing remark after a case ends opens nothing", () => {
+    const ms = [msg("G", 0, "CUSTOMER", null), msg("G", 5 * M, "MEMBER", "done"), msg("G", 6 * H, "CUSTOMER", "Yes it is working now, thank you")];
+    expect(buildCases(ms, LATER, settings)).toHaveLength(1);
+  });
+
   it("a team message with no case open belongs to no case", () => {
     expect(buildCases([msg("G", 0, "MEMBER", "Good morning everyone")], LATER, settings)).toHaveLength(0);
   });
@@ -245,6 +287,18 @@ describe("human waits", () => {
     const ws = humanWaits([msg("G", 0, "CUSTOMER", null), msg("G", 2 * M, "CUSTOMER", null)], { ...opts, measuredTo: T0 + 10 * M });
     expect(ws).toHaveLength(1);
     expect(ws[0]!.status).toBe("PENDING");
+  });
+
+  it("a thank-you after the reply is not a new wait — nothing is waiting for an answer", () => {
+    const ms = [msg("G", 0, "CUSTOMER", null), msg("G", 5 * M, "MEMBER", null), msg("G", 10 * M, "CUSTOMER", "Yes it is working, thank you"), msg("G", 4 * 24 * H, "MEMBER", null)];
+    expect(humanWaits(ms, opts)).toHaveLength(1);
+  });
+
+  it("…but a thank-you with a question, or 'still not working', is", () => {
+    const q = humanWaits([msg("A", 0, "CUSTOMER", "thanks, when will the technician come?")], opts);
+    const broken = humanWaits([msg("B", 0, "CUSTOMER", "thanks but still not working")], opts);
+    expect(q).toHaveLength(1);
+    expect(broken).toHaveLength(1);
   });
 
   it("only waits starting inside the period count", () => {
