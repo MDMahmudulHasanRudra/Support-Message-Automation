@@ -1023,6 +1023,36 @@ one.**
 - WhatsApp calls are not recorded anywhere, so the Call Activity report is inferred from text and
   says so. Never present it as call records.
 
+**Reporting data health and Support Intelligence (REPORTS.md §8–§9).**
+- **Data health.** `CollectionGap` (worker-written: one row per outage per account, plus what the
+  catch-up sweep recovered) and `SupportActivitySettings.reportingVerifiedFrom` decide how far a
+  period can be trusted. Every `/reports/<id>` page and the Team Report show the strip, and every
+  Excel Summary carries it.
+  - "No stored message" is never "no communication".
+  - An unset verified-from means nothing is verified. Never default it.
+- **Five Support Intelligence reports.** Executive, Employee Effectiveness, Support Cases, Human
+  Response SLA and Customer Appreciation & Preference.
+  - They read `Message` through ONE loader (`server/intelligence/loader.ts`) and ONE pure model
+    (`packages/shared/src/intelligence/`). The page, the exports and the read-only validation script
+    (`pnpm --filter @support-automation/web validate:intelligence`) cannot disagree.
+  - They sit beside the operational figures, never replacing them. Human Response SLA sits beside
+    Response SLA. Observed Support Session Time (the union of sessions across groups) sits beside
+    Support Time. An internal hand-off (the employee's words) is kept apart from an SLA escalation
+    (a recorded fact).
+- **Inference rules worth not undoing.**
+  - Every inferred figure carries its confidence and evidence, and is labelled "(inferred)".
+  - "No further contact" is never resolved.
+  - A closing remark ("thanks", "it's working now") opens neither a case nor a human wait.
+  - A fix stated before a reopen earns no ownership.
+  - Appreciation counts toward a person only at HIGH/MEDIUM attribution.
+  - A score needs ≥20 human waits and ≥3 verified active days, otherwise it is "Insufficient
+    sample", never a low number.
+  - Rates are shrunk toward the team rate. A dimension with no opportunity is left out, not zeroed.
+  - Time outside duty is shown, never scored.
+- **Validation.** These rules are tested against constructed conversations only. Until somebody
+  runs the validation script against real groups and compares with WhatsApp, the reports say so.
+  Do not remove that caveat on the strength of the tests.
+
 **Element-level rules in `globals.css` belong in `@layer base`.** Tailwind's utilities live in a
 layer, and ANY unlayered style beats ANY layered one regardless of specificity: the default
 `* { border-color }` sat unlayered until 30 Sep 2026, so every border-colour utility in the app

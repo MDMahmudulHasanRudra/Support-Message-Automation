@@ -3,7 +3,9 @@
 **Date:** 4 Oct 2026
 **Branch:** `rudra`
 **Stage:** 0 (audit). It precedes every implementation stage.
-**Progress:** stage 1 (reporting data health) is built. See REPORTS.md §8.
+**Progress:** stages 1–14 are built locally, on `rudra` only. Nothing is pushed or deployed.
+Stage 1 (reporting data health) is in REPORTS.md §8. Stages 2–14 (the Support Intelligence reports)
+are in §9. Real-data validation is still open: see §9.6.
 
 This audit covers the Support Intelligence request: three layers of reporting.
 - **Level 1** — what happened. These are the existing reports, which stay unchanged.

@@ -498,3 +498,298 @@ The additions are the strip, the Summary rows, Inactive Groups' new last column 
 - The verified-from field lives on Support Activity Setup, so it needs the Support Activity feature
   switched on for the project.
 
+## 9. Support Intelligence (5 Oct 2026, stages 2–14)
+
+Five reports in a new **Support Intelligence** category on All Reports. They sit ABOVE the
+operational reports. No existing report, figure, label, route, permission or export column changed.
+SUPPORT_INTELLIGENCE_IMPLEMENTATION_AUDIT.md has the reasoning and the decisions.
+
+| Report | Route | Question |
+|---|---|---|
+| Executive Support Intelligence | `/reports/support-intelligence` | What is happening in support, where are the problems, and what changed? |
+| Employee Effectiveness | `/reports/employee-effectiveness` (`?member=<id>` = one person) | How effectively did each person handle support — and on how much evidence? |
+| Support Cases | `/reports/support-cases` (`?status=` filter) | Customer problems as cases: owner, hand-offs, resolution, reopened and complex cases, sessions |
+| Human Response SLA | `/reports/human-response-sla` | How long did customers wait for a PERSON? |
+| Customer Appreciation & Preference | `/reports/customer-signals` | Where did customers thank or praise the team — and whom, on what evidence? |
+
+All five use:
+- the `support_activity.view` permission and the `TEAM_REPORTS` feature — no new permission was added;
+- the Team Report's filters: period up to 92 days, team, member, groups, account;
+- the generic page and exports: CSV is the Detailed table; Excel is Summary + Detailed + Breakdown
+  sheets.
+
+### 9.1 Where the figures come from
+
+- **One loader** (`apps/web/src/server/intelligence/loader.ts`) and **one pure model**
+  (`packages/shared/src/intelligence/`). The page, both exports and the validation script call the
+  same functions, so they cannot disagree.
+- It reads `Message` from the period start minus 4 hours to the period end plus 24 hours:
+  - the look-behind lets a case that opened just before the period be understood;
+  - the look-ahead finds late replies;
+  - only cases and waits that START inside the period are counted.
+- One row per real message: `DISTINCT ON (whatsappGroupId, whatsappMessageId)`, as in the Team Report.
+- The text is loaded only when it is 24 characters or shorter, or when a phrase catalogue could match
+  it. That check is a superset prefilter in SQL (`INTELLIGENCE_SQL_PREFILTER`, tested).
+- Raw SQL names `"projectId"` on every project-owned table, including the joined `OutboundMessage`.
+- The only database change is one index, `OutboundMessage(providerMessageId)` (migration
+  `20261008090000_outbound_provider_message_index`).
+
+**Who sent each message** (`IntelActor`):
+
+| Actor | Rule |
+|---|---|
+| CUSTOMER | incoming, sender not on the roster |
+| MEMBER | incoming, sender matched to a roster member (whatsappId, raw or digits-only phone; deactivated members included) |
+| MEMBER_UNMAPPED | stamped `isFromTeamMember` when it arrived, but nobody on the roster matches now |
+| OPERATOR | ours, with an `OutboundMessage` of type MANUAL_REPLY (typed in the dashboard chat) |
+| AI | ours, `AUTO_REPLY` with no rule |
+| RULE | ours, `AUTO_REPLY` with a rule (and any other automated type) |
+| BROADCAST | ours, `GROUP_BROADCAST` |
+| BUSINESS_PHONE | ours, with no `OutboundMessage` — somebody typing on the business phone |
+
+A **human reply** is MEMBER, MEMBER_UNMAPPED, OPERATOR or BUSINESS_PHONE. AI, rules and broadcasts
+never are.
+
+### 9.2 Definitions and formulas
+
+**Support Session.** One employee's messages in one group, split wherever they were quiet in that
+group longer than the Team Report's idle gap (`offlineAfterMinutes`). It runs from their first
+message to their last; a session of one message is 0 seconds.
+
+**Observed Support Session Time.** The union of one employee's sessions across every group, so
+overlapping groups count once. A 10:00–10:30, B 10:10–10:40 and C 10:20–10:50 is 50 minutes, not 90.
+Peak concurrency (3) and average concurrency (1.8) are shown beside it. It is shown next to the Team
+Report's **Support Time**, never instead of it, and Support Time is unchanged.
+
+**Duty vs actual.** Observed time is cut against the person's `DutyAssignment` shifts:
+- inside a shift: **during duty**;
+- on a day with a shift but outside it: **before shift** or **after shift**;
+- on a day with no shift: **off-day**.
+
+A cross-midnight shift belongs to the day it starts, as in Duty History. Time outside duty is shown,
+never scored.
+
+**Support Case.** One customer problem in one group.
+
+| Rule | Detail |
+|---|---|
+| Opens | A customer message when no case is open in the group |
+| Never opens | A **closing remark**: "ok", "thanks", "yes it is working now", an emoji — with no question mark and nothing saying it is still broken |
+| Closes | After 4 hours with no message (`DEFAULT_CASE_GAP_MS`) |
+| Reopens | A customer message within 24 hours of a resolution, ONLY when it carries the problem on: it quotes one of the case's messages, or says it is still not working |
+| New case instead | Any other new question after a resolution |
+| No case | A team message with no case open (a greeting, an announcement) |
+
+| State | Meaning |
+|---|---|
+| ACTIVE | The case is open and moving |
+| WAITING_CUSTOMER | Waiting for the customer |
+| WAITING_INTERNAL | After a hand-off |
+| ESCALATED | An SLA escalation is open |
+| RESOLVED | A resolution was inferred (below) |
+| REOPENED | The customer carried the problem on after a resolution |
+| ABANDONED | Shown as "No further contact" |
+| MISSED | No human reply before the group's Missed threshold |
+
+**Resolution (inferred), with confidence.** Only messages after the latest reopen count.
+
+| Confidence | Evidence, strongest first |
+|---|---|
+| HIGH | An admin resolved the group's SLA escalation case (a recorded fact) |
+| HIGH | The customer confirms it works, after a human reply |
+| MEDIUM | An employee says it is fixed, and the customer does not say it is still broken afterwards |
+| MEDIUM | A completion keyword closed the `SupportSession` |
+| MEDIUM | The customer thanked the team (not "thanks everyone") after a human reply |
+| — | The conversation stops: "No further contact", **never counted as resolved** |
+
+"Still not working" from the customer cancels every earlier signal. The resolution rate counts High
+and Medium only.
+
+**Internal hand-off (inferred).** The employee's own words about passing the problem on:
+
+| Confidence | Example phrases |
+|---|---|
+| HIGH | developer, technical team, forwarded, escalated, "team ke janacchi" |
+| MEDIUM | "I'll check", "check kore janacchi", "update dicchi" |
+| LOW | "please wait", "ektu somoy din" |
+
+The hand-off "came back" when the same employee wrote again at least 5 minutes later. A hand-off is
+NOT an SLA escalation, which is the system's alert ladder and a recorded fact. The two are reported
+separately.
+
+**Owner (inferred).** Not simply the last replier. Points:
+
+| Points | Reason |
+|---|---|
+| 1 | First to respond |
+| 2 | Took it on: a HIGH or MEDIUM hand-off |
+| 2 | Came back after the hand-off |
+| 2 | Told the customer it was fixed. Counts only after the latest reopen: a fix that did not hold earns nothing |
+| 2 | Took it on again: the first employee to reply after the customer reopened it |
+| 1 | The last employee to reply before the resolution |
+| 1 | Wrote MORE than half the team's replies (a 50/50 split gives it to nobody) |
+
+Ties go to whoever replied first. Owner confidence:
+- **HIGH**: the owner came back after a hand-off, or stated a fix that a High or Medium resolution
+  supports — and nobody tied them;
+- **MEDIUM**: the only employee, or a clear lead without that evidence;
+- **LOW**: a tie.
+
+The reasons are printed on every case.
+
+**Complexity.**
+
+| Points | Reason |
+|---|---|
+| 1 | 6+ back-and-forth turns |
+| 2 | 12+ turns (instead of 1) |
+| 1 | Ran over an hour |
+| 2 | Ran 4+ hours (instead of 1) |
+| 2 | Passed to the developer/technical team (a HIGH hand-off) |
+| 1 | Only "I'll check and let you know" (a MEDIUM hand-off) |
+| 1 | Several employees involved |
+| 2 | An SLA escalation opened |
+| 1 | Reopened |
+
+Simple is 0–1 points, Moderate 2–3, Complex 4+.
+
+**Human Response SLA.** It has the Team Report's wait shape: a run of customer lines is one wait,
+measured from the first. There are two differences:
+- only a HUMAN reply ends it — an AI or rule reply is recorded beside the wait ("AI after 1m") and
+  does not end it;
+- a closing remark starts no wait.
+
+The status is judged against the group's Missed threshold: its escalation policy's
+`firstAlertMinutes`, otherwise `missedReplyAfterMinutes`.
+
+| Status | Meaning |
+|---|---|
+| On time | Answered by a person within the threshold |
+| Late | Answered by a person after it |
+| Missed | Never answered by a person, and the threshold has passed |
+| Pending | Still inside the threshold |
+
+Human SLA = on time ÷ answered. The existing **Response SLA**, where any reply counts, is shown
+beside it, unchanged.
+
+**Appreciation.** Two kinds, weighted differently:
+- GENERAL_THANKS ("thanks", "ধন্যবাদ") weighs 0.5;
+- EMPLOYEE_PRAISE ("onek valo support den", "great support") weighs 1.
+
+Who it is for, strongest evidence first:
+
+| Evidence | Attributed to | Confidence |
+|---|---|---|
+| Quotes the employee's message, or @mentions one employee | that employee | HIGH |
+| Names one employee | that employee | MEDIUM |
+| Only one employee replied in that case | that employee | MEDIUM |
+| Several employees replied | the case owner | LOW |
+| Addressed to everyone ("thanks everyone", "সবাইকে ধন্যবাদ") | nobody | — |
+
+Only HIGH and MEDIUM count toward a person.
+
+**Preference.** A customer prefers an employee only with at least 5 cases together AND at least 2
+explicit signals: a request by name, or praise attributed to them. Below that the pair is
+"Insufficient sample", never a negative mark.
+
+### 9.3 Support Effectiveness score
+
+Eight dimensions, each scored 0–100 and shown with its formula, raw ratio and sample:
+
+| Dimension | Weight | Formula |
+|---|---|---|
+| Human response (SLA) | 20 | waits answered on time ÷ waits answered |
+| Resolution | 20 | owned cases resolved (High/Medium) ÷ cases owned |
+| Ownership | 15 | cases owned ÷ cases taken part in |
+| Efficiency | 15 | resolved owned cases per observed hour, relative to the team: 50 = team average, 100 = twice it or more |
+| Reliability | 10 | owned cases not reopened ÷ cases owned |
+| Customer appreciation | 10 | weighted appreciation per case taken part in, relative to the team (50 = average) |
+| Hand-off follow-through | 5 | cases with a stated hand-off that ended resolved ÷ those cases |
+| Complex cases | 5 | owned Complex cases ÷ cases owned |
+
+Fairness rules:
+- **Shrinkage.** Every rate is pulled toward the team rate by 10 pseudo-observations (5 pseudo-hours
+  for efficiency). Three perfect cases land near the average; 200 good ones earn their distance
+  from it.
+- **No opportunity is not zero.** A dimension with no sample is left out and the weights are
+  renormalised.
+- **Rates, never totals.** More groups or more messages never raise a score by themselves. When high
+  volume comes with low efficiency, a note says so rather than hiding either.
+- **Eligibility.** At least 20 human waits answered AND 3 verified active days. A verified day is on
+  or after verified-from and touched by no incomplete collection gap. Below that the result is
+  **Insufficient sample**, never a low score.
+- **Confidence.** HIGH needs 100+ waits and 10+ verified days; otherwise MEDIUM.
+
+**Leaderboards** cover eligible people only, top 3 each:
+- Best overall effectiveness
+- Most active
+- Most efficient
+- Best human SLA
+- Strongest resolver
+- Strongest ownership
+- Customer favourite
+- High-complexity handler
+
+Each leaderboard says what it is ranked by.
+
+**Executive Support Intelligence** compares each figure with the previous period of equal length:
+- as a change in value or in percentage points — never as a percentage of zero ("new (0 → 35)");
+- it lists what needs attention;
+- it carries the inference caveat.
+
+### 9.4 Data confidence
+
+- Every Support Intelligence page shows the §8 data-health strip and carries the Summary-sheet rows.
+- Eligibility counts verified days only.
+- Every inferred column is labelled "(inferred)" and carries its confidence.
+- Recorded facts are named as facts: SLA escalations, admin resolution, completion keywords.
+
+### 9.5 Known limitations
+
+- The phrase catalogues cover English, Bangla and Banglish as written in this deployment's groups.
+  A phrasing outside them reads as no signal. That is conservative: no hand-off and no resolution
+  are claimed.
+- "update dicchi" counts as a MEDIUM hand-off; it may only be a status note.
+- A case that stops after an employee's hand-off with no return closes as "No further contact":
+  not resolved, and not charged as missed.
+- BUSINESS_PHONE replies count as human replies but carry no person. They earn no ownership, no
+  duration and no score.
+- A participant known only by a LID with no roster entry is treated as a CUSTOMER.
+- Cases and waits are per group (the WhatsApp group id), not per customer.
+- The 92-day period cap applies.
+
+### 9.6 Validation status
+
+- **Tests.** Every test was confirmed to fail against the code it protects, and survivors were
+  mutation-checked.
+  - The pure model has unit tests: `intelligenceTextSignals`, `intelligenceModel`,
+    `intelligenceEffectiveness`, `dataHealth`.
+  - The reports have a two-project integration test, `supportIntelligence.integration.test.ts`.
+- **Browser.** Checked against a constructed fixture set:
+  - all five pages and their CSV/Excel exports;
+  - the employee detail page;
+  - Bizify isolation;
+  - the empty state;
+  - 390 px width.
+- **Real data: NOT YET VALIDATED.** The page itself says so. Before relying on the inferred figures,
+  run the read-only script against a few real groups and compare each case with WhatsApp:
+
+  ```bash
+  VALIDATION_DATABASE_URL="postgresql://<read-only user>@<host>/<db>" \
+  VALIDATE_PROJECT=isp-digital VALIDATE_FROM=2026-10-01 VALIDATE_TO=2026-10-03 \
+  VALIDATE_GROUP_NAMES="ABC ISP,Dhaka Fiber" VALIDATE_OUT=si-validation.md \
+  pnpm --filter @support-automation/web validate:intelligence
+  ```
+
+  How the script stays safe:
+  - it opens one connection and sets it READ ONLY;
+  - before reading anything, it proves Postgres refuses a no-op UPDATE on that connection;
+  - it writes only the local Markdown file;
+  - it allows at most 14 days and 10 groups.
+
+  Its first run against the fixtures found four rule faults, all since fixed:
+  - a fix that did not hold still earned ownership;
+  - a 50/50 split counted as "most replies";
+  - a thank-you opened a new wait;
+  - "I'll check" weighed as much as a developer hand-off.
+

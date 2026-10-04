@@ -13,6 +13,20 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Support Intelligence reports** (Reports → All Reports → Support Intelligence). Built locally on
+  `rudra`; not deployed.
+  - **Executive Support Intelligence:** what is happening in support, where the problems are, and
+    what changed since the previous period.
+  - **Support Cases:** each customer problem with its owner, internal hand-offs, resolution and
+    complexity, all inferred and each with its confidence.
+  - **Human Response SLA:** how long customers waited for a person; AI and rule replies do not count.
+  - **Employee Effectiveness:** an explainable score with every dimension shown. People with too
+    little evidence show "Insufficient sample".
+  - **Customer Appreciation & Preference:** who customers thanked or praised, and on what evidence.
+
+  Every report also shows **reporting data health**: collection gaps and a verified-from date. The
+  inferred figures still need checking against real conversations with the read-only validation
+  script (`REPORTS.md` §8–§9).
 - **Unanswered Groups & Response Time** (Support → Messages): one row per group where a customer is
   waiting for the Support Team.
   - **Answering:** the group moves to Response Time the moment a Support Team member replies, with
