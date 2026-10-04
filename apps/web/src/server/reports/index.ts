@@ -1,6 +1,7 @@
 import { GENERIC_REPORT_IDS, reportCatalogueEntry, type DatePresetId, type PermissionKey } from "@support-automation/shared";
 import { buildCalls, buildHeatmap } from "./activityReports";
 import { loadReportContext, type ReportContext } from "./context";
+import { buildExecutiveHealth } from "./executiveReports";
 import { buildGroupCoverage, buildGroupTrend, buildInactiveGroups } from "./groupReports";
 import { buildDistribution, buildDutyWorkload, buildEmployeeGroups, buildWorkload } from "./memberReports";
 import { buildMissedSupport, buildResponseSla } from "./responseReports";
@@ -33,6 +34,7 @@ const INACTIVE_GROUP_PRESETS: readonly DatePresetId[] = [
 ];
 
 const DEFINITIONS: Record<string, ReportDefinition> = {
+  "executive-health": { permission: "support_activity.view", build: buildExecutiveHealth },
   "inactive-groups": { permission: "support_activity.view", build: buildInactiveGroups, presets: INACTIVE_GROUP_PRESETS },
   "group-coverage": { permission: "support_activity.view", build: buildGroupCoverage },
   "group-trend": { permission: "support_activity.view", build: buildGroupTrend },
@@ -72,7 +74,7 @@ export type { BuiltReport, ReportTable } from "./types";
 export type { ReportContext } from "./context";
 
 /** A report's own extra filters, carried through presets, links and exports. */
-export const REPORT_EXTRA_PARAMS = ["status", "metric", "low"] as const;
+export const REPORT_EXTRA_PARAMS = ["status", "metric", "low", "prolonged"] as const;
 
 /** The query string that reproduces this report: the common filters plus its own extra ones. */
 export function reportQuery(ctx: ReportContext): string {

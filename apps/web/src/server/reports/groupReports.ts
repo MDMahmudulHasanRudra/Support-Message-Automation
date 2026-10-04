@@ -74,11 +74,73 @@ const assignedOf = (ctx: ReportContext, groupKey: string) => ctx.data.groups.get
 const STATUS_ORDER: GroupActivityStatus[] = ["NO_COMMUNICATION", "CUSTOMER_NO_REPLY", "NO_CUSTOMER_ACTIVITY", "LOW_ACTIVITY", "ACTIVE"];
 
 /** A group's most recent stored message before the period ends, and who sent it. */
-interface LastActivity {
+export interface LastActivity {
   at: number;
   senderPhone: string;
   senderName: string | null;
   direction: string;
+}
+
+/**
+ * Each group's latest stored message before the period END — any kind, any account in the filter —
+ * with its sender. For a group silent in the period that is its last activity BEFORE the period.
+ * One index probe per group row (LATERAL on [groupId, timestampWa]), never a scan of Message, and the
+ * project named explicitly: raw SQL is not covered by the scoped client.
+ */
+export async function loadLastActivity(ctx: ReportContext, groupKeys: readonly string[]): Promise<Map<string, LastActivity>> {
+  if (!groupKeys.length) return new Map();
+  const rows = await prisma.$queryRaw<Array<{ wgid: string; lastAt: Date; senderPhone: string; senderName: string | null; direction: string }>>`
+    SELECT DISTINCT ON (g."whatsappGroupId")
+           g."whatsappGroupId" AS wgid, last.ts AS "lastAt", last."senderPhone", last."senderName", last.direction
+    FROM "WhatsAppGroup" g
+    CROSS JOIN LATERAL (
+      SELECT m."timestampWa" AS ts, m."senderPhone", m."senderName", m."direction"::text AS direction FROM "Message" m
+      WHERE m."groupId" = g."id" AND m."timestampWa" < ${new Date(ctx.rangeEnd)}
+        AND m."direction" <> 'SYSTEM'
+      ORDER BY m."timestampWa" DESC
+      LIMIT 1
+    ) last
+    WHERE g."projectId" = ${await activeProjectId()}
+      AND g."whatsappGroupId" IN (${Prisma.join([...groupKeys])})
+      ${ctx.filters.accountId ? Prisma.sql`AND g."accountId" = ${ctx.filters.accountId}` : Prisma.empty}
+    ORDER BY g."whatsappGroupId", last.ts DESC`;
+  return new Map(rows.map((r) => [r.wgid, { at: r.lastAt.getTime(), senderPhone: r.senderPhone, senderName: r.senderName, direction: r.direction }]));
+}
+
+/**
+ * Of groups with nothing stored before the period end (`noneBefore`), the ones that do have
+ * messages — after the period. Told apart from "never recorded", because only that one is a group
+ * with no history.
+ */
+export async function loadGroupsWithLaterMessagesOnly(ctx: ReportContext, noneBefore: readonly string[]): Promise<Set<string>> {
+  if (!noneBefore.length) return new Set();
+  const rows = await prisma.$queryRaw<Array<{ wgid: string }>>`
+    SELECT DISTINCT g."whatsappGroupId" AS wgid
+    FROM "WhatsAppGroup" g
+    WHERE g."projectId" = ${await activeProjectId()}
+      AND g."whatsappGroupId" IN (${Prisma.join([...noneBefore])})
+      ${ctx.filters.accountId ? Prisma.sql`AND g."accountId" = ${ctx.filters.accountId}` : Prisma.empty}
+      AND EXISTS (SELECT 1 FROM "Message" m WHERE m."groupId" = g."id" AND m."direction" <> 'SYSTEM')`;
+  return new Set(rows.map((r) => r.wgid));
+}
+
+/**
+ * The roster, for two questions group reports ask: which Team a member is in today, and who sent a
+ * message (customer / team member / business number) — by the identifiers the Team Report matches on.
+ */
+export async function loadRoster(ctx: ReportContext): Promise<{ teamOf: Map<string, string | null>; describeSender: (l: LastActivity) => string }> {
+  const roster = await prisma.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true, teamId: true } });
+  const memberBySender = new Map<string, { name: string }>();
+  for (const member of roster) for (const id of senderIdentifiers(member)) memberBySender.set(id, member);
+  const teamNameById = new Map(ctx.data.teams.map((t) => [t.id, t.name]));
+  return {
+    teamOf: new Map(roster.map((m) => [m.id, m.teamId ? (teamNameById.get(m.teamId) ?? null) : null])),
+    describeSender: (l) => {
+      if (l.direction === "OUTGOING") return "Business number";
+      const member = memberBySender.get(l.senderPhone) ?? memberBySender.get(normalizePhoneNumber(l.senderPhone) ?? "");
+      return member ? `Team member · ${member.name}` : `Customer · ${l.senderName || l.senderPhone}`;
+    },
+  };
 }
 
 /**
@@ -104,57 +166,13 @@ export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltRepo
 
   const groups = await loadMonitoredGroups(ctx);
   const counts = groupMessageCounts(ctx.data.messages, ctx.rangeStart, ctx.rangeEnd);
-  const projectId = await activeProjectId();
-
-  // Each group's last stored message before the period ends — any kind, any account in the filter —
-  // with its sender. For a group silent in the period that is its last activity BEFORE the period.
-  // One index probe per group row (LATERAL on [groupId, timestampWa]), never a scan of Message.
-  const lastRows = groups.length
-    ? await prisma.$queryRaw<Array<{ wgid: string; lastAt: Date; senderPhone: string; senderName: string | null; direction: string }>>`
-        SELECT DISTINCT ON (g."whatsappGroupId")
-               g."whatsappGroupId" AS wgid, last.ts AS "lastAt", last."senderPhone", last."senderName", last.direction
-        FROM "WhatsAppGroup" g
-        CROSS JOIN LATERAL (
-          SELECT m."timestampWa" AS ts, m."senderPhone", m."senderName", m."direction"::text AS direction FROM "Message" m
-          WHERE m."groupId" = g."id" AND m."timestampWa" < ${new Date(ctx.rangeEnd)}
-            AND m."direction" <> 'SYSTEM'
-          ORDER BY m."timestampWa" DESC
-          LIMIT 1
-        ) last
-        WHERE g."projectId" = ${projectId}
-          AND g."whatsappGroupId" IN (${Prisma.join(groups.map((g) => g.whatsappGroupId))})
-          ${ctx.filters.accountId ? Prisma.sql`AND g."accountId" = ${ctx.filters.accountId}` : Prisma.empty}
-        ORDER BY g."whatsappGroupId", last.ts DESC`
-    : [];
-  const last = new Map<string, LastActivity>(
-    lastRows.map((r) => [r.wgid, { at: r.lastAt.getTime(), senderPhone: r.senderPhone, senderName: r.senderName, direction: r.direction }]),
+  const [last, roster] = await Promise.all([loadLastActivity(ctx, groups.map((g) => g.whatsappGroupId)), loadRoster(ctx)]);
+  const hasLaterOnly = await loadGroupsWithLaterMessagesOnly(
+    ctx,
+    groups.filter((g) => !last.has(g.whatsappGroupId)).map((g) => g.whatsappGroupId),
   );
-
-  // A group with nothing before the period ends either has never had a stored message, or only has
-  // messages after the period. Said apart, because only the first is "never recorded".
-  const noneBefore = groups.filter((g) => !last.has(g.whatsappGroupId)).map((g) => g.whatsappGroupId);
-  const laterRows = noneBefore.length
-    ? await prisma.$queryRaw<Array<{ wgid: string }>>`
-        SELECT DISTINCT g."whatsappGroupId" AS wgid
-        FROM "WhatsAppGroup" g
-        WHERE g."projectId" = ${projectId}
-          AND g."whatsappGroupId" IN (${Prisma.join(noneBefore)})
-          ${ctx.filters.accountId ? Prisma.sql`AND g."accountId" = ${ctx.filters.accountId}` : Prisma.empty}
-          AND EXISTS (SELECT 1 FROM "Message" m WHERE m."groupId" = g."id" AND m."direction" <> 'SYSTEM')`
-    : [];
-  const hasLaterOnly = new Set(laterRows.map((r) => r.wgid));
-
-  // Who a last message came from, by the same identifiers the Team Report matches team members on.
-  const roster = await prisma.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true, teamId: true } });
-  const memberBySender = new Map<string, { name: string }>();
-  for (const member of roster) for (const id of senderIdentifiers(member)) memberBySender.set(id, member);
-  const teamNameById = new Map(ctx.data.teams.map((t) => [t.id, t.name]));
-  const teamOfMember = new Map(roster.map((m) => [m.id, m.teamId ? (teamNameById.get(m.teamId) ?? null) : null]));
-  const lastBy = (l: LastActivity) => {
-    if (l.direction === "OUTGOING") return "Business number";
-    const member = memberBySender.get(l.senderPhone) ?? memberBySender.get(normalizePhoneNumber(l.senderPhone) ?? "");
-    return member ? `Team member · ${member.name}` : `Customer · ${l.senderName || l.senderPhone}`;
-  };
+  const teamOfMember = roster.teamOf;
+  const lastBy = roster.describeSender;
 
   const to = measuredTo(ctx);
   const classified = groups.map((g) => {

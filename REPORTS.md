@@ -123,6 +123,7 @@ Every report has the common filters. Time is Asia/Dhaka throughout.
 
 | Report | Category | Question |
 |---|---|---|
+| Executive Support Health | Executive | How much support was asked for, how much was handled, and what needs attention? |
 | Team Report | Support Performance | What did the team do, and what was missed? |
 | Support Activity | Support Performance | Which support activity was recorded, per group and session? |
 | Employee Support Breakdown | Team & Employee | Which groups did each person support, and how? |
@@ -137,6 +138,53 @@ Every report has the common filters. Time is Asia/Dhaka throughout.
 | Support Activity Heatmap | Activity & Workload | When in the week do customers write and the team reply? |
 | WhatsApp Call Activity | Activity & Workload | Where did people ask for, or mention, a call? |
 | Workload Distribution | Management | How is the work shared across the team? |
+
+**Executive Support Health** (4 Oct 2026; `/reports/executive-health`, `support_activity.view`, the
+Team Reports feature). One page management reads in half a minute. It is a snapshot plus an exception
+list, and deliberately **not** a ranking: there is no score, no best or worst person or group. Every
+figure is one another report already defines, cut together and never re-decided:
+
+| Tile | Definition (owner) |
+|---|---|
+| Monitored groups | monitored and active today, one per WhatsApp group (Inactive Groups) |
+| Active / No-communication groups | at least one / no stored message of any kind in the period (Inactive Groups) |
+| Customer messages, Team replies | the Team Report summary; replies include the business number |
+| Unanswered customer waits | waits with no reply yet, whether still pending or missed; a run of customer messages is one wait |
+| Missed support | answered late + never answered (the Team Report's Missed) |
+| Average / Median first response, SLA % | Response SLA, over the same waits |
+| Recorded support time, Active team members | the Team Report summary |
+| Groups requiring attention / with declining activity / with prolonged unanswered | counts of the attention list |
+
+**Attention required.** Monitored groups only, **one row per group** under its most urgent issue, with
+any others under "Also". The rules are pure and unit-tested (`packages/shared/src/executiveHealth.ts`):
+1. **Prolonged unanswered**: a customer with no reply for at least *Prolonged after* (1, 2, 6 or 24
+   hours; default 2), measured to the period end, or to now if it has not ended.
+2. **Unanswered**: the same, shorter.
+3. **SLA breach**: answers after the group's threshold; the worst one is the Waiting figure.
+4. **No communication**: no stored message in the period, with days since the last one ("never
+   recorded" when there is none).
+5. **Declining activity**: at most half the messages of the previous period of the same length, from
+   at least 10. A drop from 0 has no percentage (never "∞%"), a drop from 8 to 1 is too small to
+   call, and a group gone silent is No communication rather than Declining.
+
+Columns: Group, Issue, Detail, Also, Last activity, Waiting, Assigned, Team. Most urgent issue first,
+then the longest wait or silence.
+
+**Workload by team.** Active members, replies, share of replies, recorded support time and charged
+Missed per Team (each person's current Team; "No team" otherwise). A distribution of the work, not a
+score.
+
+**Previous period.** One raw query counts distinct messages per group in the equal-length period
+before, excluding system events, naming `"projectId"` and honouring the account filter.
+
+**Exports.** CSV is the attention list. Excel: Summary (filters, tiles, formulas), Detailed (the
+attention list), Breakdown (workload by team).
+
+**Isolation.** `executiveHealth.integration.test.ts` gives Bizify the same WhatsApp groups with
+different messages (busy in "decline" in September, a customer in "silent" in October); it fails when
+the previous-period query's project filter is removed. It also fails if system events count as
+activity, if a pending wait is not "unanswered", if a late answer is not "missed", or if the Prolonged
+setting is ignored.
 
 **Inactive Groups — No Communication** (enriched 4 Oct 2026; same report, same route).
 

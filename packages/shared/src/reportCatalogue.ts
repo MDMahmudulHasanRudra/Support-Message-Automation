@@ -11,6 +11,7 @@ import { formatDhakaDateKey } from "./dhakaDay.js";
  */
 
 export const REPORT_CATEGORIES = [
+  "Executive",
   "Support Performance",
   "Team & Employee",
   "Group / Client Health",
@@ -39,6 +40,16 @@ export interface ReportCatalogueEntry {
 const BOTH: readonly ReportExportFormat[] = ["CSV", "Excel"];
 
 export const REPORT_CATALOGUE: readonly ReportCatalogueEntry[] = [
+  {
+    id: "executive-health",
+    href: "/reports/executive-health",
+    label: "Executive Support Health",
+    category: "Executive",
+    description: "One page: demand, replies, unanswered and missed support, first response and SLA, support time — and the groups that need attention.",
+    question: "How much support was asked for, how much was handled, and what needs attention?",
+    exports: BOTH,
+    generic: true,
+  },
   {
     id: "team-report",
     href: "/team-report",
