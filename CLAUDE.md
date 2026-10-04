@@ -279,6 +279,8 @@ since `setInterval` doesn't await its callback)
 |---|---|---|
 | `startOutboundQueueProcessor` | 2s | drains the outbound send queue, one message/tick |
 | `startGroupParticipantAddProcessor` | 2s | drains "Add to Groups" queue |
+| `startMediaDownloadProcessor` | 2s | fetches WhatsApp attachments into media storage, a small pool (`MEDIA_DOWNLOAD_CONCURRENCY`, 2), never on the message path (`MEDIA_STORAGE.md`) |
+| `startMediaCleanupProcessor` | 5s | media retention + manual cleanups, one 200-row batch per tick; retention scheduled at most every 6h per project |
 | `startGroupAdminPromotionProcessor` | 3s | Groups Admin Maker: checks one job or promotes in one group per tick, paced 8–20s per account (`GROUP_ADMIN_MAKER.md`) |
 | `startCommandProcessor` | 1.5s | polls `WorkerCommand` (dashboard-issued actions), strictly serial |
 | `startNotificationDispatcher` | 3s | sends queued Teams/WhatsApp notifications |
@@ -807,6 +809,42 @@ subscription and a new table, OpenWA's `onReaction()` is gated behind an **Insid
 deployment does not have**, so the trigger would appear configured in the UI and never fire once.
 (`sendTextWithMentions`, used by the handover mention, is *not* licence-gated — the two are often
 assumed to go together.)
+
+### WhatsApp Message & Media Storage (`apps/worker/src/media/`, `packages/media-storage`, `/settings/media-storage`)
+
+Message text is always stored. Each attachment gets a `MessageMedia` row; its file goes to media
+storage, never to Postgres. **`MEDIA_STORAGE.md` is the reference.** Rules worth not undoing:
+
+- **The pipeline records an attachment and never fetches it.** `registerMessageMedia` runs after the
+  `Message` insert in both write paths (`persistIncomingMessage`, `storeNonAutomatedMessage`): one
+  settings read and one insert, and it never throws. A file can never cost a message its row, its
+  rules or its reply. The download is `mediaDownloadProcessor`'s job.
+- **Decryption is our own streaming code** (`whatsappMediaCrypto.ts`), not OpenWA's
+  `wa-decrypt`, which builds a JS array byte by byte (gigabytes for a large video).
+  - The test cross-checks our output against `wa-decrypt` on the same file.
+  - The MAC and WhatsApp's `filehash` are both verified.
+  - The file is fetched from WhatsApp's CDN with no browser, so a download survives a disconnect.
+- **Storage is `MediaStorage`.** Only `LocalMediaStorage` exists: the `support_automation_media`
+  volume, mounted in both `app` and `worker` at `MEDIA_STORAGE_DIR`. Keys are ids only and
+  validated against traversal. S3 or MinIO is a second implementation behind the same interface.
+  Below `MEDIA_MIN_FREE_DISK_MB`, nothing new is written — the disk is Postgres's too.
+- **Files are served only by `/p/<slug>/api/whatsapp/media/<id>`:**
+  - session → project access → `messages.view` + WHATSAPP_CHAT → the row through the scoped client
+    (another project's id is a 404);
+  - Range and ETag support;
+  - only image/video/audio/PDF inline, everything else an attachment with `nosniff` and a sandbox
+    CSP.
+
+  The spec's `whatsapp_group_chat.*` keys do not exist; the chat's own `messages.view` /
+  `messages.reply` are what gate it.
+- **Switches affect future media only, and retention is separate from them.**
+  - Cleanup is a `MediaCleanupJob` the worker runs in keyset batches: file first, then the row is
+    marked `DELETED`.
+  - A file that fails to delete stays `STORED`.
+  - `Message` rows are never touched.
+  - A retention job snapshots `retentionDays` and stops if the setting changes; the web action
+    cancels it immediately as well.
+- A database backup does not include media; the volume needs its own backup.
 
 ### Groups Admin Maker (`apps/worker/src/queue/groupAdminPromotionProcessor.ts`, `(dashboard)/group-admin-maker/`)
 

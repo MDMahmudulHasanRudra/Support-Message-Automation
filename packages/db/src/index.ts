@@ -127,11 +127,11 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   // settings singletons
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
-  "TeamManagementSettings", "CommunicationStyleProfile",
+  "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings",
   // descendants
   "Message", "OutboundMessage", "WhatsAppGroup", "AutomationExecution", "Notification", "WorkerCommand",
   "ProcessingCheckpoint", "MessageDropCounter", "GroupBroadcastJob", "GroupParticipantAddJob",
-  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
+  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
   "SupportEscalationEvent", "ConversationSession", "SupportActivity", "SupportSession", "TeamAttendanceDay",
   "TeamAttendanceGroup",
 ]);
@@ -139,7 +139,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
-  "TeamManagementSettings", "CommunicationStyleProfile",
+  "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings",
 ]);
 
 /** `SystemLog.projectId` is optional: a project's operational events carry one, platform events do not. */
@@ -1287,6 +1287,8 @@ export async function createProjectWithDefaults(input: CreateProjectInput, db: P
     await tx.forgeSettings.create({ data: own });
     await tx.teamManagementSettings.create({ data: own });
     await tx.communicationStyleProfile.create({ data: own });
+    // Every media type stored, kept indefinitely (MEDIA_STORAGE.md).
+    await tx.mediaStorageSettings.create({ data: own });
 
     await tx.projectFeature.createMany({
       data: PROJECT_FEATURES.map((feature) => ({ projectId: project.id, key: feature.key, enabled: feature.defaultEnabled })),

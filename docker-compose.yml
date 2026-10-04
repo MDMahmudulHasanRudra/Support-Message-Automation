@@ -77,6 +77,11 @@ services:
       # integration is simply absent, which is the documented default (see FORGE_SETUP.md).
       FORGE_API_KEY: ${FORGE_API_KEY}
       FORGE_API_URL: ${FORGE_API_URL}
+      # WhatsApp media files (MEDIA_STORAGE.md). The dashboard only READS them — through an
+      # authorised endpoint, never a public URL — from the same volume the worker writes to.
+      MEDIA_STORAGE_DIR: ${MEDIA_STORAGE_DIR:-/app/media}
+    volumes:
+      - whatsapp_media:/app/media
     ports:
       - "${WEB_PORT:-8668}:3000"
     healthcheck:
@@ -138,11 +143,18 @@ services:
       # dashboard. Never overwrites a provider an admin already configured.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      # WhatsApp media files (MEDIA_STORAGE.md): downloaded here in the background, kept on the
+      # whatsapp_media volume shared with the dashboard. Below MEDIA_MIN_FREE_DISK_MB of free space
+      # nothing new is written — this disk is shared with Postgres, and a full disk stops it too.
+      MEDIA_STORAGE_DIR: ${MEDIA_STORAGE_DIR:-/app/media}
+      MEDIA_MIN_FREE_DISK_MB: ${MEDIA_MIN_FREE_DISK_MB:-2048}
+      MEDIA_DOWNLOAD_CONCURRENCY: ${MEDIA_DOWNLOAD_CONCURRENCY:-2}
     # No `ports:` here on purpose: the worker's health endpoint binds to
     # 127.0.0.1 inside the container only, for its own HEALTHCHECK to use.
     # The dashboard never talks to the worker over HTTP (see ARCHITECTURE.md).
     volumes:
       - whatsapp_session:/app/sessions
+      - whatsapp_media:/app/media
     shm_size: "1gb"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:4100/health"]
@@ -158,6 +170,9 @@ volumes:
     name: support_automation_pg_data
   whatsapp_session:
     name: support_automation_whatsapp_session
+  # WhatsApp media files. NOT covered by a database backup — back this volume up separately.
+  whatsapp_media:
+    name: support_automation_media
 
 networks:
   automation_net:

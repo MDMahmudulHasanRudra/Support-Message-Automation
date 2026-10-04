@@ -11,7 +11,7 @@ import type {
   SendResult,
   WhatsAppProvider,
 } from "../provider/WhatsAppProvider.js";
-import type { RawIncomingMessage } from "../pipeline/types.js";
+import type { MediaDownloadInfo, RawIncomingMessage } from "../pipeline/types.js";
 
 /**
  * A mocked WhatsAppProvider for integration tests — the outbound queue
@@ -153,6 +153,12 @@ export class MockProvider implements WhatsAppProvider {
       if (!admins.includes(participantId)) this.adminIdsByChatId.set(chatId, [...admins, participantId]);
     }
     return result;
+  }
+
+  /** Fresh fetch details per WhatsApp message id; anything not listed reads as unknown (null). */
+  public mediaDownloadInfo = new Map<string, MediaDownloadInfo>();
+  async getMediaDownloadInfo(whatsappMessageId: string): Promise<MediaDownloadInfo | null> {
+    return this.mediaDownloadInfo.get(whatsappMessageId) ?? null;
   }
 
   /** Per-number answers; anything not listed comes back as existing on WhatsApp. */

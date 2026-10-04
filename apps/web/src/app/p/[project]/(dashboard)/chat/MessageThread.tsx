@@ -1,6 +1,8 @@
 import { AlertTriangle, Bot, Check, Clock, ListChecks, UserRound } from "lucide-react";
+import { isMediaPlaceholderBody, mediaCaption } from "@support-automation/shared";
 import type { ThreadEntry } from "@/server/chatInbox";
 import { formatDateTime, formatTime } from "@/lib/date";
+import { MediaNotArchived, MessageAttachment } from "./MessageAttachment";
 
 const dayFormat = new Intl.DateTimeFormat("en-US", {
   timeZone: "Asia/Dhaka",
@@ -114,6 +116,12 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
         const isOutbound = entry.kind === "OUTGOING" || entry.kind === "QUEUED";
         const isSystem = entry.kind === "SYSTEM";
         const queued = entry.kind === "QUEUED" ? QUEUED_LABEL[entry.outboundStatus ?? ""] : undefined;
+        // A file is drawn as itself; the provider's "[Image]" label beside it would say nothing, so
+        // only a caption the person typed stays as text. A message that carried a file before media
+        // storage existed has no attachment row, and says so instead of showing a bare label.
+        const notArchived = !entry.media && entry.kind !== "QUEUED" && isMediaPlaceholderBody(entry.body);
+        const hasFile = Boolean(entry.media) || notArchived;
+        const text = hasFile ? mediaCaption(entry.body, entry.media?.type ?? null) : entry.body;
 
         return (
           <div key={entry.id} className={startsRun && !showDivider ? "mt-2.5" : undefined}>
@@ -141,7 +149,7 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
                       side said this", carried by geometry rather than another label. Mid-run
                       bubbles keep both inner corners tight so a run reads as one block. */}
                   <div
-                    className={`px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] transition-shadow duration-[var(--duration-fast)] ease-[var(--ease-out)] group-hover/bubble:shadow-[var(--shadow-sm)] ${
+                    className={`${hasFile ? "p-1.5" : "px-3.5 py-2"} text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] transition-shadow duration-[var(--duration-fast)] ease-[var(--ease-out)] group-hover/bubble:shadow-[var(--shadow-sm)] ${
                       isOutbound
                         ? `rounded-l-[var(--radius-lg)] rounded-br-[var(--radius-xs)] ${startsRun ? "rounded-tr-[var(--radius-lg)]" : "rounded-tr-[var(--radius-xs)]"}`
                         : `rounded-r-[var(--radius-lg)] ${startsRun ? "rounded-tl-[var(--radius-lg)]" : "rounded-tl-[var(--radius-xs)]"} rounded-bl-[var(--radius-xs)]`
@@ -153,7 +161,9 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
                           : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-foreground)]"
                     }`}
                   >
-                    {entry.body}
+                    {entry.media ? <MessageAttachment media={entry.media} /> : null}
+                    {notArchived ? <MediaNotArchived body={entry.body} /> : null}
+                    {text ? <div className={hasFile ? "px-2 pt-1.5 pb-0.5" : undefined}>{text}</div> : null}
                   </div>
 
                   <span

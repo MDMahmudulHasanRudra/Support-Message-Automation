@@ -24,3 +24,4 @@ export * from "./projects.js";
 export * from "./projectFeatures.js";
 export * from "./rawSqlGuard.js";
 export * from "./projectAccessLevels.js";
+export * from "./messageMedia.js";

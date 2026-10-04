@@ -401,6 +401,30 @@ export interface ThreadEntry {
    * an unlabelled reply reads as a colleague's and gets contradicted.
    */
   authoredBy?: ThreadAuthor;
+  /**
+   * The file this message carried, as metadata only (MEDIA_STORAGE.md). The bytes are never part
+   * of the thread: the browser asks the media endpoint for each one when it is about to show it.
+   * Absent for a message recorded without an attachment row — text, or media that arrived before
+   * media storage existed.
+   */
+  media?: ThreadMedia;
+}
+
+export interface ThreadMedia {
+  id: string;
+  type: "IMAGE" | "VIDEO" | "AUDIO" | "DOCUMENT" | "STICKER" | "GIF" | "OTHER";
+  waType: string;
+  status: "PENDING" | "DOWNLOADING" | "STORED" | "NOT_STORED" | "FAILED" | "DELETED";
+  statusReason: string | null;
+  mimeType: string | null;
+  fileName: string | null;
+  /** The stored size, or the size WhatsApp announced while it is not stored yet. */
+  sizeBytes: number | null;
+  width: number | null;
+  height: number | null;
+  durationSeconds: number | null;
+  hasThumbnail: boolean;
+  deletedAt: Date | null;
 }
 
 export interface ChatThread {
@@ -504,6 +528,25 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
         timestampWa: true,
         isFromTeamMember: true,
         whatsappMessageId: true,
+        // Metadata only; one indexed lookup by the unique messageId for the whole window.
+        media: {
+          select: {
+            id: true,
+            mediaType: true,
+            waType: true,
+            status: true,
+            statusReason: true,
+            mimeType: true,
+            fileName: true,
+            sizeBytes: true,
+            declaredSizeBytes: true,
+            width: true,
+            height: true,
+            durationSeconds: true,
+            thumbnailKey: true,
+            deletedAt: true,
+          },
+        },
       },
     }),
     prisma.outboundMessage.findMany({
@@ -557,6 +600,23 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
     senderPhone: m.senderPhone,
     isTeamMember: m.isFromTeamMember,
     authoredBy: m.direction === "OUTGOING" ? authorByProviderId.get(m.whatsappMessageId) : undefined,
+    media: m.media
+      ? {
+          id: m.media.id,
+          type: m.media.mediaType,
+          waType: m.media.waType,
+          status: m.media.status,
+          statusReason: m.media.statusReason,
+          mimeType: m.media.mimeType,
+          fileName: m.media.fileName,
+          sizeBytes: m.media.sizeBytes !== null ? Number(m.media.sizeBytes) : m.media.declaredSizeBytes !== null ? Number(m.media.declaredSizeBytes) : null,
+          width: m.media.width,
+          height: m.media.height,
+          durationSeconds: m.media.durationSeconds,
+          hasThumbnail: m.media.thumbnailKey !== null,
+          deletedAt: m.media.deletedAt,
+        }
+      : undefined,
   }));
 
   for (const row of outbound) {

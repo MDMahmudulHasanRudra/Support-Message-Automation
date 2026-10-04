@@ -18,6 +18,7 @@
     "@support-automation/db": "workspace:*",
     "@support-automation/engine": "workspace:*",
     "@support-automation/forge-client": "workspace:*",
+    "@support-automation/media-storage": "workspace:*",
     "@support-automation/shared": "workspace:*",
     "qrcode": "^1.5.4"
   },

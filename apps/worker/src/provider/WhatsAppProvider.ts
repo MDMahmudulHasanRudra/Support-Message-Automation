@@ -1,4 +1,4 @@
-import type { RawIncomingMessage } from "../pipeline/types.js";
+import type { MediaDownloadInfo, RawIncomingMessage } from "../pipeline/types.js";
 
 export type ConnectionStatus =
   | "CONNECTED"
@@ -226,6 +226,12 @@ export interface WhatsAppProvider {
    * error text comes back in `error`.
    */
   promoteGroupParticipant(chatId: string, participantId: string): Promise<SendResult>;
+  /**
+   * What it takes to fetch one stored message's attachment — read fresh from the live session.
+   * The media worker asks only when the message itself arrived without these details (a message
+   * recovered from history can). Null (never throws) when the session cannot say.
+   */
+  getMediaDownloadInfo(whatsappMessageId: string): Promise<MediaDownloadInfo | null>;
   /**
    * Whether a number has a WhatsApp account. A network call per number, so the check phase asks
    * once per distinct number rather than once per (number, group) pair.

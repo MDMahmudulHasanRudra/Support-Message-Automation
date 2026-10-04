@@ -22,6 +22,7 @@ import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
 import { recordTeamAttendance } from "../teamManagement/attendance.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { countDroppedMessage } from "./dropCounter.js";
+import { registerMessageMedia } from "../media/registerMessageMedia.js";
 import { currentProjectId, projectIsOperating, withAccountProject } from "../project/context.js";
 
 interface ActionExecutionRecord {
@@ -548,6 +549,12 @@ async function persistIncomingMessage(
     traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: false, result: "unique — proceeding" });
   }
 
+  // The attachment is recorded and queued, never fetched here: the media worker downloads it in the
+  // background, so a large file cannot hold this message up. Never throws (MEDIA_STORAGE.md).
+  if (raw.media) {
+    await registerMessageMedia({ messageId: message.id, accountId: raw.accountId, groupId: group?.id ?? null, media: raw.media });
+  }
+
   return { message, group, isFromTeamMember, quotedMessage, previous };
 }
 
@@ -789,7 +796,7 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
   const group = await resolveGroup(raw);
   let stored = true;
   try {
-    await prisma.message.create({
+    const message = await prisma.message.create({
       data: {
         accountId: raw.accountId,
         groupId: group?.id ?? null,
@@ -805,6 +812,10 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
         processingStatus: "PROCESSED",
       },
     });
+    // A photo an executive sent from the business phone is part of the conversation too.
+    if (raw.media) {
+      await registerMessageMedia({ messageId: message.id, accountId: raw.accountId, groupId: group?.id ?? null, media: raw.media });
+    }
   } catch (err: any) {
     if (err?.code !== "P2002") throw err;
     // Already stored — this is a replayed echo, so the side effect below has already run.

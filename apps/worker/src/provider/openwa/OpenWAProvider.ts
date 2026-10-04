@@ -15,7 +15,8 @@ import {
   type Message as WaMessage,
   type MessageId,
 } from "@open-wa/wa-automate";
-import type { RawIncomingMessage } from "../../pipeline/types.js";
+import type { MediaDownloadInfo, RawIncomingMessage, RawMediaDescriptor } from "../../pipeline/types.js";
+import { classifyWhatsAppMedia } from "@support-automation/shared";
 import type {
   AccountInfo,
   CollectionProbe,
@@ -189,6 +190,75 @@ function stripJidDomain(jid: string | null | undefined): string {
   return String(jid ?? "").split("@")[0] ?? "";
 }
 
+/**
+ * WhatsApp's attachment fields. The library serializes every raw message attribute but declares
+ * only some of them — `mediaKey`, `size`, `directPath` and the dimensions are present at runtime
+ * (they are exactly what OpenWA's own `@open-wa/wa-decrypt` reads) without being in its types.
+ */
+interface WaMediaFields {
+  type?: string;
+  mimetype?: string;
+  filename?: string;
+  body?: string;
+  mediaKey?: string;
+  filehash?: string;
+  encFilehash?: string;
+  size?: number | string;
+  deprecatedMms3Url?: string;
+  clientUrl?: string;
+  directPath?: string;
+  width?: number | string;
+  height?: number | string;
+  duration?: number | string;
+  isGif?: boolean;
+  isAnimated?: boolean;
+}
+
+function positiveInt(value: unknown): number | null {
+  const n = typeof value === "string" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
+
+/** What it takes to fetch and decrypt the file later. Null without a media key: nothing could decrypt it. */
+function toMediaDownloadInfo(fields: WaMediaFields): MediaDownloadInfo | null {
+  if (!fields.mediaKey) return null;
+  // For a media message `body` is WhatsApp's own small JPEG preview (see resolveMessageBody). It is
+  // kept only when it really is one; the worker checks the bytes again before storing anything.
+  const preview = typeof fields.body === "string" && fields.body.startsWith("/9j/") && fields.body.length < 400_000 ? fields.body : null;
+  return {
+    mediaKey: fields.mediaKey,
+    filehash: fields.filehash ?? null,
+    encFilehash: fields.encFilehash ?? null,
+    url: fields.deprecatedMms3Url || fields.clientUrl || null,
+    directPath: fields.directPath ?? null,
+    thumbnailJpegBase64: preview,
+  };
+}
+
+/**
+ * The attachment's description, recorded alongside the message (MEDIA_STORAGE.md). Metadata only —
+ * nothing is downloaded here, on the listener's path. Null for text, locations and contact cards.
+ */
+function toMediaDescriptor(message: WaMessage): RawMediaDescriptor | null {
+  const fields = message as unknown as WaMediaFields;
+  if (!message.isMedia && !fields.mimetype) return null;
+  const waType = String(fields.type ?? "");
+  const mediaType = classifyWhatsAppMedia({ waType, mimeType: fields.mimetype, isGif: fields.isGif });
+  if (!mediaType) return null;
+  return {
+    waType,
+    mediaType,
+    mimeType: fields.mimetype ?? null,
+    fileName: fields.filename?.trim() || null,
+    declaredSizeBytes: positiveInt(fields.size),
+    width: positiveInt(fields.width),
+    height: positiveInt(fields.height),
+    durationSeconds: positiveInt(fields.duration),
+    isAnimated: Boolean(fields.isAnimated),
+    download: toMediaDownloadInfo(fields),
+  };
+}
+
 function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomingMessage {
   return {
     accountId,
@@ -213,6 +283,7 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
     // this as WhatsApp's key object, not the string the live listener gets — see messageId.ts.
     quotedWhatsappMessageId: message.isQuotedMsgAvailable ? serializeMessageId(message.quotedMsg?.id) : null,
     mentionedPhones: (message.mentionedJidList ?? []).map((jid) => String(jid).split("@")[0] ?? "").filter(Boolean),
+    media: toMediaDescriptor(message),
   };
 }
 
@@ -1720,6 +1791,18 @@ export class OpenWAProvider implements WhatsAppProvider {
       return { success: false, error: typeof result === "string" ? result : "WhatsApp did not confirm the promotion." };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** `getMessageById` — public. Reads the message from the session's own store, for its media fields. */
+  async getMediaDownloadInfo(whatsappMessageId: string): Promise<MediaDownloadInfo | null> {
+    if (!this.client) return null;
+    try {
+      const message: unknown = await this.client.getMessageById(whatsappMessageId as MessageId);
+      return message && typeof message === "object" ? toMediaDownloadInfo(message as WaMediaFields) : null;
+    } catch (err) {
+      console.error(`[provider] could not read media details for ${whatsappMessageId}`, err);
+      return null;
     }
   }
 

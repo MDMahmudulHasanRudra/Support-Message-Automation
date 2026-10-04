@@ -39,6 +39,7 @@ import {
   PackageSearch,
   Power,
   Route,
+  HardDrive,
   Send,
   Settings as SettingsIcon,
   ShieldAlert,
@@ -134,8 +135,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     label: "WhatsApp",
-    description: "Which number sends each kind of notification.",
-    links: [{ href: "/accounts/routing", label: "Account Routing", icon: Route }],
+    description: "Which number sends each kind of notification, and what media is kept.",
+    links: [
+      { href: "/accounts/routing", label: "Account Routing", icon: Route },
+      { href: "/settings/media-storage", label: "Message & Media Storage", icon: HardDrive },
+    ],
   },
   {
     label: "Bulk Messaging",

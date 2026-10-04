@@ -9,6 +9,9 @@ import { startOutboundQueueProcessor } from "./queue/outboundQueueProcessor.js";
 import { startGroupParticipantAddProcessor } from "./queue/groupParticipantAddProcessor.js";
 import { startGroupParticipantCheckProcessor } from "./queue/groupParticipantCheckProcessor.js";
 import { startGroupAdminPromotionProcessor } from "./queue/groupAdminPromotionProcessor.js";
+import { createMediaStorageFromEnv } from "@support-automation/media-storage";
+import { startMediaDownloadProcessor } from "./media/mediaDownloadProcessor.js";
+import { startMediaCleanupProcessor } from "./media/mediaCleanupProcessor.js";
 import { startNotificationDispatcher } from "./notifications/dispatcher.js";
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
@@ -71,12 +74,20 @@ async function main() {
       recovered.notifications +
       recovered.participantAdds +
       recovered.participantChecks +
+      recovered.mediaDownloads +
       recovered.commands >
     0
   ) {
     console.log(
-      `[worker] crash recovery: requeued ${recovered.outbound} outbound message(s), ${recovered.notifications} notification(s), ${recovered.participantAdds} group-participant-add item(s), ${recovered.participantChecks} membership check(s); failed ${recovered.commands} interrupted worker command(s)`,
+      `[worker] crash recovery: requeued ${recovered.outbound} outbound message(s), ${recovered.notifications} notification(s), ${recovered.participantAdds} group-participant-add item(s), ${recovered.participantChecks} membership check(s), ${recovered.mediaDownloads} media download(s); failed ${recovered.commands} interrupted worker command(s)`,
     );
+  }
+
+  // Media storage (MEDIA_STORAGE.md): the same directory the dashboard reads from. Unset, media is
+  // still recorded per message and its downloads wait, each saying why — never silently dropped.
+  const mediaStorage = createMediaStorageFromEnv();
+  if (!mediaStorage) {
+    console.warn("[worker] MEDIA_STORAGE_DIR is not set: attachments are recorded but their files are not downloaded.");
   }
 
   // Nothing clears connection status on the way down, so every account is still reporting whatever
@@ -130,6 +141,9 @@ async function main() {
     // Reads rosters so an operator can see who is genuinely missing before a single add is spent.
     startGroupParticipantCheckProcessor(registry),
     startGroupAdminPromotionProcessor(registry),
+    // Media files are fetched here, never on the message path, and removed here by retention.
+    startMediaDownloadProcessor({ storage: mediaStorage, providers: registry }),
+    startMediaCleanupProcessor(mediaStorage),
     startEscalationProcessor(),
     // Conversation Learning Phase 1 — always registered, but processOneSegmentationBatch()
     // itself no-ops on every tick until LearningSettings.conversationLearningEnabled is turned

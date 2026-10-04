@@ -1,8 +1,19 @@
-# Media Foundation — frozen scope
+# Media Foundation — frozen scope (SUPERSEDED)
 
-**Status: scope agreed, nothing implemented.** No code, no schema, no migration exists for any of
-this. This document exists so the first implementation pass has a decided boundary rather than an
-open-ended one.
+**Superseded by `MEDIA_STORAGE.md` (5 Oct 2026), which is what was built.** That build followed a
+later, explicit specification, so it differs from this draft in these ways:
+
+- **Types:** every type has its own switch, all on by default (including video). Stickers, GIFs and
+  other files are stored.
+- **Retention:** indefinite by default.
+- **Outbound media and forwarding:** not part of it.
+
+This document is kept for its reasoning — the disk arithmetic below is why the size limits and the
+low-disk guard exist.
+
+**Original status:** scope agreed, nothing implemented. No code, no schema and no migration existed
+for any of this. The document was written so the first implementation pass would have a decided
+boundary rather than an open-ended one.
 
 **Sequencing: Phase B first.** The Support Activity / Team Management audit is currently verifying
 the baseline integrity of those two modules. Introducing media at the same time changes that

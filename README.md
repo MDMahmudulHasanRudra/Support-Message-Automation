@@ -13,6 +13,18 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **WhatsApp Message & Media Storage.** The text of every message is always stored. Attachments are
+  stored too: images, video, voice notes and audio, documents of any file type, stickers, GIFs and
+  other files.
+  - **How:** each file is downloaded in the background (never on the message path), verified
+    against WhatsApp's own checksum, and kept on a media volume rather than in the database.
+  - **In the chat:** files show inline in WhatsApp Chat through an authorised endpoint.
+  - **Settings:** each type has its own switch, and all are on by default. Retention is indefinite
+    by default; a background, batched cleanup is available with a preview and a typed
+    confirmation.
+  - **Backups:** the media volume must be backed up separately from the database.
+
+  See `MEDIA_STORAGE.md`.
 - **WhatsApp Groups Admin Maker.** Pick a connected account and a number, and a background job
   makes that person an admin in every group where the account is an admin. It never adds anyone:
   - groups where they are not a member are reported, not joined;

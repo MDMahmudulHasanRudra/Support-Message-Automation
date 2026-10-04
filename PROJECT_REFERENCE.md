@@ -115,6 +115,16 @@ Sidebar group: **Support** → Messages (tabs: All messages / Needs attention / 
   as dashed "queued" bubbles; a `SENT` row whose provider message id already exists as a stored
   message is skipped as a duplicate, because WhatsApp echoes our own sends back to us. Polls every
   4s — there is no websocket.
+  **Attachments (MEDIA_STORAGE.md):**
+  - **Shown in the bubble:** images and stickers load lazily and open full size on click; video and
+    audio players load nothing until played; documents and any other file appear as a card with
+    the name, type and size, plus Open (only for types the browser can show) and Download.
+  - **Where files come from:** every file comes through the authorised `/api/whatsapp/media/<id>`
+    endpoint (`messages.view`), never a public URL.
+  - **When there is no file to show:** the bubble says why — being stored, not stored (that type
+    was switched off, or the file was over the limit), unavailable (WhatsApp no longer has it), or
+    removed by retention on a date.
+  - **Older messages:** a message from before media storage existed says the file was not archived.
 - **All Messages** (`/messages`) — every processed message, filterable by Account, Group (name
   contains), Sender (phone/name contains), From/To date, Decision (`IGNORE`, `AUTO_REPLY`,
   `SUPPORT_REQUIRED`, `STOPPED`, `ACTIONED`, `NO_MATCH`), matched Rule, Auto-Reply status
@@ -573,6 +583,30 @@ Pattern Alerts**. Each row: an Account dropdown (Primary/default, or a specific 
 "If unavailable" fallback policy (Fall back to Primary / Show error, don't send), and a live
 "Currently sends via {account}" resolution line with its source (Configured / Primary Default /
 Primary Fallback) or an error if nothing can resolve.
+
+### Message & Media Storage — `/settings/media-storage` (Settings → WhatsApp)
+
+Message text is always stored and shown as "Always stored", with no switch. Gated by
+`settings.view` (to see) and `settings.edit` (to change). Full design: `MEDIA_STORAGE.md`.
+
+- **Storage used:** total stored size and file count; how many files are being stored and how many
+  could not be stored; free space on the media disk; and a per-type table. Every figure is the size
+  recorded when each file was written, never an estimate.
+- **What is stored:** one switch per type — Images, Videos, Audio & voice messages, Documents (any
+  file type), Stickers, GIFs, Other files. All are on by default. A switch affects only media that
+  arrives from now on: turning one off deletes nothing, and turning one on recovers nothing.
+- **Media retention:** keep everything (the default), 3, 6 or 12 months, or a custom number of days
+  (7–3650).
+  - Removal happens in the background, in batches. Message text is never removed.
+  - Changing the setting stops any retention cleanup in flight.
+- **Storage cleanup:**
+  - **Preview first:** "Delete media older than…" shows the real file count and size.
+  - **Confirm:** type `DELETE`.
+  - **Then:** the worker removes the files in batches, with progress shown as processed, removed
+    and freed. Stop cleanup cancels it before the next batch.
+  - **History:** past cleanups are listed with their results and any errors.
+- **Backups:** the page states that database backups do not include media files; the media volume
+  must be backed up separately.
 
 ### Groups — `/groups`
 
@@ -1092,6 +1126,8 @@ once.
 |---|---|---|
 | Outbound queue processor | 2s | Drains the outbound send queue, one message per tick |
 | Group participant-add processor | 2s | Drains the "Add to Groups" queue |
+| Media download | 2s | Fetches WhatsApp attachments recorded by the pipeline into media storage, two at a time, off the message path |
+| Media cleanup | 5s | Runs media retention and manual cleanups one batch at a time; checks every 10 min whether a retention cleanup is due |
 | Command processor | 1.5s | Polls `WorkerCommand` (dashboard-issued actions), strictly serial |
 | Notification dispatcher | 3s | Sends queued Teams/WhatsApp notifications |
 | Account registry sync | 20s | Discovers new accounts, connects them one at a time |
