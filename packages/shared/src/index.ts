@@ -29,3 +29,7 @@ export * from "./supportResponse.js";
 export * from "./executiveHealth.js";
 export * from "./whatsappOperations.js";
 export * from "./dataHealth.js";
+export * from "./intelligence/textSignals.js";
+export * from "./intelligence/model.js";
+export * from "./intelligence/customerSignals.js";
+export * from "./intelligence/effectiveness.js";
