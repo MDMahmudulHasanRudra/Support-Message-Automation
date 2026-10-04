@@ -88,6 +88,11 @@ export function reportWorkbook(report: BuiltReport, ctx: ReportContext): Buffer 
     ["WhatsApp account", filters.accountId ? (ctx.options.accounts.find((a) => a.id === filters.accountId)?.label ?? filters.accountId) : "All accounts"],
     ...(report.usesGranularity ? [["Breakdown", filters.granularity] as Cell[]] : []),
     ...report.selects.map((s) => [s.label, s.options.find((o) => o.value === s.value)?.label ?? s.value] as Cell[]),
+    // How far the figures can be trusted — the same reading the page shows above them.
+    ["Data health", ctx.dataHealth.label],
+    ["Data health detail", ctx.dataHealth.headline],
+    ["Verified from (Asia/Dhaka)", ctx.dataHealth.verifiedFrom ? iso(ctx.dataHealth.verifiedFrom) : "Not set"],
+    ...ctx.dataHealth.warnings.map((w) => ["Data caveat", w] as Cell[]),
     ["", ""],
     ...report.tiles.map((t) => [t.label, t.hint ? `${t.value} (${t.hint})` : t.value] as Cell[]),
     ["", ""],

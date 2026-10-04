@@ -1,4 +1,5 @@
 import { platformPrisma } from "./db.js";
+import { openCollectionGapForAccount } from "./health/collectionGaps.js";
 import { recoverStuckOutboundMessages } from "./queue/outboundQueueProcessor.js";
 import { recoverStuckParticipantAddItems } from "./queue/groupParticipantAddProcessor.js";
 import { recoverStuckParticipantChecks } from "./queue/groupParticipantCheckProcessor.js";
@@ -122,6 +123,18 @@ export function startStuckWorkRecoveryProcessor(intervalMs = RECOVERY_INTERVAL_M
 export async function reconcileAccountStatusesOnBoot(): Promise<number> {
   // Install-wide on purpose: this process holds every project's sessions, and none of them
   // survived its restart. Only live-session columns are touched.
+  // Every account that claimed a live session lost it when the previous process died. Collection
+  // stopped at its last heartbeat (stamped every 15 seconds), not at this boot — that is the gap's
+  // honest start. Recorded before the reset; the connect that follows closes it, and the catch-up
+  // sweep records what it recovered.
+  const wasLive = await platformPrisma.whatsAppAccount.findMany({
+    where: { status: { in: ["CONNECTED", "RECONNECTING"] }, lastConnectedAt: { not: null } },
+    select: { id: true, projectId: true, lastHeartbeatAt: true },
+  });
+  for (const account of wasLive) {
+    await openCollectionGapForAccount(account, "WORKER_RESTART", account.lastHeartbeatAt ?? new Date());
+  }
+
   const stale = await platformPrisma.whatsAppAccount.updateMany({
     // OUTBOUND_PAUSED and RATE_LIMITED used to be listed here too. They are gone from the enum
     // entirely: nothing ever wrote them, and they described a per-account throttling mechanism

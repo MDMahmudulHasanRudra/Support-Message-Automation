@@ -3,6 +3,7 @@
 **Date:** 4 Oct 2026
 **Branch:** `rudra`
 **Stage:** 0 (audit). It precedes every implementation stage.
+**Progress:** stage 1 (reporting data health) is built. See REPORTS.md §8.
 
 This audit covers the Support Intelligence request: three layers of reporting.
 - **Level 1** — what happened. These are the existing reports, which stay unchanged.

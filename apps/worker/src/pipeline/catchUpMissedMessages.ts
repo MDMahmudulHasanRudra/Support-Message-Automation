@@ -4,6 +4,7 @@ import { prisma } from "../db.js";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { processIncomingMessage, storeMissedMessage } from "./processIncomingMessage.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { recordGapRecovery } from "../health/collectionGaps.js";
 
 /**
  * Fills the gap in collected messages left by any period this worker was not listening.
@@ -117,14 +118,32 @@ async function catchUpMissedMessagesInProject(accountId: string, provider: Whats
     // No checkpoint means this account has never processed a message — a brand-new number, with no
     // gap to speak of and no history that belongs to us. Reading its whole backlog on first connect
     // would import conversations from before it was ever part of this system.
-    if (!checkpoint?.lastProcessedTimestampWa) return nothingToDo();
+    if (!checkpoint?.lastProcessedTimestampWa) {
+      await recordGapRecovery(accountId, {
+        status: "NOT_ATTEMPTED",
+        from: null,
+        count: 0,
+        note: "No message had been processed on this account yet, so there was no position to recover from.",
+      });
+      return nothingToDo();
+    }
 
     const now = Date.now();
     const window = resolveSweepWindow(checkpoint.lastProcessedTimestampWa, now);
-    if (!window) return nothingToDo();
+    if (!window) {
+      // The last processed message is under a minute old: nothing can have been missed.
+      await recordGapRecovery(accountId, { status: "RECOVERED", from: checkpoint.lastProcessedTimestampWa, count: 0, note: null });
+      return nothingToDo();
+    }
     const { since, gapMs } = window;
+    // The look-back cut the window short: everything between the checkpoint and `since` is beyond reach.
+    const lookbackCut = since.getTime() > checkpoint.lastProcessedTimestampWa.getTime();
 
-    const missed = await provider.fetchMessagesSince(since, MAX_MESSAGES);
+    // probeCollection rather than fetchMessagesSince — the same read (fetchMessagesSince is a thin
+    // wrapper over it), but it says when the read itself failed, which the gap record needs to tell
+    // "nothing was missed" from "nothing could be read". The sweep behaves exactly as before.
+    const probe = await provider.probeCollection(since, MAX_MESSAGES);
+    const missed = probe.ok ? probe.messages : [];
     const result: CatchUpResult = {
       gapSeconds: Math.round(gapMs / 1000),
       offered: missed.length,
@@ -132,7 +151,23 @@ async function catchUpMissedMessagesInProject(accountId: string, provider: Whats
       stored: 0,
       duplicates: 0,
     };
-    if (missed.length === 0) return result;
+    const recordRecovery = () =>
+      recordGapRecovery(accountId, {
+        status: !probe.ok ? "FAILED" : lookbackCut || missed.length >= MAX_MESSAGES ? "PARTIAL" : "RECOVERED",
+        from: since,
+        count: result.automated + result.stored,
+        note: !probe.ok
+          ? `The session could not be read: ${probe.reason}`
+          : lookbackCut
+            ? `Only the last ${Math.round(MAX_LOOKBACK_MS / 3_600_000)} hours could be read back; anything older in this gap was not recovered.`
+            : missed.length >= MAX_MESSAGES
+              ? `The sweep stopped at its limit of ${MAX_MESSAGES} messages.`
+              : null,
+      });
+    if (missed.length === 0) {
+      await recordRecovery();
+      return result;
+    }
 
     let newest: Date | null = null;
 
@@ -171,6 +206,7 @@ async function catchUpMissedMessagesInProject(accountId: string, provider: Whats
       });
     }
 
+    await recordRecovery();
     console.log(`[catch-up] account ${accountId}: ${JSON.stringify(result)}`);
     // Worth a dashboard-visible record: this is the evidence that a gap existed and what was done
     // about it, which is otherwise invisible. Only when something was actually recovered — a sweep
@@ -185,6 +221,7 @@ async function catchUpMissedMessagesInProject(accountId: string, provider: Whats
     return result;
   } catch (err) {
     console.error(`[catch-up] sweep failed for account ${accountId} — connection is unaffected`, err);
+    await recordGapRecovery(accountId, { status: "FAILED", from: null, count: 0, note: `The sweep failed: ${(err as Error).message}` });
     await logSystemEvent("ERROR", "pipeline", "Could not recover messages missed while disconnected", {
       accountId,
       error: (err as Error).message,

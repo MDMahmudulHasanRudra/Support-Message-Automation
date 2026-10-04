@@ -4,6 +4,7 @@ import { withAccountProject } from "../project/context.js";
 import type { ConnectionStatus } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
+import { closeCollectionGap, openCollectionGap } from "./collectionGaps.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { trackTick } from "../lifecycle.js";
 import { raiseCollectionAlert } from "./collectionAlert.js";
@@ -215,6 +216,13 @@ export async function checkCollectionHealth(registry: ProviderRegistry): Promise
   return findings;
 }
 
+/**
+ * Where a gap the watchdog finds began: the newest message stored before the silence — the last
+ * moment collection is known to have worked. "Now" for an account that never stored anything.
+ * Only used when no gap is already open (the session leaving CONNECTED usually opened one first).
+ */
+const gapStart = (newest: { timestampWa: Date } | null) => newest?.timestampWa ?? new Date();
+
 async function checkOneAccount(
   registry: ProviderRegistry,
   account: { id: string; label: string },
@@ -246,6 +254,7 @@ async function checkOneAccount(
       return null;
     }
     enterProblem(account.id, "NEEDS_HUMAN");
+    await openCollectionGap(account.id, "NEEDS_HUMAN", gapStart(newest));
     return report(registry, {
       ...base,
       problem: "NEEDS_HUMAN",
@@ -259,6 +268,7 @@ async function checkOneAccount(
   if (status === "RECONNECTING") {
     const stuckFor = enterProblem(account.id, "STUCK_RECONNECTING");
     if (stuckFor < reconnectingGraceMs()) return null;
+    await openCollectionGap(account.id, "STUCK_RECONNECTING", gapStart(newest));
     return report(registry, {
       ...base,
       problem: "STUCK_RECONNECTING",
@@ -271,6 +281,7 @@ async function checkOneAccount(
     // it has plainly not worked.
     const downFor = enterProblem(account.id, "DOWN");
     if (downFor < disconnectedGraceMs()) return null;
+    await openCollectionGap(account.id, "DISCONNECTED", gapStart(newest));
     return report(registry, {
       ...base,
       problem: "DOWN",
@@ -296,6 +307,7 @@ async function checkOneAccount(
     // A message arrived recently, which is the strongest possible evidence that collection works.
     clearProblem(account.id);
     resetStrikes(account.id);
+    await closeCollectionGap(account.id, new Date());
     return null;
   }
 
@@ -313,6 +325,7 @@ async function checkOneAccount(
       return null;
     }
     enterProblem(account.id, "UNREADABLE");
+    await openCollectionGap(account.id, "UNREADABLE", gapStart(newest));
     return report(registry, {
       ...base,
       problem: "UNREADABLE",
@@ -329,12 +342,14 @@ async function checkOneAccount(
     // later. It can be trusted now in a way it could not before: the probe was able to fail, and
     // did not.
     clearProblem(account.id);
+    await closeCollectionGap(account.id, new Date());
     console.log(`[watchdog] account "${account.label}" quiet for ${quietForMinutes}m and WhatsApp agrees`);
     return null;
   }
 
   countMetric("collectionBreaks");
   enterProblem(account.id, "NOT_COLLECTING");
+  await openCollectionGap(account.id, "NOT_COLLECTING", gapStart(newest));
   const finding = await report(registry, {
     ...base,
     missed,

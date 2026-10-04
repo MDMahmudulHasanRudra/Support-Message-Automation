@@ -17,6 +17,7 @@ import {
   loadTeamReport,
   memberLabel,
   parseTeamReportFilters,
+  resolveTeamReportRange,
   scopeLabel,
   teamReportQuery,
 } from "@/server/teamReport";
@@ -25,6 +26,8 @@ import { ReportDataTable } from "./ReportDataTable";
 import { buildBucketsTable, buildGroupsTable, buildMembersTable } from "@/server/teamReportTables";
 import { loadReportFilterOptions } from "@/server/reports/context";
 import { presetLinks } from "@/server/reports/presets";
+import { loadDataHealth } from "@/server/dataHealth";
+import { DataHealthStrip } from "@/components/reports/DataHealthStrip";
 
 export const metadata = { title: "Team Report" };
 
@@ -52,7 +55,12 @@ export default async function TeamReportPage({
   const params = await searchParams;
   const now = new Date();
   const requested = parseTeamReportFilters(params, now);
-  const [report, filterOptions] = await Promise.all([loadTeamReport(requested, now), loadReportFilterOptions(requested.groupKeys)]);
+  const requestedRange = resolveTeamReportRange(requested, now);
+  const [report, filterOptions, dataHealth] = await Promise.all([
+    loadTeamReport(requested, now),
+    loadReportFilterOptions(requested.groupKeys),
+    loadDataHealth({ periodStart: requestedRange.start.getTime(), periodEnd: requestedRange.end.getTime(), now, accountId: requested.accountId }),
+  ]);
   const { filters, range, result, memberNames, members, rules, teams, teamMemberIds, teamName, filterNote } = report;
   const { summary } = result;
 
@@ -141,6 +149,8 @@ export default async function TeamReportPage({
           </span>
         ) : null}
       </p>
+
+      <DataHealthStrip health={dataHealth} />
 
       {filterNote ? (
         <div className="mb-5">

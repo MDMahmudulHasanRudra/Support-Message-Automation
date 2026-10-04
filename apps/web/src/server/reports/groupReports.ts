@@ -1,11 +1,13 @@
 import { Prisma } from "@prisma/client";
 import {
   classifyGroupActivity,
+  DATA_CONFIDENCE_LABELS,
   daysBetween,
   DEFAULT_LOW_ACTIVITY_THRESHOLD,
   GROUP_ACTIVITY_LABELS,
   groupActivityTrend,
   groupMessageCounts,
+  groupDataConfidence,
   groupWaitsBy,
   normalizePhoneNumber,
   responseStats,
@@ -13,6 +15,7 @@ import {
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
+import { accountsByGroupKey } from "@/server/dataHealth";
 import { bucketLabel, senderIdentifiers } from "@/server/teamReport";
 import { bucketColumnLabel } from "@/server/teamReportTables";
 import { measuredTo, type ReportContext } from "./context";
@@ -173,6 +176,10 @@ export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltRepo
   );
   const teamOfMember = roster.teamOf;
   const lastBy = roster.describeSender;
+  // Recorded ≠ occurred: a group whose account was not collecting, or a period nobody has verified,
+  // can only say "no communication RECORDED" (SUPPORT_INTELLIGENCE_IMPLEMENTATION_AUDIT.md §E).
+  const accountsOf = await accountsByGroupKey(groups.map((g) => g.whatsappGroupId));
+  const confidenceOf = (groupKey: string) => groupDataConfidence(ctx.dataHealth, accountsOf.get(groupKey) ?? []);
 
   const to = measuredTo(ctx);
   const classified = groups.map((g) => {
@@ -233,6 +240,7 @@ export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltRepo
       { label: "Customer messages", numeric: true },
       { label: "Team replies", numeric: true },
       { label: "Monitoring" },
+      { label: "Data" },
     ],
     rows: shown.map((row) => {
       const { group, counts: c, status } = row;
@@ -252,6 +260,7 @@ export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltRepo
           c?.customer ?? 0,
           replies,
           monitoring(group),
+          DATA_CONFIDENCE_LABELS[confidenceOf(group.whatsappGroupId)],
         ],
         sort: [
           group.name.toLowerCase(),
@@ -265,8 +274,9 @@ export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltRepo
           c?.customer ?? 0,
           replies,
           monitoring(group),
+          DATA_CONFIDENCE_LABELS[confidenceOf(group.whatsappGroupId)],
         ],
-        sub: [group.whatsappGroupId, null, group.assignedMemberId ? ctx.memberName(group.assignedMemberId) : null, null, null, null, null, null, null, null, null],
+        sub: [group.whatsappGroupId, null, group.assignedMemberId ? ctx.memberName(group.assignedMemberId) : null, null, null, null, null, null, null, null, null, null],
       };
     }),
   };
@@ -325,6 +335,19 @@ export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltRepo
               ? `No communication · ${rangeLabel}: ${count(silent.length)} of ${count(groups.length)} monitored group${groups.length === 1 ? "" : "s"} had no recorded WhatsApp activity during this period.`
               : `All monitored groups had activity during this period (${rangeLabel}).`,
       },
+      ...(ctx.dataHealth.status !== "HEALTHY" && silent.length > 0
+        ? [
+            {
+              tone: ctx.dataHealth.status === "DATA_GAP" ? ("warning" as const) : ("info" as const),
+              text:
+                ctx.dataHealth.status === "DATA_GAP"
+                  ? `No communication RECORDED is not proof that none occurred: collection was incomplete during this period, so a group marked "Data gap" in the Data column may have had messages that were never stored.`
+                  : ctx.dataHealth.status === "UNVERIFIED_HISTORY"
+                    ? `No communication RECORDED is not proof that none occurred: this period is historical / unverified, so missing messages cannot be ruled out.`
+                    : `Collection paused during this period and the missed messages were recovered; the figures are complete as far as WhatsApp could still return them.`,
+            },
+          ]
+        : []),
       {
         tone: "info",
         text: "Groups are the ones monitored and active today: whether a group was monitored in the past is not recorded. \"Never recorded\" means no message from the group has ever been stored — not proof the group was silent before monitoring began.",
@@ -346,6 +369,10 @@ export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltRepo
       {
         title: "Team",
         text: "The Team of the group's assigned team member today. A group with no assigned member has no Team.",
+      },
+      {
+        title: "Data",
+        text: "How far a group's figures can be trusted. Data gap: one of the WhatsApp accounts the group is stored under had a collection gap in the period that was not fully recovered. Historical / unverified: the period is before the project's verified-from date. Verified: neither. Only a Verified \"No communication\" means none occurred; otherwise it means none was recorded.",
       },
     ],
     selects: [

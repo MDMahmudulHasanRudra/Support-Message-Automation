@@ -5,6 +5,7 @@ import { pageAccess } from "@/server/authorize";
 import { ButtonLink, Card, HelpButton, HelpSection, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { SupportActivitySettingsForm } from "./SupportActivitySettingsForm";
 import { SupportTeamCard } from "./SupportTeamCard";
+import { ReportingDataCard } from "./ReportingDataCard";
 
 export default async function SupportActivitySettingsPage() {
   const { canManage } = await pageAccess("support_activity.view", "support_activity.manage");
@@ -19,6 +20,15 @@ export default async function SupportActivitySettingsPage() {
     select: { id: true, name: true, _count: { select: { members: true } } },
     orderBy: { name: "asc" },
   });
+
+  const [recentGaps, firstGap] = await Promise.all([
+    prisma.collectionGap.findMany({
+      orderBy: { startedAt: "desc" },
+      take: 10,
+      select: { id: true, cause: true, startedAt: true, endedAt: true, recoveryStatus: true, recoveredCount: true, account: { select: { label: true } } },
+    }),
+    prisma.collectionGap.findFirst({ orderBy: { createdAt: "asc" }, select: { createdAt: true } }),
+  ]);
 
   return (
     <div>
@@ -52,6 +62,21 @@ export default async function SupportActivitySettingsPage() {
       <SupportTeamCard
         teams={teams.map((t) => ({ id: t.id, name: t.name, memberCount: t._count.members }))}
         selectedIds={settings.responseTrackingTeamIds}
+        canManage={canManage}
+      />
+
+      <ReportingDataCard
+        verifiedFrom={settings.reportingVerifiedFrom?.getTime() ?? null}
+        firstGapRecordedAt={firstGap?.createdAt.getTime() ?? null}
+        gaps={recentGaps.map((g) => ({
+          id: g.id,
+          accountLabel: g.account.label,
+          cause: g.cause,
+          startedAt: g.startedAt.getTime(),
+          endedAt: g.endedAt?.getTime() ?? null,
+          recoveryStatus: g.recoveryStatus,
+          recoveredCount: g.recoveredCount,
+        }))}
         canManage={canManage}
       />
 

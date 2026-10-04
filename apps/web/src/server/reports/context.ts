@@ -1,8 +1,10 @@
 import { prisma } from "@/server/db";
+import { loadDataHealth, type ReportDataHealth } from "@/server/dataHealth";
 import {
   loadTeamReport,
   memberLabel,
   parseTeamReportFilters,
+  resolveTeamReportRange,
   scopeLabel,
   type TeamReportData,
   type TeamReportFilters,
@@ -42,6 +44,8 @@ export interface ReportContext {
   groupName: (groupKey: string) => string;
   memberName: (memberId: string | null) => string;
   options: ReportFilterOptions;
+  /** How far this period's figures can be trusted: verified-from and collection gaps. */
+  dataHealth: ReportDataHealth;
 }
 
 /** The groups and accounts the filter pickers offer — active groups, one row per WhatsApp group. */
@@ -76,7 +80,12 @@ export async function loadReportFilterOptions(selectedGroupKeys: readonly string
 
 export async function loadReportContext(params: Record<string, string | undefined>, now: Date): Promise<ReportContext> {
   const requested = parseTeamReportFilters(params, now);
-  const [data, options] = await Promise.all([loadTeamReport(requested, now), loadReportFilterOptions(requested.groupKeys)]);
+  const requestedRange = resolveTeamReportRange(requested, now);
+  const [data, options, dataHealth] = await Promise.all([
+    loadTeamReport(requested, now),
+    loadReportFilterOptions(requested.groupKeys),
+    loadDataHealth({ periodStart: requestedRange.start.getTime(), periodEnd: requestedRange.end.getTime(), now, accountId: requested.accountId }),
+  ]);
   const { filters, range, memberNames, teamName, teamMemberIds } = data;
   const memberName = (id: string | null) => memberLabel(id, memberNames);
   const scoped = Boolean(filters.teamId || filters.memberId);
@@ -108,6 +117,7 @@ export async function loadReportContext(params: Record<string, string | undefine
     groupName: (key) => data.groups.get(key)?.name ?? optionName.get(key) ?? key,
     memberName,
     options,
+    dataHealth,
   };
 }
 

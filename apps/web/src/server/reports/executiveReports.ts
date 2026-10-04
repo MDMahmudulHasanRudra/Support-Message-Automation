@@ -210,6 +210,14 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
             ? `${rangeLabel}: no monitored group needs attention.`
             : `${rangeLabel}: no monitored group matches these filters.`,
       },
+      ...(ctx.dataHealth.status === "DATA_GAP" || ctx.dataHealth.status === "UNVERIFIED_HISTORY"
+        ? [
+            {
+              tone: ctx.dataHealth.status === "DATA_GAP" ? ("warning" as const) : ("info" as const),
+              text: `Every figure here is what was recorded. ${ctx.dataHealth.headline} "No communication" and "declining activity" can reflect missing data rather than a quiet group — see the data health details above.`,
+            },
+          ]
+        : []),
       {
         tone: "info",
         text: "This is a snapshot and an exception list, not a ranking of groups or people. WhatsApp activity shows workload and responsiveness; it is not a measure of anyone's overall performance.",

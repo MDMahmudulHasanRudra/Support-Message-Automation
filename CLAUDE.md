@@ -920,6 +920,27 @@ was being able to SEE them anywhere but their own page. Rules worth not undoing:
   `existingJobId` ("This operation is already running → View current process") instead of creating a
   second job. A settled pair, or a finished/cancelled job, blocks nothing.
 
+### Reporting data health (`packages/shared/src/dataHealth.ts`, `apps/worker/src/health/collectionGaps.ts`, REPORTS.md §8)
+
+Stage 1 of Support Intelligence (`SUPPORT_INTELLIGENCE_IMPLEMENTATION_AUDIT.md` is the plan for every
+later stage). Three rules worth not undoing:
+
+- **`CollectionGap` is the only record that a period was collected completely.** It is opened by:
+  - the session leaving CONNECTED;
+  - a worker restart (starting at the last heartbeat);
+  - the watchdog's findings.
+
+  It is closed on reconnect or when messages arrive again. The catch-up sweep records RECOVERED /
+  PARTIAL / FAILED / NOT_ATTEMPTED on it, and reads through `probeCollection` (same messages as
+  `fetchMessagesSince`) so "nothing to recover" and "could not read" stay distinct. Every write is
+  best effort; one open gap per account is a partial unique index.
+- **`reportingVerifiedFrom` ships empty, meaning nothing is verified.** No period before gap
+  recording can be proven complete, and a default date would be a claim nobody made. An admin sets
+  it.
+- **Reports only ever ADD a caveat.** The strip, Summary rows, Inactive Groups' Data column and notes
+  are additive. A quiet group across a gap is "no communication recorded", never "none occurred";
+  no existing figure's meaning changed.
+
 ### Team Report (`packages/shared/src/teamReport.ts`, `apps/web/src/server/teamReport.ts`, `(dashboard)/team-report/`)
 
 Per-member and per-group WhatsApp support report — groups supported, replies, customer messages,

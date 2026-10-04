@@ -563,6 +563,7 @@ model Project {
   notificationRows                     Notification[]
   workerCommandRows                    WorkerCommand[]
   processingCheckpointRows             ProcessingCheckpoint[]
+  collectionGapRows                    CollectionGap[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
   groupParticipantAddJobRows           GroupParticipantAddJob[]
@@ -874,6 +875,7 @@ model WhatsAppAccount {
   media                MessageMedia[]
   supportEpisodes      SupportResponseEpisode[]
   processingCheckpoint ProcessingCheckpoint?
+  collectionGaps       CollectionGap[]
   escalationCases      SupportEscalationCase[]
   workerCommands       WorkerCommand[]
   notifications        Notification[]
@@ -2118,6 +2120,57 @@ model ProcessingCheckpoint {
   lastProcessedTimestampWa DateTime?
   lastProcessedMessageId   String?
   updatedAt                DateTime        @updatedAt
+}
+
+/// What the catch-up sweep managed for a collection gap.
+enum CollectionGapRecovery {
+  /// The sweep read the whole gap and stored what WhatsApp still held.
+  RECOVERED
+  /// The sweep ran but cannot have covered the whole gap: it started after the gap began (the
+  /// 12-hour look-back), or it hit its message cap.
+  PARTIAL
+  /// The sweep could not read the session, or threw. Nothing from the gap is known to be stored.
+  FAILED
+  /// No sweep was possible — the account had never processed a message, so there was no position
+  /// to recover from.
+  NOT_ATTEMPTED
+}
+
+/// A period one WhatsApp account was not collecting messages (SUPPORT_INTELLIGENCE_IMPLEMENTATION_AUDIT.md
+/// §H). Written by the worker: opened when collection stops — the session leaves CONNECTED, the
+/// worker restarts, or the watchdog proves the listener deaf — and closed when it resumes, with what
+/// the catch-up sweep recovered. Reports read it to say "reporting data may be incomplete between
+/// 14:20 and 15:05" instead of calling a quiet group inactive. Recorded from the day this table
+/// exists; nothing before it can be reconstructed, which is why reporting has a verified-from date.
+model CollectionGap {
+  id                  String                 @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId           String                 @default(dbgenerated("project_id_required()"))
+  project             Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId           String
+  account             WhatsAppAccount        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Why collection stopped: DISCONNECTED, WORKER_RESTART, NOT_COLLECTING, UNREADABLE, or the
+  /// connection state that ended the session (AUTHENTICATION_REQUIRED, ...). Text, not an enum:
+  /// the set follows the provider's states.
+  cause               String
+  /// When collection stopped. For a worker restart, the account's last heartbeat; for a deaf
+  /// listener, the newest message stored before the silence.
+  startedAt           DateTime
+  /// When collection resumed. Null while the gap is still open.
+  endedAt             DateTime?
+  recoveryStatus      CollectionGapRecovery?
+  recoveryAttemptedAt DateTime?
+  /// The start of the window the sweep read. Later than startedAt means part of the gap was beyond
+  /// the sweep's reach.
+  recoveredFrom       DateTime?
+  recoveredCount      Int                    @default(0)
+  recoveryNote        String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  @@index([projectId, startedAt])
+  @@index([accountId, endedAt])
 }
 
 /// Why a message the provider handed over produced no row at all.
@@ -3466,6 +3519,11 @@ model SupportActivitySettings {
   /// (SUPPORT_RESPONSE.md). Only a reply from a member of one of these Teams — at the moment they
   /// replied — answers an episode. Empty = response tracking is not set up, and nothing is tracked.
   responseTrackingTeamIds String[]                      @default([])
+  /// Reporting is verified from this moment (SUPPORT_INTELLIGENCE_IMPLEMENTATION_AUDIT.md). Before
+  /// it every report labels its figures historical / unverified; after it a period is verified
+  /// unless a CollectionGap overlaps it. Null = nothing is verified yet — the honest default, since
+  /// collection health was not recorded before CollectionGap existed. Set by an admin.
+  reportingVerifiedFrom   DateTime?
 }
 
 /// Admin-managed keyword/phrase. Referenced by zero or more SupportRules via SupportRuleKeyword —

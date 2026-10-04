@@ -420,3 +420,81 @@ days"; both change how much one request reads.
 web 172, worker 869; browser 72/72 (workspace), 37/37 (Main Admin and access levels), 77/77 (reports,
 roles, audit fixes) and 5/5 (selected / page / filtered table exports).
 
+## 8. Reporting data health (4 Oct 2026, Support Intelligence stage 1)
+
+A report must not claim more certainty than the data supports. "No stored message" is not "no
+communication": collection can stop. Two records now decide how far a period can be trusted.
+SUPPORT_INTELLIGENCE_IMPLEMENTATION_AUDIT.md has the reasoning.
+
+**CollectionGap (worker-written, one row per outage per WhatsApp account).**
+
+| Opened when | Started at |
+|---|---|
+| The session leaves CONNECTED (`recordConnectionState`) | Now |
+| The worker restarts while a session was live (`reconcileAccountStatusesOnBoot`) | The account's last heartbeat |
+| The watchdog proves the listener deaf (NOT_COLLECTING) or the session unreadable (UNREADABLE) | The last message stored before the silence |
+| The watchdog finds an account down, stuck reconnecting or needing a re-link with no gap open yet | The last message stored before the silence |
+
+It is closed when the session reaches CONNECTED again, or when the watchdog sees messages arriving.
+The catch-up sweep that runs after a reconnect records its result on the gap:
+
+| Recovery status | Meaning |
+|---|---|
+| RECOVERED | The sweep read the whole gap |
+| PARTIAL | The gap began before the sweep's 12-hour look-back, or the sweep hit its 2,000-message cap |
+| FAILED | The session could not be read, or the sweep threw |
+| NOT_ATTEMPTED | The account had never processed a message, so there was no position to recover from |
+
+- One open gap per account is a database rule (a partial unique index).
+- Recording is best effort and never breaks a connection-state write or a sweep.
+- Gaps are recorded from the day this shipped; nothing earlier can be reconstructed.
+
+**Verified from** (`SupportActivitySettings.reportingVerifiedFrom`, per project). It is set on
+Support Activity Setup → Reporting data health by `support_activity.manage`, in Asia/Dhaka time.
+- It cannot be in the future.
+- It is logged in System Logs.
+- It is empty by default, meaning nothing is verified yet: collection health was never recorded
+  before, so no earlier period can be proven complete.
+
+**Status of a report period** (`computeDataHealth`, packages/shared/src/dataHealth.ts):
+
+| Status | When |
+|---|---|
+| DATA_GAP | A gap overlapping the period is still open, or was not fully RECOVERED |
+| UNVERIFIED_HISTORY | Verified-from is not set, or is later than the period start |
+| WARNING | Every overlapping gap was RECOVERED ("Verified — a collection pause was recovered") |
+| HEALTHY | None of the above ("Verified") |
+
+The statuses rank in that order. An open gap is measured to now. Only accounts in at least one group
+count: a spare number in no group cannot lose a group message.
+
+**Where it shows.**
+- **Every `/reports/<id>` page and the Team Report** show a data-health strip above the figures:
+  - status and headline;
+  - every caveat with its exact hours ("Reporting data may be incomplete between 20 Oct 2025,
+    09:00 – 23:00 — Primary Account: disconnected; only part of it could be recovered");
+  - last message stored, last processed, and verified-from.
+- **Every Excel export's Summary sheet** carries "Data health", "Data health detail", "Verified
+  from" and one "Data caveat" row per caveat.
+- **Inactive Groups** has a **Data** column per group:
+  - Data gap: one of the group's accounts had an incomplete gap;
+  - Historical / unverified;
+  - Verified.
+
+  When the period is not Verified it adds the note that "no communication RECORDED is not proof
+  that none occurred".
+- **Executive Support Health** adds the same caveat when the period is DATA_GAP or
+  UNVERIFIED_HISTORY.
+
+**Nothing else changed.** No existing figure, label, route, permission or export column was altered.
+The additions are the strip, the Summary rows, Inactive Groups' new last column and the notes.
+
+**Known limits.**
+- Gaps are per account. When two of our numbers share a group and only one dropped, the group was
+  still collected, but the gap is reported anyway. That is conservative: it claims less certainty,
+  never more.
+- A sweep that read nothing from a healthy session is RECOVERED even when WhatsApp no longer held old
+  messages. The sweep is bounded by what WhatsApp Web still returns.
+- The verified-from field lives on Support Activity Setup, so it needs the Support Activity feature
+  switched on for the project.
+

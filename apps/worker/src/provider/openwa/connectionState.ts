@@ -1,4 +1,5 @@
 import { projectIdForAccount, withProject } from "../../project/context.js";
+import { closeCollectionGap, openCollectionGap } from "../../health/collectionGaps.js";
 import { decryptSecret } from "@support-automation/db";
 import { prisma } from "../../db.js";
 import type { WhatsAppAccountStatus } from "@prisma/client";
@@ -254,6 +255,7 @@ async function recordConnectionStateInProject(
         metadata: { state, ...metadata } as any,
       },
     });
+    const before = await prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { status: true } });
     await prisma.whatsAppAccount.update({
       where: { id: accountId },
       data: {
@@ -269,6 +271,10 @@ async function recordConnectionStateInProject(
         ...(state === "QR_AVAILABLE" && qrCode ? { qrCode, qrUpdatedAt: new Date() } : {}),
       },
     });
+    // The collection-gap record (reporting data health): leaving CONNECTED stops collection, and
+    // reaching it again resumes it. Best effort and after the status write, which matters more.
+    if (toAccountStatus(state) === "CONNECTED") await closeCollectionGap(accountId, new Date());
+    else if (before?.status === "CONNECTED") await openCollectionGap(accountId, state, new Date());
   } catch (err) {
     // Console-only, and this one is worse than it looks. Everything that decides whether an
     // account is healthy — the dashboard badge, the outbound queue's own checks, the Overview's

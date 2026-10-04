@@ -6,6 +6,7 @@ import { BarList, ChartCard, ColumnChart, Heatmap } from "@/components/charts";
 import { reportCatalogueEntry } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { buildReport, reportDefinition, reportExtras, reportQuery } from "@/server/reports";
+import { DataHealthStrip } from "@/components/reports/DataHealthStrip";
 import { presetLinks } from "@/server/reports/presets";
 import { TeamReportFilters } from "../../team-report/TeamReportFilters";
 import { ReportDataTable } from "../../team-report/ReportDataTable";
@@ -139,6 +140,8 @@ export default async function ReportPage({
           </span>
         ) : null}
       </p>
+
+      <DataHealthStrip health={ctx.dataHealth} />
 
       {[
         ...(filterNote ? [{ tone: "info" as const, text: filterNote }] : []),
