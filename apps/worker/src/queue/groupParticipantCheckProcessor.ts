@@ -42,12 +42,15 @@ export async function recoverStuckParticipantChecks(): Promise<number> {
   return result.count;
 }
 
-/** The oldest job with checking still to do. One job at a time keeps its roster reads together. */
-async function claimNextCheckingJob() {
-  // Across projects, oldest first; the job is then worked inside its own project.
-  return platformPrisma.groupParticipantAddJob.findFirst({
+/** Jobs with checking still to do, oldest first. One job at a time keeps its roster reads together. */
+async function checkingJobCandidates() {
+  // Across projects, oldest first; the job is then worked inside its own project. A handful rather
+  // than one, so a job whose account is disconnected cannot hold every other account's jobs behind
+  // it — the oldest job whose session is live is the one checked.
+  return platformPrisma.groupParticipantAddJob.findMany({
     where: { status: "CHECKING", project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
     orderBy: { createdAt: "asc" },
+    take: 20,
     select: { id: true, accountId: true, projectId: true },
   });
 }
@@ -77,6 +80,10 @@ export async function checkOneJob(provider: WhatsAppProvider, jobId: string): Pr
 }
 
 async function checkOneJobInProject(provider: WhatsAppProvider, jobId: string): Promise<number> {
+  // Reading rosters through a dropped session returns nothing, and every pair would be settled
+  // CHECK_FAILED. Waiting costs nothing: the job stays CHECKING and the next tick tries again.
+  if (provider.getConnectionStatus() !== "CONNECTED") return 0;
+
   const pending = await prisma.groupParticipantAddItem.findMany({
     where: { jobId, status: "PENDING_CHECK" },
     include: { group: { select: { whatsappGroupId: true, isActive: true } } },
@@ -204,20 +211,23 @@ async function settleJobAfterCheck(jobId: string): Promise<void> {
   });
 }
 
-async function checkTick(registry: ProviderRegistry): Promise<void> {
-  const job = await claimNextCheckingJob();
-  if (!job) return;
+/** Exported for the tests: checks the oldest CHECKING job whose account is connected right now. */
+export async function checkTick(registry: Pick<ProviderRegistry, "get">): Promise<string | null> {
+  for (const job of await checkingJobCandidates()) {
+    const provider = registry.get(job.accountId);
+    // Not connected yet, or dropped: this job waits, and the next one gets its turn.
+    if (!provider || provider.getConnectionStatus() !== "CONNECTED") continue;
 
-  const provider = registry.get(job.accountId);
-  if (!provider) return; // account not connected yet; the next tick will find it
-
-  // The roster is read through the job's own account, which must belong to the job's project.
-  const sameProject = await withProject(job.projectId, () => accountInCurrentProject(job.accountId));
-  if (!sameProject) {
-    console.error(`[participant-check] job ${job.id}: its account belongs to another project; not checked`);
-    return;
+    // The roster is read through the job's own account, which must belong to the job's project.
+    const sameProject = await withProject(job.projectId, () => accountInCurrentProject(job.accountId));
+    if (!sameProject) {
+      console.error(`[participant-check] job ${job.id}: its account belongs to another project; not checked`);
+      continue;
+    }
+    await checkOneJob(provider, job.id);
+    return job.id;
   }
-  await checkOneJob(provider, job.id);
+  return null;
 }
 
 /**

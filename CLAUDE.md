@@ -890,6 +890,36 @@ paused job by itself.
 
 It reuses `bulk_messaging.*` and the `BULK_MESSAGING` feature, and adds no permission key.
 
+### WhatsApp Operations — the job indicator on every page (`packages/shared/src/whatsappOperations.ts`, `components/whatsappOperations/`)
+
+Add Number to Groups and the Groups Admin Maker were already background jobs: rows in their own job
+and per-group tables, processed by worker loops, surviving a refresh or a restart. What was missing
+was being able to SEE them anywhere but their own page. Rules worth not undoing:
+
+- **One reading, not one table.** `summariseAddJob` / `summariseAdminJob` turn each kind's rows into
+  one `WhatsAppOperation` (state, progress, counts, the pair in flight). The two job tables were NOT
+  merged into a generic `WhatsAppJob`: each carries its own lifecycle (Add's check → review → add,
+  Admin's check → promote → pause/resume), and migrating live job history to gain nothing the reader
+  does not already give would be the rewrite the request ruled out. A new kind of job is one more
+  `summarise…` function and one more list in `server/whatsappOperations.ts`.
+- **The browser only reads.** `WhatsAppJobCenter` (in `DashboardShell`, for `bulk_messaging.view` with
+  the Bulk Messaging feature on) and a module page's `CurrentOperations` share ONE poll
+  (`operationsStore.ts`): 3s while the worker is moving something, 15s while a job waits on a person,
+  30s otherwise, nothing while the tab is hidden. The reader is a Server Action that refuses as an
+  empty list and takes no project/account/job argument; the scoped client confines it to the URL's
+  project. It renders nothing when there is nothing to show. Dismissing a finished job is
+  per-browser (`localStorage`); its page keeps the result regardless.
+- **A dropped session is a wait, never a result.** The add processor releases a pair untouched (no
+  attempt counted) when the provider is not CONNECTED, instead of failing it on "membership could
+  not be verified"; the check processor reads nothing rather than settling every pair CHECK_FAILED,
+  and skips a job whose account is down so it cannot hold every other account's checks behind it.
+  The job carries on by itself on reconnect. (Admin Maker pauses instead and needs Resume — that is
+  its documented rule.) `STUCK_PROCESSING_TIMEOUT_MS` for adds is 5 minutes, above Puppeteer's 180s.
+- **The same (number, group) pair is never in two unfinished jobs.** `createGroupParticipantAddJob`
+  checks open pairs of active jobs on the account under `pg_advisory_xact_lock`, and returns
+  `existingJobId` ("This operation is already running → View current process") instead of creating a
+  second job. A settled pair, or a finished/cancelled job, blocks nothing.
+
 ### Team Report (`packages/shared/src/teamReport.ts`, `apps/web/src/server/teamReport.ts`, `(dashboard)/team-report/`)
 
 Per-member and per-group WhatsApp support report — groups supported, replies, customer messages,

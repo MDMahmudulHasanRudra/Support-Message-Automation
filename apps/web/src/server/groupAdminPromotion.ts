@@ -147,6 +147,21 @@ export async function getRecentAdminPromotionJobs(limit = 10): Promise<AdminProm
   return jobs.map((j) => summarise(j, counts.get(j.id)));
 }
 
+/** Jobs that finished (or were cancelled) since a moment, newest first — the job indicator's "recent". */
+export async function getAdminPromotionJobsFinishedSince(since: Date, limit = 5): Promise<Array<AdminPromotionJobSummary & { cancelledAt: Date | null }>> {
+  const jobs = await prisma.groupAdminPromotionJob.findMany({
+    where: {
+      status: { notIn: [...ACTIVE_ADMIN_PROMOTION_JOB_STATUSES] },
+      OR: [{ completedAt: { gte: since } }, { cancelledAt: { gte: since } }],
+    },
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+    select: { ...JOB_SELECT, cancelledAt: true },
+  });
+  const counts = await countsFor(jobs.map((j) => j.id));
+  return jobs.map((j) => ({ ...summarise(j, counts.get(j.id)), cancelledAt: j.cancelledAt }));
+}
+
 export async function getAdminPromotionJob(id: string) {
   const job = await prisma.groupAdminPromotionJob.findFirst({ where: { id }, select: JOB_SELECT });
   if (!job) return null;

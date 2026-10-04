@@ -31,7 +31,7 @@ export default async function GroupParticipantAddJobPage({ params }: { params: P
 
   const job = await prisma.groupParticipantAddJob.findUnique({
     where: { id },
-    include: { account: { select: { label: true } }, createdBy: { select: { name: true, email: true } } },
+    include: { account: { select: { label: true, status: true } }, createdBy: { select: { name: true, email: true } } },
   });
   if (!job) notFound();
 
@@ -95,6 +95,16 @@ export default async function GroupParticipantAddJobPage({ params }: { params: P
           <Alert tone="danger" title="Stopped by kill switch">
             Automation was paused while this job was running. Groups already added to remain ADDED; the rest were
             cancelled. Resume automation on the Automation Control page, then retry if needed.
+          </Alert>
+        </div>
+      ) : null}
+      {/* The worker waits rather than failing anything while the session is down (see the add and
+          check processors), so the page must say why the numbers have stopped moving. */}
+      {(job.status === "CHECKING" || job.status === "QUEUED" || job.status === "RUNNING") && job.account.status !== "CONNECTED" ? (
+        <div className="mb-4">
+          <Alert tone="warning" title="WhatsApp account disconnected — waiting">
+            &quot;{job.account.label}&quot; is not connected, so this job is waiting. Nothing is lost and nothing is
+            marked failed: it carries on from where it stopped once the account is reconnected on WhatsApp Accounts.
           </Alert>
         </div>
       ) : null}

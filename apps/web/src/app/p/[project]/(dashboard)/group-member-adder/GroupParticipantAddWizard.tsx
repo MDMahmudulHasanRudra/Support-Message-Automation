@@ -90,6 +90,8 @@ export function GroupParticipantAddWizard({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The unfinished job these adds already belong to, when the server refused a duplicate. */
+  const [existingJobId, setExistingJobId] = useState<string | null>(null);
 
   const account = accounts.find((a) => a.id === accountId) ?? accounts[0] ?? null;
 
@@ -261,6 +263,7 @@ export function GroupParticipantAddWizard({
     if (!account) return;
     setConfirming(true);
     setError(null);
+    setExistingJobId(null);
     try {
       const result = await createGroupParticipantAddJob({
         accountId: account.id,
@@ -269,6 +272,7 @@ export function GroupParticipantAddWizard({
       });
       if (result.error) {
         setError(result.error);
+        setExistingJobId(result.existingJobId ?? null);
         setConfirming(false);
         setConfirmOpen(false);
         return;
@@ -613,7 +617,17 @@ export function GroupParticipantAddWizard({
       </div>
 
       {error ? (
-        <Alert tone="danger" title="Could not queue this job">
+        <Alert
+          tone={existingJobId ? "warning" : "danger"}
+          title={existingJobId ? "This operation is already running" : "Could not queue this job"}
+          actions={
+            existingJobId ? (
+              <Button variant="secondary" onClick={() => router.push(`/group-member-adder/jobs/${existingJobId}`)}>
+                View current process
+              </Button>
+            ) : undefined
+          }
+        >
           {error}
         </Alert>
       ) : null}

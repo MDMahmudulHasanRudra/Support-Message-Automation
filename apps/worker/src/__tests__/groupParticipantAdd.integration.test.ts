@@ -505,3 +505,44 @@ describe("WhatsApp reports the person is already in the group", () => {
     expect(refreshed.failureReason).toContain("privacy settings");
   });
 });
+
+describe("a dropped session is a wait, never a result", () => {
+  it("leaves the pair PENDING with no attempt counted, then adds it once the account is back", async () => {
+    const group = await makeGroup();
+    const job = await makeJob({ queuedCount: 1, totalRequested: 1, status: "RUNNING" });
+    const item = await queueItem({ job, group });
+
+    const provider = new MockProvider();
+    provider.connectionStatus = "DISCONNECTED";
+    await processOne(provider);
+
+    let row = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(row.status).toBe("PENDING");
+    expect(row.attemptCount).toBe(0);
+    expect(row.failureReason).toBeNull();
+    expect(row.scheduledAt.getTime()).toBeGreaterThan(Date.now());
+    expect(provider.addedParticipants).toHaveLength(0);
+    expect((await prisma.groupParticipantAddJob.findUniqueOrThrow({ where: { id: job.id } })).status).toBe("RUNNING");
+
+    // Reconnected: the same pair is picked up where it was, not restarted and not failed.
+    await prisma.groupParticipantAddItem.update({ where: { id: item.id }, data: { scheduledAt: new Date(Date.now() - 1000) } });
+    provider.connectionStatus = "CONNECTED";
+    await processOne(provider);
+    row = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(row.status).toBe("ADDED");
+    expect(provider.addedParticipants).toHaveLength(1);
+  });
+});
+
+describe("crash recovery waits out an add still in flight", () => {
+  it("does not requeue a pair claimed three minutes ago (the add call may take up to 180s)", async () => {
+    const group = await makeGroup();
+    const job = await makeJob({ queuedCount: 1, totalRequested: 1 });
+    const item = await queueItem({ job, group });
+    await prisma.groupParticipantAddItem.update({ where: { id: item.id }, data: { status: "PROCESSING" } });
+    await prisma.$executeRaw`UPDATE "GroupParticipantAddItem" SET "updatedAt" = NOW() - INTERVAL '3 minutes' WHERE id = ${item.id}`;
+
+    await recoverStuckParticipantAddItems();
+    expect((await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("PROCESSING");
+  });
+});

@@ -17,7 +17,12 @@ import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 /** Name this loop reports itself under in the per-loop liveness view. */
 const LOOP_NAME = "group-participant-add";
 
-const STUCK_PROCESSING_TIMEOUT_MS = 2 * 60_000;
+/**
+ * Longer than Puppeteer's 180s `protocolTimeout`, which bounds the add call itself. At 2 minutes an
+ * add still in flight could be put back to PENDING by the five-minute recovery sweep and attempted a
+ * second time — the outbound queue had exactly this bug and was raised to 5 minutes for it.
+ */
+const STUCK_PROCESSING_TIMEOUT_MS = 5 * 60_000;
 /** How long to defer an item when its job's own per-minute cap is hit — not a failure, just a wait. */
 const JOB_RATE_LIMIT_DEFER_MS = 15_000;
 /** Fixed backoff before a retried add attempt — this job type has no retryIntervalsMs list like AutomationSettings. */
@@ -156,6 +161,19 @@ async function processClaimedItem(item: GroupParticipantAddItem, provider: Whats
 
   const gate = await handlePreAddChecks(item);
   if (gate === "STOP_TICK") return;
+
+  // A dropped session is a wait, never a result. Without this the live membership check below
+  // failed against the dead page and the pair was recorded FAILED ("Membership could not be
+  // verified") — so a disconnect in the middle of a job quietly failed every group still to come.
+  // Released untouched instead: no attempt counted, nothing lost, and the job carries on by itself
+  // once the account is connected again. The pages say "waiting for the account" meanwhile.
+  if (provider.getConnectionStatus() !== "CONNECTED") {
+    await prisma.groupParticipantAddItem.update({
+      where: { id: item.id },
+      data: { status: "PENDING", scheduledAt: new Date(Date.now() + ACCOUNT_NOT_READY_DEFER_MS) },
+    });
+    return;
+  }
 
   await markJobStartedIfNeeded(item.jobId);
 

@@ -24,7 +24,17 @@ export interface CreateParticipantAddJobInput {
 export interface CreateParticipantAddJobResult {
   jobId?: string;
   error?: string;
+  /**
+   * Set when some of these adds already belong to a job that has not finished: nothing new was
+   * created, and this is the job to show instead ("View current process").
+   */
+  existingJobId?: string;
 }
+
+/** Jobs still doing, or about to do, something. */
+const ACTIVE_JOB_STATUSES = ["CHECKING", "AWAITING_REVIEW", "QUEUED", "RUNNING"] as const;
+/** Pairs not settled yet: still to check, offered for review, or still to add. */
+const OPEN_ITEM_STATUSES = ["PENDING_CHECK", "CHECKING", "READY", "CANNOT_VERIFY", "PENDING", "PROCESSING"] as const;
 
 /**
  * Re-derives and re-validates everything server-side, same philosophy as
@@ -110,47 +120,79 @@ export async function createGroupParticipantAddJob(
     return { error: "Every target group was skipped before queueing (see reasons shown in preview) — nothing to add." };
   }
 
-  const job = await prisma.groupParticipantAddJob.create({
-    data: {
-      accountId: input.accountId,
-      createdById: session.userId,
-      phoneNumbers,
-      totalRequested: dedupedTargets.length * phoneNumbers.length,
-      // Nothing is queued to SEND yet. The job starts by reading rosters; `queuedCount` is written
-      // at confirm time, once a person has chosen what to add.
-      queuedCount: 0,
-      preQueueSkipped: preQueueSkipReasons.length,
-      preQueueSkipReasons: preQueueSkipReasons as unknown as Prisma.InputJsonValue,
-      status: "CHECKING",
-      delayMinMs: settings.delayMinMs,
-      delayMaxMs: settings.delayMaxMs,
-      maxPerMinute: settings.maxPerMinute,
-      maxPerJob: settings.maxPerJob,
-      retryMaxAttempts: settings.retryMaxAttempts,
-    },
-  });
-
-  // Every pair starts as something to CHECK, not something to send. The pacing delays are applied
-  // later, at confirm — until a person has chosen, there is nothing to pace.
-  //
-  // createMany in chunks — a 2,000-row job issuing 2,000 separate inserts kept a server action
-  // open long enough to look hung, and the wizard cannot report progress until it returns.
-  const rows: Prisma.GroupParticipantAddItemCreateManyInput[] = [];
-  for (const phone of phoneNumbers) {
-    for (const target of toQueue) {
-      rows.push({
-        jobId: job.id,
-        groupId: target.groupId,
-        groupNameSnapshot: target.groupName,
-        phoneNumber: phone,
-        status: "PENDING_CHECK",
+  // The same (number, group) pair must never be in two unfinished jobs at once: both would check it,
+  // both would find it missing, and the second add would be refused by WhatsApp — an add attempt
+  // spent for nothing on the operation it punishes hardest. Decided under a per-account lock, so two
+  // quick clicks or two tabs cannot both pass; the second is shown the first job instead.
+  const outcome = await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`group-participant-add:${input.accountId}`})::bigint)`;
+      const clash = await tx.groupParticipantAddItem.findFirst({
+        where: {
+          job: { accountId: input.accountId, status: { in: [...ACTIVE_JOB_STATUSES] } },
+          status: { in: [...OPEN_ITEM_STATUSES] },
+          phoneNumber: { in: phoneNumbers },
+          groupId: { in: toQueue.map((t) => t.groupId) },
+        },
+        select: { jobId: true },
       });
-    }
+      if (clash) return { existingJobId: clash.jobId };
+
+      const job = await tx.groupParticipantAddJob.create({
+        data: {
+          accountId: input.accountId,
+          createdById: session.userId,
+          phoneNumbers,
+          totalRequested: dedupedTargets.length * phoneNumbers.length,
+          // Nothing is queued to SEND yet. The job starts by reading rosters; `queuedCount` is written
+          // at confirm time, once a person has chosen what to add.
+          queuedCount: 0,
+          preQueueSkipped: preQueueSkipReasons.length,
+          preQueueSkipReasons: preQueueSkipReasons as unknown as Prisma.InputJsonValue,
+          status: "CHECKING",
+          delayMinMs: settings.delayMinMs,
+          delayMaxMs: settings.delayMaxMs,
+          maxPerMinute: settings.maxPerMinute,
+          maxPerJob: settings.maxPerJob,
+          retryMaxAttempts: settings.retryMaxAttempts,
+        },
+        select: { id: true, projectId: true },
+      });
+
+      // Every pair starts as something to CHECK, not something to send. The pacing delays are applied
+      // later, at confirm — until a person has chosen, there is nothing to pace.
+      //
+      // createMany in chunks — a 2,000-row job issuing 2,000 separate inserts kept a server action
+      // open long enough to look hung, and the wizard cannot report progress until it returns.
+      const rows: Prisma.GroupParticipantAddItemCreateManyInput[] = [];
+      for (const phone of phoneNumbers) {
+        for (const target of toQueue) {
+          rows.push({
+            projectId: job.projectId,
+            jobId: job.id,
+            groupId: target.groupId,
+            groupNameSnapshot: target.groupName,
+            phoneNumber: phone,
+            status: "PENDING_CHECK",
+          });
+        }
+      }
+      const CHUNK = 500;
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        await tx.groupParticipantAddItem.createMany({ data: rows.slice(i, i + CHUNK) });
+      }
+      return { job };
+    },
+    { timeout: 60_000 },
+  );
+
+  if ("existingJobId" in outcome) {
+    return {
+      existingJobId: outcome.existingJobId,
+      error: "Some of these numbers are already being added to some of these groups by a job that has not finished, so nothing new was started.",
+    };
   }
-  const CHUNK = 500;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    await prisma.groupParticipantAddItem.createMany({ data: rows.slice(i, i + CHUNK) });
-  }
+  const { job } = outcome;
 
   await logSystemEvent(
     "INFO",

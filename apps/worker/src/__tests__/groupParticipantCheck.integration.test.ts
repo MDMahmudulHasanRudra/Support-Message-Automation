@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { randomUUID } from "node:crypto";
 import { prisma } from "./helpers/projectFixtures.js";
 import type { GroupParticipantAddSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
-import { checkOneJob, recoverStuckParticipantChecks } from "../queue/groupParticipantCheckProcessor.js";
+import { checkOneJob, checkTick, recoverStuckParticipantChecks } from "../queue/groupParticipantCheckProcessor.js";
 import { MockProvider } from "./mockProvider.js";
 
 /**
@@ -370,5 +370,59 @@ describe("crash recovery", () => {
 
     expect(recovered).toBeGreaterThanOrEqual(1);
     expect(await statusOf(item.id)).toBe("PENDING_CHECK");
+  });
+});
+
+describe("a dropped session waits instead of failing the check", () => {
+  it("reads nothing and settles nothing while the account is disconnected", async () => {
+    const group = await makeGroup();
+    const job = await makeCheckingJob();
+    const item = await pendingCheckItem({ job, group });
+
+    const provider = new MockProvider();
+    provider.connectionStatus = "DISCONNECTED";
+    expect(await checkOneJob(provider, job.id)).toBe(0);
+
+    expect(await statusOf(item.id)).toBe("PENDING_CHECK");
+    expect((await prisma.groupParticipantAddJob.findUniqueOrThrow({ where: { id: job.id } })).status).toBe("CHECKING");
+  });
+
+  it("a job on a disconnected account does not hold back a younger job on a connected one", async () => {
+    const stalledGroup = await makeGroup();
+    const stalled = await makeCheckingJob();
+    await prisma.groupParticipantAddJob.update({ where: { id: stalled.id }, data: { createdAt: new Date(Date.now() - 60_000) } });
+    const stalledItem = await pendingCheckItem({ job: stalled, group: stalledGroup });
+
+    const other = await prisma.whatsAppAccount.create({ data: { label: `Participant Check Other ${randomUUID()}`, status: "CONNECTED" } });
+    try {
+      const otherGroup = await prisma.whatsAppGroup.create({
+        data: { accountId: other.id, whatsappGroupId: uniqueGroupJid(), name: "Other", isActive: true, lastSyncedAt: new Date() },
+      });
+      const younger = await prisma.groupParticipantAddJob.create({
+        data: {
+          accountId: other.id, phoneNumbers: ["8801000000000"], totalRequested: 1, queuedCount: 0, status: "CHECKING",
+          delayMinMs: 0, delayMaxMs: 0, maxPerMinute: 100, maxPerJob: 100, retryMaxAttempts: 2,
+        },
+      });
+      const youngerItem = await pendingCheckItem({ job: younger, group: otherGroup });
+
+      const dropped = new MockProvider();
+      dropped.connectionStatus = "DISCONNECTED";
+      const live = new MockProvider();
+      live.participantsByChatId.set(otherGroup.whatsappGroupId, [MockProvider.phoneParticipant("8809999999999")]);
+      const providers = new Map([[account.id, dropped], [other.id, live]]);
+
+      // Other suites may leave CHECKING jobs behind; drive ticks until ours is reached or none remain.
+      let checked: string | null = null;
+      for (let i = 0; i < 25 && checked !== younger.id; i++) {
+        checked = await checkTick(providers as never);
+        if (checked === null) break;
+      }
+      expect(checked).toBe(younger.id);
+      expect(await statusOf(youngerItem.id)).toBe("READY");
+      expect(await statusOf(stalledItem.id)).toBe("PENDING_CHECK");
+    } finally {
+      await prisma.whatsAppAccount.delete({ where: { id: other.id } });
+    }
   });
 });

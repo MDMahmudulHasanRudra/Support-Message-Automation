@@ -11,6 +11,7 @@ import { featureForPath } from "@support-automation/shared";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { CommandPalette } from "./CommandPalette";
 import { FloatingAiChat } from "./FloatingAiChat";
+import { WhatsAppJobCenter } from "@/components/whatsappOperations/WhatsAppJobCenter";
 import {
   isSettingsPath,
   navGroupsFor,
@@ -322,6 +323,11 @@ export function DashboardShell({
       {/* Only for roles that can use it: every send is refused without ai_learning.view, and a
           floating button on every page that always answers "not allowed" is worse than none. */}
       {granted.has("ai_learning.view") ? <FloatingAiChat /> : null}
+      {/* Long-running WhatsApp jobs stay visible on every page (Add Number to Groups, Groups Admin
+          Maker). Offered to whoever may see those modules; the reader refuses everyone else anyway. */}
+      {granted.has("bulk_messaging.view") && !featuresOff.has("BULK_MESSAGING") ? (
+        <WhatsAppJobCenter projectSlug={project.slug} besideAiChat={granted.has("ai_learning.view")} />
+      ) : null}
     </div>
     </WorkspaceModeContext.Provider>
   );
