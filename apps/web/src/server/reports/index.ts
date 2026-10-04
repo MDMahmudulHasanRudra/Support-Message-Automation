@@ -2,6 +2,7 @@ import { GENERIC_REPORT_IDS, reportCatalogueEntry, type DatePresetId, type Permi
 import { buildCalls, buildHeatmap } from "./activityReports";
 import { loadReportContext, type ReportContext } from "./context";
 import { buildExecutiveHealth } from "./executiveReports";
+import { buildCustomerSignals, buildEmployeeEffectiveness, buildHumanResponseSla, buildSupportCases, buildSupportIntelligence } from "./intelligenceReports";
 import { buildGroupCoverage, buildGroupTrend, buildInactiveGroups } from "./groupReports";
 import { buildDistribution, buildDutyWorkload, buildEmployeeGroups, buildWorkload } from "./memberReports";
 import { buildMissedSupport, buildResponseSla } from "./responseReports";
@@ -33,7 +34,26 @@ const INACTIVE_GROUP_PRESETS: readonly DatePresetId[] = [
   "last_month",
 ];
 
+/** Support Intelligence compares like periods; "This year" would exceed the 92-day limit. */
+const INTELLIGENCE_PRESETS: readonly DatePresetId[] = [
+  "today",
+  "yesterday",
+  "last_7_days",
+  "last_30_days",
+  "last_60_days",
+  "last_90_days",
+  "this_week",
+  "last_week",
+  "this_month",
+  "last_month",
+];
+
 const DEFINITIONS: Record<string, ReportDefinition> = {
+  "support-intelligence": { permission: "support_activity.view", build: buildSupportIntelligence, presets: INTELLIGENCE_PRESETS },
+  "employee-effectiveness": { permission: "support_activity.view", build: buildEmployeeEffectiveness, presets: INTELLIGENCE_PRESETS },
+  "support-cases": { permission: "support_activity.view", build: buildSupportCases, presets: INTELLIGENCE_PRESETS },
+  "human-response-sla": { permission: "support_activity.view", build: buildHumanResponseSla, presets: INTELLIGENCE_PRESETS },
+  "customer-signals": { permission: "support_activity.view", build: buildCustomerSignals, presets: INTELLIGENCE_PRESETS },
   "executive-health": { permission: "support_activity.view", build: buildExecutiveHealth },
   "inactive-groups": { permission: "support_activity.view", build: buildInactiveGroups, presets: INACTIVE_GROUP_PRESETS },
   "group-coverage": { permission: "support_activity.view", build: buildGroupCoverage },

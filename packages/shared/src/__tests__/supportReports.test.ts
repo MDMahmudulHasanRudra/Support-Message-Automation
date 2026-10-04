@@ -424,7 +424,7 @@ describe("report catalogue and date presets", () => {
     }
     // The three reports that predate the catalogue keep their routes.
     expect(REPORT_CATALOGUE.filter((r) => !r.generic).map((r) => r.href)).toEqual(["/team-report", "/support-activity/reports", "/team-management/attendance"]);
-    expect(GENERIC_REPORT_IDS).toHaveLength(12);
+    expect(GENERIC_REPORT_IDS).toHaveLength(17);
   });
 
   it("presets map onto the existing period/date/from/to filters (Asia/Dhaka)", () => {

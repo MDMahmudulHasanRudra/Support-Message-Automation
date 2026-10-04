@@ -1463,6 +1463,8 @@ model OutboundMessage {
   /// answered one stops showing as waiting) and which queued bubbles to render. `chatId` had no
   /// index at all, so each of those was a sequential scan of a table that only ever grows.
   @@index([chatId, createdAt])
+  /// Support Intelligence joins an outgoing Message to the send it echoes (actor attribution).
+  @@index([providerMessageId])
 }
 
 /// One row per "send this message to these groups" batch created through the

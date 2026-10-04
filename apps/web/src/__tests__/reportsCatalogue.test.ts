@@ -50,7 +50,7 @@ describe("who sees which card", () => {
     expect(hrefs).toContain("/reports/response-sla");
     expect(hrefs).not.toContain("/reports/duty-workload");
     expect(hrefs).not.toContain("/team-management/attendance");
-    expect(hrefs).toHaveLength(13);
+    expect(hrefs).toHaveLength(18);
   });
 
   it("team management only: the two duty reports", () => {
