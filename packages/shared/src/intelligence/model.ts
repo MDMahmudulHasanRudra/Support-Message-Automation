@@ -513,8 +513,8 @@ function finishCase(wc: WorkingCase, measuredTo: number, settings: IntelSettings
 /**
  * Every case in the messages, group by group.
  *
- * A case OPENS at a customer message when no case is open in that group (a bare acknowledgement —
- * "ok", "ji vai", a thumbs-up — never opens one) — or REOPENS the group's
+ * A case OPENS at a customer message when no case is open in that group (a closing remark — "ok",
+ * "thanks", "it's working now", a thumbs-up — never opens one) — or REOPENS the group's
  * previous case when that case was resolved less than the reopen window ago AND the message carries
  * it on (quotes one of its messages, or says it is still broken). A customer message after a
  * resolution signal inside an open case either reopens it (the same continuity test) or, if it is

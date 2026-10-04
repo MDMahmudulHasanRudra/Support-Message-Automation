@@ -212,7 +212,7 @@ export async function buildHumanResponseSla(ctx: ReportContext): Promise<BuiltRe
       },
     ],
     formulas: [
-      { title: "Wait", text: "The Team Report's wait: a customer message after a person's reply (or none) starts one; a run of customer messages is one wait; the next reply from a PERSON ends it. AI, rule and broadcast replies are recorded beside the wait and never end it." },
+      { title: "Wait", text: "Like the Team Report's wait: a customer message after a person's reply (or none) starts one; a run of customer messages is one wait; the next reply from a PERSON ends it. AI, rule and broadcast replies are recorded beside the wait and never end it. One difference: a closing remark — 'ok', 'thanks', 'yes it is working now', with no question and nothing saying it is still broken — starts no wait here, because nobody is waiting for an answer." },
       { title: "Person", text: "An employee writing from their own WhatsApp (named), a reply typed in the dashboard's chat (the operator), or somebody on the business phone (a person, but which one cannot be known)." },
       { title: "Target and status", text: "The target is the Team Report's Missed threshold for the group. On time: answered within it. Late: answered after it. Missed: never answered by a person, older than the target. Still waiting: inside the target. Human SLA = on time ÷ (on time + late + missed)." },
     ],
@@ -387,11 +387,11 @@ export async function buildSupportCases(ctx: ReportContext): Promise<BuiltReport
     ],
     notes: [{ tone: "info", text: VALIDATION_NOTE }],
     formulas: [
-      { title: "Case", text: "Opened by a customer message when no case is open in the group (a bare 'ok', 'ji vai' or emoji never opens one). Closed after 4 hours of silence. A customer coming back within 24 hours of a resolution reopens it only when the message carries it on — quotes one of its messages, or says it is still not working; any other new question is a new case." },
+      { title: "Case", text: "Opened by a customer message when no case is open in the group (a closing remark — 'ok', 'thanks', 'it is working now', an emoji — never opens one). Closed after 4 hours of silence. A customer coming back within 24 hours of a resolution reopens it only when the message carries it on — quotes one of its messages, or says it is still not working; any other new question is a new case." },
       { title: "Resolution (inferred)", text: "High: the customer confirms it works, or an admin resolved the group's SLA escalation. Medium: the employee says it is fixed and the customer does not complain after; a completion keyword closed the session; or the customer thanked the team after the reply. A conversation that just stops is 'No further contact' and never counts as resolved." },
-      { title: "Owner (inferred)", text: "Not simply the last replier: points for being first to respond (1), taking it on — 'I'll check with the developer' (2), coming back after that (2), telling the customer it is fixed (2), being the last employee before the resolution (1), and writing most replies (1). High confidence needs a return after a hand-off, or a stated fix that the customer's side confirms." },
+      { title: "Owner (inferred)", text: "Not simply the last replier: points for being first to respond (1), taking it on — 'I'll check with the developer' (2), coming back after that (2), telling the customer it is fixed (2), being the last employee before the resolution (1), and writing more than half the replies (1). In a reopened case a fix stated before the reopen earns nothing, and whoever takes it on again after the reopen earns 2. High confidence needs a return after a hand-off, or a stated fix that the customer's side confirms." },
       { title: "Internal hand-off vs SLA escalation", text: "A hand-off is the employee's own words about passing the problem on (developer, technical team, forwarded) — inferred, with confidence. An SLA escalation is the system's alert ladder for an unanswered priority group — a recorded fact. They are reported separately." },
-      { title: "Complexity", text: "Points: 6+ turns (1) or 12+ (2); over an hour (1) or 4+ hours (2); a hand-off (2); several employees (1); an SLA escalation (2); reopened (1). Simple 0–1, Moderate 2–3, Complex 4+. The reasons are listed on every case." },
+      { title: "Complexity", text: "Points: 6+ turns (1) or 12+ (2); over an hour (1) or 4+ hours (2); passed to the developer/technical team (2), or only 'I'll check and let you know' (1); several employees (1); an SLA escalation (2); reopened (1). Simple 0–1, Moderate 2–3, Complex 4+. The reasons are listed on every case." },
     ],
     selects: [
       {
