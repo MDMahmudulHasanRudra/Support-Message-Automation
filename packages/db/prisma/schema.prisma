@@ -571,6 +571,7 @@ model Project {
   groupAdminPromotionItemRows          GroupAdminPromotionItem[]
   messageMediaRows                     MessageMedia[]
   mediaCleanupJobRows                  MediaCleanupJob[]
+  supportResponseEpisodeRows           SupportResponseEpisode[]
   aiFallbackDecisionRows               AiFallbackDecision[]
   aiEvidenceSnapshotRows               AiEvidenceSnapshot[]
   aiEvidenceItemRows                   AiEvidenceItem[]
@@ -664,6 +665,7 @@ model User {
   createdAdminPromotionJobs   GroupAdminPromotionJob[]
   requestedMediaCleanups      MediaCleanupJob[]
   updatedMediaStorageSettings MediaStorageSettings[]
+  clearedSupportEpisodes      SupportResponseEpisode[]
   createdKnowledgeItems       AiKnowledgeItem[]
   createdKnowledgeImports     KnowledgeImport[]
   createdKnowledgeVersions    AiKnowledgeVersion[]
@@ -870,6 +872,7 @@ model WhatsAppAccount {
   participantAddJobs   GroupParticipantAddJob[]
   adminPromotionJobs   GroupAdminPromotionJob[]
   media                MessageMedia[]
+  supportEpisodes      SupportResponseEpisode[]
   processingCheckpoint ProcessingCheckpoint?
   escalationCases      SupportEscalationCase[]
   workerCommands       WorkerCommand[]
@@ -1108,6 +1111,7 @@ model WhatsAppGroup {
   participantAddItems    GroupParticipantAddItem[]
   adminPromotionItems    GroupAdminPromotionItem[]
   media                  MessageMedia[]
+  supportEpisodes        SupportResponseEpisode[]
   escalationCases        SupportEscalationCase[]
   conversationSessions   ConversationSession[]
   supportActivities      SupportActivity[]
@@ -1174,6 +1178,7 @@ model InternalTeamMember {
   completedSupportSessions  SupportSession[]                   @relation("SupportSessionCompleted")
   supportRuleScopes         SupportRuleTeamMember[]
   notificationPreferences   TeamMemberNotificationPreference[]
+  answeredSupportEpisodes   SupportResponseEpisode[]
 
   /// The shift this person normally works, used to pre-fill a weekly pattern and nothing else.
   ///
@@ -1216,8 +1221,9 @@ model Team {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  members     InternalTeamMember[]
-  memberships TeamMembership[]
+  members         InternalTeamMember[]
+  memberships     TeamMembership[]
+  supportEpisodes SupportResponseEpisode[]
 
   @@unique([projectId, name])
   @@unique([projectId, code])
@@ -1303,6 +1309,10 @@ model Message {
   /// The attachment this message carried, when it carried one (MEDIA_STORAGE.md). Text is the
   /// message row itself and is always stored; only the file is optional.
   media                    MessageMedia?
+  /// Support-response episodes this message started, last extended, or answered (SUPPORT_RESPONSE.md).
+  episodesStarted          SupportResponseEpisode[]   @relation("SupportResponseFirstIncoming")
+  episodesExtended         SupportResponseEpisode[]   @relation("SupportResponseLatestIncoming")
+  episodesAnswered         SupportResponseEpisode[]   @relation("SupportResponseReply")
 
   @@unique([accountId, whatsappMessageId])
   @@index([chatId, timestampWa])
@@ -1888,6 +1898,81 @@ model MediaCleanupJob {
 
   @@index([status, createdAt])
   @@index([projectId, createdAt])
+}
+
+/// Where one group's support-response episode stands (SUPPORT_RESPONSE.md).
+enum SupportResponseEpisodeStatus {
+  /// A customer has written and no Support Team member has replied since.
+  UNANSWERED
+  /// A Support Team member replied; the response time is recorded.
+  ANSWERED
+  /// Dismissed on Messages → Unanswered Groups. Nothing about the conversation was changed.
+  CLEARED
+}
+
+/// One support-response episode in one group (SUPPORT_RESPONSE.md): from the first customer message
+/// after the previous Support Team reply, to the next Support Team reply.
+///
+/// Built from `Message` rows as they arrive and pointing back at them — no message text is copied.
+/// "Support Team" is the Teams named in `SupportActivitySettings.responseTrackingTeamIds`, as they
+/// were at the moment of each message (`TeamMembership`). Replies from other Teams, from the business
+/// number, from rules and from AI never answer an episode.
+///
+/// At most one UNANSWERED episode per group row: a partial unique index in the migration enforces
+/// it, and the worker decides under a per-group advisory lock.
+model SupportResponseEpisode {
+  id        String                       @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId String                       @default(dbgenerated("project_id_required()"))
+  project   Project                      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId String
+  account   WhatsAppAccount              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// The account's own row for the group — identity is account + group, never a group name.
+  groupId   String
+  group     WhatsAppGroup                @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  status    SupportResponseEpisodeStatus @default(UNANSWERED)
+
+  /// The first customer message of the episode: when the wait started.
+  firstIncomingMessageId  String?
+  firstIncomingMessage    Message? @relation("SupportResponseFirstIncoming", fields: [firstIncomingMessageId], references: [id], onDelete: SetNull)
+  firstIncomingAt         DateTime
+  latestIncomingMessageId String?
+  latestIncomingMessage   Message? @relation("SupportResponseLatestIncoming", fields: [latestIncomingMessageId], references: [id], onDelete: SetNull)
+  latestIncomingAt        DateTime
+  /// Customer messages in the episode — one wait, however many lines it took.
+  incomingMessageCount    Int      @default(1)
+
+  /// The first Support Team reply after the episode began. Kept as recorded when it happened: a
+  /// later Team change, or the member leaving, never rewrites a historical response.
+  supportReplyMessageId String?
+  supportReplyMessage   Message?            @relation("SupportResponseReply", fields: [supportReplyMessageId], references: [id], onDelete: SetNull)
+  supportRepliedAt      DateTime?
+  supportMemberId       String?
+  supportMember         InternalTeamMember? @relation(fields: [supportMemberId], references: [id], onDelete: SetNull)
+  /// The Support Team the member was in when they replied.
+  supportTeamId         String?
+  supportTeam           Team?               @relation(fields: [supportTeamId], references: [id], onDelete: SetNull)
+  /// supportRepliedAt − firstIncomingAt, in whole seconds. Both timestamps are kept, so it can be
+  /// recalculated and audited.
+  responseSeconds       Int?
+
+  clearedAt       DateTime?
+  clearedByUserId String?
+  clearedBy       User?     @relation(fields: [clearedByUserId], references: [id], onDelete: SetNull)
+  clearReason     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Unanswered Groups: one project's open episodes, longest waiting first.
+  @@index([projectId, status, firstIncomingAt])
+  /// Response Time: one project's answered episodes, newest reply first.
+  @@index([projectId, status, supportRepliedAt])
+  /// The tracker's "this group's open episode" and "its last answer".
+  @@index([groupId, status])
+  @@index([supportMemberId, supportRepliedAt])
+  @@index([accountId])
 }
 
 /// Singleton row (id is always the literal string "global"), analogous to
@@ -3377,6 +3462,10 @@ model SupportActivitySettings {
   /// use their escalation policy's first-alert time instead; this covers every other group, since
   /// no rule for them existed. See packages/shared/src/teamReport.ts.
   missedReplyAfterMinutes Int                           @default(30)
+  /// The Teams that are the Support Team for Messages → Unanswered Groups / Response Time
+  /// (SUPPORT_RESPONSE.md). Only a reply from a member of one of these Teams — at the moment they
+  /// replied — answers an episode. Empty = response tracking is not set up, and nothing is tracked.
+  responseTrackingTeamIds String[]                      @default([])
 }
 
 /// Admin-managed keyword/phrase. Referenced by zero or more SupportRules via SupportRuleKeyword —

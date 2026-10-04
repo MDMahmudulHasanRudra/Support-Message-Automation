@@ -13,6 +13,15 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Unanswered Groups & Response Time** (Support → Messages): one row per group where a customer is
+  waiting for the Support Team.
+  - **Answering:** the group moves to Response Time the moment a Support Team member replies, with
+    who replied and how long the customer waited from their first message.
+  - **What does not count:** other Teams, the business number, rules and AI.
+  - **Clear:** dismisses a wait without touching any message.
+  - **Export:** selected rows or everything matching, to Excel.
+
+  Tracked as messages arrive (`SUPPORT_RESPONSE.md`).
 - **WhatsApp Message & Media Storage.** The text of every message is always stored. Attachments are
   stored too: images, video, voice notes and audio, documents of any file type, stickers, GIFs and
   other files.

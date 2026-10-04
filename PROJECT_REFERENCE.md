@@ -134,6 +134,26 @@ Sidebar group: **Support** → Messages (tabs: All messages / Needs attention / 
   Rule Matched, Decision, Auto-Reply badge, Notification badge(s), View link.
 - **Needs Attention** (`/messages?decision=SUPPORT_REQUIRED`) — a redirect/filtered view of the
   same page, not a separate implementation.
+- **Unanswered Groups** (`/messages/unanswered`) — one row per group where a customer is waiting
+  and no Support Team member has replied since (`SUPPORT_RESPONSE.md`).
+  - **Columns:** group (opens the chat), account, latest message and sender, first unanswered,
+    waiting (live), messages, status.
+  - **Filters:** account, group, sender, waiting at least, messages at least, dates.
+  - **Sorts:** longest waiting (the default), newest, most messages, account, group.
+  - **Clear:** per row, selected or all matching, with an optional reason. Needs `messages.reply`.
+    It only dismisses the wait; a new customer message brings the group back. The **Cleared** chip
+    lists dismissals with who, when and why.
+  - **Selection and export:** select all matching, Export selected / all (Excel, CSV).
+  - **Refresh:** every 15 s.
+  - **Setup:** nothing is tracked until the Support Team is chosen in Support Activity Setup.
+- **Response Time** (`/messages/response-time`) — every wait a Support Team member answered.
+  - **Columns:** customer wrote, Support replied, response time, replied by (and Team), messages.
+  - **Totals:** responses, average, slowest.
+  - **Filters:** account, group, member, Team, reply dates, response minutes range.
+  - **Sorts:** newest, slowest, fastest, group.
+  - **Selection and export:** the same as Unanswered Groups.
+  - **Who counts:** only the Support Team's own WhatsApp replies; other Teams, the business number,
+    rules and AI never count.
 - **Ignored Messages** (`/messages?decision=IGNORE`) — same, filtered to `IGNORE`.
 - The message-text search is AND-ed with the sender filter rather than folded into the same OR:
   "this sender **or** anyone who mentioned this word" is never what is meant.
@@ -306,6 +326,12 @@ Simple CRUD: Value, Match Mode (Contains/Exact), Case Sensitive toggle, Active/D
 matches at a whole-word boundary; case-insensitive is the default.
 
 ---
+
+### Support Activity Setup — Support Team for response tracking
+
+A card on `/support-activity/settings` (`support_activity.manage`): tick the Teams that are the
+Support Team for Messages → Unanswered Groups / Response Time. It takes effect from the next
+message; history is not reprocessed.
 
 ## Team Management
 

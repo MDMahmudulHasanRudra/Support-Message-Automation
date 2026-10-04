@@ -23,6 +23,7 @@ import { recordTeamAttendance } from "../teamManagement/attendance.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { countDroppedMessage } from "./dropCounter.js";
 import { registerMessageMedia } from "../media/registerMessageMedia.js";
+import { trackSupportResponse } from "../supportResponse/tracker.js";
 import { currentProjectId, projectIsOperating, withAccountProject } from "../project/context.js";
 
 interface ActionExecutionRecord {
@@ -554,6 +555,17 @@ async function persistIncomingMessage(
   if (raw.media) {
     await registerMessageMedia({ messageId: message.id, accountId: raw.accountId, groupId: group?.id ?? null, media: raw.media });
   }
+
+  // Messages → Unanswered Groups / Response Time (SUPPORT_RESPONSE.md). Runs once per new message,
+  // live or recovered, since this insert is the dedup guard. Never throws.
+  await trackSupportResponse({
+    messageId: message.id,
+    groupId: group?.id ?? null,
+    accountId: raw.accountId,
+    direction: "INCOMING",
+    senderPhone: raw.senderPhone,
+    timestampWa: raw.timestampWa,
+  });
 
   return { message, group, isFromTeamMember, quotedMessage, previous };
 }

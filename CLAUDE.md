@@ -810,6 +810,26 @@ deployment does not have**, so the trigger would appear configured in the UI and
 (`sendTextWithMentions`, used by the handover mention, is *not* licence-gated — the two are often
 assumed to go together.)
 
+### Support response tracking — Messages → Unanswered Groups / Response Time (`apps/worker/src/supportResponse/`, `SUPPORT_RESPONSE.md`)
+
+- **One record per wait.** `SupportResponseEpisode` has one row per wait per group row (account +
+  group). It opens on a customer message and is answered by the first reply from a **Support Team**
+  member. It references its `Message` rows and copies no text.
+- **The Support Team** is the Teams in `SupportActivitySettings.responseTrackingTeamIds`, taken from
+  `TeamMembership` **at the moment of the reply**. When none are chosen, nothing is tracked.
+- **Never an answer:** another Team, the business number (the business phone or the dashboard), rules
+  and AI. This was decided with Rudra, and it is deliberately stricter than the Team Report and
+  Response SLA "wait", which stay unchanged.
+- **Where it runs.** `trackSupportResponse` runs after the `Message` insert in `persistIncomingMessage`
+  only, so it runs once per message and never throws.
+- **How it decides.** Under a per-group advisory lock, plus a partial unique index allowing one
+  UNANSWERED episode per group. Timestamps, not arrival order, decide. The rules are pure functions
+  in `packages/shared/src/supportResponse.ts`.
+- **Clear** only sets the episode to CLEARED (`messages.reply`), never touches a message, and the
+  next customer message opens a new wait.
+- **The web reads episodes only.** One `where` builder serves the page, select-all, Clear all and
+  export.
+
 ### WhatsApp Message & Media Storage (`apps/worker/src/media/`, `packages/media-storage`, `/settings/media-storage`)
 
 Message text is always stored. Each attachment gets a `MessageMedia` row; its file goes to media

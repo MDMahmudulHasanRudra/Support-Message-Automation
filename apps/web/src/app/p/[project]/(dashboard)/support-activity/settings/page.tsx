@@ -4,6 +4,7 @@ import Link from "@/components/ProjectLink";
 import { pageAccess } from "@/server/authorize";
 import { ButtonLink, Card, HelpButton, HelpSection, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { SupportActivitySettingsForm } from "./SupportActivitySettingsForm";
+import { SupportTeamCard } from "./SupportTeamCard";
 
 export default async function SupportActivitySettingsPage() {
   const { canManage } = await pageAccess("support_activity.view", "support_activity.manage");
@@ -11,6 +12,12 @@ export default async function SupportActivitySettingsPage() {
     where: { id: "global" },
     update: {},
     create: { id: "global" },
+  });
+  const teams = await prisma.team.findMany({
+    // A Team already chosen stays listed even if it was disabled since, so saving never drops it unseen.
+    where: { OR: [{ status: "ACTIVE" }, { id: { in: settings.responseTrackingTeamIds } }] },
+    select: { id: true, name: true, _count: { select: { members: true } } },
+    orderBy: { name: "asc" },
   });
 
   return (
@@ -41,6 +48,12 @@ export default async function SupportActivitySettingsPage() {
       {canManage ? null : <ViewOnlyNotice />}
 
       <SupportActivitySettingsForm settings={settings} />
+
+      <SupportTeamCard
+        teams={teams.map((t) => ({ id: t.id, name: t.name, memberCount: t._count.members }))}
+        selectedIds={settings.responseTrackingTeamIds}
+        canManage={canManage}
+      />
 
       {/* Rules and Keywords were two more nav entries for the same job as this page: deciding what
           counts. They keep their own routes — this is where you now find them. */}
