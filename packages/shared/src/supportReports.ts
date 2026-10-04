@@ -162,9 +162,10 @@ export function groupMessageCounts(
   return out;
 }
 
-export type GroupActivityStatus = "NO_CUSTOMER_ACTIVITY" | "CUSTOMER_NO_REPLY" | "LOW_ACTIVITY" | "ACTIVE";
+export type GroupActivityStatus = "NO_COMMUNICATION" | "NO_CUSTOMER_ACTIVITY" | "CUSTOMER_NO_REPLY" | "LOW_ACTIVITY" | "ACTIVE";
 
 export const GROUP_ACTIVITY_LABELS: Record<GroupActivityStatus, string> = {
+  NO_COMMUNICATION: "No communication",
   NO_CUSTOMER_ACTIVITY: "No customer activity",
   CUSTOMER_NO_REPLY: "Customer activity, no reply",
   LOW_ACTIVITY: "Low activity",
@@ -175,18 +176,22 @@ export const DEFAULT_LOW_ACTIVITY_THRESHOLD = 5;
 
 /**
  * One status per group for the period, checked in this order:
- *   no customer message                          → NO_CUSTOMER_ACTIVITY
+ *   no stored message of any kind                → NO_COMMUNICATION
+ *   messages, but none from a customer           → NO_CUSTOMER_ACTIVITY
  *   customer messages, no member/business reply  → CUSTOMER_NO_REPLY
  *   fewer than `lowActivityThreshold` messages   → LOW_ACTIVITY
  *   otherwise                                    → ACTIVE
- * Kept as four separate answers on purpose: "nobody wrote" and "somebody wrote and nobody answered"
- * call for opposite responses, and merging them would hide the second inside the first.
+ * Kept as separate answers on purpose: "nobody wrote" and "somebody wrote and nobody answered"
+ * call for opposite responses, and merging them would hide the second inside the first. Likewise
+ * "no message at all" is not "no customer message": a group where only the team posted had
+ * communication, and saying it had none would be false.
  */
 export function classifyGroupActivity(
   counts: Pick<GroupMessageCounts, "customer" | "member" | "business" | "total"> | undefined,
   lowActivityThreshold: number,
 ): GroupActivityStatus {
-  if (!counts || counts.customer === 0) return "NO_CUSTOMER_ACTIVITY";
+  if (!counts || counts.total === 0) return "NO_COMMUNICATION";
+  if (counts.customer === 0) return "NO_CUSTOMER_ACTIVITY";
   if (counts.member + counts.business === 0) return "CUSTOMER_NO_REPLY";
   if (counts.total < lowActivityThreshold) return "LOW_ACTIVITY";
   return "ACTIVE";

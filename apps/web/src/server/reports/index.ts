@@ -1,4 +1,4 @@
-import { GENERIC_REPORT_IDS, reportCatalogueEntry, type PermissionKey } from "@support-automation/shared";
+import { GENERIC_REPORT_IDS, reportCatalogueEntry, type DatePresetId, type PermissionKey } from "@support-automation/shared";
 import { buildCalls, buildHeatmap } from "./activityReports";
 import { loadReportContext, type ReportContext } from "./context";
 import { buildGroupCoverage, buildGroupTrend, buildInactiveGroups } from "./groupReports";
@@ -16,10 +16,24 @@ import type { BuiltReport } from "./types";
 interface ReportDefinition {
   permission: PermissionKey;
   build: (ctx: ReportContext) => BuiltReport | Promise<BuiltReport>;
+  /** The quick-period row, when the report needs its own; otherwise the standard one. */
+  presets?: readonly DatePresetId[];
 }
 
+/** Inactive Groups asks "silent for how long?", which rolling windows answer directly. */
+const INACTIVE_GROUP_PRESETS: readonly DatePresetId[] = [
+  "today",
+  "yesterday",
+  "last_7_days",
+  "last_30_days",
+  "last_60_days",
+  "last_90_days",
+  "this_month",
+  "last_month",
+];
+
 const DEFINITIONS: Record<string, ReportDefinition> = {
-  "inactive-groups": { permission: "support_activity.view", build: buildInactiveGroups },
+  "inactive-groups": { permission: "support_activity.view", build: buildInactiveGroups, presets: INACTIVE_GROUP_PRESETS },
   "group-coverage": { permission: "support_activity.view", build: buildGroupCoverage },
   "group-trend": { permission: "support_activity.view", build: buildGroupTrend },
   "response-sla": { permission: "support_activity.view", build: buildResponseSla },

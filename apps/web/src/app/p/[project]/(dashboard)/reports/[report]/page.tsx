@@ -108,7 +108,7 @@ export default async function ReportPage({
           members={members}
           teams={teams}
           teamMemberIds={teamMemberIds}
-          presets={presetLinks(entry.href, filters, now, reportExtras(ctx))}
+          presets={presetLinks(entry.href, filters, now, reportExtras(ctx), definition.presets)}
           groupOptions={ctx.options.groups}
           groupKeys={filters.groupKeys}
           accounts={ctx.options.accounts}

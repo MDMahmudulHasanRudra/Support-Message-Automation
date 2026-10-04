@@ -94,8 +94,8 @@ export const REPORT_CATALOGUE: readonly ReportCatalogueEntry[] = [
     href: "/reports/inactive-groups",
     label: "Inactive Groups",
     category: "Group / Client Health",
-    description: "Monitored groups with no customer activity, customer messages with no reply, or low activity in the period.",
-    question: "Which monitored groups have gone quiet, or are waiting with no reply?",
+    description: "Monitored groups with no communication at all in the period — with their last activity before it — plus no customer activity, no reply, or low activity.",
+    question: "Which groups had no communication at all during this period?",
     exports: BOTH,
     generic: true,
   },
@@ -205,7 +205,25 @@ export const DATE_PRESETS = [
   { id: "last_month", label: "Last month" },
   { id: "this_year", label: "This year" },
 ] as const;
-export type DatePresetId = (typeof DATE_PRESETS)[number]["id"];
+
+/**
+ * Rolling "last N days" periods, ending today and counting today. Offered only by reports that ask
+ * for them (Inactive Groups), so no other report's preset row changes. Ninety days stays inside the
+ * 92-day custom-range limit.
+ */
+export const ROLLING_DATE_PRESETS = [
+  { id: "last_7_days", label: "Last 7 days", days: 7 },
+  { id: "last_30_days", label: "Last 30 days", days: 30 },
+  { id: "last_60_days", label: "Last 60 days", days: 60 },
+  { id: "last_90_days", label: "Last 90 days", days: 90 },
+] as const;
+
+export type DatePresetId = (typeof DATE_PRESETS)[number]["id"] | (typeof ROLLING_DATE_PRESETS)[number]["id"];
+
+/** Every preset's label, by id. */
+export const DATE_PRESET_LABELS: Record<DatePresetId, string> = Object.fromEntries(
+  [...DATE_PRESETS, ...ROLLING_DATE_PRESETS].map((p) => [p.id, p.label]),
+) as Record<DatePresetId, string>;
 
 export interface PresetParams {
   period: "day" | "week" | "month" | "custom";
@@ -238,5 +256,12 @@ export function datePresetParams(preset: DatePresetId, now: Date): PresetParams 
     }
     case "this_year":
       return { period: "custom", from: `${today.slice(0, 4)}-01-01`, to: today };
+    case "last_7_days":
+    case "last_30_days":
+    case "last_60_days":
+    case "last_90_days": {
+      const days = ROLLING_DATE_PRESETS.find((p) => p.id === preset)!.days;
+      return { period: "custom", from: daysAgo(days - 1), to: today };
+    }
   }
 }

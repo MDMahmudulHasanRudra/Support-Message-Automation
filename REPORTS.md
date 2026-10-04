@@ -94,6 +94,9 @@ Defaults keep every existing URL meaning what it meant:
 - This year and Custom map onto `period=custom`. A custom range keeps the existing 92-day limit, and
   the page says when it applied it. "This year" past 92 days therefore shows its first 92 days, with
   that note.
+- A report can offer its own preset row. Inactive Groups shows Today, Yesterday, **Last 7 / 30 / 60 /
+  90 days**, This month and Last month. A "last N days" preset is `period=custom` from N−1 days ago
+  to today, so 90 days stays inside the 92-day limit. No other report's preset row changed.
 
 The Team Report gets the Groups and Account filters too. With both empty its SQL, its figures and its
 exports are byte-identical to before.
@@ -125,7 +128,7 @@ Every report has the common filters. Time is Asia/Dhaka throughout.
 | Employee Support Breakdown | Team & Employee | Which groups did each person support, and how? |
 | Duty History | Team & Employee | Did each person's day match their shift? |
 | Duty & Workload | Team & Employee | How does recorded support time compare with the scheduled shift? |
-| Inactive Groups | Group / Client Health | Which monitored groups have gone quiet, or are waiting with no reply? |
+| Inactive Groups | Group / Client Health | Which groups had no communication at all during this period? |
 | Group Support Coverage | Group / Client Health | In each group, how many customer waits got an answer? |
 | Group Activity Trend | Group / Client Health | Are groups getting busier or quieter? |
 | Response SLA | Response & SLA | How fast are customers answered, and how often within the target? |
@@ -135,19 +138,49 @@ Every report has the common filters. Time is Asia/Dhaka throughout.
 | WhatsApp Call Activity | Activity & Workload | Where did people ask for, or mention, a call? |
 | Workload Distribution | Management | How is the work shared across the team? |
 
-**Inactive Groups.** Monitored, active groups (one row per WhatsApp group), each with one status for
-the period:
+**Inactive Groups — No Communication** (enriched 4 Oct 2026; same report, same route).
+
+**The question.** Which monitored, active groups had **no stored WhatsApp message of any kind** in the
+period? That is the default view (Show → No communication). Above the list, a line names the range and
+the count: "No communication · 1 Oct 2025 – 31 Oct 2025: 3 of 6 monitored groups had no recorded
+WhatsApp activity during this period". When there are none it says "All monitored groups had activity
+during this period".
+
+**Statuses.** Every group (one row per WhatsApp group) gets one status for the period:
 
 | Status | Rule |
 |---|---|
-| No customer activity | no customer message in the period |
+| No communication | no stored message of any kind — customer, team member or business number — in the period |
+| No customer activity | messages in the period, but none from a customer (only the team posted) |
 | Customer activity, no reply | customer messages, and no reply from a member or the business number |
 | Low activity | fewer than N messages in total (N = 5 by default, selectable) |
 | Active | everything else |
 
-- **Days since last message** = (the earlier of the period end and now) − the group's last stored
-  message of any kind, before the period end.
-- A group with no messages at all says "No stored messages".
+**Columns:**
+- Group, WhatsApp account (every account holding it, within the account filter), and Team (the
+  assigned member's Team today).
+- Status.
+- Last activity and Last activity by: the latest stored message before the period END. For a silent
+  group, that is its latest message before the period. Senders are classed customer / team member /
+  business number by the Team Report's own identifiers.
+- Days since last activity = (the earlier of the period end and now) − last activity.
+- Messages in period, Customer messages, and Team replies (team members plus the business number).
+- Monitoring: monitored, and the account's connection state.
+- "Never recorded" means the group has no stored message at all. "None before the period end" means
+  its first message came after the period. The two are kept apart because only the first is a group
+  with no history.
+
+**Tiles.** Monitored groups, With communication, No communication, No-communication share, Longest
+silence (days, naming the group and its last date), Never recorded, and Customer activity with no reply.
+
+**Exports.**
+- CSV is the shown list.
+- Excel has three sheets: Summary (filters, tiles, formulas), Detailed (the list) and Breakdown (the
+  activity summary: groups per status).
+
+**Isolation.** Message counts come from the scoped Team Report dataset. Both raw last-activity queries
+name `"projectId"`. `inactiveGroups.integration.test.ts` gives Bizify the same WhatsApp groups and
+names with different messages, and fails when either project filter is removed.
 
 **Group Support Coverage.** Per group with customer waits in the period:
 - **Coverage** = waits answered ÷ waits that needed an answer.

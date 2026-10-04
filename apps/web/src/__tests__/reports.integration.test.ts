@@ -283,20 +283,25 @@ describe("calculations, against the hand-worked fixture", () => {
     expect(coverage.slice(1)).toEqual(["100.0%", "100.0%", "100.0%"]);
   });
 
-  it("Inactive Groups: each of the four statuses, and days since the last message", async () => {
+  it("Inactive Groups: each status, and days since the last message", async () => {
     const r = await run(isp, "inactive-groups", { groups: fixtureGroups(), status: "all" });
-    const status = Object.fromEntries(table(r, "groups").rows.map((row) => [row.cells[0], row.cells[1]]));
+    const status = Object.fromEntries(table(r, "groups").rows.map((row) => [row.cells[0], row.cells[3]]));
     expect(status).toEqual({
       [`ISP busy ${tag}`]: "Active",
       [`ISP silent ${tag}`]: "Customer activity, no reply",
       [`ISP low ${tag}`]: "Low activity",
-      [`ISP quiet ${tag}`]: "No customer activity",
+      // Not one message in the period: no communication (it was "No customer activity" before the
+      // report learned to tell no message at all apart from no customer message).
+      [`ISP quiet ${tag}`]: "No communication",
       [`ISP acc2 ${tag}`]: "Low activity",
     });
     const quiet = table(r, "groups").rows.find((row) => row.cells[0] === `ISP quiet ${tag}`)!;
-    expect(quiet.cells[7]).toBe(31);
-    // The default view hides the active ones.
-    const attention = await run(isp, "inactive-groups", { groups: fixtureGroups() });
+    expect(quiet.cells[6]).toBe(31);
+    // The default view is the report's question: no communication at all.
+    const silent = await run(isp, "inactive-groups", { groups: fixtureGroups() });
+    expect(table(silent, "groups").rows.map((row) => row.cells[0])).toEqual([`ISP quiet ${tag}`]);
+    // "Needing attention" still hides the active ones.
+    const attention = await run(isp, "inactive-groups", { groups: fixtureGroups(), status: "attention" });
     expect(table(attention, "groups").rows).toHaveLength(4);
   });
 

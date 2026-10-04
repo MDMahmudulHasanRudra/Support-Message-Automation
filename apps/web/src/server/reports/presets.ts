@@ -1,4 +1,4 @@
-import { DATE_PRESETS, datePresetParams } from "@support-automation/shared";
+import { DATE_PRESET_LABELS, DATE_PRESETS, datePresetParams, type DatePresetId } from "@support-automation/shared";
 import { resolveTeamReportRange, teamReportQuery, type TeamReportFilters } from "@/server/teamReport";
 
 export interface PresetLink {
@@ -19,12 +19,15 @@ export function presetLinks(
   filters: TeamReportFilters,
   now: Date,
   keep: Record<string, string | undefined> = {},
+  /** A report's own preset row, in order; the standard row when omitted. */
+  presetIds: readonly DatePresetId[] = DATE_PRESETS.map((p) => p.id),
 ): PresetLink[] {
   const current = resolveTeamReportRange(filters, now);
   const extra = new URLSearchParams(
     Object.entries(keep).filter((e): e is [string, string] => typeof e[1] === "string" && e[1] !== ""),
   ).toString();
-  return DATE_PRESETS.map(({ id, label }) => {
+  return presetIds.map((id) => {
+    const label = DATE_PRESET_LABELS[id];
     const p = datePresetParams(id, now);
     const next: TeamReportFilters = { ...filters, period: p.period, date: p.date ?? filters.date, from: p.from ?? filters.from, to: p.to ?? filters.to };
     const range = resolveTeamReportRange(next, now);

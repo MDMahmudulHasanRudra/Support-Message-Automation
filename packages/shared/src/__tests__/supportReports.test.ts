@@ -106,7 +106,7 @@ describe("response statistics", () => {
 });
 
 describe("inactive groups", () => {
-  it("separates no customer activity, customer activity with no reply, low activity and active", () => {
+  it("separates no communication, no customer activity, customer activity with no reply, low activity and active", () => {
     const messages = [
       member("ANNOUNCE", 60, "rudra"), // team posted, no customer
       customer("SILENT_REPLY", 60),
@@ -121,7 +121,10 @@ describe("inactive groups", () => {
       business("BIZ", 74),
     ];
     const counts = groupMessageCounts(messages, RANGE.rangeStart, RANGE.rangeEnd);
-    expect(classifyGroupActivity(counts.get("NOTHING"), 5)).toBe("NO_CUSTOMER_ACTIVITY");
+    // Not one message of any kind: no communication — never confused with "no customer message".
+    expect(classifyGroupActivity(counts.get("NOTHING"), 5)).toBe("NO_COMMUNICATION");
+    expect(classifyGroupActivity(undefined, 5)).toBe("NO_COMMUNICATION");
+    // Only the team posted: that IS communication.
     expect(classifyGroupActivity(counts.get("ANNOUNCE"), 5)).toBe("NO_CUSTOMER_ACTIVITY");
     expect(classifyGroupActivity(counts.get("SILENT_REPLY"), 5)).toBe("CUSTOMER_NO_REPLY");
     expect(classifyGroupActivity(counts.get("LOW"), 5)).toBe("LOW_ACTIVITY");
@@ -130,6 +133,17 @@ describe("inactive groups", () => {
     expect(classifyGroupActivity(counts.get("BIZ"), 5)).toBe("ACTIVE");
     // The threshold is the caller's.
     expect(classifyGroupActivity(counts.get("BUSY"), 10)).toBe("LOW_ACTIVITY");
+  });
+
+  it("a group with only customer messages had communication, even unanswered", () => {
+    const counts = groupMessageCounts([customer("C", 10), customer("C", 11)], RANGE.rangeStart, RANGE.rangeEnd);
+    expect(classifyGroupActivity(counts.get("C"), 5)).toBe("CUSTOMER_NO_REPLY");
+  });
+
+  it("a group busy before the period and silent in it has no communication in the period", () => {
+    const counts = groupMessageCounts([customer("BEFORE", -100), member("BEFORE", -90, "rudra")], RANGE.rangeStart, RANGE.rangeEnd);
+    expect(counts.get("BEFORE")).toBeUndefined();
+    expect(classifyGroupActivity(counts.get("BEFORE"), 5)).toBe("NO_COMMUNICATION");
   });
 
   it("only counts messages inside the period", () => {
@@ -424,5 +438,10 @@ describe("report catalogue and date presets", () => {
     expect(datePresetParams("last_month", now)).toEqual({ period: "month", date: "2026-09-30" });
     expect(datePresetParams("this_year", now)).toEqual({ period: "custom", from: "2026-01-01", to: "2026-10-01" });
     expect(datePresetParams("last_month", new Date(Date.UTC(2026, 0, 15)))).toEqual({ period: "month", date: "2025-12-31" });
+    // Rolling windows end today and count today: 7 days is today and the six before it.
+    expect(datePresetParams("last_7_days", now)).toEqual({ period: "custom", from: "2026-09-25", to: "2026-10-01" });
+    expect(datePresetParams("last_30_days", now)).toEqual({ period: "custom", from: "2026-09-02", to: "2026-10-01" });
+    expect(datePresetParams("last_60_days", now)).toEqual({ period: "custom", from: "2026-08-03", to: "2026-10-01" });
+    expect(datePresetParams("last_90_days", now)).toEqual({ period: "custom", from: "2026-07-04", to: "2026-10-01" });
   });
 });

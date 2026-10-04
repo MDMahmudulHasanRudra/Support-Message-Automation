@@ -7,15 +7,16 @@ import {
   groupActivityTrend,
   groupMessageCounts,
   groupWaitsBy,
+  normalizePhoneNumber,
   responseStats,
   type GroupActivityStatus,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
-import { bucketLabel } from "@/server/teamReport";
+import { bucketLabel, senderIdentifiers } from "@/server/teamReport";
 import { bucketColumnLabel } from "@/server/teamReportTables";
 import { measuredTo, type ReportContext } from "./context";
-import { count, dateOnly, duration, percent } from "./format";
+import { count, dateOnly, duration, percent, when } from "./format";
 import type { BuiltReport, ReportTable } from "./types";
 
 /** Group-oriented reports: Inactive Groups, Group Support Coverage, Group Activity Trend. */
@@ -24,6 +25,8 @@ export interface MonitoredGroup {
   whatsappGroupId: string;
   name: string;
   assignedMemberId: string | null;
+  /** The accounts (within the account filter) that hold this group, Primary first. */
+  accounts: Array<{ label: string; status: string }>;
 }
 
 /**
@@ -40,18 +43,24 @@ export async function loadMonitoredGroups(ctx: ReportContext): Promise<Monitored
       ...(groupKeys?.length ? { whatsappGroupId: { in: groupKeys } } : {}),
       ...(accountId ? { accountId } : {}),
     },
-    select: { whatsappGroupId: true, name: true, assignedTeamMemberId: true, account: { select: { isPrimary: true } } },
+    select: { whatsappGroupId: true, name: true, assignedTeamMemberId: true, account: { select: { isPrimary: true, label: true, status: true } } },
+    orderBy: [{ account: { isPrimary: "desc" } }, { account: { label: "asc" } }],
   });
   const out = new Map<string, MonitoredGroup>();
   for (const row of rows) {
     const existing = out.get(row.whatsappGroupId);
+    const account = { label: row.account.label, status: row.account.status };
     if (!existing || row.account.isPrimary) {
       out.set(row.whatsappGroupId, {
         whatsappGroupId: row.whatsappGroupId,
         name: row.name,
         assignedMemberId: row.assignedTeamMemberId ?? existing?.assignedMemberId ?? null,
+        accounts: existing ? [account, ...existing.accounts] : [account],
       });
-    } else if (!existing.assignedMemberId && row.assignedTeamMemberId) existing.assignedMemberId = row.assignedTeamMemberId;
+    } else {
+      existing.accounts.push(account);
+      if (!existing.assignedMemberId && row.assignedTeamMemberId) existing.assignedMemberId = row.assignedTeamMemberId;
+    }
   }
   return [...out.values()].filter((g) => ctx.groupInScope(g.whatsappGroupId, g.assignedMemberId));
 }
@@ -61,129 +70,264 @@ const assignedOf = (ctx: ReportContext, groupKey: string) => ctx.data.groups.get
 
 // ---------------------------------------------------------------------------------------------
 
-const STATUS_ORDER: GroupActivityStatus[] = ["CUSTOMER_NO_REPLY", "NO_CUSTOMER_ACTIVITY", "LOW_ACTIVITY", "ACTIVE"];
+/** No communication first — the report's question — then the other ways a group can need attention. */
+const STATUS_ORDER: GroupActivityStatus[] = ["NO_COMMUNICATION", "CUSTOMER_NO_REPLY", "NO_CUSTOMER_ACTIVITY", "LOW_ACTIVITY", "ACTIVE"];
 
+/** A group's most recent stored message before the period ends, and who sent it. */
+interface LastActivity {
+  at: number;
+  senderPhone: string;
+  senderName: string | null;
+  direction: string;
+}
+
+/**
+ * Inactive Groups, centred on one question: which groups had NO communication at all in the period?
+ *
+ * "No communication" means zero stored messages of any kind — customer, team member, business
+ * number — in the period. It is kept apart from "no customer activity" (only the team posted),
+ * which is communication and is never reported as silence. For a silent group, the last-activity
+ * columns describe the most recent message BEFORE the period; a group with no stored message at all
+ * says "Never recorded" rather than looking like a known silence.
+ *
+ * Message counts come from the Team Report's own dataset (same filters, one row per real message);
+ * the last activity is one index probe per group. Both are read through the project-scoped client or
+ * name the project explicitly, so another project's copy of the same WhatsApp group never leaks in.
+ */
 export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltReport> {
   const lowRaw = Number(ctx.params.low);
   const low = [3, 5, 10, 20].includes(lowRaw) ? lowRaw : DEFAULT_LOW_ACTIVITY_THRESHOLD;
-  const statusFilter = ctx.params.status && (ctx.params.status === "all" || Object.prototype.hasOwnProperty.call(GROUP_ACTIVITY_LABELS, ctx.params.status)) ? ctx.params.status : "attention";
+  const statusFilter =
+    ctx.params.status && (ctx.params.status === "all" || ctx.params.status === "attention" || Object.prototype.hasOwnProperty.call(GROUP_ACTIVITY_LABELS, ctx.params.status))
+      ? ctx.params.status
+      : "NO_COMMUNICATION";
 
   const groups = await loadMonitoredGroups(ctx);
   const counts = groupMessageCounts(ctx.data.messages, ctx.rangeStart, ctx.rangeEnd);
+  const projectId = await activeProjectId();
 
-  // Each group's last stored message before the period ends — any kind, any account in the filter.
-  // One index probe per group (LATERAL on [groupId, timestampWa]), never a scan of Message.
+  // Each group's last stored message before the period ends — any kind, any account in the filter —
+  // with its sender. For a group silent in the period that is its last activity BEFORE the period.
+  // One index probe per group row (LATERAL on [groupId, timestampWa]), never a scan of Message.
   const lastRows = groups.length
-    ? await prisma.$queryRaw<Array<{ wgid: string; lastAt: Date | null }>>`
-        SELECT g."whatsappGroupId" AS wgid, MAX(last.ts) AS "lastAt"
+    ? await prisma.$queryRaw<Array<{ wgid: string; lastAt: Date; senderPhone: string; senderName: string | null; direction: string }>>`
+        SELECT DISTINCT ON (g."whatsappGroupId")
+               g."whatsappGroupId" AS wgid, last.ts AS "lastAt", last."senderPhone", last."senderName", last.direction
         FROM "WhatsAppGroup" g
         CROSS JOIN LATERAL (
-          SELECT m."timestampWa" AS ts FROM "Message" m
+          SELECT m."timestampWa" AS ts, m."senderPhone", m."senderName", m."direction"::text AS direction FROM "Message" m
           WHERE m."groupId" = g."id" AND m."timestampWa" < ${new Date(ctx.rangeEnd)}
             AND m."direction" <> 'SYSTEM'
           ORDER BY m."timestampWa" DESC
           LIMIT 1
         ) last
-        WHERE g."projectId" = ${await activeProjectId()}
+        WHERE g."projectId" = ${projectId}
           AND g."whatsappGroupId" IN (${Prisma.join(groups.map((g) => g.whatsappGroupId))})
           ${ctx.filters.accountId ? Prisma.sql`AND g."accountId" = ${ctx.filters.accountId}` : Prisma.empty}
-        GROUP BY g."whatsappGroupId"`
+        ORDER BY g."whatsappGroupId", last.ts DESC`
     : [];
-  const lastAt = new Map(lastRows.map((r) => [r.wgid, r.lastAt?.getTime() ?? null]));
-  const to = measuredTo(ctx);
+  const last = new Map<string, LastActivity>(
+    lastRows.map((r) => [r.wgid, { at: r.lastAt.getTime(), senderPhone: r.senderPhone, senderName: r.senderName, direction: r.direction }]),
+  );
 
+  // A group with nothing before the period ends either has never had a stored message, or only has
+  // messages after the period. Said apart, because only the first is "never recorded".
+  const noneBefore = groups.filter((g) => !last.has(g.whatsappGroupId)).map((g) => g.whatsappGroupId);
+  const laterRows = noneBefore.length
+    ? await prisma.$queryRaw<Array<{ wgid: string }>>`
+        SELECT DISTINCT g."whatsappGroupId" AS wgid
+        FROM "WhatsAppGroup" g
+        WHERE g."projectId" = ${projectId}
+          AND g."whatsappGroupId" IN (${Prisma.join(noneBefore)})
+          ${ctx.filters.accountId ? Prisma.sql`AND g."accountId" = ${ctx.filters.accountId}` : Prisma.empty}
+          AND EXISTS (SELECT 1 FROM "Message" m WHERE m."groupId" = g."id" AND m."direction" <> 'SYSTEM')`
+    : [];
+  const hasLaterOnly = new Set(laterRows.map((r) => r.wgid));
+
+  // Who a last message came from, by the same identifiers the Team Report matches team members on.
+  const roster = await prisma.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true, teamId: true } });
+  const memberBySender = new Map<string, { name: string }>();
+  for (const member of roster) for (const id of senderIdentifiers(member)) memberBySender.set(id, member);
+  const teamNameById = new Map(ctx.data.teams.map((t) => [t.id, t.name]));
+  const teamOfMember = new Map(roster.map((m) => [m.id, m.teamId ? (teamNameById.get(m.teamId) ?? null) : null]));
+  const lastBy = (l: LastActivity) => {
+    if (l.direction === "OUTGOING") return "Business number";
+    const member = memberBySender.get(l.senderPhone) ?? memberBySender.get(normalizePhoneNumber(l.senderPhone) ?? "");
+    return member ? `Team member · ${member.name}` : `Customer · ${l.senderName || l.senderPhone}`;
+  };
+
+  const to = measuredTo(ctx);
   const classified = groups.map((g) => {
     const c = counts.get(g.whatsappGroupId);
-    return { group: g, counts: c, status: classifyGroupActivity(c, low), lastAt: lastAt.get(g.whatsappGroupId) ?? null };
+    const l = last.get(g.whatsappGroupId) ?? null;
+    return {
+      group: g,
+      counts: c,
+      status: classifyGroupActivity(c, low),
+      last: l,
+      neverRecorded: !l && !hasLaterOnly.has(g.whatsappGroupId),
+      days: daysBetween(l?.at ?? null, to),
+    };
   });
   const byStatus = (s: GroupActivityStatus) => classified.filter((row) => row.status === s).length;
+  const silent = classified.filter((row) => row.status === "NO_COMMUNICATION");
+  const withActivity = groups.length - silent.length;
+  const neverRecorded = silent.filter((row) => row.neverRecorded).length;
+  const longest = silent
+    .filter((row) => row.days !== null)
+    .sort((a, b) => (b.days ?? 0) - (a.days ?? 0) || a.group.name.localeCompare(b.group.name))[0];
+
   const shown = classified
     .filter((row) => (statusFilter === "all" ? true : statusFilter === "attention" ? row.status !== "ACTIVE" : row.status === statusFilter))
     .sort(
       (a, b) =>
         STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) ||
-        (a.lastAt ?? 0) - (b.lastAt ?? 0) ||
+        (a.last?.at ?? 0) - (b.last?.at ?? 0) ||
         a.group.name.localeCompare(b.group.name),
     );
+
+  const rangeLabel = ctx.data.range.label;
+  const lastActivityText = (row: (typeof classified)[number]) =>
+    row.last ? when(row.last.at) : row.neverRecorded ? "Never recorded" : "None before the period end";
+  const monitoring = (g: MonitoredGroup) => {
+    const statuses = [...new Set(g.accounts.map((a) => a.status))];
+    return `Monitored · ${statuses.length === 1 && statuses[0] === "CONNECTED" ? "account connected" : `account ${statuses.map((s) => s.toLowerCase().replace(/_/g, " ")).join(" / ")}`}`;
+  };
 
   const table: ReportTable = {
     id: "groups",
     sheet: "Detailed",
-    title: `Groups (${count(shown.length)})`,
-    description: "Monitored groups and their status for the period, the ones needing attention first. Select a group for its Team Report.",
+    title: statusFilter === "NO_COMMUNICATION" ? `No communication · ${rangeLabel} (${count(shown.length)})` : `Groups (${count(shown.length)})`,
+    description:
+      statusFilter === "NO_COMMUNICATION"
+        ? "Monitored groups with no stored WhatsApp message of any kind in the period, longest silent first. Last activity is the latest message before the period."
+        : "Monitored groups and their status for the period, the ones needing attention first. Select a group for its Team Report.",
     noun: { singular: "group", plural: "groups" },
     columns: [
       { label: "Group" },
+      { label: "WhatsApp account" },
+      { label: "Team" },
       { label: "Status" },
-      { label: "Assigned" },
-      { label: "Customer msgs", numeric: true },
-      { label: "Replies", numeric: true },
-      { label: "All messages", numeric: true },
-      { label: "Last message", muted: true },
-      { label: "Days since last message", numeric: true },
+      { label: "Last activity", muted: true },
+      { label: "Last activity by" },
+      { label: "Days since last activity", numeric: true },
+      { label: "Messages in period", numeric: true },
+      { label: "Customer messages", numeric: true },
+      { label: "Team replies", numeric: true },
+      { label: "Monitoring" },
     ],
-    rows: shown.map(({ group, counts: c, status, lastAt: last }) => {
-      const days = daysBetween(last, to);
+    rows: shown.map((row) => {
+      const { group, counts: c, status } = row;
       const replies = (c?.member ?? 0) + (c?.business ?? 0);
+      const team = group.assignedMemberId ? (teamOfMember.get(group.assignedMemberId) ?? "—") : "—";
       return {
         key: group.whatsappGroupId,
         cells: [
           group.name,
+          group.accounts.map((a) => a.label).join(", "),
+          team,
           GROUP_ACTIVITY_LABELS[status],
-          group.assignedMemberId ? ctx.memberName(group.assignedMemberId) : "—",
+          lastActivityText(row),
+          row.last ? lastBy(row.last) : "—",
+          row.days === null ? "—" : row.days,
+          c?.total ?? 0,
           c?.customer ?? 0,
           replies,
-          c?.total ?? 0,
-          last === null ? "No stored messages" : dateOnly(last),
-          days === null ? "—" : days,
+          monitoring(group),
         ],
         sort: [
           group.name.toLowerCase(),
+          group.accounts.map((a) => a.label).join(", ").toLowerCase(),
+          team.toLowerCase(),
           STATUS_ORDER.indexOf(status),
-          group.assignedMemberId ? ctx.memberName(group.assignedMemberId).toLowerCase() : "~",
+          row.last?.at ?? 0,
+          row.last ? lastBy(row.last).toLowerCase() : "~",
+          row.days ?? Number.MAX_SAFE_INTEGER,
+          c?.total ?? 0,
           c?.customer ?? 0,
           replies,
-          c?.total ?? 0,
-          last ?? 0,
-          days ?? Number.MAX_SAFE_INTEGER,
+          monitoring(group),
         ],
-        sub: [group.whatsappGroupId, null, null, null, null, null, null, null],
+        sub: [group.whatsappGroupId, null, group.assignedMemberId ? ctx.memberName(group.assignedMemberId) : null, null, null, null, null, null, null, null, null],
       };
     }),
   };
 
+  const summary: ReportTable = {
+    id: "summary",
+    sheet: "Breakdown",
+    title: "Activity summary",
+    description: "Every monitored group in the period, by status.",
+    noun: { singular: "status", plural: "statuses" },
+    columns: [{ label: "Status" }, { label: "Groups", numeric: true }, { label: "Share" }],
+    rows: STATUS_ORDER.map((s) => ({
+      key: s,
+      cells: [GROUP_ACTIVITY_LABELS[s], byStatus(s), percent(groups.length ? byStatus(s) / groups.length : null)],
+      sort: [STATUS_ORDER.indexOf(s), byStatus(s), groups.length ? byStatus(s) / groups.length : 0],
+    })),
+  };
+
   return {
     id: "inactive-groups",
-    title: "Inactive Groups",
-    question: "Which monitored groups have gone quiet, or are waiting with no reply?",
+    title: "Inactive Groups — No Communication",
+    question: "Which groups had no communication at all during this period?",
     tiles: [
       { label: "Monitored groups", value: count(groups.length), hint: "active and monitored today" },
+      { label: "With communication", value: count(withActivity), hint: "at least one stored message", tone: "success" },
+      {
+        label: "No communication",
+        value: count(silent.length),
+        hint: `no stored message · ${rangeLabel}`,
+        tone: silent.length > 0 ? "danger" : "neutral",
+      },
+      { label: "No-communication share", value: percent(groups.length ? silent.length / groups.length : null), hint: "of monitored groups" },
+      {
+        label: "Longest silence",
+        value: longest ? `${count(longest.days ?? 0)} days` : "—",
+        hint: longest ? `${longest.group.name} · last ${dateOnly(longest.last?.at ?? null)}` : "no silent group with earlier activity",
+        tone: longest ? "warning" : "neutral",
+      },
+      { label: "Never recorded", value: count(neverRecorded), hint: "silent groups with no stored message at all" },
       {
         label: "Customer activity, no reply",
         value: count(byStatus("CUSTOMER_NO_REPLY")),
         hint: "customers wrote, nobody answered",
         tone: byStatus("CUSTOMER_NO_REPLY") > 0 ? "danger" : "neutral",
       },
-      { label: "No customer activity", value: count(byStatus("NO_CUSTOMER_ACTIVITY")), hint: "no customer message" },
-      { label: "Low activity", value: count(byStatus("LOW_ACTIVITY")), hint: `fewer than ${low} messages` },
-      { label: "Active", value: count(byStatus("ACTIVE")), tone: "success" },
     ],
     visuals: [],
-    tables: [table],
+    tables: [table, summary],
     notes: [
       {
+        tone: silent.length > 0 ? "warning" : "info",
+        text:
+          groups.length === 0
+            ? `No monitored group matches these filters · ${rangeLabel}.`
+            : silent.length > 0
+              ? `No communication · ${rangeLabel}: ${count(silent.length)} of ${count(groups.length)} monitored group${groups.length === 1 ? "" : "s"} had no recorded WhatsApp activity during this period.`
+              : `All monitored groups had activity during this period (${rangeLabel}).`,
+      },
+      {
         tone: "info",
-        text: "Groups are the ones monitored and active today: whether a group was monitored in the past is not recorded. No customer activity is not a problem in itself — some groups are quiet.",
+        text: "Groups are the ones monitored and active today: whether a group was monitored in the past is not recorded. \"Never recorded\" means no message from the group has ever been stored — not proof the group was silent before monitoring began.",
       },
     ],
     formulas: [
       {
-        title: "Status",
-        text: `Checked in this order for the period: no customer message → No customer activity; customer messages but no reply from a team member or the business number → Customer activity, no reply; fewer than ${low} messages in total → Low activity; otherwise Active.`,
+        title: "No communication",
+        text: "A monitored group with zero stored WhatsApp messages of any kind — customer, team member or business number — between the start and end of the period. A group where only the team posted HAD communication and is listed as No customer activity instead.",
       },
       {
-        title: "Days since last message",
-        text: "Whole days from the group's last stored message of any kind (before the period end) to the end of the period, or to now if the period has not ended.",
+        title: "Status",
+        text: `Checked in this order for the period: no message at all → No communication; messages but none from a customer → No customer activity; customer messages but no reply from a team member or the business number → Customer activity, no reply; fewer than ${low} messages in total → Low activity; otherwise Active.`,
+      },
+      {
+        title: "Last activity and days since",
+        text: "The group's latest stored message before the period ends (for a silent group, that is its latest message BEFORE the period), and who sent it. Days since: whole days from it to the end of the period, or to now if the period has not ended. \"Never recorded\": no stored message at all; \"None before the period end\": its first stored message came after the period.",
+      },
+      {
+        title: "Team",
+        text: "The Team of the group's assigned team member today. A group with no assigned member has no Team.",
       },
     ],
     selects: [
@@ -192,9 +336,10 @@ export async function buildInactiveGroups(ctx: ReportContext): Promise<BuiltRepo
         label: "Show",
         value: statusFilter,
         options: [
+          { value: "NO_COMMUNICATION", label: "No communication" },
           { value: "attention", label: "Needing attention" },
           { value: "all", label: "All monitored groups" },
-          ...STATUS_ORDER.map((s) => ({ value: s, label: GROUP_ACTIVITY_LABELS[s] })),
+          ...STATUS_ORDER.filter((s) => s !== "NO_COMMUNICATION").map((s) => ({ value: s, label: GROUP_ACTIVITY_LABELS[s] })),
         ],
       },
       {
