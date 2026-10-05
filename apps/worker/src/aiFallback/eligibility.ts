@@ -63,7 +63,7 @@ export function checkAiFallbackEligibility(ctx: AiFallbackEligibilityContext): A
     // Human takeover: a team member is actively handling this group right now — silent, same
     // zero-side-effect philosophy as every other gate. Deterministic rules/escalation are
     // completely unaffected; only the AI fallback stage is paused, and only for this one group.
-    return { eligible: false, reason: `A team member is actively handling this group until ${ctx.group.aiSuppressedUntil.toISOString()}.` };
+    return { eligible: false, reason: `AI replies are paused in this group until ${ctx.group.aiSuppressedUntil.toISOString()} (a team member is handling it, or Mood Detection asked for a person).` };
   }
   if (!ctx.aiEngineEnabled) {
     return { eligible: false, reason: "AI Engine is disabled in AI Settings." };

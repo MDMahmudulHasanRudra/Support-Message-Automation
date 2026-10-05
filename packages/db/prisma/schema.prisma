@@ -246,6 +246,9 @@ enum NotificationEvent {
   /// for three hours unnoticed — every other event here describes something a customer said, so
   /// there was no vocabulary for "nothing a customer says is reaching us at all".
   COLLECTION_BROKEN
+  /// Mood Detection found a customer angry, very angry, frustrated or urgent enough to act on
+  /// (MOOD_DETECTION.md). One per escalation, inside the configured cooldown.
+  MOOD_ALERT
 }
 
 /// One team member's opt-in to be alerted directly about one kind of event.
@@ -574,6 +577,10 @@ model Project {
   messageMediaRows                     MessageMedia[]
   mediaCleanupJobRows                  MediaCleanupJob[]
   supportResponseEpisodeRows           SupportResponseEpisode[]
+  moodDetectionSettingsRows            MoodDetectionSettings[]
+  customerMoodEventRows                CustomerMoodEvent[]
+  moodAlertRows                        MoodAlert[]
+  moodAlertActionRows                  MoodAlertAction[]
   aiFallbackDecisionRows               AiFallbackDecision[]
   aiEvidenceSnapshotRows               AiEvidenceSnapshot[]
   aiEvidenceItemRows                   AiEvidenceItem[]
@@ -876,6 +883,8 @@ model WhatsAppAccount {
   adminPromotionJobs   GroupAdminPromotionJob[]
   media                MessageMedia[]
   supportEpisodes      SupportResponseEpisode[]
+  moodEvents           CustomerMoodEvent[]
+  moodAlerts           MoodAlert[]
   processingCheckpoint ProcessingCheckpoint?
   collectionGaps       CollectionGap[]
   escalationCases      SupportEscalationCase[]
@@ -1116,6 +1125,8 @@ model WhatsAppGroup {
   adminPromotionItems    GroupAdminPromotionItem[]
   media                  MessageMedia[]
   supportEpisodes        SupportResponseEpisode[]
+  moodEvents             CustomerMoodEvent[]
+  moodAlerts             MoodAlert[]
   escalationCases        SupportEscalationCase[]
   conversationSessions   ConversationSession[]
   supportActivities      SupportActivity[]
@@ -1313,6 +1324,7 @@ model Message {
   /// The attachment this message carried, when it carried one (MEDIA_STORAGE.md). Text is the
   /// message row itself and is always stored; only the file is optional.
   media                    MessageMedia?
+  moodEvent                CustomerMoodEvent?
   /// Support-response episodes this message started, last extended, or answered (SUPPORT_RESPONSE.md).
   episodesStarted          SupportResponseEpisode[]   @relation("SupportResponseFirstIncoming")
   episodesExtended         SupportResponseEpisode[]   @relation("SupportResponseLatestIncoming")
@@ -4887,4 +4899,184 @@ model WhatsAppOperationDismissal {
 
   @@unique([projectId, userId, kind, jobId])
   @@index([projectId, userId])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Mood Detection (MOOD_DETECTION.md). Detection is separate from action: a CustomerMoodEvent is one
+// customer message's reading; a MoodAlert is the cooldown unit (one per escalation of one customer
+// in one group); a MoodAlertAction is one configured action of that alert, retried on its own.
+
+enum MoodEventStatus {
+  /// Recorded by the pipeline's deterministic pre-filter; waiting for the mood processor.
+  PENDING
+  PROCESSING
+  /// Finished: final mood decided, trigger evaluated, any alert created.
+  ANALYZED
+  FAILED
+}
+
+enum MoodAlertActionStatus {
+  PENDING
+  PROCESSING
+  DONE
+  /// Deliberately not done (no destination, unreachable member, safety refused the send…).
+  SKIPPED
+  FAILED
+}
+
+/// Settings → Mood Detection. One row per project; an absent row means the defaults (off).
+model MoodDetectionSettings {
+  id                                String   @id @default("global")
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId                         String   @unique @default(dbgenerated("project_id_required()"))
+  project                           Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  enabled                           Boolean  @default(false)
+  analyzeText                       Boolean  @default(true)
+  analyzeEmoji                      Boolean  @default(true)
+  analyzeStickers                   Boolean  @default(true)
+  /// Ask the AI (the RESPONSE job's model) about ambiguous readings only. The deterministic
+  /// pre-filter always runs first; a message with no emotional signal never reaches the AI.
+  useAiClassification               Boolean  @default(false)
+  /// LOW | BALANCED | HIGH | CUSTOM (packages/shared/src/mood.ts SENSITIVITY_THRESHOLDS).
+  sensitivity                       String   @default("BALANCED")
+  /// The threshold (50–99) used when sensitivity is CUSTOM.
+  minConfidence                     Int      @default(80)
+  /// One alert per customer per group inside this window; a higher level inside it adds only the
+  /// actions the lower one did not take.
+  cooldownMinutes                   Int      @default(30)
+  /// Internal escalation group(s): WhatsApp group ids (…@g.us), chosen with the group picker —
+  /// the same form as every other alert destination.
+  internalGroupIds                  String[] @default([])
+  /// Per-mood action policy (MoodPolicies). Null = DEFAULT_MOOD_POLICIES.
+  policies                          Json?
+  /// Who an internal alert mentions when the group has no assigned member:
+  /// OPTED_IN (members opted into Mood alerts, at most three) | NONE.
+  unassignedMention                 String   @default("OPTED_IN")
+  /// Skip the customer-facing message when nobody is assigned to the group.
+  skipCustomerMessageWhenUnassigned Boolean  @default(false)
+  /// How long "Require human takeover" holds AI replies back unless a person replies first.
+  requireHumanHours                 Int      @default(24)
+  updatedById                       String?
+  updatedAt                         DateTime @updatedAt
+}
+
+/// One customer message's mood reading — the job row the processor claims, and the history.
+model CustomerMoodEvent {
+  id              String          @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId       String          @default(dbgenerated("project_id_required()"))
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// One reading per message: the idempotency guard for replays and redeliveries.
+  messageId       String          @unique
+  message         Message         @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId         String
+  group           WhatsAppGroup   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// The WhatsApp group itself (…@g.us). Two accounts in one group store one Message row each, so
+  /// trend, twin detection and the alert cooldown key on this rather than on a group row.
+  whatsappGroupId String
+  /// The customer, as Message.senderPhone (digits or a LID). Mood is per customer; the group's
+  /// mood is an aggregate of these.
+  customerKey     String
+  /// The message's own WhatsApp time — what trend and "mood at the time of response" read.
+  messageAt       DateTime
+  /// Final reading (packages/shared/src/mood.ts MOODS). Text, not an enum: a new mood needs no
+  /// migration. Before analysis: the deterministic reading.
+  mood            String
+  /// 0–1.
+  confidence      Float
+  scores          Json?
+  /// Structured reasons (MOOD_SIGNALS). Never model reasoning.
+  signals         String[]        @default([])
+  previousMood    String?
+  /// MOOD_LEVEL of the final mood (0–4).
+  level           Int             @default(0)
+  /// The pre-filter judged the reading ambiguous enough to be worth an AI classification.
+  aiRequested     Boolean         @default(false)
+  aiUsed          Boolean         @default(false)
+  triggered       Boolean         @default(false)
+  /// Why it did or did not trigger, in words (decideMoodTrigger().because or a skip reason).
+  decisionNote    String?
+  status          MoodEventStatus @default(PENDING)
+  attempts        Int             @default(0)
+  lastError       String?
+  scheduledAt     DateTime
+  analyzedAt      DateTime?
+  alertId         String?
+  alert           MoodAlert?      @relation(fields: [alertId], references: [id], onDelete: SetNull)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([whatsappGroupId, customerKey, messageAt])
+  @@index([groupId, messageAt])
+  @@index([projectId, messageAt])
+}
+
+/// One escalation of one customer in one group — the cooldown unit. Exactly one alert per
+/// escalation: later angry messages inside the cooldown attach to it instead of alerting again.
+model MoodAlert {
+  id              String              @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId       String              @default(dbgenerated("project_id_required()"))
+  project         Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId       String
+  account         WhatsAppAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId         String
+  group           WhatsAppGroup       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// The WhatsApp group (…@g.us): the cooldown is per WhatsApp group and customer, whichever
+  /// account's copy of the message arrived first.
+  whatsappGroupId String
+  customerKey     String
+  /// The highest mood this alert reached, its level, and the priority that mood's policy set.
+  mood            String
+  level           Int
+  priority        String
+  confidence      Float
+  signals         String[]            @default([])
+  /// The message that opened it, and the latest one that raised or extended it.
+  firstMessageId  String
+  latestMessageId String
+  /// Readings that triggered while this alert was open (the first included).
+  triggerCount    Int                 @default(1)
+  openedAt        DateTime            @default(now())
+  cooldownUntil   DateTime
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  events          CustomerMoodEvent[]
+  actions         MoodAlertAction[]
+
+  @@index([whatsappGroupId, customerKey, cooldownUntil])
+  @@index([groupId, openedAt])
+  @@index([projectId, openedAt])
+}
+
+/// One configured action of one alert, retried independently: a failed team notification never
+/// blocks the AI pause, and the AI pause never waits on WhatsApp.
+model MoodAlertAction {
+  id          String                @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId   String                @default(dbgenerated("project_id_required()"))
+  project     Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  alertId     String
+  alert       MoodAlert             @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  /// CONVERSATION | NEEDS_ATTENTION | NOTIFY_TEAM | INTERNAL_ALERT | CUSTOMER_MESSAGE
+  action      String
+  status      MoodAlertActionStatus @default(PENDING)
+  attempts    Int                   @default(0)
+  /// What was done or why not, in words.
+  detail      String?
+  lastError   String?
+  scheduledAt DateTime
+  completedAt DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  @@unique([alertId, action])
+  @@index([status, scheduledAt])
 }

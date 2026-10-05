@@ -4,6 +4,7 @@ import { isMediaPlaceholderBody, mediaCaption } from "@support-automation/shared
 import type { ThreadEntry } from "@/server/chatInbox";
 import { formatDateTime, formatTime } from "@/lib/date";
 import { MediaNotArchived, MessageAttachment } from "./MessageAttachment";
+import { MoodBadge } from "@/components/MoodBadge";
 
 const dayFormat = new Intl.DateTimeFormat("en-US", {
   timeZone: "Asia/Dhaka",
@@ -171,6 +172,14 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
                     {notArchived ? <MediaNotArchived body={entry.body} /> : null}
                     {text ? <div className={hasFile ? "px-2 pt-1.5 pb-0.5" : undefined}>{text}</div> : null}
                   </div>
+
+                  {/* Mood Detection's reading of this customer message — an inference, with the
+                      structured reasons on hover, never model reasoning. */}
+                  {entry.mood ? (
+                    <span className="mt-1 px-1">
+                      <MoodBadge mood={entry.mood.mood} confidence={entry.mood.confidence} signals={entry.mood.signals} />
+                    </span>
+                  ) : null}
 
                   <span
                     className={`mt-1 flex items-center gap-1 px-1 text-[10px] text-[color:var(--color-muted-foreground)] ${

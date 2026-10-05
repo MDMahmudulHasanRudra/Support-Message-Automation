@@ -101,6 +101,7 @@ describe("creating a project", () => {
       TeamManagementSettings: 1,
       CommunicationStyleProfile: 1,
       MediaStorageSettings: 1,
+      MoodDetectionSettings: 1,
       NotificationEventSetting: Object.values(NotificationEvent).length,
       ShiftTemplate: DEFAULT_SHIFT_TEMPLATES.length,
       ProjectAccess: 1,

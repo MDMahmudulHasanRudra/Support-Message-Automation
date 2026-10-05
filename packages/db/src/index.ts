@@ -127,11 +127,11 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   // settings singletons
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
-  "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings",
+  "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
   // descendants
   "Message", "OutboundMessage", "WhatsAppGroup", "AutomationExecution", "Notification", "WorkerCommand",
   "ProcessingCheckpoint", "MessageDropCounter", "GroupBroadcastJob", "GroupParticipantAddJob",
-  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "SupportResponseEpisode", "CollectionGap", "WhatsAppOperationDismissal", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
+  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "SupportResponseEpisode", "CollectionGap", "WhatsAppOperationDismissal", "CustomerMoodEvent", "MoodAlert", "MoodAlertAction", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
   "SupportEscalationEvent", "ConversationSession", "SupportActivity", "SupportSession", "TeamAttendanceDay",
   "TeamAttendanceGroup",
 ]);
@@ -139,7 +139,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
-  "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings",
+  "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
 ]);
 
 /** `SystemLog.projectId` is optional: a project's operational events carry one, platform events do not. */
@@ -1289,6 +1289,8 @@ export async function createProjectWithDefaults(input: CreateProjectInput, db: P
     await tx.communicationStyleProfile.create({ data: own });
     // Every media type stored, kept indefinitely (MEDIA_STORAGE.md).
     await tx.mediaStorageSettings.create({ data: own });
+    // Mood Detection off, with the recommended policies (MOOD_DETECTION.md).
+    await tx.moodDetectionSettings.create({ data: own });
 
     await tx.projectFeature.createMany({
       data: PROJECT_FEATURES.map((feature) => ({ projectId: project.id, key: feature.key, enabled: feature.defaultEnabled })),

@@ -14,6 +14,7 @@ export const NOTIFICATION_EVENTS = [
   // which is what made the 18 Sep 2026 outage run for three hours unnoticed.
   "COLLECTION_BROKEN",
   "SUPPORT_ESCALATION",
+  "MOOD_ALERT",
   "AI_HUMAN_FALLBACK",
   "RULE_NOTIFY_WHATSAPP",
   "RULE_NOTIFY_TEAMS",

@@ -6,6 +6,7 @@ import { recoverStuckParticipantChecks } from "./queue/groupParticipantCheckProc
 import { recoverStuckNotifications } from "./notifications/dispatcher.js";
 import { recoverStuckCommands } from "./commands/commandProcessor.js";
 import { recoverStuckMediaDownloads } from "./media/mediaDownloadProcessor.js";
+import { recoverStuckMoodWork } from "./mood/moodProcessor.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { trackTick } from "./lifecycle.js";
 import { recordLoopTick, registerLoop } from "./health/loopLiveness.js";
@@ -35,6 +36,8 @@ export interface StuckWorkRecovered {
   /** Media downloads whose process went away mid-download, put back in the queue. */
   mediaDownloads: number;
   commands: number;
+  /** Mood readings and mood alert actions left PROCESSING. */
+  mood: number;
 }
 
 /**
@@ -47,15 +50,16 @@ export interface StuckWorkRecovered {
  * claimed by the previous process would otherwise wait out a twenty-minute timer for no reason.
  */
 export async function runStuckWorkRecovery(options: { atBoot?: boolean } = {}): Promise<StuckWorkRecovered> {
-  const [outbound, notifications, participantAdds, participantChecks, mediaDownloads, commands] = await Promise.all([
+  const [outbound, notifications, participantAdds, participantChecks, mediaDownloads, commands, mood] = await Promise.all([
     recoverStuckOutboundMessages(),
     recoverStuckNotifications(),
     recoverStuckParticipantAddItems(),
     recoverStuckParticipantChecks(),
     recoverStuckMediaDownloads({ atBoot: options.atBoot }),
     recoverStuckCommands({ atBoot: options.atBoot }),
+    recoverStuckMoodWork(),
   ]);
-  return { outbound, notifications, participantAdds, participantChecks, mediaDownloads, commands };
+  return { outbound, notifications, participantAdds, participantChecks, mediaDownloads, commands, mood };
 }
 
 /**
@@ -83,7 +87,7 @@ export function startStuckWorkRecoveryProcessor(intervalMs = RECOVERY_INTERVAL_M
     processing = true;
     void trackTick(async () => {
       const recovered = await runStuckWorkRecovery();
-      const total = recovered.outbound + recovered.notifications + recovered.participantAdds + recovered.mediaDownloads + recovered.commands;
+      const total = recovered.outbound + recovered.notifications + recovered.participantAdds + recovered.mediaDownloads + recovered.commands + recovered.mood;
       // Silent when there is nothing to do, which is the normal case. A line every five minutes
       // saying "recovered nothing" is how a log stops being read.
       if (total === 0) return;

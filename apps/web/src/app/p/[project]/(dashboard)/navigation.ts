@@ -47,6 +47,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Smartphone,
+  Smile,
   Sparkles,
   Terminal as ConsoleIcon,
   UserCog,
@@ -163,10 +164,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     label: "Support",
-    description: "Escalation timers and what counts as support work.",
+    description: "Escalation timers, what counts as support work, and upset customers.",
     links: [
       { href: "/support-escalation/policies", label: "Escalation Policies", icon: ShieldAlert },
       { href: "/support-activity/settings", label: "Support Activity Setup", icon: Activity },
+      { href: "/settings/mood-detection", label: "Mood Detection", icon: Smile },
     ],
   },
   {

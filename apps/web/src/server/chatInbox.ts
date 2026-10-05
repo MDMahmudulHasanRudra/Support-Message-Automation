@@ -2,7 +2,8 @@
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
 import { Prisma } from "@prisma/client";
-import { attributeOutbound, type OutboundSenderType } from "@support-automation/shared";
+import { attributeOutbound, MOOD_LEVEL, type Mood, type OutboundSenderType } from "@support-automation/shared";
+import { getGroupMoods, getMessageMoods, type MessageMood } from "@/server/moodDetectionReports";
 
 /**
  * Read helpers for the WhatsApp Chat inbox. Plain async functions with no "use server"
@@ -56,6 +57,8 @@ export interface ConversationSummary {
   categoryId: string | null;
   isPinned: boolean;
   isArchived: boolean;
+  /** Mood Detection's conversation-level reading (concerned or worse), or null. An inference. */
+  mood: Mood | null;
 }
 
 export interface ChatCategorySummary {
@@ -291,7 +294,7 @@ async function summarise(accountId: string, ranked: RankedConversation[]): Promi
   });
   if (groups.length === 0) return [];
 
-  const [latest, pending] = await Promise.all([
+  const [latest, pending, moods] = await Promise.all([
     prisma.$queryRaw<
       Array<{ groupId: string; body: string; timestampWa: Date; direction: string; senderName: string | null; senderPhone: string }>
     >`
@@ -314,6 +317,7 @@ async function summarise(accountId: string, ranked: RankedConversation[]): Promi
       where: { accountId, chatId: { in: groups.map((g) => g.whatsappGroupId) }, status: UNSETTLED_OUTBOUND },
       _count: { chatId: true },
     }),
+    getGroupMoods(groups.map((g) => g.whatsappGroupId)),
   ]);
 
   const latestByGroup = new Map(latest.map((row) => [row.groupId, row]));
@@ -347,6 +351,7 @@ async function summarise(accountId: string, ranked: RankedConversation[]): Promi
         // message puts it straight back. Nothing is dismissed for good, only until they speak again.
         isUnanswered: rank.unanswered,
         awaitingReply: rank.awaiting,
+        mood: moods.get(group.whatsappGroupId) ?? null,
       },
     ];
   });
@@ -431,6 +436,7 @@ export async function getArchivedChatConversations(accountId: string, search?: s
     categoryId: group.chatCategoryId,
     isPinned: group.chatPinnedAt !== null,
     isArchived: true,
+    mood: null,
   }));
 }
 
@@ -469,6 +475,8 @@ export interface ThreadEntry {
    * media storage existed.
    */
   media?: ThreadMedia;
+  /** Mood Detection's reading of this customer message (concerned or worse), with its signals. */
+  mood?: MessageMood;
 }
 
 export interface ThreadMedia {
@@ -502,6 +510,8 @@ export interface ChatThread {
     aiAutomationEnabled: boolean;
     aiSuppressedUntil: Date | null;
     participantCount: number | null;
+    /** The conversation's detected mood (concerned or worse), or null. */
+    mood: Mood | null;
   };
   entries: ThreadEntry[];
   /** True when older messages exist beyond the window this returned. */
@@ -657,6 +667,11 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
       })
     : [];
   const attributionByProviderId = new Map(echoed.map((row) => [row.providerMessageId!, attributionOf(row)]));
+  const incomingIds = messages.filter((m) => m.direction === "INCOMING" && !m.isFromTeamMember).map((m) => m.whatsappMessageId);
+  const [messageMoods, groupMoods] = await Promise.all([
+    getMessageMoods(group.whatsappGroupId, incomingIds),
+    getGroupMoods([group.whatsappGroupId]),
+  ]);
 
   const entries: ThreadEntry[] = messages.map((m) => ({
     id: m.id,
@@ -667,6 +682,10 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
     senderPhone: m.senderPhone,
     isTeamMember: m.isFromTeamMember,
     ...(m.direction === "OUTGOING" ? attributionByProviderId.get(m.whatsappMessageId) : undefined),
+    ...(() => {
+      const mood = messageMoods.get(m.whatsappMessageId);
+      return mood && MOOD_LEVEL[mood.mood] >= 1 ? { mood } : {};
+    })(),
     media: m.media
       ? {
           id: m.media.id,
@@ -724,6 +743,7 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
       aiAutomationEnabled: group.aiAutomationEnabled,
       aiSuppressedUntil: group.aiSuppressedUntil,
       participantCount: group.participantCount,
+      mood: groupMoods.get(group.whatsappGroupId) ?? null,
     },
     entries,
     hasMore,

@@ -1,6 +1,6 @@
 
 import { prisma } from "@/server/db";
-import { NOTIFICATION_TEMPLATES } from "@support-automation/shared";
+import { NOTIFICATION_TEMPLATES, parseMoodPolicies, TRIGGERABLE_MOODS, type MoodPolicies, type TriggerableMood } from "@support-automation/shared";
 
 /**
  * Whether each template can currently reach anybody, and what to switch on if not.
@@ -36,6 +36,10 @@ export async function getTemplateLiveness(): Promise<Record<string, TemplateLive
     prisma.automationRule.findMany({ where: { status: "ACTIVE" }, select: { actions: true } }),
     prisma.whatsAppGroup.count({ where: { isActive: true, priority: { not: null } } }),
   ]);
+  // Read after the batch above, not inside it: a sixth concurrent query can exhaust a small
+  // connection pool while each one also resolves the project (seen as a hang with 5 connections).
+  const mood = await prisma.moodDetectionSettings.findUnique({ where: { id: "global" }, select: { enabled: true, policies: true } });
+  const moodPolicies = parseMoodPolicies(mood?.policies ?? null);
 
   const notifyRuleCount = notifyRules.filter((rule) =>
     Array.isArray(rule.actions)
@@ -67,6 +71,8 @@ export async function getTemplateLiveness(): Promise<Record<string, TemplateLive
       eventEnabled,
       notifyRuleCount,
       priorityGroupCount,
+      moodEnabled: Boolean(mood?.enabled),
+      moodPolicies,
     });
   }
 
@@ -81,7 +87,11 @@ interface Inputs {
   eventEnabled: (event: string) => boolean;
   notifyRuleCount: number;
   priorityGroupCount: number;
+  moodEnabled: boolean;
+  moodPolicies: MoodPolicies;
 }
+
+const MOOD_SETTINGS = { fixHref: "/settings/mood-detection", fixLabel: "Mood Detection" };
 
 function computeOne(key: string, input: Inputs): TemplateLiveness {
   if (key === "AI_HANDOVER_ALERT") {
@@ -154,6 +164,24 @@ function computeOne(key: string, input: Inputs): TemplateLiveness {
     // Deliberately no "nothing raises it yet" branch. The watchdog runs unconditionally and needs
     // no feature switched on, so the only way this template is dead is if somebody muted it — and
     // saying anything softer would understate what muting it costs.
+    return { live: true };
+  }
+
+  if (key === "MOOD_ALERT") {
+    if (!input.moodEnabled) return { live: false, reason: "Mood Detection is off.", ...MOOD_SETTINGS };
+    if (!input.eventEnabled("MOOD_ALERT")) return { live: false, reason: "Mood alerts are muted.", ...NOTIFICATION_CENTER };
+    const any = TRIGGERABLE_MOODS.some((m) => input.moodPolicies[m].trigger && (input.moodPolicies[m].notifyTeam || input.moodPolicies[m].internalAlert));
+    if (!any) return { live: false, reason: "No mood is set to alert the team or the internal group.", ...MOOD_SETTINGS };
+    return { live: true };
+  }
+
+  if (key.startsWith("MOOD_CUSTOMER_")) {
+    if (!input.moodEnabled) return { live: false, reason: "Mood Detection is off.", ...MOOD_SETTINGS };
+    const mood = key.slice("MOOD_CUSTOMER_".length) as TriggerableMood;
+    const policy = input.moodPolicies[mood];
+    if (!policy?.trigger || !policy.customerMessage) {
+      return { live: false, reason: "This mood's \"Send a message to the customer\" is off (it is off by default).", ...MOOD_SETTINGS };
+    }
     return { live: true };
   }
 

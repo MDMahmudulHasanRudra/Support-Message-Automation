@@ -27,6 +27,7 @@ import { startCollectionWatchdog } from "./health/collectionWatchdog.js";
 import { readLoops, recordLoopTick, registerLoop } from "./health/loopLiveness.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
+import { startMoodDetectionProcessor } from "./mood/moodProcessor.js";
 import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
 import { startPatternDetectionProcessor } from "./learning/patternDetectionProcessor.js";
 import { startAiAnalysisProcessor } from "./learning/aiAnalysisProcessor.js";
@@ -75,7 +76,8 @@ async function main() {
       recovered.participantAdds +
       recovered.participantChecks +
       recovered.mediaDownloads +
-      recovered.commands >
+      recovered.commands +
+      recovered.mood >
     0
   ) {
     console.log(
@@ -145,6 +147,8 @@ async function main() {
     startMediaDownloadProcessor({ storage: mediaStorage, providers: registry }),
     startMediaCleanupProcessor(mediaStorage),
     startEscalationProcessor(),
+    // Mood Detection: finishes recorded readings and runs each alert's actions (a no-op while off).
+    startMoodDetectionProcessor(),
     // Conversation Learning Phase 1 — always registered, but processOneSegmentationBatch()
     // itself no-ops on every tick until LearningSettings.conversationLearningEnabled is turned
     // on, so this has zero effect on a fresh/default install.

@@ -1,5 +1,5 @@
 import { prisma } from "../db.js";
-import { UNABLE_TO_UNDERSTAND_VARIANT } from "@support-automation/shared";
+import { MOOD_CUSTOMER_MESSAGE_VARIANT, UNABLE_TO_UNDERSTAND_VARIANT } from "@support-automation/shared";
 
 /**
  * True if this client already has a reply for this rule in flight or sent
@@ -57,7 +57,13 @@ export async function isCooldownActive(params: {
       // row and the same kind of thing: sent BECAUSE nothing was answered. Counting it would block
       // the customer's next, clearer message from being answered, and cancel the handover mention
       // queued right after it at send time. `idempotencyKey` is required, so NOT is NULL-safe here.
-      NOT: { idempotencyKey: { endsWith: `:${UNABLE_TO_UNDERSTAND_VARIANT}` } },
+      //
+      // Mood Detection's message to an upset customer is the same again: sent because a person is
+      // needed, never an answer.
+      NOT: [
+        { idempotencyKey: { endsWith: `:${UNABLE_TO_UNDERSTAND_VARIANT}` } },
+        { idempotencyKey: { endsWith: `:${MOOD_CUSTOMER_MESSAGE_VARIANT}` } },
+      ],
       status: { in: ["PENDING", "PROCESSING", "SENT"] },
       createdAt: { gte: since },
       ...(params.excludeOutboundMessageId ? { id: { not: params.excludeOutboundMessageId } } : {}),

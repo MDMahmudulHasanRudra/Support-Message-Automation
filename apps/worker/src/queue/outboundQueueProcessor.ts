@@ -5,6 +5,7 @@ import { currentProjectId, OPERATING_PROJECT_STATUSES, projectIdForAccount, with
 import type { OutboundMessage } from "@prisma/client";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { isCooldownActive } from "./cooldown.js";
+import { MOOD_CUSTOMER_MESSAGE_VARIANT } from "@support-automation/shared";
 import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from "./rateLimiter.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { getAiSettings } from "../ai/settings.js";
@@ -352,9 +353,12 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
   const cooldownSeconds = message.ruleId
     ? (await prisma.automationRule.findUnique({ where: { id: message.ruleId }, select: { cooldownSeconds: true } }))
         ?.cooldownSeconds ?? null
-    : message.actionType === "AUTO_REPLY"
+    : message.actionType === "AUTO_REPLY" && !message.idempotencyKey.endsWith(`:${MOOD_CUSTOMER_MESSAGE_VARIANT}`)
       ? (await getAiSettings()).aiReplyCooldownSeconds
       : null;
+  // (Mood Detection's message to an upset customer is excluded: it is sent once per mood alert
+  // BECAUSE a person is needed, so an AI answer moments earlier must not cancel it on the way out.
+  // Kill switch, MANUAL_ONLY, rate limits and membership are all still checked.)
 
   // Test mode lifts cooldowns at enqueue time (safety.ts); it has to lift them here too, or an
   // approved test group could queue a reply and then have it cancelled on the way out.

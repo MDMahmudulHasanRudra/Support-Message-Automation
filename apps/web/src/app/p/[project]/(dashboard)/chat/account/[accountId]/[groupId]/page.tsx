@@ -5,6 +5,7 @@ import Link from "@/components/ProjectLink";
 import { notFound, redirect } from "next/navigation";
 import { after } from "next/server";
 import { Badge } from "@/components/ui";
+import { MoodBadge } from "@/components/MoodBadge";
 import { pageAccess } from "@/server/authorize";
 import { projectPath } from "@/server/projectPaths";
 import { getChatThread, getOtherAccountCopies, getSavedReplies } from "@/server/chatInbox";
@@ -110,6 +111,7 @@ export default async function ChatConversationPage({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          {group.mood ? <MoodBadge mood={group.mood} /> : null}
           {group.aiAutomationEnabled ? (
             <span className="hidden sm:inline">
               <Badge color="blue" dot>

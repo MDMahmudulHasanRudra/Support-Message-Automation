@@ -31,6 +31,22 @@ export async function formatSupportAlert(payload: Record<string, unknown>): Prom
     });
   }
 
+  if (payload.alertKind === "MOOD_ALERT") {
+    return renderNotification("MOOD_ALERT", {
+      moodLabel: text("moodLabel") ?? "Upset",
+      priority: text("priority") ?? "HIGH",
+      confidence: text("confidence") ?? "n/a",
+      groupName,
+      clientName,
+      customerMessage,
+      reasons: text("reasons") ?? "",
+      trend: text("trend") ?? "",
+      assignedTo: text("assignedTo") ?? "",
+      conversation: text("conversation") ?? "",
+      mentions: text("mentionTags") ?? "",
+    });
+  }
+
   if (payload.alertKind === "UNKNOWN_PATTERN") {
     return renderNotification("UNKNOWN_PATTERN", {
       keywords: (payload.patternKeywords as string[] | undefined)?.join(", ") || "(pattern)",

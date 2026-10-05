@@ -165,8 +165,86 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateDefinition[] =
       "Customer messages arriving now are not being stored and nobody is being alerted about them.",
     ].join("\n"),
   },
+  {
+    key: "MOOD_ALERT",
+    label: "Mood Detection — customer upset",
+    description:
+      "Sent when Mood Detection finds a customer angry, very angry, frustrated or urgent enough to act on, under the mood's own settings. Once per escalation: further messages inside the cooldown do not repeat it. Goes to the Notification Center's routing and, when chosen, the internal escalation group.",
+    audience: "TEAM",
+    variables: [
+      { name: "moodLabel", description: "The detected mood, with its emoji.", sample: "😡 Angry" },
+      { name: "priority", description: "The alert priority that mood's settings give it.", sample: "HIGH" },
+      { name: "confidence", description: "How sure the detection was.", sample: "91%" },
+      { name: "groupName", description: "The group the customer wrote in.", sample: "Karnaphuli Broadband" },
+      { name: "clientName", description: "Sender's name, or their number if unknown.", sample: "Shoriful Islam Shuvo" },
+      { name: CUSTOMER_MESSAGE, description: "The message that triggered it.", sample: "barbar eki problem, worst service 😡" },
+      { name: "reasons", description: "Why, as structured reasons — never AI reasoning.", sample: "Strongly negative language, Repeated complaint, Angry emoji" },
+      { name: "trend", description: "How their mood moved, if it rose.", sample: "Concerned → Frustrated → Angry" },
+      { name: "assignedTo", description: "Who the group is assigned to, or empty if nobody.", sample: "Kazi Sifat" },
+      { name: "conversation", description: "What happened to automation in that conversation.", sample: "AI replies paused — rules continue" },
+      { name: "mentions", description: "The @-tags, when 'mention the responsible member' is on. Empty otherwise.", sample: "@8801700000000" },
+    ],
+    defaultBody: [
+      "{{moodLabel}} CUSTOMER — {{priority}} PRIORITY",
+      "",
+      "Group: {{groupName}}",
+      "Customer: {{clientName}}",
+      "Message: {{customerMessage}}",
+      "",
+      "Detected: {{moodLabel}} ({{confidence}})",
+      "Why: {{reasons}}",
+      "Trend: {{trend}}",
+      "Assigned to: {{assignedTo}}",
+      "Automation: {{conversation}}",
+      "",
+      "{{mentions}}",
+      "Please take over this conversation.",
+    ].join("\n"),
+  },
+  ...moodCustomerTemplates(),
   ...escalationTemplates(),
 ];
+
+/**
+ * The optional message to the customer, one per mood so the tone can match: a frustrated customer
+ * and a very angry one should not read the same sentence. Off by default in every mood's policy —
+ * putting an extra message in front of an upset customer is a decision about tone.
+ */
+function moodCustomerTemplates(): NotificationTemplateDefinition[] {
+  const moods = [
+    {
+      key: "MOOD_CUSTOMER_FRUSTRATED",
+      mood: "frustrated",
+      body: "দুঃখিত যে সমস্যাটি এখনও সমাধান হয়নি। আমাদের সাপোর্ট টিম বিষয়টি দেখছে এবং দ্রুত আপনাকে জানাবে।\n\nSorry this is still not sorted — our support team is on it and will update you shortly.",
+    },
+    {
+      key: "MOOD_CUSTOMER_ANGRY",
+      mood: "angry",
+      body: "আপনার অসুবিধার জন্য আমরা আন্তরিকভাবে দুঃখিত। একজন সাপোর্ট টিম সদস্য এখনই বিষয়টি দেখছেন।\n\nWe are sincerely sorry for the trouble. A member of our support team is looking into this now.",
+    },
+    {
+      key: "MOOD_CUSTOMER_VERY_ANGRY",
+      mood: "very angry",
+      body: "আপনার অভিজ্ঞতার জন্য আমরা আন্তরিকভাবে দুঃখিত। বিষয়টি অগ্রাধিকার দিয়ে আমাদের সাপোর্ট টিমের কাছে পাঠানো হয়েছে, একজন সদস্য সরাসরি আপনার সাথে কথা বলবেন।\n\nWe are truly sorry. This has been escalated to our support team as a priority, and a person will respond to you directly.",
+    },
+    {
+      key: "MOOD_CUSTOMER_URGENT",
+      mood: "urgent",
+      body: "আমরা বুঝতে পারছি বিষয়টি জরুরি। আমাদের সাপোর্ট টিমকে জানানো হয়েছে, তারা যত দ্রুত সম্ভব সাহায্য করবে।\n\nWe understand this is urgent. Our support team has been alerted and will help as quickly as possible.",
+    },
+  ];
+  return moods.map(({ key, mood, body }) => ({
+    key,
+    label: `Mood Detection — message to a ${mood} customer`,
+    description: `Posted in the customer's own group when Mood Detection finds them ${mood} and that mood's "Send a message to the customer" is on (off by default). Once per alert. The customer reads this.`,
+    audience: "CUSTOMER" as const,
+    variables: [
+      { name: "groupName", description: "The group this is posted in.", sample: "Karnaphuli Broadband" },
+      { name: "assignedTo", description: "Who the group is assigned to, or empty if nobody.", sample: "Kazi Sifat" },
+    ],
+    defaultBody: body,
+  }));
+}
 
 /**
  * The five escalation tiers share a body and differ only in their heading, which is the part that

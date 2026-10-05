@@ -24,6 +24,7 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { countDroppedMessage } from "./dropCounter.js";
 import { registerMessageMedia } from "../media/registerMessageMedia.js";
 import { trackSupportResponse } from "../supportResponse/tracker.js";
+import { recordMoodSignal } from "../mood/moodDetection.js";
 import { currentProjectId, projectIsOperating, withAccountProject } from "../project/context.js";
 
 interface ActionExecutionRecord {
@@ -237,6 +238,32 @@ async function runAutomationStageInProject(
       console.error("[team-attendance] failed to record attendance evidence", err);
     }
 
+    // Mood Detection's deterministic pre-filter (MOOD_DETECTION.md). Same shape as the hooks above:
+    // own try/catch, swallowed. A message with no emotional signal writes nothing; one with a signal
+    // writes one reading for the mood processor. It runs for every account (like the evidence hooks
+    // above) and before the Primary gate below, so a reading never depends on which number replies.
+    // The one thing it may do at once is hold AI back, so the AI fallback further down this same
+    // function sees the pause instead of answering an angry customer cheerfully.
+    let moodPausedUntil: Date | undefined;
+    try {
+      const mood = await recordMoodSignal({
+        messageId: message.id,
+        accountId: raw.accountId,
+        whatsappGroupId: raw.whatsappGroupId,
+        whatsappMessageId: raw.whatsappMessageId,
+        chatId: raw.chatId,
+        group: group ? { id: group.id, isMonitored: group.isMonitored } : null,
+        isFromTeamMember,
+        senderPhone: raw.senderPhone,
+        body: raw.body,
+        timestampWa: raw.timestampWa,
+        isSticker: raw.media?.mediaType === "STICKER" || raw.body === "[Sticker]",
+      });
+      moodPausedUntil = mood.aiSuppressedUntil;
+    } catch (err) {
+      console.error("[mood] failed to record a mood reading", err);
+    }
+
     /**
      * Only the Primary account answers customers.
      *
@@ -357,7 +384,10 @@ async function runAutomationStageInProject(
                 isMonitored: group.isMonitored,
                 aiAutomationEnabled: group.aiAutomationEnabled,
                 aiAutomationExcluded: group.aiAutomationExcluded,
-                aiSuppressedUntil: group.aiSuppressedUntil,
+                aiSuppressedUntil:
+                  moodPausedUntil && (!group.aiSuppressedUntil || group.aiSuppressedUntil < moodPausedUntil)
+                    ? moodPausedUntil
+                    : group.aiSuppressedUntil,
                 // Was omitted, so `params.group?.testModeEnabled ?? false` inside runAiFallback
                 // was always false and an approved test group still paid the full randomised
                 // 3-15s reply delay on every AI answer and every handover mention. The throttle

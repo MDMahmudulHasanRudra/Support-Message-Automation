@@ -38,6 +38,7 @@ import {
 import { chatAccountSwitchTarget, listConversationView, searchConversations } from "@/server/actions/chatSearch";
 import type { ChatAccountOption, ChatCategorySummary, ConversationCounts, ConversationSummary, ConversationView } from "@/server/chatInbox";
 import { CategoryManager } from "./CategoryManager";
+import { MOOD_EMOJI, MOOD_LABELS, MOOD_LEVEL } from "@support-automation/shared";
 import { conversationAvatar } from "./avatar";
 import { categoryDotClass } from "./categoryColors";
 import { accountStatusTone, rememberChatAccount } from "./chatAccounts";
@@ -1086,6 +1087,18 @@ function Row({
               <span className="flex items-center gap-1 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px text-[10px] text-[color:var(--color-neutral-fg)]">
                 <span className={`size-1.5 rounded-full ${categoryDotClass(category.color)}`} aria-hidden />
                 {category.name}
+              </span>
+            ) : null}
+            {conversation.mood ? (
+              <span
+                title={`Detected mood: ${MOOD_LABELS[conversation.mood]} (Mood Detection — an inference)`}
+                className={`rounded-[var(--radius-xs)] px-1.5 py-px text-[10px] font-medium ${
+                  MOOD_LEVEL[conversation.mood] >= 3
+                    ? "bg-[var(--color-danger-bg)] text-[color:var(--color-danger-fg)]"
+                    : "bg-[var(--color-warning-bg)] text-[color:var(--color-warning-fg)]"
+                }`}
+              >
+                <span aria-hidden>{MOOD_EMOJI[conversation.mood]}</span> {MOOD_LABELS[conversation.mood]}
               </span>
             ) : null}
             {conversation.aiAutomationEnabled ? (

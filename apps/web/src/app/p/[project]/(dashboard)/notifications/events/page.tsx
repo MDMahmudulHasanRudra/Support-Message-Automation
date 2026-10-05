@@ -25,6 +25,13 @@ const EVENT_COPY: Record<
     description: "A priority conversation crossed one of its SLA timers and nobody has replied yet.",
     consequence: "Muting this means an overdue customer goes unnoticed until someone opens the console.",
   },
+  MOOD_ALERT: {
+    title: "Customer upset (Mood Detection)",
+    description:
+      "Mood Detection found a customer angry, very angry, frustrated or urgent enough to act on. Once per escalation — further messages inside the cooldown do not repeat it.",
+    consequence:
+      "Muting this silences both the team alert and the internal escalation group alert from Settings → Mood Detection. AI pauses and Waiting-list marks still happen.",
+  },
   AI_HUMAN_FALLBACK: {
     title: "AI handed over to a human",
     description: "A customer asked something the AI could not answer safely, so it stopped and asked for a person.",

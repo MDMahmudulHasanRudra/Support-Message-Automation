@@ -1,4 +1,5 @@
 import { prisma } from "../db.js";
+import type { NotificationEvent } from "@prisma/client";
 import { buildWhatsAppContactId, hasReachablePhoneNumber, normalizePhoneNumber } from "@support-automation/shared";
 import { enqueueOutboundMessage } from "../pipeline/enqueueOutbound.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -36,10 +37,19 @@ import { renderNotification } from "../notifications/templates.js";
  */
 const MENTION_REPEAT_WINDOW_MS = 15 * 60_000;
 
-/** Who to tag, in preference order, plus the group's own name for the message template. */
-async function resolveMentionTargets(
+/**
+ * Who to tag, in preference order, plus the group's own name for the message template.
+ *
+ * Shared with Mood Detection's internal alert, which tags the same person for a different reason —
+ * hence the event whose opted-in members stand in when nobody is assigned, and the option to tag
+ * nobody at all in that case.
+ */
+export async function resolveMentionTargets(
   groupId: string,
-): Promise<{ targets: Array<{ name: string; chatId: string }>; groupName: string }> {
+  options: { event?: NotificationEvent; fallbackToOptedIn?: boolean } = {},
+): Promise<{ targets: Array<{ name: string; chatId: string }>; groupName: string; assignedName: string | null }> {
+  const event = options.event ?? "AI_HUMAN_FALLBACK";
+  const fallbackToOptedIn = options.fallbackToOptedIn ?? true;
   const group = await prisma.whatsAppGroup.findUnique({
     where: { id: groupId },
     select: {
@@ -54,8 +64,10 @@ async function resolveMentionTargets(
   const candidates =
     assigned && assigned.status === "ACTIVE"
       ? [assigned]
-      : await prisma.internalTeamMember.findMany({
-          where: { status: "ACTIVE", notificationPreferences: { some: { event: "AI_HUMAN_FALLBACK" } } },
+      : !fallbackToOptedIn
+        ? []
+        : await prisma.internalTeamMember.findMany({
+          where: { status: "ACTIVE", notificationPreferences: { some: { event } } },
           select: { id: true, name: true, phoneNumber: true, whatsappId: true, status: true },
           // A handful at most: a message tagging fifteen people is noise, not escalation.
           take: 3,
@@ -71,7 +83,7 @@ async function resolveMentionTargets(
     if (!digits) continue;
     targets.push({ name: member.name, chatId: buildWhatsAppContactId(digits) });
   }
-  return { targets, groupName: group?.name ?? "" };
+  return { targets, groupName: group?.name ?? "", assignedName: assigned && assigned.status === "ACTIVE" ? assigned.name : null };
 }
 
 /**

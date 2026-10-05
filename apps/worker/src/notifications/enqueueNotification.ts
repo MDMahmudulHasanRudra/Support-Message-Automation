@@ -24,6 +24,12 @@ export async function enqueueNotification(params: {
   relatedRuleId?: string | null;
   relatedPatternCandidateId?: string | null;
   payload: Record<string, unknown>;
+  /**
+   * Leave out the opted-in members' personal copies. For a caller that announces one event in
+   * several places (Mood Detection's team routing and its internal escalation group), so nobody
+   * gets the same direct message once per destination.
+   */
+  skipDirectRecipients?: boolean;
 }): Promise<{ id: string; suppressed?: true }> {
   const delivery = await getEventDelivery(params.event);
   if (!delivery.enabled || !delivery.allowsChannel(params.type)) {
@@ -40,7 +46,7 @@ export async function enqueueNotification(params: {
   // WhatsApp only, and only for the WhatsApp copy, so a Teams webhook does not also fan out to
   // everyone's phone. Failures are swallowed per recipient: one person with a stale number must
   // not stop the alert reaching the group or the others.
-  if (params.type === "WHATSAPP" && params.accountId) {
+  if (params.type === "WHATSAPP" && params.accountId && !params.skipDirectRecipients) {
     for (const recipient of await getDirectRecipients(params.event)) {
       // Skip if this alert is already going to that exact chat, so somebody who has opted in AND
       // is in the destination group does not get it twice.
