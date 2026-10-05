@@ -1,12 +1,13 @@
 "use client";
 
-import { SendHorizontal } from "lucide-react";
+import { ArrowRight, SendHorizontal, Smartphone } from "lucide-react";
+import Link from "@/components/ProjectLink";
 import { useActionState, useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Textarea } from "@/components/ui";
 import { sendChatMessage, type ChatSendState } from "@/server/actions/chat";
 import { SavedReplyManager } from "./SavedReplyManager";
 import { SavedReplyPicker, type SavedReplyOption } from "./SavedReplyPicker";
-import type { ReplyAccountOption } from "@/server/chatInbox";
+import type { OtherAccountCopy } from "@/server/chatInbox";
 
 const INITIAL: ChatSendState = {};
 
@@ -31,29 +32,32 @@ const MAX_COMPOSER_PX = 168;
  * shared table would show a colleague words nobody chose to send.
  */
 export function Composer({
+  accountId,
   groupId,
+  accountLabel,
+  accountPhone,
   disabledReason,
   savedReplies,
-  replyAccounts = [],
+  otherCopies = [],
 }: {
+  /** The selected account. Every message typed here goes out from it — and only from it. */
+  accountId: string;
   groupId: string;
+  accountLabel: string;
+  accountPhone: string | null;
   /** Non-null when sending is impossible right now (account offline, group left). */
   disabledReason?: string | null;
   savedReplies: SavedReplyOption[];
-  /** Connected accounts in this group, the likeliest sender first. See `getReplyAccounts`. */
-  replyAccounts?: ReplyAccountOption[];
+  /** Other connected accounts in this WhatsApp group: offered as a switch, never as a hidden sender. */
+  otherCopies?: OtherAccountCopy[];
 }) {
-  const sendToGroup = sendChatMessage.bind(null, groupId);
+  // The account is bound into the action, and the server re-checks that this conversation really is
+  // that account's copy before queueing anything.
+  const sendToGroup = sendChatMessage.bind(null, accountId, groupId);
   const [state, formAction, pending] = useActionState(sendToGroup, INITIAL);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [managingReplies, setManagingReplies] = useState(false);
-  // Remembered only while this conversation stays open: the parent keys nothing on it, and a
-  // different conversation starts from its own likeliest sender rather than inheriting a choice
-  // made somewhere else.
-  const [sendAs, setSendAs] = useState(replyAccounts[0]?.groupRowId ?? "");
-  const chosenStillAvailable = replyAccounts.some((option) => option.groupRowId === sendAs);
-  const effectiveSendAs = chosenStillAvailable ? sendAs : (replyAccounts[0]?.groupRowId ?? "");
 
   /**
    * Grows the box to fit what is in it, up to a cap.
@@ -143,6 +147,23 @@ export function Composer({
     return (
       <div className="border-t border-[var(--color-border)] p-4 sm:px-6">
         <Alert tone="warning">{disabledReason}</Alert>
+        {/* The other way to answer: switch to another of our numbers in this group. A link that
+            changes the selected account, so the operator always sees who they are replying as. */}
+        {otherCopies.length ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[color:var(--color-muted-foreground)]">
+            <span>Also in this group:</span>
+            {otherCopies.map((copy) => (
+              <Link
+                key={copy.groupRowId}
+                href={`/chat/account/${copy.accountId}/${copy.groupRowId}`}
+                className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-medium text-[color:var(--color-foreground)] hover:border-[var(--color-border-strong)]"
+              >
+                Reply from {copy.accountLabel}
+                <ArrowRight className="size-3" aria-hidden />
+              </Link>
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -155,30 +176,16 @@ export function Composer({
         </div>
       ) : null}
 
-      {/* Only shown when there is a real choice. With one account in the group this is the same
-          composer as always; the value still travels so the server sends from the row offered. */}
-      {replyAccounts.length > 1 ? (
-        <div className="mb-2 flex items-center gap-2 text-[11px] text-[color:var(--color-muted-foreground)]">
-          <label htmlFor="chat-send-as">Reply as</label>
-          <select
-            id="chat-send-as"
-            value={effectiveSendAs}
-            onChange={(event) => setSendAs(event.target.value)}
-            className="h-7 cursor-pointer rounded-[var(--radius-sm)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
-          >
-            {replyAccounts.map((option) => (
-              <option key={option.groupRowId} value={option.groupRowId}>
-                {option.accountLabel}
-                {option.isPrimary ? " (Primary)" : ""}
-                {option.isThisConversation ? "" : " — other account"}
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : null}
+      {/* Which number this reply leaves from, stated where the reply is written — nobody should have
+          to remember which account they picked at the top of the page. */}
+      <p className="mb-2 flex items-center gap-1.5 text-[11px] text-[color:var(--color-muted-foreground)]">
+        <Smartphone className="size-3" aria-hidden />
+        Sending from
+        <strong className="font-semibold text-[color:var(--color-foreground)]">{accountLabel}</strong>
+        {accountPhone ? <span className="tabular">· +{accountPhone.replace(/^\+/, "")}</span> : null}
+      </p>
 
       <form ref={formRef} action={formAction} className="flex items-end gap-2">
-        <input type="hidden" name="sendAs" value={effectiveSendAs} />
         <label htmlFor="chat-body" className="sr-only">
           Message
         </label>

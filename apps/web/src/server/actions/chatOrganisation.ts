@@ -29,6 +29,8 @@ export interface ChatOrganisationResult {
   updated?: number;
   /** Rows already in the requested state — not an error, but not work either. */
   unchanged?: number;
+  /** Selected rows that belong to another WhatsApp account, left untouched. */
+  outsideAccount?: number;
 }
 
 async function revalidateInbox() {
@@ -39,6 +41,22 @@ async function revalidateInbox() {
 /** Shared guard: a bulk action over an empty selection is a no-op, not a failure. */
 function normaliseIds(groupIds: string[]): string[] {
   return [...new Set(groupIds.filter(Boolean))];
+}
+
+const NONE_IN_ACCOUNT = "None of the selected conversations belong to this WhatsApp account. Nothing was changed.";
+
+/**
+ * The selected rows that really belong to the SELECTED account. A bulk action is account-scoped on
+ * the server, not because the browser promised to send only that account's rows: a selection left
+ * over from another account, or a crafted request, touches nothing outside it, and the result says
+ * how many it left alone, since a silent shortfall reads as a bug. The scoped client already
+ * confines all of it to the URL's project.
+ */
+async function inAccount(accountId: string, groupIds: string[]): Promise<{ ids: string[]; outsideAccount: number }> {
+  const requested = normaliseIds(groupIds);
+  if (requested.length === 0) return { ids: [], outsideAccount: 0 };
+  const rows = await prisma.whatsAppGroup.findMany({ where: { id: { in: requested }, accountId }, select: { id: true } });
+  return { ids: rows.map((r) => r.id), outsideAccount: requested.length - rows.length };
 }
 
 // ---------------------------------------------------------------------------- categories
@@ -126,13 +144,15 @@ export async function deleteChatCategory(id: string): Promise<ChatOrganisationRe
 // ---------------------------------------------------------------------------- group actions
 
 export async function setChatCategory(
+  accountId: string,
   groupIds: string[],
   categoryId: string | null,
 ): Promise<ChatOrganisationResult> {
   const granted = await checkPermission("messages.reply");
   if ("denied" in granted) return { error: granted.denied };
-  const ids = normaliseIds(groupIds);
-  if (ids.length === 0) return { error: "Select at least one conversation." };
+  if (normaliseIds(groupIds).length === 0) return { error: "Select at least one conversation." };
+  const { ids, outsideAccount } = await inAccount(accountId, groupIds);
+  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount };
 
   if (categoryId) {
     const exists = await prisma.chatCategory.findUnique({ where: { id: categoryId }, select: { id: true } });
@@ -168,14 +188,15 @@ export async function setChatCategory(
   });
 
   await revalidateInbox();
-  return { updated: count, unchanged: alreadyThere };
+  return { updated: count, unchanged: alreadyThere, outsideAccount };
 }
 
-export async function setChatPinned(groupIds: string[], pinned: boolean): Promise<ChatOrganisationResult> {
+export async function setChatPinned(accountId: string, groupIds: string[], pinned: boolean): Promise<ChatOrganisationResult> {
   const granted = await checkPermission("messages.reply");
   if ("denied" in granted) return { error: granted.denied };
-  const ids = normaliseIds(groupIds);
-  if (ids.length === 0) return { error: "Select at least one conversation." };
+  if (normaliseIds(groupIds).length === 0) return { error: "Select at least one conversation." };
+  const { ids, outsideAccount } = await inAccount(accountId, groupIds);
+  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount };
 
   const alreadyThere = await prisma.whatsAppGroup.count({
     where: { id: { in: ids }, chatPinnedAt: pinned ? { not: null } : null },
@@ -189,14 +210,15 @@ export async function setChatPinned(groupIds: string[], pinned: boolean): Promis
   });
 
   await revalidateInbox();
-  return { updated: count, unchanged: alreadyThere };
+  return { updated: count, unchanged: alreadyThere, outsideAccount };
 }
 
-export async function setChatArchived(groupIds: string[], archived: boolean): Promise<ChatOrganisationResult> {
+export async function setChatArchived(accountId: string, groupIds: string[], archived: boolean): Promise<ChatOrganisationResult> {
   const granted = await checkPermission("messages.reply");
   if ("denied" in granted) return { error: granted.denied };
-  const ids = normaliseIds(groupIds);
-  if (ids.length === 0) return { error: "Select at least one conversation." };
+  if (normaliseIds(groupIds).length === 0) return { error: "Select at least one conversation." };
+  const { ids, outsideAccount } = await inAccount(accountId, groupIds);
+  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount };
 
   const alreadyThere = await prisma.whatsAppGroup.count({
     where: { id: { in: ids }, chatArchivedAt: archived ? { not: null } : null },
@@ -214,7 +236,7 @@ export async function setChatArchived(groupIds: string[], archived: boolean): Pr
   });
 
   await revalidateInbox();
-  return { updated: count, unchanged: alreadyThere };
+  return { updated: count, unchanged: alreadyThere, outsideAccount };
 }
 
 
@@ -295,11 +317,12 @@ export async function markChatReviewed(groupId: string): Promise<void> {
  * filter. Nothing here can make a customer disappear — it can only stop asking about the ones you
  * have already seen.
  */
-export async function setChatReviewed(groupIds: string[], reviewed: boolean): Promise<ChatOrganisationResult> {
+export async function setChatReviewed(accountId: string, groupIds: string[], reviewed: boolean): Promise<ChatOrganisationResult> {
   const granted = await checkPermission("messages.reply");
   if ("denied" in granted) return { error: granted.denied };
-  const ids = normaliseIds(groupIds);
-  if (ids.length === 0) return { error: "Select at least one conversation." };
+  if (normaliseIds(groupIds).length === 0) return { error: "Select at least one conversation." };
+  const { ids, outsideAccount } = await inAccount(accountId, groupIds);
+  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount };
 
   if (!reviewed) {
     // Clearing the mark rather than setting a flag, so the ordinary rule simply resumes:
@@ -310,7 +333,7 @@ export async function setChatReviewed(groupIds: string[], reviewed: boolean): Pr
       data: { chatReviewedAt: null },
     });
     await revalidateInbox();
-    return { updated: count, unchanged: alreadyWaiting };
+    return { updated: count, unchanged: alreadyWaiting, outsideAccount };
   }
 
   // No `chatReviewedAt: null` narrowing on the write. A row already carrying a mark can still be
@@ -324,10 +347,12 @@ export async function setChatReviewed(groupIds: string[], reviewed: boolean): Pr
   });
 
   await revalidateInbox();
-  return { updated: count };
+  return { updated: count, outsideAccount };
 }
 
-/** Single-conversation form, for the thread header's undo. */
+/** Single-conversation form, for the thread header's undo — in the conversation's own account. */
 export async function markChatWaiting(groupId: string): Promise<ChatOrganisationResult> {
-  return setChatReviewed([groupId], false);
+  const group = await prisma.whatsAppGroup.findUnique({ where: { id: groupId }, select: { accountId: true } });
+  if (!group) return { error: "That conversation no longer exists." };
+  return setChatReviewed(group.accountId, [groupId], false);
 }

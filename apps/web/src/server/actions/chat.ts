@@ -31,16 +31,23 @@ function buildManualReplyIdempotencyKey(groupId: string, body: string): string {
 }
 
 /**
- * Queues one operator-typed reply to a WhatsApp group.
+ * Queues one operator-typed reply to a WhatsApp group, from the SELECTED account.
  *
  * Writes a single `OutboundMessage` row and stops there — it never talks to the worker
- * and never sends anything itself. That is the same DB-mediated hand-off the Teams
- * resolution notifier uses, and it keeps the promise that all outbound WhatsApp traffic
+ * and never sends anything itself, which keeps the promise that all outbound WhatsApp traffic
  * leaves through exactly one queue. Deliberately not `enqueueOutboundMessage()`, which is
  * shaped for the incoming-message pipeline's non-null `incomingMessageId` and rule-cooldown
  * contract; neither applies to a human replying in a group.
+ *
+ * The account is the one the operator chose in the workspace (it is in the URL, bound into this
+ * action), and nothing from the browser is trusted: the server re-derives every link —
+ *   project (the scoped client) → account (must be this project's) → group (must be THAT account's
+ *   own copy, still a member) → the session's user (`createdById`, never a form field).
+ * A message is never sent through a different account than the one shown as "Sending from"; the old
+ * cross-account "Reply as" is gone, and a request still carrying one is refused rather than honoured.
  */
 export async function sendChatMessage(
+  accountId: string,
   groupId: string,
   _prevState: ChatSendState,
   formData: FormData,
@@ -55,28 +62,21 @@ export async function sendChatMessage(
     return { error: `That message is ${body.length} characters. WhatsApp accepts at most ${MAX_BODY_LENGTH}.` };
   }
 
-  const groupSelect = {
-    id: true,
-    name: true,
-    whatsappGroupId: true,
-    accountId: true,
-    isActive: true,
-    account: { select: { label: true, status: true } },
-  } as const;
-  const thread = await prisma.whatsAppGroup.findUnique({ where: { id: groupId }, select: groupSelect });
-  if (!thread) return { error: "That conversation no longer exists." };
+  // The scoped client only finds this project's account; another project's id is "not found".
+  const account = await prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { id: true, label: true, status: true } });
+  if (!account) return { error: "That WhatsApp account is not in this project. Choose an account at the top of WhatsApp Chat." };
 
-  // "Reply as" another account in the same WhatsApp group. The form names a group ROW, and it is
-  // only honoured if it really is this same WhatsApp group — otherwise a crafted request could
-  // post into any group any account is in, under cover of an unrelated conversation.
+  const group = await prisma.whatsAppGroup.findUnique({
+    where: { id: groupId },
+    select: { id: true, name: true, whatsappGroupId: true, accountId: true, isActive: true },
+  });
+  if (!group) return { error: "That conversation no longer exists." };
+  if (group.accountId !== account.id) {
+    return { error: `This conversation belongs to a different WhatsApp account than ${account.label}. Nothing was sent. Reopen it from the account selector.` };
+  }
   const sendAs = String(formData.get("sendAs") ?? "").trim();
-  let group = thread;
-  if (sendAs && sendAs !== thread.id) {
-    const chosen = await prisma.whatsAppGroup.findUnique({ where: { id: sendAs }, select: groupSelect });
-    if (!chosen || chosen.whatsappGroupId !== thread.whatsappGroupId) {
-      return { error: "That account is not in this group. Pick another account to reply as." };
-    }
-    group = chosen;
+  if (sendAs && sendAs !== group.id) {
+    return { error: `Replies go out only from the selected account (${account.label}). Nothing was sent.` };
   }
 
   // Checked here so the operator is told immediately, in the composer, instead of watching
@@ -86,16 +86,16 @@ export async function sendChatMessage(
       error: `This account is no longer a member of ${group.name}, so messages cannot be sent to it. Resync groups if you have since been re-added.`,
     };
   }
-  if (group.account.status !== "CONNECTED") {
+  if (account.status !== "CONNECTED") {
     return {
-      error: `${group.account.label} is ${group.account.status.toLowerCase()}. Reconnect it on WhatsApp Accounts before sending.`,
+      error: `${account.label} is ${account.status.toLowerCase()}, so nothing was sent. Reconnect it on WhatsApp Accounts, or switch to another account that is in this group.`,
     };
   }
 
   try {
     await prisma.outboundMessage.create({
       data: {
-        accountId: group.accountId,
+        accountId: account.id,
         chatId: group.whatsappGroupId,
         // A group has no single recipient number; the broadcast path sets the chat id here
         // for the same reason, and the queue's per-client rate limiter keys off this value.
@@ -105,6 +105,8 @@ export async function sendChatMessage(
         idempotencyKey: buildManualReplyIdempotencyKey(groupId, body),
         groupId: group.id,
         groupNameSnapshot: group.name,
+        // WHO pressed send, from the server-side session — the attribution the conversation and the
+        // User Activity report both read. The account above is WHICH NUMBER sent it.
         createdById: session.userId,
       },
     });
@@ -112,7 +114,7 @@ export async function sendChatMessage(
     // A P2002 here is the idempotency window doing its job on a double-submit: the first
     // write already queued this exact text, so report success rather than a scary error.
     if ((err as { code?: string }).code === "P2002") {
-      revalidatePath(await projectPath(`/chat/${groupId}`));
+      revalidatePath(await projectPath("/chat"), "layout");
       return { sentAt: Date.now() };
     }
 
@@ -123,7 +125,7 @@ export async function sendChatMessage(
     await logSystemEvent("ERROR", "chat-inbox", "Failed to queue a manual reply", {
       error: (err as Error).message,
       groupId: group.id,
-      accountId: group.accountId,
+      accountId: account.id,
       userId: session.userId,
     });
     return {
@@ -131,46 +133,43 @@ export async function sendChatMessage(
     };
   }
 
-  // Sent from a DIFFERENT account than the conversation's own, the reply reaches that account as an
+  // When another of our accounts is in the same WhatsApp group, this reply reaches ITS copy as an
   // ordinary incoming message from a participant it cannot recognise as ours — WhatsApp identifies
-  // group members by opaque ids, not by our other number. If that account is the one allowed to
-  // answer customers, its AI could then answer our own operator. An operator writing in the group
-  // is exactly what human takeover means, so the group's AI pauses across every account's copy for
-  // the configured cooldown — the same pause a colleague replying from their phone causes.
-  if (group.accountId !== thread.accountId) {
-    try {
-      const ai = await prisma.aiSettings.findUnique({ where: { id: "global" }, select: { humanTakeoverCooldownMinutes: true } });
-      // No settings row yet means the schema default applies, as it does for the worker.
-      const minutes = ai?.humanTakeoverCooldownMinutes ?? 30;
-      if (minutes > 0) {
-        const until = new Date(Date.now() + minutes * 60_000);
-        await prisma.whatsAppGroup.updateMany({
-          where: {
-            whatsappGroupId: thread.whatsappGroupId,
-            OR: [{ aiSuppressedUntil: null }, { aiSuppressedUntil: { lt: until } }],
-          },
-          data: { aiSuppressedUntil: until },
-        });
-      }
-    } catch (err) {
-      // The reply is already queued; failing to pause AI must not report the send as failed.
-      await logSystemEvent("WARN", "chat-inbox", "Could not pause AI after a reply from another account", {
-        error: (err as Error).message,
-        groupId: thread.id,
+  // group members by opaque ids, not by our other number. If that account answers customers with AI,
+  // it could then answer our own operator. An operator writing in the group is exactly what human
+  // takeover means, so the AI pauses on the other accounts' copies for the configured cooldown — the
+  // same pause a colleague replying from their phone causes.
+  try {
+    const ai = await prisma.aiSettings.findFirst({ select: { humanTakeoverCooldownMinutes: true } });
+    // No settings row yet means the schema default applies, as it does for the worker.
+    const minutes = ai?.humanTakeoverCooldownMinutes ?? 30;
+    if (minutes > 0) {
+      const until = new Date(Date.now() + minutes * 60_000);
+      await prisma.whatsAppGroup.updateMany({
+        where: {
+          whatsappGroupId: group.whatsappGroupId,
+          accountId: { not: account.id },
+          OR: [{ aiSuppressedUntil: null }, { aiSuppressedUntil: { lt: until } }],
+        },
+        data: { aiSuppressedUntil: until },
       });
     }
+  } catch (err) {
+    // The reply is already queued; failing to pause AI must not report the send as failed.
+    await logSystemEvent("WARN", "chat-inbox", "Could not pause AI on the other accounts in this group", {
+      error: (err as Error).message,
+      groupId: group.id,
+    });
   }
 
   await logSystemEvent("INFO", "chat-inbox", `Queued a manual reply to ${group.name}`, {
     groupId: group.id,
-    accountId: group.accountId,
+    accountId: account.id,
     userId: session.userId,
     length: body.length,
-    ...(group.id !== thread.id ? { repliedAsAccountOf: group.id, conversation: thread.id } : {}),
   });
 
-  revalidatePath(await projectPath(`/chat/${groupId}`));
-  revalidatePath(await projectPath("/chat"));
+  revalidatePath(await projectPath("/chat"), "layout");
   return { sentAt: Date.now() };
 }
 
@@ -179,13 +178,13 @@ export async function sendChatMessage(
  * still PENDING — an automation-generated send or one already in flight is never cancellable
  * from here.
  */
-export async function cancelQueuedChatMessage(outboundId: string, groupId: string): Promise<void> {
+export async function cancelQueuedChatMessage(outboundId: string): Promise<void> {
   await requireAccess("messages.reply");
   await prisma.outboundMessage.updateMany({
     where: { id: outboundId, actionType: "MANUAL_REPLY", status: "PENDING" },
     data: { status: "CANCELLED", failureReason: "Cancelled from the chat inbox before sending." },
   });
-  revalidatePath(await projectPath(`/chat/${groupId}`));
+  revalidatePath(await projectPath("/chat"), "layout");
 }
 
 export interface MessageActionResult {
@@ -217,7 +216,7 @@ export async function reactToChatMessage(messageId: string, emoji: string): Prom
       payload: { whatsappMessageId: message.whatsappMessageId, emoji },
     },
   });
-  if (message.groupId) revalidatePath(await projectPath(`/chat/${message.groupId}`));
+  if (message.groupId) revalidatePath(await projectPath("/chat"), "layout");
   return {};
 }
 
@@ -254,6 +253,6 @@ export async function editChatMessage(messageId: string, newBody: string): Promi
       payload: { whatsappMessageId: message.whatsappMessageId, newBody: trimmed },
     },
   });
-  if (message.groupId) revalidatePath(await projectPath(`/chat/${message.groupId}`));
+  if (message.groupId) revalidatePath(await projectPath("/chat"), "layout");
   return {};
 }

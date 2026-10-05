@@ -1,43 +1,22 @@
-import { MessagesSquare } from "lucide-react";
+import { redirect } from "next/navigation";
 import { requireAccess } from "@/server/authorize";
-import { getChatCategories, getChatConversations } from "@/server/chatInbox";
-import { ConversationList } from "./ConversationList";
+import { projectPath } from "@/server/projectPaths";
+import { getChatAccounts } from "@/server/chatInbox";
+import { ChatAccountChooser } from "./ChatAccountChooser";
 
 export const metadata = { title: "WhatsApp Chat" };
 
 /**
- * The index. On a wide screen the conversation list already sits in the layout's sidebar,
- * so this pane just explains what to do next. Below `md` that sidebar is hidden, so the
- * list becomes this page.
+ * /chat: which WhatsApp account to work in.
+ *
+ * There is no combined inbox. With one account there is nothing to choose, so it opens directly.
+ * With several, the operator picks one — the chooser forwards to the account last used in this
+ * browser when it is still one of this project's, so the choice is made once, not on every visit.
+ * The account then stays in the URL (`/chat/account/<id>/…`), which every tab keeps for itself.
  */
 export default async function ChatIndexPage() {
   await requireAccess("messages.view");
-  const [conversations, categories] = await Promise.all([getChatConversations(), getChatCategories()]);
-
-  return (
-    <>
-      <div className="flex min-h-0 flex-1 flex-col md:hidden">
-        <ConversationList conversations={conversations} categories={categories} />
-      </div>
-
-      <div className="hidden flex-1 items-center justify-center p-10 md:flex">
-        <div className="max-w-sm text-center">
-          <span
-            aria-hidden
-            className="mx-auto flex size-11 items-center justify-center rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] text-[color:var(--color-subtle-foreground)] shadow-[var(--shadow-xs),var(--highlight-top)]"
-          >
-            <MessagesSquare className="size-5" />
-          </span>
-          <h2 className="mt-4 text-[15px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
-            Pick a conversation
-          </h2>
-          <p className="mt-2 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-            Every group this account belongs to is on the left, most recently active first.
-            Open one to read it and reply — your message goes out through the same queue the
-            automation uses, so account rate limits still apply.
-          </p>
-        </div>
-      </div>
-    </>
-  );
+  const accounts = await getChatAccounts();
+  if (accounts.length === 1) redirect(await projectPath(`/chat/account/${accounts[0]!.id}`));
+  return <ChatAccountChooser accounts={accounts} />;
 }

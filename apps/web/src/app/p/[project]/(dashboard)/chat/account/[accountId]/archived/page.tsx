@@ -1,6 +1,8 @@
 import Link from "@/components/ProjectLink";
 import { Archive } from "lucide-react";
+import { notFound } from "next/navigation";
 import { requireAccess } from "@/server/authorize";
+import { prisma } from "@/server/db";
 import { getArchivedChatConversations } from "@/server/chatInbox";
 import { ArchivedList } from "./ArchivedList";
 
@@ -14,9 +16,12 @@ export const metadata = { title: "Archived conversations" };
  * rows that are almost always discarded, on every poll of a page that refreshes every four
  * seconds.
  */
-export default async function ArchivedChatPage() {
+export default async function ArchivedChatPage({ params }: { params: Promise<{ accountId: string }> }) {
   await requireAccess("messages.view");
-  const conversations = await getArchivedChatConversations();
+  const { accountId } = await params;
+  const account = await prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { id: true, label: true } });
+  if (!account) notFound();
+  const conversations = await getArchivedChatConversations(account.id);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -28,21 +33,21 @@ export default async function ArchivedChatPage() {
           <Archive className="size-4" />
         </span>
         <div className="min-w-0">
-          <h1 className="text-[15px] font-semibold text-[color:var(--color-foreground)]">Archived</h1>
+          <h1 className="text-[15px] font-semibold text-[color:var(--color-foreground)]">Archived · {account.label}</h1>
           <p className="text-[12px] text-[color:var(--color-muted-foreground)]">
             Hidden from the inbox. Monitoring and AI are unaffected — these conversations are still
             being handled, just not shown.
           </p>
         </div>
         <Link
-          href="/chat"
+          href={`/chat/account/${account.id}`}
           className="ml-auto shrink-0 text-[12px] text-[color:var(--color-muted-foreground)] underline-offset-2 hover:text-[color:var(--color-foreground)] hover:underline"
         >
           Back to inbox
         </Link>
       </div>
 
-      <ArchivedList conversations={conversations} />
+      <ArchivedList accountId={account.id} conversations={conversations} />
     </div>
   );
 }

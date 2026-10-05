@@ -1,4 +1,5 @@
-import { AlertTriangle, Bot, Check, Clock, ListChecks, UserRound } from "lucide-react";
+import { AlertTriangle, Bot, Check, Clock, ListChecks, Megaphone, Settings2, UserRound } from "lucide-react";
+import type { OutboundSenderType } from "@support-automation/shared";
 import { isMediaPlaceholderBody, mediaCaption } from "@support-automation/shared";
 import type { ThreadEntry } from "@/server/chatInbox";
 import { formatDateTime, formatTime } from "@/lib/date";
@@ -22,12 +23,16 @@ const QUEUED_LABEL: Record<string, { text: string; tone: "wait" | "bad" }> = {
   SENT: { text: "Sent — waiting for WhatsApp to confirm", tone: "wait" },
 };
 
-/** Who wrote an outgoing message, in the operator's terms. */
-const AUTHOR_LABEL = {
+/**
+ * Automated authorship, in the operator's terms. A person's send is named instead (the software user
+ * who pressed send), so it has no badge here.
+ */
+const AUTHOR_BADGE: Partial<Record<OutboundSenderType, { text: string; icon: typeof Bot }>> = {
   AI: { text: "AI", icon: Bot },
-  RULE: { text: "Rule", icon: ListChecks },
-  PERSON: { text: null, icon: null },
-} as const;
+  RULE_AUTOMATION: { text: "Rule", icon: ListChecks },
+  BROADCAST: { text: "Broadcast", icon: Megaphone },
+  SYSTEM: { text: "Automated", icon: Settings2 },
+};
 
 /** Longer and the next message reads as a new thought rather than the same one continued. */
 const RUN_GAP_MS = 5 * 60_000;
@@ -44,9 +49,10 @@ function continues(current: ThreadEntry, next: ThreadEntry): boolean {
   // into one run would attribute somebody's message to whoever spoke above them.
   if (!nextOutbound && (current.senderPhone ?? null) !== (next.senderPhone ?? null)) return false;
 
-  // Outbound runs need the same author, so an AI reply never merges into a person's and inherits
-  // the absence of a badge — the absence is the signal that a human wrote it.
+  // Outbound runs need the same author — and, for people, the same person — so an AI reply never
+  // merges into a person's, and Hasan's reply never appears under Rudra's name.
   if (nextOutbound && (current.authoredBy ?? null) !== (next.authoredBy ?? null)) return false;
+  if (nextOutbound && (current.sentBy?.id ?? null) !== (next.sentBy?.id ?? null)) return false;
 
   return next.at.getTime() - current.at.getTime() <= RUN_GAP_MS;
 }
@@ -73,7 +79,7 @@ function DayDivider({ label }: { label: string }) {
  * outbound queue; the worker does the sending), so without it an operator would press
  * send and watch nothing happen for a couple of seconds.
  */
-export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
+export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[]; accountLabel: string }) {
   if (entries.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-6 py-12">
@@ -178,18 +184,10 @@ export function MessageThread({ entries }: { entries: ThreadEntry[] }) {
                     }`}
                     title={formatDateTime(entry.at)}
                   >
-                    {/* Only automated authorship is called out. A person's own reply needs no
-                        badge — the absence of one is the signal, and labelling every message
-                        would make the automated ones harder to spot, not easier. */}
-                    {entry.authoredBy && AUTHOR_LABEL[entry.authoredBy].text ? (
-                      <span className="inline-flex items-center gap-0.5 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1 py-px font-medium text-[color:var(--color-neutral-fg)]">
-                        {(() => {
-                          const Icon = AUTHOR_LABEL[entry.authoredBy!].icon!;
-                          return <Icon className="size-2.5" aria-hidden />;
-                        })()}
-                        {AUTHOR_LABEL[entry.authoredBy].text}
-                      </span>
-                    ) : null}
+                    {/* Who sent it, once per run: the software user who pressed send, or the
+                        automation, and which of our numbers it went out from. The same attribution
+                        the User Activity report reads, so the two can never disagree. */}
+                    {isOutbound ? <Attribution entry={entry} accountLabel={accountLabel} /> : null}
                     {queued ? (
                       <>
                         {queued.tone === "bad" ? (
@@ -242,5 +240,32 @@ export function AiActiveNotice({ suppressedUntil }: { suppressedUntil: Date | nu
         </span>
       )}
     </div>
+  );
+}
+
+/** "Rudra · via Primary Account", or "AI · via Primary Account". Unknown senders stay unlabelled. */
+function Attribution({ entry, accountLabel }: { entry: ThreadEntry; accountLabel: string }) {
+  const badge = entry.authoredBy ? AUTHOR_BADGE[entry.authoredBy] : undefined;
+  const person = entry.authoredBy === "HUMAN_USER" ? entry.sentBy : null;
+  if (!badge && !person) return null;
+  const Icon = badge?.icon;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {person ? (
+        <span className="inline-flex items-center gap-0.5 font-medium text-[color:var(--color-foreground)]" title={`Sent by ${person.name} (@${person.username})`}>
+          <UserRound className="size-2.5" aria-hidden />
+          {person.name}
+        </span>
+      ) : badge && Icon ? (
+        <span className="inline-flex items-center gap-0.5 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1 py-px font-medium text-[color:var(--color-neutral-fg)]">
+          <Icon className="size-2.5" aria-hidden />
+          {badge.text}
+          {entry.authoredBy === "BROADCAST" && entry.sentBy ? ` · ${entry.sentBy.name}` : ""}
+        </span>
+      ) : null}
+      <span aria-hidden>·</span>
+      <span>via {accountLabel}</span>
+      <span aria-hidden>·</span>
+    </span>
   );
 }

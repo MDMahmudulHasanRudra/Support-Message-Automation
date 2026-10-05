@@ -1,41 +1,11 @@
 import { requireAccess } from "@/server/authorize";
-import { AutoRefresh } from "@/components/AutoRefresh";
-import { getChatCategories, getChatConversations } from "@/server/chatInbox";
-import { ConversationList } from "./ConversationList";
 
 /**
- * The two-pane frame. The conversation list lives here rather than in each page so it
- * keeps its scroll position and search text as you move between conversations — the one
- * thing that separates a chat client from a list of links.
- *
- * The height is pinned to the viewport (minus the dashboard header and the page padding
- * around it — `--chat-inset`, which the Main Admin Workspace raises to make room for its project
- * tabs) so each pane scrolls on its own, the way a mail or chat client does, instead
- * of the whole page growing with the longest conversation.
- *
- * Below `md` the sidebar is hidden and the two views become separate screens: /chat is the
- * list, /chat/[id] is the conversation. Each of those pages renders what it needs, so
- * nothing is duplicated into the DOM twice here.
+ * The chat module's outer boundary: one permission check for everything under /chat. The
+ * workspace itself — the account's conversation list beside the open conversation — is the
+ * `account/[accountId]` layout, because the account is part of the URL there (see that file).
  */
-export default async function ChatLayout({ children }: { children: React.ReactNode }) {
+export default async function ChatRootLayout({ children }: { children: React.ReactNode }) {
   await requireAccess("messages.view");
-  const [conversations, categories] = await Promise.all([getChatConversations(), getChatCategories()]);
-
-  return (
-    <div className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] min-h-[30rem] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">
-      {/* Polls the server tree so new messages and delivery-state changes appear without a
-          manual reload. Four seconds sits close enough to the outbound queue's own 2s tick
-          that a reply's queued → sent transition is visible almost immediately. */}
-      <AutoRefresh intervalMs={4000} />
-
-      <aside
-        aria-label="Conversations"
-        className="hidden w-[19rem] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] md:flex"
-      >
-        <ConversationList conversations={conversations} categories={categories} />
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col">{children}</div>
-    </div>
-  );
+  return children;
 }

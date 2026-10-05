@@ -14,14 +14,14 @@ import type { ConversationSummary } from "@/server/chatInbox";
  * last-message preview for these rows at all, so showing an empty line where one usually sits
  * would read as a bug rather than a choice.
  */
-export function ArchivedList({ conversations }: { conversations: ConversationSummary[] }) {
+export function ArchivedList({ accountId, conversations }: { accountId: string; conversations: ConversationSummary[] }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const { showToast } = useToast();
 
   function restore(ids: string[]) {
     startTransition(async () => {
-      const result = await setChatArchived(ids, false);
+      const result = await setChatArchived(accountId, ids, false);
       if (result.error) {
         showToast({ tone: "danger", title: result.error });
         return;

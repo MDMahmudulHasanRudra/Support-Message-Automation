@@ -6,8 +6,10 @@ import {
   BellRing,
   Check,
   CheckSquare,
+  ChevronDown,
   EyeOff,
   Inbox,
+  Loader2,
   MailOpen,
   Pin,
   PinOff,
@@ -15,6 +17,8 @@ import {
   Rows4,
   Search,
   Settings2,
+  Smartphone,
+  Star,
   Tag,
   TextSearch,
   X,
@@ -29,13 +33,14 @@ import {
   setChatCategory,
   setChatPinned,
   setChatReviewed,
+  type ChatOrganisationResult,
 } from "@/server/actions/chatOrganisation";
-import { searchConversations } from "@/server/actions/chatSearch";
-import type { ChatCategorySummary, ConversationSummary } from "@/server/chatInbox";
-import { CONVERSATION_LIST_LIMIT } from "@/lib/chatInboxLimits";
+import { chatAccountSwitchTarget, listConversationView, searchConversations } from "@/server/actions/chatSearch";
+import type { ChatAccountOption, ChatCategorySummary, ConversationCounts, ConversationSummary, ConversationView } from "@/server/chatInbox";
 import { CategoryManager } from "./CategoryManager";
 import { conversationAvatar } from "./avatar";
 import { categoryDotClass } from "./categoryColors";
+import { accountStatusTone, rememberChatAccount } from "./chatAccounts";
 
 function relativeTime(value: Date | null): string {
   if (!value) return "";
@@ -52,18 +57,30 @@ function relativeTime(value: Date | null): string {
   );
 }
 
-/** "All", "awaiting a reply", a category id, or the archive. */
-type Filter =
-  | { kind: "all" }
-  | { kind: "waiting" }
-  /** Opened by somebody, and the customer still has no reply. */
-  | { kind: "seen-unanswered" }
-  | { kind: "category"; id: string }
-  | { kind: "archived" };
+/** "All", "awaiting a reply", "seen but unanswered", or a category. The archive is its own page. */
+type Filter = ConversationView;
 
-function isSameFilter(a: Filter, b: Filter): boolean {
-  if (a.kind !== b.kind) return false;
-  return a.kind === "category" && b.kind === "category" ? a.id === b.id : true;
+function filterKey(filter: Filter): string {
+  return filter.kind === "category" ? `category:${filter.id}` : filter.kind;
+}
+
+function viewFromKey(key: string): Filter {
+  if (key.startsWith("category:")) return { kind: "category", id: key.slice("category:".length) };
+  if (key === "waiting" || key === "seen-unanswered") return { kind: key };
+  return { kind: "all" };
+}
+
+function matchesFilter(conversation: ConversationSummary, filter: Filter): boolean {
+  switch (filter.kind) {
+    case "waiting":
+      return conversation.awaitingReply;
+    case "seen-unanswered":
+      return conversation.isUnanswered && !conversation.awaitingReply;
+    case "category":
+      return conversation.categoryId === filter.id;
+    default:
+      return true;
+  }
 }
 
 /** Row height preference. Stored per browser: it is how one person likes to read, not team state. */
@@ -115,143 +132,154 @@ function writeDensity(compact: boolean): void {
 }
 
 /**
- * The left pane, rendered once by the chat layout so it keeps its scroll position as you move
- * between conversations.
+ * The chat workspace for one WhatsApp account, rendered once by the account layout so the list keeps
+ * its scroll position as you move between conversations.
  *
- * Filtering is local rather than a server round-trip: the layout already loaded the list (name and
- * last line only), so matching in the browser is instant. That also means local search cannot
- * reach past CONVERSATION_LIST_LIMIT, so the cap is surfaced rather than left invisible.
+ * The hierarchy is the order an operator reaches for things: WHICH ACCOUNT (the selector, first and
+ * largest — every reply goes out from it), then search, then the filters, then the list. They sit in
+ * a header across the whole workspace rather than squeezed into the list's narrow column, where the
+ * filters used to be an 11px rail. The header is two rows and no more, so the conversation keeps its
+ * height.
  *
- * Selection mode is deliberately a mode rather than always-on checkboxes. This list is read far
- * more often than it is reorganised, and a checkbox against every row turns a reading surface into
- * a form — the same reason WhatsApp hides its own until you long-press. Clicking a row means "open
- * this conversation" until you say otherwise.
+ * Counts are the account's real totals from the server — "All 742" when there are 742, even though
+ * the list renders the 300 most recently active. A filter whose total exceeds what was loaded fetches
+ * its complete list from the server, so "Waiting 18" opens eighteen conversations, not the twelve that
+ * happened to be among the loaded 300.
  *
- * The filter rail scrolls sideways rather than wrapping. Wrapping looked harmless with two
- * categories and pushed the first conversation below the fold once a team had six: the header grew
- * downward without limit while the list it was filtering shrank. A rail has a fixed height whatever
- * the team files their work into.
+ * Selection is a mode rather than always-on checkboxes: this list is read far more often than it is
+ * reorganised. It belongs to one account and one filter — switching account remounts the whole
+ * workspace, and changing the filter clears it — so a bulk action can only ever reach what is on
+ * screen. The server re-checks the account anyway.
  */
-export function ConversationList({
+export function ChatWorkspace({
+  account,
+  accounts,
   conversations,
+  counts,
   categories,
+  children,
 }: {
+  account: ChatAccountOption;
+  accounts: ChatAccountOption[];
   conversations: ConversationSummary[];
+  counts: ConversationCounts;
   categories: ChatCategorySummary[];
+  children: React.ReactNode;
 }) {
   const pathname = stripProjectPrefix(usePathname());
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>({ kind: "all" });
+  const [filter, setFilterState] = useState<Filter>({ kind: "all" });
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [managingCategories, setManagingCategories] = useState(false);
   const compact = useSyncExternalStore(subscribeDensity, densitySnapshot, densityServerSnapshot);
   const [cursor, setCursor] = useState(-1);
   /**
-   * The last completed remote search, stored WITH the query it answered.
-   *
-   * Keeping the query alongside the results is what makes "are these results current?" a
-   * derivable fact rather than a second piece of state to keep in sync. A stale response can then
-   * never be displayed under a newer query, and there is no "searching" flag to set, clear, and
-   * eventually forget to clear on some path.
+   * The last completed remote search, stored WITH the query it answered, so "are these results
+   * current?" is derived rather than tracked: a stale response can never be shown under a newer query.
    */
-  const [remote, setRemote] = useState<{ query: string; matches: ConversationSummary[] }>({
-    query: "",
-    matches: [],
-  });
+  const [remote, setRemote] = useState<{ query: string; matches: ConversationSummary[] }>({ query: "", matches: [] });
+  /** A filter's complete list from the server, stored with the filter it answered. */
+  const [viewRows, setViewRows] = useState<{ key: string; rows: ConversationSummary[] }>({ key: "", rows: [] });
   const [pending, startTransition] = useTransition();
   const { showToast } = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const activeGroupId = pathname.startsWith("/chat/") ? pathname.slice("/chat/".length) : undefined;
+  const base = `/chat/account/${account.id}`;
+  const rest = pathname.startsWith(`${base}/`) ? pathname.slice(base.length + 1) : "";
+  const activeGroupId = rest && rest !== "archived" ? rest.split("/")[0] : undefined;
+  /** The inbox page itself — on a phone the list IS this page; elsewhere the conversation is. */
+  const onIndex = pathname === base || pathname === `${base}/`;
+
+  // Remembered for /chat's next visit. The URL stays the authority on which account this tab is in.
+  useEffect(() => rememberChatAccount(account.id), [account.id]);
 
   const toggleDensity = useCallback(() => writeDensity(!densitySnapshot()), []);
-
-  const seenUnansweredCount = useMemo(
-    () => conversations.filter((c) => c.isUnanswered && !c.awaitingReply).length,
-    [conversations],
-  );
-
-  const waitingCount = useMemo(
-    () => conversations.filter((conversation) => conversation.awaitingReply).length,
-    [conversations],
-  );
-  const pinnedCount = useMemo(
-    () => conversations.filter((conversation) => conversation.isPinned).length,
-    [conversations],
-  );
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
-  const capped = conversations.length >= CONVERSATION_LIST_LIMIT;
+  const key = filterKey(filter);
+  const totalFor = (f: Filter): number =>
+    f.kind === "all"
+      ? counts.total
+      : f.kind === "waiting"
+        ? counts.waiting
+        : f.kind === "seen-unanswered"
+          ? counts.seenUnanswered
+          : (categoryById.get(f.id)?.count ?? 0);
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return conversations.filter((conversation) => {
-      if (filter.kind === "waiting" && !conversation.awaitingReply) return false;
-      if (filter.kind === "seen-unanswered" && !(conversation.isUnanswered && !conversation.awaitingReply)) {
-        return false;
-      }
-      if (filter.kind === "category" && conversation.categoryId !== filter.id) return false;
-      // Archived rows never reach this component — the server excludes them — so the archive
-      // filter is a link to its own view rather than a predicate here.
-      if (!needle) return true;
-      const haystack = `${conversation.name} ${conversation.accountLabel} ${conversation.lastMessagePreview ?? ""}`;
-      return haystack.toLowerCase().includes(needle);
-    });
-  }, [conversations, query, filter]);
+  const loadedMatches = useMemo(() => conversations.filter((c) => matchesFilter(c, filter)), [conversations, filter]);
+  /** The loaded 300 do not hold every row of this filter, so its complete list comes from the server. */
+  const incomplete = filter.kind !== "all" && loadedMatches.length < totalFor(filter);
 
-  // Pinned rows are split into their own section only in the unfiltered view. Inside a category
-  // the useful ordering is recency — repeating the pinned block there would show the same three
-  // groups twice on one screen.
-  //
-  // Computed in ONE memo rather than three statements: `navigable` is what the keyboard walks, and
-  // deriving it from two separately-recreated arrays would rebuild it on every render, defeating
-  // the memo and re-running the cursor clamp for nothing.
+  // Refetched whenever the layout refreshes (every four seconds) while such a filter is open, so the
+  // list keeps up with new messages exactly as the loaded list does. Nothing is set synchronously:
+  // the only write is the answer, stored with the filter it belongs to.
+  useEffect(() => {
+    if (!incomplete) return;
+    let cancelled = false;
+    listConversationView(account.id, viewFromKey(key))
+      .then((rows) => {
+        if (!cancelled) setViewRows({ key, rows });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [incomplete, key, conversations, account.id]);
+
+  const viewLoading = incomplete && viewRows.key !== key;
+  const baseRows = incomplete && viewRows.key === key ? viewRows.rows : loadedMatches;
+
   const needle = query.trim();
+  const filtered = useMemo(() => {
+    const lower = needle.toLowerCase();
+    if (!lower) return baseRows;
+    return baseRows.filter((c) => `${c.name} ${c.lastMessagePreview ?? ""}`.toLowerCase().includes(lower));
+  }, [baseRows, needle]);
+
   /** Long enough to search, and the stored answer is for a different query. Derived, never set. */
   const searching = needle.length >= 2 && remote.query !== needle;
 
   const elsewhere = useMemo(() => {
-    // Results belonging to an older query are simply not shown; there is no state to clear.
     if (remote.query !== needle || remote.matches.length === 0) return [];
-    const onScreen = new Set(conversations.map((c) => c.id));
-    return remote.matches.filter((match) => !onScreen.has(match.id));
-  }, [remote, needle, conversations]);
+    const onScreen = new Set(baseRows.map((c) => c.id));
+    // Search reaches every group of the account; within a filter it stays inside that filter.
+    return remote.matches.filter((match) => !onScreen.has(match.id) && matchesFilter(match, filter));
+  }, [remote, needle, baseRows, filter]);
 
-  /**
-   * Everything a bulk action could reach right now: what the filters left, plus the search matches
-   * from beyond the loaded window. Those rows are already individually selectable, so leaving them
-   * out of "select all" made the two disagree about what "all" meant.
-   */
-  const selectableIds = useMemo(
-    () => [...filtered.map((c) => c.id), ...elsewhere.map((c) => c.id)],
-    [filtered, elsewhere],
-  );
+  /** Everything a bulk action could reach right now: what the filter and search show, nothing else. */
+  const selectableIds = useMemo(() => [...filtered.map((c) => c.id), ...elsewhere.map((c) => c.id)], [filtered, elsewhere]);
 
+  const pinnedCount = useMemo(() => conversations.filter((c) => c.isPinned).length, [conversations]);
   const { pinnedRows, otherRows, navigable } = useMemo(() => {
-    const split = filter.kind === "all" && !query.trim() && pinnedCount > 0;
+    const split = filter.kind === "all" && !needle && pinnedCount > 0;
     const pinned = split ? filtered.filter((c) => c.isPinned) : [];
-    const rest = split ? filtered.filter((c) => !c.isPinned) : filtered;
+    const others = split ? filtered.filter((c) => !c.isPinned) : filtered;
     // The keyboard walks what is on screen, in the order it is on screen.
-    return { pinnedRows: pinned, otherRows: rest, navigable: [...pinned, ...rest, ...elsewhere] };
-  }, [filtered, filter, query, pinnedCount, elsewhere]);
+    return { pinnedRows: pinned, otherRows: others, navigable: [...pinned, ...others, ...elsewhere] };
+  }, [filtered, filter, needle, pinnedCount, elsewhere]);
 
   // Clamped at read time rather than reset in an effect: typing shrinks the list under a cursor
-  // that was valid a keystroke ago, and setting state from an effect to correct that costs a
-  // second render pass on every character.
+  // that was valid a keystroke ago.
   const activeCursor = cursor < 0 ? -1 : Math.min(cursor, navigable.length - 1);
 
   const selectedIds = [...selected];
-  const allSelectedPinned = selectedIds.length > 0 && selectedIds.every((id) => conversations.find((c) => c.id === id)?.isPinned);
+  const byId = useMemo(() => new Map([...conversations, ...baseRows, ...elsewhere].map((c) => [c.id, c])), [conversations, baseRows, elsewhere]);
+  const allSelectedPinned = selectedIds.length > 0 && selectedIds.every((id) => byId.get(id)?.isPinned);
 
-  // "/" to search, from anywhere on the page. The shortcut every inbox has, and the reason the
-  // hint is printed in the field rather than left to be discovered.
+  /** A new filter is a new list: anything selected under the old one is not on screen any more. */
+  function setFilter(next: Filter) {
+    setFilterState(next);
+    setSelected(new Set());
+    setCursor(-1);
+  }
+
+  // "/" to search, from anywhere on the page — never while typing in a field.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
-      // Never steal the key from someone typing a message.
       if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
       event.preventDefault();
       searchRef.current?.focus();
@@ -261,39 +289,25 @@ export function ConversationList({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  // Reaching past the loaded 300. The local filter above stays exactly as it was and answers
-  // instantly for everything on screen; this runs alongside it and fills in the rest of the
-  // roster, so a quiet group is findable by name without the list itself getting heavier.
-  //
-  // Debounced rather than fired per keystroke: this is a real query over every group on the
-  // account, and "sof" should cost one of them rather than three.
-  //
-  // Nothing is set synchronously here, which is deliberate. The only write happens in the timer's
-  // callback, once an answer actually exists; "no results yet" is derived from the stored query
-  // not matching the typed one, rather than being a state somebody has to remember to reset.
+  // Reaching past the loaded 300: a debounced server search over every group of THIS account.
   useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length < 2) return;
-
     let cancelled = false;
     const timer = setTimeout(() => {
-      searchConversations(trimmed)
+      searchConversations(account.id, trimmed)
         .then((matches) => {
-          // A slow response for a query the reader has already moved past must not land: the
-          // cancel flag covers an unmounted timer, and storing the query covers the rest.
           if (!cancelled) setRemote({ query: trimmed, matches });
         })
         .catch(() => {
           if (!cancelled) setRemote({ query: trimmed, matches: [] });
         });
     }, 250);
-
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query]);
-
+  }, [query, account.id]);
 
   function onSearchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
@@ -304,7 +318,7 @@ export function ConversationList({
       setCursor((current) => Math.max(current - 1, 0));
     } else if (event.key === "Enter" && navigable[activeCursor]) {
       event.preventDefault();
-      router.push(`/chat/${navigable[activeCursor]!.id}`);
+      router.push(`${base}/${navigable[activeCursor]!.id}`);
     } else if (event.key === "Escape") {
       if (query) {
         setQuery("");
@@ -330,7 +344,7 @@ export function ConversationList({
   }
 
   /** Every bulk action reports what it actually did, then leaves selection mode. */
-  function runBulk(label: string, action: () => Promise<{ error?: string; updated?: number; unchanged?: number }>) {
+  function runBulk(label: string, action: () => Promise<ChatOrganisationResult>) {
     startTransition(async () => {
       const result = await action();
       if (result.error) {
@@ -338,22 +352,22 @@ export function ConversationList({
         return;
       }
       const updated = result.updated ?? 0;
+      const notes = [
+        result.unchanged ? `${result.unchanged} already ${label}.` : null,
+        result.outsideAccount ? `${result.outsideAccount} belong to another account and were left alone.` : null,
+      ].filter(Boolean);
       showToast({
         tone: "success",
         title: `${updated} conversation${updated === 1 ? "" : "s"} ${label}`,
-        // "8 moved, 3 already there" rather than "Done" — an operator who selected eleven and saw
-        // eight move needs to know the other three were not a failure.
-        description: result.unchanged ? `${result.unchanged} already ${label}.` : undefined,
+        description: notes.length ? notes.join(" ") : undefined,
       });
       exitSelection();
     });
   }
 
-  // `key` is deliberately NOT part of this object. React 19 does not read a spread key, and the
-  // lint rule that catches it is right to: a list whose keys silently became undefined would
-  // re-create every row on every keystroke.
   const rowProps = (conversation: ConversationSummary, index: number) => ({
     conversation,
+    href: `${base}/${conversation.id}`,
     category: conversation.categoryId ? categoryById.get(conversation.categoryId) : undefined,
     active: conversation.id === activeGroupId,
     cursored: index === activeCursor,
@@ -363,13 +377,31 @@ export function ConversationList({
     onToggle: () => toggleSelected(conversation.id),
   });
 
+  const allCapped = filter.kind === "all" && !needle && counts.total > conversations.length;
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3 pb-2 pt-3">
-        <div className="flex items-center gap-1.5">
-          <div className="relative min-w-0 flex-1">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* ── Account, search, filters ─────────────────────────────────────────────────────────── */}
+      <div
+        className={`${onIndex ? "flex" : "hidden md:flex"} shrink-0 flex-col gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3 py-3 sm:px-4`}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <AccountSelector
+            account={account}
+            accounts={accounts}
+            onSwitch={(targetId) =>
+              startTransition(async () => {
+                const target = await chatAccountSwitchTarget(targetId, activeGroupId ?? null);
+                rememberChatAccount(targetId);
+                router.push(target ?? `/chat/account/${targetId}`);
+              })
+            }
+            switching={pending}
+          />
+
+          <div className="relative min-w-[12rem] flex-1">
             <Search
-              className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[color:var(--color-muted-foreground)]"
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[color:var(--color-muted-foreground)]"
               aria-hidden
             />
             <input
@@ -382,10 +414,10 @@ export function ConversationList({
                 setCursor(-1);
               }}
               onKeyDown={onSearchKeyDown}
-              placeholder="Search conversations"
-              aria-label="Search conversations"
+              placeholder={`Search ${account.label} conversations`}
+              aria-label={`Search ${account.label} conversations`}
               aria-keyshortcuts="/"
-              className="h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-8 pr-14 text-[13px] text-[color:var(--color-foreground)] outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
+              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
             />
             {query ? (
               <button
@@ -396,16 +428,14 @@ export function ConversationList({
                   searchRef.current?.focus();
                 }}
                 aria-label="Clear search"
-                className="absolute right-2 top-1/2 flex size-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-[var(--radius-xs)] text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
+                className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-[var(--radius-xs)] text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
               >
                 <X className="size-3.5" aria-hidden />
               </button>
             ) : (
-              // The shortcut, shown rather than hidden. A keyboard affordance nobody knows about
-              // is the same as no keyboard affordance.
               <kbd
                 aria-hidden
-                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-subtle-foreground)]"
+                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-subtle-foreground)]"
               >
                 /
               </kbd>
@@ -418,55 +448,53 @@ export function ConversationList({
             aria-pressed={compact}
             title={compact ? "Switch to comfortable rows" : "Switch to compact rows"}
             aria-label={compact ? "Switch to comfortable rows" : "Switch to compact rows"}
-            className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+            className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
           >
             {compact ? <Rows3 className="size-4" aria-hidden /> : <Rows4 className="size-4" aria-hidden />}
           </button>
+
+          <Link
+            href={`${base}/archived`}
+            className="flex h-10 shrink-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-[12px] font-medium text-[color:var(--color-muted-foreground)] transition-[border-color,color] duration-[var(--duration-fast)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+          >
+            <Archive className="size-3.5" aria-hidden />
+            Archived
+          </Link>
         </div>
 
-        {/* One rail, scrolled sideways, never wrapped. Order is the order they are reached for:
-            everything, then the two numbers a support inbox is opened to answer, then the team's
-            own folders. */}
+        {/* One row of filters, scrolled sideways rather than wrapped, so the header never grows
+            downward into the conversation's space however many categories the team keeps. */}
         <div
-          className="-mx-1 mt-2 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:thin]"
           role="group"
           aria-label="Filter conversations"
         >
-          <FilterChip active={isSameFilter(filter, { kind: "all" })} onClick={() => setFilter({ kind: "all" })}>
+          <FilterChip active={filter.kind === "all"} onClick={() => setFilter({ kind: "all" })}>
             All
-            <ChipCount>{conversations.length}</ChipCount>
+            <ChipCount>{counts.total}</ChipCount>
           </FilterChip>
-
-          {waitingCount > 0 ? (
-            <FilterChip
-              tone="warning"
-              active={isSameFilter(filter, { kind: "waiting" })}
-              onClick={() => setFilter({ kind: "waiting" })}
-            >
-              <Inbox className="size-3" aria-hidden />
-              Waiting
-              <ChipCount>{waitingCount}</ChipCount>
-            </FilterChip>
-          ) : null}
-
-          {/* Separate from "waiting" on purpose: these are conversations somebody has already
-              opened and the customer still has no answer. They are gone from the waiting count by
-              design — this is where they went, so they cannot quietly disappear. */}
-          {seenUnansweredCount > 0 ? (
-            <FilterChip
-              active={isSameFilter(filter, { kind: "seen-unanswered" })}
-              onClick={() => setFilter({ kind: "seen-unanswered" })}
-            >
-              <EyeOff className="size-3" aria-hidden />
+          <FilterChip tone="warning" active={filter.kind === "waiting"} onClick={() => setFilter({ kind: "waiting" })}>
+            <Inbox className="size-3.5" aria-hidden />
+            Waiting
+            <ChipCount>{counts.waiting}</ChipCount>
+          </FilterChip>
+          {/* Separate from "waiting" on purpose: conversations somebody has already opened and the
+              customer still has no answer. They leave the waiting count by design — this is where
+              they went, so they cannot quietly disappear. */}
+          {counts.seenUnanswered > 0 || filter.kind === "seen-unanswered" ? (
+            <FilterChip active={filter.kind === "seen-unanswered"} onClick={() => setFilter({ kind: "seen-unanswered" })}>
+              <EyeOff className="size-3.5" aria-hidden />
               Seen, unanswered
-              <ChipCount>{seenUnansweredCount}</ChipCount>
+              <ChipCount>{counts.seenUnanswered}</ChipCount>
             </FilterChip>
           ) : null}
+
+          {categories.length ? <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-[var(--color-border-strong)]" /> : null}
 
           {categories.map((category) => (
             <FilterChip
               key={category.id}
-              active={isSameFilter(filter, { kind: "category", id: category.id })}
+              active={filter.kind === "category" && filter.id === category.id}
               onClick={() => setFilter({ kind: "category", id: category.id })}
             >
               <span className={`size-2 shrink-0 rounded-full ${categoryDotClass(category.color)}`} aria-hidden />
@@ -479,226 +507,340 @@ export function ConversationList({
             type="button"
             onClick={() => setManagingCategories(true)}
             title="Manage categories"
-            aria-label="Manage categories"
-            className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-dashed border-[var(--color-border-strong)] text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-primary)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+            className="flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-[var(--color-border-strong)] px-3 text-[12px] font-medium text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-primary)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
           >
-            <Settings2 className="size-3" aria-hidden />
+            <Settings2 className="size-3.5" aria-hidden />
+            {categories.length ? "Categories" : "Add a category"}
           </button>
         </div>
-
-        <div className="mt-1.5 flex items-center gap-2 text-[11px]">
-          <ToolbarButton onClick={() => (selecting ? exitSelection() : setSelecting(true))} pressed={selecting}>
-            <CheckSquare className="size-3.5" aria-hidden />
-            {selecting ? "Cancel" : "Select"}
-          </ToolbarButton>
-
-          {/* Includes the search matches found BEYOND the loaded 300, which are individually
-              selectable in the list but were missing from this count — so "search, then bulk
-              categorise exactly those" silently dropped every match outside the loaded window,
-              and the number on the button was the tell nobody had. */}
-          {selecting && selectableIds.length > 0 ? (
-            <ToolbarButton
-              onClick={() =>
-                setSelected((current) =>
-                  current.size === selectableIds.length ? new Set() : new Set(selectableIds),
-                )
-              }
-            >
-              {selected.size === selectableIds.length ? "Clear all" : `Select all ${selectableIds.length}`}
-            </ToolbarButton>
-          ) : null}
-
-          {/* Scoped to the waiting filter on purpose. "Mark everything read" from the All tab
-              would be a single click that silences the entire inbox, and the one place that
-              gesture is genuinely wanted is the list of things you have just read. */}
-          {!selecting && filter.kind === "waiting" && filtered.length > 0 ? (
-            <ToolbarButton
-              disabled={pending}
-              onClick={() => {
-                runBulk("marked as read", () => setChatReviewed(filtered.map((c) => c.id), true));
-                // Back to All afterwards: the waiting chip only renders while something is
-                // waiting, so staying here would leave the reader on a filter whose own control
-                // has just disappeared, looking at an empty list.
-                setFilter({ kind: "all" });
-              }}
-            >
-              <MailOpen className="size-3.5" aria-hidden />
-              Mark all {filtered.length} read
-            </ToolbarButton>
-          ) : null}
-
-          <Link
-            href="/chat/archived"
-            className="ml-auto flex shrink-0 items-center gap-1 rounded-[var(--radius-xs)] px-1.5 py-1 text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
-          >
-            <Archive className="size-3" aria-hidden />
-            Archived
-          </Link>
-        </div>
       </div>
 
-      {/* The bulk bar replaces nothing and covers nothing — it appears between the filters and the
-          list, so the rows it acts on stay visible while you choose what to do to them. */}
-      {selecting && selected.size > 0 ? (
-        <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-neutral-bg)] px-3 py-2">
-          <p className="mb-1.5 text-[11px] font-medium text-[color:var(--color-foreground)]" aria-live="polite">
-            {selected.size} selected
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            <BulkButton
-              disabled={pending}
-              onClick={() =>
-                runBulk(allSelectedPinned ? "unpinned" : "pinned", () =>
-                  setChatPinned(selectedIds, !allSelectedPinned),
-                )
-              }
-            >
-              {allSelectedPinned ? <PinOff className="size-3" aria-hidden /> : <Pin className="size-3" aria-hidden />}
-              {allSelectedPinned ? "Unpin" : "Pin"}
-            </BulkButton>
+      <div className="flex min-h-0 flex-1">
+        {/* ── The account's conversations ─────────────────────────────────────────────────────── */}
+        <aside
+          aria-label={`${account.label} conversations`}
+          className={`${onIndex ? "flex" : "hidden"} w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] md:flex md:w-[21rem]`}
+        >
+          <div className="flex shrink-0 items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-1.5 text-[12px]">
+            <ToolbarButton onClick={() => (selecting ? exitSelection() : setSelecting(true))} pressed={selecting}>
+              <CheckSquare className="size-3.5" aria-hidden />
+              {selecting ? "Done" : "Select"}
+            </ToolbarButton>
 
-            {categories.map((category) => (
-              <BulkButton
-                key={category.id}
+            {selecting && selectableIds.length > 0 ? (
+              <>
+                <ToolbarButton onClick={() => setSelected(new Set(selectableIds))} disabled={selected.size === selectableIds.length}>
+                  Select all {selectableIds.length}
+                </ToolbarButton>
+                {selected.size > 0 ? <ToolbarButton onClick={() => setSelected(new Set())}>Clear</ToolbarButton> : null}
+              </>
+            ) : null}
+
+            {/* Scoped to the waiting filter on purpose. "Mark everything read" from All would be a
+                single click that silences the entire inbox. */}
+            {!selecting && filter.kind === "waiting" && filtered.length > 0 ? (
+              <ToolbarButton
                 disabled={pending}
-                onClick={() => runBulk(`moved to ${category.name}`, () => setChatCategory(selectedIds, category.id))}
+                onClick={() => {
+                  const ids = filtered.map((c) => c.id);
+                  runBulk("marked as read", () => setChatReviewed(account.id, ids, true));
+                  setFilter({ kind: "all" });
+                }}
               >
-                <span className={`size-2 shrink-0 rounded-full ${categoryDotClass(category.color)}`} aria-hidden />
-                {category.name}
-              </BulkButton>
-            ))}
+                <MailOpen className="size-3.5" aria-hidden />
+                Mark all {filtered.length} read
+              </ToolbarButton>
+            ) : null}
 
-            <BulkButton disabled={pending} onClick={() => runBulk("uncategorised", () => setChatCategory(selectedIds, null))}>
-              <Tag className="size-3" aria-hidden />
-              Remove category
-            </BulkButton>
-
-            {/* Clearing "waiting" in bulk is the point of selection mode for most people: you have
-                already dealt with these on your phone and telling the inbox so one conversation at
-                a time is worse than useless. Safe in bulk because the mark is a timestamp — every
-                one of these returns the moment its customer writes again. */}
-            <BulkButton disabled={pending} onClick={() => runBulk("marked as read", () => setChatReviewed(selectedIds, true))}>
-              <MailOpen className="size-3" aria-hidden />
-              Mark as read
-            </BulkButton>
-
-            <BulkButton disabled={pending} onClick={() => runBulk("marked as waiting", () => setChatReviewed(selectedIds, false))}>
-              <BellRing className="size-3" aria-hidden />
-              Mark as waiting
-            </BulkButton>
-
-            <BulkButton disabled={pending} onClick={() => runBulk("archived", () => setChatArchived(selectedIds, true))}>
-              <Archive className="size-3" aria-hidden />
-              Archive
-            </BulkButton>
+            <span className="tabular ml-auto shrink-0 text-[11px] text-[color:var(--color-muted-foreground)]" aria-live="polite">
+              {selecting
+                ? `${selected.size} of ${selectableIds.length} selected`
+                : viewLoading
+                  ? "Loading…"
+                  : `${(filtered.length + elsewhere.length).toLocaleString("en-US")} shown`}
+            </span>
           </div>
-        </div>
-      ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {filtered.length === 0 && elsewhere.length === 0 && !searching ? (
-          <EmptyList
-            conversations={conversations.length}
-            filter={filter}
-            query={query}
-            onClear={() => {
-              setQuery("");
-              setFilter({ kind: "all" });
-            }}
-          />
-        ) : (
-          <>
-            {pinnedRows.length > 0 ? (
+          {/* The bulk bar appears between the toolbar and the list, so the rows it acts on stay
+              visible while you choose what to do to them. */}
+          {selecting && selected.size > 0 ? (
+            <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-primary)]/[0.06] px-3 py-2.5">
+              <p className="mb-2 text-[12px] font-semibold text-[color:var(--color-foreground)]">
+                {selected.size} selected <span className="font-normal text-[color:var(--color-muted-foreground)]">· {account.label}</span>
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <BulkButton
+                  disabled={pending}
+                  onClick={() =>
+                    runBulk(allSelectedPinned ? "unpinned" : "pinned", () => setChatPinned(account.id, selectedIds, !allSelectedPinned))
+                  }
+                >
+                  {allSelectedPinned ? <PinOff className="size-3" aria-hidden /> : <Pin className="size-3" aria-hidden />}
+                  {allSelectedPinned ? "Unpin" : "Pin"}
+                </BulkButton>
+
+                {categories.map((category) => (
+                  <BulkButton
+                    key={category.id}
+                    disabled={pending}
+                    onClick={() => runBulk(`moved to ${category.name}`, () => setChatCategory(account.id, selectedIds, category.id))}
+                  >
+                    <span className={`size-2 shrink-0 rounded-full ${categoryDotClass(category.color)}`} aria-hidden />
+                    {category.name}
+                  </BulkButton>
+                ))}
+
+                <BulkButton disabled={pending} onClick={() => runBulk("uncategorised", () => setChatCategory(account.id, selectedIds, null))}>
+                  <Tag className="size-3" aria-hidden />
+                  Remove category
+                </BulkButton>
+
+                {/* Safe in bulk because the mark is a timestamp — every one of these returns the
+                    moment its customer writes again. */}
+                <BulkButton disabled={pending} onClick={() => runBulk("marked as read", () => setChatReviewed(account.id, selectedIds, true))}>
+                  <MailOpen className="size-3" aria-hidden />
+                  Mark as read
+                </BulkButton>
+                <BulkButton disabled={pending} onClick={() => runBulk("marked as waiting", () => setChatReviewed(account.id, selectedIds, false))}>
+                  <BellRing className="size-3" aria-hidden />
+                  Mark as waiting
+                </BulkButton>
+                {/* Not destructive: archiving hides a conversation from the inbox, monitoring and AI
+                    carry on, and the archive puts it back in one click. */}
+                <BulkButton disabled={pending} onClick={() => runBulk("archived", () => setChatArchived(account.id, selectedIds, true))}>
+                  <Archive className="size-3" aria-hidden />
+                  Archive
+                </BulkButton>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            {filtered.length === 0 && elsewhere.length === 0 && !searching && !viewLoading ? (
+              <EmptyList
+                accountLabel={account.label}
+                total={counts.total}
+                filter={filter}
+                query={query}
+                onClear={() => {
+                  setQuery("");
+                  setFilter({ kind: "all" });
+                }}
+              />
+            ) : (
               <>
-                <SectionLabel icon={<Pin className="size-3" aria-hidden />}>Pinned</SectionLabel>
+                {pinnedRows.length > 0 ? (
+                  <>
+                    <SectionLabel icon={<Pin className="size-3" aria-hidden />}>Pinned</SectionLabel>
+                    <ul>
+                      {pinnedRows.map((conversation, index) => (
+                        <Row key={conversation.id} {...rowProps(conversation, index)} />
+                      ))}
+                    </ul>
+                    <SectionLabel>All conversations</SectionLabel>
+                  </>
+                ) : null}
+
                 <ul>
-                  {pinnedRows.map((conversation, index) => (
-                    <Row key={conversation.id} {...rowProps(conversation, index)} />
+                  {otherRows.map((conversation, index) => (
+                    <Row key={conversation.id} {...rowProps(conversation, pinnedRows.length + index)} />
                   ))}
                 </ul>
-                <SectionLabel>All conversations</SectionLabel>
+
+                {viewLoading ? (
+                  <p className="flex items-center gap-1.5 px-3.5 py-2.5 text-[11px] text-[color:var(--color-subtle-foreground)]" aria-live="polite">
+                    <Loader2 className="size-3 animate-spin" aria-hidden />
+                    Loading the rest of this filter…
+                  </p>
+                ) : null}
+
+                {elsewhere.length > 0 ? (
+                  <>
+                    <SectionLabel icon={<TextSearch className="size-3" aria-hidden />}>Elsewhere in {account.label}</SectionLabel>
+                    <ul>
+                      {elsewhere.map((conversation, index) => (
+                        <Row key={conversation.id} {...rowProps(conversation, pinnedRows.length + otherRows.length + index)} />
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+
+                {searching ? (
+                  <p className="px-3.5 py-2.5 text-[11px] text-[color:var(--color-subtle-foreground)]" aria-live="polite">
+                    Searching every group of {account.label}…
+                  </p>
+                ) : null}
+
+                {allCapped ? (
+                  <p className="border-t border-[var(--color-border)] px-3.5 py-3 text-[11px] leading-relaxed text-[color:var(--color-subtle-foreground)]">
+                    Showing the {conversations.length.toLocaleString("en-US")} most recently active of{" "}
+                    {counts.total.toLocaleString("en-US")} groups. Search and the filters reach every group of this account.
+                  </p>
+                ) : null}
               </>
-            ) : null}
+            )}
+          </div>
+        </aside>
 
-            <ul>
-              {otherRows.map((conversation, index) => (
-                <Row key={conversation.id} {...rowProps(conversation, pinnedRows.length + index)} />
-              ))}
-            </ul>
-
-            {/* Matches from the rest of the roster, kept in their own section rather than mixed in.
-                These are groups that have been quiet long enough to fall outside the loaded list,
-                and saying so is more useful than silently padding the results. */}
-            {elsewhere.length > 0 ? (
-              <>
-                <SectionLabel icon={<TextSearch className="size-3" aria-hidden />}>
-                  Elsewhere in your groups
-                </SectionLabel>
-                <ul>
-                  {elsewhere.map((conversation, index) => (
-                    <Row
-                      key={conversation.id}
-                      {...rowProps(conversation, pinnedRows.length + otherRows.length + index)}
-                    />
-                  ))}
-                </ul>
-              </>
-            ) : null}
-
-            {searching ? (
-              <p className="px-3.5 py-2.5 text-[11px] text-[color:var(--color-subtle-foreground)]" aria-live="polite">
-                Searching the rest of your groups…
-              </p>
-            ) : null}
-
-            {capped ? (
-              // At the foot of the list and one line, because a caveat above the first conversation
-              // is a caption on a tool somebody opens fifty times a day. It says what search covers
-              // now rather than what it cannot reach — which, since searchConversations exists, is
-              // no longer a limitation worth leading with.
-              <p className="border-t border-[var(--color-border)] px-3.5 py-3 text-[11px] leading-relaxed text-[color:var(--color-subtle-foreground)]">
-                The list holds the {CONVERSATION_LIST_LIMIT} most recently active groups. Search
-                reaches every group on the account.
-              </p>
-            ) : null}
-          </>
-        )}
+        <div className={`${onIndex ? "hidden md:flex" : "flex"} min-w-0 flex-1 flex-col`}>{children}</div>
       </div>
 
-      <CategoryManager
-        open={managingCategories}
-        onClose={() => setManagingCategories(false)}
-        categories={categories}
-      />
+      <CategoryManager open={managingCategories} onClose={() => setManagingCategories(false)} categories={categories} />
+    </div>
+  );
+}
+
+/**
+ * The account everything below belongs to. Large, first, and always showing the number and its
+ * connection, because a reply goes out from it. With one account it is a plain label; with several it
+ * opens a list.
+ */
+function AccountSelector({
+  account,
+  accounts,
+  onSwitch,
+  switching,
+}: {
+  account: ChatAccountOption;
+  accounts: ChatAccountOption[];
+  onSwitch: (accountId: string) => void;
+  switching: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const tone = accountStatusTone(account.status);
+  const multiple = accounts.length > 1;
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(event: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const face = (
+    <>
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-on-primary)]">
+        <Smartphone className="size-3.5" aria-hidden />
+      </span>
+      <span className="min-w-0 text-left">
+        <span className="block text-[10px] font-medium uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]">WhatsApp account</span>
+        <span className="flex items-center gap-1.5 text-[13px] font-semibold leading-tight text-[color:var(--color-foreground)]">
+          <span className="truncate">{account.label}</span>
+          <span className={`size-1.5 shrink-0 rounded-full ${tone.dot}`} title={tone.label} aria-hidden />
+          <span className="sr-only">{tone.label}</span>
+        </span>
+      </span>
+    </>
+  );
+
+  if (!multiple) {
+    return (
+      <div className="flex h-10 max-w-[16rem] shrink-0 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 pr-3">
+        {face}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={wrapRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={switching}
+        className="flex h-10 max-w-[18rem] cursor-pointer items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-primary)]/45 bg-[var(--color-surface)] px-1.5 pr-2.5 shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-primary)] active:translate-y-px disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+      >
+        {face}
+        {switching ? (
+          <Loader2 className="ml-1 size-3.5 shrink-0 animate-spin text-[color:var(--color-muted-foreground)]" aria-hidden />
+        ) : (
+          <ChevronDown className={`ml-1 size-4 shrink-0 text-[color:var(--color-muted-foreground)] transition-transform duration-[var(--duration-fast)] ${open ? "rotate-180" : ""}`} aria-hidden />
+        )}
+      </button>
+
+      {open ? (
+        <ul
+          role="listbox"
+          aria-label="WhatsApp accounts"
+          className="absolute left-0 top-[calc(100%+6px)] z-30 w-[19rem] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-lg)]"
+        >
+          {accounts.map((option) => {
+            const optionTone = accountStatusTone(option.status);
+            const current = option.id === account.id;
+            return (
+              <li key={option.id} role="option" aria-selected={current}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    if (!current) onSwitch(option.id);
+                  }}
+                  className={`flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-neutral-bg)] focus-visible:bg-[var(--color-neutral-bg)] focus-visible:outline-none ${current ? "bg-[var(--color-neutral-bg)]" : ""}`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5 text-[13px] font-medium text-[color:var(--color-foreground)]">
+                      <span className="truncate">{option.label}</span>
+                      {option.isPrimary ? <Star className="size-3 shrink-0 fill-current text-[color:var(--color-warning)]" aria-label="Primary" /> : null}
+                    </span>
+                    <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-[color:var(--color-muted-foreground)]">
+                      <span className="inline-flex items-center gap-1">
+                        <span className={`size-1.5 rounded-full ${optionTone.dot}`} aria-hidden />
+                        {optionTone.label}
+                      </span>
+                      {option.phoneNumber ? <span className="tabular">+{option.phoneNumber.replace(/^\+/, "")}</span> : null}
+                      <span className="tabular">{option.groupCount.toLocaleString("en-US")} groups</span>
+                    </span>
+                  </span>
+                  {current ? <Check className="size-4 shrink-0 text-[color:var(--color-primary)]" aria-hidden /> : null}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </div>
   );
 }
 
 function EmptyList({
-  conversations,
+  accountLabel,
+  total,
   filter,
   query,
   onClear,
 }: {
-  conversations: number;
+  accountLabel: string;
+  total: number;
   filter: Filter;
   query: string;
   onClear: () => void;
 }) {
   const message =
-    conversations === 0
-      ? "No groups yet. Connect an account and run a group sync to populate this list."
-      : filter.kind === "seen-unanswered"
-        ? "Nothing has been seen and left unanswered."
-        : filter.kind === "waiting"
-          ? "Nothing is waiting on a reply."
-          : filter.kind === "category"
-            ? "Nothing filed here yet. Use Select to move conversations into it."
-            : `No group matches “${query}”.`;
+    total === 0
+      ? `No chats found for ${accountLabel}. Run a group sync on WhatsApp Accounts once it is connected and in groups.`
+      : query.trim()
+        ? `No ${accountLabel} group matches “${query}”${filter.kind === "all" ? "" : " in this filter"}.`
+        : filter.kind === "seen-unanswered"
+          ? "Nothing has been seen and left unanswered."
+          : filter.kind === "waiting"
+            ? "Nothing is waiting on a reply."
+            : filter.kind === "category"
+              ? "No groups match the selected category. Use Select to move conversations into it."
+              : `No chats found for ${accountLabel}.`;
 
-  // An empty state that only states the obvious leaves the reader to work out the way back. When
-  // the emptiness is something they caused, the way back is one button.
-  const recoverable = conversations > 0 && (query.trim().length > 0 || filter.kind !== "all");
+  // When the emptiness is something the reader caused, the way back is one button.
+  const recoverable = total > 0 && (query.trim().length > 0 || filter.kind !== "all");
 
   return (
     <div className="px-6 py-12 text-center">
@@ -708,9 +850,7 @@ function EmptyList({
       >
         <Inbox className="size-4" />
       </span>
-      <p className="mx-auto mt-3 max-w-[22ch] text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-        {message}
-      </p>
+      <p className="mx-auto mt-3 max-w-[26ch] text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">{message}</p>
       {recoverable ? (
         <button
           type="button"
@@ -725,8 +865,8 @@ function EmptyList({
 }
 
 /** The number inside a chip. Tabular so a rail of counts does not jitter as they change. */
-function ChipCount({ children }: { children: React.ReactNode }) {
-  return <span className="tabular text-[10px] opacity-55">{children}</span>;
+function ChipCount({ children }: { children: number }) {
+  return <span className="tabular rounded-full bg-current/10 px-1.5 text-[11px] font-semibold leading-[18px]">{children.toLocaleString("en-US")}</span>;
 }
 
 function FilterChip({
@@ -741,11 +881,11 @@ function FilterChip({
   children: React.ReactNode;
 }) {
   const base =
-    "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-[background-color,border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]";
+    "flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-[background-color,border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]";
   const styles = active
     ? tone === "warning"
-      ? "border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] text-[color:var(--color-warning-fg)]"
-      : "border-[var(--color-primary)] bg-[var(--color-primary)] text-[var(--color-on-primary)]"
+      ? "border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] text-[color:var(--color-warning-fg)] shadow-[var(--shadow-xs)]"
+      : "border-[var(--color-primary)] bg-[var(--color-primary)] text-[var(--color-on-primary)] shadow-[var(--shadow-xs)]"
     : "border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)]";
 
   return (
@@ -797,7 +937,7 @@ function BulkButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[11px] font-medium text-[color:var(--color-foreground)] transition-[border-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-border-strong)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+      className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[11px] font-medium text-[color:var(--color-foreground)] transition-[border-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-border-strong)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
     >
       {children}
     </button>
@@ -815,6 +955,7 @@ function SectionLabel({ icon, children }: { icon?: React.ReactNode; children: Re
 
 function Row({
   conversation,
+  href,
   category,
   active,
   cursored,
@@ -824,6 +965,7 @@ function Row({
   onToggle,
 }: {
   conversation: ConversationSummary;
+  href: string;
   category: ChatCategorySummary | undefined;
   active: boolean;
   /** Highlighted by the keyboard, which is not the same as opened. */
@@ -834,8 +976,8 @@ function Row({
   onToggle: () => void;
 }) {
   const avatar = conversationAvatar(conversation.id, conversation.name);
-  // Weight carries the unread state, not just a 10px dot. An unanswered customer should be legible
-  // from the far end of the list at a glance, the same way an unread mail is.
+  // Weight carries the unread state, not just a dot: an unanswered customer should be legible from
+  // the far end of the list at a glance, the way an unread mail is.
   const unread = conversation.awaitingReply;
 
   const inner = (
@@ -844,18 +986,15 @@ function Row({
         {selecting ? (
           <span
             aria-hidden
-            className={`flex ${compact ? "size-7" : "size-9"} items-center justify-center rounded-[var(--radius-lg)] border text-[12px] font-semibold transition-[background-color,border-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] ${
+            className={`flex ${compact ? "size-7" : "size-9"} items-center justify-center rounded-[var(--radius-lg)] border-2 transition-[background-color,border-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] ${
               selected
                 ? "scale-[0.94] border-[var(--color-primary)] bg-[var(--color-primary)] text-[var(--color-on-primary)]"
-                : "border-[var(--color-border)] bg-[var(--color-surface-sunken)] text-[color:var(--color-muted-foreground)]"
+                : "border-[var(--color-border-strong)] bg-[var(--color-surface)]"
             }`}
           >
-            {selected ? <Check className="size-4" /> : avatar.initials}
+            {selected ? <Check className="size-4" /> : null}
           </span>
         ) : (
-          // Tinted per group and stable forever — see avatar.ts. The inner highlight is the same
-          // one every raised surface in this app carries, so the monogram sits on the shared
-          // light source rather than looking pasted on.
           <span
             aria-hidden
             style={{ background: avatar.background, color: avatar.color }}
@@ -864,11 +1003,9 @@ function Row({
             {avatar.initials}
           </span>
         )}
-        {/* Two states, not one, and the second is the important one. A solid dot means nobody
-            has even looked. A hollow ring means somebody opened it and the customer STILL has no
-            reply — which is the case this whole feature could otherwise hide, since opening a
-            conversation is what clears it from the waiting list. Without the ring, "I glanced at
-            it" and "it is handled" would look identical to the next person down the list. */}
+        {/* Two states, not one. A solid dot means nobody has looked. A hollow ring means somebody
+            opened it and the customer STILL has no reply — without it "I glanced at it" and "it is
+            handled" would look identical to the next person down the list. */}
         {conversation.awaitingReply && !selecting ? (
           <>
             <span
@@ -876,8 +1013,6 @@ function Row({
               title="A customer is waiting for a reply"
               className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-[var(--color-warning)] shadow-[0_0_0_2px_var(--color-surface-sunken)]"
             />
-            {/* The dot is shape and colour. A screen reader gets the same fact in words, because
-                "title" on a decorative span is not reliably announced. */}
             <span className="sr-only">Waiting for a reply.</span>
           </>
         ) : conversation.isUnanswered && !selecting ? (
@@ -898,18 +1033,17 @@ function Row({
             {conversation.isPinned ? (
               <Pin className="size-3 shrink-0 text-[color:var(--color-muted-foreground)]" aria-label="Pinned" />
             ) : null}
-            <span
-              className={`truncate text-[13px] text-[color:var(--color-foreground)] ${
-                unread ? "font-semibold" : "font-medium"
-              }`}
-            >
+            <span className={`truncate text-[13px] text-[color:var(--color-foreground)] ${unread ? "font-semibold" : "font-medium"}`}>
               {conversation.name}
             </span>
           </span>
           <span
-            className={`tabular shrink-0 text-[10px] ${
+            className={`tabular shrink-0 text-[11px] ${
               unread ? "font-medium text-[color:var(--color-warning-fg)]" : "text-[color:var(--color-muted-foreground)]"
             }`}
+            // "10m" is relative to the clock reading it: the server and the browser can sit either
+            // side of a minute boundary, which is not a mismatch worth re-rendering the list over.
+            suppressHydrationWarning
           >
             {relativeTime(conversation.lastMessageAt)}
           </span>
@@ -923,9 +1057,7 @@ function Row({
           >
             {conversation.lastMessagePreview ? (
               <>
-                {conversation.lastMessageOutgoing ? (
-                  <span className="text-[color:var(--color-subtle-foreground)]">You: </span>
-                ) : null}
+                {conversation.lastMessageOutgoing ? <span className="text-[color:var(--color-subtle-foreground)]">You: </span> : null}
                 {conversation.lastMessagePreview}
               </>
             ) : (
@@ -942,11 +1074,14 @@ function Row({
           ) : null}
         </span>
 
-        {/* Hidden in compact mode, which is the point of compact mode. The state is still one
-            click away in the conversation header, and a badge that appears on every row carries
-            no information while costing a line on all of them. */}
+        {/* Hidden in compact mode, which is the point of compact mode. */}
         {!compact ? (
           <span className="mt-1 flex flex-wrap items-center gap-1">
+            {conversation.awaitingReply ? (
+              <span className="rounded-[var(--radius-xs)] bg-[var(--color-warning-bg)] px-1.5 py-px text-[10px] font-medium text-[color:var(--color-warning-fg)]">
+                Waiting
+              </span>
+            ) : null}
             {category ? (
               <span className="flex items-center gap-1 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px text-[10px] text-[color:var(--color-neutral-fg)]">
                 <span className={`size-1.5 rounded-full ${categoryDotClass(category.color)}`} aria-hidden />
@@ -960,18 +1095,13 @@ function Row({
             ) : null}
             {/* Quieter than the rest: on a roster where almost nothing is monitored this appears on
                 almost every row, and a badge with a 99% hit rate should not shout. */}
-            {!conversation.isMonitored ? (
-              <span className="text-[10px] text-[color:var(--color-subtle-foreground)]">Not monitored</span>
-            ) : null}
+            {!conversation.isMonitored ? <span className="text-[10px] text-[color:var(--color-subtle-foreground)]">Not monitored</span> : null}
           </span>
         ) : null}
       </span>
     </>
   );
 
-  // A press state and a focus ring, neither of which this row had. The press is a 1px settle
-  // rather than a scale: a scaling row nudges every row below it, and in a list you are dragging
-  // your eye down that reads as the list moving under you.
   const shell = [
     "group/row relative flex w-full gap-3 border-b border-[var(--color-border)] text-left",
     compact ? "px-3.5 py-2" : "px-3.5 py-3",
@@ -979,29 +1109,20 @@ function Row({
     "active:translate-y-px",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus-ring)]",
     cursored ? "ring-2 ring-inset ring-[var(--color-focus-ring)]" : "",
-    active ? "bg-[var(--color-neutral-bg)]" : "hover:bg-[var(--color-neutral-bg)]/60",
+    selected ? "bg-[var(--color-primary)]/[0.07]" : active ? "bg-[var(--color-surface)]" : "hover:bg-[var(--color-neutral-bg)]/60",
   ].join(" ");
 
-  // In selection mode the row is a button, not a link. Keeping it a link and intercepting the
-  // click would leave a real href under the cursor — middle-click, ctrl-click and "open in new
-  // tab" would all navigate away mid-selection and lose it.
+  // In selection mode the row is a button, not a link: a real href under the cursor would let
+  // middle-click and ctrl-click navigate away mid-selection and lose it.
   return (
     <li className="relative">
-      {/* An edge marker for the open conversation. The background fill alone is the same weight as
-          the hover state, so on a list you are running the cursor down, "which one is open" and
-          "which one am I over" become the same colour. */}
-      {active ? (
-        <span
-          aria-hidden
-          className="absolute inset-y-0 left-0 w-0.5 bg-[var(--color-primary)]"
-        />
-      ) : null}
+      {active ? <span aria-hidden className="absolute inset-y-0 left-0 z-[1] w-[3px] bg-[var(--color-primary)]" /> : null}
       {selecting ? (
         <button type="button" onClick={onToggle} aria-pressed={selected} className={`${shell} cursor-pointer`}>
           {inner}
         </button>
       ) : (
-        <Link href={`/chat/${conversation.id}`} aria-current={active ? "page" : undefined} className={shell}>
+        <Link href={href} aria-current={active ? "page" : undefined} className={shell}>
           {inner}
         </Link>
       )}

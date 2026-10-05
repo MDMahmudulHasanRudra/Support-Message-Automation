@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createProjectWithDefaults, ORIGINAL_PROJECT_ID, prisma as rawPrisma } from "@support-automation/db";
 import { runWithProject, type ActiveProject } from "@/server/projectContext";
 import { prisma } from "@/server/db";
-import { getChatConversations, getChatThread } from "@/server/chatInbox";
+import { getChatAccounts, getChatConversations, getChatInbox, getChatThread } from "@/server/chatInbox";
 import {
   getActivityTrend,
   getActorBreakdown,
@@ -126,8 +126,15 @@ async function allFigures(project: ActiveProject) {
     const report = await loadTeamReport(filters, NOW);
     const drill = await loadTeamReport(filters, NOW, SHARED_WGID);
     const figures = {
-      inbox: (await getChatConversations("")).map((c) => c.name).sort(),
-      inboxSearch: (await getChatConversations(tag)).map((c) => c.name).sort(),
+      // The inbox is per WhatsApp account now: every account of the project, each with its counts.
+      inbox: (await Promise.all((await getChatAccounts()).map((a) => getChatInbox(a.id))))
+        .flatMap((i) => i.conversations.map((c) => c.name))
+        .sort(),
+      inboxCounts: (await Promise.all((await getChatAccounts()).map((a) => getChatInbox(a.id)))).map((i) => i.counts),
+      inboxSearch: (await Promise.all((await getChatAccounts()).map((a) => getChatConversations(a.id, { search: tag }))))
+        .flat()
+        .map((c) => c.name)
+        .sort(),
       everyActivity: await getEveryActivityCount(range),
       uniqueGroups: await getUniqueGroupCount(range),
       actorMix: await getActorBreakdown(range),
@@ -311,5 +318,11 @@ describe("Bizify's figures are exactly its own rows", () => {
   it("another project's conversation cannot be opened by id", async () => {
     expect(await runWithProject(isp, () => getChatThread(bizFixtures.group.id))).toBeNull();
     expect(await runWithProject(biz, () => getChatThread(ispFixtures.group.id))).toBeNull();
+  });
+
+  it("another project's WhatsApp account opens an empty inbox, not its conversations", async () => {
+    const crossed = await runWithProject(isp, () => getChatInbox(bizFixtures.account.id));
+    expect(crossed).toEqual({ conversations: [], counts: { total: 0, waiting: 0, seenUnanswered: 0 } });
+    expect(await runWithProject(isp, () => getChatConversations(bizFixtures.account.id, { search: tag }))).toEqual([]);
   });
 });
