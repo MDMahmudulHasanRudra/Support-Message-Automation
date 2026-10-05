@@ -874,3 +874,54 @@ database, and is not applied to any live database.
 - UI = report attribution.
 
 Each guard was mutation-checked.
+
+## 11. Duration display and "Support Overtime" (5 Oct 2026)
+
+**One duration format.** Every report shows a duration as total hours and minutes, using
+`formatHoursMinutes` in `packages/shared/src/duration.ts`.
+
+| Shown | Never shown |
+|---|---|
+| 35h 0m | 1d 11h |
+| 0h 45m | 45m |
+| 0h 0m | 38s |
+
+- Minutes are truncated: 35h 42m 39s is 35h 42m.
+- Nothing stored or calculated changed; only the text did.
+- Every report formatter calls it:
+  - the reports' `duration()`;
+  - the Team Report's tables, tiles and group page;
+  - `formatDurationShort` (Support Activity pages and Team Performance);
+  - Executive Support Health's `shortDuration`;
+  - Duty History's `formatMinutesShort`.
+- First–last timestamp ranges are dates, not durations, and are unchanged.
+
+**Exports.**
+
+| Export | Duration columns |
+|---|---|
+| Generic `/reports/<id>` CSV/Excel, Team Report table export | The displayed text, so they match the screen exactly |
+| Team Report full Excel | Raw numbers, kept for spreadsheet work: "Support Overtime (hours)" (decimal hours), "Wait (minutes)" |
+| Support Activity | "Duration (seconds)", a raw number |
+| Duty History | "Engaged (minutes)", a raw number |
+
+**"Support Overtime".** The Team Report's support time — `activeSeconds`, the idle-gap stretches
+in §4 — is labelled **Support Overtime** everywhere it is shown:
+- Team Report tiles, tables, chart and Help;
+- the group page;
+- Team Workload, Workload Distribution and Employee Support Breakdown;
+- Duty & Workload;
+- Executive Support Health;
+- the Employee Effectiveness hint;
+- catalogue descriptions;
+- the full Excel export.
+
+The calculation is 100% unchanged. Internal names stay `activeSeconds` / support time, because this
+is not yet roster-based overtime. A later phase will compute true overtime: duty time against actual
+support, outside-duty support. Earlier sections of this file that say "support time" mean this
+metric.
+
+Different metrics keep their own names:
+- Team Performance's "Time engaged";
+- Support Intelligence's "Observed Support Session Time";
+- Call Activity's "Duration".

@@ -907,8 +907,21 @@ was being able to SEE them anywhere but their own page. Rules worth not undoing:
   (`operationsStore.ts`): 3s while the worker is moving something, 15s while a job waits on a person,
   30s otherwise, nothing while the tab is hidden. The reader is a Server Action that refuses as an
   empty list and takes no project/account/job argument; the scoped client confines it to the URL's
-  project. It renders nothing when there is nothing to show. Dismissing a finished job is
-  per-browser (`localStorage`); its page keeps the result regardless.
+  project. It renders nothing when there is nothing to show.
+- **Clear / Hide is per user, on the server, and never a cancel** (`WhatsAppOperationDismissal`,
+  `clearWhatsAppOperation`, 5 Oct 2026).
+  - "Clear" applies to a finished or ready-for-review operation; "Hide" to one still running or
+    paused (`operationClearLabel`).
+  - It removes the operation from that person's indicator AND the module page's "Current
+    operation". Both read `listWhatsAppOperations({ viewerId })`, so they cannot disagree and a
+    refresh cannot bring it back.
+  - The job, its items, review and results are untouched, and its page still opens. Cancel stays a
+    separate action on that page.
+  - A dismissal holds only while the operation is in the state it was cleared in
+    (`isOperationCleared`). A continued review or a running job finishing is news, so the operation
+    shows again.
+  - It replaced the old per-browser `localStorage` dismiss, which only covered finished jobs and
+    only the indicator.
 - **A dropped session is a wait, never a result.** The add processor releases a pair untouched (no
   attempt counted) when the provider is not CONNECTED, instead of failing it on "membership could
   not be verified"; the check processor reads nothing rather than settling every pair CHECK_FAILED,
@@ -944,7 +957,8 @@ later stage). Three rules worth not undoing:
 ### Team Report (`packages/shared/src/teamReport.ts`, `apps/web/src/server/teamReport.ts`, `(dashboard)/team-report/`)
 
 Per-member and per-group WhatsApp support report — groups supported, replies, customer messages,
-customer waits, **Missed**, **Recall** and support duration — for a day, week, month or custom range
+customer waits, **Missed**, **Recall** and **Support Overtime** (the idle-gap support duration —
+the label only; internally still `activeSeconds`/support time, and NOT yet duty-based overtime) — for a day, week, month or custom range
 (capped at 92 days), for the whole team or one member, broken down by day/week/month, with a group
 drill-down listing every wait and CSV (groups) / Excel (full: Summary, Team Members, Groups, period,
 Missed & Recall) exports. Sidebar: Reports → Team Report; also the first card on All Reports.
@@ -1037,7 +1051,7 @@ one.**
     (`pnpm --filter @support-automation/web validate:intelligence`) cannot disagree.
   - They sit beside the operational figures, never replacing them. Human Response SLA sits beside
     Response SLA. Observed Support Session Time (the union of sessions across groups) sits beside
-    Support Time. An internal hand-off (the employee's words) is kept apart from an SLA escalation
+    Support Overtime (the Team Report's support time, relabelled). An internal hand-off (the employee's words) is kept apart from an SLA escalation
     (a recorded fact).
 - **Inference rules worth not undoing.**
   - Every inferred figure carries its confidence and evidence, and is labelled "(inferred)".
@@ -1052,6 +1066,20 @@ one.**
 - **Validation.** These rules are tested against constructed conversations only. Until somebody
   runs the validation script against real groups and compares with WhatsApp, the reports say so.
   Do not remove that caveat on the strength of the tests.
+
+**Report durations are shown ONE way: total hours and minutes** (`formatHoursMinutes`,
+`packages/shared/src/duration.ts`, 5 Oct 2026).
+- Examples: "35h 0m", never "1d 11h"; "0h 45m", never "45m" or "38s"; zero is "0h 0m".
+- Minutes are truncated, never rounded up.
+- Every report formatter routes through it: `formatDurationShort`, the reports' `duration()`,
+  `teamReportTables.formatDuration`, `shortDuration` (Executive), `formatMinutesShort` (Duty
+  History). Display only — no stored value or calculation changed.
+- Raw numeric export columns stay numeric: Team Report "Support Overtime (hours)", "Wait
+  (minutes)", Support Activity "Duration (seconds)", Duty History "Engaged (minutes)".
+- **"Support Overtime" is a label**, applied 5 Oct 2026 at Rudra's request to the existing
+  idle-gap support time. Internal names (`activeSeconds`, support time) are deliberately unchanged,
+  because it is not yet roster-based overtime. Do not rename internals until that real calculation
+  exists.
 
 **Element-level rules in `globals.css` belong in `@layer base`.** Tailwind's utilities live in a
 layer, and ANY unlayered style beats ANY layered one regardless of specificity: the default

@@ -13,6 +13,10 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Report durations in total hours** (35h 0m, never 1d 11h) and the Team Report's support time is
+  now labelled **Support Overtime** (same calculation). **WhatsApp operations can be cleared**
+  (finished / ready for review) or hidden (still running) from your own tracker — never a cancel.
+  Built locally on `rudra`; not deployed (`REPORTS.md` §11).
 - **WhatsApp Chat — one account at a time** (Support → WhatsApp Chat). Built locally on `rudra`;
   not deployed.
   - **Choosing:** pick the WhatsApp account at the top. The list, real counts (All / Waiting /

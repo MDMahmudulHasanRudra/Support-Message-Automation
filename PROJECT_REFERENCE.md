@@ -493,8 +493,8 @@ Each is one generic page. It has:
 | `group-trend` | per bucket: customer messages, replies, groups with a message, groups with no reply, waits, missed | by |
 | `response-sla` | SLA %, median / average / p90 / worst response; by group, by who answered, by bucket | by |
 | `missed` | every wait: Waiting / Answered / Answered late / Never answered, with the customer's first line | show |
-| `workload` | per member: groups, replies, waits answered, support time, stretches, active days | by |
-| `distribution` | each member's share of replies, support time, groups or waits answered, with the total | share of |
+| `workload` | per member: groups, replies, waits answered, Support Overtime, stretches, active days | by |
+| `distribution` | each member's share of replies, Support Overtime, groups or waits answered, with the total | share of |
 | `employee-groups` | member × group: replies, waits answered, median response, recall, time in group | — |
 | `heatmap` | weekday × hour counts of customer messages, team replies or waits started | show |
 | `calls` | messages asking for or mentioning a call, inferred from text, with a duration only when stated | — |
