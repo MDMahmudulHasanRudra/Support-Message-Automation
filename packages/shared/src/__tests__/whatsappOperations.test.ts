@@ -135,3 +135,19 @@ describe("one view of every kind", () => {
     expect(operationPollMs([])).toBe(30_000);
   });
 });
+
+describe("clearing an operation from one person's tracker", () => {
+  it("is called Hide while the job still runs or waits for Resume, Clear once finished or ready for review", async () => {
+    const { operationClearLabel } = await import("../whatsappOperations.js");
+    expect(["CHECKING", "RUNNING", "WAITING_ACCOUNT", "PAUSED"].map((s) => operationClearLabel(s as never))).toEqual(["Hide", "Hide", "Hide", "Hide"]);
+    expect(["REVIEW", "COMPLETED", "PARTIAL", "FAILED", "CANCELLED", "STOPPED"].map((s) => operationClearLabel(s as never))).toEqual(Array(6).fill("Clear"));
+  });
+
+  it("holds while the state is the one it was cleared in, and lapses when the job moves on", async () => {
+    const { isOperationCleared } = await import("../whatsappOperations.js");
+    expect(isOperationCleared({ state: "REVIEW" }, { stateAtDismissal: "REVIEW" })).toBe(true);
+    expect(isOperationCleared({ state: "RUNNING" }, { stateAtDismissal: "REVIEW" })).toBe(false);
+    expect(isOperationCleared({ state: "COMPLETED" }, { stateAtDismissal: "RUNNING" })).toBe(false);
+    expect(isOperationCleared({ state: "COMPLETED" }, undefined)).toBe(false);
+  });
+});

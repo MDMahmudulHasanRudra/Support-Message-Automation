@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import {
+  isOperationCleared,
   sortOperations,
   summariseAddJob,
   summariseAdminJob,
@@ -121,12 +122,25 @@ async function listAdminMakerOperations(now: Date): Promise<WhatsAppOperation[]>
   );
 }
 
-/** Every operation of the given kind (or all kinds): running ones first, then those finished recently. */
-export async function listWhatsAppOperations(options: { kind?: WhatsAppOperationKind; now?: Date } = {}): Promise<WhatsAppOperation[]> {
+/**
+ * Every operation of the given kind (or all kinds): running ones first, then those finished recently.
+ *
+ * With `viewerId`, the operations that person cleared from their tracker are left out — while they
+ * are still in the state they were cleared in (`isOperationCleared`). This is the one place that
+ * filter lives, so the job indicator and a module page's "Current operation" can never disagree, and
+ * a refresh cannot bring a cleared operation back. Nothing about the job itself is touched.
+ */
+export async function listWhatsAppOperations(
+  options: { kind?: WhatsAppOperationKind; now?: Date; viewerId?: string } = {},
+): Promise<WhatsAppOperation[]> {
   const now = options.now ?? new Date();
-  const [adds, admins] = await Promise.all([
+  const [adds, admins, dismissals] = await Promise.all([
     options.kind && options.kind !== "ADD_NUMBER_TO_GROUPS" ? Promise.resolve([]) : listAddNumberOperations(now),
     options.kind && options.kind !== "ADMIN_MAKER" ? Promise.resolve([]) : listAdminMakerOperations(now),
+    options.viewerId
+      ? prisma.whatsAppOperationDismissal.findMany({ where: { userId: options.viewerId }, select: { kind: true, jobId: true, stateAtDismissal: true } })
+      : Promise.resolve([]),
   ]);
-  return sortOperations([...adds, ...admins]);
+  const cleared = new Map(dismissals.map((d) => [`${d.kind}:${d.jobId}`, d]));
+  return sortOperations([...adds, ...admins].filter((op) => !isOperationCleared(op, cleared.get(`${op.kind}:${op.id}`))));
 }

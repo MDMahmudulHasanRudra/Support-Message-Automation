@@ -263,3 +263,78 @@ describe("Add Number to Groups never runs the same pair twice", () => {
     await holder;
   });
 });
+
+describe("Clear / Hide — one person's tracker, never the job", () => {
+  const extra = { review: "", colleague: "" };
+  let colleague: Session;
+
+  beforeAll(async () => {
+    extra.review = await addJob(ORIGINAL_PROJECT_ID, ids.account, ids.groups[1]!, "AWAITING_REVIEW", ["READY", "ALREADY_MEMBER"]);
+    const c = await user("wo_col", ids.roles[0]!);
+    extra.colleague = c.id;
+    colleague = c.session;
+  });
+
+  afterAll(async () => {
+    await rawPrisma.groupParticipantAddJob.deleteMany({ where: { id: extra.review } });
+    await rawPrisma.projectAccess.deleteMany({ where: { userId: extra.colleague } });
+    await rawPrisma.user.deleteMany({ where: { id: extra.colleague } });
+  });
+
+  const visibleTo = async (session: Session) => {
+    current = session;
+    return (await inIsp(() => action.readWhatsAppOperations())).map((o) => o.id);
+  };
+
+  it("clearing a job ready for review removes it for that person only, and leaves the job and its review intact", async () => {
+    expect(await visibleTo(sessions.manager)).toContain(extra.review);
+    current = sessions.manager;
+    expect(await inIsp(() => action.clearWhatsAppOperation("ADD_NUMBER_TO_GROUPS", extra.review))).toEqual({ action: "Clear" });
+    expect(await visibleTo(sessions.manager)).not.toContain(extra.review);
+    // The module page's server-rendered list uses the same per-viewer filter.
+    expect((await inIsp(() => reader.listWhatsAppOperations({ kind: "ADD_NUMBER_TO_GROUPS", viewerId: ids.manager }))).map((o) => o.id)).not.toContain(extra.review);
+    // A colleague still sees it.
+    expect(await visibleTo(colleague)).toContain(extra.review);
+    // Nothing about the job changed: still awaiting review, every item still there.
+    const job = await rawPrisma.groupParticipantAddJob.findUniqueOrThrow({ where: { id: extra.review }, include: { items: true } });
+    expect(job.status).toBe("AWAITING_REVIEW");
+    expect(job.items.map((i) => i.status).sort()).toEqual(["ALREADY_MEMBER", "READY"]);
+  });
+
+  it("it shows again once the job moves on — a continued review is news", async () => {
+    await rawPrisma.groupParticipantAddJob.update({ where: { id: extra.review }, data: { status: "RUNNING" } });
+    expect(await visibleTo(sessions.manager)).toContain(extra.review);
+    await rawPrisma.groupParticipantAddJob.update({ where: { id: extra.review }, data: { status: "AWAITING_REVIEW" } });
+  });
+
+  it("hiding a running job is only hiding: it is called Hide and the job keeps running", async () => {
+    current = sessions.manager;
+    expect(await inIsp(() => action.clearWhatsAppOperation("ADD_NUMBER_TO_GROUPS", jobs.running))).toEqual({ action: "Hide" });
+    expect(await visibleTo(sessions.manager)).not.toContain(jobs.running);
+    const job = await rawPrisma.groupParticipantAddJob.findUniqueOrThrow({ where: { id: jobs.running } });
+    expect(job.status).toBe("RUNNING");
+    expect(job.cancelledAt).toBeNull();
+  });
+
+  it("restore puts it back", async () => {
+    current = sessions.manager;
+    await inIsp(() => action.restoreWhatsAppOperation("ADD_NUMBER_TO_GROUPS", jobs.running));
+    expect(await visibleTo(sessions.manager)).toContain(jobs.running);
+  });
+
+  it("a finished job can be cleared; its result stays", async () => {
+    current = sessions.manager;
+    expect(await inIsp(() => action.clearWhatsAppOperation("ADD_NUMBER_TO_GROUPS", jobs.done))).toEqual({ action: "Clear" });
+    expect(await visibleTo(sessions.manager)).not.toContain(jobs.done);
+    expect(await rawPrisma.groupParticipantAddItem.count({ where: { jobId: jobs.done } })).toBe(2);
+  });
+
+  it("another project's job, an unknown kind and a role without Bulk Messaging are refused", async () => {
+    current = sessions.manager;
+    expect((await inIsp(() => action.clearWhatsAppOperation("ADD_NUMBER_TO_GROUPS", jobs.bizAdd))).error).toBeTruthy();
+    expect((await inIsp(() => action.clearWhatsAppOperation("SOMETHING", jobs.running))).error).toBeTruthy();
+    current = sessions.outsider;
+    expect((await inIsp(() => action.clearWhatsAppOperation("ADD_NUMBER_TO_GROUPS", jobs.running))).error).toBeTruthy();
+    expect(await rawPrisma.whatsAppOperationDismissal.count({ where: { jobId: jobs.bizAdd } })).toBe(0);
+  });
+});

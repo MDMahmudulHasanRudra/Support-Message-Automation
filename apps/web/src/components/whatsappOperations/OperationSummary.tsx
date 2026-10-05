@@ -38,7 +38,16 @@ function StateBadge({ op }: { op: WhatsAppOperation }) {
   );
 }
 
-export function OperationSummary({ op, compact = false }: { op: WhatsAppOperation; compact?: boolean }) {
+export function OperationSummary({
+  op,
+  compact = false,
+  actions,
+}: {
+  op: WhatsAppOperation;
+  compact?: boolean;
+  /** Secondary controls beside the main link — the Clear / Hide button. */
+  actions?: React.ReactNode;
+}) {
   if (compact) {
     return (
       <div className="min-w-0">
@@ -72,6 +81,12 @@ export function OperationSummary({ op, compact = false }: { op: WhatsAppOperatio
           ))}
         </p>
         {op.detail && op.state !== "RUNNING" ? <p className="mt-1.5 text-xs text-[color:var(--color-muted-foreground)]">{op.detail}</p> : null}
+        <div className="mt-2 flex items-center justify-end gap-1">
+          <Link href={op.href} className="link px-1.5 py-0.5 text-xs font-medium">
+            {op.state === "REVIEW" ? "Review" : "View"}
+          </Link>
+          {actions}
+        </div>
       </div>
     );
   }
@@ -87,9 +102,10 @@ export function OperationSummary({ op, compact = false }: { op: WhatsAppOperatio
         </div>
         <div className="flex items-center gap-3">
           <StateBadge op={op} />
-          <Link href={op.href} className="link text-[13px]">
+          <Link href={op.href} className="link text-[13px] font-medium">
             {op.state === "REVIEW" ? "Review" : "View details"}
           </Link>
+          {actions}
         </div>
       </div>
       {op.detail && needsAttention ? (

@@ -2,7 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { operationPollMs, type WhatsAppOperation } from "@support-automation/shared";
-import { readWhatsAppOperations } from "@/server/actions/whatsappOperations";
+import { clearWhatsAppOperation, readWhatsAppOperations, type ClearOperationResult } from "@/server/actions/whatsappOperations";
 
 /**
  * One poll of the project's WhatsApp operations, shared by everything on the page that shows them —
@@ -100,57 +100,54 @@ function selectProject(slug: string) {
 export function useWhatsAppOperations(projectSlug: string): { ops: WhatsAppOperation[]; loaded: boolean } {
   const current = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   useEffect(() => selectProject(projectSlug), [projectSlug]);
-  return current.project === projectSlug ? current : { ops: [], loaded: false };
+  const own = current.project === projectSlug ? current : { ops: [] as WhatsAppOperation[], loaded: false };
+  const ops = useWithoutCleared(own.ops);
+  return { ops, loaded: own.loaded };
 }
 
 // ---------------------------------------------------------------------------------------------
-// Finished jobs a viewer has dismissed from the indicator. A per-viewer convenience, so it lives in
-// this browser only; the job's own page keeps every result regardless.
+// Clearing an operation from the viewer's tracker (WhatsAppOperationDismissal, per user, on the
+// server). The server's reader already leaves cleared operations out, so after a refresh they stay
+// gone on every surface and every device. This set only bridges the moment between the click and
+// the next poll, and the server-rendered list a module page starts from — keyed by id AND state, so
+// an operation that moves on (a review continued, a job finished) shows again, exactly as the server
+// rule does.
 
-const DISMISSED_KEY = "whatsapp-operations-dismissed";
-const dismissedListeners = new Set<() => void>();
-let dismissedCache: string | null = null;
+const clearedKeys = new Set<string>();
+const clearedListeners = new Set<() => void>();
+let clearedVersion = 0;
+const clearKey = (op: Pick<WhatsAppOperation, "id" | "state">) => `${op.id}:${op.state}`;
 
-function dismissedSnapshot(): string {
-  if (dismissedCache === null) {
-    try {
-      dismissedCache = window.localStorage.getItem(DISMISSED_KEY) ?? "[]";
-    } catch {
-      dismissedCache = "[]";
-    }
-  }
-  return dismissedCache;
-}
-
-function parseDismissed(raw: string): string[] {
-  try {
-    const value: unknown = JSON.parse(raw);
-    return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-export function useDismissedOperations(): Set<string> {
-  const raw = useSyncExternalStore(
+/** Drops operations the viewer has just cleared (until the server's own filter takes over). */
+export function useWithoutCleared(ops: WhatsAppOperation[]): WhatsAppOperation[] {
+  useSyncExternalStore(
     (listener) => {
-      dismissedListeners.add(listener);
-      return () => dismissedListeners.delete(listener);
+      clearedListeners.add(listener);
+      return () => clearedListeners.delete(listener);
     },
-    dismissedSnapshot,
-    () => "[]",
+    () => clearedVersion,
+    () => 0,
   );
-  return new Set(parseDismissed(raw));
+  return clearedKeys.size ? ops.filter((op) => !clearedKeys.has(clearKey(op))) : ops;
 }
 
-export function dismissOperation(id: string): void {
-  // The newest fifty are plenty: a finished job leaves the indicator by itself after twelve hours.
-  const next = [id, ...parseDismissed(dismissedSnapshot()).filter((x) => x !== id)].slice(0, 50);
-  dismissedCache = JSON.stringify(next);
+/**
+ * Clears (or, for a job still running, hides) one operation for the signed-in person, on the server.
+ * Display only — it never cancels or changes the job. Resolves to the server's answer.
+ */
+export async function clearOperation(op: WhatsAppOperation): Promise<ClearOperationResult> {
+  clearedKeys.add(clearKey(op));
+  clearedVersion += 1;
+  clearedListeners.forEach((listener) => listener());
   try {
-    window.localStorage.setItem(DISMISSED_KEY, dismissedCache);
-  } catch {
-    /* private mode — still works for this tab */
+    const result = await clearWhatsAppOperation(op.kind, op.id);
+    if (result.error) throw new Error(result.error);
+    void refreshWhatsAppOperations();
+    return result;
+  } catch (err) {
+    clearedKeys.delete(clearKey(op));
+    clearedVersion += 1;
+    clearedListeners.forEach((listener) => listener());
+    return { error: (err as Error).message || "The operation could not be cleared. Try again." };
   }
-  dismissedListeners.forEach((listener) => listener());
 }

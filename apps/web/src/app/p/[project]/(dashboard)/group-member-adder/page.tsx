@@ -17,7 +17,7 @@ import {
 } from "./GroupParticipantAddWizard";
 
 export default async function GroupParticipantAdderPage() {
-  await requireAccess("bulk_messaging.manage");
+  const session = await requireAccess("bulk_messaging.manage");
 
   const [accounts, settings, automationSettings, roster, savedGroupSets, operations, recentJobs, projectSlug] = await Promise.all([
     prisma.whatsAppAccount.findMany({
@@ -41,7 +41,8 @@ export default async function GroupParticipantAdderPage() {
     prisma.savedGroupSet.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, groupIds: true } }),
     // Running jobs come first on this page, read from the database on every visit — so coming back
     // after Reports, a refresh or another browser shows the job where it is now.
-    listWhatsAppOperations({ kind: "ADD_NUMBER_TO_GROUPS" }),
+    // What this person cleared from their tracker stays cleared here too (the same filter as the indicator).
+    listWhatsAppOperations({ kind: "ADD_NUMBER_TO_GROUPS", viewerId: session.userId }),
     prisma.groupParticipantAddJob.findMany({
       where: { status: { in: ["COMPLETED", "CANCELLED", "STOPPED_KILL_SWITCH"] } },
       orderBy: { createdAt: "desc" },

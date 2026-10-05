@@ -78,8 +78,8 @@ describe("the constraints later phases depend on", () => {
     // 70 at Phase 1, + GroupAdminPromotionJob and GroupAdminPromotionItem (Groups Admin Maker),
     // + MessageMedia, MediaStorageSettings and MediaCleanupJob (Message & Media Storage),
     // + SupportResponseEpisode (Unanswered Groups / Response Time),
-    // + CollectionGap (reporting data health).
-    expect(refusing).toHaveLength(77);
+    // + CollectionGap (reporting data health), + WhatsAppOperationDismissal (Clear / Hide).
+    expect(refusing).toHaveLength(78);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -101,10 +101,10 @@ describe("the constraints later phases depend on", () => {
       SELECT conrelid::regclass::text AS table, convalidated AS validated
       FROM pg_constraint
       WHERE contype = 'f' AND confrelid = '"Project"'::regclass AND conname LIKE '%\\_projectId\\_fkey'`;
-    // 77 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
-    // & Media Storage tables + SupportResponseEpisode + CollectionGap) + SystemLog + ProjectAccess +
-    // ProjectFeature.
-    expect(rows).toHaveLength(80);
+    // 78 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
+    // & Media Storage tables + SupportResponseEpisode + CollectionGap + WhatsAppOperationDismissal)
+    // + SystemLog + ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(81);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

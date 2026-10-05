@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { CheckCircle2, ChevronDown, Loader2, Pause, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, Loader2, Pause } from "lucide-react";
 import { isFinishedOperationState, isWorkingOperationState } from "@support-automation/shared";
 import { OperationSummary } from "./OperationSummary";
-import { dismissOperation, refreshWhatsAppOperations, useDismissedOperations, useWhatsAppOperations } from "./operationsStore";
+import { ClearOperationButton } from "./ClearOperationButton";
+import { refreshWhatsAppOperations, useWhatsAppOperations } from "./operationsStore";
 
 /**
  * WhatsApp Operations: the job indicator in the corner of every dashboard page.
@@ -20,7 +21,6 @@ import { dismissOperation, refreshWhatsAppOperations, useDismissedOperations, us
  */
 export function WhatsAppJobCenter({ projectSlug, besideAiChat }: { projectSlug: string; besideAiChat: boolean }) {
   const { ops } = useWhatsAppOperations(projectSlug);
-  const dismissed = useDismissedOperations();
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
@@ -30,7 +30,9 @@ export function WhatsAppJobCenter({ projectSlug, besideAiChat }: { projectSlug: 
     void refreshWhatsAppOperations();
   }, [pathname]);
 
-  const visible = ops.filter((op) => !isFinishedOperationState(op.state) || !dismissed.has(op.id));
+  // Operations this person cleared are already gone from `ops` (the server's per-user filter, plus the
+  // store for the moment after the click), so this panel and a page's "Current operation" agree.
+  const visible = ops;
   if (visible.length === 0) return null;
 
   const active = visible.filter((op) => !isFinishedOperationState(op.state));
@@ -68,19 +70,7 @@ export function WhatsAppJobCenter({ projectSlug, besideAiChat }: { projectSlug: 
           <ul className="min-h-0 flex-1 divide-y divide-[var(--color-border)] overflow-y-auto">
             {visible.map((op) => (
               <li key={op.id} className="px-4 py-3">
-                <OperationSummary op={op} compact />
-                {isFinishedOperationState(op.state) ? (
-                  <div className="mt-1.5 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => dismissOperation(op.id)}
-                      className="flex cursor-pointer items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-0.5 text-xs text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
-                    >
-                      <X className="size-3" aria-hidden />
-                      Dismiss
-                    </button>
-                  </div>
-                ) : null}
+                <OperationSummary op={op} compact actions={<ClearOperationButton op={op} size="xs" />} />
               </li>
             ))}
           </ul>

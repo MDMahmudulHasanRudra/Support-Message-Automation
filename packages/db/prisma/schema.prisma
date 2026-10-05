@@ -564,6 +564,7 @@ model Project {
   workerCommandRows                    WorkerCommand[]
   processingCheckpointRows             ProcessingCheckpoint[]
   collectionGapRows                    CollectionGap[]
+  whatsappOperationDismissals          WhatsAppOperationDismissal[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
   groupParticipantAddJobRows           GroupParticipantAddJob[]
@@ -672,6 +673,7 @@ model User {
   createdKnowledgeVersions    AiKnowledgeVersion[]
   approvedStyleProfiles       CommunicationStyleProfile[]
   editedNotificationTemplates NotificationTemplate[]
+  whatsappOperationDismissals WhatsAppOperationDismissal[]
   savedReplies                SavedReply[]
   savedGroupSets              SavedGroupSet[]
   resolvedEscalationCases     SupportEscalationCase[]
@@ -4861,4 +4863,28 @@ model Employee {
 
   @@index([departmentId])
   @@index([jobTitleId])
+}
+
+/// One person clearing one WhatsApp operation (Add Number to Groups, Groups Admin Maker) from THEIR
+/// operation tracker — the job indicator and a module page's "Current operation". Display only: the
+/// job, its items and everything it already did are untouched, and its own page still shows it.
+/// The operation stays hidden while its state is `stateAtDismissal`; when it moves on (a review is
+/// continued, a running job finishes or needs a person) it shows again, because that is news.
+/// Per user, not per job: clearing it for yourself never hides it from a colleague.
+model WhatsAppOperationDismissal {
+  id               String   @id @default(cuid())
+  projectId        String   @default(dbgenerated("project_id_required()"))
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// "ADD_NUMBER_TO_GROUPS" | "ADMIN_MAKER" — the operation kind, as packages/shared names it.
+  kind             String
+  /// The job row's id (GroupParticipantAddJob / GroupAdminPromotionJob).
+  jobId            String
+  /// The operation state it was cleared in (WhatsAppOperationState).
+  stateAtDismissal String
+  dismissedAt      DateTime @default(now())
+
+  @@unique([projectId, userId, kind, jobId])
+  @@index([projectId, userId])
 }

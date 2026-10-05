@@ -46,6 +46,24 @@ const WORKING_STATES: ReadonlySet<WhatsAppOperationState> = new Set(["CHECKING",
 export const isFinishedOperationState = (state: WhatsAppOperationState) => FINISHED_STATES.has(state);
 export const isWorkingOperationState = (state: WhatsAppOperationState) => WORKING_STATES.has(state);
 
+/**
+ * Clearing an operation from one person's tracker (WhatsAppOperationDismissal) — display only, never
+ * a cancel. The wording says so: a job the worker is still moving, or one paused waiting for Resume,
+ * is only HIDDEN ("Hide"; Cancel stays on its own page); one finished or ready for review is CLEARED.
+ */
+export function operationClearLabel(state: WhatsAppOperationState): "Clear" | "Hide" {
+  return isFinishedOperationState(state) || state === "REVIEW" ? "Clear" : "Hide";
+}
+
+/**
+ * Whether a person's dismissal still applies. It holds while the operation is in the state it was
+ * cleared in; once the job moves on — a review continued, a running job finished or paused — that is
+ * news, and the operation shows again until it is cleared again.
+ */
+export function isOperationCleared(op: Pick<WhatsAppOperation, "state">, dismissal: { stateAtDismissal: string } | undefined): boolean {
+  return dismissal !== undefined && dismissal.stateAtDismissal === op.state;
+}
+
 export type WhatsAppOperationTone = "success" | "warning" | "danger" | "neutral";
 
 export interface WhatsAppOperationCount {
