@@ -1465,6 +1465,8 @@ model OutboundMessage {
   @@index([chatId, createdAt])
   /// Support Intelligence joins an outgoing Message to the send it echoes (actor attribution).
   @@index([providerMessageId])
+  /// WhatsApp Chat User Activity: one project's manual sends over a period.
+  @@index([projectId, actionType, createdAt])
 }
 
 /// One row per "send this message to these groups" batch created through the

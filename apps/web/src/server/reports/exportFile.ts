@@ -80,7 +80,7 @@ export function reportWorkbook(report: BuiltReport, ctx: ReportContext): Buffer 
   const summary: Cell[][] = [
     ["Report", report.title],
     ["Question", report.question],
-    ["Showing", ctx.scopeText],
+    ...(report.usesMemberFilters === false ? [] : [["Showing", ctx.scopeText] as Cell[]]),
     ["Period", range.label],
     ["Period start (Asia/Dhaka)", iso(range.start.getTime())],
     ["Period end (Asia/Dhaka, exclusive)", iso(range.end.getTime())],

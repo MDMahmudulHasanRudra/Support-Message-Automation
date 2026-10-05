@@ -93,7 +93,7 @@ export const PROJECT_FEATURES = [
       // The reports at /reports/<id> (REPORTS.md). Duty & Workload belongs to Team Management.
       "/reports/employee-groups",
       "/reports/inactive-groups",
-      "/reports/executive-health", "/reports/support-intelligence", "/reports/employee-effectiveness", "/reports/support-cases", "/reports/human-response-sla", "/reports/customer-signals",
+      "/reports/executive-health", "/reports/support-intelligence", "/reports/employee-effectiveness", "/reports/support-cases", "/reports/human-response-sla", "/reports/customer-signals", "/reports/whatsapp-user-activity",
       "/reports/group-coverage",
       "/reports/group-trend",
       "/reports/response-sla",

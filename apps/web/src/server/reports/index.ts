@@ -6,6 +6,7 @@ import { buildCustomerSignals, buildEmployeeEffectiveness, buildHumanResponseSla
 import { buildGroupCoverage, buildGroupTrend, buildInactiveGroups } from "./groupReports";
 import { buildDistribution, buildDutyWorkload, buildEmployeeGroups, buildWorkload } from "./memberReports";
 import { buildMissedSupport, buildResponseSla } from "./responseReports";
+import { buildUserActivity } from "./userActivityReports";
 import { teamReportQuery } from "@/server/teamReport";
 import type { BuiltReport } from "./types";
 
@@ -66,6 +67,8 @@ const DEFINITIONS: Record<string, ReportDefinition> = {
   heatmap: { permission: "support_activity.view", build: buildHeatmap },
   calls: { permission: "support_activity.view", build: buildCalls },
   "duty-workload": { permission: "team_management.view", build: buildDutyWorkload },
+  // It shows message text, so it needs the chat's own key.
+  "whatsapp-user-activity": { permission: "messages.view", build: buildUserActivity, presets: INTELLIGENCE_PRESETS },
 };
 
 export function reportDefinition(id: string): ReportDefinition | null {
@@ -94,7 +97,7 @@ export type { BuiltReport, ReportTable } from "./types";
 export type { ReportContext } from "./context";
 
 /** A report's own extra filters, carried through presets, links and exports. */
-export const REPORT_EXTRA_PARAMS = ["status", "metric", "low", "prolonged"] as const;
+export const REPORT_EXTRA_PARAMS = ["status", "metric", "low", "prolonged", "user", "sender"] as const;
 
 /** The query string that reproduces this report: the common filters plus its own extra ones. */
 export function reportQuery(ctx: ReportContext): string {

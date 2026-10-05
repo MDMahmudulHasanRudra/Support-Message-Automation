@@ -61,7 +61,7 @@ export default async function ReportPage({
       </Link>
       <PageHeader
         title={report.title}
-        description={`${report.question} ${ctx.scopeText} · ${range.label}.`}
+        description={`${report.question} ${report.usesMemberFilters === false ? "" : `${ctx.scopeText} · `}${range.label}.`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <ButtonLink href={`${exportBase}/export?${query}&format=csv`}>
@@ -80,11 +80,11 @@ export default async function ReportPage({
               ))}
               <HelpSection title="Where the numbers come from">
                 <p>
-                  The same stored WhatsApp group messages, waits and support-time rules as the Team Report, for the same
-                  filters — so a figure here is a Team Report figure cut another way. A message two of our numbers stored is
-                  counted once. Days, weeks (Sunday start) and months are Asia/Dhaka.
+                  {report.sourceHelp ??
+                    "The same stored WhatsApp group messages, waits and support-time rules as the Team Report, for the same filters — so a figure here is a Team Report figure cut another way. A message two of our numbers stored is counted once. Days, weeks (Sunday start) and months are Asia/Dhaka."}
                 </p>
               </HelpSection>
+              {report.usesMemberFilters === false ? null : (
               <HelpSection title="Team and member filters">
                 <p>
                   In group reports, a chosen Team or member includes a group when its assigned team member is in scope, or
@@ -92,6 +92,7 @@ export default async function ReportPage({
                   they were in the chosen Team.
                 </p>
               </HelpSection>
+              )}
             </HelpButton>
           </div>
         }
@@ -115,14 +116,17 @@ export default async function ReportPage({
           accounts={ctx.options.accounts}
           accountId={filters.accountId}
           showGranularity={report.usesGranularity}
+          showMemberFilters={report.usesMemberFilters !== false}
           selects={report.selects}
         />
       </Card>
 
       <p className="mb-4 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-[color:var(--color-muted-foreground)]">
-        <span>
-          Showing: <strong className="font-medium text-[color:var(--color-foreground)]">{ctx.scopeText}</strong>
-        </span>
+        {report.usesMemberFilters === false ? null : (
+          <span>
+            Showing: <strong className="font-medium text-[color:var(--color-foreground)]">{ctx.scopeText}</strong>
+          </span>
+        )}
         <span>
           Period: <strong className="font-medium text-[color:var(--color-foreground)]">{PERIOD_NAMES[filters.period]} · {range.label}</strong>
         </span>

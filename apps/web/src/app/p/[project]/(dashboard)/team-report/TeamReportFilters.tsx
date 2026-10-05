@@ -51,6 +51,7 @@ export function TeamReportFilters({
   accounts,
   accountId = null,
   showGranularity = true,
+  showMemberFilters = true,
   selects = [],
 }: {
   period: string;
@@ -71,6 +72,8 @@ export function TeamReportFilters({
   accounts?: Array<{ id: string; label: string; phoneNumber: string | null }>;
   accountId?: string | null;
   showGranularity?: boolean;
+  /** Offer the Team and Team member pickers (a report about software users has no use for them). */
+  showMemberFilters?: boolean;
   selects?: ExtraSelect[];
 }) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -141,6 +144,8 @@ export function TeamReportFilters({
         </Field>
       )}
 
+      {showMemberFilters ? (
+      <>
       <Field label="Team">
         <Select
           name="team"
@@ -187,6 +192,8 @@ export function TeamReportFilters({
           ))}
         </Select>
       </Field>
+      </>
+      ) : null}
 
       {groupOptions ? (
         <Field label="Groups">

@@ -132,6 +132,16 @@ export const REPORT_CATALOGUE: readonly ReportCatalogueEntry[] = [
     generic: true,
   },
   {
+    id: "whatsapp-user-activity",
+    href: "/reports/whatsapp-user-activity",
+    label: "WhatsApp Chat User Activity",
+    category: "Team & Employee",
+    description: "Which software user sent which messages through this software, from which WhatsApp account, to which groups and when — with every message.",
+    question: "Which software user sent which WhatsApp messages, through which account, to which groups — and when?",
+    exports: BOTH,
+    generic: true,
+  },
+  {
     id: "duty-history",
     href: "/team-management/attendance",
     label: "Duty History",

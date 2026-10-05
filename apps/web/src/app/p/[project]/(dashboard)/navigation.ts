@@ -235,6 +235,7 @@ const REPORT_PRESENTATION: Record<string, { icon: LucideIcon; module: string }> 
   "support-activity": { icon: Activity, module: "Support Activity" },
   "duty-history": { icon: CalendarDays, module: "Team Management" },
   "employee-groups": { icon: UsersRound, module: "WhatsApp support" },
+  "whatsapp-user-activity": { icon: MessageCircleMore, module: "WhatsApp Chat" },
   "duty-workload": { icon: CalendarClock, module: "Team Management" },
   "executive-health": { icon: Activity, module: "WhatsApp support" },
   "support-intelligence": { icon: Activity, module: "Support Intelligence" },

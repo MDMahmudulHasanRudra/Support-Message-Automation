@@ -52,4 +52,12 @@ export interface BuiltReport {
   usesGranularity: boolean;
   /** Shown instead of tables and visuals when the dataset is empty. */
   emptyMessage: string | null;
+  /**
+   * False for a report about something other than WhatsApp team members (the software users of the
+   * User Activity report): the Team and member pickers and the "Showing" scope are hidden, since they
+   * would filter nothing. Absent means true — every other report renders exactly as before.
+   */
+  usesMemberFilters?: boolean;
+  /** Replaces the page Help's "where the numbers come from" text when the report reads other data. */
+  sourceHelp?: string;
 }
