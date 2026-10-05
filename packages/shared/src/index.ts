@@ -33,3 +33,4 @@ export * from "./intelligence/textSignals.js";
 export * from "./intelligence/model.js";
 export * from "./intelligence/customerSignals.js";
 export * from "./intelligence/effectiveness.js";
+export * from "./outboundAttribution.js";
