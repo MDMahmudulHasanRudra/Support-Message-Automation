@@ -1,5 +1,9 @@
 # WhatsApp Chat — multi-account separation, workspace UX and user attribution: audit
 
+**Progress:** phases 0–11 are built locally on `rudra`. Nothing is pushed or deployed. Migration
+`20261009090000_outbound_user_activity_index` is not applied to any live database. CLAUDE.md
+("One WhatsApp account at a time") and REPORTS.md §10 describe the result.
+
 Audit written 5 Oct 2026, before any change. It describes the code as it was then, decides what
 changes, and records why. All work is local on `rudra`: nothing is pushed or deployed, and no
 production migration is run.

@@ -793,3 +793,84 @@ Each leaderboard says what it is ranked by.
   - a thank-you opened a new wait;
   - "I'll check" weighed as much as a developer hand-off.
 
+
+## 10. WhatsApp Chat User Activity (5 Oct 2026)
+
+`/reports/whatsapp-user-activity` · Team & Employee · `messages.view` (it shows message text, which
+is the chat's own key) · route in `TEAM_REPORTS`. WHATSAPP_CHAT_MULTI_ACCOUNT_AUDIT.md has the
+decisions.
+
+**Question.** Which software user sent which WhatsApp messages through this software, from which
+account, to which groups, and when?
+
+**Source.** `OutboundMessage`, the queue every send of this software goes through. Two columns answer
+two questions:
+
+| Column | Answers |
+|---|---|
+| `createdById` | Who pressed send: the authenticated user, written server-side from the session |
+| `accountId` | Which number it left from |
+
+Several people can send from one number, and both are shown. The sender type comes from
+`attributeOutbound()` (`packages/shared/src/outboundAttribution.ts`), the same rule the chat thread
+labels messages with, so the conversation and the report cannot disagree.
+
+| Sender type | Rule |
+|---|---|
+| Human user | `MANUAL_REPLY`. Source "Chat reply", or "Template test" for a notification template test send |
+| Broadcast | `GROUP_BROADCAST`, attributed to the job's creator |
+| AI | Owned by an AI fallback decision |
+| Rule automation | Has a rule |
+| System | Any other automated send (handover mention, holding reply) |
+
+**Filters.**
+- Period (≤92 days), WhatsApp account, groups.
+- Software user and sender type, which default to Human user.
+
+The Team and member pickers are hidden (`usesMemberFilters: false`): they describe WhatsApp team
+members, not software users.
+
+**Views.**
+- **Overview:**
+  - tiles — messages, active users, accounts, groups, active days, per active day, first/last,
+    busiest hour and day;
+  - messages per day and a weekday × hour heatmap;
+  - tables by user, account and group, and every message.
+- **A user (`?user=`):**
+  - their accounts and groups;
+  - estimated active time;
+  - every message.
+- **Drill-down:** a group (`&groups=<id>`) narrows to its messages.
+
+**Formulas.**
+- **Active day:** an Asia/Dhaka day with at least one send.
+- **Estimated active time:** one person's sends split at the Team Report's idle gap and at Dhaka
+  midnight, each stretch first send to last (`activeSendSeconds`). A single send is 0.
+- **Status** is the queue's state. "Sent · confirmed by WhatsApp" means the echo is stored as a
+  Message. Delivery and read receipts are not recorded.
+
+**Export.** CSV is the messages table: Time, User, WhatsApp account, Group, Sender type, Source,
+Status, Message, Message ID. Excel adds Summary and the breakdowns. Both come from the same builder.
+The Summary has no "Showing" row for this report.
+
+**Who sees it.** Its card, its page and its export need `messages.view`; the sidebar map names that
+key explicitly. A role that can only read WhatsApp Chat therefore now reaches All Reports, holding this
+single card.
+
+**Not in it.**
+- Messages typed on the phone or by team members on their own WhatsApp — the Team Report covers
+  those.
+- Duty: a software user has no link to a duty roster, and matching by phone would be a guess.
+
+**Index.** `OutboundMessage(projectId, actionType, createdAt)` (migration
+`20261009090000_outbound_user_activity_index`). It needs the CONCURRENTLY deploy step on a busy
+database, and is not applied to any live database.
+
+**Tests.** `userActivity.integration.test.ts` covers:
+- defaults, user detail and drill-down;
+- account filter and sender types;
+- project isolation;
+- the export;
+- UI = report attribution.
+
+Each guard was mutation-checked.

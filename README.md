@@ -13,6 +13,15 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **WhatsApp Chat — one account at a time** (Support → WhatsApp Chat). Built locally on `rudra`;
+  not deployed.
+  - **Choosing:** pick the WhatsApp account at the top. The list, real counts (All / Waiting /
+    categories), search, bulk selection and replies all belong to that account.
+  - **Replying:** a reply goes out only from it ("Sending from Primary Account").
+  - **Attribution:** each of our messages shows who sent it through the software and from which
+    number.
+  - **New report:** **WhatsApp Chat User Activity** lists every send by user, account and group, down
+    to the message (`WHATSAPP_CHAT_MULTI_ACCOUNT_AUDIT.md`, `REPORTS.md` §10).
 - **Support Intelligence reports** (Reports → All Reports → Support Intelligence). Built locally on
   `rudra`; not deployed.
   - **Executive Support Intelligence:** what is happening in support, where the problems are, and

@@ -115,6 +115,33 @@ Sidebar group: **Support** → Messages (tabs: All messages / Needs attention / 
   as dashed "queued" bubbles; a `SENT` row whose provider message id already exists as a stored
   message is skipped as a duplicate, because WhatsApp echoes our own sends back to us. Polls every
   4s — there is no websocket.
+  - **One WhatsApp account at a time (5 Oct 2026).** `/chat` opens the only account, or the account
+    last used in this browser, or asks which one; the workspace lives at
+    `/chat/account/<accountId>/<groupId>`. Old `/chat/<groupId>` links redirect to the group's own
+    account.
+  - **The header spans both panes:** the account selector (label, connection, and a list of every
+    account with phone and group count), search, density, Archived; then the filter chips — All,
+    Waiting, Seen-unanswered and the shared categories.
+  - **Counts are the account's real totals** ("All 320" when the list renders 300). A filter whose
+    total exceeds what is loaded fetches its full list.
+  - **Select → Select all** selects what the filter shows; changing filter clears the selection;
+    switching account remounts the workspace. Switching with a conversation open opens the same group
+    under the new account when it is a member.
+  - **The composer says "Sending from <account> · +number".** A reply goes out from that account only:
+    the server re-checks project, account, the group's account, connection and `messages.reply`.
+    There is no cross-account "Reply as". A disconnected account offers "Reply from <other account>"
+    links instead.
+  - **The thread names who sent each of our messages:** the software user and account ("Rudra · via
+    Primary Account"), or AI / Rule / Broadcast / Automated.
+  - **Bulk actions are account-scoped on the server.** Rows of another account are left alone and
+    counted.
+
+- **WhatsApp Chat User Activity** (`/reports/whatsapp-user-activity`, Reports → Team & Employee,
+  `messages.view`). Which software user sent what through this software, from which WhatsApp account,
+  to which groups and when; read from the outbound queue.
+  - **Filters:** period, account, groups, software user, sender type (default Human user).
+  - **Drill-down:** users → a user (`?user=`) → a group (`&groups=`) → every message, with status.
+  - **Export:** CSV (messages) and Excel.
   **Attachments (MEDIA_STORAGE.md):**
   - **Shown in the bubble:** images and stickers load lazily and open full size on click; video and
     audio players load nothing until played; documents and any other file appear as a card with

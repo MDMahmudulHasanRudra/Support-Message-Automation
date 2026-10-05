@@ -1390,6 +1390,38 @@ and is really a selection one: with 1,848 groups a conversation that arrived fiv
 invisible if its name sorted past the 300th. A `LATERAL` join picks the newest message per group so
 the cap falls on the quietest rows rather than the alphabetically unlucky ones.
 
+**One WhatsApp account at a time (5 Oct 2026, `WHATSAPP_CHAT_MULTI_ACCOUNT_AUDIT.md`).** Five rules
+worth not undoing:
+- **The account is a URL path segment** (`/chat/account/<accountId>/…`): the list lives in that
+  layout, and a path segment is the only per-request state a layout can read. A cookie was rejected
+  because every tab shares it, so one tab switching account would repaint another's inbox with the
+  other number. `/chat` opens the only account, the last one used in this browser (`localStorage`, a
+  convenience only) or a chooser. Old `/chat/<groupId>` links redirect to the group's own account,
+  and a conversation URL under the wrong account redirects to the right one, so the list and the
+  open conversation can never be from two numbers.
+- **Everything is filtered by account on the server.** That covers list, counts, search, views,
+  category counts, archive, thread and pending badge. The thread reads only this account's
+  outbound rows, so another number's queued or failed sends to the same WhatsApp group do not leak
+  in. Bulk actions take the account and refuse other accounts' rows (`outsideAccount`).
+- **Counts are real totals.** One statement (`rankInbox`: a MATERIALIZED base CTE, one LATERAL per
+  group, the queued-reply EXISTS inside a CASE) returns the ranked 300 AND All/Waiting/Seen over
+  every group of the account. "All" used to be `conversations.length`, so it could never exceed
+  300. A filter whose total exceeds what is loaded fetches its full list (`listConversationView`).
+  The "unanswered" definition is unchanged and still lives in that SQL only: a queued reply from ANY
+  of our accounts to the group still counts as an answer.
+- **A reply goes out from the selected account only.** `sendChatMessage(accountId, groupId)` checks
+  project → account → the group is that account's copy → connected → `messages.reply`, and records
+  the session's user. The old cross-account "Reply as" is gone, and a request still carrying one is
+  refused. To answer from another number, switch the selector: it opens that number's own copy of
+  the group (`chatAccountSwitchTarget`). Other accounts' copies of the group get the AI takeover
+  pause, because our send reaches them as a stranger's message.
+- **Attribution is `OutboundMessage.createdById` (who pressed send) + `accountId` (which number)**,
+  classified by `attributeOutbound()` (`packages/shared/src/outboundAttribution.ts`). The thread
+  ("Rudra · via Primary Account") and the WhatsApp Chat User Activity report
+  (`/reports/whatsapp-user-activity`, `messages.view`) both use it. There is no new table or name
+  snapshot: users are never deleted and `username` never changes. Echoes are matched by an exact
+  `providerMessageId` lookup.
+
 **Inbox organisation is `chatCategoryId` / `chatPinnedAt` / `chatArchivedAt` on `WhatsAppGroup`,
 plus `ChatCategory`** (`server/actions/chatOrganisation.ts`). All three govern what an operator
 SEES and nothing else — that file never writes `isMonitored` or `aiAutomationEnabled`. Archiving is
@@ -1427,8 +1459,8 @@ customer'''s question, so an answered conversation kept showing as waiting. Both
 `OutboundMessage`, so one lookup covers both. `ANSWERING_OUTBOUND` is pointedly NOT
 `UNSETTLED_OUTBOUND`: that set exists to render queued bubbles and includes FAILED, CANCELLED and
 SKIPPED, which mean the customer received nothing — reading those as an answer would hide the
-conversations that most need somebody. It is floored at the oldest message the page is asking about,
-because SENT rows accumulate forever and `OutboundMessage.chatId` carries no index of its own.
+conversations that most need somebody. It is now an `EXISTS` in `inboxBaseSql`, run only for groups
+whose newest message is a customer's, on the `(chatId, createdAt)` index.
 
 `setChatReviewed(ids, reviewed)` is the bulk form, in the selection bar beside pin/categorise/
 archive, plus a one-click "Mark all N read" that appears ONLY while the waiting filter is active —
