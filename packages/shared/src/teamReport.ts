@@ -252,7 +252,7 @@ interface Stretch {
   end: number;
 }
 
-/** Splits one person's (or one group's) sorted timestamps into stretches. See "Support duration". */
+/** Splits one person's (or one group's) sorted timestamps into stretches. See "Support Overtime" (the Team Report Help). */
 export function splitIntoStretches(sortedTs: readonly number[], idleGapMs: number): Stretch[] {
   const stretches: Stretch[] = [];
   let current: Stretch | null = null;

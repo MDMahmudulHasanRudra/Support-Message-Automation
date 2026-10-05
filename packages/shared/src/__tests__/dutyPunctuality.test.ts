@@ -172,11 +172,12 @@ describe("formatting", () => {
     expect(formatMinuteOfDay(26 * 60)).toBe("02:00");
   });
 
-  it("prints a duration the way somebody says it out loud", () => {
-    expect(formatMinutesShort(47)).toBe("47m");
-    expect(formatMinutesShort(60)).toBe("1h");
+  it("prints a duration in the reports' one format: total hours and minutes", () => {
+    expect(formatMinutesShort(47)).toBe("0h 47m");
+    expect(formatMinutesShort(60)).toBe("1h 0m");
     expect(formatMinutesShort(192)).toBe("3h 12m");
-    expect(formatMinutesShort(0)).toBe("0m");
+    expect(formatMinutesShort(1500)).toBe("25h 0m");
+    expect(formatMinutesShort(0)).toBe("0h 0m");
     expect(formatMinutesShort(null)).toBe("—");
   });
 });

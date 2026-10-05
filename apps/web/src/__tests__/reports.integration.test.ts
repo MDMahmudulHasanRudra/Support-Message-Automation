@@ -260,13 +260,13 @@ afterAll(async () => {
 });
 
 describe("calculations, against the hand-worked fixture", () => {
-  it("Response SLA: 6 waits — 4 within, 1 late, 1 never; median 5m, p90 and worst 45m", async () => {
+  it("Response SLA: 6 waits — 4 within, 1 late, 1 never; median 0h 5m, p90 and worst 0h 45m", async () => {
     const r = await run(isp, "response-sla", { groups: fixtureGroups() });
     expect(tile(r, "Customer waits")).toBe("6");
     expect(tile(r, "Within SLA")).toBe("66.7%");
-    expect(tile(r, "Median first response")).toBe("5m");
-    expect(tile(r, "90th percentile")).toBe("45m");
-    expect(tile(r, "Worst")).toBe("45m");
+    expect(tile(r, "Median first response")).toBe("0h 5m");
+    expect(tile(r, "90th percentile")).toBe("0h 45m");
+    expect(tile(r, "Worst")).toBe("0h 45m");
     expect(tile(r, "Breached")).toBe("2");
     // By who answered: Rina closed two (10m, 5m), Bipul two (45m late, 5m), the business number one.
     const names = column(r, "members", "Answered by");
@@ -517,7 +517,7 @@ describe("project isolation", () => {
     expect(tile(sla, "Customer waits")).toBe("3");
     const calls = await run(biz, "calls");
     expect(tile(calls, "Missed calls mentioned")).toBe("1");
-    expect(column(calls, "calls", "Duration")).toContain("15m (stated in message)");
+    expect(column(calls, "calls", "Duration")).toContain("0h 15m (stated in message)");
     const duty = await run(biz, "duty-workload");
     expect(table(duty, "days").rows.map((row) => row.cells[0])).toContain(bizMemberName);
   });

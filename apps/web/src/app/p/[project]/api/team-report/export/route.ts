@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
       "Never answered": row.unrecovered,
       "First support": iso(row.firstActivityAt),
       "Last support": iso(row.lastActivityAt),
-      "Support hours": hours(row.activeSeconds),
+      "Support Overtime (hours)": hours(row.activeSeconds),
     }),
   );
 
@@ -129,7 +129,7 @@ export async function GET(request: NextRequest) {
     { Metric: "Missed", Value: summary.missed },
     { Metric: "Recall support", Value: summary.recalled },
     { Metric: "Never answered", Value: summary.unrecovered },
-    { Metric: "Support hours", Value: hours(summary.activeSeconds) },
+    { Metric: "Support Overtime (hours)", Value: hours(summary.activeSeconds) },
     { Metric: "Active team members", Value: summary.activeMembers },
     { Metric: "Last activity", Value: iso(summary.lastActivityAt) },
     { Metric: "Rule: missed after (minutes, groups without a priority)", Value: rules.missedAfterMinutes },
@@ -149,7 +149,7 @@ export async function GET(request: NextRequest) {
       "Missed (assigned groups)": row.missed,
       "Recall (answered late)": row.recalled,
       "Never answered": row.unrecovered,
-      "Support hours": hours(row.activeSeconds),
+      "Support Overtime (hours)": hours(row.activeSeconds),
       "Work stretches": row.stretches,
       "First activity": iso(row.firstAt),
       "Last activity": iso(row.lastAt),
@@ -166,7 +166,7 @@ export async function GET(request: NextRequest) {
       "Customer messages": b.customerMessages,
       Missed: b.missed,
       Recall: b.recalled,
-      "Support hours": hours(b.activeSeconds),
+      "Support Overtime (hours)": hours(b.activeSeconds),
     }),
   );
 

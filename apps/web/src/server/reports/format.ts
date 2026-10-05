@@ -4,7 +4,8 @@ import { formatDurationShort } from "@/lib/duration";
 
 export const count = (n: number) => n.toLocaleString("en-US");
 
-export const duration = (seconds: number | null) => (seconds === null ? "—" : seconds > 0 ? formatDurationShort(seconds) : "0m");
+/** Total hours and minutes ("35h 0m", "0h 0m"); "—" when there is no value. Display only. */
+export const duration = (seconds: number | null) => (seconds === null ? "—" : formatDurationShort(seconds));
 
 /** 0.8734 → "87.3%"; null (nothing to divide) → "—", never a made-up 0% or 100%. */
 export const percent = (ratio: number | null) => (ratio === null ? "—" : `${(Math.round(ratio * 1000) / 10).toFixed(1)}%`);

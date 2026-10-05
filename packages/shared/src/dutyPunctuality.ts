@@ -1,3 +1,4 @@
+import { formatHoursMinutes } from "./duration.js";
 import { DHAKA_OFFSET_MS } from "./dhakaDay.js";
 
 /**
@@ -137,11 +138,8 @@ export function formatMinuteOfDay(minute: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
-/** "3h 12m", "47m", "—". Durations here are spans of a working day, never more than a day or two. */
+/** "3h 12m", "0h 47m", "—" — the reports' one duration format (`formatHoursMinutes`). */
 export function formatMinutesShort(minutes: number | null): string {
   if (minutes === null) return "—";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+  return formatHoursMinutes(minutes * 60);
 }

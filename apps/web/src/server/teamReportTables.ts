@@ -56,7 +56,7 @@ export const formatWhen = (ms: number | null) =>
         hour12: false,
       }).format(new Date(ms));
 
-export const formatDuration = (seconds: number) => (seconds > 0 ? formatDurationShort(seconds) : "0m");
+export const formatDuration = (seconds: number) => formatDurationShort(seconds);
 
 export function buildMembersTable(data: TeamReportData): ReportTableData {
   const { filters, result, memberNames } = data;
@@ -69,7 +69,7 @@ export function buildMembersTable(data: TeamReportData): ReportTableData {
       { label: "Customer msgs", numeric: true },
       { label: "Missed", numeric: true },
       { label: "Recall", numeric: true },
-      { label: "Support time" },
+      { label: "Support Overtime" },
       { label: "First – last", muted: true },
     ],
     rows: result.members.map((row) => {
@@ -119,7 +119,7 @@ export function buildBucketsTable(data: TeamReportData): ReportTableData {
       { label: "Customer msgs", numeric: true },
       { label: "Missed", numeric: true },
       { label: "Recall", numeric: true },
-      { label: "Support time" },
+      { label: "Support Overtime" },
     ],
     rows: result.buckets.map((b) => ({
       key: b.key,
@@ -152,7 +152,7 @@ export function buildGroupsTable(data: TeamReportData): ReportTableData {
       { label: "Missed", numeric: true },
       { label: "Recall", numeric: true },
       { label: "First – last support", muted: true },
-      { label: "Support time" },
+      { label: "Support Overtime" },
     ],
     rows: result.groups.map((row) => {
       const meta = groups.get(row.groupKey);

@@ -368,7 +368,7 @@ export type DistributionMetric = "replies" | "time" | "groups" | "waits";
 
 export const DISTRIBUTION_METRICS: Record<DistributionMetric, { label: string; denominator: string }> = {
   replies: { label: "Replies", denominator: "replies sent by the members listed" },
-  time: { label: "Support time", denominator: "support time recorded by the members listed" },
+  time: { label: "Support Overtime", denominator: "Support Overtime recorded by the members listed" },
   groups: {
     label: "Groups supported",
     denominator: "group-member pairs (a group two people supported counts once for each)",

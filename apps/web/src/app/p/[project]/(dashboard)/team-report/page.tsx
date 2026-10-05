@@ -44,7 +44,7 @@ const when = (ms: number | null) =>
       }).format(new Date(ms));
 
 const count = (n: number) => n.toLocaleString("en-US");
-const duration = (seconds: number) => (seconds > 0 ? formatDurationShort(seconds) : "0m");
+const duration = (seconds: number) => formatDurationShort(seconds);
 
 export default async function TeamReportPage({
   searchParams,
@@ -187,7 +187,7 @@ export default async function TeamReportPage({
           }
         />
         <StatTile
-          label="Support duration"
+          label="Support Overtime"
           value={duration(summary.activeSeconds)}
           hint={filters.memberId ? "active time, one timeline" : `${summary.activeMembers} member(s), summed`}
         />
@@ -225,8 +225,8 @@ export default async function TeamReportPage({
                 emptyMessage="Nothing was missed in this period."
               />
             </ChartCard>
-            <ChartCard className="lg:col-span-3" title="Support duration" description={`Active support hours per ${filters.granularity}.`}>
-              <ColumnChart data={durationSeries} ariaLabel="Support hours over the period" unitLabel="h" labelEvery={labelEvery} />
+            <ChartCard className="lg:col-span-3" title="Support Overtime" description={`Support Overtime hours per ${filters.granularity}.`}>
+              <ColumnChart data={durationSeries} ariaLabel="Support Overtime hours over the period" unitLabel="h" labelEvery={labelEvery} />
             </ChartCard>
           </section>
 
@@ -322,11 +322,11 @@ function CalculationHelp({
           Recall is credited to whoever sent the late reply.
         </p>
       </HelpSection>
-      <HelpSection title="Support duration">
+      <HelpSection title="Support Overtime">
         <p>
           Each member&apos;s messages across all groups form one timeline. A new stretch of work starts after more than{" "}
           {idleGapMinutes} minutes without a message (the &quot;Offline after&quot; setting Team Performance uses) and at
-          every midnight. Duration adds up first-to-last message of each stretch, so two groups answered at the same time
+          every midnight. Support Overtime adds up first-to-last message of each stretch, so two groups answered at the same time
           count once. A stretch with a single message is zero. The team figure is the sum of members; group rows measure
           each group on its own, so they can add up to more.
         </p>

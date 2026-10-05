@@ -30,14 +30,14 @@ describe("attention list", () => {
   it("unanswered waits: timed from the OLDEST unanswered customer to the period end, prolonged past the threshold", () => {
     const [short] = run([group("A")], [wait("A", 1, "PENDING"), wait("A", 0.5, "PENDING")]);
     expect(short).toMatchObject({ issue: "UNANSWERED", waitingSeconds: 3600 });
-    expect(short!.detail).toBe("2 customer waits with no reply, oldest 1h 00m");
+    expect(short!.detail).toBe("2 customer waits with no reply, oldest 1h 0m");
     const [long] = run([group("B")], [wait("B", 5, "MISSED")]);
     expect(long).toMatchObject({ issue: "PROLONGED_UNANSWERED", waitingSeconds: 5 * 3600 });
   });
 
   it("SLA breach: answered after the threshold, the worst late answer as the figure", () => {
     const [item] = run([group("C")], [wait("C", 3, "RECALLED", 48), wait("C", 2, "RECALLED", 35), wait("C", 1, "ON_TIME", 5)]);
-    expect(item).toMatchObject({ issue: "SLA_BREACH", waitingSeconds: 48 * 60, detail: "2 answers after the SLA, worst 48m" });
+    expect(item).toMatchObject({ issue: "SLA_BREACH", waitingSeconds: 48 * 60, detail: "2 answers after the SLA, worst 0h 48m" });
   });
 
   it("no communication: days since the last activity, or never recorded", () => {
@@ -81,8 +81,8 @@ describe("change", () => {
     expect(changeRatio(0, 50)).toBeNull();
   });
   it("short durations", () => {
-    expect(shortDuration(48 * 60)).toBe("48m");
+    expect(shortDuration(48 * 60)).toBe("0h 48m");
     expect(shortDuration(2 * 3600 + 14 * 60)).toBe("2h 14m");
-    expect(shortDuration(3 * 86400 + 4 * 3600)).toBe("3d 4h");
+    expect(shortDuration(3 * 86400 + 4 * 3600)).toBe("76h 0m");
   });
 });

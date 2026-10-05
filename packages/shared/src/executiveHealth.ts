@@ -1,3 +1,4 @@
+import { formatHoursMinutes } from "./duration.js";
 import type { ReportWait } from "./teamReport.js";
 
 /**
@@ -59,13 +60,9 @@ export interface AttentionItem {
 
 const severity = (issue: AttentionIssue) => ATTENTION_ISSUES.indexOf(issue);
 
-/** "2h 14m", "48m", "3d 4h". */
+/** "2h 14m", "0h 48m", "76h 0m" — the reports' one duration format (`formatHoursMinutes`). */
 export function shortDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ${String(m % 60).padStart(2, "0")}m`;
-  return `${Math.floor(h / 24)}d ${h % 24}h`;
+  return formatHoursMinutes(seconds);
 }
 
 /**

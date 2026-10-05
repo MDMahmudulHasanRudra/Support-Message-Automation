@@ -26,7 +26,7 @@ const when = (ms: number | null) =>
       }).format(new Date(ms));
 
 const count = (n: number) => n.toLocaleString("en-US");
-const duration = (seconds: number) => (seconds > 0 ? formatDurationShort(seconds) : "0m");
+const duration = (seconds: number) => formatDurationShort(seconds);
 
 const STATUS: Record<string, { label: string; color: "green" | "yellow" | "red" | "gray" }> = {
   ON_TIME: { label: "Answered in time", color: "green" },
@@ -93,7 +93,7 @@ export default async function TeamReportGroupPage({
             <StatTile label="Messages" value={count(row.totalMessages)} hint={group.participantCount ? `${group.participantCount} participants` : undefined} />
             <StatTile label="Customer messages" value={count(row.customerMessages)} />
             <StatTile label="Team replies" value={count(row.memberReplies)} hint={row.businessReplies ? `+ ${count(row.businessReplies)} from the business number` : undefined} />
-            <StatTile label="Support duration" value={duration(row.activeSeconds)} />
+            <StatTile label="Support Overtime" value={duration(row.activeSeconds)} />
             <StatTile label="Customer waits" value={count(row.waits)} />
             <StatTile label="Missed" value={count(row.missed)} tone={row.missed > 0 ? "warning" : "neutral"} hint={`${count(row.unrecovered)} never answered`} />
             <StatTile label="Recall support" value={count(row.recalled)} tone="accent" />
@@ -140,7 +140,7 @@ export default async function TeamReportGroupPage({
                       <Td className="tabular">{when(wait.askedAt)}</Td>
                       <Td className="tabular">{when(wait.repliedAt)}</Td>
                       <Td className="tabular">{wait.waitSeconds === null ? "—" : duration(wait.waitSeconds)}</Td>
-                      <Td className="tabular">{Math.round(wait.thresholdSeconds / 60)} min</Td>
+                      <Td className="tabular">{duration(wait.thresholdSeconds)}</Td>
                       <Td>{wait.repliedBy ? memberLabel(wait.repliedBy, memberNames) : "—"}</Td>
                       <Td>
                         <Badge color={STATUS[wait.status]!.color} dot>

@@ -64,14 +64,14 @@ export function buildWorkload(ctx: ReportContext): BuiltReport {
     id: "members",
     sheet: "Detailed",
     title: `Team members (${count(rows.length)})`,
-    description: "Everyone who sent a message in the period, most support time first. Select a name for their Team Report.",
+    description: "Everyone who sent a message in the period, most Support Overtime first. Select a name for their Team Report.",
     noun: { singular: "team member", plural: "team members" },
     columns: [
       { label: "Team member" },
       { label: "Groups", numeric: true },
       { label: "Replies", numeric: true },
       { label: "Waits answered", numeric: true },
-      { label: "Support time" },
+      { label: "Support Overtime" },
       { label: "Work stretches", numeric: true },
       { label: "Active days", numeric: true },
       { label: "Per active day" },
@@ -90,7 +90,7 @@ export function buildWorkload(ctx: ReportContext): BuiltReport {
     title: `By ${granularity}`,
     description: "The team's figures over the period.",
     noun: nounFor(granularity),
-    columns: [{ label: bucketColumnLabel(granularity) }, { label: "Members active", numeric: true }, { label: "Replies", numeric: true }, { label: "Support time" }],
+    columns: [{ label: bucketColumnLabel(granularity) }, { label: "Members active", numeric: true }, { label: "Replies", numeric: true }, { label: "Support Overtime" }],
     rows: [...buckets.entries()].map(([key, b]) => ({
       key,
       cells: [bucketLabel(key, granularity), b.members.size, b.replies, duration(b.seconds)],
@@ -103,17 +103,17 @@ export function buildWorkload(ctx: ReportContext): BuiltReport {
     title: "Team Workload",
     question: "How much support work did each person record?",
     tiles: [
-      { label: "Support time", value: duration(totals.seconds), hint: `${count(rows.length)} member(s), summed` },
+      { label: "Support Overtime", value: duration(totals.seconds), hint: `${count(rows.length)} member(s), summed` },
       { label: "Active members", value: count(rows.length), hint: "sent at least one message" },
       { label: "Replies", value: count(totals.replies), hint: "by team members" },
       { label: "Waits answered", value: count(totals.waits), hint: "closed by a member's reply" },
-      { label: "Per active member", value: duration(rows.length ? Math.round(totals.seconds / rows.length) : null), hint: "support time ÷ active members" },
-      { label: "Per active day", value: duration(totals.days ? Math.round(totals.seconds / totals.days) : null), hint: "support time ÷ member-days worked" },
+      { label: "Per active member", value: duration(rows.length ? Math.round(totals.seconds / rows.length) : null), hint: "Support Overtime ÷ active members" },
+      { label: "Per active day", value: duration(totals.days ? Math.round(totals.seconds / totals.days) : null), hint: "Support Overtime ÷ member-days worked" },
     ],
     visuals: [
       {
         kind: "columns",
-        title: "Support time",
+        title: "Support Overtime",
         description: `Hours per ${granularity}, team total.`,
         unit: "h",
         data: [...buckets.entries()].map(([key, b]) => ({ label: bucketLabel(key, granularity), value: Math.round((b.seconds / 3600) * 10) / 10 })),
@@ -128,7 +128,7 @@ export function buildWorkload(ctx: ReportContext): BuiltReport {
     ],
     formulas: [
       {
-        title: "Support time",
+        title: "Support Overtime",
         text: `The Team Report's: each member's messages across all groups form one timeline, split after ${ctx.data.rules.idleGapMinutes} minutes without a message and at every midnight; time is first-to-last message of each stretch. Two groups answered at once count once.`,
       },
       { title: "Waits answered", text: "Customer waits whose closing reply was this member's." },
@@ -189,7 +189,7 @@ export function buildDistribution(ctx: ReportContext): BuiltReport {
         title: `${meta.label} by team member`,
         description: `Share = the member's ${meta.label.toLowerCase()} ÷ ${show(total)}, the total ${meta.denominator}.`,
         noun: { singular: "team member", plural: "team members" },
-        columns: [{ label: "Team member" }, { label: meta.label }, { label: "Share" }, { label: "Replies", numeric: true }, { label: "Support time" }, { label: "Groups", numeric: true }, { label: "Waits answered", numeric: true }],
+        columns: [{ label: "Team member" }, { label: meta.label }, { label: "Share" }, { label: "Replies", numeric: true }, { label: "Support Overtime" }, { label: "Groups", numeric: true }, { label: "Waits answered", numeric: true }],
         rows: shares.map((s) => ({
           key: s.item.memberId,
           cells: [ctx.memberName(s.item.memberId), show(s.value), percent(s.share), s.item.replies, duration(s.item.activeSeconds), s.item.groups, s.item.waitsAnswered],
@@ -252,7 +252,7 @@ export function buildEmployeeGroups(ctx: ReportContext): BuiltReport {
           { label: "Waits answered", numeric: true },
           { label: "Median response" },
           { label: "Recall", numeric: true },
-          { label: "Support time in group" },
+          { label: "Support Overtime in group" },
           { label: "First – last", muted: true },
         ],
         rows: pairs.map((p) => ({
@@ -286,9 +286,9 @@ export function buildEmployeeGroups(ctx: ReportContext): BuiltReport {
         id: "members",
         sheet: "Breakdown",
         title: "Per team member",
-        description: "Support time here is the person's own single timeline — the Team Report's figure.",
+        description: "Support Overtime here is the person's own single timeline — the Team Report's figure.",
         noun: { singular: "team member", plural: "team members" },
-        columns: [{ label: "Team member" }, { label: "Groups", numeric: true }, { label: "Replies", numeric: true }, { label: "Waits answered", numeric: true }, { label: "Support time" }],
+        columns: [{ label: "Team member" }, { label: "Groups", numeric: true }, { label: "Replies", numeric: true }, { label: "Waits answered", numeric: true }, { label: "Support Overtime" }],
         rows: members.map((m) => ({
           key: m.memberId,
           cells: [ctx.memberName(m.memberId), m.groups, m.replies, m.waitsAnswered, duration(m.activeSeconds)],
@@ -299,7 +299,7 @@ export function buildEmployeeGroups(ctx: ReportContext): BuiltReport {
     notes: [
       {
         tone: "info",
-        text: "Support time in a group is measured over the person's messages in that group alone, so one person's group rows can add up to more than their own total when they worked groups in parallel. Their own total is in the per-member table.",
+        text: "Support Overtime in a group is measured over the person's messages in that group alone, so one person's group rows can add up to more than their own total when they worked groups in parallel. Their own total is in the per-member table.",
       },
     ],
     formulas: [
@@ -383,10 +383,10 @@ export async function buildDutyWorkload(ctx: ReportContext): Promise<BuiltReport
   return {
     id: "duty-workload",
     title: "Duty & Workload",
-    question: "How does recorded support time compare with the scheduled shift?",
+    question: "How does recorded Support Overtime compare with the scheduled shift?",
     tiles: [
       { label: "Scheduled", value: duration(scheduled), hint: `${count(rows.filter((r) => r.shiftStart !== null).length)} shift(s)` },
-      { label: "Recorded in shift", value: duration(inShift), hint: "support time inside the shift" },
+      { label: "Recorded in shift", value: duration(inShift), hint: "Support Overtime inside the shift" },
       { label: "Beyond schedule", value: duration(beyond), hint: "on a shift day, outside the shift" },
       { label: "On off days", value: duration(offDay), hint: "on a day with no shift" },
       { label: "Scheduled, no recorded activity", value: duration(unrecorded), hint: "not idle — nothing was recorded" },
@@ -444,7 +444,7 @@ export async function buildDutyWorkload(ctx: ReportContext): Promise<BuiltReport
         id: "members",
         sheet: "Breakdown",
         title: "Per team member",
-        description: "Recorded in shift + beyond schedule + on off days = the person's support time on the Team Report.",
+        description: "Recorded in shift + beyond schedule + on off days = the person's Support Overtime on the Team Report.",
         noun: { singular: "team member", plural: "team members" },
         columns: [
           { label: "Team member" },
@@ -479,11 +479,11 @@ export async function buildDutyWorkload(ctx: ReportContext): Promise<BuiltReport
       },
       {
         title: "Recorded in shift",
-        text: "The Team Report's support time, cut against the shift: time inside the shift window counts for the shift's day, even after midnight.",
+        text: "The Team Report's Support Overtime, cut against the shift: time inside the shift window counts for the shift's day, even after midnight.",
       },
       {
         title: "Beyond schedule / On off days",
-        text: "Support time outside every shift window, on its own calendar day: Beyond schedule on a day with a shift, On off days on a day without one.",
+        text: "Support Overtime outside every shift window, on its own calendar day: Beyond schedule on a day with a shift, On off days on a day without one.",
       },
       { title: "Scheduled, no recorded activity", text: "Scheduled − recorded in shift, never below zero." },
     ],

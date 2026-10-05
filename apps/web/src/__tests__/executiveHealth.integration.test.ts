@@ -151,8 +151,8 @@ describe("attention required", () => {
     const r = await run(isp);
     expect(attention(r).rows.map((x) => x.cells[0])).toEqual([name("old"), name("wait"), name("late"), name("silent"), name("decline")]);
     expect(row(r, "old")).toMatchObject({ Issue: "Prolonged unanswered", Assigned: `EX Rina ${tag}`, Team: `EX Team ${tag}` });
-    expect(row(r, "wait")).toMatchObject({ Issue: "Unanswered", Waiting: "1h 00m" });
-    expect(row(r, "late")).toMatchObject({ Issue: "SLA breach", Waiting: "48m", Detail: "1 answer after the SLA, worst 48m" });
+    expect(row(r, "wait")).toMatchObject({ Issue: "Unanswered", Waiting: "1h 0m" });
+    expect(row(r, "late")).toMatchObject({ Issue: "SLA breach", Waiting: "0h 48m", Detail: "1 answer after the SLA, worst 0h 48m" });
     expect(row(r, "silent")).toMatchObject({ Issue: "No communication", Waiting: "—" });
     expect(row(r, "decline")).toMatchObject({ Issue: "Declining activity", Detail: "Activity down 90% (20 → 2 messages)" });
     expect(row(r, "ok")).toBeUndefined();
@@ -181,7 +181,7 @@ describe("before the period ends", () => {
     const r = await runWithProject(isp, async () => (await buildReport("executive-health", { ...OCTOBER, groups: Object.values(wg).join(",") }, at(10, 31, 23, 10))).report);
     expect(tile(r, "Unanswered customer waits")).toBe("3"); // wait (pending), old, unmonitored
     expect(tile(r, "Missed support")).toBe("3"); // late, old, unmonitored
-    expect(row(r, "wait")).toMatchObject({ Issue: "Unanswered", Waiting: "10m" });
+    expect(row(r, "wait")).toMatchObject({ Issue: "Unanswered", Waiting: "0h 10m" });
   });
 });
 
