@@ -455,6 +455,8 @@ const NAV_KEY_EXACT: Record<string, string> = {
   // Team Management's own pages already required manage for these two before this map existed.
   "/team-management/shifts": "team_management.manage",
   "/team-management/settings": "team_management.manage",
+  // Shows message text, so it needs the chat's key rather than the other reports' support_activity.view.
+  "/reports/whatsapp-user-activity": "messages.view",
 };
 
 /** Longest prefix wins, so `/ai-learning/providers` resolves before `/ai-learning`. */

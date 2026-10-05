@@ -22,7 +22,8 @@ describe("report catalogue ⇄ pages", () => {
       expect(navPermissionFor(`/reports/${id}`), id).toBe(reportPermission(id));
     }
     expect(reportPermission("duty-workload")).toBe("team_management.view");
-    expect(GENERIC_REPORT_IDS.filter((id) => id !== "duty-workload").every((id) => reportPermission(id) === "support_activity.view")).toBe(true);
+    expect(reportPermission("whatsapp-user-activity")).toBe("messages.view");
+    expect(GENERIC_REPORT_IDS.filter((id) => id !== "duty-workload" && id !== "whatsapp-user-activity").every((id) => reportPermission(id) === "support_activity.view")).toBe(true);
   });
 
   it("each report, its export and its table export belong to one project feature", () => {
@@ -51,6 +52,11 @@ describe("who sees which card", () => {
     expect(hrefs).not.toContain("/reports/duty-workload");
     expect(hrefs).not.toContain("/team-management/attendance");
     expect(hrefs).toHaveLength(18);
+    expect(hrefs).not.toContain("/reports/whatsapp-user-activity");
+  });
+
+  it("messages only: the User Activity report, which shows message text", () => {
+    expect(reportPagesFor(new Set(["messages.view"])).map((p) => p.href)).toEqual(["/reports/whatsapp-user-activity"]);
   });
 
   it("team management only: the two duty reports", () => {
@@ -71,7 +77,9 @@ describe("who sees which card", () => {
     for (const keys of [new Set<string>(), new Set(["messages.view"]), new Set(["support_activity.view"]), ALL_KEYS]) {
       const hasHub = navGroupsFor(keys).some((g) => g.links.some((l) => l.href === "/reports"));
       const couldBefore = keys.has("support_activity.view") || keys.has("team_management.view");
-      expect(hasHub).toBe(couldBefore);
+      // WhatsApp Chat User Activity (messages.view) is the one report a chat-only role can open, so
+      // that role now reaches the hub — with that single card and nothing else.
+      expect(hasHub).toBe(couldBefore || keys.has("messages.view"));
     }
   });
 
