@@ -661,6 +661,32 @@ Message text is always stored and shown as "Always stored", with no switch. Gate
 - **Backups:** the page states that database backups do not include media files; the media volume
   must be backed up separately.
 
+### Mood Detection — `/settings/mood-detection` (Settings → Support)
+
+Gated by `settings.view` (to see) and `settings.edit` (to change). Off by default. Full design:
+`MOOD_DETECTION.md`.
+
+- **Tiles:** on/off with who saved it and when; readings and triggered readings in 7 days; the most
+  common mood.
+- **Enable Mood Detection.**
+- **What is read:** Text, Emoji, Stickers switches; a note that reactions and images are not
+  available; "Ask AI about unclear messages".
+- **How sure it must be:** Low 90% / Balanced 80% / High 65% / Custom (50–99).
+- **What each mood does:** one card per Concerned, Confused, Frustrated, Angry, Very angry, Urgent —
+  Triggers; Notify the team; Alert the internal group; Mention the responsible member; Mark as
+  needing attention; Send a message to the customer; Conversation (continue / pause AI / require
+  human takeover); Alert priority. "Restore recommended" resets the cards.
+- **Alerts:** cooldown (5/15/30/60/custom), how long "require human takeover" holds AI back, who to
+  mention when nobody is assigned, skip the customer message when nobody is assigned, internal
+  escalation group (group picker).
+- **Save** refuses a setting that could do nothing, and is audited in System Logs field by field.
+- **Recent mood alerts:** mood with confidence and reasons, priority, group (opens the chat),
+  customer, time, how many messages attached, and each action's result (hover for detail).
+
+Elsewhere: WhatsApp Chat rows, the thread header and each customer message show a "Detected mood"
+badge; Notification Center has a "Customer upset (Mood Detection)" event; Message Templates has the
+team alert and four customer messages.
+
 ### Groups — `/groups`
 
 Search by name; filter chips All/Monitored/Not Monitored/Active/Inactive with live counts. Table:

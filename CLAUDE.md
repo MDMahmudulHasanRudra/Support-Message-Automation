@@ -866,6 +866,33 @@ storage, never to Postgres. **`MEDIA_STORAGE.md` is the reference.** Rules worth
     cancels it immediately as well.
 - A database backup does not include media; the volume needs its own backup.
 
+### Mood Detection (`packages/shared/src/mood.ts`, `apps/worker/src/mood/`, `/settings/mood-detection`)
+
+Notices an angry, frustrated or urgent CUSTOMER and does only what the admin chose. Off by default.
+**`MOOD_DETECTION.md` is the reference.** Rules worth not undoing:
+
+- **Detection is separate from action.** The pipeline hook (`recordMoodSignal`, beside the
+  attendance hook) is a cheap deterministic pre-filter: no emotional signal → nothing written. A
+  signal → one `CustomerMoodEvent` (`messageId` UNIQUE). The mood processor (3 s loop) does the
+  optional AI classification (ambiguous readings only, roles not names), trend, threshold, and the
+  `MoodAlert` + one `MoodAlertAction` per enabled action, each retried on its own.
+- **Never a team member, never an unmonitored group, never the internal escalation group.**
+- **One alert per escalation**, keyed (project, `whatsappGroupId`, customer) under an advisory lock:
+  inside the cooldown a same-or-lower reading attaches, a higher one escalates the same alert and
+  re-runs its actions at the new level — except the customer message, once per alert.
+- **Pausing AI is `aiSuppressedUntil`, the human-takeover state — never a second mechanism.** Only
+  ever extended, on every account's copy of the group. The hook also hands the pause to the AI
+  fallback further down the same pipeline run, so the angry message itself is not answered.
+- **The customer message is not an answer**: AUTO_REPLY with the `mood-escalation` variant, excluded
+  from the AI reply cooldown at queue and send time, through `checkAutoReplySafety`, from Primary's
+  copy of the group only (when a Primary is set). Off by default in every mood.
+- **Alerts go through `enqueueNotification` as `MOOD_ALERT`** (own enum migration). The internal
+  group alert carries structured mentions (`payload.mentions`), which `WhatsAppNotificationProvider`
+  now passes to `sendMessage`. `skipDirectRecipients` stops personal DMs repeating per destination.
+- **Every mood is an inference**: a confidence plus structured signal codes, shown as "Detected".
+  Model reasoning is never stored or shown. Stickers are `UNKNOWN_STICKER_SIGNAL`, never guessed;
+  reactions and images are unavailable (Insiders licence; text-only AI client).
+
 ### Groups Admin Maker (`apps/worker/src/queue/groupAdminPromotionProcessor.ts`, `(dashboard)/group-admin-maker/`)
 
 Makes one existing member an admin in every group where the chosen account is an admin.

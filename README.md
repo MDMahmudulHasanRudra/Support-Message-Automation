@@ -13,6 +13,11 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Mood Detection** (Settings → Support → Mood Detection). Notices an angry, frustrated or urgent
+  customer and does only what you choose per mood: pause AI or require a person, alert the team and
+  an internal group (tagging the responsible member), put the chat back on Waiting, optionally a
+  message to the customer. One alert per escalation; off by default. Built locally on `rudra`;
+  not committed, not deployed (`MOOD_DETECTION.md`).
 - **Report durations in total hours** (35h 0m, never 1d 11h) and the Team Report's support time is
   now labelled **Support Overtime** (same calculation). **WhatsApp operations can be cleared**
   (finished / ready for review) or hidden (still running) from your own tracker — never a cancel.
