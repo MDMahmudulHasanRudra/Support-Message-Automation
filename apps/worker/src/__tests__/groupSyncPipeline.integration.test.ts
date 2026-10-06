@@ -212,9 +212,10 @@ describe("no duplicate syncs, and no account waits for another", () => {
 describe("a newly linked phone still sending its chats", () => {
   it("decides when the list has settled", () => {
     const settings = { stableReads: 3, maxMs: 1000 };
-    expect(groupArrivalDecision([400, 300, 0, 0], 100, settings)).toBe("CONTINUE");
-    expect(groupArrivalDecision([400, 0, 0, 0], 100, settings)).toBe("SETTLED");
-    expect(groupArrivalDecision([400, 300, 200], 1000, settings)).toBe("GAVE_UP");
+    // true = the pass showed growth (new groups, or a bigger list than any seen).
+    expect(groupArrivalDecision([true, true, false, false], 100, settings)).toBe("CONTINUE");
+    expect(groupArrivalDecision([true, false, false, false], 100, settings)).toBe("SETTLED");
+    expect(groupArrivalDecision([true, true, true], 1000, settings)).toBe("GAVE_UP");
   });
 
   it("groups appear as the phone delivers them, without waiting for a five-minute pass, and nothing is switched off while it fills in", async () => {

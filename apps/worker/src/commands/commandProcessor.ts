@@ -562,8 +562,9 @@ function resyncAndCatchUpInProject(accountId: string, provider: WhatsAppProvider
  * (on 24 Sep 2026: 498 of 1,952 groups). The rest used to appear only at the fixed passes 5 and 15
  * minutes later. Now the list is read again every `intervalMs` — one call into the page, writing
  * only what is new — so a group appears within one interval of WhatsApp delivering it, and the
- * reading stops once `stableReads` passes in a row bring nothing new (then one FULL sync, which is
- * what may switch off groups the account left). A long-linked number whose list is already
+ * reading stops once `stableReads` passes in a row show no growth (no new group and no bigger
+ * list than any seen since the connect — `isGrowthPass`), then one FULL sync, which is what may
+ * switch off groups the account left. A long-linked number whose list is already
  * complete settles on its first few passes and costs a handful of cheap reads.
  */
 export const GROUP_ARRIVAL_SETTINGS = {
@@ -572,14 +573,34 @@ export const GROUP_ARRIVAL_SETTINGS = {
   maxMs: 20 * 60_000,
 };
 
-/** Whether to keep reading: settled after `stableReads` passes in a row that found nothing new. */
+/**
+ * Whether a pass shows the list is still arriving. Two independent signals, either one is growth:
+ *
+ * - **new groups** (`created + reactivated`): rows this account did not have;
+ * - **a bigger list than ever seen** (`returned` above `maxReturned`, the largest list WhatsApp
+ *   has returned since this connect).
+ *
+ * The second is what an account with existing rows needs. Its groups are already in the database,
+ * so a list growing 492 → 900 → 1,400 creates nothing and "new groups" alone reads as stable after
+ * three passes while the list is still filling. A SMALLER list is not growth and not stability
+ * evidence of anything either: it neither moves `maxReturned` nor permits any deactivation — the
+ * sweep and its guard (`groupSyncGuard.ts`) are untouched and still decide that alone.
+ */
+export function isGrowthPass(arrived: number, returned: number, maxReturned: number): boolean {
+  return arrived > 0 || returned > maxReturned;
+}
+
+/**
+ * Whether to keep reading: settled after `stableReads` passes in a row that showed no growth
+ * (`growthPerPass`, from `isGrowthPass`).
+ */
 export function groupArrivalDecision(
-  newPerPass: readonly number[],
+  growthPerPass: readonly boolean[],
   elapsedMs: number,
   settings: { stableReads: number; maxMs: number } = GROUP_ARRIVAL_SETTINGS,
 ): "CONTINUE" | "SETTLED" | "GAVE_UP" {
-  const tail = newPerPass.slice(-settings.stableReads);
-  if (tail.length === settings.stableReads && tail.every((count) => count === 0)) return "SETTLED";
+  const tail = growthPerPass.slice(-settings.stableReads);
+  if (tail.length === settings.stableReads && tail.every((grew) => !grew)) return "SETTLED";
   if (elapsedMs >= settings.maxMs) return "GAVE_UP";
   return "CONTINUE";
 }
@@ -601,7 +622,9 @@ function watchGroupListArrival(
   firstCount: number | null,
 ): void {
   const started = Date.now();
-  const newPerPass: number[] = [];
+  const growthPerPass: boolean[] = [];
+  // The largest list WhatsApp has returned since this connect; the first sync's count is the baseline.
+  let maxReturned = firstCount ?? 0;
   // When each group arrived, as seconds since the connect — the production measurement of how long
   // WhatsApp takes to hand a new device its list. Recorded once, in System Logs, when it settles.
   const timeline: Array<{ atSeconds: number; total: number; new: number }> =
@@ -641,7 +664,7 @@ function watchGroupListArrival(
         accountId,
         source,
         outcome,
-        passes: newPerPass.length,
+        passes: growthPerPass.length,
         totalSeconds: Math.round((Date.now() - connectedAt) / 1000),
         timeline,
       }),
@@ -666,10 +689,12 @@ function watchGroupListArrival(
         // than joining this ADD_ONLY pass (which would skip the stamp, the sweep and the status).
         if (syncInFlight.get(accountId) === tracked) syncInFlight.delete(accountId);
         const arrived = outcome.created + outcome.reactivated;
-        newPerPass.push(arrived);
-        if (arrived > 0) timeline.push({ atSeconds: Math.round((Date.now() - connectedAt) / 1000), total: outcome.discovered, new: arrived });
-        if (arrived > 0) {
-          console.log(`[groupsync] GROUP_ARRIVAL ${arrived} new group(s) for account ${accountId}, ${outcome.discovered} so far`);
+        const grew = isGrowthPass(arrived, outcome.discovered, maxReturned);
+        growthPerPass.push(grew);
+        maxReturned = Math.max(maxReturned, outcome.discovered);
+        if (grew) timeline.push({ atSeconds: Math.round((Date.now() - connectedAt) / 1000), total: outcome.discovered, new: arrived });
+        if (grew) {
+          console.log(`[groupsync] GROUP_ARRIVAL ${arrived} new group(s) for account ${accountId}, ${outcome.discovered} listed so far`);
           markedRunning = true;
           await withAccountProject(accountId, () =>
             recordGroupSyncState(accountId, {
@@ -679,7 +704,7 @@ function watchGroupListArrival(
             }),
           );
         }
-        const decision = groupArrivalDecision(newPerPass, Date.now() - started);
+        const decision = groupArrivalDecision(growthPerPass, Date.now() - started);
         if (decision === "CONTINUE") schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
         else {
           void logTimeline(decision);
