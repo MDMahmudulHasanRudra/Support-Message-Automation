@@ -15,104 +15,262 @@ import { withTimeout } from "../util/withTimeout.js";
 import { connectWithRetry } from "../provider/connectWithRetry.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { shouldHoldDeactivationSweep } from "./groupSyncGuard.js";
+import type { Prisma } from "@prisma/client";
 
 /** Name this loop reports itself under in the per-loop liveness view. */
 const LOOP_NAME = "command-processor";
 
 
 /**
- * PHASE 5.2: discovers/updates the account's monitored groups from the live provider.
+ * PHASE 5.2: discovers/updates the account's groups from the live provider (GROUP_SYNC.md).
  *
  * Still idempotent, which is the property that matters — safe to call repeatedly (retries, a
- * manual RESYNC_GROUPS, a future scheduled resync) without ever duplicating a row or losing groups
+ * manual RESYNC_GROUPS, the post-connect passes) without ever duplicating a row or losing groups
  * synced by an earlier, since-failed attempt. `@@unique([accountId, whatsappGroupId])` remains the
- * real guarantee of that, exactly as it was when this was written as a per-group upsert.
+ * real guarantee of that. It writes only what WhatsApp owns — the name, `isActive` and
+ * `lastSyncedAt` — and never monitoring, AI, priority, exclusions or anything else a person set.
  */
 export async function syncGroups(accountId: string, provider: WhatsAppProvider): Promise<number> {
-  // Groups belong to the account's project, and only that project's rows are read or written.
-  return withAccountProject(accountId, () => syncGroupsInProject(accountId, provider));
+  return (await syncGroupsDetailed(accountId, provider)).discovered;
 }
 
-async function syncGroupsInProject(accountId: string, provider: WhatsAppProvider): Promise<number> {
-  const groups = await provider.getGroups();
+/**
+ * FULL is the ordinary sync: everything below, including the stamp and the deactivation sweep.
+ * ADD_ONLY is the cheap pass run while a newly linked phone is still sending its chats: it saves
+ * groups that have appeared, renames and reactivates, and touches nothing else — no stamp of every
+ * row, and no sweep, which must only ever act on a complete list.
+ */
+export type GroupSyncMode = "FULL" | "ADD_ONLY";
+
+export interface GroupSyncOutcome {
+  discovered: number;
+  created: number;
+  renamed: number;
+  reactivated: number;
+  deactivated: number;
+  /** Groups that could not be saved this pass; the next pass tries them again. */
+  failed: number;
+  /** The list looked incomplete, so nothing was deactivated (groupSyncGuard.ts). */
+  sweepHeld: boolean;
+  /** Reading the list from WhatsApp. */
+  discoveryMs: number;
+  /** Writing it to the database. */
+  persistMs: number;
+}
+
+/**
+ * Stopping a sync because its session is going away (GROUP_SYNC.md §2, "Logout and Reconnect").
+ *
+ * Every sync of an account carries the account's sync GENERATION from when it started. Logout and
+ * Reconnect bump it (`cancelGroupSync`). A sync checks it before every write; once it has moved on,
+ * the sync stops without writing anything more and without recording a state — the canceller
+ * already recorded CANCELLED, and a newer sync (after the reconnect) owns the state from then on.
+ *
+ * Why it matters beyond the label: LOGOUT switches off every group of the account. A sync that had
+ * already read the list and then reached its stamp would switch them all back on — an inbox full
+ * of conversations the number can no longer reach.
+ */
+export class GroupSyncCancelledError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "GroupSyncCancelledError";
+  }
+}
+
+const syncGeneration = new Map<string, number>();
+const generationOf = (accountId: string) => syncGeneration.get(accountId) ?? 0;
+
+/** How long a cancel waits for a sync's statement in flight to finish before Logout/Reconnect carries on. */
+const CANCEL_SETTLE_WAIT_MS = 5_000;
+
+/**
+ * Stops any group sync of this account and records CANCELLED with the reason. Waits briefly for a
+ * write already under way, never for the WhatsApp read (which may be what is hanging) — once the
+ * generation has moved, nothing after that read can write. Safe with nothing running: returns at
+ * once and records nothing.
+ */
+export async function cancelGroupSync(accountId: string, reason: string): Promise<boolean> {
+  const running = syncInFlight.get(accountId);
+  const account = running
+    ? null
+    : await prisma.whatsAppAccount.findFirst({ where: { id: accountId }, select: { groupSyncStatus: true } }).catch(() => null);
+  syncGeneration.set(accountId, generationOf(accountId) + 1);
+  if (!running && account?.groupSyncStatus !== "RUNNING") return false;
+
+  // Released so a sync started after this (the reconnect's own) is a new one, not a join of this.
+  syncInFlight.delete(accountId);
+  await recordGroupSyncState(accountId, {
+    groupSyncStatus: "CANCELLED",
+    groupSyncStage: null,
+    groupSyncCompletedAt: new Date(),
+    groupSyncError: reason,
+  });
+  await logSystemEvent("INFO", "provider", "GROUP_SYNC_CANCELLED", { accountId, reason });
+  if (running) {
+    await Promise.race([running.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, CANCEL_SETTLE_WAIT_MS))]);
+  }
+  return true;
+}
+
+export async function syncGroupsDetailed(
+  accountId: string,
+  provider: WhatsAppProvider,
+  mode: GroupSyncMode = "FULL",
+  generation: number = generationOf(accountId),
+): Promise<GroupSyncOutcome> {
+  // Groups belong to the account's project, and only that project's rows are read or written.
+  return withAccountProject(accountId, () => syncGroupsInProject(accountId, provider, mode, generation));
+}
+
+/**
+ * Rows per `createMany`, and ids per `in` list. Postgres takes at most 65,535 bind parameters in a
+ * statement, so one statement for an unbounded roster stops working somewhere in the tens of
+ * thousands; bounded batches keep it working at any size, and limit what one bad row can cost.
+ */
+export const GROUP_SYNC_BATCH_SIZE = 500;
+
+function inBatches<T>(items: readonly T[], size = GROUP_SYNC_BATCH_SIZE): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+async function syncGroupsInProject(
+  accountId: string,
+  provider: WhatsAppProvider,
+  mode: GroupSyncMode,
+  generation: number,
+): Promise<GroupSyncOutcome> {
+  // Before every write: a Logout or Reconnect since this sync started means stop, writing nothing.
+  const checkpoint = () => {
+    if (generationOf(accountId) !== generation) {
+      throw new GroupSyncCancelledError("The group sync was stopped because the account was logged out or reconnected.");
+    }
+  };
+  const discoveryStarted = performance.now();
+  // ONE call into the page for the whole roster — no per-group request, no participants, no
+  // pictures (OpenWAProvider.listGroupChats). A chat listed twice is kept once.
+  const listed = await provider.getGroups();
+  checkpoint();
+  const discoveryMs = Math.round(performance.now() - discoveryStarted);
+  const groups = [...new Map(listed.map((group) => [group.whatsappGroupId, group])).values()];
+
+  const persistStarted = performance.now();
   const syncedAt = new Date();
 
-  // Four statements, not 1,848.
-  //
-  // This was a sequential `upsert` per group. On this deployment's roster that is 1,848 round
-  // trips, every one of them a real UPDATE — `lastSyncedAt: new Date()` moves on every pass, so
-  // the "nothing changed" case, which is nearly all of them, still rewrote the row, its indexes
-  // and a dead tuple for the vacuum. And it runs inside the STRICTLY SERIAL command processor, so
-  // for however long that took, no other dashboard action could be processed at all. It is also
-  // the most likely reason this sync has been timing out in production (GROUP_SYNC_TIMEOUT on 7,
-  // 11 and 18 Sep 2026) — at 150s for 1,848 upserts the write half alone needs ~80ms per group to
-  // blow the budget, before `getGroups()` has cost anything.
-  //
-  // Identical results, by construction: every group the provider returned ends up present, named,
-  // active and stamped, exactly as before.
+  // Everything the decisions below need, in ONE read: which groups exist, their names, and which
+  // are active. From that, the inserts, renames, reactivations and the deactivation sweep are all
+  // worked out in memory rather than asked of the database group by group.
   const existing = await prisma.whatsAppGroup.findMany({
     where: { accountId },
-    select: { whatsappGroupId: true, name: true },
+    select: { whatsappGroupId: true, name: true, isActive: true },
   });
-  const nameById = new Map(existing.map((row) => [row.whatsappGroupId, row.name]));
+  const known = new Map(existing.map((row) => [row.whatsappGroupId, row]));
 
-  const fresh = groups.filter((group) => !nameById.has(group.whatsappGroupId));
+  const fresh: typeof groups = [];
   // A rename is rare and has to be per-row, because the value differs per group. Reading the
   // current names first is what turns "1,848 updates" into "however many were actually renamed",
   // which in a steady state is none.
-  const renamed = groups.filter(
-    (group) => nameById.has(group.whatsappGroupId) && nameById.get(group.whatsappGroupId) !== group.name,
-  );
-
-  if (fresh.length > 0) {
-    // skipDuplicates because a concurrent sync for the same account is guarded against but a
-    // partially-applied earlier attempt is not — the unique constraint stays the real authority.
-    await prisma.whatsAppGroup.createMany({
-      data: fresh.map((group) => ({
-        accountId,
-        whatsappGroupId: group.whatsappGroupId,
-        name: group.name,
-        lastSyncedAt: syncedAt,
-      })),
-      skipDuplicates: true,
-    });
-    console.log(`[groupsync] GROUP_SYNC_NEW ${fresh.length} group(s)`);
+  const renamed: typeof groups = [];
+  let reactivated = 0;
+  for (const group of groups) {
+    const row = known.get(group.whatsappGroupId);
+    if (!row) fresh.push(group);
+    else {
+      if (row.name !== group.name) renamed.push(group);
+      if (!row.isActive) reactivated += 1;
+    }
   }
 
+  let created = 0;
+  let failed = 0;
+  const failedIds = new Set<string>();
+  for (const batch of inBatches(fresh)) {
+    checkpoint();
+    try {
+      // skipDuplicates because a partially-applied earlier attempt (or a group registered by an
+      // arriving message a moment ago) may already have the row — the unique constraint decides.
+      const result = await prisma.whatsAppGroup.createMany({
+        data: batch.map((group) => ({ accountId, whatsappGroupId: group.whatsappGroupId, name: group.name, lastSyncedAt: syncedAt })),
+        skipDuplicates: true,
+      });
+      created += result.count;
+    } catch (batchErr) {
+      console.warn(`[groupsync] a batch of ${batch.length} new group(s) failed as a whole (${(batchErr as Error).message.slice(0, 200)}); saving them one at a time`);
+      // One bad row fails the whole statement. Save the batch's groups one at a time so it costs
+      // only itself, and count what still fails — the next pass tries those again.
+      for (const group of batch) {
+        try {
+          const result = await prisma.whatsAppGroup.createMany({
+            data: [{ accountId, whatsappGroupId: group.whatsappGroupId, name: group.name, lastSyncedAt: syncedAt }],
+            skipDuplicates: true,
+          });
+          created += result.count;
+        } catch (err) {
+          failed += 1;
+          failedIds.add(group.whatsappGroupId);
+          console.warn(`[groupsync] could not save group ${group.whatsappGroupId}: ${(err as Error).message.slice(0, 200)}`);
+        }
+      }
+    }
+  }
+  if (created > 0) console.log(`[groupsync] GROUP_SYNC_NEW ${created} group(s)`);
+
   for (const group of renamed) {
-    await prisma.whatsAppGroup.update({
-      where: { accountId_whatsappGroupId: { accountId, whatsappGroupId: group.whatsappGroupId } },
-      data: { name: group.name },
-    });
+    checkpoint();
+    try {
+      await prisma.whatsAppGroup.update({
+        where: { accountId_whatsappGroupId: { accountId, whatsappGroupId: group.whatsappGroupId } },
+        data: { name: group.name },
+      });
+    } catch (err) {
+      failed += 1;
+      console.warn(`[groupsync] could not rename group ${group.whatsappGroupId}: ${(err as Error).message.slice(0, 200)}`);
+    }
   }
   if (renamed.length > 0) console.log(`[groupsync] GROUP_SYNC_RENAMED ${renamed.length} group(s)`);
 
-  if (groups.length > 0) {
-    // The stamp and the reactivation, for every group in one statement. `isActive: true` matters
-    // here: a group the account rejoined must come back, and the sweep below is what took it away.
-    await prisma.whatsAppGroup.updateMany({
-      where: { accountId, whatsappGroupId: { in: groups.map((g) => g.whatsappGroupId) } },
-      data: { lastSyncedAt: syncedAt, isActive: true },
-    });
+  const seenIds = groups.map((group) => group.whatsappGroupId).filter((id) => !failedIds.has(id));
+  checkpoint();
+  if (mode === "FULL") {
+    // The stamp and the reactivation, for every group listed. `isActive: true` matters here: a
+    // group the account rejoined must come back, and the sweep below is what took it away.
+    for (const ids of inBatches(seenIds, 5_000)) {
+      await prisma.whatsAppGroup.updateMany({
+        where: { accountId, whatsappGroupId: { in: ids } },
+        data: { lastSyncedAt: syncedAt, isActive: true },
+      });
+    }
+  } else if (reactivated > 0) {
+    const inactiveSeen = seenIds.filter((id) => known.get(id)?.isActive === false);
+    for (const ids of inBatches(inactiveSeen, 5_000)) {
+      await prisma.whatsAppGroup.updateMany({ where: { accountId, whatsappGroupId: { in: ids } }, data: { isActive: true } });
+    }
   }
 
-  // A group the account has since left/been removed from no longer appears in getAllGroups() —
+  // A group the account has since left/been removed from no longer appears in the list —
   // soft-deactivate it (never delete: Message.groupId history must keep a valid FK). Idempotent:
   // re-running this against the same result set is a no-op for groups already isActive: false.
   //
   // Guard: an empty `groups` result (e.g. getGroups() called while the provider's client is
   // temporarily null during a reconnect) must NEVER be treated as "the account left every
   // group" — that would mass-deactivate the entire table from a transient connection blip. Only
-  // run the sweep when we actually have a real result set to compare against.
-  if (groups.length > 0) {
-    const currentWhatsappGroupIds = groups.map((g) => g.whatsappGroupId);
-    const missingWhere = { accountId, isActive: true, whatsappGroupId: { notIn: currentWhatsappGroupIds } };
-    const wouldDeactivate = await prisma.whatsAppGroup.count({ where: missingWhere });
-    // Counted after the reactivation above, so this is the active roster the sweep would cut.
-    const activeBefore = await prisma.whatsAppGroup.count({ where: { accountId, isActive: true } });
+  // run the sweep when we actually have a real result set to compare against, and only on a FULL
+  // pass: an ADD_ONLY pass runs precisely because the list is still arriving.
+  let deactivated = 0;
+  let sweepHeld = false;
+  checkpoint();
+  if (mode === "FULL" && groups.length > 0) {
+    const listedIds = new Set(groups.map((group) => group.whatsappGroupId));
+    // Worked out from the one read above: what is active after the reactivation, and which of
+    // those WhatsApp no longer listed.
+    const missing = existing.filter((row) => row.isActive && !listedIds.has(row.whatsappGroupId)).map((row) => row.whatsappGroupId);
+    const wouldDeactivate = missing.length;
+    const activeBefore = existing.filter((row) => row.isActive).length + reactivated + created;
 
     if (shouldHoldDeactivationSweep(activeBefore, wouldDeactivate)) {
       // See groupSyncGuard.ts: this read is far more likely incomplete than a real mass exit.
+      sweepHeld = true;
       await logSystemEvent("WARN", "provider", "GROUP_SYNC_SWEEP_HELD", {
         accountId,
         returned: groups.length,
@@ -121,14 +279,45 @@ async function syncGroupsInProject(accountId: string, provider: WhatsAppProvider
         note: "WhatsApp returned far fewer groups than are active. Nothing was deactivated; a later sync will finish the list.",
       });
     } else if (wouldDeactivate > 0) {
-      const deactivated = await prisma.whatsAppGroup.updateMany({ where: missingWhere, data: { isActive: false } });
-      if (deactivated.count > 0) {
-        console.log(`[groupsync] GROUP_SYNC_DEACTIVATED ${deactivated.count} group(s) no longer returned by the account`);
+      for (const ids of inBatches(missing, 5_000)) {
+        checkpoint();
+        // `isActive: true` in the filter too, so a group an arriving message reactivated a moment
+        // ago is judged on its current state, as the counted sweep always was.
+        const result = await prisma.whatsAppGroup.updateMany({
+          where: { accountId, isActive: true, whatsappGroupId: { in: ids } },
+          data: { isActive: false },
+        });
+        deactivated += result.count;
+      }
+      if (deactivated > 0) {
+        console.log(`[groupsync] GROUP_SYNC_DEACTIVATED ${deactivated} group(s) no longer returned by the account`);
       }
     }
   }
 
-  return groups.length;
+  return {
+    discovered: groups.length,
+    created,
+    renamed: renamed.length,
+    reactivated,
+    deactivated,
+    failed,
+    sweepHeld,
+    discoveryMs,
+    persistMs: Math.round(performance.now() - persistStarted),
+  };
+}
+
+/**
+ * The account's own sync state, for the dashboard (WhatsAppAccount.groupSync*). Best effort and
+ * never throws: a failed status write must not fail the sync it describes.
+ */
+async function recordGroupSyncState(accountId: string, data: Prisma.WhatsAppAccountUpdateManyMutationInput): Promise<void> {
+  try {
+    await prisma.whatsAppAccount.updateMany({ where: { id: accountId }, data });
+  } catch (err) {
+    console.warn(`[groupsync] could not record the sync state for account ${accountId}: ${(err as Error).message}`);
+  }
 }
 
 const GROUP_SYNC_TIMEOUT_MS = Number(process.env.WHATSAPP_GROUP_SYNC_TIMEOUT_MS) || 150_000;
@@ -152,14 +341,16 @@ const GROUP_SYNC_RETRY_DELAYS_MS = [10_000, 30_000];
  * processing or take the connection down with it).
  */
 /**
- * Module-level, not per-call: index.ts's fire-and-forget post-connect sync
- * and an explicit RESYNC_GROUPS command are two independent call sites with
- * no shared state otherwise — without this, they could genuinely run
- * concurrently (ENGINEERING_STANDARDS.md §9's "conflicting group sync
- * operations"), and the isActive deactivation sweep is only correct against
- * a single, complete getGroups() snapshot. A second caller that arrives
- * while one is already running gets the SAME in-flight result instead of
- * starting a competing sync.
+ * Module-level, not per-call: the post-connect sync, the arrival passes and an explicit
+ * RESYNC_GROUPS command are independent call sites with no shared state otherwise — without this,
+ * they could genuinely run concurrently (ENGINEERING_STANDARDS.md §9's "conflicting group sync
+ * operations"), and the isActive deactivation sweep is only correct against a single, complete
+ * getGroups() snapshot. A second caller that arrives while one is already running gets the SAME
+ * in-flight result instead of starting a competing sync.
+ *
+ * In memory rather than in the database, deliberately: only the process holding an account's
+ * browser can sync it, and there is one such process — a database lock would guard against a
+ * second worker that cannot exist without also fighting over the WhatsApp session itself.
  *
  * Keyed by accountId, because the conflict this guards against is per-session: two accounts sync
  * different providers and write disjoint rows. A single shared slot meant the second account
@@ -167,6 +358,11 @@ const GROUP_SYNC_RETRY_DELAYS_MS = [10_000, 30_000];
  * ran — it ended up with zero groups while the log reported the other account's count.
  */
 const syncInFlight = new Map<string, Promise<number>>();
+
+/** Whether this account has a group sync running in this process right now. */
+export function isGroupSyncRunning(accountId: string): boolean {
+  return syncInFlight.has(accountId);
+}
 
 export async function syncGroupsWithTimeoutAndRetry(
   accountId: string,
@@ -185,20 +381,70 @@ export async function syncGroupsWithTimeoutAndRetry(
   try {
     return await run;
   } finally {
-    syncInFlight.delete(accountId);
+    // Only our own entry: a cancel may already have released it for a newer sync.
+    if (syncInFlight.get(accountId) === run) syncInFlight.delete(accountId);
   }
 }
 
 async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): Promise<number> {
   const attempts = GROUP_SYNC_RETRY_DELAYS_MS.length + 1;
+  const started = performance.now();
+  const generation = generationOf(accountId);
+  // A state write from a sync that has since been cancelled would overwrite CANCELLED, or the
+  // state of the newer sync that replaced it.
+  const record = async (data: Prisma.WhatsAppAccountUpdateManyMutationInput) => {
+    if (generationOf(accountId) === generation) await recordGroupSyncState(accountId, data);
+  };
   await logSystemEvent("INFO", "provider", "GROUP_SYNC_STARTED", { accountId });
+  await record({
+    groupSyncStatus: "RUNNING",
+    groupSyncStage: "Reading the group list from WhatsApp",
+    groupSyncStartedAt: new Date(),
+    groupSyncError: null,
+  });
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const count = await withTimeout(syncGroups(accountId, provider), GROUP_SYNC_TIMEOUT_MS, "group sync");
-      await logSystemEvent("INFO", "provider", "GROUP_SYNC_COMPLETED", { accountId, groupCount: count, attempt });
-      return count;
+      const outcome = await withTimeout(syncGroupsDetailed(accountId, provider, "FULL", generation), GROUP_SYNC_TIMEOUT_MS, "group sync");
+      const totalMs = Math.round(performance.now() - started);
+      await logSystemEvent("INFO", "provider", "GROUP_SYNC_COMPLETED", {
+        accountId,
+        groupCount: outcome.discovered,
+        attempt,
+        created: outcome.created,
+        renamed: outcome.renamed,
+        reactivated: outcome.reactivated,
+        deactivated: outcome.deactivated,
+        failed: outcome.failed,
+        sweepHeld: outcome.sweepHeld,
+        discoveryMs: outcome.discoveryMs,
+        persistMs: outcome.persistMs,
+        totalMs,
+      });
+      await record({
+        groupSyncStatus: outcome.failed > 0 || outcome.sweepHeld ? "PARTIAL" : "COMPLETED",
+        groupSyncStage: null,
+        groupSyncCompletedAt: new Date(),
+        groupSyncDiscovered: outcome.discovered,
+        groupSyncNew: outcome.created,
+        groupSyncUpdated: outcome.renamed + outcome.reactivated,
+        groupSyncDeactivated: outcome.deactivated,
+        groupSyncFailed: outcome.failed,
+        groupSyncDurationMs: totalMs,
+        groupSyncError:
+          outcome.failed > 0
+            ? `${outcome.failed} group(s) could not be saved; the next sync tries them again.`
+            : outcome.sweepHeld
+              ? "WhatsApp listed far fewer groups than are active, so none were switched off. The next sync completes the list."
+              : null,
+      });
+      return outcome.discovered;
     } catch (err) {
+      // Stopped by a Logout or Reconnect: not a failure, never retried, and the canceller has
+      // already recorded CANCELLED with its reason.
+      if (err instanceof GroupSyncCancelledError || generationOf(accountId) !== generation) {
+        throw err instanceof GroupSyncCancelledError ? err : new GroupSyncCancelledError("The group sync was stopped because the account was logged out or reconnected.");
+      }
       const message = (err as Error).message ?? String(err);
       const isTimeout = message.includes("timed out");
       // A logged-out or disconnected session will be exactly as logged out in ten seconds, so this
@@ -211,10 +457,23 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
         isTimeout ? "GROUP_SYNC_TIMEOUT" : "GROUP_SYNC_FAILED",
         { attempt, attempts, error: message },
       );
-      if (isLastAttempt) throw err;
+      if (isLastAttempt) {
+        await record({
+          groupSyncStatus: "FAILED",
+          groupSyncStage: null,
+          groupSyncCompletedAt: new Date(),
+          groupSyncDurationMs: Math.round(performance.now() - started),
+          groupSyncError: message.slice(0, 500),
+        });
+        throw err;
+      }
       const delayMs = GROUP_SYNC_RETRY_DELAYS_MS[attempt - 1];
       await logSystemEvent("INFO", "provider", "GROUP_SYNC_RETRY", { nextAttempt: attempt + 1, delayMs });
+      await record({ groupSyncStage: `Retrying in ${Math.round(delayMs! / 1000)}s (attempt ${attempt + 1} of ${attempts})` });
       await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (generationOf(accountId) !== generation) {
+        throw new GroupSyncCancelledError("The group sync was stopped because the account was logged out or reconnected.");
+      }
     }
   }
   // Unreachable: the loop above always either returns or throws on the last attempt.
@@ -256,7 +515,7 @@ export function resyncAndCatchUpAfterConnect(
   provider: WhatsAppProvider,
   source: string,
 ): void {
-  // The whole chain — sync, catch-up and the follow-up timers it schedules — runs as the account's
+  // The whole chain — sync, catch-up and the arrival passes it starts — runs as the account's
   // project, so its log lines and rows are attributed there.
   void withAccountProject(accountId, async () => resyncAndCatchUpInProject(accountId, provider, source)).catch((err) => {
     console.error(`[worker] could not start the post-connect sync for account ${accountId}`, err);
@@ -264,11 +523,20 @@ export function resyncAndCatchUpAfterConnect(
 }
 
 function resyncAndCatchUpInProject(accountId: string, provider: WhatsAppProvider, source: string): Promise<unknown> {
+  // The passes that follow belong to this connect: a Logout or Reconnect after it stops them.
+  const generation = generationOf(accountId);
+  const connectedAt = Date.now();
+  let firstCount: number | null = null;
   return syncGroupsWithTimeoutAndRetry(accountId, provider)
     .then((groupCount) => {
+      firstCount = groupCount;
       console.log(`[worker] synced ${groupCount} group(s) for account ${accountId} after ${source}`);
     })
     .catch((err) => {
+      if (err instanceof GroupSyncCancelledError) {
+        console.log(`[worker] group sync for account ${accountId} after ${source} was stopped: ${err.message}`);
+        return;
+      }
       console.error(
         `[worker] group sync failed after retries for account ${accountId} after ${source} — the session stays connected, but its group list is now stale. Press Resync Groups.`,
         err,
@@ -283,39 +551,153 @@ function resyncAndCatchUpInProject(accountId: string, provider: WhatsAppProvider
     .catch((err) => {
       console.error(`[worker] catch-up failed for account ${accountId} after ${source}`, err);
     })
-    .finally(() => scheduleFollowUpSyncs(accountId, provider, source));
+    .finally(() => watchGroupListArrival(accountId, provider, source, generation, connectedAt, firstCount));
 }
 
 /**
- * Sync again a few minutes after connecting, because the first read is often not the whole list.
+ * How the group list is read while a phone is still sending it, and when that is judged done.
  *
  * A number that has just been linked receives its chats from the phone over several minutes, and
- * the sync above runs the moment `create()` resolves — so it reads whatever has arrived by then.
- * On 24 Sep 2026 that was 498 of 1,952 groups, and nothing ever read the list again unless somebody
- * pressed Resync, so three quarters of the roster stayed missing from the inbox. These passes pick
- * up the rest once it has landed. Each one only ADDS and reactivates groups it can see (the
- * deactivation sweep holds on a list that is still short — see groupSyncGuard.ts), and each is
- * skipped if the session is no longer connected by then.
- *
- * Bounded to two, on purpose: this is filling in after a connect, not a polling loop over a
- * 1,952-group roster. `unref` so a pending pass never holds the process open at shutdown.
+ * the first sync runs the moment the session comes up — so it reads whatever has arrived by then
+ * (on 24 Sep 2026: 498 of 1,952 groups). The rest used to appear only at the fixed passes 5 and 15
+ * minutes later. Now the list is read again every `intervalMs` — one call into the page, writing
+ * only what is new — so a group appears within one interval of WhatsApp delivering it, and the
+ * reading stops once `stableReads` passes in a row bring nothing new (then one FULL sync, which is
+ * what may switch off groups the account left). A long-linked number whose list is already
+ * complete settles on its first few passes and costs a handful of cheap reads.
  */
-const FOLLOW_UP_SYNC_DELAYS_MS = [5 * 60_000, 15 * 60_000];
+export const GROUP_ARRIVAL_SETTINGS = {
+  intervalMs: Number(process.env.WHATSAPP_GROUP_ARRIVAL_INTERVAL_MS) || 30_000,
+  stableReads: 3,
+  maxMs: 20 * 60_000,
+};
 
-function scheduleFollowUpSyncs(accountId: string, provider: WhatsAppProvider, source: string): void {
-  for (const delayMs of FOLLOW_UP_SYNC_DELAYS_MS) {
-    const timer = setTimeout(() => {
-      if (provider.getConnectionStatus() !== "CONNECTED") return;
-      syncGroupsWithTimeoutAndRetry(accountId, provider)
-        .then((groupCount) => {
-          console.log(
-            `[worker] follow-up sync ${Math.round(delayMs / 60_000)}m after ${source}: ${groupCount} group(s) for account ${accountId}`,
-          );
-        })
-        .catch((err) => console.error(`[worker] follow-up group sync failed for account ${accountId}`, err));
-    }, delayMs);
+/** Whether to keep reading: settled after `stableReads` passes in a row that found nothing new. */
+export function groupArrivalDecision(
+  newPerPass: readonly number[],
+  elapsedMs: number,
+  settings: { stableReads: number; maxMs: number } = GROUP_ARRIVAL_SETTINGS,
+): "CONTINUE" | "SETTLED" | "GAVE_UP" {
+  const tail = newPerPass.slice(-settings.stableReads);
+  if (tail.length === settings.stableReads && tail.every((count) => count === 0)) return "SETTLED";
+  if (elapsedMs >= settings.maxMs) return "GAVE_UP";
+  return "CONTINUE";
+}
+
+/**
+ * The arrival passes after a connect, then one last FULL sync 15 minutes after it (the old
+ * safety net, kept for a phone that pauses). Each pass skips while another sync of this account is
+ * running, and everything stops if the session drops. Timers are `unref`ed so a pending pass never
+ * holds the process open at shutdown.
+ */
+const FINAL_FULL_SYNC_AFTER_MS = 15 * 60_000;
+
+function watchGroupListArrival(
+  accountId: string,
+  provider: WhatsAppProvider,
+  source: string,
+  generation: number,
+  connectedAt: number,
+  firstCount: number | null,
+): void {
+  const started = Date.now();
+  const newPerPass: number[] = [];
+  // When each group arrived, as seconds since the connect — the production measurement of how long
+  // WhatsApp takes to hand a new device its list. Recorded once, in System Logs, when it settles.
+  const timeline: Array<{ atSeconds: number; total: number; new: number }> =
+    firstCount === null ? [] : [{ atSeconds: Math.round((Date.now() - connectedAt) / 1000), total: firstCount, new: firstCount }];
+  const cancelled = () => generationOf(accountId) !== generation;
+
+  const schedule = (fn: () => void, delayMs: number) => {
+    const timer = setTimeout(fn, delayMs);
     timer.unref?.();
-  }
+  };
+
+  const fullSync = (label: string) => {
+    if (cancelled() || provider.getConnectionStatus() !== "CONNECTED") return;
+    syncGroupsWithTimeoutAndRetry(accountId, provider)
+      .then((groupCount) => console.log(`[worker] ${label} after ${source}: ${groupCount} group(s) for account ${accountId}`))
+      .catch((err) => console.error(`[worker] ${label} failed for account ${accountId}`, err));
+  };
+
+  // Set once a pass has reported "still receiving", so a session that drops before the list
+  // settles does not leave the card saying "syncing" forever.
+  let markedRunning = false;
+  const stopBecauseDisconnected = () => {
+    if (!markedRunning) return;
+    void withAccountProject(accountId, () =>
+      recordGroupSyncState(accountId, {
+        groupSyncStatus: "PARTIAL",
+        groupSyncStage: null,
+        groupSyncCompletedAt: new Date(),
+        groupSyncError: "The session disconnected while the phone was still sending chats. The groups received so far are saved; the rest arrive after reconnecting.",
+      }),
+    ).catch(() => undefined);
+  };
+
+  const logTimeline = (outcome: "SETTLED" | "GAVE_UP") =>
+    withAccountProject(accountId, () =>
+      logSystemEvent("INFO", "provider", "GROUP_ARRIVAL_SETTLED", {
+        accountId,
+        source,
+        outcome,
+        passes: newPerPass.length,
+        totalSeconds: Math.round((Date.now() - connectedAt) / 1000),
+        timeline,
+      }),
+    ).catch(() => undefined);
+
+  const pass = () => {
+    if (cancelled()) return; // Logout or Reconnect: its own flow owns the account now
+    if (provider.getConnectionStatus() !== "CONNECTED") return stopBecauseDisconnected();
+    if (isGroupSyncRunning(accountId)) {
+      schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs); // a resync is reading it already
+      return;
+    }
+    const run = withAccountProject(accountId, () => syncGroupsInProject(accountId, provider, "ADD_ONLY", generation));
+    // Registered like any sync, so a manual resync arriving now joins this pass instead of racing it.
+    const tracked = run.then((outcome) => outcome.discovered);
+    tracked.catch(() => undefined);
+    syncInFlight.set(accountId, tracked);
+    void run
+      .then(async (outcome) => {
+        if (cancelled()) return; // stopped between this pass's last write and here
+        // Released before deciding, so the FULL sync started below is a sync of its own rather
+        // than joining this ADD_ONLY pass (which would skip the stamp, the sweep and the status).
+        if (syncInFlight.get(accountId) === tracked) syncInFlight.delete(accountId);
+        const arrived = outcome.created + outcome.reactivated;
+        newPerPass.push(arrived);
+        if (arrived > 0) timeline.push({ atSeconds: Math.round((Date.now() - connectedAt) / 1000), total: outcome.discovered, new: arrived });
+        if (arrived > 0) {
+          console.log(`[groupsync] GROUP_ARRIVAL ${arrived} new group(s) for account ${accountId}, ${outcome.discovered} so far`);
+          markedRunning = true;
+          await withAccountProject(accountId, () =>
+            recordGroupSyncState(accountId, {
+              groupSyncStatus: "RUNNING",
+              groupSyncStage: `Receiving chats from the phone — ${outcome.discovered.toLocaleString("en-US")} groups so far`,
+              groupSyncDiscovered: outcome.discovered,
+            }),
+          );
+        }
+        const decision = groupArrivalDecision(newPerPass, Date.now() - started);
+        if (decision === "CONTINUE") schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
+        else {
+          void logTimeline(decision);
+          fullSync(decision === "SETTLED" ? "group list settled; full sync" : "group arrival window ended; full sync");
+        }
+      })
+      .catch((err) => {
+        if (err instanceof GroupSyncCancelledError) return;
+        console.error(`[groupsync] arrival pass failed for account ${accountId}`, err);
+        if (Date.now() - started < GROUP_ARRIVAL_SETTINGS.maxMs) schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
+      })
+      .finally(() => {
+        if (syncInFlight.get(accountId) === tracked) syncInFlight.delete(accountId);
+      });
+  };
+
+  schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
+  schedule(() => fullSync("15-minute follow-up sync"), FINAL_FULL_SYNC_AFTER_MS);
 }
 
 /**
@@ -686,6 +1068,9 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
           });
           break;
         }
+        // A sync of the session being torn down stops first, as CANCELLED rather than as a failure.
+        // The reconnect's own post-connect sync starts afresh.
+        await cancelGroupSync(accountId, "Stopped for a reconnect. A new sync starts once the account is connected again.");
         await provider.disconnect();
         /**
          * Retried, exactly like the automatic path — and it was not, which is why linking so often
@@ -743,6 +1128,9 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         // provider.logout() never throws by design (see its own doc comment) -- whatever happens
         // remotely, we still want to land on DISCONNECTED locally and clear the stale phone number
         // so the dashboard doesn't keep showing an account that's no longer actually connected.
+        // Before the logout and, above all, before the deactivation below: a sync that had already
+        // read the list would otherwise switch every group back on at its stamp.
+        await cancelGroupSync(accountId, "Stopped because the account was logged out.");
         await provider.logout();
         await prisma.whatsAppAccount.update({
           where: { id: accountId },
@@ -794,11 +1182,33 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
       }
 
       case "RESYNC_GROUPS": {
-        const count = await syncGroupsWithTimeoutAndRetry(accountId, provider);
-        await prisma.workerCommand.update({
-          where: { id: command.id },
-          data: { status: "DONE", processedAt: new Date(), result: { groupsSynced: count } },
-        });
+        // NOT awaited. This processor is strictly serial and one global queue, and a sync can take
+        // minutes (three attempts at up to 150s); awaiting it here parked every other account's
+        // commands — their own resync, Show QR, Reconnect — behind this account's roster. The
+        // command stays PROCESSING until the sync settles, so the dashboard's per-account dedup
+        // still sees it in flight, and a second request for this account joins the running sync.
+        const commandId = command.id;
+        void syncGroupsWithTimeoutAndRetry(accountId, provider)
+          .then((count) =>
+            prisma.workerCommand.update({
+              where: { id: commandId },
+              data: { status: "DONE", processedAt: new Date(), result: { groupsSynced: count } },
+            }),
+          )
+          .catch((err) =>
+            prisma.workerCommand
+              .update({
+                where: { id: commandId },
+                // Stopped by a Logout/Reconnect is not a failure of the resync; it is recorded as
+                // what happened (WorkerCommandStatus has no CANCELLED, and the account's own
+                // groupSyncStatus carries CANCELLED for the dashboard).
+                data:
+                  err instanceof GroupSyncCancelledError
+                    ? { status: "DONE", processedAt: new Date(), result: { cancelled: true, reason: err.message } }
+                    : { status: "FAILED", processedAt: new Date(), result: { error: (err as Error).message } },
+              })
+              .catch((writeErr) => console.error(`[groupsync] could not settle RESYNC_GROUPS ${commandId}`, writeErr)),
+          );
         break;
       }
 

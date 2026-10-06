@@ -15,6 +15,7 @@ import {
 } from "@/server/actions/accounts";
 import { GroupSetupTransfer } from "./GroupSetupTransfer";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { toGroupSyncSummary } from "@/components/GroupSyncStatus";
 import { AccountCard, type AccountCardData } from "./AccountCard";
 import { AddAccountDialog } from "./AddAccountDialog";
 
@@ -68,7 +69,10 @@ export default async function AccountsPage() {
   const isSettling = accounts.some(
     (account) => account.status === "AUTHENTICATION_REQUIRED" || account.status === "RECONNECTING",
   );
-  const shouldPoll = isSettling || pendingCommands > 0;
+  // A group sync running in the background (after a connect, or a resync) has no pending command
+  // once it is under way, but its progress is what the card is showing.
+  const groupSyncRunning = accounts.some((account) => account.groupSyncStatus === "RUNNING");
+  const shouldPoll = isSettling || pendingCommands > 0 || groupSyncRunning;
 
   /**
    * Whether the worker is alive at all.
@@ -125,6 +129,7 @@ export default async function AccountsPage() {
       pairingMethod: account.pairingMethod,
       pairingPhoneNumber: account.pairingPhoneNumber,
       proxyAddress: account.proxyAddress,
+      groupSync: toGroupSyncSummary(account),
     };
   });
 

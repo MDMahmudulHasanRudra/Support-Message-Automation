@@ -430,6 +430,18 @@ enum TeamStatus {
 /// A vocabulary that can describe states the system cannot reach is worse than a smaller one. It
 /// invites a reader to diagnose against a mechanism that was never built, and it made the account
 /// status enum an unreliable guide to what the account statuses are.
+/// An account's group-list sync (GROUP_SYNC.md).
+enum GroupSyncStatus {
+  RUNNING
+  COMPLETED
+  /// Finished, but some groups were not saved or the list was judged incomplete.
+  PARTIAL
+  FAILED
+  /// Stopped on purpose by a Logout or Reconnect of the account — not a failure. A Reconnect
+  /// starts a new sync once connected.
+  CANCELLED
+}
+
 enum WhatsAppAccountStatus {
   CONNECTED
   DISCONNECTED
@@ -860,20 +872,38 @@ model WhatsAppAccount {
 
   lastConnectedAt DateTime?
   lastHeartbeatAt DateTime?
-  sessionDataPath String?
+
+  /// The group list's last sync for THIS account (GROUP_SYNC.md) — each account has its own, so
+  /// two numbers syncing never share or overwrite one state. Null status = never synced.
+  groupSyncStatus      GroupSyncStatus?
+  /// What the sync is doing right now, in words, while RUNNING (e.g. still receiving chats from
+  /// a newly linked phone). Null otherwise.
+  groupSyncStage       String?
+  groupSyncStartedAt   DateTime?
+  groupSyncCompletedAt DateTime?
+  /// Groups WhatsApp listed on the last pass, and what that pass changed.
+  groupSyncDiscovered  Int?
+  groupSyncNew         Int?
+  groupSyncUpdated     Int?
+  groupSyncDeactivated Int?
+  /// Groups that could not be saved on the last pass (they are retried by the next one).
+  groupSyncFailed      Int?
+  groupSyncDurationMs  Int?
+  groupSyncError       String?
+  sessionDataPath      String?
   /// OpenWA's own session identifier — distinct from `id` because it doubles as part of the
   /// on-disk Chromium profile path (`${sessionDataPath}/_IGNORE_${sessionId}`, see
   /// OpenWAProvider.clearStaleChromiumLock()). The pre-existing account keeps its historical
   /// value (from WHATSAPP_SESSION_NAME) so its already-authenticated session is never orphaned;
   /// new accounts get a fresh one at creation time.
-  sessionId       String?
+  sessionId            String?
   /// Exactly one account may be true at a time — enforced by a partial unique index added by
   /// hand to this field's migration (`CREATE UNIQUE INDEX ... WHERE "isPrimary" = true`), not
   /// expressible in the Prisma schema DSL directly. See also the transactional service-layer
   /// guard in setPrimaryAccount() (apps/web/src/server/actions/accounts.ts).
-  isPrimary       Boolean   @default(false)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  isPrimary            Boolean          @default(false)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
 
   groups               WhatsAppGroup[]
   messages             Message[]

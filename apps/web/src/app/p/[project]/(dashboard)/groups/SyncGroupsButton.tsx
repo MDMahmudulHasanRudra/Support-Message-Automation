@@ -15,13 +15,21 @@ export function SyncGroupsButton() {
   function handleClick() {
     startTransition(async () => {
       const result = await requestSyncAllGroups();
+      const total = result.accountsQueued + result.alreadyRunning;
       showToast({
         tone: "info",
-        title: "Group sync requested",
+        title: result.accountsQueued > 0 ? "Group sync requested" : total > 0 ? "Sync already in progress" : "Nothing to sync",
         description:
-          result.accountsQueued > 0
-            ? `Queued for ${result.accountsQueued} account(s). The worker picks this up within a few seconds — new/renamed/left groups will update here once it's done.`
-            : "No WhatsApp accounts to sync.",
+          total === 0
+            ? "No WhatsApp accounts to sync."
+            : [
+                result.accountsQueued > 0
+                  ? `Started for ${result.accountsQueued} account(s). Each account syncs on its own, so groups appear here as each one finishes.`
+                  : null,
+                result.alreadyRunning > 0 ? `${result.alreadyRunning} account(s) were already syncing.` : null,
+              ]
+                .filter(Boolean)
+                .join(" "),
       });
       router.refresh();
     });

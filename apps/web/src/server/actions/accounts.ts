@@ -23,15 +23,16 @@ async function enqueueCommand(
   type: "RECONNECT" | "RESYNC_GROUPS" | "LOGOUT",
   accountId: string,
   payload?: Record<string, unknown>,
-) {
+): Promise<"queued" | "already-running"> {
   const existing = await prisma.workerCommand.findFirst({
     where: { type, accountId, status: { in: ["PENDING", "PROCESSING"] } },
   });
-  if (existing) return;
+  if (existing) return "already-running";
 
   await prisma.workerCommand.create({
     data: { type, accountId, payload: payload as Prisma.InputJsonValue | undefined },
   });
+  return "queued";
 }
 
 export async function requestReconnect(accountId: string): Promise<void> {
@@ -51,15 +52,23 @@ export async function requestReconnect(accountId: string): Promise<void> {
   revalidatePath(await projectPath("/accounts"));
 }
 
-export async function requestGroupResync(accountId: string): Promise<void> {
+/**
+ * Queues a group resync for one account. A resync already queued or running for that account is
+ * not queued again — the caller is told, so the dashboard can say "already in progress" rather than
+ * pretending a second one started. (The worker also joins a sync already running for the account.)
+ */
+export async function requestGroupResync(accountId: string): Promise<{ alreadyRunning: boolean }> {
   await requireAccess("whatsapp.manage");
-  await enqueueCommand("RESYNC_GROUPS", accountId);
+  const outcome = await enqueueCommand("RESYNC_GROUPS", accountId);
   revalidatePath(await projectPath("/accounts"));
   revalidatePath(await projectPath("/groups"));
+  return { alreadyRunning: outcome === "already-running" };
 }
 
 export interface SyncAllGroupsResult {
   accountsQueued: number;
+  /** Accounts whose resync was already queued or running, so nothing new was queued for them. */
+  alreadyRunning: number;
 }
 
 /**
@@ -71,12 +80,15 @@ export interface SyncAllGroupsResult {
 export async function requestSyncAllGroups(): Promise<SyncAllGroupsResult> {
   await requireAccess("whatsapp.manage");
   const accounts = await prisma.whatsAppAccount.findMany({ select: { id: true } });
+  let accountsQueued = 0;
+  let alreadyRunning = 0;
   for (const account of accounts) {
-    await enqueueCommand("RESYNC_GROUPS", account.id);
+    if ((await enqueueCommand("RESYNC_GROUPS", account.id)) === "queued") accountsQueued += 1;
+    else alreadyRunning += 1;
   }
   revalidatePath(await projectPath("/accounts"));
   revalidatePath(await projectPath("/groups"));
-  return { accountsQueued: accounts.length };
+  return { accountsQueued, alreadyRunning };
 }
 
 /** Ends the current session so a different WhatsApp account can scan a fresh QR. See ENGINEERING_STANDARDS.md §8. */

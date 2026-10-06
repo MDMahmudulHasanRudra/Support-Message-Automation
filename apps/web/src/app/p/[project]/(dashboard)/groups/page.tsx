@@ -1,4 +1,6 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
+import { GroupSyncStatusLine, toGroupSyncSummary } from "@/components/GroupSyncStatus";
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { prisma } from "@/server/db";
 import Link from "@/components/ProjectLink";
 import { Search } from "lucide-react";
@@ -88,10 +90,30 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
     }),
     // Every account, not only connected ones: a disconnected number's groups are still listed and
     // still need filtering to, and hiding it would make its rows unreachable by account.
-    prisma.whatsAppAccount.findMany({ select: { id: true, label: true, isPrimary: true }, orderBy: { label: "asc" } }),
+    prisma.whatsAppAccount.findMany({
+      select: {
+        id: true,
+        label: true,
+        isPrimary: true,
+        groupSyncStatus: true,
+        groupSyncStage: true,
+        groupSyncStartedAt: true,
+        groupSyncCompletedAt: true,
+        groupSyncDiscovered: true,
+        groupSyncNew: true,
+        groupSyncUpdated: true,
+        groupSyncDeactivated: true,
+        groupSyncFailed: true,
+        groupSyncDurationMs: true,
+        groupSyncError: true,
+      },
+      orderBy: { label: "asc" },
+    }),
   ]);
 
   const selectedAccount = accountId ? accounts.find((a) => a.id === accountId) ?? null : null;
+  const syncNotices = accounts.filter((a) => a.groupSyncStatus === "RUNNING" || a.groupSyncStatus === "FAILED" || a.groupSyncStatus === "PARTIAL" || a.groupSyncStatus === "CANCELLED");
+  const anySyncRunning = accounts.some((a) => a.groupSyncStatus === "RUNNING");
 
   const aiScopeIsGlobal = aiSettings.aiAutomationScope === "ALL_MONITORED_GROUPS";
 
@@ -204,6 +226,18 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
       />
 
       {canManage ? null : <ViewOnlyNotice />}
+
+      {/* Each account's own sync, so a second number still filling in is visible as exactly that
+          rather than as a short list. Shown only while something is running or went wrong — a
+          settled, healthy sync is the normal state and needs no line on this page. */}
+      {syncNotices.length > 0 ? (
+        <div className="mb-4 space-y-1.5 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+          {syncNotices.map((account) => (
+            <GroupSyncStatusLine key={account.id} label={account.label} sync={toGroupSyncSummary(account)} />
+          ))}
+        </div>
+      ) : null}
+      {anySyncRunning ? <AutoRefresh intervalMs={5000} /> : null}
 
       <FilterBar>
         <form className="flex flex-wrap items-end gap-2" method="GET">

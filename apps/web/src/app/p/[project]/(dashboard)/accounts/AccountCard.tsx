@@ -16,6 +16,7 @@ import {
 import { QrConnectDialog, type PairingMethod } from "./QrConnectDialog";
 import { describeConnectionStage } from "@/lib/connectionStage";
 import { AccountAdvancedDialog } from "./AccountAdvancedDialog";
+import { GroupSyncStatusLine, type GroupSyncSummary } from "@/components/GroupSyncStatus";
 
 /** What the operator should do next, per status — the card's job is to answer that, not just report state. */
 const STATUS_HINT: Record<string, string> = {
@@ -68,6 +69,7 @@ export interface AccountCardData {
   pairingPhoneNumber: string | null;
   /** `host:port`, or null when this account connects directly. Shown so a saved proxy is not an invisible setting. */
   proxyAddress: string | null;
+  groupSync: GroupSyncSummary;
 }
 
 type DialogKind = "reconnect" | "resync" | "logout" | "setPrimary" | "removePrimary" | "delete" | "advanced" | null;
@@ -84,7 +86,7 @@ export function AccountCard({
 }: {
   account: AccountCardData;
   onReconnect: () => Promise<void>;
-  onResync: () => Promise<void>;
+  onResync: () => Promise<{ alreadyRunning: boolean }>;
   onLogout: () => Promise<void>;
   onSetPrimary: () => Promise<void>;
   onRemovePrimary: () => Promise<void>;
@@ -179,12 +181,14 @@ export function AccountCard({
 
   function confirmResync() {
     startTransition(async () => {
-      await onResync();
+      const { alreadyRunning } = await onResync();
       closeDialog();
       showToast({
         tone: "info",
-        title: "Group resync requested",
-        description: "The worker will pick this up shortly.",
+        title: alreadyRunning ? "Sync already in progress" : "Group resync requested",
+        description: alreadyRunning
+          ? "This account's groups are already being synced. Progress shows on this card."
+          : "The worker starts it within a few seconds. Progress shows on this card; other accounts are not held up.",
       });
     });
   }
@@ -328,6 +332,10 @@ export function AccountCard({
           <span className="font-normal text-[color:var(--color-muted-foreground)]">— {stage.detail}</span>
         </p>
       ) : null}
+
+      <div className="mt-3">
+        <GroupSyncStatusLine sync={account.groupSync} />
+      </div>
 
       {STATUS_HINT[account.status] ? (
         <p className="mt-3 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">

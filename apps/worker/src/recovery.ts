@@ -169,6 +169,17 @@ export async function reconcileAccountStatusesOnBoot(): Promise<number> {
     data: { linkExpiresAt: null },
   });
 
+  // A group sync RUNNING in the last process did not finish — nothing will ever move it on, and a
+  // card would say "syncing" forever. The groups it already saved stay saved.
+  await platformPrisma.whatsAppAccount.updateMany({
+    where: { groupSyncStatus: "RUNNING" },
+    data: {
+      groupSyncStatus: "FAILED",
+      groupSyncStage: null,
+      groupSyncError: "The worker restarted during this sync. The groups it had saved are kept; it runs again after reconnecting.",
+    },
+  });
+
   if (stale.count > 0) {
     console.log(`[recovery] reset ${stale.count} account(s) from a status left behind by the previous process`);
     await logSystemEvent("INFO", "worker", "Reset connection status left behind by the previous process", {
