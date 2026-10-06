@@ -17,6 +17,11 @@ export interface TeamMemberFormState {
 interface TeamMemberInput {
   name: string;
   phoneNumber: string;
+  /**
+   * The WhatsApp id the sender carries in groups (a long LID such as 145938777669643), kept beside
+   * the real number. Null = none stored. Matching tries this exactly before the phone number.
+   */
+  whatsappId: string | null;
   /** The designation (Support Executive, CTO...) — stored in the `role` column. */
   role: string;
   department: string | null;
@@ -36,6 +41,9 @@ function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: stri
   const name = String(formData.get("name") ?? "").trim();
   const phoneNumber = String(formData.get("phoneNumber") ?? "").trim();
   const role = String(formData.get("role") ?? "").trim();
+  // The id as the worker stores a sender: no "@lid" / "@c.us" suffix, which is stripped before
+  // comparing, so pasting either form works.
+  const whatsappId = String(formData.get("whatsappId") ?? "").trim().replace(/@.*$/, "").replace(/\s+/g, "") || null;
   const department = String(formData.get("department") ?? "").trim() || null;
   const teamId = String(formData.get("teamId") ?? "").trim() || null;
   const status = formData.get("status") === "INACTIVE" ? "INACTIVE" : "ACTIVE";
@@ -43,7 +51,10 @@ function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: stri
   if (!normalizePhoneNumber(phoneNumber)) {
     return { error: "That does not look like a phone number. Enter it with the country code, e.g. +8801XXXXXXXXX." };
   }
-  return { name, phoneNumber, role, department, teamId, status };
+  if (whatsappId && !/^\d{6,}$/.test(whatsappId)) {
+    return { error: "The WhatsApp ID is digits only (for example 145938777669643). Leave it empty if you do not have one." };
+  }
+  return { name, phoneNumber, whatsappId, role, department, teamId, status };
 }
 
 /**
@@ -111,6 +122,24 @@ async function findPhoneConflict(phoneNumber: string, excludeId?: string) {
   );
 }
 
+/**
+ * Whoever already holds this WhatsApp id — as their own id, or as a number with the same digits —
+ * or null. Two members sharing one id would make every message from it match whichever came first.
+ */
+async function findWhatsAppIdConflict(whatsappId: string | null, excludeId?: string) {
+  if (!whatsappId) return null;
+  const members = await prisma.internalTeamMember.findMany({
+    select: { id: true, name: true, phoneNumber: true, whatsappId: true },
+  });
+  return (
+    members.find(
+      (m) =>
+        m.id !== excludeId &&
+        (m.whatsappId === whatsappId || normalizePhoneNumber(m.phoneNumber) === normalizePhoneNumber(whatsappId)),
+    ) ?? null
+  );
+}
+
 export async function createTeamMember(_prev: TeamMemberFormState, formData: FormData): Promise<TeamMemberFormState> {
   const granted = await checkPermission("whatsapp.manage");
   if ("denied" in granted) return { error: granted.denied };
@@ -119,6 +148,8 @@ export async function createTeamMember(_prev: TeamMemberFormState, formData: For
 
   const conflict = await findPhoneConflict(input.phoneNumber);
   if (conflict) return { error: `${conflict.name} already has that number.` };
+  const idConflict = await findWhatsAppIdConflict(input.whatsappId);
+  if (idConflict) return { error: `${idConflict.name} already has that WhatsApp ID.` };
   const teamProblem = await checkTeam(input.teamId);
   if (teamProblem) return { error: teamProblem };
 
@@ -420,6 +451,8 @@ export async function updateTeamMember(
   // this form for anybody added from message history.
   const conflict = await findPhoneConflict(input.phoneNumber, id);
   if (conflict) return { error: `${conflict.name} already has that number.` };
+  const idConflict = await findWhatsAppIdConflict(input.whatsappId, id);
+  if (idConflict) return { error: `${idConflict.name} already has that WhatsApp ID.` };
   const current = await prisma.internalTeamMember.findUnique({ where: { id }, select: { teamId: true } });
   if (!current) return { error: "This team member no longer exists." };
   const teamProblem = await checkTeam(input.teamId, current.teamId);

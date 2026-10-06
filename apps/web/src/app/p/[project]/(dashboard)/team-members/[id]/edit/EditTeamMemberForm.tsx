@@ -17,11 +17,14 @@ export function EditTeamMemberForm({
   memberId,
   defaults,
   options,
+  seenMessages = null,
 }: {
+  seenMessages?: number | null;
   memberId: string;
   defaults: {
     name: string;
     phoneNumber: string;
+    whatsappId: string | null;
     role: string;
     department: string | null;
     teamId: string | null;
@@ -42,6 +45,19 @@ export function EditTeamMemberForm({
       </Field>
       <Field label="Phone Number" required>
         <Input name="phoneNumber" defaultValue={defaults.phoneNumber} inputMode="tel" required />
+      </Field>
+      <Field
+        label="WhatsApp ID (optional)"
+        hint="The long id WhatsApp shows for this person in groups. Open one of their messages in Messages — the Sender is this id when it is a long number. Keep the real phone number above as well."
+      >
+        <Input name="whatsappId" defaultValue={defaults.whatsappId ?? ""} inputMode="numeric" placeholder="e.g. 145938777669643" />
+        {seenMessages !== null ? (
+          <p className="mt-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)]">
+            {seenMessages > 0
+              ? `Verified: ${seenMessages.toLocaleString("en-US")} stored message${seenMessages === 1 ? "" : "s"} were sent from this id.`
+              : "No stored message was sent from this id yet — check it against a message's Sender."}
+          </p>
+        ) : null}
       </Field>
       <Field
         label="Team"

@@ -32,6 +32,10 @@ export default async function EditTeamMemberPage({ params }: { params: Promise<{
   });
   const chosen = new Set(preferences.map((row) => row.event));
   const reachable = hasReachablePhoneNumber(member);
+  // Proof the stored id is real: how many messages we hold that came from exactly this sender.
+  const seenMessages = member.whatsappId
+    ? await prisma.message.count({ where: { senderPhone: member.whatsappId } })
+    : null;
 
   const updatePreferences = updateMemberNotificationPreferences.bind(null, member.id);
 
@@ -42,9 +46,11 @@ export default async function EditTeamMemberPage({ params }: { params: Promise<{
         <EditTeamMemberForm
           memberId={member.id}
           options={options}
+          seenMessages={seenMessages}
           defaults={{
             name: member.name,
             phoneNumber: member.phoneNumber,
+            whatsappId: member.whatsappId,
             role: member.role,
             department: member.department,
             teamId: member.teamId,

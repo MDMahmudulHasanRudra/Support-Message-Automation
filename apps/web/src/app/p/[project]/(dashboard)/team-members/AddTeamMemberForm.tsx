@@ -28,13 +28,16 @@ export function AddTeamMemberForm({ options }: { options: MemberFormOptions }) {
 
   return (
     <div className="space-y-3">
-      <form ref={formRef} action={formAction} className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+      <form ref={formRef} action={formAction} className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
         <MemberSuggestionLists options={options} />
         <Field label="Name">
           <Input name="name" placeholder="Name" required />
         </Field>
         <Field label="Phone">
           <Input name="phoneNumber" placeholder="+8801XXXXXXXXX" inputMode="tel" required />
+        </Field>
+        <Field label="WhatsApp ID">
+          <Input name="whatsappId" placeholder="Optional, e.g. 1459…" inputMode="numeric" />
         </Field>
         <Field label="Team">
           <TeamSelect teams={options.teams} />
