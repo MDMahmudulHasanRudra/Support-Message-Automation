@@ -11,7 +11,6 @@ import {
   Dialog,
   Field,
   Input,
-  Select,
   useToast,
 } from "@/components/ui";
 import {
@@ -29,6 +28,85 @@ const INITIAL: AddFromGroupState = {};
 export interface GroupOption {
   id: string;
   name: string;
+  /** Which WhatsApp number's copy of the group this is — the same group appears once per account. */
+  accountLabel: string;
+}
+
+/** Rows drawn at once; searching still covers the whole list, so this only bounds the DOM. */
+const GROUP_LIST_LIMIT = 100;
+
+/**
+ * Choosing a group by typing part of its name. A plain `<select>` of every group on the account
+ * (nearly two thousand) cannot be searched and has to be scrolled through, so this is a search box
+ * over a short scrolling list. The matching runs over every group in the browser; only the number
+ * of rows drawn is capped, and the cap is stated so a list that stops short never reads as the end.
+ */
+function GroupSearchPicker({ groups, value, onChange }: { groups: GroupOption[]; value: string; onChange: (id: string) => void }) {
+  const [query, setQuery] = useState("");
+  const chosen = groups.find((group) => group.id === value) ?? null;
+  const needle = query.trim().toLowerCase();
+  const matches = needle ? groups.filter((group) => `${group.name} ${group.accountLabel}`.toLowerCase().includes(needle)) : groups;
+  const visible = matches.slice(0, GROUP_LIST_LIMIT);
+
+  return (
+    <div className="space-y-2">
+      {chosen ? (
+        <div className="flex items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[var(--color-accent)] bg-[var(--color-accent-subtle,var(--color-neutral-bg))] px-3 py-2 text-sm">
+          <span className="min-w-0 truncate">
+            <span className="font-medium text-[color:var(--color-foreground)]">{chosen.name}</span>
+            <span className="ml-2 text-xs text-[color:var(--color-muted-foreground)]">{chosen.accountLabel}</span>
+          </span>
+          <button
+            type="button"
+            className="shrink-0 cursor-pointer text-xs underline text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+            onClick={() => {
+              onChange("");
+              setQuery("");
+            }}
+          >
+            Change
+          </button>
+        </div>
+      ) : (
+        <>
+          <Input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search groups by name…"
+            aria-label="Search groups by name"
+            autoFocus
+          />
+          <div role="listbox" aria-label="Groups" className="max-h-56 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--color-border)]">
+            {visible.length === 0 ? (
+              <p className="p-3 text-sm text-[color:var(--color-muted-foreground)]">
+                {groups.length === 0 ? "No groups synced yet." : "No group matches that search."}
+              </p>
+            ) : (
+              visible.map((group) => (
+                <button
+                  key={group.id}
+                  type="button"
+                  role="option"
+                  aria-selected={false}
+                  onClick={() => onChange(group.id)}
+                  className="flex w-full cursor-pointer items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm last:border-0 hover:bg-[var(--color-neutral-bg)]"
+                >
+                  <span className="min-w-0 truncate">{group.name}</span>
+                  <span className="shrink-0 text-xs text-[color:var(--color-muted-foreground)]">{group.accountLabel}</span>
+                </button>
+              ))
+            )}
+          </div>
+          {matches.length > visible.length ? (
+            <p className="text-xs text-[color:var(--color-muted-foreground)]">
+              Showing {visible.length} of {matches.length.toLocaleString("en-US")} groups — type more of the name to narrow it.
+            </p>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -142,14 +220,7 @@ export function AddFromGroupDialog({ groups, options }: { groups: GroupOption[];
       >
         <form action={formAction} className="space-y-4">
           <Field label="Group">
-            <Select value={groupId} onChange={(event) => loadCandidates(event.target.value)}>
-              <option value="">Select a group…</option>
-              {groups.map((group) => (
-                <option key={group.id} value={group.id}>
-                  {group.name}
-                </option>
-              ))}
-            </Select>
+            <GroupSearchPicker groups={groups} value={groupId} onChange={loadCandidates} />
           </Field>
 
           {groupId ? (

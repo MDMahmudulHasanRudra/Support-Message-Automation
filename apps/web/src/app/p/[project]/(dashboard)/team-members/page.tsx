@@ -17,7 +17,7 @@ export default async function TeamMembersPage() {
     }) as Promise<TeamMemberRow[]>,
     prisma.whatsAppGroup.findMany({
       where: { isActive: true },
-      select: { id: true, name: true },
+      select: { id: true, name: true, account: { select: { label: true } } },
       orderBy: { name: "asc" },
     }),
     loadMemberFormOptions(),
@@ -30,7 +30,7 @@ export default async function TeamMembersPage() {
         description="Messages from active team members are ignored by client automation by default."
         actions={
           <>
-            <AddFromGroupDialog groups={groups} options={options} />
+            <AddFromGroupDialog groups={groups.map((g) => ({ id: g.id, name: g.name, accountLabel: g.account.label }))} options={options} />
             <HelpButton moduleTitle="Internal Team Members">
             <HelpSection title="What this page is for">
               <p>
