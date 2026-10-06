@@ -286,6 +286,7 @@ since `setInterval` doesn't await its callback)
 | `startNotificationDispatcher` | 3s | sends queued Teams/WhatsApp notifications |
 | `startAccountRegistrySync` | 20s | discovers new accounts, provisions + connects them one at a time |
 | `startEscalationProcessor` | 15s | advances at most one due `SupportEscalationCase` per tick |
+| `startSupportAssignmentProcessor` | 15s | Support Assignment: overdue (+1 min grace), one-time escalation, and settles cases whose wait was answered/cleared while the hook was not running (`SUPPORT_ASSIGNMENT.md`) |
 | `startSessionSegmentationProcessor` | 5min | Conversation Learning: buckets messages into `ConversationSession` (no-ops unless `LearningSettings.conversationLearningEnabled`) |
 | `startPatternDetectionProcessor` | 15min | deterministic, AI-free recurring-pattern scoring → `PatternCandidate` (same enable-flag gate) |
 | `startKnowledgeImportProcessor` | 15s | drains manual Knowledge Center imports (pasted text, uploaded file, URL, spreadsheet), one chunk at a time |
@@ -473,7 +474,7 @@ Three rules worth not undoing:
 - **Logout and Reconnect cancel a running sync first** (`cancelGroupSync`, a per-account generation
   checked before every write): CANCELLED, never FAILED, and a cancelled sync writes nothing more —
   otherwise a sync that read the list before a LOGOUT re-activates every group the logout switched off.
-- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090200`, pushed).
+- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090400`).
   Prisma orders by name and `migrate deploy` silently applies an earlier-named one out of order, so
   until 12 Oct 2026 name new migrations after the last one by hand.
 
@@ -851,6 +852,36 @@ assumed to go together.)
   next customer message opens a new wait.
 - **The web reads episodes only.** One `where` builder serves the page, select-all, Clear all and
   export.
+
+### Support Assignment (`apps/worker/src/supportAssignment/`, `(dashboard)/support-assignment/`, `SUPPORT_ASSIGNMENT.md`)
+
+Assigns a waiting customer to a person, follows the SLA and alerts on overdue. Rules worth not undoing:
+
+- **A case is built ON a `SupportResponseEpisode`**, never a second "unanswered" definition, so it
+  inherits the Support Team requirement: nothing is tracked until one is chosen.
+  - `trackSupportResponse` returns its decision, and `trackSupportAssignment` reads that decision
+    right after it in `persistIncomingMessage`.
+  - The hook never throws.
+- **One CURRENT case per WhatsApp group** (`closedAt IS NULL`, partial unique on
+  `(projectId, whatsappGroupId)` plus an advisory lock), never per account's group row. Otherwise two
+  of our numbers in one group open two cases for one question.
+- **Ignore rules only exclude** (`qualifyCustomerMessage`, whole words, address words allowed). There
+  is no support-keyword list. A filtered wait is kept as IGNORED and counted, never dropped.
+- **Completion is the assignee only** (`decideReply`): after the assignment, with more than ignored
+  words.
+  - A reply from somebody else closes the case as ANSWERED_BY_OTHER: uncredited, and no further
+    alerts (decided with Rudra, 7 Oct 2026).
+  - The business number never completes or answers.
+- **Every transition is a conditional update** on status + `assignmentRound` + `closedAt`, with its
+  history and its notifications in the SAME transaction. Notifications go through
+  `queueSupportAssignmentNotices` / `buildSupportAssignmentNotices` (packages/db, shared by web and
+  worker) into the ordinary `Notification` queue, at most once per round/kind/recipient (`dedupKey`).
+  A notification that cannot go is NOTIFY_SKIPPED, never a failed assignment.
+- **Overdue waits one minute of grace past `dueAt`.** Timestamps decide whether the SLA was met, not
+  arrival order. Escalation fires once per round, and only if escalation was on when the case went
+  overdue.
+- **`InternalTeamMember.userId`** links a login to a roster member for My assignments only. It never
+  grants anything or affects matching.
 
 ### WhatsApp Message & Media Storage (`apps/worker/src/media/`, `packages/media-storage`, `/settings/media-storage`)
 

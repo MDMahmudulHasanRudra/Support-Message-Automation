@@ -249,6 +249,10 @@ enum NotificationEvent {
   /// Mood Detection found a customer angry, very angry, frustrated or urgent enough to act on
   /// (MOOD_DETECTION.md). One per escalation, inside the configured cooldown.
   MOOD_ALERT
+  /// Support Assignment (SUPPORT_ASSIGNMENT.md): a case was assigned to a person, went past its
+  /// SLA, was escalated, or was completed. Who receives it is the module's own settings; muting
+  /// this event in the Notification Center stops all of them.
+  SUPPORT_ASSIGNMENT
 }
 
 /// One team member's opt-in to be alerted directly about one kind of event.
@@ -589,6 +593,9 @@ model Project {
   messageMediaRows                     MessageMedia[]
   mediaCleanupJobRows                  MediaCleanupJob[]
   supportResponseEpisodeRows           SupportResponseEpisode[]
+  supportAssignmentRows                SupportAssignment[]
+  supportAssignmentEventRows           SupportAssignmentEvent[]
+  supportAssignmentSettings            SupportAssignmentSettings?
   moodDetectionSettingsRows            MoodDetectionSettings[]
   customerMoodEventRows                CustomerMoodEvent[]
   moodAlertRows                        MoodAlert[]
@@ -687,6 +694,10 @@ model User {
   requestedMediaCleanups      MediaCleanupJob[]
   updatedMediaStorageSettings MediaStorageSettings[]
   clearedSupportEpisodes      SupportResponseEpisode[]
+  assignedSupportCases        SupportAssignment[]
+  supportAssignmentEvents     SupportAssignmentEvent[]
+  /// The roster entries this login is (one per project at most) — what "My Assignments" reads.
+  rosterMembers               InternalTeamMember[]
   createdKnowledgeItems       AiKnowledgeItem[]
   createdKnowledgeImports     KnowledgeImport[]
   createdKnowledgeVersions    AiKnowledgeVersion[]
@@ -913,6 +924,7 @@ model WhatsAppAccount {
   adminPromotionJobs   GroupAdminPromotionJob[]
   media                MessageMedia[]
   supportEpisodes      SupportResponseEpisode[]
+  supportAssignments   SupportAssignment[]
   moodEvents           CustomerMoodEvent[]
   moodAlerts           MoodAlert[]
   processingCheckpoint ProcessingCheckpoint?
@@ -1155,6 +1167,7 @@ model WhatsAppGroup {
   adminPromotionItems    GroupAdminPromotionItem[]
   media                  MessageMedia[]
   supportEpisodes        SupportResponseEpisode[]
+  supportAssignments     SupportAssignment[]
   moodEvents             CustomerMoodEvent[]
   moodAlerts             MoodAlert[]
   escalationCases        SupportEscalationCase[]
@@ -1212,9 +1225,17 @@ model InternalTeamMember {
   /// Teams account, or won't be mapped yet. Used only for Issue "handled by" attribution
   /// (apps/worker/src/teams/resolutionEngine.ts); never required for the integration to function.
   microsoftEmail  String?
+  /// The dashboard login this person uses, if one has been linked (Team Members → edit). Nothing but
+  /// "My Assignments" reads it: it grants no permission and changes no matching — a login is not a
+  /// roster identity, and a roster member needs no login. At most one member per login per project.
+  userId          String?
+  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
+  assignedSupportCases      SupportAssignment[]                @relation("SupportAssignmentAssignee")
+  respondedSupportCases     SupportAssignment[]                @relation("SupportAssignmentResponder")
+  supportAssignmentEvents   SupportAssignmentEvent[]
   assignedGroups            WhatsAppGroup[]
   assignedEscalationCases   SupportEscalationCase[]
   SupportEscalationSettings SupportEscalationSettings[]
@@ -1245,6 +1266,7 @@ model InternalTeamMember {
   @@unique([projectId, phoneNumber])
   @@unique([projectId, whatsappId])
   @@unique([projectId, microsoftEmail])
+  @@unique([projectId, userId])
   @@index([teamId])
 }
 
@@ -1359,6 +1381,8 @@ model Message {
   episodesStarted          SupportResponseEpisode[]   @relation("SupportResponseFirstIncoming")
   episodesExtended         SupportResponseEpisode[]   @relation("SupportResponseLatestIncoming")
   episodesAnswered         SupportResponseEpisode[]   @relation("SupportResponseReply")
+  supportCasesOpened       SupportAssignment[]        @relation("SupportAssignmentFirstMessage")
+  supportCasesCompleted    SupportAssignment[]        @relation("SupportAssignmentCompletion")
 
   @@unique([accountId, whatsappMessageId])
   @@index([chatId, timestampWa])
@@ -2015,6 +2039,9 @@ model SupportResponseEpisode {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// The Support Assignment case(s) built on this wait, if the module was on (SUPPORT_ASSIGNMENT.md).
+  assignments SupportAssignment[]
+
   /// Unanswered Groups: one project's open episodes, longest waiting first.
   @@index([projectId, status, firstIncomingAt])
   /// Response Time: one project's answered episodes, newest reply first.
@@ -2023,6 +2050,200 @@ model SupportResponseEpisode {
   @@index([groupId, status])
   @@index([supportMemberId, supportRepliedAt])
   @@index([accountId])
+}
+
+/// Where a Support Assignment case stands (SUPPORT_ASSIGNMENT.md).
+enum SupportAssignmentStatus {
+  /// Every customer message in the wait matched an ignore rule (an ignored sender or a message made
+  /// only of ignored words). Kept, never deleted: it is what the "filtered" count is made of, and a
+  /// later real message in the same wait turns it into UNASSIGNED.
+  IGNORED
+  /// A genuine customer wait nobody has been given yet.
+  UNASSIGNED
+  /// Given to one person, inside its SLA.
+  ASSIGNED
+  /// Given to one person, past its SLA, still no reply from them.
+  OVERDUE
+  /// The assigned person replied in the group after being assigned.
+  COMPLETED
+  /// The customer was answered by somebody else (or before anybody was assigned). Closes the case
+  /// without crediting the assignee, and stops every alert — the customer is no longer waiting.
+  ANSWERED_BY_OTHER
+  /// The wait was cleared on Messages → Unanswered groups, or an admin cancelled the case.
+  CANCELLED
+}
+
+/// One line of a case's history.
+enum SupportAssignmentEventType {
+  OPENED
+  IGNORED
+  QUALIFIED
+  ASSIGNED
+  REASSIGNED
+  /// A WhatsApp notification was queued; `notificationId` shows whether it was delivered.
+  NOTIFIED
+  /// A notification that should have gone could not be queued (no phone number, no account…).
+  NOTIFY_SKIPPED
+  OVERDUE
+  ESCALATED
+  COMPLETED
+  ANSWERED_BY_OTHER
+  CANCELLED
+}
+
+/// One Support Assignment case: one customer wait (a `SupportResponseEpisode`), qualified, given to
+/// a person and followed until that person replies (SUPPORT_ASSIGNMENT.md).
+///
+/// Built ON the episode rather than beside it, so "unanswered" has exactly one definition in this
+/// app: the episode says a customer is waiting; this row adds who was asked to answer, by when, and
+/// whether they did. A replayed or redelivered message never reaches it at all (the `Message` insert
+/// is the pipeline's dedup guard), and two messages racing are serialised by a per-group lock.
+///
+/// One CURRENT case per WhatsApp group (`closedAt IS NULL`, a partial unique index in the
+/// migration), not per account's group row: when two of our numbers are in one group, both store
+/// the customer's message and both open an episode, and two cases for one question would mean one
+/// of them is assigned while its twin sits "unassigned" forever.
+model SupportAssignment {
+  id        String                  @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId String                  @default(dbgenerated("project_id_required()"))
+  project   Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// The wait that opened this case. Usually one case per wait; a wait can outlive its case (the
+  /// assignee replied without being in the Support Team, an admin cancelled it), and a customer
+  /// message after that opens a new case on the same wait, as Clear does on Unanswered groups.
+  episodeId String
+  episode   SupportResponseEpisode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  accountId String
+  account   WhatsAppAccount         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId   String
+  group     WhatsAppGroup           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// The WhatsApp group itself (…@g.us): what identifies "this conversation" across accounts.
+  whatsappGroupId String
+  status    SupportAssignmentStatus @default(UNASSIGNED)
+
+  /// The earliest customer message in the wait that is NOT ignored — the "issue" shown and sent.
+  /// Null while the case is IGNORED. Points at the Message; no text is copied.
+  firstMessageId      String?
+  firstMessage        Message? @relation("SupportAssignmentFirstMessage", fields: [firstMessageId], references: [id], onDelete: SetNull)
+  firstMessageAt      DateTime?
+  /// Customer messages in this wait that an ignore rule filtered out.
+  ignoredMessageCount Int      @default(0)
+
+  assignedMemberId String?
+  assignedMember   InternalTeamMember? @relation("SupportAssignmentAssignee", fields: [assignedMemberId], references: [id], onDelete: SetNull)
+  assignedAt       DateTime?
+  assignedByUserId String?
+  assignedBy       User?               @relation(fields: [assignedByUserId], references: [id], onDelete: SetNull)
+  /// Goes up by one on every assign / reassign. Part of every notification's dedup key, so a
+  /// reassigned case alerts again for its new owner but a retry never alerts twice.
+  assignmentRound  Int                 @default(0)
+  /// The SLA in force when it was (last) assigned — a later settings change never moves a deadline.
+  slaMinutes       Int?
+  dueAt            DateTime?
+  overdueAt        DateTime?
+  /// 0 = not escalated; 1 = the escalation tier has fired. One tier, at most once per round.
+  escalationLevel  Int                 @default(0)
+  nextEscalationAt DateTime?
+
+  completedAt         DateTime?
+  completionMessageId String?
+  completionMessage   Message?            @relation("SupportAssignmentCompletion", fields: [completionMessageId], references: [id], onDelete: SetNull)
+  /// Who actually answered: the assignee for COMPLETED, somebody else for ANSWERED_BY_OTHER.
+  responderMemberId   String?
+  responderMember     InternalTeamMember? @relation("SupportAssignmentResponder", fields: [responderMemberId], references: [id], onDelete: SetNull)
+  /// completedAt − assignedAt in whole seconds: how long the assignee took once asked.
+  responseSeconds     Int?
+  /// When this case stopped being the group's current one: completed, answered by someone else,
+  /// cancelled, or — for an IGNORED case — its wait answered or cleared.
+  closedAt            DateTime?
+  closeReason         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events SupportAssignmentEvent[]
+
+  /// The lists: one project's cases in one state, newest first.
+  @@index([projectId, status, createdAt])
+  /// The SLA loop: assigned cases by deadline, overdue cases by escalation time.
+  @@index([projectId, status, dueAt])
+  @@index([projectId, status, nextEscalationAt])
+  /// The pipeline: this group's open cases.
+  @@index([groupId, status])
+  /// My Assignments and the per-employee report.
+  @@index([assignedMemberId, status])
+  @@index([episodeId])
+  /// "When did this group's last case close" — a late-arriving old message opens nothing.
+  @@index([whatsappGroupId, closedAt])
+  @@index([accountId])
+}
+
+/// One line of a case's history (SUPPORT_ASSIGNMENT.md): opened, assigned, notified, overdue,
+/// completed… Append-only. `dedupKey` makes each notification at most once — a retry, a restart or
+/// two workers racing hit the unique index instead of sending a second message.
+model SupportAssignmentEvent {
+  id             String                     @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId      String                     @default(dbgenerated("project_id_required()"))
+  project        Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  assignmentId   String
+  assignment     SupportAssignment          @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  type           SupportAssignmentEventType
+  at             DateTime                   @default(now())
+  actorUserId    String?
+  actorUser      User?                      @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  /// The person this line is about: who it was assigned to, who replied, who was notified.
+  memberId       String?
+  member         InternalTeamMember?        @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  notificationId String?
+  notification   Notification?              @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+  /// Who or where a notification went, as a label ("Hasan", "Support Management group").
+  recipient      String?
+  detail         String?
+  dedupKey       String?
+
+  @@unique([assignmentId, dedupKey])
+  @@index([assignmentId, at])
+  @@index([projectId, type, at])
+}
+
+/// Support Assignment settings (SUPPORT_ASSIGNMENT.md). Singleton per project (id "global"). An
+/// absent row means "off, with these defaults".
+model SupportAssignmentSettings {
+  id                       String   @id @default("global")
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId                String   @unique @default(dbgenerated("project_id_required()"))
+  project                  Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  enabled                  Boolean  @default(false)
+  /// Words and phrases that, on their own, are not a support request ("thanks", "ok"). Matched as
+  /// whole words, never inside another word. They only EXCLUDE: a message with any other word in it
+  /// is a support case whatever it says.
+  ignoredKeywords          String[] @default(["thank you", "thanks", "thanks brother", "ok", "okay", "done", "received", "alright", "ধন্যবাদ"])
+  /// Customers whose messages never become a case (an ISP owner's announcements, a reseller's
+  /// staff): phone numbers as digits, or WhatsApp ids. Team members never need listing — no roster
+  /// member ever opens a wait.
+  ignoredSenders           String[] @default([])
+  /// Teams whose ACTIVE members can be assigned. Empty = every active team member.
+  assignableTeamIds        String[] @default([])
+  slaMinutes               Int      @default(15)
+  escalationEnabled        Boolean  @default(false)
+  /// Minutes AFTER a case went overdue before the escalation tier fires.
+  escalationAfterMinutes   Int      @default(15)
+  /// Manager WhatsApp group(s) (…@g.us), chosen with the group picker.
+  managerGroupIds          String[] @default([])
+  /// Team members who receive the admin's personal notifications.
+  adminMemberIds           String[] @default([])
+  notifyEmployeeOnAssign   Boolean  @default(true)
+  notifyEmployeeOnReassign Boolean  @default(true)
+  notifyManagerOnOverdue   Boolean  @default(true)
+  notifyAdminOnOverdue     Boolean  @default(false)
+  notifyAdminOnEscalation  Boolean  @default(true)
+  notifyAdminOnCompletion  Boolean  @default(false)
+  updatedById              String?
+  updatedAt                DateTime @updatedAt
 }
 
 /// Singleton row (id is always the literal string "global"), analogous to
@@ -2083,8 +2304,9 @@ model Notification {
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 
-  escalationEvents   SupportEscalationEvent[]
-  aiFallbackDecision AiFallbackDecision?
+  escalationEvents        SupportEscalationEvent[]
+  aiFallbackDecision      AiFallbackDecision?
+  supportAssignmentEvents SupportAssignmentEvent[]
 
   @@index([status])
   @@index([relatedMessageId])

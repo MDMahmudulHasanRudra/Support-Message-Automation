@@ -24,6 +24,7 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { countDroppedMessage } from "./dropCounter.js";
 import { registerMessageMedia } from "../media/registerMessageMedia.js";
 import { trackSupportResponse } from "../supportResponse/tracker.js";
+import { trackSupportAssignment } from "../supportAssignment/tracker.js";
 import { recordMoodSignal } from "../mood/moodDetection.js";
 import { currentProjectId, projectIsOperating, withAccountProject } from "../project/context.js";
 
@@ -588,12 +589,27 @@ async function persistIncomingMessage(
 
   // Messages → Unanswered Groups / Response Time (SUPPORT_RESPONSE.md). Runs once per new message,
   // live or recovered, since this insert is the dedup guard. Never throws.
-  await trackSupportResponse({
+  const responseTrack = await trackSupportResponse({
     messageId: message.id,
     groupId: group?.id ?? null,
     accountId: raw.accountId,
     direction: "INCOMING",
     senderPhone: raw.senderPhone,
+    timestampWa: raw.timestampWa,
+  });
+
+  // Support Assignment (SUPPORT_ASSIGNMENT.md), built on the wait the tracker just updated: opens or
+  // qualifies the group's case, or completes / closes it on a team member's reply. A no-op until
+  // the module is enabled. Never throws.
+  await trackSupportAssignment({
+    track: responseTrack,
+    messageId: message.id,
+    groupId: group?.id ?? null,
+    whatsappGroupId: raw.whatsappGroupId ?? raw.chatId,
+    accountId: raw.accountId,
+    senderPhone: raw.senderPhone,
+    body: raw.body,
+    hasMedia: Boolean(raw.media),
     timestampWa: raw.timestampWa,
   });
 

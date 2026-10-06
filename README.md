@@ -13,6 +13,14 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Support Assignment** (Support → Support Assignment). Every customer waiting for a reply becomes a
+  case, unless it is only "thanks"/"ok" or from an ignored sender (filtered cases are kept and
+  counted). Assign one or many cases to a person; they get a WhatsApp message. The case completes
+  itself when that person replies in the group. If they do not reply within the SLA, the manager
+  group and admins are told, with optional escalation. Includes My assignments, Completed, full
+  history per case, and a report (also under All Reports) with Excel/CSV. Off by default; needs the
+  Support Team chosen. Built locally on `rudra`; not committed, not deployed (`SUPPORT_ASSIGNMENT.md`).
+
 - **Faster group sync for a second account** (WhatsApp → Accounts / Groups). A newly linked number's
   groups now appear as the phone delivers them (re-read every 30 s until settled) instead of at a
   5-minute pass; one account's sync no longer holds another's; each account shows its own sync

@@ -40,6 +40,7 @@ export async function getTemplateLiveness(): Promise<Record<string, TemplateLive
   // connection pool while each one also resolves the project (seen as a hang with 5 connections).
   const mood = await prisma.moodDetectionSettings.findUnique({ where: { id: "global" }, select: { enabled: true, policies: true } });
   const moodPolicies = parseMoodPolicies(mood?.policies ?? null);
+  const assignment = await prisma.supportAssignmentSettings.findUnique({ where: { id: "global" } });
 
   const notifyRuleCount = notifyRules.filter((rule) =>
     Array.isArray(rule.actions)
@@ -73,6 +74,7 @@ export async function getTemplateLiveness(): Promise<Record<string, TemplateLive
       priorityGroupCount,
       moodEnabled: Boolean(mood?.enabled),
       moodPolicies,
+      assignment,
     });
   }
 
@@ -89,7 +91,18 @@ interface Inputs {
   priorityGroupCount: number;
   moodEnabled: boolean;
   moodPolicies: MoodPolicies;
+  assignment: {
+    enabled: boolean;
+    notifyEmployeeOnAssign: boolean;
+    notifyEmployeeOnReassign: boolean;
+    notifyManagerOnOverdue: boolean;
+    notifyAdminOnOverdue: boolean;
+    escalationEnabled: boolean;
+    notifyAdminOnCompletion: boolean;
+  } | null;
 }
+
+const SUPPORT_ASSIGNMENT_SETTINGS = { fixHref: "/support-assignment/settings", fixLabel: "Support Assignment" };
 
 const MOOD_SETTINGS = { fixHref: "/settings/mood-detection", fixLabel: "Mood Detection" };
 
@@ -182,6 +195,23 @@ function computeOne(key: string, input: Inputs): TemplateLiveness {
     if (!policy?.trigger || !policy.customerMessage) {
       return { live: false, reason: "This mood's \"Send a message to the customer\" is off (it is off by default).", ...MOOD_SETTINGS };
     }
+    return { live: true };
+  }
+
+  if (key.startsWith("SUPPORT_ASSIGNMENT_")) {
+    const a = input.assignment;
+    if (!a?.enabled) return { live: false, reason: "Support Assignment is switched off.", ...SUPPORT_ASSIGNMENT_SETTINGS };
+    if (!input.eventEnabled("SUPPORT_ASSIGNMENT")) {
+      return { live: false, reason: "Support Assignment notifications are muted.", ...NOTIFICATION_CENTER };
+    }
+    const on: Record<string, boolean> = {
+      SUPPORT_ASSIGNMENT_ASSIGNED: a.notifyEmployeeOnAssign,
+      SUPPORT_ASSIGNMENT_REASSIGNED: a.notifyEmployeeOnReassign,
+      SUPPORT_ASSIGNMENT_OVERDUE: a.notifyManagerOnOverdue || a.notifyAdminOnOverdue,
+      SUPPORT_ASSIGNMENT_ESCALATED: a.escalationEnabled,
+      SUPPORT_ASSIGNMENT_COMPLETED: a.notifyAdminOnCompletion,
+    };
+    if (on[key] === false) return { live: false, reason: "This notification is switched off.", ...SUPPORT_ASSIGNMENT_SETTINGS };
     return { live: true };
   }
 

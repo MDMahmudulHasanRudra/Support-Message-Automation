@@ -122,6 +122,18 @@ export const REPORT_CATALOGUE: readonly ReportCatalogueEntry[] = [
     generic: false,
   },
   {
+    // Support Assignment's own report (SUPPORT_ASSIGNMENT.md): the same page the module's Report tab
+    // opens, listed here so All Reports reaches it — one implementation, two ways in.
+    id: "support-assignment",
+    href: "/support-assignment/report",
+    label: "Support Assignment",
+    category: "Response & SLA",
+    description: "Assigned support cases per employee and per group: completed, pending, overdue, response time and SLA compliance.",
+    question: "Who was given which customer, and did they answer in time?",
+    exports: BOTH,
+    generic: false,
+  },
+  {
     id: "employee-groups",
     href: "/reports/employee-groups",
     label: "Employee Support Breakdown",

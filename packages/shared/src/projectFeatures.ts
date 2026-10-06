@@ -126,6 +126,15 @@ export const PROJECT_FEATURES = [
     workerEffect: "No escalation case is opened, and open cases stop advancing.",
   },
   {
+    key: "SUPPORT_ASSIGNMENT",
+    label: "Support Assignment",
+    description: "Assigning unanswered customer waits to a person, with SLA, alerts and a report.",
+    defaultEnabled: true,
+    routes: ["/support-assignment", "/api/support-assignment"],
+    permissionKeys: ["support_assignment.view", "support_assignment.assign", "support_assignment.manage"],
+    workerEffect: "No case is opened or completed, and overdue and escalation alerts stop.",
+  },
+  {
     key: "SUPPORT_ACTIVITY",
     label: "Support Activity",
     description: "Support activity tracking, its feed and its report.",

@@ -32,6 +32,13 @@ const EVENT_COPY: Record<
     consequence:
       "Muting this silences both the team alert and the internal escalation group alert from Settings → Mood Detection. AI pauses and Waiting-list marks still happen.",
   },
+  SUPPORT_ASSIGNMENT: {
+    title: "Support Assignment",
+    description:
+      "A support case was assigned to a person (they are messaged directly), went past its SLA, was escalated, or was completed. Who receives each one is set under Settings → Support Assignment.",
+    consequence:
+      "Muting this silences all of them: the assignee is not told they have a case, and overdue cases alert nobody. Assignments and deadlines still happen. Groups chosen here are used for overdue alerts only when Support Assignment has no manager group of its own.",
+  },
   AI_HUMAN_FALLBACK: {
     title: "AI handed over to a human",
     description: "A customer asked something the AI could not answer safely, so it stopped and asked for a person.",

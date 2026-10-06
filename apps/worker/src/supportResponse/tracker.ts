@@ -1,6 +1,17 @@
 import { applyResponseMessage, classifyResponseMessage } from "@support-automation/shared";
+import type { EpisodeAction, ResponseMessageRole } from "@support-automation/shared";
 import { prisma } from "../db.js";
 import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
+
+/** What `trackSupportResponse` decided for one message. */
+export interface SupportResponseTrack {
+  role: ResponseMessageRole;
+  /** The roster member who sent the message, whatever their Team. */
+  memberId: string | null;
+  action: EpisodeAction["kind"];
+  /** The episode the message opened, extended or answered. */
+  episodeId: string | null;
+}
 
 /**
  * Support response tracking (SUPPORT_RESPONSE.md): keeps each group's `SupportResponseEpisode` in
@@ -17,6 +28,10 @@ import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
  * Who counts as Support is read at the moment of the message — the member's Team then, from
  * `TeamMembership` — so moving somebody to another Team later never rewrites a response already
  * recorded, and their replies from before the move still count.
+ *
+ * Returns what it did (null when it did not run, or failed), so Support Assignment
+ * (SUPPORT_ASSIGNMENT.md), which is built on these episodes, reads the same decision rather than
+ * making a second one.
  */
 export async function trackSupportResponse(input: {
   messageId: string;
@@ -25,12 +40,12 @@ export async function trackSupportResponse(input: {
   direction: "INCOMING" | "OUTGOING" | "SYSTEM";
   senderPhone: string;
   timestampWa: Date;
-}): Promise<void> {
+}): Promise<SupportResponseTrack | null> {
   try {
-    if (!input.groupId) return; // groups only: a 1:1 chat is not a support group
+    if (!input.groupId) return null; // groups only: a 1:1 chat is not a support group
     const settings = await prisma.supportActivitySettings.findUnique({ where: { id: "global" }, select: { responseTrackingTeamIds: true } });
     const supportTeamIds = settings?.responseTrackingTeamIds ?? [];
-    if (supportTeamIds.length === 0) return; // not set up: nothing is tracked until a Support Team is chosen
+    if (supportTeamIds.length === 0) return null; // not set up: nothing is tracked until a Support Team is chosen
 
     const at = input.timestampWa;
     let memberId: string | null = null;
@@ -52,10 +67,10 @@ export async function trackSupportResponse(input: {
     }
 
     const role = classifyResponseMessage({ direction: input.direction, memberId, inSupportTeam: supportTeamId !== null });
-    if (role !== "CUSTOMER" && role !== "SUPPORT") return; // nothing else changes an episode
+    if (role !== "CUSTOMER" && role !== "SUPPORT") return { role, memberId, action: "NONE", episodeId: null }; // nothing else changes an episode
 
     const groupId = input.groupId;
-    await prisma.$transaction(async (tx) => {
+    return await prisma.$transaction(async (tx): Promise<SupportResponseTrack> => {
       // One group's messages decided one at a time, so two arriving together cannot both open an
       // episode (the partial unique index would refuse the second anyway) or both answer one.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`support-response:${groupId}`})::bigint)`;
@@ -90,8 +105,8 @@ export async function trackSupportResponse(input: {
       });
 
       switch (action.kind) {
-        case "OPEN":
-          await tx.supportResponseEpisode.create({
+        case "OPEN": {
+          const created = await tx.supportResponseEpisode.create({
             data: {
               accountId: input.accountId,
               groupId,
@@ -101,8 +116,10 @@ export async function trackSupportResponse(input: {
               latestIncomingAt: at,
               incomingMessageCount: 1,
             },
+            select: { id: true },
           });
-          return;
+          return { role, memberId, action: action.kind, episodeId: created.id };
+        }
         case "EXTEND":
           await tx.supportResponseEpisode.update({
             where: { id: open!.id },
@@ -112,7 +129,7 @@ export async function trackSupportResponse(input: {
               ...(action.movesLatest ? { latestIncomingMessageId: input.messageId, latestIncomingAt: at } : {}),
             },
           });
-          return;
+          return { role, memberId, action: action.kind, episodeId: open!.id };
         case "ANSWER":
           await tx.supportResponseEpisode.update({
             where: { id: open!.id },
@@ -125,7 +142,7 @@ export async function trackSupportResponse(input: {
               responseSeconds: action.responseSeconds,
             },
           });
-          return;
+          return { role, memberId, action: action.kind, episodeId: open!.id };
         case "REANSWER":
           // Two members replied moments apart and the later one was processed first: the earlier
           // reply is the real answer, so the record says so.
@@ -139,12 +156,13 @@ export async function trackSupportResponse(input: {
               responseSeconds: action.responseSeconds,
             },
           });
-          return;
+          return { role, memberId, action: action.kind, episodeId: lastAnswered!.id };
         default:
-          return;
+          return { role, memberId, action: "NONE", episodeId: null };
       }
     });
   } catch (err) {
     console.error(`[support-response] could not track message ${input.messageId}; the message itself is stored`, err);
+    return null;
   }
 }

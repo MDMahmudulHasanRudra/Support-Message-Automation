@@ -36,3 +36,4 @@ export * from "./intelligence/effectiveness.js";
 export * from "./outboundAttribution.js";
 export * from "./duration.js";
 export * from "./mood.js";
+export * from "./supportAssignment.js";

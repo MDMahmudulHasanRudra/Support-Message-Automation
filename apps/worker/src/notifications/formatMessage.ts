@@ -47,6 +47,17 @@ export async function formatSupportAlert(payload: Record<string, unknown>): Prom
     });
   }
 
+  // Support Assignment (SUPPORT_ASSIGNMENT.md): the variables were built when the notice was
+  // queued (packages/db queueSupportAssignmentNotices), so the times in the message are the ones
+  // the case had then, however long the send waited.
+  if (payload.alertKind === "SUPPORT_ASSIGNMENT" && typeof payload.templateKey === "string" && payload.templateKey.startsWith("SUPPORT_ASSIGNMENT_")) {
+    const vars = (payload.vars && typeof payload.vars === "object" ? payload.vars : {}) as Record<string, unknown>;
+    return renderNotification(
+      payload.templateKey,
+      Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, typeof v === "string" ? v : null])),
+    );
+  }
+
   if (payload.alertKind === "UNKNOWN_PATTERN") {
     return renderNotification("UNKNOWN_PATTERN", {
       keywords: (payload.patternKeywords as string[] | undefined)?.join(", ") || "(pattern)",

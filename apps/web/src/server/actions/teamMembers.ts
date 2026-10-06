@@ -8,6 +8,7 @@ import { type Prisma } from "@support-automation/db";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { normalizePhoneNumber } from "@support-automation/shared";
+import { loginsForProject } from "@/server/projectLogins";
 
 export interface TeamMemberFormState {
   error?: string;
@@ -514,4 +515,32 @@ export async function deleteTeamMember(id: string): Promise<DeleteTeamMemberResu
   await prisma.internalTeamMember.delete({ where: { id } });
   revalidatePath(await projectPath("/team-members"));
   return { deactivated: false };
+}
+
+export interface LoginLinkState {
+  error?: string;
+  saved?: boolean;
+}
+
+/**
+ * Link a roster member to the dashboard login they use (SUPPORT_ASSIGNMENT.md). Only Support
+ * Assignment's "My assignments" reads it: it grants nothing, and matching messages to people never
+ * looks at it. A login can be linked to one member per project; the login must be able to enter it.
+ */
+export async function linkTeamMemberLogin(memberId: string, _prev: LoginLinkState, formData: FormData): Promise<LoginLinkState> {
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const userId = String(formData.get("userId") ?? "").trim() || null;
+
+  const member = await prisma.internalTeamMember.findUnique({ where: { id: memberId }, select: { id: true, name: true } });
+  if (!member) return { error: "That team member no longer exists." };
+  if (userId) {
+    const allowed = (await loginsForProject()).some((u) => u.id === userId);
+    if (!allowed) return { error: "That login cannot enter this project, or is deactivated. Nothing was changed." };
+    const other = await prisma.internalTeamMember.findFirst({ where: { userId, id: { not: memberId } }, select: { name: true } });
+    if (other) return { error: `That login is already linked to ${other.name}. Unlink it there first.` };
+  }
+  await prisma.internalTeamMember.update({ where: { id: memberId }, data: { userId } });
+  revalidatePath(await projectPath(`/team-members/${memberId}/edit`));
+  return { saved: true };
 }

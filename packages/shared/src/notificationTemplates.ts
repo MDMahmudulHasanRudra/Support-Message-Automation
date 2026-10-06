@@ -203,6 +203,7 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateDefinition[] =
   },
   ...moodCustomerTemplates(),
   ...escalationTemplates(),
+  ...supportAssignmentTemplates(),
 ];
 
 /**
@@ -285,6 +286,120 @@ function escalationTemplates(): NotificationTemplateDefinition[] {
       "",
       "Please review the conversation and respond.",
     ].join("\n"),
+  }));
+}
+
+/**
+ * Support Assignment (SUPPORT_ASSIGNMENT.md). One shared set of variables, so a wording edit can
+ * move any detail between the five messages. Sent to the assignee (assigned, reassigned), the
+ * manager group and admins (overdue, escalated) and admins (completed).
+ */
+function supportAssignmentTemplates(): NotificationTemplateDefinition[] {
+  const variables: TemplateVariable[] = [
+    { name: "employeeName", description: "The person the case is assigned to.", sample: "Hasan" },
+    { name: "employeeId", description: "Their employee ID, when their login is linked to an employee record.", sample: "EMP-0042" },
+    { name: "groupName", description: "The WhatsApp group the customer wrote in.", sample: "ABC Broadband Support" },
+    { name: "customerName", description: "The customer's name, or their number if unknown.", sample: "017XXXXXXXX" },
+    { name: "message", description: "The customer's message (the first one that is support work).", sample: "Internet nai" },
+    { name: "assignedTime", description: "When it was assigned (Dhaka time).", sample: "10:25 PM, 6 Oct" },
+    { name: "dueTime", description: "When the SLA runs out (Dhaka time).", sample: "10:40 PM, 6 Oct" },
+    { name: "overdueBy", description: "How far past the SLA it is.", sample: "15m 00s" },
+    { name: "completedTime", description: "When the assignee replied (Dhaka time).", sample: "10:32 PM, 6 Oct" },
+    { name: "responseTime", description: "How long the assignee took once assigned.", sample: "7m 32s" },
+    { name: "previousEmployee", description: "Who had it before a reassignment.", sample: "Borhan" },
+    { name: "status", description: "The case's status.", sample: "Overdue" },
+  ];
+  const entries: Array<{ key: string; label: string; description: string; body: string[] }> = [
+    {
+      key: "SUPPORT_ASSIGNMENT_ASSIGNED",
+      label: "Support Assignment — new assignment",
+      description: "Sent to a person the moment a support case is assigned to them.",
+      body: [
+        "🔔 New Support Assignment",
+        "",
+        "You have been assigned a support task.",
+        "",
+        "Group: {{groupName}}",
+        "Customer: {{customerName}}",
+        "Issue: {{message}}",
+        "Assigned: {{assignedTime}}",
+        "Due: {{dueTime}}",
+        "",
+        "Please visit the group and complete the support.",
+      ],
+    },
+    {
+      key: "SUPPORT_ASSIGNMENT_REASSIGNED",
+      label: "Support Assignment — reassigned to you",
+      description: "Sent to the new person when a case is moved to them from somebody else.",
+      body: [
+        "🔁 Support Task Reassigned to You",
+        "",
+        "Group: {{groupName}}",
+        "Customer: {{customerName}}",
+        "Issue: {{message}}",
+        "Previously: {{previousEmployee}}",
+        "Assigned: {{assignedTime}}",
+        "Due: {{dueTime}}",
+        "",
+        "Please visit the group and complete the support.",
+      ],
+    },
+    {
+      key: "SUPPORT_ASSIGNMENT_OVERDUE",
+      label: "Support Assignment — overdue",
+      description: "Sent to the manager group (and admins, if enabled) when the assignee has not replied within the SLA.",
+      body: [
+        "🚨 Support Assignment Overdue",
+        "",
+        "Employee: {{employeeName}}",
+        "Group: {{groupName}}",
+        "Customer: {{customerName}}",
+        "Issue: {{message}}",
+        "Assigned: {{assignedTime}}",
+        "Overdue by: {{overdueBy}}",
+        "",
+        "No support response has been detected yet. Please check and take action.",
+      ],
+    },
+    {
+      key: "SUPPORT_ASSIGNMENT_ESCALATED",
+      label: "Support Assignment — escalated",
+      description: "Sent to admins when an overdue case is still unanswered after the escalation delay. Once per assignment.",
+      body: [
+        "🆘 Support Assignment Escalated",
+        "",
+        "Employee: {{employeeName}}",
+        "Group: {{groupName}}",
+        "Customer: {{customerName}}",
+        "Issue: {{message}}",
+        "Assigned: {{assignedTime}}",
+        "Overdue by: {{overdueBy}}",
+        "",
+        "The customer is still waiting. Please reassign or follow up now.",
+      ],
+    },
+    {
+      key: "SUPPORT_ASSIGNMENT_COMPLETED",
+      label: "Support Assignment — completed",
+      description: "Sent to admins (if enabled) when the assignee replies in the group.",
+      body: [
+        "✅ Support Task Completed",
+        "",
+        "Employee: {{employeeName}}",
+        "Group: {{groupName}}",
+        "Completed: {{completedTime}}",
+        "Response Time: {{responseTime}}",
+      ],
+    },
+  ];
+  return entries.map(({ key, label, description, body }) => ({
+    key,
+    label,
+    description,
+    audience: "TEAM" as const,
+    variables,
+    defaultBody: body.join("\n"),
   }));
 }
 

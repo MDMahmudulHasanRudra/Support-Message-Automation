@@ -79,8 +79,8 @@ describe("the constraints later phases depend on", () => {
     // + MessageMedia, MediaStorageSettings and MediaCleanupJob (Message & Media Storage),
     // + SupportResponseEpisode (Unanswered Groups / Response Time),
     // + CollectionGap (reporting data health), + WhatsAppOperationDismissal (Clear / Hide),
-    // + the four Mood Detection tables.
-    expect(refusing).toHaveLength(82);
+    // + the four Mood Detection tables, + the three Support Assignment tables.
+    expect(refusing).toHaveLength(85);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -102,10 +102,11 @@ describe("the constraints later phases depend on", () => {
       SELECT conrelid::regclass::text AS table, convalidated AS validated
       FROM pg_constraint
       WHERE contype = 'f' AND confrelid = '"Project"'::regclass AND conname LIKE '%\\_projectId\\_fkey'`;
-    // 82 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
+    // 85 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
     // & Media Storage tables + SupportResponseEpisode + CollectionGap + WhatsAppOperationDismissal
-    // + the four Mood Detection tables) + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(85);
+    // + the four Mood Detection tables + the three Support Assignment tables) + SystemLog +
+    // ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(88);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

@@ -49,6 +49,13 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "support_activity.view", label: "View Support Activity", category: "Support Activity" },
   { key: "support_activity.manage", label: "Manage Support Activity", category: "Support Activity" },
 
+  // Support Assignment (SUPPORT_ASSIGNMENT.md). Three keys because the three acts differ in kind:
+  // seeing the queue, putting a case on somebody's plate (which messages them), and deciding what
+  // the module treats as support work, who is alerted and when.
+  { key: "support_assignment.view", label: "View Support Assignments", category: "Support Assignment" },
+  { key: "support_assignment.assign", label: "Assign & Reassign Support Cases", category: "Support Assignment" },
+  { key: "support_assignment.manage", label: "Manage Support Assignment Settings", category: "Support Assignment" },
+
   // Team Management owns the roster, leave and coverage. Separate from support_activity.* on
   // purpose: reading who was active is a reporting concern, while approving somebody leave or
   // moving them off a shift changes what the team is contracted to do that day.

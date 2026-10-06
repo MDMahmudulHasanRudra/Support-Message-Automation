@@ -32,6 +32,9 @@ import {
   KeyRound,
   LayoutDashboard,
   ListChecks,
+  ListTodo,
+  CheckCheck,
+  UserCheck,
   MessageCircleMore,
   MessageSquareQuote,
   Megaphone,
@@ -169,6 +172,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       { href: "/support-escalation/policies", label: "Escalation Policies", icon: ShieldAlert },
       { href: "/support-activity/settings", label: "Support Activity Setup", icon: Activity },
       { href: "/settings/mood-detection", label: "Mood Detection", icon: Smile },
+      { href: "/support-assignment/settings", label: "Support Assignment", icon: ListTodo },
     ],
   },
   {
@@ -235,6 +239,7 @@ export interface ReportPage extends NavLink {
 const REPORT_PRESENTATION: Record<string, { icon: LucideIcon; module: string }> = {
   "team-report": { icon: ClipboardCheck, module: "WhatsApp support" },
   "support-activity": { icon: Activity, module: "Support Activity" },
+  "support-assignment": { icon: ListTodo, module: "Support Assignment" },
   "duty-history": { icon: CalendarDays, module: "Team Management" },
   "employee-groups": { icon: UsersRound, module: "WhatsApp support" },
   "whatsapp-user-activity": { icon: MessageCircleMore, module: "WhatsApp Chat" },
@@ -302,6 +307,17 @@ export const NAV_GROUPS: NavGroup[] = [
           { href: "/messages?decision=IGNORE", label: "Ignored", icon: EyeOff },
           { href: "/messages/unanswered", label: "Unanswered groups", icon: Hourglass },
           { href: "/messages/response-time", label: "Response time", icon: Timer },
+        ],
+      },
+      {
+        href: "/support-assignment/unanswered",
+        label: "Support Assignment",
+        icon: ListTodo,
+        tabs: [
+          { href: "/support-assignment/unanswered", label: "Unanswered", icon: ListTodo },
+          { href: "/support-assignment/mine", label: "My assignments", icon: UserCheck },
+          { href: "/support-assignment/completed", label: "Completed", icon: CheckCheck },
+          { href: "/support-assignment/report", label: "Report", icon: BarChart3 },
         ],
       },
       { href: "/support-escalation", label: "Escalations", icon: ShieldAlert },
@@ -467,6 +483,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/messages", "messages.view"],
   ["/support-escalation", "escalations.view"],
   ["/support-activity", "support_activity.view"],
+  ["/support-assignment", "support_assignment.view"],
   ["/team-report", "support_activity.view"],
   // The reports at /reports/<id> (REPORTS.md): the Team Report's key, and Duty History's for duty.
   ...REPORT_CATALOGUE.filter((r) => r.generic).map(

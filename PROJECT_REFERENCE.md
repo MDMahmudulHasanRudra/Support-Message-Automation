@@ -26,6 +26,7 @@ matching section here in the same change.
 2. [Overview (Dashboard)](#overview-dashboard)
 3. [Messages](#messages)
 4. [Escalations](#escalations)
+4a. [Support Assignment](#support-assignment)
 5. [Support Activity](#support-activity)
 6. [Team Management](#team-management)
 6a. [Reports](#reports)
@@ -188,6 +189,71 @@ Sidebar group: **Support** → Messages (tabs: All messages / Needs attention / 
   evaluation trace (every rule considered, matched/applied/reason, applied ones highlighted),
   actions executed, every outbound reply's status/body/attempts, every notification's
   status/destination/attempts.
+
+---
+
+## Support Assignment
+
+Sidebar group: **Support** → Support Assignment, with four tabs. Reference: `SUPPORT_ASSIGNMENT.md`.
+Keys: `support_assignment.view` (pages, report, export), `.assign` (assign, reassign, cancel),
+`.manage` (settings). Project feature `SUPPORT_ASSIGNMENT`. Off by default. Needs the Support Team
+chosen under Support Activity Setup, because every case is a Messages → Unanswered groups wait.
+
+### Unanswered — `/support-assignment/unanswered`
+
+- **Chips:** All / Unassigned / Assigned / Overdue, with live counts, plus "Today: N waits seen, M
+  filtered out", which links to Completed → Ignored.
+- **Filters:** search (group, customer, message), employee, account, date range. Page sizes 50–500.
+- **Columns:** status badge, group (opens the case), customer and message, received, waiting time
+  (amber at 15 min, red at 1 h), assigned to, SLA ("Due in 7m", "Overdue 12m · escalated"), and
+  Chat / Assign / Reassign.
+- **With `.assign`:**
+  - Row checkboxes, then **Assign selected** / **Cancel selected**.
+  - The assign dialog shows a searchable employee list with each person's open load and a "no
+    phone number" marker.
+  - It confirms with "You are about to assign N support cases to X", and asks explicitly before
+    moving cases that already belong to someone.
+- **Refresh:** every 15 s.
+
+### My assignments — `/support-assignment/mine`
+
+The ASSIGNED and OVERDUE cases of the team member linked to the viewer's login. The link is set on
+Team Members → edit → **Dashboard login**. Without a link, the page says how to set it.
+
+### Completed — `/support-assignment/completed`
+
+Chips: All finished / Completed / Answered by someone else / Cancelled / Ignored (filtered). Each
+row shows the close time, the assignee, and who answered when it was someone else.
+
+### Case — `/support-assignment/[id]`
+
+- **Shows:** the customer's message, then assigned to / by / when, SLA, due, answered by / when,
+  response time and filtered-message count.
+- **History:** every event, including each WhatsApp notification's delivery state (Delivered,
+  Waiting, Retrying, Failed with the reason) and why a notification was not sent.
+- **Actions:** Assign / Reassign / Cancel, with `.assign`.
+
+### Report — `/support-assignment/report` (also Reports → All Reports → Support Assignment)
+
+- **Filters:** period (Today, Yesterday, This week, This month, Custom ≤ 92 days, by case-opened
+  time), employee, group, status, SLA met/missed.
+- **Tiles:** support cases, unassigned, assigned, completed, pending, overdue, average response,
+  SLA compliance, cancelled, ignored.
+- **Tables:** Employee performance (assigned, completed, pending, overdue, answered by others,
+  reassigned away, average response, SLA), Group performance, and the case list (first 300 shown).
+- **Export:** Excel (Summary, Employees, Groups, Cases) or CSV (cases).
+
+### Settings — `/support-assignment/settings` (Settings → Support)
+
+- **General:** enable. Switching it on brings in customers already waiting, one case per WhatsApp
+  group.
+- **Qualification:** ignored keywords (one per line), and ignored senders, picked from the last 14
+  days' most active customers or typed.
+- **Assignment:** the Teams whose members can be assigned. None chosen means everybody active.
+- **SLA & escalation:** response time in minutes; escalate once, N minutes after going overdue.
+- **Notifications:** six switches, the manager group (GroupPicker; empty inherits the Notification
+  Center's destinations), and admins (team members).
+- **Message templates:** a link to Notifications → Templates (five `SUPPORT_ASSIGNMENT_*` templates).
 
 ---
 

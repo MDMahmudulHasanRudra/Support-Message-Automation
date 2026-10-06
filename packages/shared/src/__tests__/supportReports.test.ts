@@ -422,8 +422,14 @@ describe("report catalogue and date presets", () => {
       expect(r.exports.length).toBeGreaterThan(0);
       if (r.generic) expect(r.href).toBe(`/reports/${r.id}`);
     }
-    // The three reports that predate the catalogue keep their routes.
-    expect(REPORT_CATALOGUE.filter((r) => !r.generic).map((r) => r.href)).toEqual(["/team-report", "/support-activity/reports", "/team-management/attendance"]);
+    // The three reports that predate the catalogue keep their routes, and Support Assignment's
+    // report is its module's own page, listed here rather than duplicated (SUPPORT_ASSIGNMENT.md).
+    expect(REPORT_CATALOGUE.filter((r) => !r.generic).map((r) => r.href)).toEqual([
+      "/team-report",
+      "/support-activity/reports",
+      "/support-assignment/report",
+      "/team-management/attendance",
+    ]);
     expect(GENERIC_REPORT_IDS).toHaveLength(18);
   });
 

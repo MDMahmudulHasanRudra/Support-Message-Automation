@@ -3,7 +3,17 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { NotificationEvent } from "@prisma/client";
 import type { AiFallbackOutcome, ProjectStatus, WhatsAppServiceKey } from "@prisma/client";
 import { derivePatternSignature, validateRegexSafety } from "@support-automation/engine";
-import { DEFAULT_SHIFT_TEMPLATES, knowledgeContentHash, PROJECT_FEATURES } from "@support-automation/shared";
+import {
+  buildWhatsAppContactId,
+  DEFAULT_SHIFT_TEMPLATES,
+  hasReachablePhoneNumber,
+  knowledgeContentHash,
+  normalizePhoneNumber,
+  PROJECT_FEATURES,
+  SUPPORT_ASSIGNMENT_TEMPLATE_KEYS,
+  supportAssignmentDedupKey,
+  supportAssignmentNoticeVars,
+} from "@support-automation/shared";
 import type { RuleAction } from "@support-automation/shared";
 
 // Standard Next.js/Node singleton pattern: avoids exhausting Postgres
@@ -128,10 +138,11 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
   "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
+  "SupportAssignmentSettings",
   // descendants
   "Message", "OutboundMessage", "WhatsAppGroup", "AutomationExecution", "Notification", "WorkerCommand",
   "ProcessingCheckpoint", "MessageDropCounter", "GroupBroadcastJob", "GroupParticipantAddJob",
-  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "SupportResponseEpisode", "CollectionGap", "WhatsAppOperationDismissal", "CustomerMoodEvent", "MoodAlert", "MoodAlertAction", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
+  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "SupportResponseEpisode", "SupportAssignment", "SupportAssignmentEvent", "CollectionGap", "WhatsAppOperationDismissal", "CustomerMoodEvent", "MoodAlert", "MoodAlertAction", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
   "SupportEscalationEvent", "ConversationSession", "SupportActivity", "SupportSession", "TeamAttendanceDay",
   "TeamAttendanceGroup",
 ]);
@@ -140,6 +151,7 @@ export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
   "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
+  "SupportAssignmentSettings",
 ]);
 
 /** `SystemLog.projectId` is optional: a project's operational events carry one, platform events do not. */
@@ -1308,4 +1320,309 @@ export async function createProjectWithDefaults(input: CreateProjectInput, db: P
 
     return project;
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Support Assignment notifications (SUPPORT_ASSIGNMENT.md)
+// ---------------------------------------------------------------------------------------------
+
+/** Who one Support Assignment notification goes to. */
+export type SupportAssignmentRecipient =
+  | {
+      kind: "MEMBER";
+      member: { id: string; name: string; phoneNumber: string; whatsappId: string | null; status: string };
+    }
+  | { kind: "GROUP"; whatsappGroupId: string };
+
+export interface SupportAssignmentNotice {
+  assignmentId: string;
+  /** Unique per case. The same key twice is the same notification, and is queued once. */
+  dedupKey: string;
+  templateKey: string;
+  vars: Record<string, string | null>;
+  recipient: SupportAssignmentRecipient;
+  relatedMessageId?: string | null;
+  actorUserId?: string | null;
+  /** When the notification was decided — the history line's time. Defaults to now. */
+  at?: Date;
+}
+
+/**
+ * Queue Support Assignment notifications through the ordinary Notification queue, inside the
+ * CALLER'S transaction — the one that also changed the case — so a case is never assigned, made
+ * overdue or completed without its notifications, and never notified about a change that rolled
+ * back. Shared by the web (assign, reassign) and the worker (overdue, escalation, completion), so
+ * both address people, pick accounts and record history identically.
+ *
+ * - **At most once:** every notice carries a `dedupKey`; one already recorded on the case is
+ *   skipped. The caller's conditional update of the case row is what serialises two racers, and
+ *   `(assignmentId, dedupKey)` UNIQUE is the last guard.
+ * - **Muting is the Notification Center's:** a muted SUPPORT_ASSIGNMENT event (or its WhatsApp
+ *   channel switched off) writes no notification, and the case history says so.
+ * - **A person needs a real phone number** (`hasReachablePhoneNumber`): a WhatsApp id alone
+ *   identifies them in a group and reaches nobody in a direct message.
+ * - **A group is sent from a connected account that is in it**, preferring the account routed for
+ *   NOTIFY_WHATSAPP — a send from an account outside the group fails membership verification.
+ *
+ * Nothing here sends: the dispatcher does, and the template is rendered at send time from
+ * `payload.templateKey` + `payload.vars`. A notification that cannot be queued is recorded as
+ * NOTIFY_SKIPPED with the reason, and never fails the assignment itself.
+ */
+export async function queueSupportAssignmentNotices(
+  tx: Prisma.TransactionClient,
+  notices: readonly SupportAssignmentNotice[],
+): Promise<{ queued: number; skipped: number }> {
+  let queued = 0;
+  let skipped = 0;
+  if (notices.length === 0) return { queued, skipped };
+
+  // Fails open, like the worker's getEventDelivery: no row, or an unreadable one, delivers.
+  const setting = await tx.notificationEventSetting
+    .findFirst({ where: { event: NotificationEvent.SUPPORT_ASSIGNMENT }, select: { enabled: true, sendToWhatsApp: true } })
+    .catch(() => null);
+  const muted = setting ? !setting.enabled || !setting.sendToWhatsApp : false;
+  let routed: WhatsAppAccountResolution | null = null;
+  const routedAccount = async () => (routed ??= await resolveWhatsAppAccount("NOTIFY_WHATSAPP", tx as unknown as PrismaClient));
+
+  for (const notice of notices) {
+    const already = await tx.supportAssignmentEvent.findFirst({
+      where: { assignmentId: notice.assignmentId, dedupKey: notice.dedupKey },
+      select: { id: true },
+    });
+    if (already) continue;
+
+    const memberId = notice.recipient.kind === "MEMBER" ? notice.recipient.member.id : null;
+    let label = notice.recipient.kind === "MEMBER" ? notice.recipient.member.name : notice.recipient.whatsappGroupId;
+    const skip = async (detail: string) => {
+      skipped += 1;
+      await tx.supportAssignmentEvent.create({
+        data: {
+          assignmentId: notice.assignmentId,
+          type: "NOTIFY_SKIPPED",
+          at: notice.at,
+          memberId,
+          recipient: label,
+          detail,
+          dedupKey: notice.dedupKey,
+          actorUserId: notice.actorUserId ?? null,
+        },
+      });
+    };
+
+    if (muted) {
+      await skip("Support Assignment notifications are muted in the Notification Center.");
+      continue;
+    }
+
+    let destination: string;
+    let accountId: string;
+    if (notice.recipient.kind === "MEMBER") {
+      const member = notice.recipient.member;
+      if (member.status !== "ACTIVE") {
+        await skip(`${member.name} is not an active team member.`);
+        continue;
+      }
+      const digits = hasReachablePhoneNumber(member) ? normalizePhoneNumber(member.phoneNumber) : null;
+      if (!digits) {
+        await skip(`${member.name} has no phone number on Team Members (only a WhatsApp id), so a direct message cannot reach them.`);
+        continue;
+      }
+      const account = await routedAccount();
+      if (isResolutionError(account)) {
+        await skip(`No WhatsApp account to send from: ${account.error}`);
+        continue;
+      }
+      destination = buildWhatsAppContactId(digits);
+      accountId = account.accountId;
+    } else {
+      const whatsappGroupId = notice.recipient.whatsappGroupId;
+      const copies = await tx.whatsAppGroup.findMany({
+        where: { whatsappGroupId, isActive: true, account: { status: "CONNECTED" } },
+        select: { accountId: true, name: true },
+        orderBy: { accountId: "asc" },
+      });
+      if (copies[0]) label = copies[0].name;
+      if (copies.length === 0) {
+        await skip("No connected WhatsApp account is in this group.");
+        continue;
+      }
+      const account = await routedAccount();
+      const preferred = isResolutionError(account) ? undefined : copies.find((c) => c.accountId === account.accountId);
+      destination = whatsappGroupId;
+      accountId = (preferred ?? copies[0]!).accountId;
+    }
+
+    const notification = await tx.notification.create({
+      data: {
+        type: "WHATSAPP",
+        event: NotificationEvent.SUPPORT_ASSIGNMENT,
+        destination,
+        accountId,
+        relatedMessageId: notice.relatedMessageId ?? null,
+        payload: {
+          alertKind: "SUPPORT_ASSIGNMENT",
+          templateKey: notice.templateKey,
+          vars: notice.vars,
+          assignmentId: notice.assignmentId,
+        },
+      },
+      select: { id: true },
+    });
+    await tx.supportAssignmentEvent.create({
+      data: {
+        assignmentId: notice.assignmentId,
+        type: "NOTIFIED",
+        at: notice.at,
+        memberId,
+        notificationId: notification.id,
+        recipient: label,
+        dedupKey: notice.dedupKey,
+        actorUserId: notice.actorUserId ?? null,
+      },
+    });
+    queued += 1;
+  }
+  return { queued, skipped };
+}
+
+export type SupportAssignmentNoticeKind = keyof typeof SUPPORT_ASSIGNMENT_TEMPLATE_KEYS;
+
+/** The settings columns that decide who hears about what. */
+export interface SupportAssignmentNoticeSettings {
+  managerGroupIds: string[];
+  adminMemberIds: string[];
+  notifyEmployeeOnAssign: boolean;
+  notifyEmployeeOnReassign: boolean;
+  notifyManagerOnOverdue: boolean;
+  notifyAdminOnOverdue: boolean;
+  notifyAdminOnEscalation: boolean;
+  notifyAdminOnCompletion: boolean;
+}
+
+const NOTICE_MEMBER_SELECT = { id: true, name: true, phoneNumber: true, whatsappId: true, status: true } as const;
+
+/**
+ * Everything one Support Assignment notification needs, decided in one place for the web and the
+ * worker (SUPPORT_ASSIGNMENT.md):
+ *
+ * - ASSIGNED / REASSIGNED → the assignee, when that switch is on.
+ * - OVERDUE → the manager group(s) and/or the admins, per their switches.
+ * - ESCALATED → the admins (when that switch is on); with no admin chosen, the manager group(s), so
+ *   an escalation is never silent merely because one list is empty.
+ * - COMPLETED → the admins, when that switch is on.
+ *
+ * The manager groups are the module's own list; empty, they inherit the Notification Center's
+ * groups for this event, and then the global notification groups — the same "empty inherits" rule
+ * every other alert follows. Team members who opted into Support Assignment alerts on their Team
+ * Members page get OVERDUE and ESCALATED as well.
+ */
+export async function buildSupportAssignmentNotices(
+  tx: Prisma.TransactionClient,
+  input: {
+    assignmentId: string;
+    kind: SupportAssignmentNoticeKind;
+    settings: SupportAssignmentNoticeSettings;
+    now: Date;
+    actorUserId?: string | null;
+    previousEmployee?: string | null;
+  },
+): Promise<SupportAssignmentNotice[]> {
+  const row = await tx.supportAssignment.findUnique({
+    where: { id: input.assignmentId },
+    select: {
+      id: true,
+      status: true,
+      assignmentRound: true,
+      assignedAt: true,
+      dueAt: true,
+      completedAt: true,
+      responseSeconds: true,
+      firstMessageId: true,
+      group: { select: { name: true } },
+      firstMessage: { select: { senderName: true, senderPhone: true, body: true } },
+      assignedMember: { select: { ...NOTICE_MEMBER_SELECT, user: { select: { employee: { select: { employeeCode: true } } } } } },
+    },
+  });
+  if (!row) return [];
+  const { settings, kind } = input;
+
+  const members: Array<{ id: string; name: string; phoneNumber: string; whatsappId: string | null; status: string }> = [];
+  const groups: string[] = [];
+  const addMembers = (list: typeof members) => {
+    for (const m of list) if (!members.some((x) => x.id === m.id)) members.push(m);
+  };
+  const admins = async () =>
+    settings.adminMemberIds.length
+      ? tx.internalTeamMember.findMany({ where: { id: { in: settings.adminMemberIds } }, select: NOTICE_MEMBER_SELECT, orderBy: { name: "asc" } })
+      : [];
+  const optedIn = async () =>
+    (
+      await tx.teamMemberNotificationPreference.findMany({
+        where: { event: NotificationEvent.SUPPORT_ASSIGNMENT, teamMember: { status: "ACTIVE" } },
+        select: { teamMember: { select: NOTICE_MEMBER_SELECT } },
+      })
+    ).map((p) => p.teamMember);
+  const managerGroups = async (): Promise<string[]> => {
+    if (settings.managerGroupIds.length) return settings.managerGroupIds;
+    const [eventSetting, automation] = await Promise.all([
+      tx.notificationEventSetting.findFirst({ where: { event: NotificationEvent.SUPPORT_ASSIGNMENT }, select: { whatsappGroupIds: true } }),
+      tx.automationSettings.findUnique({ where: { id: "global" }, select: { whatsappNotificationGroupIds: true } }),
+    ]);
+    if (eventSetting?.whatsappGroupIds.length) return eventSetting.whatsappGroupIds;
+    return automation?.whatsappNotificationGroupIds ?? [];
+  };
+
+  switch (kind) {
+    case "ASSIGNED":
+    case "REASSIGNED":
+      if (row.assignedMember && (kind === "ASSIGNED" ? settings.notifyEmployeeOnAssign : settings.notifyEmployeeOnReassign)) {
+        addMembers([row.assignedMember]);
+      }
+      break;
+    case "OVERDUE":
+      if (settings.notifyManagerOnOverdue) groups.push(...(await managerGroups()));
+      if (settings.notifyAdminOnOverdue) addMembers(await admins());
+      addMembers(await optedIn());
+      break;
+    case "ESCALATED": {
+      const adminList = settings.notifyAdminOnEscalation ? await admins() : [];
+      if (adminList.length) addMembers(adminList);
+      else groups.push(...(await managerGroups()));
+      addMembers(await optedIn());
+      break;
+    }
+    case "COMPLETED":
+      if (settings.notifyAdminOnCompletion) addMembers(await admins());
+      break;
+  }
+
+  const vars = supportAssignmentNoticeVars({
+    groupName: row.group.name,
+    customerName: row.firstMessage?.senderName ?? null,
+    customerPhone: row.firstMessage?.senderPhone ?? null,
+    message: row.firstMessage?.body ?? null,
+    employeeName: row.assignedMember?.name ?? null,
+    employeeId: row.assignedMember?.user?.employee?.employeeCode ?? null,
+    assignedAt: row.assignedAt?.getTime() ?? null,
+    dueAt: row.dueAt?.getTime() ?? null,
+    status: row.status,
+    now: input.now.getTime(),
+    completedAt: row.completedAt?.getTime() ?? null,
+    responseSeconds: row.responseSeconds,
+    previousEmployee: input.previousEmployee ?? null,
+  });
+  const templateKey = SUPPORT_ASSIGNMENT_TEMPLATE_KEYS[kind];
+  const base = { assignmentId: row.id, templateKey, vars, relatedMessageId: row.firstMessageId, actorUserId: input.actorUserId ?? null, at: input.now };
+  return [
+    ...members.map((member) => ({
+      ...base,
+      dedupKey: supportAssignmentDedupKey(row.assignmentRound, kind, { memberId: member.id }),
+      recipient: { kind: "MEMBER" as const, member },
+    })),
+    ...[...new Set(groups)].map((whatsappGroupId) => ({
+      ...base,
+      dedupKey: supportAssignmentDedupKey(row.assignmentRound, kind, { whatsappGroupId }),
+      recipient: { kind: "GROUP" as const, whatsappGroupId },
+    })),
+  ];
 }

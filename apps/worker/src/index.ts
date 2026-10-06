@@ -28,6 +28,7 @@ import { readLoops, recordLoopTick, registerLoop } from "./health/loopLiveness.j
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startMoodDetectionProcessor } from "./mood/moodProcessor.js";
+import { startSupportAssignmentProcessor } from "./supportAssignment/processor.js";
 import { startSessionSegmentationProcessor } from "./learning/sessionSegmentationProcessor.js";
 import { startPatternDetectionProcessor } from "./learning/patternDetectionProcessor.js";
 import { startAiAnalysisProcessor } from "./learning/aiAnalysisProcessor.js";
@@ -149,6 +150,9 @@ async function main() {
     startEscalationProcessor(),
     // Mood Detection: finishes recorded readings and runs each alert's actions (a no-op while off).
     startMoodDetectionProcessor(),
+    // Support Assignment SLA, escalation and its safety net (SUPPORT_ASSIGNMENT.md). One settings
+    // read per project per tick while the module is off.
+    startSupportAssignmentProcessor(),
     // Conversation Learning Phase 1 — always registered, but processOneSegmentationBatch()
     // itself no-ops on every tick until LearningSettings.conversationLearningEnabled is turned
     // on, so this has zero effect on a fresh/default install.

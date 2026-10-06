@@ -8,6 +8,8 @@ import { hasReachablePhoneNumber } from "@support-automation/shared";
 import { EditTeamMemberForm } from "./EditTeamMemberForm";
 import { loadMemberFormOptions } from "../../memberFormOptions";
 import { updateMemberNotificationPreferences } from "@/server/actions/notificationEvents";
+import { loginsForProject } from "@/server/projectLogins";
+import { LoginLinkForm } from "./LoginLinkForm";
 
 const EVENT_LABELS: Record<string, string> = {
   SUPPORT_ESCALATION: "Support escalation — a priority case is overdue",
@@ -15,6 +17,9 @@ const EVENT_LABELS: Record<string, string> = {
   RULE_NOTIFY_WHATSAPP: "A rule raised a WhatsApp alert",
   RULE_NOTIFY_TEAMS: "A rule raised a Teams alert",
   UNKNOWN_PATTERN: "An unrecognised question keeps coming up",
+  COLLECTION_BROKEN: "A WhatsApp number has stopped collecting messages",
+  MOOD_ALERT: "Mood Detection found an upset customer",
+  SUPPORT_ASSIGNMENT: "Support Assignment — a case went overdue or was escalated",
 };
 
 export default async function EditTeamMemberPage({ params }: { params: Promise<{ id: string }> }) {
@@ -38,6 +43,7 @@ export default async function EditTeamMemberPage({ params }: { params: Promise<{
     : null;
 
   const updatePreferences = updateMemberNotificationPreferences.bind(null, member.id);
+  const logins = await loginsForProject();
 
   return (
     <div>
@@ -57,6 +63,14 @@ export default async function EditTeamMemberPage({ params }: { params: Promise<{
             status: member.status,
           }}
         />
+      </Card>
+
+      <Card className="mt-5 max-w-lg">
+        <SectionHeader
+          title="Dashboard login"
+          description="Link the login this person signs in with, so Support Assignment can show them their own cases under My assignments."
+        />
+        <LoginLinkForm memberId={member.id} currentUserId={member.userId} logins={logins} />
       </Card>
 
       <Card className="mt-5 max-w-lg">
