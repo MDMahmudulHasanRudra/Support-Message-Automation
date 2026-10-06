@@ -19,7 +19,7 @@ module, field, and behavior in the app.
   itself when that person replies in the group. If they do not reply within the SLA, the manager
   group and admins are told, with optional escalation. Includes My assignments, Completed, full
   history per case, and a report (also under All Reports) with Excel/CSV. Off by default; needs the
-  Support Team chosen. Built locally on `rudra`; not committed, not deployed (`SUPPORT_ASSIGNMENT.md`).
+  Support Team chosen. Committed on `rudra`; not deployed (`SUPPORT_ASSIGNMENT.md`).
 
 - **Faster group sync for a second account** (WhatsApp → Accounts / Groups). A newly linked number's
   groups now appear as the phone delivers them (re-read every 30 s until settled) instead of at a
