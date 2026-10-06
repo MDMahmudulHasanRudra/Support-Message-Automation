@@ -455,6 +455,28 @@ after every connect; and `checkSessionHealth()` asks each CONNECTED page every t
 A sync on a page with no chat store fails once with `SessionNotReadyError`, never three times with
 "reading 'map'". The watchdog now selects accounts with any ACTIVE group, not only monitored ones.
 
+### Group sync at roster scale (`commands/commandProcessor.ts`, `GROUP_SYNC.md`)
+
+Discovery is ONE in-page read of the chat store; nothing per group, no participants, no pictures.
+Three rules worth not undoing:
+- **A newly linked phone delivers its chats over minutes**, so after every connect ADD_ONLY
+  "arrival passes" re-read every 30 s (`GROUP_ARRIVAL_SETTINGS`) until three find nothing new, then
+  one FULL sync. ADD_ONLY never stamps every row and never runs the deactivation sweep.
+- **`RESYNC_GROUPS` is not awaited by the serial command processor** — it settles its command row
+  when the sync ends — so one account's sync never holds another account's commands. Duplicate
+  syncs of one account join `syncInFlight` (in memory on purpose: only the process holding the
+  browser can sync it).
+- **Per-account state lives on `WhatsAppAccount.groupSync*`** (RUNNING / COMPLETED / PARTIAL /
+  FAILED, counts, timing), shown on Accounts and Groups; a RUNNING left by a restart is closed at boot.
+  Persistence is batched (500 / 5,000) and a failed batch is retried row by row, so one bad group
+  costs only itself. A sync writes only name, `isActive` and `lastSyncedAt`.
+- **Logout and Reconnect cancel a running sync first** (`cancelGroupSync`, a per-account generation
+  checked before every write): CANCELLED, never FAILED, and a cancelled sync writes nothing more —
+  otherwise a sync that read the list before a LOGOUT re-activates every group the logout switched off.
+- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090200`, pushed).
+  Prisma orders by name and `migrate deploy` silently applies an earlier-named one out of order, so
+  until 12 Oct 2026 name new migrations after the last one by hand.
+
 ### Staying up, and noticing when nothing is arriving (`lifecycle.ts`, `recovery.ts`, `pipeline/messageRecovery.ts`, `health/collectionWatchdog.ts`)
 
 **Accounts connect in the BACKGROUND, and nothing may put that back on the startup path.**

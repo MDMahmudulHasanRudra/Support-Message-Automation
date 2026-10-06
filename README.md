@@ -13,6 +13,11 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Faster group sync for a second account** (WhatsApp → Accounts / Groups). A newly linked number's
+  groups now appear as the phone delivers them (re-read every 30 s until settled) instead of at a
+  5-minute pass; one account's sync no longer holds another's; each account shows its own sync
+  progress; a Logout or Reconnect stops a running sync cleanly (shown as stopped, not failed).
+  Built locally on `rudra`; not deployed (`GROUP_SYNC.md`).
 - **Mood Detection** (Settings → Support → Mood Detection). Notices an angry, frustrated or urgent
   customer and does only what you choose per mood: pause AI or require a person, alert the team and
   an internal group (tagging the responsible member), put the chat back on Waiting, optionally a
