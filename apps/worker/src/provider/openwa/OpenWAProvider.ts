@@ -31,7 +31,7 @@ import type {
   SendResult,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
-import { SessionNotReadyError } from "../WhatsAppProvider.js";
+import { GroupListNotReadyError, SessionNotReadyError } from "../WhatsAppProvider.js";
 import {
   readPairingPreference,
   recordLinkWindow,
@@ -347,6 +347,16 @@ const ABANDONED = "OPENWA_ATTEMPT_ABANDONED";
  * an entry for it would put a "Code accepted" panel on screen at a moment nothing has confirmed,
  * which is the one mistake here that would send somebody away from a screen they still need.
  */
+/**
+ * The longest one roster read is shared before it is given up on. A read that never answers (a
+ * wedged page) would otherwise be joined by every later read forever; past this, it is released
+ * with `GroupListNotReadyError` and the next caller starts a fresh read. Above Puppeteer's own 180 s
+ * `protocolTimeout`, which normally ends such a read first. Mutable for tests.
+ */
+export const GROUP_READ_SETTINGS = {
+  maxMs: Number(process.env.WHATSAPP_GROUP_READ_MAX_MS) || 200_000,
+};
+
 /** One group as `listGroupChats()` returns it — only what the sync and the collection probe read. */
 interface LeanGroupChat {
   id: string;
@@ -425,6 +435,12 @@ const POST_SCAN_GRACE_MS = 240_000;
 
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
+  /**
+   * The roster read currently running in this session's page, if any, and the client it runs on.
+   * See `listGroupChats`: a read the caller stopped waiting for keeps running inside the page, so
+   * the next caller joins it instead of queueing a second read behind it.
+   */
+  private groupRead: { client: Client; promise: Promise<LeanGroupChat[]> } | null = null;
   private state: OpenWAConnectionState = "DISCONNECTED";
   // OpenWA's onStateChanged can fire several transitions within milliseconds of each other (e.g.
   // OPENING -> PAIRING -> CONNECTED), and each call site below fires setState() without awaiting
@@ -1433,13 +1449,14 @@ export class OpenWAProvider implements WhatsAppProvider {
    * `id._serialized` for the id), so what callers receive is the same data for those fields, not an
    * approximation of it.
    *
-   * FALLS BACK TO `getAllGroups()`, and that is what makes it safe to ship without a live trace.
-   * `window.Store` is WhatsApp Web's internal module registry, not a public API, and a build that
-   * reshapes it would break this. Anything short of a non-empty list of string ids — a throw, a
-   * missing Store, an empty result — takes the old path, so the worst case is exactly today's
-   * behaviour rather than a group list quietly emptied. That also means a result of zero groups
-   * never reaches `syncGroups` from here unless the slow path agrees, which matters because an
-   * empty roster is the one input that sweep has been taught to distrust.
+   * FALLS BACK TO `getAllGroups()` when the shape is wrong, and that is what makes it safe to ship
+   * without a live trace. `window.Store` is WhatsApp Web's internal module registry, not a public
+   * API, and a build that reshapes it would break this. A throw, a reshaped collection or a
+   * malformed id takes the old path, so the worst case is exactly the old behaviour rather than a
+   * group list quietly emptied. An EMPTY list does not (since 8 Oct 2026): the slow path reads the
+   * same `Store.Chat`, so it cannot disagree — it only costs a full serialisation of every chat,
+   * which is what a freshly linked number's syncs were spending their whole 150s on. The sweep
+   * never acts on an empty list either way.
    *
    * EXCEPT when the chat store is missing altogether, which is not a shape change but a page with
    * no WhatsApp in it — logged out on the phone, reloaded to the login screen, not finished
@@ -1450,6 +1467,39 @@ export class OpenWAProvider implements WhatsAppProvider {
   private async listGroupChats(): Promise<LeanGroupChat[]> {
     const client = this.client;
     if (!client) return [];
+    // ONE roster read per session at a time. A `page.evaluate` cannot be cancelled: when a sync
+    // stops waiting for one (its own timeout), the read carries on inside WhatsApp Web's page, which
+    // runs one script at a time. A second read started then queues BEHIND the first, so on a page
+    // that is still loading a new device's chats each retry was slower than the one before and none
+    // could ever finish inside its own deadline. Joining the read already running means a slow read
+    // is not wasted: whichever caller is waiting when it finishes gets its answer. Keyed by client,
+    // so a read on a page that a reconnect has since replaced is never joined.
+    //
+    // Joining is bounded: a read is shared for at most `GROUP_READ_SETTINGS.maxMs`, then released
+    // with GroupListNotReadyError, so one that never answers cannot hold every later read forever.
+    // The page cannot be told to stop it; if it is truly wedged the session health check
+    // (`checkSessionHealth`) finds the page unresponsive and the session is restarted.
+    const running = this.groupRead;
+    if (running && running.client === client) return running.promise;
+    const maxMs = GROUP_READ_SETTINGS.maxMs;
+    const promise = withTimeout(this.readGroupChats(client), maxMs, "group list read").catch((err: unknown) => {
+      if ((err as Error).message === `group list read timed out after ${maxMs}ms`) {
+        console.warn(`[openwa] a group-list read for ${this.sessionId} did not answer in ${Math.round(maxMs / 1000)}s; the next read starts afresh`);
+        throw new GroupListNotReadyError(
+          `WhatsApp Web did not answer a group-list read within ${Math.round(maxMs / 1000)}s. The next read starts afresh.`,
+        );
+      }
+      throw err;
+    });
+    this.groupRead = { client, promise };
+    const release = () => {
+      if (this.groupRead?.promise === promise) this.groupRead = null;
+    };
+    promise.then(release, release);
+    return promise;
+  }
+
+  private async readGroupChats(client: Client): Promise<LeanGroupChat[]> {
     try {
       const lean = await client.getPage().evaluate(() => {
         interface PageChat {
@@ -1458,14 +1508,33 @@ export class OpenWAProvider implements WhatsAppProvider {
           formattedTitle?: string;
           toJSON?: () => { name?: string; t?: number };
         }
-        const store = (globalThis as unknown as { Store?: { Chat?: { filter?: (fn: (chat: PageChat) => boolean) => PageChat[] } } })
-          .Store;
-        // Distinguished from `null` below on purpose: a missing store is the page having no
-        // WhatsApp session in it, a store without `filter` is a WhatsApp Web build that reshaped it.
+        const store = (
+          globalThis as unknown as {
+            Store?: { Chat?: { filter?: (fn: (chat: PageChat) => boolean) => PageChat[]; length?: unknown; models?: unknown } };
+          }
+        ).Store;
+        // Four different answers, never confused with one another:
+        //   NO_CHAT_STORE — no WhatsApp session in the page at all (logged out, not loaded);
+        //   null          — a chat store this code does not recognise (a reshaped WhatsApp build);
+        //   NOT_LOADED    — a recognisable chat store that holds NO chats of any kind yet, which is
+        //                   a session still receiving its chats, never "this number has no groups";
+        //   a list        — the groups among the chats it holds (possibly none yet, if the phone
+        //                   has sent one-to-one chats and no group so far).
         if (!store?.Chat) return "NO_CHAT_STORE" as const;
         if (typeof store.Chat.filter !== "function") return null;
+        const total =
+          typeof store.Chat.length === "number" ? store.Chat.length : Array.isArray(store.Chat.models) ? store.Chat.models.length : null;
+        if (total === 0) return "NOT_LOADED" as const;
         return store.Chat.filter((chat) => Boolean(chat?.isGroup)).map((chat) => {
-          const json = typeof chat.toJSON === "function" ? chat.toJSON() : {};
+          // A chat the phone is still sending can be half-built, and one throw here used to fail
+          // the whole read over to the slow path. Its id is still readable, so it is listed (and
+          // never missed by a sweep) with its name left to the next read.
+          let json: { name?: string; t?: number } = {};
+          try {
+            json = typeof chat.toJSON === "function" ? chat.toJSON() : {};
+          } catch {
+            json = {};
+          }
           return {
             id: chat.id?._serialized ?? null,
             name: typeof json.name === "string" ? json.name : null,
@@ -1474,17 +1543,27 @@ export class OpenWAProvider implements WhatsAppProvider {
           };
         });
       });
+      if (lean === "NOT_LOADED") {
+        // Not the slow path either: it reads this same empty store.
+        throw new GroupListNotReadyError("WhatsApp Web has not received this number's chats from the phone yet, so its group list is not ready.");
+      }
       if (lean === "NO_CHAT_STORE") {
         throw new SessionNotReadyError(
           "WhatsApp Web is not loaded in this account's session (it has no chat list), so its groups cannot be read. This usually means the number was logged out on the phone. Reconnect it from WhatsApp Accounts, and link it again if it asks for a QR code.",
         );
       }
-      if (Array.isArray(lean) && lean.length > 0 && lean.every((chat) => typeof chat.id === "string")) {
+      // An EMPTY list from a working chat store is the true answer, not a reason for the slow
+      // path: `getAllGroups()` is `Store.Chat.map(serialise).filter(isGroup)` on the very same
+      // store, so it cannot find a group this did not — it only serialises every one-to-one chat
+      // first. Right after a number is linked that is exactly the situation (the phone has sent some
+      // chats, no groups yet), and the slow path's cost there is what ran group syncs past their
+      // 150s deadline. An empty list never deactivates anything (`syncGroupsInProject`).
+      if (Array.isArray(lean) && lean.every((chat) => typeof chat.id === "string")) {
         return lean as LeanGroupChat[];
       }
       console.warn("[openwa] lean group enumeration returned nothing usable — falling back to getAllGroups()");
     } catch (err) {
-      if (err instanceof SessionNotReadyError) throw err;
+      if (err instanceof SessionNotReadyError || err instanceof GroupListNotReadyError) throw err;
       console.warn("[openwa] lean group enumeration failed — falling back to getAllGroups()", err);
     }
     const chats: unknown = await client.getAllGroups();

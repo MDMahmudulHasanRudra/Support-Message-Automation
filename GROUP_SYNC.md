@@ -59,6 +59,101 @@ After every connect, the existing post-connect flow (sync, then catch-up) now en
 - **Overlap:** a pass skips while another sync of the account is running. It is registered in the
   same in-flight map, so a manual resync joins it rather than racing it.
 
+### A second number whose list is slow to arrive (8 Oct 2026)
+
+Production, 7 Oct 2026, both numbers CONNECTED and sending:
+
+| Account | Groups | Group sync |
+|---|---|---|
+| Primary Account | 1,865 | completed in 2.7 s |
+| Lead (linked at 12:52) | — | "group sync timed out after 150000ms" |
+
+**The read.** One `page.evaluate` over WhatsApp Web's own `Store.Chat`: filter to groups, take
+id/name/title/t (`OpenWAProvider.listGroupChats`). It is not OpenWA's `getAllGroups()`. That call
+is the fallback, and in OpenWA 4.76's injected WAPI it is
+`getAllChats().filter(isGroup)`, where `getAllChats()` serialises EVERY chat (contact, picture,
+presence, the full membership of every group).
+
+**Why the second number timed out:**
+- **The empty-list fallback.** Right after linking, the phone has sent some one-to-one chats and
+  no group yet. The lean read found no group, and an empty result used to fall back to
+  `getAllGroups()`. That reads the same store, so it could only agree, after serialising every chat.
+- **The page is busy.** A new device's WhatsApp Web is loading what the phone sends, and a read
+  waits behind it.
+- **A timeout cannot stop the read.** It keeps running inside the page, and the next attempt
+  queued behind it.
+- **The retries blocked the arrival passes.** The post-connect sync made three 150 s attempts
+  (about 8 minutes) before the arrival passes could start, then wrote FAILED.
+
+**The bottleneck is WhatsApp Web loading the new device plus our own read strategy**, not the
+database: persistence takes about 1–1.5 s for 2,000 groups.
+
+**What changed** (the Primary path is unchanged when its read is fast):
+1. **An empty list from a working chat store is the answer.** The slow path runs only when the
+   store is reshaped, the read throws, or an id is malformed. The sweep never acts on an empty list.
+2. **One roster read per session at a time.** A caller that arrives while a read is still running
+   in the page joins it, so a slow read is not wasted and reads never stack. Keyed by client, so a
+   read on a page a reconnect replaced is never joined.
+3. **A half-built chat** (its `toJSON` throws) is listed by its id instead of failing the whole read.
+4. **The post-connect sync's read is bounded** by `GROUP_ARRIVAL_SETTINGS.readTimeoutMs` (60 s,
+   `WHATSAPP_GROUP_READ_TIMEOUT_MS`). Past it, it throws `GroupListStillLoadingError`:
+   - no retry and no FAILED;
+   - status RUNNING "Waiting for WhatsApp to load this number's chats";
+   - the arrival passes take over at once.
+
+   Discovery is bounded apart from persistence.
+5. **The arrival passes use the same bound.** A pass whose read did not finish, or that failed,
+   counts as no evidence (`null`): it never counts towards "settled" and deactivates nothing. Saved
+   groups stay saved, and the next pass reads again, joining the read still running. After 20
+   minutes the protected FULL sync runs as before.
+6. **Unchanged:**
+   - ordinary syncs (Resync, the settled FULL, the 15-minute follow-up): 150 s × 3 attempts, no
+     read bound;
+   - ADD_ONLY passes (insert, rename, reactivate only);
+   - the sweep and `groupSyncGuard.ts`;
+   - settling on new groups OR a bigger returned list;
+   - Logout/Reconnect cancellation.
+
+**Empty versus not ready.** The page read returns one of four things:
+
+| Page read returns | Meaning | Result |
+|---|---|---|
+| `NO_CHAT_STORE` | No WhatsApp in the page | `SessionNotReadyError`, never retried |
+| `null` | A chat store this code does not recognise | the `getAllGroups()` fallback |
+| `NOT_LOADED` | A recognisable store holding NO chats of any kind | `GroupListNotReadyError`: still loading, never an empty roster, never the fallback |
+| a list | the groups among the chats it holds | the answer (it can be empty when the phone has sent only one-to-one chats so far) |
+
+Even a real empty list cannot settle a new number:
+- Right after a connect, 0 groups is "still loading", not COMPLETED with 0.
+- An arrival pass that reads 0 before any group has ever been listed counts as no evidence (`null`).
+- So the passes keep waiting for the roster to start arriving. The 20-minute window still ends the
+  wait.
+
+**A read that never answers.** Only one read runs per session at a time, and it can be shared for
+at most `GROUP_READ_SETTINGS.maxMs` (200 s, `WHATSAPP_GROUP_READ_MAX_MS`). Past that it is released
+with `GroupListNotReadyError`, and the next pass starts a fresh read.
+- **Why it is needed:** without the release, every later pass would join the dead read forever.
+- **Why 200 s:** Puppeteer's own 180 s `protocolTimeout` normally ends such a read first.
+- **What the release cannot do:** stop the read inside the page. If the page is truly wedged, the
+  session health check restarts the session.
+
+**A Resync pressed during that window** joins the connect's sync, and settles DONE with
+`{ stillLoading: true }`, never FAILED: the arrival passes are syncing the list.
+
+**Verification (8 Oct 2026), isolated test DB rebuilt from scratch before each phase:**
+
+| Run | Result |
+|---|---|
+| `collectionWatchdog` alone, 5 times | 19/19 each |
+| Full worker suite, new code, 3 times in a row | 1,055/1,055 each |
+| Full worker suite, committed code (HEAD), 3 times | 1,034/1,034 each |
+
+The earlier single failures (`collectionWatchdog`, `multiAccountRouting`) did not recur on a clean
+database. One real failure was found and fixed on the way: `commandSafety`'s RESYNC was recorded
+FAILED after joining the connect's "still loading" sync.
+
+No migration: nothing in the schema changed.
+
 ### No account waits for another
 
 - `RESYNC_GROUPS` now starts the sync **in the background** and settles the command row

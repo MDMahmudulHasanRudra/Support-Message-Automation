@@ -70,4 +70,27 @@ describe("group sync retries", () => {
     expect((await settled) as Error).toBeInstanceOf(Error);
     expect(getGroups).toHaveBeenCalledTimes(3);
   });
+
+  it("after a connect, a read still running past its bound is neither retried nor FAILED — the arrival passes take over", async () => {
+    const { syncGroupsWithTimeoutAndRetry, GROUP_ARRIVAL_SETTINGS, GroupListStillLoadingError } = await import("../commands/commandProcessor.js");
+    const saved = GROUP_ARRIVAL_SETTINGS.readTimeoutMs;
+    GROUP_ARRIVAL_SETTINGS.readTimeoutMs = 50;
+    try {
+      // A page still loading a new device's chats: the read takes far longer than the bound.
+      const getGroups = vi.fn(() => new Promise((resolve) => setTimeout(() => resolve([]), 2_000)));
+      await expect(syncGroupsWithTimeoutAndRetry("acc-new-device", { getGroups } as never, { afterConnect: true })).rejects.toBeInstanceOf(
+        GroupListStillLoadingError,
+      );
+      expect(getGroups).toHaveBeenCalledTimes(1);
+      const messages = logged.map((entry) => entry.message);
+      expect(messages).toContain("GROUP_LIST_STILL_LOADING");
+      expect(messages).not.toContain("GROUP_SYNC_RETRY");
+      expect(messages).not.toContain("GROUP_SYNC_TIMEOUT");
+      expect(logged.some((entry) => entry.level === "ERROR")).toBe(false);
+    } finally {
+      GROUP_ARRIVAL_SETTINGS.readTimeoutMs = saved;
+    }
+  });
+
 });
+

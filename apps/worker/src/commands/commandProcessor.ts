@@ -1,7 +1,7 @@
 import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
 import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withAccountProject, withProject } from "../project/context.js";
-import { SessionNotReadyError, type WhatsAppProvider } from "../provider/WhatsAppProvider.js";
+import { SessionNotReadyError, type WhatsAppProvider, GroupListNotReadyError } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { processOneGroupKnowledgeBuild } from "../knowledge/groupKnowledgeJob.js";
@@ -77,6 +77,20 @@ export class GroupSyncCancelledError extends Error {
   }
 }
 
+/**
+ * WhatsApp has not finished handing this session its group list: one read of it ran past
+ * `GROUP_ARRIVAL_SETTINGS.readTimeoutMs`. Not a failure — a freshly linked number's page spends
+ * minutes loading the chats its phone sends, and a read waits behind that. The read keeps running
+ * in the page (`OpenWAProvider.listGroupChats` lets the next read join it), and the arrival passes
+ * read again. Only the passes ever see this: an ordinary sync reads without that bound.
+ */
+export class GroupListStillLoadingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GroupListStillLoadingError";
+  }
+}
+
 const syncGeneration = new Map<string, number>();
 const generationOf = (accountId: string) => syncGeneration.get(accountId) ?? 0;
 
@@ -112,14 +126,31 @@ export async function cancelGroupSync(accountId: string, reason: string): Promis
   return true;
 }
 
+async function readGroupList(provider: WhatsAppProvider, readTimeoutMs: number) {
+  try {
+    return await withTimeout(provider.getGroups(), readTimeoutMs, "group list read");
+  } catch (err) {
+    // The provider's own "not ready" (an empty chat store, a read it gave up sharing) means the
+    // same thing here as a slow read: still loading, read again.
+    if (err instanceof GroupListNotReadyError) throw new GroupListStillLoadingError(err.message);
+    if ((err as Error).message === `group list read timed out after ${readTimeoutMs}ms`) {
+      throw new GroupListStillLoadingError(
+        `WhatsApp is still loading this number's chats: reading its group list took longer than ${Math.round(readTimeoutMs / 1000)}s.`,
+      );
+    }
+    throw err;
+  }
+}
+
 export async function syncGroupsDetailed(
   accountId: string,
   provider: WhatsAppProvider,
   mode: GroupSyncMode = "FULL",
   generation: number = generationOf(accountId),
+  readTimeoutMs?: number,
 ): Promise<GroupSyncOutcome> {
   // Groups belong to the account's project, and only that project's rows are read or written.
-  return withAccountProject(accountId, () => syncGroupsInProject(accountId, provider, mode, generation));
+  return withAccountProject(accountId, () => syncGroupsInProject(accountId, provider, mode, generation, readTimeoutMs));
 }
 
 /**
@@ -140,6 +171,7 @@ async function syncGroupsInProject(
   provider: WhatsAppProvider,
   mode: GroupSyncMode,
   generation: number,
+  readTimeoutMs?: number,
 ): Promise<GroupSyncOutcome> {
   // Before every write: a Logout or Reconnect since this sync started means stop, writing nothing.
   const checkpoint = () => {
@@ -150,7 +182,9 @@ async function syncGroupsInProject(
   const discoveryStarted = performance.now();
   // ONE call into the page for the whole roster — no per-group request, no participants, no
   // pictures (OpenWAProvider.listGroupChats). A chat listed twice is kept once.
-  const listed = await provider.getGroups();
+  // Discovery is bounded on its own, apart from the writes, only where a slow read means "still
+  // loading" rather than "broken" (the post-connect read and the arrival passes).
+  const listed = readTimeoutMs ? await readGroupList(provider, readTimeoutMs) : await provider.getGroups();
   checkpoint();
   const discoveryMs = Math.round(performance.now() - discoveryStarted);
   const groups = [...new Map(listed.map((group) => [group.whatsappGroupId, group])).values()];
@@ -367,6 +401,7 @@ export function isGroupSyncRunning(accountId: string): boolean {
 export async function syncGroupsWithTimeoutAndRetry(
   accountId: string,
   provider: WhatsAppProvider,
+  options: { afterConnect?: boolean } = {},
 ): Promise<number> {
   const alreadyRunning = syncInFlight.get(accountId);
   if (alreadyRunning) {
@@ -376,7 +411,7 @@ export async function syncGroupsWithTimeoutAndRetry(
     return alreadyRunning;
   }
 
-  const run = withAccountProject(accountId, () => runSyncWithRetry(accountId, provider));
+  const run = withAccountProject(accountId, () => runSyncWithRetry(accountId, provider, options));
   syncInFlight.set(accountId, run);
   try {
     return await run;
@@ -386,7 +421,15 @@ export async function syncGroupsWithTimeoutAndRetry(
   }
 }
 
-async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): Promise<number> {
+/**
+ * `afterConnect`: the sync a connect starts. Its read is bounded by `GROUP_ARRIVAL_SETTINGS.readTimeoutMs`,
+ * and a read that runs past it is NOT retried here and NOT recorded as failed: it throws
+ * `GroupListStillLoadingError`, the account stays "syncing", and the arrival passes take over at
+ * once. Retrying a 150s read three times (about eight minutes) is what kept a freshly linked number
+ * from even starting its arrival passes, and ended in FAILED although nothing was broken. A session
+ * whose list reads in a few seconds (every established account) is unaffected.
+ */
+async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, options: { afterConnect?: boolean } = {}): Promise<number> {
   const attempts = GROUP_SYNC_RETRY_DELAYS_MS.length + 1;
   const started = performance.now();
   const generation = generationOf(accountId);
@@ -405,7 +448,18 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const outcome = await withTimeout(syncGroupsDetailed(accountId, provider, "FULL", generation), GROUP_SYNC_TIMEOUT_MS, "group sync");
+      const outcome = await withTimeout(
+        syncGroupsDetailed(accountId, provider, "FULL", generation, options.afterConnect ? GROUP_ARRIVAL_SETTINGS.readTimeoutMs : undefined),
+        GROUP_SYNC_TIMEOUT_MS,
+        "group sync",
+      );
+      // Right after a connect, no group at all is WhatsApp not having sent them yet, not a finished
+      // sync: recording COMPLETED with 0 groups would tell the operator the number is in none. The
+      // read wrote nothing (and an empty list never deactivates), so this only hands over to the
+      // arrival passes, which wait for the list to arrive.
+      if (options.afterConnect && outcome.discovered === 0) {
+        throw new GroupListStillLoadingError("WhatsApp has not listed any group for this number yet.");
+      }
       const totalMs = Math.round(performance.now() - started);
       await logSystemEvent("INFO", "provider", "GROUP_SYNC_COMPLETED", {
         accountId,
@@ -446,6 +500,14 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider): 
         throw err instanceof GroupSyncCancelledError ? err : new GroupSyncCancelledError("The group sync was stopped because the account was logged out or reconnected.");
       }
       const message = (err as Error).message ?? String(err);
+      if (err instanceof GroupListStillLoadingError) {
+        await logSystemEvent("INFO", "provider", "GROUP_LIST_STILL_LOADING", { accountId, attempt, error: message });
+        await record({
+          groupSyncStatus: "RUNNING",
+          groupSyncStage: "Waiting for WhatsApp to load this number's chats — reading the group list again shortly",
+        });
+        throw err;
+      }
       const isTimeout = message.includes("timed out");
       // A logged-out or disconnected session will be exactly as logged out in ten seconds, so this
       // is the last attempt whatever the counter says. Retrying it produced two more identical
@@ -527,7 +589,9 @@ function resyncAndCatchUpInProject(accountId: string, provider: WhatsAppProvider
   const generation = generationOf(accountId);
   const connectedAt = Date.now();
   let firstCount: number | null = null;
-  return syncGroupsWithTimeoutAndRetry(accountId, provider)
+  // The connect's sync handed over while the account reads "syncing": the passes own that status.
+  let stillLoading = false;
+  return syncGroupsWithTimeoutAndRetry(accountId, provider, { afterConnect: true })
     .then((groupCount) => {
       firstCount = groupCount;
       console.log(`[worker] synced ${groupCount} group(s) for account ${accountId} after ${source}`);
@@ -535,6 +599,12 @@ function resyncAndCatchUpInProject(accountId: string, provider: WhatsAppProvider
     .catch((err) => {
       if (err instanceof GroupSyncCancelledError) {
         console.log(`[worker] group sync for account ${accountId} after ${source} was stopped: ${err.message}`);
+        return;
+      }
+      if (err instanceof GroupListStillLoadingError) {
+        stillLoading = true;
+        // Not a failure: the arrival passes below keep reading until the list is complete.
+        console.log(`[worker] group list for account ${accountId} after ${source} is still loading; the arrival passes take over`);
         return;
       }
       console.error(
@@ -551,7 +621,7 @@ function resyncAndCatchUpInProject(accountId: string, provider: WhatsAppProvider
     .catch((err) => {
       console.error(`[worker] catch-up failed for account ${accountId} after ${source}`, err);
     })
-    .finally(() => watchGroupListArrival(accountId, provider, source, generation, connectedAt, firstCount));
+    .finally(() => watchGroupListArrival(accountId, provider, source, generation, connectedAt, firstCount, stillLoading));
 }
 
 /**
@@ -571,6 +641,14 @@ export const GROUP_ARRIVAL_SETTINGS = {
   intervalMs: Number(process.env.WHATSAPP_GROUP_ARRIVAL_INTERVAL_MS) || 30_000,
   stableReads: 3,
   maxMs: 20 * 60_000,
+  /**
+   * How long one read of the list may take, during the post-connect sync and the arrival passes,
+   * before the pass counts as "still loading" rather than as a result. An established account reads
+   * its list in a few seconds (1,865 groups in 2.7 s in production), so this only ever bites while a
+   * new device's page is busy loading. The read itself is not abandoned: it keeps running in the
+   * page and the next pass joins it (OpenWAProvider.listGroupChats).
+   */
+  readTimeoutMs: Number(process.env.WHATSAPP_GROUP_READ_TIMEOUT_MS) || 60_000,
 };
 
 /**
@@ -595,12 +673,14 @@ export function isGrowthPass(arrived: number, returned: number, maxReturned: num
  * (`growthPerPass`, from `isGrowthPass`).
  */
 export function groupArrivalDecision(
-  growthPerPass: readonly boolean[],
+  growthPerPass: readonly (boolean | null)[],
   elapsedMs: number,
   settings: { stableReads: number; maxMs: number } = GROUP_ARRIVAL_SETTINGS,
 ): "CONTINUE" | "SETTLED" | "GAVE_UP" {
+  // `null` is a pass whose read did not finish (still loading) or failed: it says nothing about
+  // stability, so it breaks a stable run rather than extending it.
   const tail = growthPerPass.slice(-settings.stableReads);
-  if (tail.length === settings.stableReads && tail.every((grew) => !grew)) return "SETTLED";
+  if (tail.length === settings.stableReads && tail.every((grew) => grew === false)) return "SETTLED";
   if (elapsedMs >= settings.maxMs) return "GAVE_UP";
   return "CONTINUE";
 }
@@ -620,9 +700,10 @@ function watchGroupListArrival(
   generation: number,
   connectedAt: number,
   firstCount: number | null,
+  connectStillLoading = false,
 ): void {
   const started = Date.now();
-  const growthPerPass: boolean[] = [];
+  const growthPerPass: (boolean | null)[] = [];
   // The largest list WhatsApp has returned since this connect; the first sync's count is the baseline.
   let maxReturned = firstCount ?? 0;
   // When each group arrived, as seconds since the connect — the production measurement of how long
@@ -640,12 +721,19 @@ function watchGroupListArrival(
     if (cancelled() || provider.getConnectionStatus() !== "CONNECTED") return;
     syncGroupsWithTimeoutAndRetry(accountId, provider)
       .then((groupCount) => console.log(`[worker] ${label} after ${source}: ${groupCount} group(s) for account ${accountId}`))
-      .catch((err) => console.error(`[worker] ${label} failed for account ${accountId}`, err));
+      .catch((err) => {
+        // It joined an arrival pass whose read is still loading: the passes carry on, nothing failed.
+        if (err instanceof GroupListStillLoadingError) {
+          console.log(`[worker] ${label} for account ${accountId} joined an arrival pass that is still loading; the passes carry on`);
+          return;
+        }
+        console.error(`[worker] ${label} failed for account ${accountId}`, err);
+      });
   };
 
   // Set once a pass has reported "still receiving", so a session that drops before the list
   // settles does not leave the card saying "syncing" forever.
-  let markedRunning = false;
+  let markedRunning = connectStillLoading;
   const stopBecauseDisconnected = () => {
     if (!markedRunning) return;
     void withAccountProject(accountId, () =>
@@ -677,7 +765,9 @@ function watchGroupListArrival(
       schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs); // a resync is reading it already
       return;
     }
-    const run = withAccountProject(accountId, () => syncGroupsInProject(accountId, provider, "ADD_ONLY", generation));
+    const run = withAccountProject(accountId, () =>
+      syncGroupsInProject(accountId, provider, "ADD_ONLY", generation, GROUP_ARRIVAL_SETTINGS.readTimeoutMs),
+    );
     // Registered like any sync, so a manual resync arriving now joins this pass instead of racing it.
     const tracked = run.then((outcome) => outcome.discovered);
     tracked.catch(() => undefined);
@@ -689,10 +779,14 @@ function watchGroupListArrival(
         // than joining this ADD_ONLY pass (which would skip the stamp, the sweep and the status).
         if (syncInFlight.get(accountId) === tracked) syncInFlight.delete(accountId);
         const arrived = outcome.created + outcome.reactivated;
-        const grew = isGrowthPass(arrived, outcome.discovered, maxReturned);
+        // An empty list before any group has ever been listed is no evidence of a finished list:
+        // a second number's phone may simply not have sent a group yet. Counting it as stable is
+        // how three quick empty reads would "settle" a roster that has not started to arrive. It
+        // waits instead, and the arrival window's own limit still ends the wait.
+        const grew = outcome.discovered === 0 && maxReturned === 0 ? null : isGrowthPass(arrived, outcome.discovered, maxReturned);
         growthPerPass.push(grew);
         maxReturned = Math.max(maxReturned, outcome.discovered);
-        if (grew) timeline.push({ atSeconds: Math.round((Date.now() - connectedAt) / 1000), total: outcome.discovered, new: arrived });
+        if (grew === true) timeline.push({ atSeconds: Math.round((Date.now() - connectedAt) / 1000), total: outcome.discovered, new: arrived });
         if (grew) {
           console.log(`[groupsync] GROUP_ARRIVAL ${arrived} new group(s) for account ${accountId}, ${outcome.discovered} listed so far`);
           markedRunning = true;
@@ -711,10 +805,33 @@ function watchGroupListArrival(
           fullSync(decision === "SETTLED" ? "group list settled; full sync" : "group arrival window ended; full sync");
         }
       })
-      .catch((err) => {
-        if (err instanceof GroupSyncCancelledError) return;
-        console.error(`[groupsync] arrival pass failed for account ${accountId}`, err);
-        if (Date.now() - started < GROUP_ARRIVAL_SETTINGS.maxMs) schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
+      .catch(async (err) => {
+        if (err instanceof GroupSyncCancelledError || cancelled()) return;
+        if (syncInFlight.get(accountId) === tracked) syncInFlight.delete(accountId);
+        // A read that did not finish, or failed, is no evidence either way: it never counts towards
+        // "settled", nothing is deactivated, and the groups already saved stay saved.
+        growthPerPass.push(null);
+        if (err instanceof GroupListStillLoadingError) {
+          console.log(`[groupsync] GROUP_LIST_STILL_LOADING account ${accountId}, pass ${growthPerPass.length}`);
+          markedRunning = true;
+          await withAccountProject(accountId, () =>
+            recordGroupSyncState(accountId, {
+              groupSyncStatus: "RUNNING",
+              groupSyncStage:
+                maxReturned > 0
+                  ? `Receiving chats from the phone — ${maxReturned.toLocaleString("en-US")} groups so far; WhatsApp is still loading`
+                  : "Waiting for WhatsApp to load this number's chats — reading the group list again shortly",
+            }),
+          ).catch(() => undefined);
+        } else {
+          console.error(`[groupsync] arrival pass failed for account ${accountId}`, err);
+        }
+        if (groupArrivalDecision(growthPerPass, Date.now() - started) === "GAVE_UP") {
+          void logTimeline("GAVE_UP");
+          fullSync("group arrival window ended; full sync");
+        } else {
+          schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
+        }
       })
       .finally(() => {
         if (syncInFlight.get(accountId) === tracked) syncInFlight.delete(accountId);
@@ -1227,10 +1344,15 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
                 // Stopped by a Logout/Reconnect is not a failure of the resync; it is recorded as
                 // what happened (WorkerCommandStatus has no CANCELLED, and the account's own
                 // groupSyncStatus carries CANCELLED for the dashboard).
+                // A resync pressed right after a connect joins that connect's sync; when that one
+                // hands over to the arrival passes ("still loading"), the list IS being synced — by
+                // the passes, which keep reading until it is complete — so the request did not fail.
                 data:
                   err instanceof GroupSyncCancelledError
                     ? { status: "DONE", processedAt: new Date(), result: { cancelled: true, reason: err.message } }
-                    : { status: "FAILED", processedAt: new Date(), result: { error: (err as Error).message } },
+                    : err instanceof GroupListStillLoadingError
+                      ? { status: "DONE", processedAt: new Date(), result: { stillLoading: true, message: err.message } }
+                      : { status: "FAILED", processedAt: new Date(), result: { error: (err as Error).message } },
               })
               .catch((writeErr) => console.error(`[groupsync] could not settle RESYNC_GROUPS ${commandId}`, writeErr)),
           );

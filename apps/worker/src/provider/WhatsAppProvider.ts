@@ -56,6 +56,20 @@ export class SessionNotReadyError extends Error {
   }
 }
 
+/**
+ * The session is fine, but WhatsApp Web cannot give a trustworthy group list yet: its chat list is
+ * still completely empty (the phone has not sent this number's chats), or a read of it did not
+ * finish in time. Never "this account has no groups" — that answer is only ever an empty list from
+ * a chat store that holds chats. The post-connect sync and the arrival passes treat it as "still
+ * loading"; an ordinary sync treats it as a failure worth retrying.
+ */
+export class GroupListNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GroupListNotReadyError";
+  }
+}
+
 export interface AccountInfo {
   phoneNumber: string | null;
   pushName: string | null;

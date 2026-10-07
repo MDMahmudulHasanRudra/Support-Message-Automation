@@ -471,6 +471,13 @@ Three rules worth not undoing:
   FAILED, counts, timing), shown on Accounts and Groups; a RUNNING left by a restart is closed at boot.
   Persistence is batched (500 / 5,000) and a failed batch is retried row by row, so one bad group
   costs only itself. A sync writes only name, `isActive` and `lastSyncedAt`.
+- **A slow first read is "still loading", never FAILED** (8 Oct 2026, second number timing out at
+  150 s). The post-connect read is bounded by `GROUP_ARRIVAL_SETTINGS.readTimeoutMs`. Past it, it
+  throws `GroupListStillLoadingError`: no retry, status stays RUNNING, and the arrival passes take
+  over. An unfinished pass is `null` and never counts as stable. `listGroupChats` allows one page
+  read per session (later callers join it, since a timed-out `evaluate` keeps running in the page)
+  and trusts an empty lean list: `getAllGroups()` reads the same `Store.Chat` and only serialises
+  every chat first.
 - **Logout and Reconnect cancel a running sync first** (`cancelGroupSync`, a per-account generation
   checked before every write): CANCELLED, never FAILED, and a cancelled sync writes nothing more —
   otherwise a sync that read the list before a LOGOUT re-activates every group the logout switched off.

@@ -10,8 +10,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  *   - the page function filters to groups BEFORE mapping, and returns only four fields;
  *   - those fields come from the same places `_serializeChatObj` reads them, so callers get the
  *     same data they got before (name and t from `toJSON()`, formattedTitle from the model);
- *   - every way the lean path can fail — no Store, a throw, an empty or malformed result — falls
- *     back to `getAllGroups()`, so the worst case is the old behaviour, never an emptied roster.
+ *   - every way the lean path can fail — a throw, a reshaped store, a malformed id — falls back to
+ *     `getAllGroups()`, so the worst case is the old behaviour, never an emptied roster;
+ *   - an EMPTY list from a working store is the answer (8 Oct 2026): the slow path reads the same
+ *     store, so it could only agree, after serialising every chat — what ran a freshly linked
+ *     number's syncs past 150 s;
+ *   - one read per session at a time: a read nobody is waiting for any more keeps running in the
+ *     page, so the next caller joins it instead of queueing behind it.
  *
  * The page function is executed for real against a fake `globalThis.Store`, exactly as Puppeteer
  * would execute it in the page, rather than being re-implemented in the test.
@@ -171,14 +176,6 @@ describe("every failure takes the old path, never an emptied roster", () => {
     expect(getAllGroups).toHaveBeenCalledTimes(1);
   });
 
-  it("when the lean result is empty — so zero groups only ever comes from the slow path agreeing", async () => {
-    installStore([chat("8801700000000@c.us", false, { name: "Only a DM" })]);
-    const getAllGroups = vi.fn(async () => slowPathResult);
-    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups });
-
-    await provider.getGroups();
-    expect(getAllGroups).toHaveBeenCalledTimes(1);
-  });
 
   it("when an id comes back malformed", async () => {
     installStore([{ isGroup: true, id: {} as { _serialized: string }, toJSON: () => ({ name: "Broken" }) }]);
@@ -189,3 +186,129 @@ describe("every failure takes the old path, never an emptied roster", () => {
     expect(getAllGroups).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("a newly linked number whose chats are still arriving (8 Oct 2026)", () => {
+  it("no groups yet is an empty list, and the slow path — which reads the same store — is never run", async () => {
+    // The phone has sent some one-to-one chats and no group yet. getAllGroups() would serialise
+    // every one of them and then find no group either.
+    installStore([chat("8801700000000@c.us", false, { name: "Only a DM" }), chat("8801700000001@c.us", false, { name: "Another DM" })]);
+    const getAllGroups = vi.fn(async () => [{ id: "999-000@g.us", name: "never", formattedTitle: "", t: 1 }]);
+    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups });
+
+    expect(await provider.getGroups()).toEqual([]);
+    expect(getAllGroups).not.toHaveBeenCalled();
+  });
+
+  it("a half-built chat whose toJSON throws is still listed by its id, and does not send the whole read to the slow path", async () => {
+    installStore([
+      chat("111-000@g.us", true, { name: "Complete" }),
+      {
+        isGroup: true,
+        id: { _serialized: "222-000@g.us" },
+        formattedTitle: "Still arriving",
+        toJSON: () => {
+          throw new TypeError("Cannot read properties of undefined (reading 'name')");
+        },
+      },
+    ]);
+    const getAllGroups = vi.fn();
+    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups });
+
+    expect(await provider.getGroups()).toEqual([
+      { whatsappGroupId: "111-000@g.us", name: "Complete" },
+      { whatsappGroupId: "222-000@g.us", name: "Still arriving" },
+    ]);
+    expect(getAllGroups).not.toHaveBeenCalled();
+  });
+
+  it("a second read while one is still running in the page joins it — one page read, both callers answered", async () => {
+    installStore([chat("333-000@g.us", true, { name: "Slow page" })]);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const evaluate = vi.fn(async (fn: () => unknown) => {
+      await gate;
+      return fn();
+    });
+    const provider = await providerWith({ getPage: () => ({ evaluate }), getAllGroups: vi.fn() });
+
+    const first = provider.getGroups();
+    const second = provider.getGroups();
+    release();
+
+    expect(await first).toEqual([{ whatsappGroupId: "333-000@g.us", name: "Slow page" }]);
+    expect(await second).toEqual(await first);
+    expect(evaluate).toHaveBeenCalledTimes(1);
+    // Finished reads are not cached: the next read asks the page again.
+    await provider.getGroups();
+    expect(evaluate).toHaveBeenCalledTimes(2);
+  });
+
+  it("a read running on a page a reconnect has since replaced is never joined", async () => {
+    installStore([chat("444-000@g.us", true, { name: "New page" })]);
+    const oldEvaluate = vi.fn(() => new Promise<never>(() => undefined)); // the old page never answers
+    const provider = await providerWith({ getPage: () => ({ evaluate: oldEvaluate }), getAllGroups: vi.fn() });
+    void provider.getGroups();
+
+    (provider as unknown as { client: unknown }).client = { getPage: () => evaluatingPage, getAllGroups: vi.fn() };
+    expect(await provider.getGroups()).toEqual([{ whatsappGroupId: "444-000@g.us", name: "New page" }]);
+  });
+});
+
+describe("empty is an answer only from a chat store that holds chats (8 Oct 2026)", () => {
+  it("a recognisable chat store holding NO chats at all is 'not ready' — never an empty roster, never the slow path", async () => {
+    installStore([]);
+    const getAllGroups = vi.fn();
+    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups });
+
+    await expect(provider.getGroups()).rejects.toMatchObject({ name: "GroupListNotReadyError" });
+    expect(getAllGroups).not.toHaveBeenCalled();
+  });
+
+  it("the same for a Backbone-style collection (models, no length) that is still empty", async () => {
+    (globalThis as unknown as { Store?: unknown }).Store = { Chat: { models: [], filter: () => [] } };
+    const getAllGroups = vi.fn();
+    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups });
+
+    await expect(provider.getGroups()).rejects.toMatchObject({ name: "GroupListNotReadyError" });
+    expect(getAllGroups).not.toHaveBeenCalled();
+  });
+
+  it("whereas chats present and none a group is a real, empty answer", async () => {
+    installStore([chat("8801700000002@c.us", false, { name: "A DM" })]);
+    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups: vi.fn() });
+
+    expect(await provider.getGroups()).toEqual([]);
+  });
+});
+
+describe("a read that never answers (8 Oct 2026)", () => {
+  it("is shared only up to its limit, then released — and the next read is a fresh one that answers", async () => {
+    const { GROUP_READ_SETTINGS } = await import("../provider/openwa/OpenWAProvider.js");
+    const saved = GROUP_READ_SETTINGS.maxMs;
+    GROUP_READ_SETTINGS.maxMs = 150;
+    try {
+      installStore([chat("555-000@g.us", true, { name: "Answers the second time" })]);
+      let calls = 0;
+      const evaluate = vi.fn((fn: () => unknown) => {
+        calls += 1;
+        // The first read is wedged forever; every later one answers.
+        return calls === 1 ? new Promise<never>(() => undefined) : Promise.resolve(fn());
+      });
+      const provider = await providerWith({ getPage: () => ({ evaluate }), getAllGroups: vi.fn() });
+
+      const hung = provider.getGroups();
+      const joined = provider.getGroups(); // while it is still within its limit: joins, no second read
+      expect(evaluate).toHaveBeenCalledTimes(1);
+
+      await expect(hung).rejects.toMatchObject({ name: "GroupListNotReadyError" });
+      await expect(joined).rejects.toMatchObject({ name: "GroupListNotReadyError" });
+
+      // Released: a fresh read, which answers.
+      expect(await provider.getGroups()).toEqual([{ whatsappGroupId: "555-000@g.us", name: "Answers the second time" }]);
+      expect(evaluate).toHaveBeenCalledTimes(2);
+    } finally {
+      GROUP_READ_SETTINGS.maxMs = saved;
+    }
+  });
+});
+
