@@ -1,7 +1,7 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { AutomationSettings } from "@prisma/client";
 import { isCooldownActive } from "../queue/cooldown.js";
-import { getGlobalRateLimitUsage, getPerClientLimitUsage } from "../queue/rateLimiter.js";
+import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from "../queue/rateLimiter.js";
 import type { EngineRule } from "@support-automation/engine";
 
 export interface SafetyCheckResult {
@@ -47,30 +47,38 @@ export async function checkAutoReplySafety(params: {
   // is sent, the support team is still notified separately). Everything else
   // (EXCEPTION, GENERIC, LAST_SENDER, etc.) requires FULL_RULE_AUTOMATION. A null
   // rule (AI fallback) is treated as AUTO_REPLY for this check.
+  if (!toPhone) {
+    return { allowed: false, reason: "Destination phone number is missing or invalid." };
+  }
+
+  // Read before the rule-type and throttle checks below, because an approved test group relaxes
+  // both. The monitored requirement itself is never relaxed — an unmonitored group is not a
+  // conversation this system was invited into, which is a different thing from a throttle.
+  let testMode = false;
+  if (groupId) {
+    const group = await prisma.whatsAppGroup.findUnique({
+      where: { id: groupId },
+      select: { isMonitored: true, testModeEnabled: true },
+    });
+    if (!group?.isMonitored) {
+      return { allowed: false, reason: "The message's group is not a monitored conversation." };
+    }
+    testMode = group.testModeEnabled;
+  }
+
   const SAFE_MODE_ELIGIBLE_TYPES = new Set(["AUTO_REPLY", "SUPPORT_ESCALATION"]);
   const effectiveRuleType = rule?.type ?? "AUTO_REPLY";
-  if (settings.mode === "SAFE_AUTO_REPLY" && !SAFE_MODE_ELIGIBLE_TYPES.has(effectiveRuleType)) {
+  // Test mode lifts this one deliberately: under SAFE_AUTO_REPLY most rule types can never fire,
+  // so there would be no way to exercise them at all. MANUAL_ONLY above is still honoured — that
+  // is an operator saying "send nothing", which is a kill switch, not a throttle.
+  if (settings.mode === "SAFE_AUTO_REPLY" && !SAFE_MODE_ELIGIBLE_TYPES.has(effectiveRuleType) && !testMode) {
     return {
       allowed: false,
       reason: `Automation mode is SAFE_AUTO_REPLY; rule type ${effectiveRuleType} is not eligible for automatic replies in this mode.`,
     };
   }
 
-  if (!toPhone) {
-    return { allowed: false, reason: "Destination phone number is missing or invalid." };
-  }
-
-  if (groupId) {
-    const group = await prisma.whatsAppGroup.findUnique({
-      where: { id: groupId },
-      select: { isMonitored: true },
-    });
-    if (!group?.isMonitored) {
-      return { allowed: false, reason: "The message's group is not a monitored conversation." };
-    }
-  }
-
-  if (cooldownSeconds && cooldownSeconds > 0) {
+  if (cooldownSeconds && cooldownSeconds > 0 && !testMode) {
     const cooling = await isCooldownActive({
       accountId,
       toPhone,
@@ -85,35 +93,43 @@ export async function checkAutoReplySafety(params: {
     }
   }
 
-  if (settings.rateLimitingEnabled) {
-    const perClient = await getPerClientLimitUsage(accountId, toPhone);
-    if (perClient.perHour >= settings.maxRepliesPerClientPerHour) {
+  // Rate limits protect the WhatsApp number itself, so they are lifted only for a group an
+  // admin has explicitly marked as a test group — never globally.
+  if (settings.rateLimitingEnabled && !testMode) {
+    // Five independent COUNTs — fetched together, as the send-time re-check in
+    // outboundQueueProcessor.ts already does, rather than in two serial round trips. The
+    // precedence of the checks below is unchanged.
+    const [perClient, global] = await Promise.all([
+      getPerClientLimitUsage(accountId, toPhone),
+      getGlobalRateLimitUsage(accountId),
+    ]);
+
+    if (exceedsLimit(perClient.perHour, settings.maxRepliesPerClientPerHour)) {
       return {
         allowed: false,
         reason: `Per-client hourly reply limit reached (${perClient.perHour}/${settings.maxRepliesPerClientPerHour}).`,
       };
     }
-    if (perClient.perDay >= settings.maxRepliesPerClientPerDay) {
+    if (exceedsLimit(perClient.perDay, settings.maxRepliesPerClientPerDay)) {
       return {
         allowed: false,
         reason: `Per-client daily reply limit reached (${perClient.perDay}/${settings.maxRepliesPerClientPerDay}).`,
       };
     }
 
-    const global = await getGlobalRateLimitUsage(accountId);
-    if (global.perMinute >= settings.globalMaxPerMinute) {
+    if (exceedsLimit(global.perMinute, settings.globalMaxPerMinute)) {
       return {
         allowed: false,
         reason: `Global per-minute rate limit reached (${global.perMinute}/${settings.globalMaxPerMinute}).`,
       };
     }
-    if (global.perHour >= settings.globalMaxPerHour) {
+    if (exceedsLimit(global.perHour, settings.globalMaxPerHour)) {
       return {
         allowed: false,
         reason: `Global per-hour rate limit reached (${global.perHour}/${settings.globalMaxPerHour}).`,
       };
     }
-    if (global.perDay >= settings.globalMaxPerDay) {
+    if (exceedsLimit(global.perDay, settings.globalMaxPerDay)) {
       return {
         allowed: false,
         reason: `Global per-day rate limit reached (${global.perDay}/${settings.globalMaxPerDay}).`,

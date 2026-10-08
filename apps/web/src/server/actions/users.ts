@@ -1,21 +1,21 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
+import { isUniqueViolation } from "@/lib/prismaErrors";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
 import { requireSession, hashPassword } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { privilegeRefusal } from "@/server/privilegeGuard";
+import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
 
-const MIN_PASSWORD_LENGTH = 12;
 const PERMISSION_DENIED_ERROR = "You do not have permission to perform this action.";
 
 export interface UserFormState {
   error?: string;
-}
-
-function normalizeUsername(raw: FormDataEntryValue | null): string {
-  return String(raw ?? "").trim().toLowerCase();
 }
 
 export async function createUser(_prevState: UserFormState, formData: FormData): Promise<UserFormState> {
@@ -33,23 +33,37 @@ export async function createUser(_prevState: UserFormState, formData: FormData):
   if (!name) return { error: "Display name is required." };
   if (password.length < MIN_PASSWORD_LENGTH) return { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
   if (password !== confirmPassword) return { error: "Passwords do not match." };
+  // A login on a role holding Main Admin keys is a new Main Admin (server/privilegeGuard.ts).
+  const privileged = await privilegeRefusal(session.userId, { assignsRoleId: permissionModuleId });
+  if (privileged) return { error: privileged };
 
   const existing = await prisma.user.findUnique({ where: { username } });
   if (existing) return { error: `A user named "${username}" already exists.` };
+  // Email is unique too, and was not checked: reusing one threw a raw P2002 that replaced the page.
+  if (email && (await prisma.user.findUnique({ where: { email } }))) {
+    return { error: "Another user already has that email address." };
+  }
 
-  const created = await prisma.user.create({
-    data: {
-      username,
-      name,
-      email,
-      passwordHash: hashPassword(password),
-      permissionModuleId,
-    },
-  });
+  let created;
+  try {
+    created = await prisma.user.create({
+      data: {
+        username,
+        name,
+        email,
+        passwordHash: hashPassword(password),
+        permissionModuleId,
+      },
+    });
+  } catch (err) {
+    // Two admins creating the same username or email in the same instant both pass the checks above.
+    if (isUniqueViolation(err)) return { error: "That username or email was just taken by another user." };
+    throw err;
+  }
 
   await logSystemEvent("INFO", "users", "USER_CREATED", { actorId: session.userId, targetUserId: created.id, username });
-  revalidatePath("/users");
-  redirect("/users");
+  revalidatePath(await projectPath("/users"));
+  redirect(await projectPath("/users"));
 }
 
 export async function updateUser(id: string, _prevState: UserFormState, formData: FormData): Promise<UserFormState> {
@@ -64,15 +78,30 @@ export async function updateUser(id: string, _prevState: UserFormState, formData
   const permissionModuleId = String(formData.get("permissionModuleId") ?? "").trim() || null;
 
   if (!name) return { error: "Display name is required." };
+  if (permissionModuleId !== target.permissionModuleId) {
+    const privileged = await privilegeRefusal(session.userId, { assignsRoleId: permissionModuleId, targetUserId: id });
+    if (privileged) return { error: privileged };
+  }
+  // Email is unique; changing it to one another user already has threw a raw P2002 that replaced
+  // the page. Checked against everyone else, so saving without changing it is not a clash.
+  if (email && email !== target.email) {
+    const holder = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (holder && holder.id !== id) return { error: "Another user already has that email address." };
+  }
 
-  await prisma.user.update({
-    where: { id },
-    data: { name, email, permissionModuleId },
-  });
+  try {
+    await prisma.user.update({
+      where: { id },
+      data: { name, email, permissionModuleId },
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) return { error: "That email address was just taken by another user." };
+    throw err;
+  }
 
   await logSystemEvent("INFO", "users", "USER_UPDATED", { actorId: session.userId, targetUserId: id });
-  revalidatePath("/users");
-  redirect("/users");
+  revalidatePath(await projectPath("/users"));
+  redirect(await projectPath("/users"));
 }
 
 export async function setUserActive(id: string, isActive: boolean): Promise<{ error?: string }> {
@@ -87,6 +116,8 @@ export async function setUserActive(id: string, isActive: boolean): Promise<{ er
   if (!isActive && id === session.userId) {
     return { error: "You cannot deactivate your own account." };
   }
+  const privileged = await privilegeRefusal(session.userId, { targetUserId: id });
+  if (privileged) return { error: privileged };
 
   await prisma.user.update({ where: { id }, data: { isActive } });
 
@@ -103,7 +134,7 @@ export async function setUserActive(id: string, isActive: boolean): Promise<{ er
     actorId: session.userId,
     targetUserId: id,
   });
-  revalidatePath("/users");
+  revalidatePath(await projectPath("/users"));
   return {};
 }
 
@@ -117,6 +148,9 @@ export async function resetUserPassword(id: string, newPassword: string): Promis
 
   const target = await prisma.user.findUnique({ where: { id } });
   if (!target) return { error: "User not found." };
+  // Setting a Main Admin's password is taking over their account.
+  const privileged = await privilegeRefusal(session.userId, { targetUserId: id });
+  if (privileged) return { error: privileged };
 
   await prisma.user.update({ where: { id }, data: { passwordHash: hashPassword(newPassword) } });
 
@@ -128,6 +162,6 @@ export async function resetUserPassword(id: string, newPassword: string): Promis
   });
 
   await logSystemEvent("WARN", "users", "PASSWORD_RESET", { actorId: session.userId, targetUserId: id });
-  revalidatePath("/users");
+  revalidatePath(await projectPath("/users"));
   return {};
 }

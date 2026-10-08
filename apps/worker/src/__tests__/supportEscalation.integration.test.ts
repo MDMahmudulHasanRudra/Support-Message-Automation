@@ -1,6 +1,7 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { ISP_DIGITAL, prisma } from "./helpers/projectFixtures.js";
 import type {
   AutomationSettings,
   Prisma,
@@ -59,7 +60,7 @@ async function resetEscalationSettings(overrides: Partial<Prisma.SupportEscalati
 /** Instant SLA for deterministic tests — no real waiting between tiers. */
 async function makeInstantPolicy(maxEscalations = 5) {
   await prisma.supportPriorityPolicy.upsert({
-    where: { priority: "P1" },
+    where: { projectId_priority: { projectId: ISP_DIGITAL, priority: "P1" } },
     update: { firstAlertMinutes: 0, secondAlertMinutes: 0, memberEscalationMinutes: 0, adminEscalationMinutes: 0, followUpIntervalMinutes: 0, maxEscalations },
     create: { priority: "P1", firstAlertMinutes: 0, secondAlertMinutes: 0, memberEscalationMinutes: 0, adminEscalationMinutes: 0, followUpIntervalMinutes: 0, maxEscalations },
   });
@@ -76,7 +77,7 @@ async function makeTeamMember(phoneNumber: string) {
 beforeAll(async () => {
   originalSettings = await prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   originalEscalationSettings = await prisma.supportEscalationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
-  originalPrioritySupportRoute = await prisma.whatsAppServiceRoute.findUnique({ where: { serviceKey: "PRIORITY_SUPPORT" } });
+  originalPrioritySupportRoute = await prisma.whatsAppServiceRoute.findFirst({ where: { serviceKey: "PRIORITY_SUPPORT" } });
 
   preExistingActiveRuleIds = (await prisma.automationRule.findMany({ where: { status: "ACTIVE" }, select: { id: true } })).map((r) => r.id);
   if (preExistingActiveRuleIds.length) {
@@ -92,7 +93,7 @@ afterAll(async () => {
   });
   if (originalPrioritySupportRoute) {
     await prisma.whatsAppServiceRoute.update({
-      where: { serviceKey: "PRIORITY_SUPPORT" },
+      where: { projectId_serviceKey: { projectId: ISP_DIGITAL, serviceKey: "PRIORITY_SUPPORT" } },
       data: originalPrioritySupportRoute as unknown as Prisma.WhatsAppServiceRouteUncheckedUpdateInput,
     });
   } else {
@@ -118,7 +119,7 @@ beforeEach(async () => {
   // would collide with whatever the real running system has already promoted. A dedicated,
   // per-service route has no such global uniqueness constraint, so it's the safe knob to touch.
   await prisma.whatsAppServiceRoute.upsert({
-    where: { serviceKey: "PRIORITY_SUPPORT" },
+    where: { projectId_serviceKey: { projectId: ISP_DIGITAL, serviceKey: "PRIORITY_SUPPORT" } },
     update: { accountId: account.id, fallbackPolicy: "STRICT_NO_FALLBACK", enabled: true },
     create: { serviceKey: "PRIORITY_SUPPORT", accountId: account.id, fallbackPolicy: "STRICT_NO_FALLBACK", enabled: true },
   });

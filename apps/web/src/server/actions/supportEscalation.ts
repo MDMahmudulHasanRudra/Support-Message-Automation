@@ -1,9 +1,13 @@
 "use server";
 
+import { activeProjectId } from "@/server/projectContext";
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { SupportPriority } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 
 export interface PolicyFormState {
   error?: string;
@@ -15,7 +19,8 @@ export async function updatePriorityPolicy(
   _prevState: PolicyFormState,
   formData: FormData,
 ): Promise<PolicyFormState> {
-  await requireSession();
+  const granted = await checkPermission("escalations.manage");
+  if ("denied" in granted) return { error: granted.denied };
 
   const int = (key: string) => {
     const raw = Number(formData.get(key));
@@ -23,7 +28,7 @@ export async function updatePriorityPolicy(
   };
 
   await prisma.supportPriorityPolicy.upsert({
-    where: { priority },
+    where: { projectId_priority: { projectId: await activeProjectId(), priority } },
     update: {
       firstAlertMinutes: int("firstAlertMinutes"),
       secondAlertMinutes: int("secondAlertMinutes"),
@@ -43,7 +48,7 @@ export async function updatePriorityPolicy(
     },
   });
 
-  revalidatePath("/support-escalation/policies");
+  revalidatePath(await projectPath("/support-escalation/policies"));
   return { success: true };
 }
 
@@ -51,7 +56,8 @@ export async function updateEscalationSettings(
   _prevState: PolicyFormState,
   formData: FormData,
 ): Promise<PolicyFormState> {
-  await requireSession();
+  const granted = await checkPermission("escalations.manage");
+  if ("denied" in granted) return { error: granted.denied };
   const escalationAdminId = String(formData.get("escalationAdminId") ?? "").trim() || null;
   const enabled = formData.get("enabled") === "on";
 
@@ -61,13 +67,29 @@ export async function updateEscalationSettings(
     create: { id: "global", enabled, escalationAdminId },
   });
 
-  revalidatePath("/support-escalation/policies");
+  revalidatePath(await projectPath("/support-escalation/policies"));
   return { success: true };
+}
+
+/**
+ * A distinct recipient key for each manual action's audit row.
+ *
+ * `SupportEscalationEvent` is unique on (caseId, level, eventType, recipientKey). That constraint
+ * exists for the WORKER: a tier that fans out to several groups gets exactly one row per group, so
+ * a retried tick can never alert twice. The manual actions below borrowed it with a fixed "SYSTEM"
+ * key — but a person pressing a button is not meant to be idempotent. Reassigning a case to one
+ * colleague and then to another, or pausing, resuming and pausing again, or resetting twice, all
+ * produced the same key at the same level, and the second press threw a raw P2002 that replaced
+ * the page. Each press is a real, separate event, so each gets its own key. `recipientType` stays
+ * "SYSTEM", which is what marks these as manual; nothing reads the key back.
+ */
+function manualEventKey(): string {
+  return `SYSTEM:${randomUUID()}`;
 }
 
 /** Still-pending checks stop; a check already in flight (within its claim lease) finishes naturally. */
 export async function pauseCase(caseId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("escalations.manage");
   const caseRow = await prisma.supportEscalationCase.findUnique({ where: { id: caseId } });
   if (!caseRow || ["HUMAN_REPLIED", "RESOLVED", "CANCELLED", "PAUSED"].includes(caseRow.status)) return;
 
@@ -79,7 +101,7 @@ export async function pauseCase(caseId: string): Promise<void> {
         level: caseRow.escalationLevel,
         eventType: "PAUSED",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Paused by admin",
       },
     }),
@@ -89,13 +111,13 @@ export async function pauseCase(caseId: string): Promise<void> {
   // so this is a plain follow-up update.
   await prisma.supportEscalationCase.update({ where: { id: caseId }, data: { status: "PAUSED" } });
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 /** Resumes a paused case right where it left off — status reverts to whatever it was before pausing, due immediately. */
 export async function resumeCase(caseId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("escalations.manage");
   const caseRow = await prisma.supportEscalationCase.findUnique({ where: { id: caseId } });
   if (!caseRow || caseRow.status !== "PAUSED") return;
 
@@ -127,19 +149,19 @@ export async function resumeCase(caseId: string): Promise<void> {
         level: caseRow.escalationLevel,
         eventType: "RESUMED",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Resumed by admin",
       },
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 /** Forces the next tier to fire on the very next worker tick, skipping the rest of the current wait. */
 export async function escalateNow(caseId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("escalations.manage");
   const caseRow = await prisma.supportEscalationCase.findUnique({ where: { id: caseId } });
   if (!caseRow || ["HUMAN_REPLIED", "RESOLVED", "CANCELLED", "PAUSED"].includes(caseRow.status)) return;
 
@@ -151,18 +173,18 @@ export async function escalateNow(caseId: string): Promise<void> {
         level: caseRow.escalationLevel,
         eventType: "MANUAL_ESCALATE",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Escalated immediately by admin",
       },
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 export async function reassignCase(caseId: string, teamMemberId: string | null): Promise<void> {
-  await requireSession();
+  await requireAccess("escalations.manage");
   const caseRow = await prisma.supportEscalationCase.findUnique({ where: { id: caseId } });
   if (!caseRow) return;
 
@@ -176,29 +198,105 @@ export async function reassignCase(caseId: string, teamMemberId: string | null):
         level: caseRow.escalationLevel,
         eventType: "REASSIGNED",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: member ? `Reassigned to ${member.name}` : "Assignment cleared",
       },
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+}
+
+/**
+ * A ceiling on one bulk escalation action. Each case is its own transaction (see below), so this
+ * bounds a sequential run as much as it bounds the write — and the active queue itself caps at 200.
+ */
+const MAX_BULK_CASE_IDS = 200;
+
+const TERMINAL_STATUSES = ["HUMAN_REPLIED", "RESOLVED", "CANCELLED"];
+
+export interface BulkCaseResult {
+  changed: number;
+  /** Selected but already finished — resolved, cancelled, or a human replied while the page sat open. */
+  alreadyClosed: number;
+  notFound: number;
+  error?: string;
+}
+
+/**
+ * Clears several cases at once — the action this queue was missing.
+ *
+ * Thirty stale P3 cases meant thirty navigations into thirty detail pages, on the one screen an
+ * operator opens under time pressure. Worse, the page's own 200-case notice tells you to "resolve
+ * some of these to see the rest" while offering no way to do it.
+ *
+ * Each case is handled INDIVIDUALLY rather than by one `updateMany`, and that is the load-bearing
+ * detail: every close writes a `SupportEscalationEvent` beside the status change, in the same
+ * transaction, and a batch update would silently skip the audit trail for all of them — leaving
+ * thirty cases that closed with no record of who closed them or why. Closing is also guarded per
+ * case, so a case a human answered while the page sat open is left alone rather than overwritten.
+ */
+async function runBulkCaseAction(
+  ids: string[],
+  apply: (caseId: string) => Promise<void>,
+): Promise<BulkCaseResult> {
+  // Checked once here and answered in this function's own shape. The single actions each check
+  // too, but a refusal from them is a redirect, which would abandon a bulk run part-way through.
+  const granted = await checkPermission("escalations.manage");
+  if ("denied" in granted) return { changed: 0, alreadyClosed: 0, notFound: 0, error: granted.denied };
+
+  const unique = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+  if (unique.length === 0) return { changed: 0, alreadyClosed: 0, notFound: 0, error: "Select at least one case first." };
+  if (unique.length > MAX_BULK_CASE_IDS) {
+    return {
+      changed: 0,
+      alreadyClosed: 0,
+      notFound: 0,
+      error: `That is ${unique.length} cases at once, over the limit of ${MAX_BULK_CASE_IDS}. Narrow the filters and run it again.`,
+    };
+  }
+
+  const existing = await prisma.supportEscalationCase.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, status: true },
+  });
+  const notFound = unique.length - existing.length;
+  const actionable = existing.filter((row) => !TERMINAL_STATUSES.includes(row.status));
+
+  // Sequential, not Promise.all: each one is its own transaction, and firing two hundred at once
+  // would take two hundred connections out of a bounded pool the worker is also drawing from.
+  for (const row of actionable) {
+    await apply(row.id);
+  }
+
+  revalidatePath(await projectPath("/support-escalation"));
+  return { changed: actionable.length, alreadyClosed: existing.length - actionable.length, notFound };
+}
+
+/** Marks several cases resolved, each with its own audit event. */
+export async function bulkResolveCases(ids: string[]): Promise<BulkCaseResult> {
+  return runBulkCaseAction(ids, markResolved);
+}
+
+/** Stops escalation on several cases without claiming anybody replied. */
+export async function bulkStopEscalation(ids: string[]): Promise<BulkCaseResult> {
+  return runBulkCaseAction(ids, stopEscalation);
 }
 
 /** Stops escalation without claiming a human replied — distinct from resolve/human-reply, same spirit as GroupBroadcastJob's cancel. */
 export async function stopEscalation(caseId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("escalations.manage");
   const caseRow = await prisma.supportEscalationCase.findUnique({ where: { id: caseId } });
   if (!caseRow || ["HUMAN_REPLIED", "RESOLVED", "CANCELLED"].includes(caseRow.status)) return;
 
   await prisma.supportEscalationCase.update({ where: { id: caseId }, data: { status: "CANCELLED" } });
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 /** Clears escalation progress back to the start without discarding history — same idea as retrying a failed job. */
 export async function resetEscalation(caseId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("escalations.manage");
   const caseRow = await prisma.supportEscalationCase.findUnique({ where: { id: caseId } });
   if (!caseRow) return;
 
@@ -213,18 +311,18 @@ export async function resetEscalation(caseId: string): Promise<void> {
         level: 0,
         eventType: "RESET",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Reset by admin",
       },
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }
 
 export async function markResolved(caseId: string): Promise<void> {
-  const session = await requireSession();
+  const session = await requireAccess("escalations.manage");
   const caseRow = await prisma.supportEscalationCase.findUnique({ where: { id: caseId } });
   if (!caseRow || ["RESOLVED", "CANCELLED"].includes(caseRow.status)) return;
 
@@ -239,12 +337,12 @@ export async function markResolved(caseId: string): Promise<void> {
         level: caseRow.escalationLevel,
         eventType: "RESOLVED",
         recipientType: "SYSTEM",
-        recipientKey: "SYSTEM",
+        recipientKey: manualEventKey(),
         recipientLabel: "Marked resolved by admin",
       },
     }),
   ]);
 
-  revalidatePath(`/support-escalation/cases/${caseId}`);
-  revalidatePath("/support-escalation");
+  revalidatePath(await projectPath(`/support-escalation/cases/${caseId}`));
+  revalidatePath(await projectPath("/support-escalation"));
 }

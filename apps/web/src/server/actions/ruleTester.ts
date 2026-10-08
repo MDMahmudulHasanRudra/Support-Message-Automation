@@ -1,9 +1,10 @@
 "use server";
 
-import { prisma } from "@support-automation/db";
+
+import { prisma } from "@/server/db";
 import { evaluate, type EngineRule } from "@support-automation/engine";
 import { isRuleActionArray, isRuleConditions } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import type { EvaluationResult } from "@support-automation/engine";
 
 export interface RuleTesterState {
@@ -20,7 +21,8 @@ export interface RuleTesterState {
  * WorkerCommand) is a deliberately separate, explicit action.
  */
 export async function testRule(_prevState: RuleTesterState, formData: FormData): Promise<RuleTesterState> {
-  await requireSession();
+  const granted = await checkPermission("automation_rules.view");
+  if ("denied" in granted) return { error: granted.denied };
 
   const body = String(formData.get("body") ?? "").trim();
   if (!body) return { error: "Message body is required." };

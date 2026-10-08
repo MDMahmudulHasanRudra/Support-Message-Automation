@@ -1,4 +1,4 @@
-import { ALLOWED_KNOWLEDGE_CATEGORIES } from "./groupKnowledgePrompt.js";
+import { ALLOWED_KNOWLEDGE_CATEGORIES, PROCEDURE_FIELD_SPEC } from "./groupKnowledgePrompt.js";
 
 /**
  * Prompt for turning product documentation — a pasted manual section, an uploaded guide, a
@@ -109,6 +109,7 @@ export function buildImportPrompt(input: {
       : "MODULE: <the product area this belongs to, or NONE>",
     "QUESTION: <the question a customer or colleague would ask to reach this, or NONE>",
     "ANSWER: <the answer, complete enough to act on without the rest of the document>",
+    PROCEDURE_FIELD_SPEC,
     "CONFIDENCE: <a single integer 0-100 — how directly the text supports this entry>",
     "",
     "If this section contains nothing worth keeping, reply with exactly: NOTHING",

@@ -1,9 +1,12 @@
 "use server";
 
+import { activeProjectId } from "@/server/projectContext";
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { WhatsAppFallbackPolicy, WhatsAppServiceKey } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 export interface ServiceRouteFormState {
@@ -21,14 +24,16 @@ export async function updateServiceRoute(
   _prevState: ServiceRouteFormState,
   formData: FormData,
 ): Promise<ServiceRouteFormState> {
-  const session = await requireSession();
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
   const serviceKey = formData.get("serviceKey") as WhatsAppServiceKey;
   const rawAccountId = String(formData.get("accountId") ?? "");
   const accountId = rawAccountId === "" ? null : rawAccountId;
   const fallbackPolicy = formData.get("fallbackPolicy") as WhatsAppFallbackPolicy;
 
   const [previous, account] = await Promise.all([
-    prisma.whatsAppServiceRoute.findUnique({ where: { serviceKey } }),
+    prisma.whatsAppServiceRoute.findFirst({ where: { serviceKey } }),
     accountId ? prisma.whatsAppAccount.findUnique({ where: { id: accountId } }) : Promise.resolve(null),
   ]);
   if (accountId && !account) {
@@ -36,7 +41,7 @@ export async function updateServiceRoute(
   }
 
   await prisma.whatsAppServiceRoute.upsert({
-    where: { serviceKey },
+    where: { projectId_serviceKey: { projectId: await activeProjectId(), serviceKey } },
     update: { accountId, fallbackPolicy, enabled: true },
     create: { serviceKey, accountId, fallbackPolicy, enabled: true },
   });
@@ -49,6 +54,6 @@ export async function updateServiceRoute(
     changedBy: session.username,
   });
 
-  revalidatePath("/accounts/routing");
+  revalidatePath(await projectPath("/accounts/routing"));
   return { success: true };
 }

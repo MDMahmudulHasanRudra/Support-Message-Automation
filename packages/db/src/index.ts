@@ -1,7 +1,19 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
-import type { AiFallbackOutcome, Prisma, WhatsAppServiceKey } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
+import { NotificationEvent } from "@prisma/client";
+import type { AiFallbackOutcome, ProjectStatus, WhatsAppServiceKey } from "@prisma/client";
 import { derivePatternSignature, validateRegexSafety } from "@support-automation/engine";
+import {
+  buildWhatsAppContactId,
+  DEFAULT_SHIFT_TEMPLATES,
+  hasReachablePhoneNumber,
+  knowledgeContentHash,
+  normalizePhoneNumber,
+  PROJECT_FEATURES,
+  SUPPORT_ASSIGNMENT_TEMPLATE_KEYS,
+  supportAssignmentDedupKey,
+  supportAssignmentNoticeVars,
+} from "@support-automation/shared";
 import type { RuleAction } from "@support-automation/shared";
 
 // Standard Next.js/Node singleton pattern: avoids exhausting Postgres
@@ -10,10 +22,62 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
+/**
+ * Every process that opens this client gets a BOUNDED pool, whatever the deployment's
+ * `DATABASE_URL` happens to say.
+ *
+ * Prisma's default pool size is `num_cpus * 2 + 1` PER PROCESS, and nothing here ever set one:
+ * `app` and `worker` each sized themselves from the host's core count against a stock
+ * `postgres:16-alpine` whose `max_connections` is 100. On a multi-core VPS that is a large,
+ * silently self-scaling share of the server's connection budget claimed by two processes that
+ * spend most of their time idle — and the cost is not only the ceiling. Every Postgres connection
+ * is a backend process with its own memory, so an oversized pool shows up as load and RSS long
+ * before it shows up as "too many clients".
+ *
+ * The test harness has carried exactly these three parameters since the day an unbounded pool
+ * started failing suites at random with "Can't reach database server" while Postgres itself sat
+ * healthy and idle (see CLAUDE.md's testing section). That lesson was never applied to production;
+ * this is it applied.
+ *
+ * A URL that already names a parameter keeps its own value, untouched — that is what leaves
+ * `test:isolated`'s deliberately tighter pool exactly as it was, and what lets a deployment
+ * override any of the three without a code change.
+ */
+function withPoolBounds(url: string | undefined): string | null {
+  if (!url) return null;
+  const defaults: Record<string, string> = {
+    // Ten is comfortably above what either process runs concurrently — the worker's loops are
+    // overlap-guarded and serial, and the dashboard renders a page at a time — while keeping both
+    // processes together well inside a stock 100 even with migrations and a psql session open.
+    connection_limit: process.env.DATABASE_POOL_SIZE || "10",
+    // Wait for a pooled connection rather than failing instantly under a burst. The default is
+    // already 10s; naming it keeps the three values in one place.
+    pool_timeout: "20",
+    connect_timeout: "30",
+  };
+
+  try {
+    const parsed = new URL(url);
+    for (const [key, value] of Object.entries(defaults)) {
+      if (!parsed.searchParams.has(key)) parsed.searchParams.set(key, value);
+    }
+    return parsed.toString();
+  } catch {
+    // An unparseable URL is Prisma's problem to report, with its own far better message. Silently
+    // rewriting it here would only replace that with something more confusing.
+    return url;
+  }
+}
+
+const boundedUrl = withPoolBounds(process.env.DATABASE_URL);
+
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    // Omitted entirely when there is no URL to bound, so an unset DATABASE_URL still produces
+    // Prisma's own startup error rather than a confusing one from here.
+    ...(boundedUrl ? { datasources: { db: { url: boundedUrl } } } : {}),
   });
 
 if (process.env.NODE_ENV !== "production") {
@@ -30,7 +94,367 @@ export async function checkDatabaseConnection(): Promise<boolean> {
   }
 }
 
-export { PrismaClient } from "@prisma/client";
+export { Prisma, PrismaClient } from "@prisma/client";
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// Multi-project scoping (MULTI_PROJECT_PLAN.md §5, Phase 2)
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//
+// `createProjectScopedPrisma(base, resolveProjectId)` returns a client that adds the active project
+// to every query on a project-scoped model: to every `where`, to every created row (nested creates
+// included), to list relations reached through `include`/`select`/`_count`, and to every nested
+// `connect`, so a row can only be linked to a row of the same project. It FAILS CLOSED: a scoped
+// query with no project context throws `ProjectScopeError` instead of reading every project — the
+// resolver throws, and nothing here ever falls back to "all projects". A `projectId` in a query that
+// differs from the active one also throws: nothing may reach into another project by naming it.
+//
+// Unscoped (platform) models — users, sessions, roles, permissions, security settings, worker
+// health, release notes — pass straight through, and do not even resolve a project unless they
+// reach a scoped relation. `$queryRaw` is NOT covered (Prisma gives an extension no way into raw
+// SQL); every raw query must add its own `"projectId" = ${projectId}`.
+//
+// The settings singletons keep their `id: "global"` call sites: for them a `where: { id: "global" }`
+// is read as "this project's row" (`projectId` is unique on each), and a create of `id: "global"`
+// keeps that id only for the original project and uses the project's own id otherwise — so ISP
+// Digital's existing rows keep their identity and every other project gets its own row.
+//
+// Kept in this file on purpose: packages/db/src has no relative imports (see the rule at the top).
+
+/** The original installation. Every row that existed before multi-project belongs to it. */
+export const ORIGINAL_PROJECT_ID = "proj_isp_digital";
+
+/** Models whose rows belong to exactly one project (the 70 of MULTI_PROJECT_PLAN.md §3). */
+export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
+  // roots
+  "WhatsAppAccount", "WhatsAppServiceRoute", "InternalTeamMember", "Team", "TeamMembership", "AutomationRule",
+  "AiProvider", "AiModelConfig", "AiKnowledgeItem", "AiKnowledgeVersion", "KnowledgeImport", "SupportPriorityPolicy",
+  "SupportKeyword", "SupportRule", "SupportRuleKeyword", "SupportRuleGroup", "SupportRuleTeamMember", "ShiftTemplate",
+  "LeaveType", "Holiday", "WeeklyScheduleEntry", "DutyAssignment", "DutyAssignmentChange", "LeaveRequest",
+  "ChatCategory", "SavedGroupSet", "SavedReply", "NotificationTemplate", "NotificationEventSetting",
+  "TeamMemberNotificationPreference", "PatternCandidate", "PatternCandidateEvidence", "RuleProposal",
+  "LearningBatchJob", "ConversationAnalysisRun", "ConversationCandidate", "ForgeResearchTask", "SandboxSession",
+  "SandboxTurn",
+  // settings singletons
+  "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
+  "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
+  "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
+  "SupportAssignmentSettings",
+  // descendants
+  "Message", "OutboundMessage", "WhatsAppGroup", "AutomationExecution", "Notification", "WorkerCommand",
+  "ProcessingCheckpoint", "MessageDropCounter", "GroupBroadcastJob", "GroupParticipantAddJob",
+  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "SupportResponseEpisode", "SupportAssignment", "SupportAssignmentEvent", "CollectionGap", "WhatsAppOperationDismissal", "CustomerMoodEvent", "MoodAlert", "MoodAlertAction", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
+  "SupportEscalationEvent", "ConversationSession", "SupportActivity", "SupportSession", "TeamAttendanceDay",
+  "TeamAttendanceGroup",
+]);
+
+export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
+  "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
+  "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
+  "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
+  "SupportAssignmentSettings",
+]);
+
+/** `SystemLog.projectId` is optional: a project's operational events carry one, platform events do not. */
+const OPTIONALLY_SCOPED_MODELS: ReadonlySet<string> = new Set(["SystemLog"]);
+
+export class ProjectScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProjectScopeError";
+  }
+}
+
+interface RelationInfo {
+  model: string;
+  isList: boolean;
+  /** This side holds the foreign key (a to-one "owner" relation such as `account`). */
+  ownsForeignKey: boolean;
+}
+
+let relationCache: Map<string, Map<string, RelationInfo>> | null = null;
+function relationsOf(model: string): Map<string, RelationInfo> {
+  if (!relationCache) {
+    relationCache = new Map();
+    for (const m of Prisma.dmmf.datamodel.models) {
+      const fields = new Map<string, RelationInfo>();
+      for (const f of m.fields) {
+        if (f.kind !== "object") continue;
+        fields.set(f.name, {
+          model: f.type,
+          isList: f.isList,
+          ownsForeignKey: (f.relationFromFields?.length ?? 0) > 0,
+        });
+      }
+      relationCache.set(m.name, fields);
+    }
+  }
+  return relationCache.get(model) ?? new Map();
+}
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date);
+
+function assertSameProject(value: unknown, projectId: string, where: string): void {
+  if (value !== undefined && value !== projectId) {
+    throw new ProjectScopeError(`A query named another project (${where}); refused.`);
+  }
+}
+
+/** `where` for a scoped model: the active project added, a conflicting one refused. */
+function scopeWhere(model: string, where: unknown, projectId: string): Obj {
+  const base: Obj = isObj(where) ? { ...where } : {};
+  if (PROJECT_SINGLETON_MODELS.has(model) && base.id === "global") {
+    // "this project's settings row" — projectId is unique on every singleton.
+    delete base.id;
+  }
+  assertSameProject(base.projectId, projectId, `${model}.where`);
+  // A compound unique (`projectId_name: { projectId, name }`) names a project too.
+  for (const [key, value] of Object.entries(base)) {
+    if (key.startsWith("projectId_") && isObj(value)) assertSameProject(value.projectId, projectId, `${model}.${key}`);
+  }
+  base.projectId = projectId;
+  return base;
+}
+
+/** A row about to be created in a scoped model: stamped with the project, nested writes scoped too. */
+function scopeCreateData(model: string, data: unknown, projectId: string): Obj {
+  const out: Obj = isObj(data) ? { ...data } : {};
+  if (PROJECT_SINGLETON_MODELS.has(model) && out.id === "global" && projectId !== ORIGINAL_PROJECT_ID) {
+    out.id = projectId;
+  }
+  assertSameProject(out.projectId, projectId, `${model}.data`);
+  const relations = relationsOf(model);
+  // Checked input (a to-one relation given as `account: { connect }`) cannot also take a scalar
+  // foreign key, so the project goes in the same style the caller used.
+  const checked = Object.keys(out).some((key) => relations.get(key)?.ownsForeignKey && isObj(out[key]));
+  if (checked) {
+    const project = out.project;
+    if (isObj(project) && isObj(project.connect)) assertSameProject(project.connect.id, projectId, `${model}.project`);
+    out.project = { connect: { id: projectId } };
+    delete out.projectId;
+  } else {
+    out.projectId = projectId;
+  }
+  return scopeNestedWrites(model, out, projectId);
+}
+
+/** Nested relation writes inside `data`: creates stamped, connects/updates/deletes confined to the project. */
+function scopeNestedWrites(model: string, data: Obj, projectId: string): Obj {
+  const relations = relationsOf(model);
+  for (const [key, value] of Object.entries(data)) {
+    const rel = relations.get(key);
+    if (!rel || !isObj(value)) continue;
+    const target = rel.model;
+    if (!PROJECT_SCOPED_MODELS.has(target)) continue;
+    const ops: Obj = { ...value };
+    const each = (v: unknown, fn: (x: unknown) => unknown) => (Array.isArray(v) ? v.map(fn) : fn(v));
+    if (ops.create !== undefined) ops.create = each(ops.create, (x) => scopeCreateData(target, x, projectId));
+    if (isObj(ops.createMany) && ops.createMany.data !== undefined) {
+      ops.createMany = { ...ops.createMany, data: each(ops.createMany.data, (x) => ({ ...(x as Obj), projectId })) };
+    }
+    if (ops.connectOrCreate !== undefined) {
+      ops.connectOrCreate = each(ops.connectOrCreate, (x) => {
+        const c = x as Obj;
+        return { ...c, where: scopeWhere(target, c.where, projectId), create: scopeCreateData(target, c.create, projectId) };
+      });
+    }
+    if (ops.upsert !== undefined) {
+      ops.upsert = each(ops.upsert, (x) => {
+        const u = x as Obj;
+        return {
+          ...u,
+          ...(u.where !== undefined ? { where: scopeWhere(target, u.where, projectId) } : {}),
+          create: scopeCreateData(target, u.create, projectId),
+          update: isObj(u.update) ? scopeNestedWrites(target, u.update, projectId) : u.update,
+        };
+      });
+    }
+    for (const op of ["connect", "set", "disconnect", "delete"] as const) {
+      if (ops[op] !== undefined && typeof ops[op] !== "boolean") {
+        ops[op] = each(ops[op], (x) => scopeWhere(target, x, projectId));
+      }
+    }
+    for (const op of ["update", "updateMany"] as const) {
+      if (ops[op] === undefined) continue;
+      ops[op] = each(ops[op], (x) => {
+        const u = x as Obj;
+        if (!("data" in u)) return isObj(u) ? scopeNestedWrites(target, u, projectId) : u; // to-one: { field: value }
+        return {
+          ...u,
+          ...(u.where !== undefined ? { where: scopeWhere(target, u.where, projectId) } : {}),
+          data: isObj(u.data) ? scopeNestedWrites(target, u.data, projectId) : u.data,
+        };
+      });
+    }
+    if (ops.deleteMany !== undefined) ops.deleteMany = each(ops.deleteMany, (x) => scopeWhere(target, x, projectId));
+    data[key] = ops;
+  }
+  return data;
+}
+
+/** `include`/`select`: list relations into scoped models filtered to the project, recursively. */
+function scopeReads(model: string, args: Obj, projectId: string): void {
+  for (const key of ["include", "select"] as const) {
+    const tree = args[key];
+    if (!isObj(tree)) continue;
+    const relations = relationsOf(model);
+    const next: Obj = { ...tree };
+    for (const [field, value] of Object.entries(tree)) {
+      if (field === "_count") {
+        next._count = scopeCount(model, value, projectId);
+        continue;
+      }
+      const rel = relations.get(field);
+      if (!rel || value === false || value === undefined) continue;
+      const scoped = PROJECT_SCOPED_MODELS.has(rel.model);
+      const sub: Obj = isObj(value) ? { ...value } : {};
+      if (rel.isList && scoped) {
+        assertSameProject(isObj(sub.where) ? sub.where.projectId : undefined, projectId, `${model}.${field}`);
+        sub.where = { ...(isObj(sub.where) ? sub.where : {}), projectId };
+      }
+      scopeReads(rel.model, sub, projectId);
+      next[field] = Object.keys(sub).length === 0 && !(rel.isList && scoped) ? value : sub;
+    }
+    args[key] = next;
+  }
+}
+
+function scopeCount(model: string, value: unknown, projectId: string): unknown {
+  const relations = relationsOf(model);
+  const listFields = [...relations.entries()].filter(([, r]) => r.isList);
+  let selection: Obj;
+  if (value === true) selection = Object.fromEntries(listFields.map(([name]) => [name, true]));
+  else if (isObj(value) && isObj(value.select)) selection = { ...value.select };
+  else return value;
+  for (const [field, v] of Object.entries(selection)) {
+    const rel = relations.get(field);
+    if (!rel || !PROJECT_SCOPED_MODELS.has(rel.model) || v === false) continue;
+    const sub: Obj = isObj(v) ? { ...v } : {};
+    sub.where = { ...(isObj(sub.where) ? sub.where : {}), projectId };
+    selection[field] = sub;
+  }
+  return { select: selection };
+}
+
+/** Whether a query on an unscoped model reaches a scoped relation, and so needs the project. */
+function touchesScopedRelation(model: string, args: unknown, depth = 0): boolean {
+  if (!isObj(args) || depth > 6) return false;
+  const relations = relationsOf(model);
+  for (const key of ["include", "select"] as const) {
+    const tree = args[key];
+    if (!isObj(tree)) continue;
+    for (const [field, value] of Object.entries(tree)) {
+      if (field === "_count") {
+        if (listRelationsIntoScoped(model)) return true;
+        continue;
+      }
+      const rel = relations.get(field);
+      if (!rel || !value) continue;
+      if (PROJECT_SCOPED_MODELS.has(rel.model)) return true;
+      if (touchesScopedRelation(rel.model, value, depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
+const listRelationsIntoScoped = (model: string) =>
+  [...relationsOf(model).values()].some((r) => r.isList && PROJECT_SCOPED_MODELS.has(r.model));
+
+const WHERE_OPERATIONS = new Set([
+  "findUnique", "findUniqueOrThrow", "findFirst", "findFirstOrThrow", "findMany", "count", "aggregate", "groupBy",
+  "update", "updateMany", "delete", "deleteMany",
+]);
+
+/** Pure: the query arguments for `operation` on `model`, confined to `projectId`. Exported for tests. */
+export function scopeQueryArgs(model: string, operation: string, args: unknown, projectId: string): Obj {
+  const out: Obj = isObj(args) ? { ...args } : {};
+  const scoped = PROJECT_SCOPED_MODELS.has(model);
+  if (scoped) {
+    if (WHERE_OPERATIONS.has(operation)) out.where = scopeWhere(model, out.where, projectId);
+    if (operation === "create") out.data = scopeCreateData(model, out.data, projectId);
+    if (operation === "createMany" || operation === "createManyAndReturn") {
+      const rows = Array.isArray(out.data) ? out.data : [out.data];
+      out.data = rows.map((row) => {
+        const r: Obj = isObj(row) ? { ...row } : {};
+        if (PROJECT_SINGLETON_MODELS.has(model) && r.id === "global" && projectId !== ORIGINAL_PROJECT_ID) r.id = projectId;
+        assertSameProject(r.projectId, projectId, `${model}.createMany`);
+        r.projectId = projectId;
+        return r;
+      });
+    }
+    if (operation === "upsert") {
+      out.where = scopeWhere(model, out.where, projectId);
+      out.create = scopeCreateData(model, out.create, projectId);
+      if (isObj(out.update)) {
+        assertSameProject(out.update.projectId, projectId, `${model}.update`);
+        out.update = scopeNestedWrites(model, { ...out.update }, projectId);
+      }
+    }
+    if ((operation === "update" || operation === "updateMany") && isObj(out.data)) {
+      assertSameProject(out.data.projectId, projectId, `${model}.data`);
+      out.data = scopeNestedWrites(model, { ...out.data }, projectId);
+    }
+  } else if (OPTIONALLY_SCOPED_MODELS.has(model)) {
+    // SystemLog: a project's reader sees its own events plus platform events (null project), and a
+    // new event is attributed to the project it happened in.
+    if (["findMany", "findFirst", "findFirstOrThrow", "count", "aggregate", "groupBy"].includes(operation)) {
+      const where: Obj = isObj(out.where) ? { ...out.where } : {};
+      out.where = { AND: [where, { OR: [{ projectId }, { projectId: null }] }] };
+    }
+    if (operation === "create" && isObj(out.data) && out.data.projectId === undefined) {
+      out.data = { ...out.data, projectId };
+    }
+  }
+  scopeReads(model, out, projectId);
+  return out;
+}
+
+/**
+ * The project-scoped client. `resolveProjectId` must return the active project's id or THROW —
+ * it is only called for queries that need a project, so platform queries (login, sessions,
+ * permissions) never trigger it.
+ */
+export function createProjectScopedPrisma(base: PrismaClient, resolveProjectId: () => Promise<string>): PrismaClient {
+  const extended = base.$extends({
+    name: "project-scope",
+    query: {
+      $allModels: {
+        async $allOperations({ model, operation, args, query }) {
+          const needsProject =
+            PROJECT_SCOPED_MODELS.has(model) ||
+            OPTIONALLY_SCOPED_MODELS.has(model) ||
+            touchesScopedRelation(model, args);
+          if (!needsProject) return query(args);
+          if (OPTIONALLY_SCOPED_MODELS.has(model) && !PROJECT_SCOPED_MODELS.has(model) && !touchesScopedRelation(model, args)) {
+            // SystemLog outside a project (sign-in, a platform event): a platform entry, readable
+            // only as platform entries. Inside one, attributed to and filtered by the project.
+            let optionalProjectId: string | null = null;
+            try {
+              optionalProjectId = await resolveProjectId();
+            } catch (err) {
+              if (!(err instanceof ProjectScopeError)) throw err;
+            }
+            if (!optionalProjectId) {
+              const rawArgs: unknown = args;
+              const platformOnly: Obj = isObj(rawArgs) ? { ...rawArgs } : {};
+              if (["findMany", "findFirst", "findFirstOrThrow", "count", "aggregate", "groupBy"].includes(operation)) {
+                platformOnly.where = { AND: [isObj(platformOnly.where) ? platformOnly.where : {}, { projectId: null }] };
+              }
+              return query(platformOnly as typeof args);
+            }
+            return query(scopeQueryArgs(model, operation, args, optionalProjectId) as typeof args);
+          }
+          const projectId = await resolveProjectId();
+          if (!projectId) throw new ProjectScopeError(`No active project for ${model}.${operation}; refused.`);
+          return query(scopeQueryArgs(model, operation, args, projectId) as typeof args);
+        },
+      },
+    },
+  });
+  // Query-only extension: the model API is unchanged, so the cast is sound and lets every existing
+  // call site (and every helper that takes a PrismaClient) use the scoped client as-is.
+  return extended as unknown as PrismaClient;
+}
 
 export interface ResolvedWhatsAppAccount {
   accountId: string;
@@ -71,10 +495,13 @@ export function isResolutionError(result: WhatsAppAccountResolution): result is 
  * (worker, plain `node`) than by Next.js's Turbopack (web) — neither an extensionless nor a `.js`
  * specifier satisfies both at once. Zero relative imports sidesteps the incompatibility entirely.
  */
-export async function resolveWhatsAppAccount(serviceKey: WhatsAppServiceKey): Promise<WhatsAppAccountResolution> {
+export async function resolveWhatsAppAccount(
+  serviceKey: WhatsAppServiceKey,
+  db: PrismaClient,
+): Promise<WhatsAppAccountResolution> {
   const [route, primary] = await Promise.all([
-    prisma.whatsAppServiceRoute.findUnique({ where: { serviceKey } }),
-    prisma.whatsAppAccount.findFirst({ where: { isPrimary: true } }),
+    db.whatsAppServiceRoute.findFirst({ where: { serviceKey } }),
+    db.whatsAppAccount.findFirst({ where: { isPrimary: true } }),
   ]);
 
   const usePrimary = (source: "PRIMARY_DEFAULT" | "PRIMARY_FALLBACK"): WhatsAppAccountResolution => {
@@ -91,7 +518,7 @@ export async function resolveWhatsAppAccount(serviceKey: WhatsAppServiceKey): Pr
     return usePrimary("PRIMARY_DEFAULT");
   }
 
-  const configured = await prisma.whatsAppAccount.findUnique({ where: { id: route.accountId } });
+  const configured = await db.whatsAppAccount.findUnique({ where: { id: route.accountId } });
   if (configured && configured.status === "CONNECTED") {
     return { accountId: configured.id, accountLabel: configured.label, source: "CONFIGURED" };
   }
@@ -108,14 +535,80 @@ export async function resolveWhatsAppAccount(serviceKey: WhatsAppServiceKey): Pr
 const AI_SECRET_ALGORITHM = "aes-256-gcm";
 const AI_SECRET_IV_LENGTH = 12;
 
-function getAiSecretKey(): Buffer {
-  const secret = process.env.AI_CREDENTIALS_ENCRYPTION_KEY;
-  if (!secret) throw new Error("AI_CREDENTIALS_ENCRYPTION_KEY is not configured.");
-  const key = Buffer.from(secret, "base64");
+/**
+ * Which key encrypted a given secret, so the key can ever be changed.
+ *
+ * The stored envelope used to be `iv.tag.ciphertext` and named no key at all. With one key in one
+ * environment variable that reads as simplicity, and it is not: it makes rotation IMPOSSIBLE.
+ * Replace `AI_CREDENTIALS_ENCRYPTION_KEY` and every stored credential becomes permanently
+ * undecryptable, with no way to tell which rows were written under which key and therefore no
+ * migration to write. "We can rotate the key" was not true, and nothing in the system said so.
+ *
+ * The envelope is now `v2.<keyId>.<iv>.<tag>.<ciphertext>`. Rotation becomes an ordinary
+ * operation:
+ *
+ *   1. Generate a new key. Move the current one into `AI_CREDENTIALS_ENCRYPTION_KEYS_OLD` as
+ *      `{"<oldKeyId>":"<base64>"}`, keeping it available for DECRYPT only.
+ *   2. Set `AI_CREDENTIALS_ENCRYPTION_KEY` to the new key and `AI_CREDENTIALS_ENCRYPTION_KEY_ID`
+ *      to a new id.
+ *   3. Everything written from then on uses the new key; everything already stored still reads.
+ *   4. Re-encrypt at leisure with `reencryptSecret`, then — and only then — retire the old key.
+ *
+ * Step 4 is the one that must not be rushed: a key is not safe to destroy until every backup that
+ * might be restored has been migrated too, not merely the live rows.
+ */
+const LEGACY_KEY_ID = "v1";
+const ENVELOPE_PREFIX = "v2";
+
+function parseKey(raw: string, label: string): Buffer {
+  const key = Buffer.from(raw, "base64");
   if (key.length !== 32) {
-    throw new Error("AI_CREDENTIALS_ENCRYPTION_KEY must decode to 32 bytes (generate with: openssl rand -base64 32).");
+    throw new Error(`${label} must decode to 32 bytes (generate with: openssl rand -base64 32).`);
   }
   return key;
+}
+
+/** The key new secrets are encrypted with. */
+function getActiveKey(): { keyId: string; key: Buffer } {
+  const secret = process.env.AI_CREDENTIALS_ENCRYPTION_KEY;
+  if (!secret) throw new Error("AI_CREDENTIALS_ENCRYPTION_KEY is not configured.");
+  return {
+    // Defaults to the legacy id, so a deployment that has never rotated writes envelopes naming
+    // the key it has always used rather than inventing a new identity for it.
+    keyId: process.env.AI_CREDENTIALS_ENCRYPTION_KEY_ID?.trim() || LEGACY_KEY_ID,
+    key: parseKey(secret, "AI_CREDENTIALS_ENCRYPTION_KEY"),
+  };
+}
+
+/**
+ * Retired keys, kept only so old ciphertext still reads. A JSON object of id → base64 key.
+ *
+ * Deliberately separate from the active key: a key that can still decrypt is not the same as a key
+ * anything is allowed to encrypt with, and conflating the two is how a "rotation" silently keeps
+ * writing under the key it was supposed to retire.
+ */
+function getRetiredKeys(): Map<string, Buffer> {
+  const raw = process.env.AI_CREDENTIALS_ENCRYPTION_KEYS_OLD?.trim();
+  if (!raw) return new Map();
+  let parsed: Record<string, string>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, string>;
+  } catch {
+    throw new Error('AI_CREDENTIALS_ENCRYPTION_KEYS_OLD must be JSON, e.g. {"v1":"<base64 key>"}.');
+  }
+  return new Map(
+    Object.entries(parsed).map(([keyId, value]) => [keyId, parseKey(value, `AI_CREDENTIALS_ENCRYPTION_KEYS_OLD["${keyId}"]`)]),
+  );
+}
+
+function keyForDecryption(keyId: string): Buffer {
+  const active = getActiveKey();
+  if (keyId === active.keyId) return active.key;
+  const retired = getRetiredKeys().get(keyId);
+  if (retired) return retired;
+  throw new Error(
+    `No key available for encryption key id "${keyId}". Add it to AI_CREDENTIALS_ENCRYPTION_KEYS_OLD to read secrets written under it.`,
+  );
 }
 
 /**
@@ -129,24 +622,223 @@ function getAiSecretKey(): Buffer {
  * unaffected by that constraint.
  */
 export function encryptSecret(plaintext: string): string {
+  const { keyId, key } = getActiveKey();
   const iv = randomBytes(AI_SECRET_IV_LENGTH);
-  const cipher = createCipheriv(AI_SECRET_ALGORITHM, getAiSecretKey(), iv);
+  const cipher = createCipheriv(AI_SECRET_ALGORITHM, key, iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
-  return [iv, authTag, ciphertext].map((buf) => buf.toString("base64")).join(".");
+  return [ENVELOPE_PREFIX, keyId, ...[iv, authTag, ciphertext].map((buf) => buf.toString("base64"))].join(".");
 }
 
-/** Reverses encryptSecret — only ever called server-side, right before an outbound API call. */
+/**
+ * Reverses encryptSecret — only ever called server-side, right before an outbound API call.
+ *
+ * Reads BOTH envelopes. The legacy three-part form names no key, so it is decrypted with whatever
+ * the active key is, which is exactly what it was encrypted with: it predates rotation being
+ * possible at all. Keeping that path is not tidiness — every credential stored before this change
+ * is in that form, and dropping it would lock the deployment out of its own providers on deploy.
+ *
+ * AES-256-GCM throughout, so a wrong key does not silently return rubbish: the authentication tag
+ * fails and this throws. That property is what makes `reencryptSecret` safe to run in bulk.
+ */
 export function decryptSecret(stored: string): string {
-  const [ivB64, tagB64, ciphertextB64] = stored.split(".");
-  if (!ivB64 || !tagB64 || !ciphertextB64) throw new Error("Malformed encrypted secret.");
-  const decipher = createDecipheriv(AI_SECRET_ALGORITHM, getAiSecretKey(), Buffer.from(ivB64, "base64"));
-  decipher.setAuthTag(Buffer.from(tagB64, "base64"));
-  const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertextB64, "base64")), decipher.final()]);
+  const parts = stored.split(".");
+
+  const { keyId, iv, tag, ciphertext } =
+    parts.length === 5
+      ? { keyId: parts[1]!, iv: parts[2]!, tag: parts[3]!, ciphertext: parts[4]! }
+      : { keyId: LEGACY_KEY_ID, iv: parts[0]!, tag: parts[1]!, ciphertext: parts[2]! };
+
+  if (parts.length === 5 && parts[0] !== ENVELOPE_PREFIX) {
+    throw new Error(`Unknown encrypted secret format "${parts[0]}".`);
+  }
+  if (parts.length !== 3 && parts.length !== 5) throw new Error("Malformed encrypted secret.");
+  if (!iv || !tag || !ciphertext) throw new Error("Malformed encrypted secret.");
+
+  if (parts.length === 5) {
+    return openEnvelope(keyForDecryption(keyId), iv, tag, ciphertext);
+  }
+
+  // A LEGACY envelope names no key, so the only way to read it is to try the keys we hold — and
+  // that is sound rather than a guess, because AES-256-GCM authenticates: a wrong key fails the
+  // tag check and throws, it never returns plausible rubbish.
+  //
+  // Trying them matters on the FIRST rotation, which is the one a real deployment performs. Reading
+  // a legacy secret with the active key alone works right up until the key is rotated, at which
+  // point every credential written before key ids existed becomes unreadable — precisely the
+  // failure this whole change exists to prevent, reintroduced at the one moment it would bite.
+  const active = getActiveKey();
+  const candidates = [active.key, ...getRetiredKeys().values()];
+  for (const candidate of candidates) {
+    try {
+      return openEnvelope(candidate, iv, tag, ciphertext);
+    } catch {
+      // Wrong key for this secret. Keep going; the loop below reports it if none fit.
+    }
+  }
+  throw new Error(
+    "Could not decrypt a secret stored in the pre-key-id format with any configured key. Add the key it was written under to AI_CREDENTIALS_ENCRYPTION_KEYS_OLD.",
+  );
+}
+
+function openEnvelope(key: Buffer, iv: string, tag: string, ciphertext: string): string {
+  const decipher = createDecipheriv(AI_SECRET_ALGORITHM, key, Buffer.from(iv, "base64"));
+  decipher.setAuthTag(Buffer.from(tag, "base64"));
+  const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertext, "base64")), decipher.final()]);
   return plaintext.toString("utf8");
 }
 
+/** Which key a stored secret was written under, without decrypting it. */
+export function encryptionKeyIdOf(stored: string): string {
+  const parts = stored.split(".");
+  return parts.length === 5 && parts[0] === ENVELOPE_PREFIX ? parts[1]! : LEGACY_KEY_ID;
+}
+
+/**
+ * Moves one stored secret onto the active key: decrypt with whichever key wrote it, re-encrypt with
+ * the current one.
+ *
+ * The migration step of a rotation, and the reason rotation is now a real operation rather than a
+ * claim. Returns the value unchanged when it is already on the active key, so running it across
+ * every row repeatedly is safe and converges.
+ *
+ * Throws rather than returning the original if decryption fails — a secret that cannot be read is
+ * something an operator must see, not something to quietly carry forward under a key that cannot
+ * open it.
+ */
+export function reencryptSecret(stored: string): string {
+  if (encryptionKeyIdOf(stored) === getActiveKey().keyId && stored.split(".").length === 5) return stored;
+  return encryptSecret(decryptSecret(stored));
+}
+
 /** Never send the real key to the browser — show only enough to recognize which one it is. */
+/**
+ * What deleting a WhatsApp account would actually destroy.
+ *
+ * Fourteen relations are `onDelete: Cascade` from `WhatsAppAccount`, and the delete guarded on
+ * exactly two things — is this the last account, is it Primary — before hard-deleting. The
+ * confirmation said "synced groups and message history", which is true and radically incomplete:
+ * it also takes every SupportActivity, SupportSession, AiFallbackDecision, ConversationSession,
+ * escalation case, linked issue and attendance evidence the number ever produced. That is the
+ * support record for that phone, and this codebase's own standard is the opposite — soft-delete
+ * over hard-delete for anything with historical value.
+ *
+ * Counted per KIND rather than as one total, because they are not interchangeable to the person
+ * deciding: losing a group's configuration is an afternoon's work, losing the support record is
+ * unrecoverable. The caller shows the real numbers and makes somebody confirm them.
+ *
+ * In the same file as `resolveWhatsAppAccount`/`encryptSecret` for the same reason they are:
+ * `packages/db/src` has zero relative imports between its own files, by hard rule.
+ */
+export interface AccountHistoryImpact {
+  messages: number;
+  groups: number;
+  supportActivities: number;
+  supportSessions: number;
+  aiDecisions: number;
+  escalationCases: number;
+  conversationSessions: number;
+  /** TeamAttendanceGroup rows — the ones whose loss leaves a duty row claiming messages that are gone. */
+  attendanceEvidence: number;
+  total: number;
+  hasHistory: boolean;
+}
+
+export async function countAccountHistory(accountId: string, db: PrismaClient): Promise<AccountHistoryImpact> {
+  const [
+    messages,
+    groups,
+    supportActivities,
+    supportSessions,
+    aiDecisions,
+    escalationCases,
+    conversationSessions,
+    attendanceEvidence,
+  ] = await db.$transaction([
+    db.message.count({ where: { accountId } }),
+    db.whatsAppGroup.count({ where: { accountId } }),
+    db.supportActivity.count({ where: { accountId } }),
+    db.supportSession.count({ where: { accountId } }),
+    db.aiFallbackDecision.count({ where: { accountId } }),
+    db.supportEscalationCase.count({ where: { accountId } }),
+    db.conversationSession.count({ where: { accountId } }),
+    db.teamAttendanceGroup.count({ where: { accountId } }),
+  ]);
+
+  const total =
+    messages +
+    groups +
+    supportActivities +
+    supportSessions +
+    aiDecisions +
+    escalationCases +
+    conversationSessions +
+    attendanceEvidence;
+
+  return {
+    messages,
+    groups,
+    supportActivities,
+    supportSessions,
+    aiDecisions,
+    escalationCases,
+    conversationSessions,
+    attendanceEvidence,
+    total,
+    hasHistory: total > 0,
+  };
+}
+
+/**
+ * Brings attendance day totals back in line with the evidence that is actually left.
+ *
+ * The silent half of an account delete. `TeamAttendanceGroup` cascades from the account;
+ * `TeamAttendanceDay`, which holds `messageCount` and `uniqueGroupCount`, hangs off
+ * `InternalTeamMember` and SURVIVES. So a duty row went on reading "93 messages across 23 groups"
+ * while expanding it showed nothing — a number that cannot be reconciled and gives no sign it is
+ * wrong, which is worse than a number that is obviously missing.
+ *
+ * Pass the `attendanceDayId`s collected BEFORE the delete; afterwards the rows naming them are
+ * gone and there is no way to find them again. Recomputes from what remains rather than
+ * subtracting what left, so running it twice converges instead of accumulating — the same
+ * reasoning as `recordTeamAttendance`, which recomputes a member-day rather than incrementing it.
+ *
+ * The day row itself is never deleted, even when nothing is left: it can carry an
+ * `AttendanceOverride`, which is a manager's explicit verdict rather than evidence, and this is
+ * not entitled to throw that away.
+ */
+export async function reconcileAttendanceAfterAccountRemoval(
+  attendanceDayIds: string[],
+  db: PrismaClient,
+): Promise<number> {
+  const ids = [...new Set(attendanceDayIds)].filter(Boolean);
+  if (!ids.length) return 0;
+
+  let updated = 0;
+  for (const attendanceDayId of ids) {
+    const remaining = await db.teamAttendanceGroup.findMany({
+      where: { attendanceDayId },
+      select: { messageCount: true, firstAt: true, lastAt: true },
+    });
+
+    const messageCount = remaining.reduce((sum, row) => sum + row.messageCount, 0);
+    const firstActivityAt = remaining.length
+      ? new Date(Math.min(...remaining.map((row) => row.firstAt.getTime())))
+      : null;
+    const lastActivityAt = remaining.length
+      ? new Date(Math.max(...remaining.map((row) => row.lastAt.getTime())))
+      : null;
+
+    // The day may itself have gone — the member could have been removed in the same breath.
+    const result = await db.teamAttendanceDay.updateMany({
+      where: { id: attendanceDayId },
+      data: { messageCount, uniqueGroupCount: remaining.length, firstActivityAt, lastActivityAt },
+    });
+    updated += result.count;
+  }
+  return updated;
+}
+
 export function maskSecret(plaintext: string): string {
   if (plaintext.length <= 8) return "••••••••";
   return `${plaintext.slice(0, 4)}••••••••${plaintext.slice(-4)}`;
@@ -173,15 +865,18 @@ export type CreateRuleProposalResult = { id: string } | { error: string };
  * Same no-relative-imports reasoning as resolveWhatsAppAccount()/encryptSecret() above applies to
  * why this is in this file directly rather than a sibling module.
  */
-export async function createRuleProposalFromCandidate(candidateId: string): Promise<CreateRuleProposalResult> {
-  const candidate = await prisma.patternCandidate.findUnique({
+export async function createRuleProposalFromCandidate(
+  candidateId: string,
+  db: PrismaClient,
+): Promise<CreateRuleProposalResult> {
+  const candidate = await db.patternCandidate.findUnique({
     where: { id: candidateId },
     include: { proposal: true },
   });
   if (!candidate) return { error: "Pattern candidate not found." };
   if (candidate.proposal) return { error: "A proposal already exists for this pattern." };
 
-  const proposal = await prisma.ruleProposal.create({
+  const proposal = await db.ruleProposal.create({
     data: {
       patternCandidateId: candidate.id,
       name: deriveProposalName(candidate.suggestedKeywords),
@@ -231,7 +926,7 @@ export async function createRuleProposalFromAiReply(params: {
   intent: string | null;
   sourceMessageId: string;
   groupName: string | null;
-}): Promise<DraftRuleFromAiReplyResult> {
+}, db: PrismaClient): Promise<DraftRuleFromAiReplyResult> {
   const signature = derivePatternSignature(params.customerMessage);
   if (signature.keywords.length < MIN_SIGNATURE_KEYWORDS_FOR_DRAFT) {
     return { created: false, reason: "TOO_GENERIC" };
@@ -240,7 +935,7 @@ export async function createRuleProposalFromAiReply(params: {
   const label = params.intent?.trim() || signature.keywords.slice(0, 4).join(", ");
 
   try {
-    const proposal = await prisma.ruleProposal.create({
+    const proposal = await db.ruleProposal.create({
       data: {
         source: "AI_REPLY",
         sourceSignature: signature.patternKey,
@@ -282,8 +977,8 @@ export async function approveRuleProposalById(params: {
   proposalId: string;
   reviewedById: string | null;
   autoApproved: boolean;
-}): Promise<ApproveRuleProposalResult> {
-  const proposal = await prisma.ruleProposal.findUnique({ where: { id: params.proposalId } });
+}, db: PrismaClient): Promise<ApproveRuleProposalResult> {
+  const proposal = await db.ruleProposal.findUnique({ where: { id: params.proposalId } });
   if (!proposal) return { error: "Rule proposal not found." };
   if (proposal.status !== "PENDING_REVIEW") {
     return { error: "This proposal has already been reviewed." };
@@ -298,7 +993,7 @@ export async function approveRuleProposalById(params: {
     if (!check.safe) return { error: `Regex rejected: ${check.reason}` };
   }
 
-  const createdRule = await prisma.$transaction(async (tx) => {
+  const createdRule = await db.$transaction(async (tx) => {
     const rule = await tx.automationRule.create({
       data: {
         name: proposal.name,
@@ -359,6 +1054,17 @@ export interface CreateAiFallbackDecisionInput {
   outboundMessageId?: string | null;
   notificationId?: string | null;
   tokensUsed?: number | null;
+  /**
+   * How the generation went, in the provider's own terms, plus which version of THIS SYSTEM
+   * produced it. All optional: a decision recorded before a model was ever called — a media-only
+   * message, an exhausted cooldown — legitimately has none of them.
+   */
+  latencyMs?: number | null;
+  finishReason?: string | null;
+  promptVersion?: string | null;
+  retrievalVersion?: string | null;
+  evidenceFingerprint?: string | null;
+  correlationId?: string | null;
 }
 
 export type CreateAiFallbackDecisionResult = { id: string } | { error: string };
@@ -372,9 +1078,10 @@ export type CreateAiFallbackDecisionResult = { id: string } | { error: string };
  */
 export async function createAiFallbackDecision(
   input: CreateAiFallbackDecisionInput,
+  db: PrismaClient,
 ): Promise<CreateAiFallbackDecisionResult> {
   try {
-    const created = await prisma.aiFallbackDecision.create({
+    const created = await db.aiFallbackDecision.create({
       data: {
         messageId: input.messageId,
         accountId: input.accountId,
@@ -386,9 +1093,19 @@ export async function createAiFallbackDecision(
         responseText: input.responseText ?? null,
         outcome: input.outcome,
         reason: input.reason ?? null,
-        outboundMessageId: input.outboundMessageId ?? null,
-        notificationId: input.notificationId ?? null,
+        // `|| null`, not `?? null`: these are foreign keys, and an empty string is not a valid id.
+        // A caller that hands one over (a suppressed notification used to return "" here) would
+        // otherwise produce a P2003 that this function does not catch, losing the whole decision
+        // row rather than just the link.
+        outboundMessageId: input.outboundMessageId || null,
+        notificationId: input.notificationId || null,
         tokensUsed: input.tokensUsed ?? null,
+        latencyMs: input.latencyMs ?? null,
+        finishReason: input.finishReason ?? null,
+        promptVersion: input.promptVersion ?? null,
+        retrievalVersion: input.retrievalVersion ?? null,
+        evidenceFingerprint: input.evidenceFingerprint ?? null,
+        correlationId: input.correlationId ?? null,
       },
     });
     return { id: created.id };
@@ -398,4 +1115,514 @@ export async function createAiFallbackDecision(
     }
     throw err;
   }
+}
+
+/**
+ * The one way a knowledge entry is created — used by every writer there is.
+ *
+ * Four places create knowledge: the dashboard form, an approved conversation candidate, the Forge
+ * repository sync, and live deep-answer research. They agreed on almost nothing. Two of them wrote
+ * no `AiKnowledgeVersion` row at all, so machine-written entries claimed `currentVersion: 1` with
+ * no version behind it — versioning existed and half the system ignored it, which is worse than not
+ * having it, because a snapshot pointing at version 1 of such an entry resolves to nothing.
+ *
+ * Centralising it also puts SCOPE in one place, and scope is the data-isolation boundary. Derived
+ * from provenance rather than asked of each caller: an entry carrying a `sourceGroupId` was learned
+ * from, or researched for, one particular group, so GROUP is what it is until a person decides
+ * otherwise. Entries with no group — a manual entry, a document import, the repository sync — are
+ * statements about the product and stay GLOBAL. "Unknown or ambiguous" resolves to the narrow
+ * answer, which is the only safe direction for a rule that decides whose information can be told
+ * to whom.
+ *
+ * Lives in this file rather than a sibling module for the reason the whole package does: zero
+ * relative imports between files in packages/db (see resolveWhatsAppAccount's own note).
+ */
+export interface CreateKnowledgeItemInput {
+  title: string;
+  category: Prisma.AiKnowledgeItemCreateInput["category"];
+  question?: string | null;
+  answer: string;
+  procedure?: string | null;
+  module?: string | null;
+  software?: string | null;
+  softwareVersion?: string | null;
+  source: string;
+  sourceGroupId?: string | null;
+  sourceLabel?: string | null;
+  sourceUrl?: string | null;
+  importId?: string | null;
+  confidence?: number | null;
+  aiGenerated: boolean;
+  humanVerified: boolean;
+  createdById?: string | null;
+  /** The person who approved it, when one did. Null for a machine-verified entry. */
+  verifiedById?: string | null;
+  /**
+   * Overrides the provenance-derived scope. Only pass this where the caller genuinely knows
+   * better than "it came from a group" — a person promoting an entry, or a source that is
+   * definitionally product-wide.
+   */
+  scope?: "GLOBAL" | "GROUP" | "ACCOUNT";
+  scopeAccountId?: string | null;
+  changeSummary?: string | null;
+}
+
+/** Provenance decides scope unless a caller states otherwise. See the doc comment above. */
+export function deriveKnowledgeScope(input: {
+  scope?: "GLOBAL" | "GROUP" | "ACCOUNT";
+  sourceGroupId?: string | null;
+}): "GLOBAL" | "GROUP" | "ACCOUNT" {
+  if (input.scope) return input.scope;
+  return input.sourceGroupId ? "GROUP" : "GLOBAL";
+}
+
+export async function createKnowledgeItem(
+  input: CreateKnowledgeItemInput,
+  db: PrismaClient,
+): Promise<{ id: string }> {
+  const scope = deriveKnowledgeScope(input);
+  const contentHash = knowledgeContentHash({
+    title: input.title,
+    question: input.question ?? null,
+    answer: input.answer,
+    procedure: input.procedure ?? null,
+    module: input.module ?? null,
+  });
+
+  const content = {
+    title: input.title,
+    category: input.category,
+    question: input.question ?? null,
+    answer: input.answer,
+    procedure: input.procedure ?? null,
+    software: input.software ?? null,
+    module: input.module ?? null,
+    softwareVersion: input.softwareVersion ?? null,
+  };
+
+  const created = await db.aiKnowledgeItem.create({
+    data: {
+      ...content,
+      source: input.source,
+      sourceGroupId: input.sourceGroupId ?? null,
+      sourceLabel: input.sourceLabel ?? null,
+      sourceUrl: input.sourceUrl ?? null,
+      importId: input.importId ?? null,
+      confidence: input.confidence ?? null,
+      aiGenerated: input.aiGenerated,
+      humanVerified: input.humanVerified,
+      scope,
+      scopeAccountId: scope === "ACCOUNT" ? (input.scopeAccountId ?? null) : null,
+      contentHash,
+      verifiedById: input.verifiedById ?? null,
+      // Stamped only when it is actually verified. A machine-verified entry has a time and no
+      // person, which is the truth about it rather than a gap.
+      verifiedAt: input.humanVerified ? new Date() : null,
+      currentVersion: 1,
+      createdById: input.createdById ?? null,
+      // ALWAYS written, by every path. An evidence snapshot records the version number it read,
+      // and that only resolves to content if the version row exists.
+      versions: {
+        create: {
+          version: 1,
+          ...content,
+          changeSummary: input.changeSummary ?? null,
+          createdById: input.createdById ?? null,
+        },
+      },
+    },
+    select: { id: true },
+  });
+
+  return created;
+}
+
+/**
+ * Entries whose content is byte-identical to this one, for a reviewer to look at.
+ *
+ * Reports, never merges. Two entries sharing a fingerprint may be a re-import of the same document
+ * — or the same wording arrived at independently for two different groups, where merging would
+ * destroy a distinct procedure and silently widen its scope. Similarity is a reason for a person
+ * to look, not an instruction to the database.
+ */
+export async function findKnowledgeDuplicates(contentHash: string, db: PrismaClient, excludeId?: string) {
+  return db.aiKnowledgeItem.findMany({
+    where: { contentHash, ...(excludeId ? { id: { not: excludeId } } : {}) },
+    select: { id: true, title: true, scope: true, sourceGroupId: true, humanVerified: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+    take: 10,
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Creating a project (MULTI_PROJECT_PLAN.md §8)
+
+export interface CreateProjectInput {
+  name: string;
+  slug: string;
+  description?: string | null;
+  status: Extract<ProjectStatus, "SETUP" | "ACTIVE">;
+  /** Given access to the new project, so whoever created it can go straight in. */
+  creatorUserId: string;
+}
+
+/**
+ * Creates a project and everything it needs to be configured, in ONE transaction: the Project row,
+ * its 10 settings rows, its default feature rows, its default notification event settings, the
+ * default shift templates and the creator's project access.
+ *
+ * It copies NOTHING from any other project. Settings come from the schema's own defaults — with
+ * automation switched OFF, the one default that differs, because a project nobody has configured
+ * must not start answering customers the moment a number is linked. No WhatsApp account, AI
+ * provider, rule, team or knowledge is created: those are set up inside the project through the
+ * pages that already exist for them.
+ *
+ * Takes the PLATFORM client and names the project on every row explicitly; there is no project
+ * context yet for a scoped client to resolve. Each singleton's id is the project's id, the same
+ * convention the scoped client uses for every project but the original one.
+ */
+export async function createProjectWithDefaults(input: CreateProjectInput, db: PrismaClient): Promise<{ id: string; slug: string }> {
+  return db.$transaction(async (tx) => {
+    const project = await tx.project.create({
+      data: { name: input.name, slug: input.slug, description: input.description ?? null, status: input.status },
+      select: { id: true, slug: true },
+    });
+    const own = { id: project.id, projectId: project.id };
+
+    await tx.automationSettings.create({ data: { ...own, automationEnabled: false } });
+    await tx.aiSettings.create({ data: own });
+    await tx.groupBroadcastSettings.create({ data: own });
+    await tx.groupParticipantAddSettings.create({ data: own });
+    await tx.supportEscalationSettings.create({ data: own });
+    await tx.learningSettings.create({ data: own });
+    await tx.supportActivitySettings.create({ data: own });
+    await tx.forgeSettings.create({ data: own });
+    await tx.teamManagementSettings.create({ data: own });
+    await tx.communicationStyleProfile.create({ data: own });
+    // Every media type stored, kept indefinitely (MEDIA_STORAGE.md).
+    await tx.mediaStorageSettings.create({ data: own });
+    // Mood Detection off, with the recommended policies (MOOD_DETECTION.md).
+    await tx.moodDetectionSettings.create({ data: own });
+
+    await tx.projectFeature.createMany({
+      data: PROJECT_FEATURES.map((feature) => ({ projectId: project.id, key: feature.key, enabled: feature.defaultEnabled })),
+    });
+    // Every event on, both channels, no groups of its own (so it inherits the project's global
+    // destinations) — exactly what an absent row means, written down so the project starts with
+    // a row for each alert it can raise.
+    await tx.notificationEventSetting.createMany({
+      data: Object.values(NotificationEvent).map((event) => ({ projectId: project.id, event })),
+    });
+    await tx.shiftTemplate.createMany({
+      data: DEFAULT_SHIFT_TEMPLATES.map((shift) => ({ ...shift, projectId: project.id })),
+    });
+    await tx.projectAccess.create({ data: { projectId: project.id, userId: input.creatorUserId } });
+
+    return project;
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Support Assignment notifications (SUPPORT_ASSIGNMENT.md)
+// ---------------------------------------------------------------------------------------------
+
+/** Who one Support Assignment notification goes to. */
+export type SupportAssignmentRecipient =
+  | {
+      kind: "MEMBER";
+      member: { id: string; name: string; phoneNumber: string; whatsappId: string | null; status: string };
+    }
+  | { kind: "GROUP"; whatsappGroupId: string };
+
+export interface SupportAssignmentNotice {
+  assignmentId: string;
+  /** Unique per case. The same key twice is the same notification, and is queued once. */
+  dedupKey: string;
+  templateKey: string;
+  vars: Record<string, string | null>;
+  recipient: SupportAssignmentRecipient;
+  relatedMessageId?: string | null;
+  actorUserId?: string | null;
+  /** When the notification was decided — the history line's time. Defaults to now. */
+  at?: Date;
+}
+
+/**
+ * Queue Support Assignment notifications through the ordinary Notification queue, inside the
+ * CALLER'S transaction — the one that also changed the case — so a case is never assigned, made
+ * overdue or completed without its notifications, and never notified about a change that rolled
+ * back. Shared by the web (assign, reassign) and the worker (overdue, escalation, completion), so
+ * both address people, pick accounts and record history identically.
+ *
+ * - **At most once:** every notice carries a `dedupKey`; one already recorded on the case is
+ *   skipped. The caller's conditional update of the case row is what serialises two racers, and
+ *   `(assignmentId, dedupKey)` UNIQUE is the last guard.
+ * - **Muting is the Notification Center's:** a muted SUPPORT_ASSIGNMENT event (or its WhatsApp
+ *   channel switched off) writes no notification, and the case history says so.
+ * - **A person needs a real phone number** (`hasReachablePhoneNumber`): a WhatsApp id alone
+ *   identifies them in a group and reaches nobody in a direct message.
+ * - **A group is sent from a connected account that is in it**, preferring the account routed for
+ *   NOTIFY_WHATSAPP — a send from an account outside the group fails membership verification.
+ *
+ * Nothing here sends: the dispatcher does, and the template is rendered at send time from
+ * `payload.templateKey` + `payload.vars`. A notification that cannot be queued is recorded as
+ * NOTIFY_SKIPPED with the reason, and never fails the assignment itself.
+ */
+export async function queueSupportAssignmentNotices(
+  tx: Prisma.TransactionClient,
+  notices: readonly SupportAssignmentNotice[],
+): Promise<{ queued: number; skipped: number }> {
+  let queued = 0;
+  let skipped = 0;
+  if (notices.length === 0) return { queued, skipped };
+
+  // Fails open, like the worker's getEventDelivery: no row, or an unreadable one, delivers.
+  const setting = await tx.notificationEventSetting
+    .findFirst({ where: { event: NotificationEvent.SUPPORT_ASSIGNMENT }, select: { enabled: true, sendToWhatsApp: true } })
+    .catch(() => null);
+  const muted = setting ? !setting.enabled || !setting.sendToWhatsApp : false;
+  let routed: WhatsAppAccountResolution | null = null;
+  const routedAccount = async () => (routed ??= await resolveWhatsAppAccount("NOTIFY_WHATSAPP", tx as unknown as PrismaClient));
+
+  for (const notice of notices) {
+    const already = await tx.supportAssignmentEvent.findFirst({
+      where: { assignmentId: notice.assignmentId, dedupKey: notice.dedupKey },
+      select: { id: true },
+    });
+    if (already) continue;
+
+    const memberId = notice.recipient.kind === "MEMBER" ? notice.recipient.member.id : null;
+    let label = notice.recipient.kind === "MEMBER" ? notice.recipient.member.name : notice.recipient.whatsappGroupId;
+    const skip = async (detail: string) => {
+      skipped += 1;
+      await tx.supportAssignmentEvent.create({
+        data: {
+          assignmentId: notice.assignmentId,
+          type: "NOTIFY_SKIPPED",
+          at: notice.at,
+          memberId,
+          recipient: label,
+          detail,
+          dedupKey: notice.dedupKey,
+          actorUserId: notice.actorUserId ?? null,
+        },
+      });
+    };
+
+    if (muted) {
+      await skip("Support Assignment notifications are muted in the Notification Center.");
+      continue;
+    }
+
+    let destination: string;
+    let accountId: string;
+    if (notice.recipient.kind === "MEMBER") {
+      const member = notice.recipient.member;
+      if (member.status !== "ACTIVE") {
+        await skip(`${member.name} is not an active team member.`);
+        continue;
+      }
+      const digits = hasReachablePhoneNumber(member) ? normalizePhoneNumber(member.phoneNumber) : null;
+      if (!digits) {
+        await skip(`${member.name} has no phone number on Team Members (only a WhatsApp id), so a direct message cannot reach them.`);
+        continue;
+      }
+      const account = await routedAccount();
+      if (isResolutionError(account)) {
+        await skip(`No WhatsApp account to send from: ${account.error}`);
+        continue;
+      }
+      destination = buildWhatsAppContactId(digits);
+      accountId = account.accountId;
+    } else {
+      const whatsappGroupId = notice.recipient.whatsappGroupId;
+      const copies = await tx.whatsAppGroup.findMany({
+        where: { whatsappGroupId, isActive: true, account: { status: "CONNECTED" } },
+        select: { accountId: true, name: true },
+        orderBy: { accountId: "asc" },
+      });
+      if (copies[0]) label = copies[0].name;
+      if (copies.length === 0) {
+        await skip("No connected WhatsApp account is in this group.");
+        continue;
+      }
+      const account = await routedAccount();
+      const preferred = isResolutionError(account) ? undefined : copies.find((c) => c.accountId === account.accountId);
+      destination = whatsappGroupId;
+      accountId = (preferred ?? copies[0]!).accountId;
+    }
+
+    const notification = await tx.notification.create({
+      data: {
+        type: "WHATSAPP",
+        event: NotificationEvent.SUPPORT_ASSIGNMENT,
+        destination,
+        accountId,
+        relatedMessageId: notice.relatedMessageId ?? null,
+        payload: {
+          alertKind: "SUPPORT_ASSIGNMENT",
+          templateKey: notice.templateKey,
+          vars: notice.vars,
+          assignmentId: notice.assignmentId,
+        },
+      },
+      select: { id: true },
+    });
+    await tx.supportAssignmentEvent.create({
+      data: {
+        assignmentId: notice.assignmentId,
+        type: "NOTIFIED",
+        at: notice.at,
+        memberId,
+        notificationId: notification.id,
+        recipient: label,
+        dedupKey: notice.dedupKey,
+        actorUserId: notice.actorUserId ?? null,
+      },
+    });
+    queued += 1;
+  }
+  return { queued, skipped };
+}
+
+export type SupportAssignmentNoticeKind = keyof typeof SUPPORT_ASSIGNMENT_TEMPLATE_KEYS;
+
+/** The settings columns that decide who hears about what. */
+export interface SupportAssignmentNoticeSettings {
+  managerGroupIds: string[];
+  adminMemberIds: string[];
+  notifyEmployeeOnAssign: boolean;
+  notifyEmployeeOnReassign: boolean;
+  notifyManagerOnOverdue: boolean;
+  notifyAdminOnOverdue: boolean;
+  notifyAdminOnEscalation: boolean;
+  notifyAdminOnCompletion: boolean;
+}
+
+const NOTICE_MEMBER_SELECT = { id: true, name: true, phoneNumber: true, whatsappId: true, status: true } as const;
+
+/**
+ * Everything one Support Assignment notification needs, decided in one place for the web and the
+ * worker (SUPPORT_ASSIGNMENT.md):
+ *
+ * - ASSIGNED / REASSIGNED → the assignee, when that switch is on.
+ * - OVERDUE → the manager group(s) and/or the admins, per their switches.
+ * - ESCALATED → the admins (when that switch is on); with no admin chosen, the manager group(s), so
+ *   an escalation is never silent merely because one list is empty.
+ * - COMPLETED → the admins, when that switch is on.
+ *
+ * The manager groups are the module's own list; empty, they inherit the Notification Center's
+ * groups for this event, and then the global notification groups — the same "empty inherits" rule
+ * every other alert follows. Team members who opted into Support Assignment alerts on their Team
+ * Members page get OVERDUE and ESCALATED as well.
+ */
+export async function buildSupportAssignmentNotices(
+  tx: Prisma.TransactionClient,
+  input: {
+    assignmentId: string;
+    kind: SupportAssignmentNoticeKind;
+    settings: SupportAssignmentNoticeSettings;
+    now: Date;
+    actorUserId?: string | null;
+    previousEmployee?: string | null;
+  },
+): Promise<SupportAssignmentNotice[]> {
+  const row = await tx.supportAssignment.findUnique({
+    where: { id: input.assignmentId },
+    select: {
+      id: true,
+      status: true,
+      assignmentRound: true,
+      assignedAt: true,
+      dueAt: true,
+      completedAt: true,
+      responseSeconds: true,
+      firstMessageId: true,
+      group: { select: { name: true } },
+      firstMessage: { select: { senderName: true, senderPhone: true, body: true } },
+      assignedMember: { select: { ...NOTICE_MEMBER_SELECT, user: { select: { employee: { select: { employeeCode: true } } } } } },
+    },
+  });
+  if (!row) return [];
+  const { settings, kind } = input;
+
+  const members: Array<{ id: string; name: string; phoneNumber: string; whatsappId: string | null; status: string }> = [];
+  const groups: string[] = [];
+  const addMembers = (list: typeof members) => {
+    for (const m of list) if (!members.some((x) => x.id === m.id)) members.push(m);
+  };
+  const admins = async () =>
+    settings.adminMemberIds.length
+      ? tx.internalTeamMember.findMany({ where: { id: { in: settings.adminMemberIds } }, select: NOTICE_MEMBER_SELECT, orderBy: { name: "asc" } })
+      : [];
+  const optedIn = async () =>
+    (
+      await tx.teamMemberNotificationPreference.findMany({
+        where: { event: NotificationEvent.SUPPORT_ASSIGNMENT, teamMember: { status: "ACTIVE" } },
+        select: { teamMember: { select: NOTICE_MEMBER_SELECT } },
+      })
+    ).map((p) => p.teamMember);
+  const managerGroups = async (): Promise<string[]> => {
+    if (settings.managerGroupIds.length) return settings.managerGroupIds;
+    const [eventSetting, automation] = await Promise.all([
+      tx.notificationEventSetting.findFirst({ where: { event: NotificationEvent.SUPPORT_ASSIGNMENT }, select: { whatsappGroupIds: true } }),
+      tx.automationSettings.findUnique({ where: { id: "global" }, select: { whatsappNotificationGroupIds: true } }),
+    ]);
+    if (eventSetting?.whatsappGroupIds.length) return eventSetting.whatsappGroupIds;
+    return automation?.whatsappNotificationGroupIds ?? [];
+  };
+
+  switch (kind) {
+    case "ASSIGNED":
+    case "REASSIGNED":
+      if (row.assignedMember && (kind === "ASSIGNED" ? settings.notifyEmployeeOnAssign : settings.notifyEmployeeOnReassign)) {
+        addMembers([row.assignedMember]);
+      }
+      break;
+    case "OVERDUE":
+      if (settings.notifyManagerOnOverdue) groups.push(...(await managerGroups()));
+      if (settings.notifyAdminOnOverdue) addMembers(await admins());
+      addMembers(await optedIn());
+      break;
+    case "ESCALATED": {
+      const adminList = settings.notifyAdminOnEscalation ? await admins() : [];
+      if (adminList.length) addMembers(adminList);
+      else groups.push(...(await managerGroups()));
+      addMembers(await optedIn());
+      break;
+    }
+    case "COMPLETED":
+      if (settings.notifyAdminOnCompletion) addMembers(await admins());
+      break;
+  }
+
+  const vars = supportAssignmentNoticeVars({
+    groupName: row.group.name,
+    customerName: row.firstMessage?.senderName ?? null,
+    customerPhone: row.firstMessage?.senderPhone ?? null,
+    message: row.firstMessage?.body ?? null,
+    employeeName: row.assignedMember?.name ?? null,
+    employeeId: row.assignedMember?.user?.employee?.employeeCode ?? null,
+    assignedAt: row.assignedAt?.getTime() ?? null,
+    dueAt: row.dueAt?.getTime() ?? null,
+    status: row.status,
+    now: input.now.getTime(),
+    completedAt: row.completedAt?.getTime() ?? null,
+    responseSeconds: row.responseSeconds,
+    previousEmployee: input.previousEmployee ?? null,
+  });
+  const templateKey = SUPPORT_ASSIGNMENT_TEMPLATE_KEYS[kind];
+  const base = { assignmentId: row.id, templateKey, vars, relatedMessageId: row.firstMessageId, actorUserId: input.actorUserId ?? null, at: input.now };
+  return [
+    ...members.map((member) => ({
+      ...base,
+      dedupKey: supportAssignmentDedupKey(row.assignmentRound, kind, { memberId: member.id }),
+      recipient: { kind: "MEMBER" as const, member },
+    })),
+    ...[...new Set(groups)].map((whatsappGroupId) => ({
+      ...base,
+      dedupKey: supportAssignmentDedupKey(row.assignmentRound, kind, { whatsappGroupId }),
+      recipient: { kind: "GROUP" as const, whatsappGroupId },
+    })),
+  ];
 }

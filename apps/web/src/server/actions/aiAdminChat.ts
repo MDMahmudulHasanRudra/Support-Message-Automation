@@ -1,6 +1,6 @@
 "use server";
 
-import { requireSession } from "@/server/auth";
+import { checkPermission } from "@/server/authorize";
 import { runAiAdminChat, type AiAdminChatTurn } from "@/server/aiAdmin/chat";
 
 export interface AiAdminChatState {
@@ -9,7 +9,8 @@ export interface AiAdminChatState {
 }
 
 export async function sendAiAdminMessage(prevState: AiAdminChatState, formData: FormData): Promise<AiAdminChatState> {
-  await requireSession();
+  const granted = await checkPermission("ai_learning.view");
+  if ("denied" in granted) return { turns: prevState.turns, error: granted.denied };
   const message = String(formData.get("message") ?? "").trim();
   if (!message) return prevState;
 

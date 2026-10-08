@@ -26,9 +26,14 @@ export class WhatsAppNotificationProvider implements NotificationProvider {
     if (!provider) {
       return { success: false, error: `WhatsApp account ${accountId} is not connected in this worker.` };
     }
-    const text = formatSupportAlert(payload);
+    const text = await formatSupportAlert(payload);
     console.log(`[whatsapp-routing] account=${accountId} recipient=${destination} action=SEND`);
-    const result = await provider.sendMessage(destination, text);
+    // Structured mentions (Mood Detection's internal alert tags the responsible member): contact ids
+    // travel in the payload beside the @-tags in the text, exactly as an outbound reply carries them.
+    const mentions = Array.isArray(payload.mentions)
+      ? payload.mentions.filter((m): m is string => typeof m === "string" && m.endsWith("@c.us"))
+      : [];
+    const result = await provider.sendMessage(destination, text, mentions.length > 0 ? mentions : undefined);
     return { success: result.success, error: result.error };
   }
 }

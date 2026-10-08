@@ -12,7 +12,7 @@ export interface AiAdminChatResult {
   toolsUsed: string[];
 }
 
-const SYSTEM_PROMPT = `You are the AI Admin Assistant for a WhatsApp Support Automation dashboard.
+const SYSTEM_PROMPT = `You are the AI Admin Assistant for Softify Assist, a WhatsApp support automation dashboard.
 
 Rules:
 - Only state facts you got back from a tool call. If a tool doesn't give you what you need, say the information isn't available — never invent numbers, group names, statuses, or settings.
@@ -38,14 +38,14 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = AI_ADMIN_TOOLS.map((t) => ({
  */
 export async function runAiAdminChat(history: AiAdminChatTurn[], userMessage: string): Promise<AiAdminChatResult> {
   const resolved = await resolveAiAdminClient();
-  if (!resolved) {
-    return {
-      reply:
-        'The AI Admin Assistant isn\'t configured yet. An admin needs to add an AI Provider and assign it to the "Admin Assistant Model" job on the AI Models page, with the AI Engine switch turned on in AI Settings.',
-      toolsUsed: [],
-    };
+  // Each cause gets its own sentence naming what is actually wrong. A single generic "not
+  // configured yet" told an admin who had configured it — to an OpenRouter provider, say — to go
+  // and do it again, which is both false and unactionable.
+  const client = resolved.client;
+  const modelId = resolved.modelId;
+  if (!client || !modelId) {
+    return { reply: resolved.detail ?? "The AI Admin Assistant is unavailable right now.", toolsUsed: [] };
   }
-  const { client, modelId } = resolved;
 
   const messages: Anthropic.MessageParam[] = [
     ...history.map((turn): Anthropic.MessageParam => ({ role: turn.role, content: turn.text })),

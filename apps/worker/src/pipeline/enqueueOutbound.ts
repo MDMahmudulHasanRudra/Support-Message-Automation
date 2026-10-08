@@ -1,4 +1,4 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { ActionType, AutomationSettings } from "@prisma/client";
 import { buildOutboundIdempotencyKey } from "./idempotency.js";
 
@@ -30,6 +30,19 @@ export async function enqueueOutboundMessage(params: {
   settings: Pick<AutomationSettings, "defaultReplyDelayMinMs" | "defaultReplyDelayMaxMs">;
   ruleDelayMinMs?: number | null;
   ruleDelayMaxMs?: number | null;
+  /**
+   * True for a group an admin marked as a test group. The randomised 3-15s delay exists to make
+   * automated replies look human to WhatsApp's spam heuristics; in a test group it only makes
+   * every check take a quarter of a minute longer than it needs to.
+   */
+  testMode?: boolean;
+  /** Contact ids to @mention. Only the AI handover mention sets this. */
+  mentions?: string[];
+  /**
+   * Set only when one incoming message can produce two genuinely different sends of the same
+   * action type — see `buildOutboundIdempotencyKey`. Left unset, keys are unchanged.
+   */
+  idempotencyVariant?: string;
 }): Promise<{ queued: boolean; outboundMessageId?: string }> {
   const idempotencyKey = buildOutboundIdempotencyKey({
     accountId: params.accountId,
@@ -37,12 +50,15 @@ export async function enqueueOutboundMessage(params: {
     incomingMessageId: params.incomingMessageId,
     ruleId: params.ruleId,
     actionType: params.actionType,
+    variant: params.idempotencyVariant,
   });
 
-  const delayMs = randomDelayMs(
-    params.ruleDelayMinMs ?? params.settings.defaultReplyDelayMinMs,
-    params.ruleDelayMaxMs ?? params.settings.defaultReplyDelayMaxMs,
-  );
+  const delayMs = params.testMode
+    ? 0
+    : randomDelayMs(
+        params.ruleDelayMinMs ?? params.settings.defaultReplyDelayMinMs,
+        params.ruleDelayMaxMs ?? params.settings.defaultReplyDelayMaxMs,
+      );
 
   try {
     const created = await prisma.outboundMessage.create({
@@ -56,6 +72,7 @@ export async function enqueueOutboundMessage(params: {
         actionType: params.actionType,
         idempotencyKey,
         delayMs,
+        mentions: params.mentions ?? [],
         scheduledAt: new Date(Date.now() + delayMs),
       },
     });

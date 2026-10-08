@@ -1,6 +1,7 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import type { AutomationSettings, GroupParticipantAddSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processOne, recoverStuckParticipantAddItems } from "../queue/groupParticipantAddProcessor.js";
 import { MockProvider } from "./mockProvider.js";
@@ -50,7 +51,7 @@ async function makeJob(overrides: Partial<Prisma.GroupParticipantAddJobUnchecked
   return prisma.groupParticipantAddJob.create({
     data: {
       accountId: account.id,
-      phoneNumber: "8801000000000",
+      phoneNumbers: ["8801000000000"],
       totalRequested: 1,
       queuedCount: 1,
       delayMinMs: settings.delayMinMs,
@@ -63,12 +64,19 @@ async function makeJob(overrides: Partial<Prisma.GroupParticipantAddJobUnchecked
   });
 }
 
-async function queueItem(params: { job: { id: string }; group: WhatsAppGroup; scheduledAt?: Date }) {
+async function queueItem(params: {
+  job: { id: string };
+  group: WhatsAppGroup;
+  scheduledAt?: Date;
+  phoneNumber?: string;
+}) {
   return prisma.groupParticipantAddItem.create({
     data: {
       jobId: params.job.id,
       groupId: params.group.id,
       groupNameSnapshot: params.group.name,
+      // Defaults to the same number makeJob() queues, so every existing test reads unchanged.
+      phoneNumber: params.phoneNumber ?? "8801000000000",
       scheduledAt: params.scheduledAt ?? new Date(),
     },
   });
@@ -170,7 +178,10 @@ describe("Scenario 3: provider failure -> retry, then exhausted", () => {
     let row = await prisma.groupParticipantAddItem.findFirstOrThrow({ where: { jobId: job.id } });
     expect(row.status).toBe("PENDING");
     expect(row.attemptCount).toBe(1);
+    // The raw code is kept for diagnosis, but an operator must be told what to actually do:
+    // a bare INSUFFICIENT_PERMISSIONS gives them nowhere to go.
     expect(row.failureReason).toMatch(/INSUFFICIENT_PERMISSIONS/);
+    expect(row.failureReason).toMatch(/not an admin of that group/i);
 
     // Force the retry to be due now instead of waiting out the real backoff delay.
     await prisma.groupParticipantAddItem.update({ where: { id: row.id }, data: { scheduledAt: new Date() } });
@@ -279,5 +290,259 @@ describe("Membership verification (safety requirement: never act blindly)", () =
     expect(row.status).toBe("FAILED");
     expect(row.failureReason).toMatch(/Membership could not be verified/);
     expect(provider.addedParticipants).toHaveLength(0);
+  });
+});
+
+describe("Already a member: skipped rather than attempted", () => {
+  it("skips without calling addParticipant when the number is already in the group", async () => {
+    // A rejected add is a signal WhatsApp counts against the number. Re-running a roster across
+    // groups it is partly already in would generate hundreds of them, which is the opposite of
+    // what this feature's pacing exists to avoid.
+    const group = await makeGroup();
+    const job = await makeJob();
+    const item = await queueItem({ job, group, phoneNumber: "8801000000000" });
+
+    const provider = new MockProvider();
+    provider.participantsByChatId.set(group.whatsappGroupId, [
+      MockProvider.phoneParticipant("8801000000000", "Already In"),
+    ]);
+
+    await processOne(provider);
+
+    const refreshed = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(refreshed.status).toBe("SKIPPED_ALREADY_MEMBER");
+    expect(provider.addedParticipants).toHaveLength(0);
+  });
+
+  it("matches on digits, not on formatting", async () => {
+    const group = await makeGroup();
+    const job = await makeJob();
+    const item = await queueItem({ job, group, phoneNumber: "8801000000000" });
+
+    const provider = new MockProvider();
+    provider.participantsByChatId.set(group.whatsappGroupId, [
+      // Formatted differently from the queued number on purpose — matching is on digits, not bytes.
+      { phoneNumber: "+880 1000000000", rawId: "+880 1000000000@c.us", name: "Same Person", isSelf: false, isAdmin: null },
+    ]);
+
+    await processOne(provider);
+
+    expect(
+      (await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } })).status,
+    ).toBe("SKIPPED_ALREADY_MEMBER");
+    expect(provider.addedParticipants).toHaveLength(0);
+  });
+
+  it("still attempts the add when the participant list comes back empty", async () => {
+    // An empty list means "could not read", not "nobody is in this group" — the provider may be
+    // mid-reconnect. Reading it as "already in" would silently skip every remaining group and
+    // report the job complete, so doubt has to fall on the side of attempting.
+    const group = await makeGroup();
+    const job = await makeJob();
+    const item = await queueItem({ job, group, phoneNumber: "8801000000000" });
+
+    const provider = new MockProvider();
+
+    await processOne(provider);
+
+    expect((await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("ADDED");
+    expect(provider.addedParticipants).toHaveLength(1);
+  });
+
+  it("adds a number that is not among the existing participants", async () => {
+    const group = await makeGroup();
+    const job = await makeJob();
+    await queueItem({ job, group, phoneNumber: "8801000000000" });
+
+    const provider = new MockProvider();
+    provider.participantsByChatId.set(group.whatsappGroupId, [
+      MockProvider.phoneParticipant("8809999999999", "Somebody Else"),
+    ]);
+
+    await processOne(provider);
+
+    expect(provider.addedParticipants).toEqual([
+      { chatId: group.whatsappGroupId, phoneNumber: "8801000000000" },
+    ]);
+  });
+});
+
+describe("Several numbers in one job", () => {
+  it("adds each number using its own item, not the job's first", async () => {
+    // The bug this pins is the obvious one after moving the number onto the item: reading it back
+    // off the job would add the same person twice and never touch the second.
+    const group = await makeGroup();
+    const job = await makeJob({ phoneNumbers: ["8801000000000", "8802000000000"] });
+    await queueItem({ job, group, phoneNumber: "8801000000000" });
+    await queueItem({ job, group, phoneNumber: "8802000000000" });
+
+    const provider = new MockProvider();
+    await processOne(provider);
+    await processOne(provider);
+
+    expect(provider.addedParticipants.map((a) => a.phoneNumber).sort()).toEqual([
+      "8801000000000",
+      "8802000000000",
+    ]);
+  });
+
+  it("lets the same group appear once per number", async () => {
+    // Idempotency is (job, group, number) now. If it were still (job, group), the second person
+    // could not be queued for a group the first was already queued for.
+    const group = await makeGroup();
+    const job = await makeJob({ phoneNumbers: ["8801000000000", "8802000000000"] });
+    await queueItem({ job, group, phoneNumber: "8801000000000" });
+    await queueItem({ job, group, phoneNumber: "8802000000000" });
+
+    expect(await prisma.groupParticipantAddItem.count({ where: { jobId: job.id } })).toBe(2);
+  });
+
+  it("completes the job only once every number has been processed everywhere", async () => {
+    const group = await makeGroup();
+    const job = await makeJob({ phoneNumbers: ["8801000000000", "8802000000000"] });
+    await queueItem({ job, group, phoneNumber: "8801000000000" });
+    await queueItem({ job, group, phoneNumber: "8802000000000" });
+
+    const provider = new MockProvider();
+    await processOne(provider);
+    expect((await prisma.groupParticipantAddJob.findUniqueOrThrow({ where: { id: job.id } })).status).not.toBe(
+      "COMPLETED",
+    );
+
+    await processOne(provider);
+    expect((await prisma.groupParticipantAddJob.findUniqueOrThrow({ where: { id: job.id } })).status).toBe(
+      "COMPLETED",
+    );
+  });
+});
+
+describe("The per-minute cap is global, not per job", () => {
+  it("holds a second job back because of a first job's adds", async () => {
+    // The whole reason the size cap could be raised. When this was per-job, splitting a large
+    // selection into twenty jobs ran at twenty times the configured rate on the operation
+    // WhatsApp punishes hardest — the cap manufactured the risk it looked like it prevented.
+    const groupA = await makeGroup();
+    const groupB = await makeGroup();
+    const jobA = await makeJob({ maxPerMinute: 1 });
+    const jobB = await makeJob({ maxPerMinute: 1 });
+    await queueItem({ job: jobA, group: groupA });
+    const itemB = await queueItem({ job: jobB, group: groupB });
+
+    const provider = new MockProvider();
+    await processOne(provider); // consumes the single add allowed this minute
+    await processOne(provider); // jobB's item must be deferred, not added
+
+    const refreshedB = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: itemB.id } });
+    expect(refreshedB.status).toBe("PENDING");
+    expect(refreshedB.scheduledAt.getTime()).toBeGreaterThan(Date.now());
+    expect(provider.addedParticipants).toHaveLength(1);
+  });
+
+  it("counts a skip against the budget too", async () => {
+    // Establishing that somebody is already in a group is itself a call to WhatsApp. Pacing only
+    // successful adds would let a large re-run hammer the API at full speed while reporting that
+    // it barely did anything.
+    const groupA = await makeGroup();
+    const groupB = await makeGroup();
+    const job = await makeJob({ maxPerMinute: 1 });
+    await queueItem({ job, group: groupA, phoneNumber: "8801000000000" });
+    const itemB = await queueItem({ job, group: groupB, phoneNumber: "8801000000000" });
+
+    const provider = new MockProvider();
+    provider.participantsByChatId.set(groupA.whatsappGroupId, [
+      MockProvider.phoneParticipant("8801000000000", "Already In"),
+    ]);
+
+    await processOne(provider); // skips groupA — still spends the minute's budget
+    await processOne(provider);
+
+    expect((await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: itemB.id } })).status).toBe(
+      "PENDING",
+    );
+  });
+});
+
+/**
+ * WhatsApp's own 409 is the backstop behind the pre-check, and the thing that actually makes this
+ * feature idempotent. The pre-check cannot catch everything — somebody can join between the check
+ * and their turn in a queue paced at three a minute, and a roster identifying people by LID cannot
+ * be matched at all — so the add path has to read that answer correctly when it arrives.
+ */
+describe("WhatsApp reports the person is already in the group", () => {
+  it("records ALREADY_IN_GROUP as a skip, not a failure, and does not retry it", async () => {
+    const group = await makeGroup();
+    const job = await makeJob({ retryMaxAttempts: 3 });
+    const item = await queueItem({ job, group });
+
+    const provider = new MockProvider();
+    // No roster registered, so the pre-check cannot tell — exactly the gap the 409 covers.
+    provider.nextAddParticipantResult = { success: false, error: "ALREADY_IN_GROUP" };
+
+    await processOne(provider);
+
+    const refreshed = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } });
+    // Not FAILED: the desired end state holds, so a red row would be wrong and a retry would spend
+    // another add to be told the same thing.
+    expect(refreshed.status).toBe("SKIPPED_ALREADY_MEMBER");
+    expect(refreshed.failureCode).toBe("ALREADY_IN_GROUP");
+  });
+
+  it("stores the machine-readable code alongside the prose for a real failure", async () => {
+    const group = await makeGroup();
+    const job = await makeJob({ retryMaxAttempts: 1 });
+    const item = await queueItem({ job, group });
+
+    const provider = new MockProvider();
+    provider.participantsByChatId.set(group.whatsappGroupId, [MockProvider.phoneParticipant("8809999999999")]);
+    provider.nextAddParticipantResult = { success: false, error: "PRIVACY_SETTINGS" };
+
+    await processOne(provider);
+
+    const refreshed = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(refreshed.status).toBe("FAILED");
+    expect(refreshed.failureCode).toBe("PRIVACY_SETTINGS");
+    // And the prose explains it rather than echoing the bare code.
+    expect(refreshed.failureReason).toContain("privacy settings");
+  });
+});
+
+describe("a dropped session is a wait, never a result", () => {
+  it("leaves the pair PENDING with no attempt counted, then adds it once the account is back", async () => {
+    const group = await makeGroup();
+    const job = await makeJob({ queuedCount: 1, totalRequested: 1, status: "RUNNING" });
+    const item = await queueItem({ job, group });
+
+    const provider = new MockProvider();
+    provider.connectionStatus = "DISCONNECTED";
+    await processOne(provider);
+
+    let row = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(row.status).toBe("PENDING");
+    expect(row.attemptCount).toBe(0);
+    expect(row.failureReason).toBeNull();
+    expect(row.scheduledAt.getTime()).toBeGreaterThan(Date.now());
+    expect(provider.addedParticipants).toHaveLength(0);
+    expect((await prisma.groupParticipantAddJob.findUniqueOrThrow({ where: { id: job.id } })).status).toBe("RUNNING");
+
+    // Reconnected: the same pair is picked up where it was, not restarted and not failed.
+    await prisma.groupParticipantAddItem.update({ where: { id: item.id }, data: { scheduledAt: new Date(Date.now() - 1000) } });
+    provider.connectionStatus = "CONNECTED";
+    await processOne(provider);
+    row = await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(row.status).toBe("ADDED");
+    expect(provider.addedParticipants).toHaveLength(1);
+  });
+});
+
+describe("crash recovery waits out an add still in flight", () => {
+  it("does not requeue a pair claimed three minutes ago (the add call may take up to 180s)", async () => {
+    const group = await makeGroup();
+    const job = await makeJob({ queuedCount: 1, totalRequested: 1 });
+    const item = await queueItem({ job, group });
+    await prisma.groupParticipantAddItem.update({ where: { id: item.id }, data: { status: "PROCESSING" } });
+    await prisma.$executeRaw`UPDATE "GroupParticipantAddItem" SET "updatedAt" = NOW() - INTERVAL '3 minutes' WHERE id = ${item.id}`;
+
+    await recoverStuckParticipantAddItems();
+    expect((await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("PROCESSING");
   });
 });

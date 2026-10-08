@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { randomBytes, scryptSync } from "node:crypto";
 import {
+  DEFAULT_SHIFT_TEMPLATES,
   PERMISSIONS,
   READ_ONLY_PERMISSION_KEYS,
   SUPPORT_MANAGER_PERMISSION_KEYS,
@@ -8,6 +9,13 @@ import {
 } from "@support-automation/shared";
 
 const prisma = new PrismaClient();
+
+/**
+ * Everything project-scoped this script creates belongs to ISP Digital, the original installation
+ * (MULTI_PROJECT_PLAN.md). Named explicitly on every write: since Phase 3 the database has no
+ * default project, so a row that does not name one is refused.
+ */
+const ISP_DIGITAL = "proj_isp_digital";
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -35,6 +43,22 @@ async function main() {
   });
   console.log(`Seeded admin user: ${admin.username}`);
 
+  // Multi-project (MULTI_PROJECT_PLAN.md): the original installation is the project ISP Digital,
+  // created by the 20260928150000_projects_foundation migration. On a fresh install the seeded
+  // admin is created AFTER that migration ran, so it would have no project access — give it access
+  // to ISP Digital. Access only: what the admin may do is still its existing role, set below.
+  // Idempotent, and never removes anyone's access.
+  await prisma.project.upsert({
+    where: { id: ISP_DIGITAL },
+    update: {},
+    create: { id: ISP_DIGITAL, name: "ISP Digital", slug: "isp-digital", status: "ACTIVE" },
+  });
+  await prisma.projectAccess.upsert({
+    where: { projectId_userId: { projectId: "proj_isp_digital", userId: admin.id } },
+    update: {},
+    create: { projectId: "proj_isp_digital", userId: admin.id },
+  });
+
   const exampleTeamMembers = [
     {
       name: "Support Executive 1",
@@ -50,14 +74,24 @@ async function main() {
     },
   ] as const;
 
-  for (const member of exampleTeamMembers) {
-    await prisma.internalTeamMember.upsert({
-      where: { phoneNumber: member.phoneNumber },
-      update: {},
-      create: { ...member, status: "ACTIVE" },
-    });
+  // Examples exist so a fresh install has something to look at, and only then. Upserting them by
+  // phone number meant any admin who deleted them got them back on the next redeploy, because
+  // every `docker compose up` re-runs this script: two fake "Support Executive" rows reappeared in
+  // a live roster the day Team Management shipped, where they would sit in schedules, attendance
+  // and duty planning as if they were staff. An empty roster is the only one that gets them.
+  const existingTeamMembers = await prisma.internalTeamMember.count({ where: { projectId: ISP_DIGITAL } });
+  if (existingTeamMembers === 0) {
+    for (const member of exampleTeamMembers) {
+      await prisma.internalTeamMember.upsert({
+        where: { projectId_phoneNumber: { projectId: ISP_DIGITAL, phoneNumber: member.phoneNumber } },
+        update: {},
+        create: { ...member, status: "ACTIVE", projectId: ISP_DIGITAL },
+      });
+    }
+    console.log(`Seeded ${exampleTeamMembers.length} example internal team members`);
+  } else {
+    console.log(`Skipped example team members: the roster already has ${existingTeamMembers}`);
   }
-  console.log(`Seeded ${exampleTeamMembers.length} example internal team members`);
 
   const defaultIgnoreRules: Array<{
     name: string;
@@ -70,10 +104,11 @@ async function main() {
   ];
 
   for (const rule of defaultIgnoreRules) {
-    const existing = await prisma.automationRule.findFirst({ where: { name: rule.name } });
+    const existing = await prisma.automationRule.findFirst({ where: { projectId: ISP_DIGITAL, name: rule.name } });
     if (existing) continue;
     await prisma.automationRule.create({
       data: {
+        projectId: ISP_DIGITAL,
         name: rule.name,
         description: "Seeded default-ignore rule for a known system/confirmation message.",
         type: "DEFAULT_IGNORE",
@@ -89,10 +124,11 @@ async function main() {
   console.log(`Seeded ${defaultIgnoreRules.length} default-ignore rules`);
 
   const greetingRuleName = "Auto Reply: Greeting";
-  const existingGreeting = await prisma.automationRule.findFirst({ where: { name: greetingRuleName } });
+  const existingGreeting = await prisma.automationRule.findFirst({ where: { projectId: ISP_DIGITAL, name: greetingRuleName } });
   if (!existingGreeting) {
     await prisma.automationRule.create({
       data: {
+        projectId: ISP_DIGITAL,
         name: greetingRuleName,
         description: "Seeded example SAFE_AUTO_REPLY acknowledgement for a plain greeting.",
         type: "AUTO_REPLY",
@@ -117,6 +153,7 @@ async function main() {
     update: {},
     create: {
       id: "global",
+      projectId: ISP_DIGITAL,
       mode: "SAFE_AUTO_REPLY",
       automationEnabled: true,
     },
@@ -126,7 +163,7 @@ async function main() {
   await prisma.groupBroadcastSettings.upsert({
     where: { id: "global" },
     update: {},
-    create: { id: "global" },
+    create: { id: "global", projectId: ISP_DIGITAL },
   });
   console.log("Seeded conservative default Group Message Sender settings");
 
@@ -136,6 +173,25 @@ async function main() {
     create: { id: "global" },
   });
   console.log("Seeded default Security Settings (24h session lifetime)");
+
+  // The shifts this office runs today. SEED DATA, never a business rule: nothing in the codebase
+  // may branch on the name "Morning" or on 10:00-19:00, because the whole point of ShiftTemplate
+  // is that an operator can add a night shift or a 09:00-18:00 from the UI without a code change.
+  //
+  // `update: {}` so re-seeding never overwrites times somebody has since corrected — the same
+  // create-once discipline the default Permission Modules below use for `isSystem`. Minutes are
+  // measured from local midnight.
+  // Shared with project creation (packages/shared/src/projects.ts), so a new project starts with
+  // exactly the shifts ISP Digital was given.
+  const DEFAULT_SHIFTS = DEFAULT_SHIFT_TEMPLATES;
+  for (const shift of DEFAULT_SHIFTS) {
+    await prisma.shiftTemplate.upsert({
+      where: { projectId_name: { projectId: ISP_DIGITAL, name: shift.name } },
+      update: {},
+      create: { ...shift, projectId: ISP_DIGITAL },
+    });
+  }
+  console.log(`Seeded ${DEFAULT_SHIFTS.length} default shift templates`);
 
   // Permission catalogue is code-defined at packages/shared/src/permissions.ts — synced here
   // (never created ad hoc from the UI), so a key's label/category can be corrected in code and
@@ -148,6 +204,17 @@ async function main() {
     });
   }
   console.log(`Synced ${PERMISSIONS.length} permissions`);
+
+  // Keys whose feature was removed. Named one by one rather than "anything not in the catalogue":
+  // a blanket delete would wipe a NEWER deploy's keys if an older seed ever ran during a rollback.
+  // Their role assignments go with them (the join table cascades).
+  const RETIRED_PERMISSION_KEYS = [
+    // Microsoft Teams Integration, removed 27 Sep 2026.
+    "teams_integration.view",
+    "teams_integration.manage",
+  ];
+  const retired = await prisma.permission.deleteMany({ where: { key: { in: RETIRED_PERMISSION_KEYS } } });
+  if (retired.count > 0) console.log(`Removed ${retired.count} retired permission(s)`);
 
   const allPermissionKeys = PERMISSIONS.map((p) => p.key);
   const defaultModules: Array<{ name: string; description: string; keys: readonly string[] }> = [

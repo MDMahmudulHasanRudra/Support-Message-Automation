@@ -1,8 +1,10 @@
-import { prisma } from "@support-automation/db";
+import { projectHasFeature } from "../project/features.js";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { parseKnowledgeRecords, type ExtractedKnowledge } from "./groupKnowledgePrompt.js";
 import { buildImportPrompt, chunkDocument } from "./importPrompt.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * Turns one queued KnowledgeImport — pasted documentation or an uploaded file — into structured
@@ -57,20 +59,18 @@ async function claimNextImport() {
 
 /** `clientOverride` is a test-only seam, mirroring the other AI jobs — production never passes it. */
 export async function processOneKnowledgeImport(clientOverride?: AiClient): Promise<KnowledgeImportRunResult> {
-  const aiSettings = await prisma.aiSettings.upsert({
-    where: { id: "global" },
-    update: {},
-    create: { id: "global" },
-  });
+  const aiSettings = await getAiSettings();
   // Only the master switch. Unlike the conversation builder this is not gated on
   // knowledgeFromChatEnabled: importing your own documentation is an explicit, human-initiated
   // act, not the automatic observation of customer chats that flag governs.
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
+  // Entitlement (MULTI_PROJECT_PLAN.md §9): a queued import waits, untouched, until it is back on.
+  if (!(await projectHasFeature("AI_LEARNING"))) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
 
   const job = await claimNextImport();
   if (!job) return { ran: false, skipped: "NOTHING_QUEUED" };
 
-  const client = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const client = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!client) {
     await failImport(job.id, "No AI provider is configured for the LEARNING job. Assign one on AI Models, then retry.");
     return { ran: false, importId: job.id, skipped: "NO_AI_CLIENT" };
@@ -114,7 +114,7 @@ export async function processOneKnowledgeImport(clientOverride?: AiClient): Prom
       .filter((entry) => entry.confidence >= MIN_CONFIDENCE_TO_STORE)
       .slice(0, MAX_ENTRIES_PER_IMPORT - created);
 
-    created += await storeImportedKnowledge(job.id, job.label, job.module, worthStoring);
+    created += await storeImportedKnowledge(job, worthStoring);
 
     await prisma.knowledgeImport.update({
       where: { id: job.id },
@@ -161,12 +161,11 @@ async function failImport(importId: string, error: string): Promise<void> {
  * cross-source title collision is a judgement call for the reviewer, not for this function.
  */
 async function storeImportedKnowledge(
-  importId: string,
-  label: string,
-  moduleHint: string | null,
+  job: { id: string; label: string; module: string | null; sourceUrl: string | null },
   entries: ExtractedKnowledge[],
 ): Promise<number> {
   if (entries.length === 0) return 0;
+  const importId = job.id;
 
   const existing = await prisma.aiKnowledgeItem.findMany({
     where: { importId, title: { in: entries.map((e) => e.title) } },
@@ -188,11 +187,16 @@ async function storeImportedKnowledge(
       category: entry.category,
       question: entry.question,
       answer: entry.answer,
+      procedure: entry.procedure,
       // The operator's module hint wins over the model's guess: they know their product.
-      module: moduleHint ?? entry.module,
+      module: job.module ?? entry.module,
       source: "IMPORT",
       importId,
-      sourceLabel: label,
+      sourceLabel: job.label,
+      // Null for every source but a fetched page. A reviewer checking a claim against the page it
+      // was read from is the difference between reviewing and guessing, and a label alone
+      // ("Billing docs") does not say which page.
+      sourceUrl: job.sourceUrl,
       confidence: entry.confidence,
       aiGenerated: true,
       humanVerified: false,

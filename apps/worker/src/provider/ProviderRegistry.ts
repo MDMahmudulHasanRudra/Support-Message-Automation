@@ -1,10 +1,15 @@
+import { countMetric } from "../health/metrics.js";
 import { OpenWAProvider } from "./openwa/OpenWAProvider.js";
 import type { WhatsAppProvider } from "./WhatsAppProvider.js";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
-import { syncGroupsWithTimeoutAndRetry } from "../commands/commandProcessor.js";
+import { resyncAndCatchUpAfterConnect } from "../commands/commandProcessor.js";
+import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
+import { countDroppedMessage } from "../pipeline/dropCounter.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
-
-const CONNECT_RETRY_DELAYS_MS = [15_000, 45_000]; // bounded, matching the spec's "safe retry policy" spirit — not unlimited
+// Moved to its own module to break the ProviderRegistry <-> commandProcessor import cycle; still
+// re-exported here so existing callers and tests are unaffected by where it lives.
+import { connectWithRetry } from "./connectWithRetry.js";
+export { connectWithRetry };
 
 /**
  * Owns every connected WhatsApp session in this process — one `OpenWAProvider` (one Chromium
@@ -54,6 +59,20 @@ export class ProviderRegistry {
     this.providers.set(account.id, provider);
 
     const connected = await connectWithRetry(provider, account.id);
+
+    // The account can be removed while this is waiting. `connectWithRetry` is up to three attempts
+    // with backoff and a QR wait, so the window is minutes, not milliseconds — long enough for an
+    // operator to delete the number in the dashboard and for the next reconciliation pass to drop
+    // it. Identity rather than `has()`: a reconnect may already have replaced this entry with a
+    // NEWER provider, and tearing that one down would kill a session somebody else just built.
+    if (this.providers.get(account.id) !== provider) {
+      console.log(`[registry] account ${account.id} was removed while connecting — abandoning this attempt`);
+      await provider.disconnect().catch((err) => {
+        console.error(`[registry] error releasing an abandoned connect for account ${account.id}`, err);
+      });
+      return false;
+    }
+
     if (!connected) {
       console.error(`[registry] account ${account.id} failed to connect after all retries`);
       await logSystemEvent("ERROR", "provider", "Failed to connect to WhatsApp after all retries", {
@@ -63,6 +82,10 @@ export class ProviderRegistry {
     }
 
     provider.subscribeToMessages((message) => {
+      // Counted here rather than after storing: the question this answers is whether the provider
+      // is still handing anything over at all, and a message dropped by a later filter still
+      // proves it was.
+      countMetric("received");
       // PHASE 6.1: the exact OpenWA -> worker event handoff point — logged here, not inside the
       // provider, since this is the provider-agnostic boundary any future provider implementation
       // would call through identically.
@@ -77,6 +100,11 @@ export class ProviderRegistry {
       );
       processIncomingMessage(message).catch((err) => {
         console.error("[worker] error processing incoming message", err);
+        // The message may have been stored before the throw or not at all, and from here there is
+        // no way to tell. Counting it either way is the honest choice: what this number answers is
+        // "how many messages went wrong", and an over-count that makes somebody look is far better
+        // than an under-count that lets a shape change pass as a quiet afternoon.
+        countDroppedMessage(message.accountId, "PIPELINE_ERROR");
         logSystemEvent("ERROR", "pipeline", "Error processing incoming message", {
           error: (err as Error).message,
           accountId: message.accountId,
@@ -85,15 +113,50 @@ export class ProviderRegistry {
     });
 
     // Deliberately NOT awaited — a slow/failed group sync must never delay this account's message
-    // processing (already wired above) or the next account's connectAccount() call.
-    syncGroupsWithTimeoutAndRetry(account.id, provider)
-      .then((groupCount) => {
-        console.log(`[worker] synced ${groupCount} group(s) for account ${account.id}`);
-      })
-      .catch((err) => {
-        console.error(`[worker] group sync failed after retries for account ${account.id} — connection remains active`, err);
-      });
+    // processing (already wired above) or the next account's connectAccount() call. Shared with the
+    // other two connect paths, which each used to omit it; see the routine's own doc comment.
+    resyncAndCatchUpAfterConnect(account.id, provider, "the registry's initial connect");
 
+    return true;
+  }
+
+  /**
+   * Releases ONE account: its registry entry, its provider and the Chromium behind it.
+   *
+   * There was no way to do this. The registry only ever grew — `accountRegistrySync` adds an
+   * account it does not already hold and never removes one — so deleting an account in the
+   * dashboard left the worker holding a live `OpenWAProvider` and a 300-500MB browser for the rest
+   * of the process lifetime. `allAccountIds()` went on reporting it too, and `pickSendingAccount`
+   * chooses from that list, so a collection alert could be routed through a number the database no
+   * longer knows about.
+   *
+   * The Map entry goes FIRST and the browser second, which is the order that matters: removing it
+   * is what stops anything new reaching this provider, and the teardown below can take as long as
+   * it takes without a caller picking the account up in the meantime. `disconnect()` is itself
+   * bounded and already tolerates having nothing to close, so calling this on an account that is
+   * not connected — or calling it twice — is a no-op rather than an error.
+   *
+   * Returns whether an entry was actually held, so a reconciling caller can log the ones it really
+   * released rather than every account it considered.
+   */
+  async disconnectAccount(accountId: string): Promise<boolean> {
+    const provider = this.providers.get(accountId);
+    if (!provider) return false;
+
+    this.providers.delete(accountId);
+
+    // Never rethrows. The entry is already gone, so the caller has got what it asked for; a browser
+    // that will not close is a leak to report, not a reason to fail the sweep that is trying to
+    // clean up after it — and an unhandled rejection here would take the whole worker down.
+    try {
+      await provider.disconnect();
+    } catch (err) {
+      console.error(`[registry] error tearing down provider for account ${accountId}`, err);
+      await logSystemEvent("ERROR", "provider", "Provider teardown failed after account removal", {
+        accountId,
+        error: (err as Error).message,
+      }).catch(() => undefined);
+    }
     return true;
   }
 
@@ -106,30 +169,3 @@ export class ProviderRegistry {
   }
 }
 
-/**
- * A single transient failure (e.g. WhatsApp Web taking longer than usual to bootstrap) shouldn't
- * require a manual RECONNECT command. Bounded retries only — after these are exhausted, the
- * account is left in ERROR and a manual RECONNECT (or a worker restart) is required.
- */
-export async function connectWithRetry(provider: WhatsAppProvider, accountId: string): Promise<boolean> {
-  const attempts = CONNECT_RETRY_DELAYS_MS.length + 1;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      await provider.connect();
-      return true;
-    } catch (err) {
-      const isLastAttempt = attempt === attempts;
-      console.error(
-        `[worker] account ${accountId} connect attempt ${attempt}/${attempts} failed${isLastAttempt ? "" : " — will retry"}`,
-        err,
-      );
-      await logSystemEvent("ERROR", "provider", `Connect attempt ${attempt}/${attempts} failed`, {
-        accountId,
-        error: (err as Error).message,
-      });
-      if (isLastAttempt) return false;
-      await new Promise((resolve) => setTimeout(resolve, CONNECT_RETRY_DELAYS_MS[attempt - 1]));
-    }
-  }
-  return false;
-}

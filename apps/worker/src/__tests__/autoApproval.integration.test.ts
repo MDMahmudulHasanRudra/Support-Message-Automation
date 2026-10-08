@@ -1,6 +1,8 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createRuleProposalFromCandidate, prisma } from "@support-automation/db";
+import { createRuleProposalFromCandidate } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AiSettings, LearningSettings, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processOnePatternDetectionBatch } from "../learning/patternDetectionJob.js";
 import { getLearningSettings } from "../learning/sessionSegmentation.js";
@@ -128,7 +130,7 @@ beforeAll(async () => {
   account =
     (await prisma.whatsAppAccount.findFirst()) ??
     (await prisma.whatsAppAccount.create({ data: { label: "Test Account (isolated DB fallback)", status: "CONNECTED" } }));
-  originalLearningSettings = await getLearningSettings();
+  originalLearningSettings = await inIsp(() => getLearningSettings());
   const aiSettings: AiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   originalHumanReviewThreshold = aiSettings.humanReviewThreshold;
 });
@@ -171,7 +173,7 @@ describe("auto-approval — disabled (default)", () => {
     const marker = uniqueMarker();
     await seedOccurrences(4, marker, group); // frequencyScore 100 -> confidence 100
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);
@@ -197,7 +199,7 @@ describe("auto-approval — enabled", () => {
     const marker = uniqueMarker();
     await seedOccurrences(4, marker, group); // frequencyScore 100 -> confidence 100 >= 90
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);
@@ -226,7 +228,7 @@ describe("auto-approval — enabled", () => {
     const marker = uniqueMarker();
     await seedOccurrences(2, marker, group); // frequencyScore 79 -> confidence 79: >=60, <90
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);
@@ -249,20 +251,20 @@ describe("auto-approval — enabled", () => {
     const group = await makeGroup();
     const marker = uniqueMarker();
     await seedOccurrences(4, marker, group);
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);
     expect(candidate.status).toBe("PENDING_REVIEW");
 
-    const manualProposal = await createRuleProposalFromCandidate(candidate.id);
+    const manualProposal = await createRuleProposalFromCandidate(candidate.id, prisma);
     if (!("id" in manualProposal)) throw new Error(`expected proposal creation to succeed: ${manualProposal.error}`);
 
     // A new occurrence makes the candidate "dirty" again on the next tick; flipping auto-approval
     // on afterwards must not crash or create a second proposal now that one already exists.
     await setLearningSettings({ autoApprovalEnabled: true, autoApprovalMinConfidence: 90 });
     await seedOccurrences(1, marker, group);
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const proposals = await prisma.ruleProposal.findMany({ where: { patternCandidateId: candidate.id } });
     expect(proposals).toHaveLength(1);
@@ -291,7 +293,7 @@ describe("candidate expiry sweep", () => {
     });
     createdCandidateIds.push(candidate.id);
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const refetched = await prisma.patternCandidate.findUniqueOrThrow({ where: { id: candidate.id } });
     expect(refetched.status).toBe("EXPIRED");
@@ -312,7 +314,7 @@ describe("candidate expiry sweep", () => {
     });
     createdCandidateIds.push(candidate.id);
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const refetched = await prisma.patternCandidate.findUniqueOrThrow({ where: { id: candidate.id } });
     expect(refetched.status).toBe("PENDING_REVIEW");

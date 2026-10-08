@@ -1,4 +1,5 @@
-import { prisma } from "@support-automation/db";
+import { prisma } from "../db.js";
+import { MOOD_CUSTOMER_MESSAGE_VARIANT, UNABLE_TO_UNDERSTAND_VARIANT } from "@support-automation/shared";
 
 /**
  * True if this client already has a reply for this rule in flight or sent
@@ -38,6 +39,31 @@ export async function isCooldownActive(params: {
       // null-ruleId FORWARD/GROUP_BROADCAST row (a different action entirely) can never be
       // mistaken for AI-cooldown activity against the same (accountId, toPhone) pair.
       actionType: "AUTO_REPLY",
+      // A cooldown asks "have we already ANSWERED this client recently". The AI handover mention
+      // ("@Rakib, please help") is enqueued as a rule-less AUTO_REPLY too, so it landed in this
+      // bucket and stood in for an answer it is the opposite of — a request for a person, raised
+      // precisely BECAUSE nothing was answered.
+      //
+      // That was self-sustaining. The mention itself never passes checkAutoReplySafety, so every
+      // further customer message inside the window was blocked by the previous mention, and each
+      // block posted another mention that re-armed the window from its own createdAt. A customer
+      // writing every few minutes could never be answered again, and watched the team be tagged
+      // over and over in their own group.
+      //
+      // Mentions are the only rows this path ever gives a non-empty `mentions` array, so this is
+      // an exact identification of them and touches no ordinary reply.
+      mentions: { isEmpty: true },
+      // The "we could not understand, the team will follow up" holding reply is the same shape of
+      // row and the same kind of thing: sent BECAUSE nothing was answered. Counting it would block
+      // the customer's next, clearer message from being answered, and cancel the handover mention
+      // queued right after it at send time. `idempotencyKey` is required, so NOT is NULL-safe here.
+      //
+      // Mood Detection's message to an upset customer is the same again: sent because a person is
+      // needed, never an answer.
+      NOT: [
+        { idempotencyKey: { endsWith: `:${UNABLE_TO_UNDERSTAND_VARIANT}` } },
+        { idempotencyKey: { endsWith: `:${MOOD_CUSTOMER_MESSAGE_VARIANT}` } },
+      ],
       status: { in: ["PENDING", "PROCESSING", "SENT"] },
       createdAt: { gte: since },
       ...(params.excludeOutboundMessageId ? { id: { not: params.excludeOutboundMessageId } } : {}),

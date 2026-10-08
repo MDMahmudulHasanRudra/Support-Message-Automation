@@ -1,6 +1,7 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AutomationRule, AutomationSettings, LearningSettings, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processOnePatternDetectionBatch } from "../learning/patternDetectionJob.js";
 import { getLearningSettings } from "../learning/sessionSegmentation.js";
@@ -122,7 +123,7 @@ async function setLearningSettings(overrides: Partial<LearningSettings>) {
 }
 
 beforeAll(async () => {
-  originalLearningSettings = await getLearningSettings();
+  originalLearningSettings = await inIsp(() => getLearningSettings());
   const automationSettings = await prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   originalWhatsappNotificationGroupIds = automationSettings.whatsappNotificationGroupIds;
 });
@@ -189,7 +190,7 @@ describe("unknown pattern detection — disabled (default)", () => {
       messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: `${marker} internet billing issue`, timestampWa: new Date() }],
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);
@@ -218,7 +219,7 @@ describe("unknown pattern detection — enabled", () => {
       messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: `${marker} internet billing issue`, timestampWa: new Date() }],
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);
@@ -251,7 +252,7 @@ describe("unknown pattern detection — enabled", () => {
     });
     await markHandledByRule(messageIds[0]!, rule);
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);
@@ -280,7 +281,7 @@ describe("unknown pattern detection — enabled", () => {
       groupId: group.id,
       messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: `${marker} internet billing issue`, timestampWa: new Date() }],
     });
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);
@@ -295,7 +296,7 @@ describe("unknown pattern detection — enabled", () => {
       groupId: group.id,
       messages: [{ senderPhone: "+8802222222222", isFromTeamMember: false, body: `${marker} internet billing issue`, timestampWa: new Date() }],
     });
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const notifications = await prisma.notification.findMany({ where: { relatedPatternCandidateId: candidate.id } });
     expect(notifications).toHaveLength(1);
@@ -319,7 +320,7 @@ describe("unknown pattern detection — enabled", () => {
       groupId: group.id,
       messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: `${marker} internet billing issue`, timestampWa: new Date() }],
     });
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);
@@ -333,7 +334,7 @@ describe("unknown pattern detection — enabled", () => {
       groupId: group.id,
       messages: [{ senderPhone: "+8802222222222", isFromTeamMember: false, body: `${marker} internet billing issue`, timestampWa: new Date() }],
     });
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const notification = await prisma.notification.findFirst({ where: { relatedPatternCandidateId: candidate.id } });
     expect(notification).toBeNull();
@@ -360,7 +361,7 @@ describe("unknown pattern detection — enabled", () => {
       messages: [{ senderPhone: "+8801111111111", isFromTeamMember: false, body: `${marker} internet billing issue`, timestampWa: new Date() }],
     });
 
-    await processOnePatternDetectionBatch();
+    await inIsp(() => processOnePatternDetectionBatch());
 
     const candidate = await prisma.patternCandidate.findFirstOrThrow({ where: { suggestedKeywords: { has: marker } } });
     createdCandidateIds.push(candidate.id);

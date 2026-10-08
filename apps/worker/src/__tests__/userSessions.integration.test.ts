@@ -1,6 +1,7 @@
+import "./helpers/requireTestDatabase.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 
 /**
  * apps/web has no test infrastructure (server actions need next/headers' request-scoped

@@ -1,4 +1,5 @@
-import { prisma } from "@support-automation/db";
+import { projectHasFeature } from "../project/features.js";
+import { prisma } from "../db.js";
 import { matchSupportKeyword } from "@support-automation/engine";
 import { normalizePhoneNumber } from "@support-automation/shared";
 import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
@@ -54,6 +55,8 @@ export async function detectSupportActivity(
 
   const settings = await getSupportActivitySettings();
   if (!settings.enabled) return null;
+  // Project entitlement (MULTI_PROJECT_PLAN.md §9), checked beside the module's own setting: both must be on.
+  if (!(await projectHasFeature("SUPPORT_ACTIVITY"))) return null;
 
   // Same digits-only match the pipeline's own team-member check uses. This was an exact string
   // lookup on phoneNumber, which never matched a real WhatsApp sender — see teamFilter.ts.

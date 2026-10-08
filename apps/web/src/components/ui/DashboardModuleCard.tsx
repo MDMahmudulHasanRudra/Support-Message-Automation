@@ -1,7 +1,27 @@
 import type { ReactNode } from "react";
-import Link from "next/link";
+import Link from "@/components/ProjectLink";
 import { ArrowRight, type LucideIcon } from "lucide-react";
 import { Card } from "./Card";
+import { Badge, type BadgeColor } from "./Badge";
+
+export type ModuleHealthStatus = "OPERATIONAL" | "ATTENTION" | "DOWN" | "OFF";
+
+const STATUS_LABEL: Record<ModuleHealthStatus, string> = {
+  OPERATIONAL: "Operational",
+  ATTENTION: "Attention",
+  DOWN: "Down",
+  // Deliberately not "Disabled" or "Off" phrased as a problem — most modules here are optional
+  // and opt-in by design (Conversation Learning, AI Learning, Support Activity, Teams), so their
+  // resting state is exactly this and must not read like something broken.
+  OFF: "Not enabled",
+};
+
+const STATUS_COLOR: Record<ModuleHealthStatus, BadgeColor> = {
+  OPERATIONAL: "green",
+  ATTENTION: "yellow",
+  DOWN: "red",
+  OFF: "gray",
+};
 
 export function DashboardModuleCard({
   title,
@@ -9,6 +29,8 @@ export function DashboardModuleCard({
   href,
   linkLabel = "View module",
   secondaryLink,
+  /** Omit entirely for a module with no real health signal to report — see the page for how each is derived. */
+  status,
   children,
 }: {
   title: string;
@@ -16,17 +38,25 @@ export function DashboardModuleCard({
   href: string;
   linkLabel?: string;
   secondaryLink?: { href: string; label: string };
+  status?: ModuleHealthStatus;
   children: ReactNode;
 }) {
   return (
     <Card className="group/card flex h-full flex-col p-5 hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-md)]">
-      <div className="flex items-center gap-2.5">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-base)] group-hover/card:border-[var(--color-border-strong)] group-hover/card:text-[color:var(--color-foreground)]">
-          <Icon className="size-4" aria-hidden />
-        </span>
-        <p className="text-sm font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
-          {title}
-        </p>
+      <div className="flex items-center justify-between gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-base)] group-hover/card:border-[var(--color-border-strong)] group-hover/card:text-[color:var(--color-foreground)]">
+            <Icon className="size-4" aria-hidden />
+          </span>
+          <p className="truncate text-sm font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
+            {title}
+          </p>
+        </div>
+        {status ? (
+          <Badge color={STATUS_COLOR[status]} dot>
+            {STATUS_LABEL[status]}
+          </Badge>
+        ) : null}
       </div>
 
       <div className="mt-4 flex-1 space-y-2.5">{children}</div>

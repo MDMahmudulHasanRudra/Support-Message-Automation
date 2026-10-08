@@ -1,77 +1,91 @@
-/** Shared support-alert text format for both the Teams and WhatsApp notification providers. */
-export function formatSupportAlert(payload: Record<string, unknown>): string {
+import { renderNotification } from "./templates.js";
+
+/**
+ * Shared support-alert text for both the Teams and WhatsApp notification providers.
+ *
+ * The wording now comes from a template an operator can edit (Notification Templates), with the
+ * built-in default in packages/shared/src/notificationTemplates.ts. This function's job is
+ * narrowed to what it always really did: turn a loosely-typed payload into the named variables
+ * that template declares, and supply a sensible stand-in for each missing one.
+ *
+ * Async now, because reading an override is a database call. Both providers already await their
+ * send, so this costs nothing beyond one indexed primary-key lookup per notification.
+ */
+export async function formatSupportAlert(payload: Record<string, unknown>): Promise<string> {
+  const text = (key: string): string | undefined => {
+    const value = payload[key];
+    return typeof value === "string" && value.trim() ? value : undefined;
+  };
+
+  const groupName = text("groupName") ?? text("groupId") ?? "(direct message)";
+  const clientName = text("clientName") ?? text("clientPhone") ?? "unknown";
+  const customerMessage = (payload.message as string) ?? "";
+
+  if (payload.alertKind === "COLLECTION_BROKEN") {
+    return renderNotification("COLLECTION_BROKEN", {
+      accountLabel: text("accountLabel") ?? "(unnamed account)",
+      problem: text("problem") ?? "This number is not collecting messages.",
+      detail: text("detail") ?? "",
+      quietFor: text("quietFor") ?? "unknown",
+      action: text("action") ?? "Open WhatsApp → Accounts and check this number.",
+    });
+  }
+
+  if (payload.alertKind === "MOOD_ALERT") {
+    return renderNotification("MOOD_ALERT", {
+      moodLabel: text("moodLabel") ?? "Upset",
+      priority: text("priority") ?? "HIGH",
+      confidence: text("confidence") ?? "n/a",
+      groupName,
+      clientName,
+      customerMessage,
+      reasons: text("reasons") ?? "",
+      trend: text("trend") ?? "",
+      assignedTo: text("assignedTo") ?? "",
+      conversation: text("conversation") ?? "",
+      mentions: text("mentionTags") ?? "",
+    });
+  }
+
+  // Support Assignment (SUPPORT_ASSIGNMENT.md): the variables were built when the notice was
+  // queued (packages/db queueSupportAssignmentNotices), so the times in the message are the ones
+  // the case had then, however long the send waited.
+  if (payload.alertKind === "SUPPORT_ASSIGNMENT" && typeof payload.templateKey === "string" && payload.templateKey.startsWith("SUPPORT_ASSIGNMENT_")) {
+    const vars = (payload.vars && typeof payload.vars === "object" ? payload.vars : {}) as Record<string, unknown>;
+    return renderNotification(
+      payload.templateKey,
+      Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, typeof v === "string" ? v : null])),
+    );
+  }
+
   if (payload.alertKind === "UNKNOWN_PATTERN") {
-    return formatUnknownPatternAlert(payload);
+    return renderNotification("UNKNOWN_PATTERN", {
+      keywords: (payload.patternKeywords as string[] | undefined)?.join(", ") || "(pattern)",
+      occurrences: String((payload.occurrences as number) ?? 0),
+      groups: String((payload.groups as number) ?? 0),
+      clients: String((payload.clients as number) ?? 0),
+      confidence: `${(payload.confidence as number) ?? 0}%`,
+      groupName: text("groupName") ?? text("groupId") ?? "(unknown group)",
+      latestMessage: text("latestMessage") ?? "(no example captured)",
+    });
   }
+
   if (payload.alertKind === "AI_ASSISTANCE_REQUIRED") {
-    return formatAiAssistanceRequiredAlert(payload);
+    return renderNotification("AI_HANDOVER_ALERT", {
+      groupName,
+      clientName,
+      customerMessage,
+      confidence: payload.confidence != null ? `${payload.confidence}%` : "n/a",
+      intent: text("intent") ?? "(not classified)",
+      reason: text("reason") ?? "(no reason given)",
+    });
   }
 
-  const group =
-    (payload.groupName as string) ?? (payload.groupId as string) ?? "(direct message)";
-  const client = (payload.clientName as string) ?? (payload.clientPhone as string) ?? "unknown";
-  const message = (payload.message as string) ?? "";
-  const category = (payload.category as string) ?? "(uncategorized)";
-  const ruleName = (payload.matchedRuleName as string) ?? "(no rule)";
-
-  return [
-    "🚨 NEW SUPPORT REQUEST",
-    "",
-    `Group: ${group}`,
-    `Client: ${client}`,
-    `Message: ${message}`,
-    `Category: ${category}`,
-    `Matched Rule: ${ruleName}`,
-    "",
-    "Action Required: Please contact the client and resolve the issue.",
-  ].join("\n");
-}
-
-/** Conversation Learning's Unknown Pattern alert — one recurring, unhandled question aggregated
- * across every occurrence rather than a per-message alert; see patternDetectionJob.ts's cooldown. */
-function formatUnknownPatternAlert(payload: Record<string, unknown>): string {
-  const keywords = (payload.patternKeywords as string[] | undefined)?.join(", ") || "(pattern)";
-  const occurrences = (payload.occurrences as number) ?? 0;
-  const groups = (payload.groups as number) ?? 0;
-  const clients = (payload.clients as number) ?? 0;
-  const confidence = (payload.confidence as number) ?? 0;
-  const groupName = (payload.groupName as string) ?? (payload.groupId as string) ?? "(unknown group)";
-  const latestMessage = (payload.latestMessage as string) ?? "(no example captured)";
-
-  return [
-    "🔍 UNKNOWN PATTERN DETECTED",
-    "",
-    `Pattern: ${keywords}`,
-    `Evidence: ${occurrences} unhandled occurrence(s) across ${groups} group(s), ${clients} client(s)`,
-    `Confidence: ${confidence}%`,
-    `Latest group: ${groupName}`,
-    `Latest message: ${latestMessage}`,
-    "",
-    "No existing rule handles this yet — review it in Conversation Learning → Unknown Patterns.",
-  ].join("\n");
-}
-
-/** Hybrid AI Automation's human-fallback alert — sent when the AI layer couldn't (or wasn't
- * confident enough to) auto-reply; see apps/worker/src/aiFallback/runAiFallback.ts. */
-function formatAiAssistanceRequiredAlert(payload: Record<string, unknown>): string {
-  const group = (payload.groupName as string) ?? "(direct message)";
-  const client = (payload.clientName as string) ?? (payload.clientPhone as string) ?? "unknown";
-  const message = (payload.message as string) ?? "";
-  const confidence = payload.confidence != null ? `${payload.confidence}%` : "n/a";
-  const intent = (payload.intent as string) ?? "(not classified)";
-  const reason = (payload.reason as string) ?? "(no reason given)";
-
-  return [
-    "🤖 AI ASSISTANCE REQUIRED",
-    "",
-    `Group: ${group}`,
-    `Sender: ${client}`,
-    `Message: ${message}`,
-    "",
-    `AI confidence: ${confidence}`,
-    `Detected intent: ${intent}`,
-    `Reason: ${reason}`,
-    "",
-    "The AI layer could not confidently reply — please review and respond.",
-  ].join("\n");
+  return renderNotification("RULE_SUPPORT_REQUEST", {
+    groupName,
+    clientName,
+    customerMessage,
+    category: text("category") ?? "(uncategorized)",
+    matchedRuleName: text("matchedRuleName") ?? "(no rule)",
+  });
 }

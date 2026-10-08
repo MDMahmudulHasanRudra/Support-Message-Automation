@@ -1,0 +1,13 @@
+-- Make the knowledge base's one safety gate default to CLOSED.
+--
+-- "AiKnowledgeItem"."humanVerified" is the only filter on retrieval: apps/worker's
+-- knowledgeContext.ts selects humanVerified = true AND status = 'ACTIVE', and what it returns is
+-- put in front of the model as "reference material verified by this team". Defaulting it to true
+-- made that invariant opt-out — every automated writer had to remember to set it false, and any
+-- future writer that forgot would have been customer-facing on its first insert, silently.
+--
+-- Behaviourally inert for existing data and existing code: this changes only the column DEFAULT,
+-- never a stored row, and every current writer already passes the value explicitly (including the
+-- two that legitimately write true — the manual knowledge form and an approved conversation
+-- candidate). Nothing is re-verified, nothing is un-verified, no row is touched.
+ALTER TABLE "AiKnowledgeItem" ALTER COLUMN "humanVerified" SET DEFAULT false;

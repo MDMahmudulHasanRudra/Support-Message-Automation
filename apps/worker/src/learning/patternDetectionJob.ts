@@ -1,16 +1,14 @@
-import {
-  approveRuleProposalById,
-  createRuleProposalFromCandidate,
-  isResolutionError,
-  prisma,
-  resolveWhatsAppAccount,
-} from "@support-automation/db";
+import { projectHasFeature } from "../project/features.js";
+import { currentProjectId } from "../project/context.js";
+import { approveRuleProposalById, createRuleProposalFromCandidate, isResolutionError, resolveWhatsAppAccount } from "@support-automation/db";
+import { prisma } from "../db.js";
 import type { EvidenceResponseSource, LearningSettings, PatternCandidateStatus } from "@prisma/client";
 import { derivePatternSignature, meetsCandidateFloor, scorePatternCandidate } from "@support-automation/engine";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { getLearningSettings } from "./sessionSegmentation.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /** A candidate in any of these states has already been resolved one way or another (a real rule
  * exists, or a human dismissed it) — further Unknown Pattern alerts about it would be noise. */
@@ -54,6 +52,7 @@ const SESSION_BATCH_SIZE = 200;
 export async function processOnePatternDetectionBatch(): Promise<boolean> {
   const settings = await getLearningSettings();
   if (!settings.conversationLearningEnabled) return false;
+  if (!(await projectHasFeature("CONVERSATION_LEARNING"))) return false; // entitlement, MULTI_PROJECT_PLAN.md §9
 
   const job = await prisma.learningBatchJob.create({
     data: { jobType: "PATTERN_DETECTION", trigger: "SCHEDULED", status: "RUNNING", startedAt: new Date() },
@@ -62,7 +61,7 @@ export async function processOnePatternDetectionBatch(): Promise<boolean> {
   try {
     const { sessionsLinked, dirtyCandidateIds } = await linkClosedSessionsToCandidates();
     const humanReviewThreshold = (
-      await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } })
+      await getAiSettings()
     ).humanReviewThreshold;
 
     for (const candidateId of dirtyCandidateIds) {
@@ -155,7 +154,7 @@ async function linkClosedSessionsToCandidates(): Promise<{ sessionsLinked: numbe
           : "UNRESOLVED";
 
     const candidate = await prisma.patternCandidate.upsert({
-      where: { patternKey },
+      where: { projectId_patternKey: { projectId: currentProjectId(), patternKey } },
       update: {},
       create: {
         patternKey,
@@ -304,13 +303,13 @@ export async function rescoreCandidate(
   // safety gate — auto-approval only ever skips the human's click, never the validation, and never
   // the separate manual activation step on the Rules page.
   if (status === "PENDING_REVIEW" && settings.autoApprovalEnabled && scores.confidenceScore >= settings.autoApprovalMinConfidence) {
-    const proposalResult = await createRuleProposalFromCandidate(candidateId);
+    const proposalResult = await createRuleProposalFromCandidate(candidateId, prisma);
     if ("id" in proposalResult) {
       const approveResult = await approveRuleProposalById({
         proposalId: proposalResult.id,
         reviewedById: null,
         autoApproved: true,
-      });
+      }, prisma);
       if (!("error" in approveResult)) {
         status = "APPROVED";
       }
@@ -389,7 +388,7 @@ async function sendUnknownPatternAlert(
   const automationSettings = await getAutomationSettings();
   if (automationSettings.whatsappNotificationGroupIds.length === 0) return false;
 
-  const resolution = await resolveWhatsAppAccount("CONVERSATION_LEARNING");
+  const resolution = await resolveWhatsAppAccount("CONVERSATION_LEARNING", prisma);
   if (isResolutionError(resolution)) {
     await logSystemEvent("WARN", "conversation-learning", "Unknown Pattern alert skipped — no WhatsApp account available", {
       patternCandidateId: candidate.id,
@@ -423,6 +422,7 @@ async function sendUnknownPatternAlert(
   for (const destination of automationSettings.whatsappNotificationGroupIds) {
     await enqueueNotification({
       type: "WHATSAPP",
+      event: "UNKNOWN_PATTERN",
       destination,
       accountId: resolution.accountId,
       relatedMessageId: latestEvidence?.matchedMessage.id ?? null,

@@ -1,3 +1,5 @@
+import Link from "@/components/ProjectLink";
+import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { Card } from "@/components/ui";
 
@@ -6,12 +8,21 @@ import { Card } from "@/components/ui";
  * why single-series charts need no legend box), the window it covers, and an
  * optional headline figure on the right.
  */
+/**
+ * `href` renders a small link in the header rather than wrapping the whole card.
+ *
+ * A chart is content somebody reads — hovering a series, selecting a number off an axis — and
+ * making the entire surface one anchor turns every one of those into a navigation. The tiles next
+ * door are a single figure with nothing to read, which is why they take the opposite approach.
+ */
 export function ChartCard({
   title,
   description,
   headline,
   children,
   className = "",
+  href,
+  linkLabel = "View",
 }: {
   title: string;
   description?: string;
@@ -19,6 +30,9 @@ export function ChartCard({
   headline?: ReactNode;
   children: ReactNode;
   className?: string;
+  /** Where the rows behind this plot live, already filtered. Omit when nowhere lists them. */
+  href?: string;
+  linkLabel?: string;
 }) {
   return (
     <Card className={`flex flex-col p-5 ${className}`}>
@@ -33,9 +47,23 @@ export function ChartCard({
             </p>
           ) : null}
         </div>
-        {headline ? <div className="shrink-0 text-right">{headline}</div> : null}
+        <div className="flex shrink-0 items-start gap-3">
+          {headline ? <div className="text-right">{headline}</div> : null}
+          {href ? (
+            <Link
+              href={href}
+              className="flex shrink-0 items-center gap-0.5 rounded-[var(--radius-xs)] text-[11px] font-medium text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+            >
+              {linkLabel}
+              <ArrowUpRight className="size-3" aria-hidden />
+            </Link>
+          ) : null}
+        </div>
       </div>
-      <div className="flex-1">{children}</div>
+      {/* Centred in whatever height the row gives it. Overview pairs each wide chart with a narrow
+          card in the same row, and a donut beside an area chart is shorter than its row — top-
+          aligned, that left a band of blank card under every short chart. */}
+      <div className="flex flex-1 flex-col justify-center">{children}</div>
     </Card>
   );
 }

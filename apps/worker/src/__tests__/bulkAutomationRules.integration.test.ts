@@ -1,6 +1,7 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma } from "./helpers/projectFixtures.js";
 import type { AutomationSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
 import { MockProvider } from "./mockProvider.js";

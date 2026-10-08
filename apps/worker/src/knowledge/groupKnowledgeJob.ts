@@ -1,4 +1,5 @@
-import { prisma } from "@support-automation/db";
+import { projectHasFeature } from "../project/features.js";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import {
@@ -6,6 +7,7 @@ import {
   parseKnowledgeRecords,
   type ExtractedKnowledge,
 } from "./groupKnowledgePrompt.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * Reads one monitored group's conversation and distils it into knowledge base entries: what this
@@ -44,15 +46,12 @@ export async function processOneGroupKnowledgeBuild(
   clientOverride?: AiClient,
   groupIdOverride?: string,
 ): Promise<GroupKnowledgeRunResult> {
-  const aiSettings = await prisma.aiSettings.upsert({
-    where: { id: "global" },
-    update: {},
-    create: { id: "global" },
-  });
+  const aiSettings = await getAiSettings();
   // Both gates checked explicitly here as well as inside resolveAiClient, so injecting a test
   // client still exercises the real rule rather than bypassing it.
   if (!aiSettings.aiEngineEnabled) return { ran: false, skipped: "AI_ENGINE_DISABLED" };
   if (!aiSettings.knowledgeFromChatEnabled) return { ran: false, skipped: "KNOWLEDGE_DISABLED" };
+  if (!(await projectHasFeature("AI_LEARNING"))) return { ran: false, skipped: "KNOWLEDGE_DISABLED" }; // entitlement, MULTI_PROJECT_PLAN.md §9
 
   const group = groupIdOverride
     ? await prisma.whatsAppGroup.findUnique({
@@ -89,7 +88,7 @@ export async function processOneGroupKnowledgeBuild(
     return { ran: false, groupId: group.id, skipped: "NOT_ENOUGH_MESSAGES" };
   }
 
-  const client = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const client = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!client) return { ran: false, skipped: "NO_AI_CLIENT" };
 
   const prompt = buildGroupKnowledgePrompt({
@@ -167,6 +166,7 @@ async function storeExtractedKnowledge(
       question: entry.question,
       answer: entry.answer,
       module: entry.module,
+      procedure: entry.procedure,
       source: "CHAT_LEARNING",
       sourceGroupId: groupId,
       // Denormalised so the review queue can show provenance without a join.

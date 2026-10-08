@@ -1,6 +1,10 @@
-import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { projectHasFeature } from "../project/features.js";
+import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { platformPrisma, prisma } from "../db.js";
+import { currentProjectId, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
+import { getEventDelivery } from "../notifications/eventSettings.js";
 import type { EscalationStatus, Prisma, SupportEscalationCase, SupportPriority } from "@prisma/client";
-import { buildWhatsAppContactId, normalizePhoneNumber } from "@support-automation/shared";
+import { buildWhatsAppContactId, hasReachablePhoneNumber, normalizePhoneNumber } from "@support-automation/shared";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { formatEscalationAlert } from "./formatEscalationMessage.js";
@@ -31,22 +35,34 @@ const PRIORITY_POLICY_DEFAULTS: Record<SupportPriority, Omit<Prisma.SupportPrior
   P3: { firstAlertMinutes: 15, secondAlertMinutes: 30, memberEscalationMinutes: 60, adminEscalationMinutes: 120, followUpIntervalMinutes: 120, maxEscalations: 3 },
 };
 
-/** Lazily seeds all three policy rows on first use, same "upsert on read" pattern as every other settings model in this app. */
+/**
+ * Lazily seeds all three policy rows on first use. Reads first and only seeds what is genuinely
+ * missing: this runs once per customer message in a priority group, and three unconditional
+ * upserts took write locks on the same three rows every time — from inside openOrContinueCase's
+ * transaction, at that.
+ */
 export async function getSupportPriorityPolicies(): Promise<Record<SupportPriority, Prisma.SupportPriorityPolicyGetPayload<{}>>> {
   const priorities: SupportPriority[] = ["P1", "P2", "P3"];
-  const rows = await Promise.all(
-    priorities.map((priority) =>
-      prisma.supportPriorityPolicy.upsert({
-        where: { priority },
-        update: {},
-        create: { priority, ...PRIORITY_POLICY_DEFAULTS[priority] },
-      }),
-    ),
-  );
+  const existing = await prisma.supportPriorityPolicy.findMany({ where: { priority: { in: priorities } } });
+  const rows =
+    existing.length === priorities.length
+      ? existing
+      : await Promise.all(
+          priorities.map((priority) =>
+            prisma.supportPriorityPolicy.upsert({
+              where: { projectId_priority: { projectId: currentProjectId(), priority } },
+              update: {},
+              create: { priority, ...PRIORITY_POLICY_DEFAULTS[priority] },
+            }),
+          ),
+        );
   return Object.fromEntries(rows.map((r) => [r.priority, r])) as Record<SupportPriority, (typeof rows)[number]>;
 }
 
+/** Read-first for the same reason getAutomationSettings() is — see its doc comment. */
 export async function getSupportEscalationSettings() {
+  const existing = await prisma.supportEscalationSettings.findUnique({ where: { id: "global" } });
+  if (existing) return existing;
   return prisma.supportEscalationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
 }
 
@@ -55,6 +71,15 @@ export async function getSupportEscalationSettings() {
  * lastCustomerMessageAt without resetting the escalation clock (spec's
  * Condition C: another customer message while waiting continues the
  * existing policy, it doesn't restart it).
+ *
+ * "One open case per chat" is a real invariant with no unique constraint able to express it
+ * ("open" is a set of seven statuses, not a value), and the caller is genuinely concurrent —
+ * ProviderRegistry dispatches each incoming message with a fire-and-forget
+ * `processIncomingMessage(...).catch(...)`, so two customer messages arriving together both ran
+ * the find and both created a case, firing the entire tier ladder twice. A transaction-scoped
+ * advisory lock on the chat serializes just this check-then-insert, per chat, and is released
+ * automatically when the transaction ends (including on rollback) — no lock row to clean up, and
+ * no contention between different conversations.
  */
 export async function openOrContinueCase(params: {
   accountId: string;
@@ -66,39 +91,49 @@ export async function openOrContinueCase(params: {
   triggerMessageId: string;
   timestampWa: Date;
 }): Promise<void> {
-  const existing = await prisma.supportEscalationCase.findFirst({
-    where: { chatId: params.chatId, status: { in: ACTIVE_STATUSES } },
-  });
-  if (existing) {
-    await prisma.supportEscalationCase.update({
-      where: { id: existing.id },
-      data: { lastCustomerMessageAt: params.timestampWa },
-    });
-    return;
-  }
+  // Project entitlement (MULTI_PROJECT_PLAN.md §9), checked beside the module's own setting: both must be on.
+  if (!(await projectHasFeature("ESCALATIONS"))) return;
 
+  // Read outside the transaction on purpose: everything inside runs on the transaction's own
+  // connection, and reaching for a second one from in there would hold two connections per
+  // concurrent message. Cheap now that this is a plain read after the first call seeds the rows.
   const policies = await getSupportPriorityPolicies();
   const policy = policies[params.priority];
 
-  await prisma.supportEscalationCase.create({
-    data: {
-      accountId: params.accountId,
-      groupId: params.groupId,
-      chatId: params.chatId,
-      clientPhone: params.clientPhone,
-      priority: params.priority,
-      status: "NEW",
-      triggerMessageId: params.triggerMessageId,
-      lastCustomerMessageAt: params.timestampWa,
-      assignedTeamMemberId: params.assignedTeamMemberId,
-      firstAlertMinutes: policy.firstAlertMinutes,
-      secondAlertMinutes: policy.secondAlertMinutes,
-      memberEscalationMinutes: policy.memberEscalationMinutes,
-      adminEscalationMinutes: policy.adminEscalationMinutes,
-      followUpIntervalMinutes: policy.followUpIntervalMinutes,
-      maxEscalations: policy.maxEscalations,
-      nextCheckAt: addMinutes(new Date(), policy.firstAlertMinutes),
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${params.chatId}::text))`;
+
+    const existing = await tx.supportEscalationCase.findFirst({
+      where: { chatId: params.chatId, status: { in: ACTIVE_STATUSES } },
+    });
+    if (existing) {
+      await tx.supportEscalationCase.update({
+        where: { id: existing.id },
+        data: { lastCustomerMessageAt: params.timestampWa },
+      });
+      return;
+    }
+
+    await tx.supportEscalationCase.create({
+      data: {
+        accountId: params.accountId,
+        groupId: params.groupId,
+        chatId: params.chatId,
+        clientPhone: params.clientPhone,
+        priority: params.priority,
+        status: "NEW",
+        triggerMessageId: params.triggerMessageId,
+        lastCustomerMessageAt: params.timestampWa,
+        assignedTeamMemberId: params.assignedTeamMemberId,
+        firstAlertMinutes: policy.firstAlertMinutes,
+        secondAlertMinutes: policy.secondAlertMinutes,
+        memberEscalationMinutes: policy.memberEscalationMinutes,
+        adminEscalationMinutes: policy.adminEscalationMinutes,
+        followUpIntervalMinutes: policy.followUpIntervalMinutes,
+        maxEscalations: policy.maxEscalations,
+        nextCheckAt: addMinutes(new Date(), policy.firstAlertMinutes),
+      },
+    });
   });
 }
 
@@ -133,19 +168,21 @@ function addMinutes(date: Date, minutes: number): Date {
 
 /** Atomically claims exactly one due case, or null if none are ready. Uses a claim-lease on nextCheckAt rather than a transient status, since `status` carries real business meaning here. */
 async function claimNextDueCase(): Promise<SupportEscalationCase | null> {
-  const candidate = await prisma.supportEscalationCase.findFirst({
-    where: { status: { in: ACTIVE_STATUSES }, nextCheckAt: { lte: new Date() } },
+  // Due cases across every project in one order; each is then worked inside its own project, so
+  // its policy, settings, account and alerts are that project's (MULTI_PROJECT_PLAN.md Phase 3).
+  const candidate = await platformPrisma.supportEscalationCase.findFirst({
+    where: { status: { in: ACTIVE_STATUSES }, nextCheckAt: { lte: new Date() }, project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
     orderBy: { nextCheckAt: "asc" },
   });
   if (!candidate) return null;
 
-  const claim = await prisma.supportEscalationCase.updateMany({
+  const claim = await platformPrisma.supportEscalationCase.updateMany({
     where: { id: candidate.id, nextCheckAt: candidate.nextCheckAt },
     data: { nextCheckAt: new Date(Date.now() + CLAIM_LEASE_MS) },
   });
   if (claim.count === 0) return null; // lost the race
 
-  return prisma.supportEscalationCase.findUniqueOrThrow({ where: { id: candidate.id } });
+  return platformPrisma.supportEscalationCase.findUniqueOrThrow({ where: { id: candidate.id } });
 }
 
 /**
@@ -165,6 +202,13 @@ async function fireEscalationEvent(params: {
   body: string;
   accountId: string;
 }): Promise<boolean> {
+  // Muting is checked here rather than inside enqueueNotification, because this path writes the
+  // Notification inside the same transaction as the SupportEscalationEvent — the two have to land
+  // together or a tier can fire twice. Fails open like the rest of the Notification Center: an
+  // escalation nobody saw is far worse than one that should have been muted.
+  const delivery = await getEventDelivery("SUPPORT_ESCALATION");
+  if (!delivery.enabled || !delivery.allowsChannel("WHATSAPP")) return false;
+
   try {
     await prisma.$transaction(async (tx) => {
       const event = await tx.supportEscalationEvent.create({
@@ -180,6 +224,12 @@ async function fireEscalationEvent(params: {
       const notification = await tx.notification.create({
         data: {
           type: "WHATSAPP",
+          // Written directly rather than through enqueueNotification() because it has to share the
+          // transaction that creates the SupportEscalationEvent — the two must land together or
+          // not at all, or a tier can fire twice. It still carries its event so the Notification
+          // Center can report on it; muting is checked by the caller instead, see
+          // shouldRaiseEscalationNotification().
+          event: "SUPPORT_ESCALATION",
           destination: params.destination,
           accountId: params.accountId,
           relatedMessageId: params.caseRow.triggerMessageId,
@@ -240,6 +290,19 @@ async function fireMemberTier(caseRow: SupportEscalationCase, level: number, acc
     });
     return;
   }
+  // Recognising this person and messaging them are different problems. Someone mapped from message
+  // history has a WhatsApp LID stored as their number, which identifies them perfectly and cannot
+  // receive a direct message — so this tier would send into nothing and report success.
+  if (!hasReachablePhoneNumber(member)) {
+    await logSystemEvent(
+      "WARN",
+      "support-escalation",
+      "Assigned team member has no real phone number, only a WhatsApp id — member tier skipped",
+      { caseId: caseRow.id, teamMemberId: member.id, teamMemberName: member.name },
+    );
+    return;
+  }
+
   const memberDigits = normalizePhoneNumber(member.phoneNumber);
   if (!memberDigits) {
     await logSystemEvent("WARN", "support-escalation", "Assigned team member has an unusable phone number — member tier skipped", {
@@ -310,9 +373,13 @@ async function fireAdminTier(
 export async function processOneCase(): Promise<boolean> {
   const caseRow = await claimNextDueCase();
   if (!caseRow) return false;
+  return withProject(caseRow.projectId, () => processClaimedCase(caseRow));
+}
+
+async function processClaimedCase(caseRow: SupportEscalationCase): Promise<boolean> {
 
   const settings = await getSupportEscalationSettings();
-  if (!settings.enabled) {
+  if (!settings.enabled || !(await projectHasFeature("ESCALATIONS"))) {
     // Feature-wide pause: defer, don't cancel — resuming the switch should pick up right where it left off.
     await prisma.supportEscalationCase.update({
       where: { id: caseRow.id },
@@ -332,7 +399,7 @@ export async function processOneCase(): Promise<boolean> {
   // Centralized account resolution — never scattered, and re-resolved fresh every tick (never
   // snapshotted like the SLA minutes) since a case can sit open for hours, long enough for the
   // configured account to reconnect/disconnect/change underneath it.
-  const resolution = await resolveWhatsAppAccount("PRIORITY_SUPPORT");
+  const resolution = await resolveWhatsAppAccount("PRIORITY_SUPPORT", prisma);
   if (isResolutionError(resolution)) {
     await logSystemEvent("WARN", "support-escalation", "WhatsApp account unavailable — tick deferred", {
       caseId: caseRow.id,

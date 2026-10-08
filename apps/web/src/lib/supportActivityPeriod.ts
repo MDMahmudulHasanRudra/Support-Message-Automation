@@ -1,37 +1,32 @@
 import type { SupportActivityCountingPeriod } from "@prisma/client";
+import { getDhakaDayRange, getDhakaMonthRange, getDhakaWeekRange } from "@support-automation/shared";
 
-// Asia/Dhaka is a fixed UTC+6 offset with no DST — safe to hardcode a constant offset for day-
-// boundary math, unlike display formatting (see lib/date.ts's own comment on why display
-// formatting must go through Intl.DateTimeFormat instead: the server process's own timezone can't
-// be trusted). Kept as its own file rather than added to date.ts since date.ts is display-only.
-const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
+/**
+ * Dhaka calendar-period helpers for the dashboard.
+ *
+ * The day/week/month arithmetic itself moved to `packages/shared/src/dhakaDay.ts` once Team
+ * Management's worker-side attendance hook needed the same maths: the worker decides which
+ * calendar day a message belongs to and this app decides which day it is displaying, and two
+ * implementations of "what day is it in Dhaka" would disagree for six hours out of every
+ * twenty-four. They are re-exported here so every existing caller keeps importing from the same
+ * place — this was a move, not a rewrite.
+ *
+ * `getSupportActivityPeriodRange` stays here rather than moving with them because it takes a Prisma
+ * enum, and `packages/shared` deliberately cannot depend on `@prisma/client` (the engine could not
+ * import it, which is why the shared package exists at all).
+ */
 
-/** [start, end) UTC instants bounding the Dhaka calendar day that contains `when`. */
-export function getDhakaDayRange(when: Date): { start: Date; end: Date } {
-  const dhakaMidnightMs = Math.floor((when.getTime() + DHAKA_OFFSET_MS) / DAY_MS) * DAY_MS;
-  const start = new Date(dhakaMidnightMs - DHAKA_OFFSET_MS);
-  return { start, end: new Date(start.getTime() + DAY_MS) };
-}
-
-/** [start, end) UTC instants bounding the Dhaka calendar week (Sunday-start) containing `when`. */
-export function getDhakaWeekRange(when: Date): { start: Date; end: Date } {
-  const dhakaMidnightMs = Math.floor((when.getTime() + DHAKA_OFFSET_MS) / DAY_MS) * DAY_MS;
-  const dayOfWeek = new Date(dhakaMidnightMs).getUTCDay(); // 0 = Sunday, treating the shifted instant as UTC
-  const weekStartShiftedMs = dhakaMidnightMs - dayOfWeek * DAY_MS;
-  const start = new Date(weekStartShiftedMs - DHAKA_OFFSET_MS);
-  return { start, end: new Date(start.getTime() + 7 * DAY_MS) };
-}
-
-/** [start, end) UTC instants bounding the Dhaka calendar month containing `when`. */
-export function getDhakaMonthRange(when: Date): { start: Date; end: Date } {
-  const shifted = new Date(when.getTime() + DHAKA_OFFSET_MS);
-  const year = shifted.getUTCFullYear();
-  const month = shifted.getUTCMonth();
-  const start = new Date(Date.UTC(year, month, 1) - DHAKA_OFFSET_MS);
-  const end = new Date(Date.UTC(year, month + 1, 1) - DHAKA_OFFSET_MS);
-  return { start, end };
-}
+export {
+  DHAKA_OFFSET_MS,
+  formatDhakaDateKey,
+  getDhakaDayRange,
+  getDhakaMonthRange,
+  getDhakaWeekday,
+  getDhakaWeekRange,
+  parseDhakaDayFromInput,
+  parseDhakaDayRangeFromInput,
+  toDhakaDateOnly,
+} from "@support-automation/shared";
 
 /** Dispatches on SupportActivitySettings.countingPeriod for the report pages/detector to share. */
 export function getSupportActivityPeriodRange(

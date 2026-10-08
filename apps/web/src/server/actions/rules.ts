@@ -1,10 +1,13 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma } from "@support-automation/db";
+
+import type { Prisma } from "@prisma/client";
 import type { RuleAction, RuleConditions } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 import { validateRuleBusinessRules } from "@/server/ruleValidation";
 
 const ACTION_TYPES = [
@@ -61,17 +64,6 @@ function parseConditions(formData: FormData): RuleConditions {
   return conditions;
 }
 
-/** A zero-width window (e.g. 22:00 to 22:00) would never match anything — use Disable for "intentionally inactive" instead. */
-function validateTimeWindow(formData: FormData): string | null {
-  if (formData.get("timeWindowEnabled") !== "on") return null;
-  const startHour = parseHour(formData.get("timeWindowStartHour"));
-  const endHour = parseHour(formData.get("timeWindowEndHour"));
-  if (startHour === endHour) {
-    return "Active-from and active-until cannot be the same hour — this would never match. Use Disable instead if you want the rule inactive.";
-  }
-  return null;
-}
-
 function parseActions(formData: FormData): RuleAction[] {
   const actions: RuleAction[] = [];
   for (const type of ACTION_TYPES) {
@@ -89,13 +81,13 @@ function parseActions(formData: FormData): RuleAction[] {
 function parseRuleFields(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim() || null;
-  const type = String(formData.get("type") ?? "GENERIC") as any;
-  const matchType = String(formData.get("matchType") ?? "ALWAYS") as any;
+  const type = String(formData.get("type") ?? "GENERIC") as Prisma.AutomationRuleCreateInput["type"];
+  const matchType = String(formData.get("matchType") ?? "ALWAYS") as Prisma.AutomationRuleCreateInput["matchType"];
   const matchValue = String(formData.get("matchValue") ?? "").trim() || null;
   const keywordsRaw = String(formData.get("keywords") ?? "").trim();
   const keywords = keywordsRaw ? keywordsRaw.split(",").map((k) => k.trim()).filter(Boolean) : [];
   const priority = Number(formData.get("priority") ?? 0);
-  const status = String(formData.get("status") ?? "DRAFT") as any;
+  const status = String(formData.get("status") ?? "DRAFT") as Prisma.AutomationRuleCreateInput["status"];
   const cooldownSecondsRaw = String(formData.get("cooldownSeconds") ?? "").trim();
   const cooldownSeconds = cooldownSecondsRaw ? Number(cooldownSecondsRaw) : null;
   const replyMessage = String(formData.get("replyMessage") ?? "").trim() || null;
@@ -121,7 +113,8 @@ function parseRuleFields(formData: FormData) {
 }
 
 export async function createRule(_prevState: RuleFormState, formData: FormData): Promise<RuleFormState> {
-  await requireSession();
+  const granted = await checkPermission("automation_rules.create");
+  if ("denied" in granted) return { error: granted.denied };
   const fields = parseRuleFields(formData);
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);
@@ -131,6 +124,7 @@ export async function createRule(_prevState: RuleFormState, formData: FormData):
     matchType: fields.matchType,
     matchValue: fields.matchValue,
     actions,
+    replyMessage: fields.replyMessage,
     timeWindowEnabled: formData.get("timeWindowEnabled") === "on",
     timeWindowStartHour: conditions.timeWindow?.startHour,
     timeWindowEndHour: conditions.timeWindow?.endHour,
@@ -138,15 +132,17 @@ export async function createRule(_prevState: RuleFormState, formData: FormData):
   if (businessError) return { error: businessError };
 
   await prisma.automationRule.create({
-    data: { ...fields, conditions: conditions as any, actions: actions as any },
+    data: { ...fields, conditions: conditions as unknown as Prisma.InputJsonValue,
+      actions: actions as unknown as Prisma.InputJsonValue },
   });
 
-  revalidatePath("/rules");
-  redirect("/rules");
+  revalidatePath(await projectPath("/rules"));
+  redirect(await projectPath("/rules"));
 }
 
 export async function updateRule(id: string, _prevState: RuleFormState, formData: FormData): Promise<RuleFormState> {
-  await requireSession();
+  const granted = await checkPermission("automation_rules.edit");
+  if ("denied" in granted) return { error: granted.denied };
   const fields = parseRuleFields(formData);
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);
@@ -156,6 +152,7 @@ export async function updateRule(id: string, _prevState: RuleFormState, formData
     matchType: fields.matchType,
     matchValue: fields.matchValue,
     actions,
+    replyMessage: fields.replyMessage,
     timeWindowEnabled: formData.get("timeWindowEnabled") === "on",
     timeWindowStartHour: conditions.timeWindow?.startHour,
     timeWindowEndHour: conditions.timeWindow?.endHour,
@@ -164,27 +161,28 @@ export async function updateRule(id: string, _prevState: RuleFormState, formData
 
   await prisma.automationRule.update({
     where: { id },
-    data: { ...fields, conditions: conditions as any, actions: actions as any },
+    data: { ...fields, conditions: conditions as unknown as Prisma.InputJsonValue,
+      actions: actions as unknown as Prisma.InputJsonValue },
   });
 
-  revalidatePath("/rules");
-  redirect("/rules");
+  revalidatePath(await projectPath("/rules"));
+  redirect(await projectPath("/rules"));
 }
 
 export async function setRuleStatus(id: string, status: "ACTIVE" | "DISABLED" | "ARCHIVED"): Promise<void> {
-  await requireSession();
+  await requireAccess("automation_rules.activate");
   await prisma.automationRule.update({ where: { id }, data: { status } });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
 }
 
 export async function deleteRule(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("automation_rules.delete");
   await prisma.automationRule.delete({ where: { id } });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
 }
 
 export async function duplicateRule(id: string): Promise<void> {
-  await requireSession();
+  await requireAccess("automation_rules.create");
   const original = await prisma.automationRule.findUniqueOrThrow({ where: { id } });
   await prisma.automationRule.create({
     data: {
@@ -194,8 +192,8 @@ export async function duplicateRule(id: string): Promise<void> {
       matchType: original.matchType,
       matchValue: original.matchValue,
       keywords: original.keywords,
-      conditions: original.conditions as any,
-      actions: original.actions as any,
+      conditions: original.conditions as Prisma.InputJsonValue,
+      actions: original.actions as Prisma.InputJsonValue,
       priority: original.priority,
       status: "DRAFT",
       cooldownSeconds: original.cooldownSeconds,
@@ -204,11 +202,11 @@ export async function duplicateRule(id: string): Promise<void> {
       replyDelayMaxMs: original.replyDelayMaxMs,
     },
   });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
 }
 
 export async function updatePriority(id: string, priority: number): Promise<void> {
-  await requireSession();
+  await requireAccess("automation_rules.edit");
   await prisma.automationRule.update({ where: { id }, data: { priority } });
-  revalidatePath("/rules");
+  revalidatePath(await projectPath("/rules"));
 }

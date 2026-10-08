@@ -2,6 +2,15 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Stated rather than inherited. 100 is already the image's default, but the connection budget
+    # is now a number both sides are sized against — `packages/db` bounds each process's Prisma
+    # pool (see withPoolBounds) precisely so `app` + `worker` + a migration + a psql session stay
+    # comfortably inside this. Leaving it implicit meant the ceiling lived only in Postgres's
+    # documentation while the clients scaled themselves off the host's core count.
+    command:
+      - postgres
+      - -c
+      - max_connections=100
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -63,10 +72,16 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
-      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
-      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
-      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
-      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
+      # Softify Forge — product knowledge from the ISPDIGITAL repository. Both apps read these:
+      # the worker to do the reading, the dashboard for its settings page. Unset means the
+      # integration is simply absent, which is the documented default (see FORGE_SETUP.md).
+      FORGE_API_KEY: ${FORGE_API_KEY}
+      FORGE_API_URL: ${FORGE_API_URL}
+      # WhatsApp media files (MEDIA_STORAGE.md). The dashboard only READS them — through an
+      # authorised endpoint, never a public URL — from the same volume the worker writes to.
+      MEDIA_STORAGE_DIR: ${MEDIA_STORAGE_DIR:-/app/media}
+    volumes:
+      - whatsapp_media:/app/media
     ports:
       - "${WEB_PORT:-8668}:3000"
     healthcheck:
@@ -98,20 +113,48 @@ services:
       WHATSAPP_USE_STEALTH: ${WHATSAPP_USE_STEALTH:-true}
       WHATSAPP_CUSTOM_USER_AGENT: ${WHATSAPP_CUSTOM_USER_AGENT}
       WHATSAPP_GROUP_SYNC_TIMEOUT_MS: ${WHATSAPP_GROUP_SYNC_TIMEOUT_MS:-150000}
+      # Two diagnostics, both off by default and both for the same class of problem: a session that
+      # looks healthy while nothing arrives. WHATSAPP_DEBUG_BROWSER turns on the library's own
+      # console/screenshot capture; WHATSAPP_DEBUG_EVENTS prints every event it raises, which is how
+      # you tell "WhatsApp said nothing" from "we stopped listening". The browser one was already
+      # read by the provider and simply never passed through here, so it could not be switched on
+      # in the deployment it exists for.
+      # Connect timeouts. Both are OVERRIDES and deliberately default to empty, so the worker's own
+      # constants apply: they are only correct relative to each other and to the library's timers
+      # (connectTimeouts.test.ts), and a number written here would silently win over them. A
+      # default of 300000 here once made the no-code deadline equal to the linking window in every
+      # Docker deployment while the test — which reads the source — still passed.
+      #   WHATSAPP_CONNECT_WATCHDOG_MS    the linking window the dialog counts down (code: 5 min)
+      #   WHATSAPP_FIRST_CODE_TIMEOUT_MS  no code at all by then -> retry (code: 4 min, must be less)
+      WHATSAPP_CONNECT_WATCHDOG_MS: ${WHATSAPP_CONNECT_WATCHDOG_MS:-}
+      WHATSAPP_FIRST_CODE_TIMEOUT_MS: ${WHATSAPP_FIRST_CODE_TIMEOUT_MS:-}
+      WHATSAPP_DEBUG_BROWSER: ${WHATSAPP_DEBUG_BROWSER:-false}
+      WHATSAPP_DEBUG_EVENTS: ${WHATSAPP_DEBUG_EVENTS:-false}
       TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL}
       WHATSAPP_NOTIFICATION_GROUP_ID: ${WHATSAPP_NOTIFICATION_GROUP_ID}
       # Needed by packages/ai-client's resolveAiClient() to decrypt a stored AiProvider API key
       # before calling it — same key apps/web already uses, so the two must always match.
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
-      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
-      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
-      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
-      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
+      # Softify Forge — the worker does the reading (see FORGE_SETUP.md). Unset means the
+      # integration is absent, and both Forge loops return immediately every tick.
+      FORGE_API_KEY: ${FORGE_API_KEY}
+      FORGE_API_URL: ${FORGE_API_URL}
+      # Seeds an AiProvider + model config on boot so a deployment is usable without opening the
+      # dashboard. Never overwrites a provider an admin already configured.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      # WhatsApp media files (MEDIA_STORAGE.md): downloaded here in the background, kept on the
+      # whatsapp_media volume shared with the dashboard. Below MEDIA_MIN_FREE_DISK_MB of free space
+      # nothing new is written — this disk is shared with Postgres, and a full disk stops it too.
+      MEDIA_STORAGE_DIR: ${MEDIA_STORAGE_DIR:-/app/media}
+      MEDIA_MIN_FREE_DISK_MB: ${MEDIA_MIN_FREE_DISK_MB:-2048}
+      MEDIA_DOWNLOAD_CONCURRENCY: ${MEDIA_DOWNLOAD_CONCURRENCY:-2}
     # No `ports:` here on purpose: the worker's health endpoint binds to
     # 127.0.0.1 inside the container only, for its own HEALTHCHECK to use.
     # The dashboard never talks to the worker over HTTP (see ARCHITECTURE.md).
     volumes:
       - whatsapp_session:/app/sessions
+      - whatsapp_media:/app/media
     shm_size: "1gb"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:4100/health"]
@@ -127,6 +170,9 @@ volumes:
     name: support_automation_pg_data
   whatsapp_session:
     name: support_automation_whatsapp_session
+  # WhatsApp media files. NOT covered by a database backup — back this volume up separately.
+  whatsapp_media:
+    name: support_automation_media
 
 networks:
   automation_net:

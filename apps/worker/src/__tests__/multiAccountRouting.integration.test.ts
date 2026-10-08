@@ -1,6 +1,8 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
+import { ISP_DIGITAL, prisma } from "./helpers/projectFixtures.js";
 import type { WhatsAppAccount, WhatsAppServiceRoute } from "@prisma/client";
 import { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { processOneCommandViaRegistry } from "../commands/commandProcessor.js";
@@ -28,13 +30,13 @@ async function currentPrimaryResolution(): Promise<{ accountId: string; accountL
 }
 
 beforeAll(async () => {
-  originalRoute = await prisma.whatsAppServiceRoute.findUnique({ where: { serviceKey: "PRIORITY_SUPPORT" } });
+  originalRoute = await prisma.whatsAppServiceRoute.findFirst({ where: { serviceKey: "PRIORITY_SUPPORT" } });
 });
 
 afterAll(async () => {
   if (originalRoute) {
     await prisma.whatsAppServiceRoute.upsert({
-      where: { serviceKey: "PRIORITY_SUPPORT" },
+      where: { projectId_serviceKey: { projectId: ISP_DIGITAL, serviceKey: "PRIORITY_SUPPORT" } },
       update: originalRoute,
       create: originalRoute,
     });
@@ -63,7 +65,7 @@ describe("resolveWhatsAppAccount", () => {
       data: { serviceKey: "PRIORITY_SUPPORT", accountId: connectedAccount.id, fallbackPolicy: "PRIMARY_FALLBACK", enabled: true },
     });
 
-    const result = await resolveWhatsAppAccount("PRIORITY_SUPPORT");
+    const result = await resolveWhatsAppAccount("PRIORITY_SUPPORT", prisma);
     expect(isResolutionError(result)).toBe(false);
     if (!isResolutionError(result)) {
       expect(result.accountId).toBe(connectedAccount.id);
@@ -80,7 +82,7 @@ describe("resolveWhatsAppAccount", () => {
       data: { label: `Routing Test Decoy ${randomUUID()}`, status: "CONNECTED" },
     });
     try {
-      const result = await resolveWhatsAppAccount("PRIORITY_SUPPORT");
+      const result = await resolveWhatsAppAccount("PRIORITY_SUPPORT", prisma);
       expect(isResolutionError(result)).toBe(false);
       if (!isResolutionError(result)) {
         expect(result.accountId).toBe(connectedAccount.id);
@@ -96,7 +98,7 @@ describe("resolveWhatsAppAccount", () => {
       data: { serviceKey: "PRIORITY_SUPPORT", accountId: disconnectedAccount.id, fallbackPolicy: "STRICT_NO_FALLBACK", enabled: true },
     });
 
-    const result = await resolveWhatsAppAccount("PRIORITY_SUPPORT");
+    const result = await resolveWhatsAppAccount("PRIORITY_SUPPORT", prisma);
     expect(isResolutionError(result)).toBe(true);
     if (isResolutionError(result)) {
       expect(result.error).toMatch(/unavailable/i);
@@ -109,7 +111,7 @@ describe("resolveWhatsAppAccount", () => {
       data: { serviceKey: "PRIORITY_SUPPORT", accountId: disconnectedAccount.id, fallbackPolicy: "PRIMARY_FALLBACK", enabled: true },
     });
 
-    const [result, expected] = await Promise.all([resolveWhatsAppAccount("PRIORITY_SUPPORT"), currentPrimaryResolution()]);
+    const [result, expected] = await Promise.all([resolveWhatsAppAccount("PRIORITY_SUPPORT", prisma), currentPrimaryResolution()]);
     if ("error" in expected) {
       expect(isResolutionError(result)).toBe(true);
     } else {
@@ -122,7 +124,7 @@ describe("resolveWhatsAppAccount", () => {
   });
 
   it("falls back to Primary when no route is configured for the service at all", async () => {
-    const [result, expected] = await Promise.all([resolveWhatsAppAccount("PRIORITY_SUPPORT"), currentPrimaryResolution()]);
+    const [result, expected] = await Promise.all([resolveWhatsAppAccount("PRIORITY_SUPPORT", prisma), currentPrimaryResolution()]);
     if ("error" in expected) {
       expect(isResolutionError(result)).toBe(true);
     } else {
@@ -139,7 +141,7 @@ describe("resolveWhatsAppAccount", () => {
       data: { serviceKey: "PRIORITY_SUPPORT", accountId: connectedAccount.id, fallbackPolicy: "PRIMARY_FALLBACK", enabled: false },
     });
 
-    const [result, expected] = await Promise.all([resolveWhatsAppAccount("PRIORITY_SUPPORT"), currentPrimaryResolution()]);
+    const [result, expected] = await Promise.all([resolveWhatsAppAccount("PRIORITY_SUPPORT", prisma), currentPrimaryResolution()]);
     if ("error" in expected) {
       expect(isResolutionError(result)).toBe(true);
     } else {

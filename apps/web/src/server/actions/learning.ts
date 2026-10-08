@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
-import { requireSession } from "@/server/auth";
+
+import { checkPermission, requireAccess } from "@/server/authorize";
 
 /**
  * Dashboard "Run AI analysis now" button — mirrors the existing enqueueCommand idempotency
@@ -11,7 +13,7 @@ import { requireSession } from "@/server/auth";
  * apps/worker/src/commands/commandProcessor.ts's special-case handling for AI_ANALYSIS_BATCH.
  */
 export async function triggerAiAnalysisBatch(): Promise<void> {
-  await requireSession();
+  await requireAccess("conversation_learning.manage");
 
   const existing = await prisma.workerCommand.findFirst({
     where: { type: "AI_ANALYSIS_BATCH", status: { in: ["PENDING", "PROCESSING"] } },
@@ -20,7 +22,7 @@ export async function triggerAiAnalysisBatch(): Promise<void> {
     await prisma.workerCommand.create({ data: { type: "AI_ANALYSIS_BATCH" } });
   }
 
-  revalidatePath("/conversation-learning");
+  revalidatePath(await projectPath("/conversation-learning"));
 }
 
 export interface LearningSettingsFormState {
@@ -44,7 +46,8 @@ export async function updateLearningSettings(
   _prevState: LearningSettingsFormState,
   formData: FormData,
 ): Promise<LearningSettingsFormState> {
-  await requireSession();
+  const granted = await checkPermission("conversation_learning.manage");
+  if ("denied" in granted) return { error: granted.denied };
 
   const flag = (key: string) => formData.get(key) === "on";
   const int = (key: string, min: number, max: number, fallback: number) =>
@@ -73,7 +76,7 @@ export async function updateLearningSettings(
     create: { id: "global" },
   });
 
-  revalidatePath("/conversation-learning/settings");
-  revalidatePath("/conversation-learning");
+  revalidatePath(await projectPath("/conversation-learning/settings"));
+  revalidatePath(await projectPath("/conversation-learning"));
   return { success: true };
 }

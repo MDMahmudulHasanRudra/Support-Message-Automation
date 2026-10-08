@@ -2,6 +2,7 @@
 
 import { Loader2 } from "lucide-react";
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from "react";
+import { useProjectHref } from "@/components/ProjectLink";
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 type ButtonSize = "sm" | "md";
@@ -65,8 +66,11 @@ export function ButtonLink({
   variant?: ButtonVariant;
   size?: ButtonSize;
 }) {
+  // A project-relative href ("/api/…/export") resolves inside the current project, like every link.
+  const toProject = useProjectHref();
+  const href = typeof props.href === "string" ? toProject(props.href) : props.href;
   return (
-    <a className={`${BASE} ${VARIANT_STYLES[variant]} ${SIZE_STYLES[size]} ${className}`} {...props}>
+    <a className={`${BASE} ${VARIANT_STYLES[variant]} ${SIZE_STYLES[size]} ${className}`} {...props} href={href}>
       {children}
     </a>
   );

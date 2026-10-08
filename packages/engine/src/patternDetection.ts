@@ -1,4 +1,4 @@
-import { normalizeText } from "./normalize.js";
+import { normalizeText, tokenizeWords } from "./normalize.js";
 
 /**
  * Pure, side-effect-free deterministic pattern-detection logic for Conversation Learning / Pattern
@@ -30,9 +30,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function tokenize(normalizedBody: string): string[] {
-  return normalizedBody.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-}
 
 export interface PatternSignature {
   /** Deterministic, order-independent signature — the same recurring intent always produces the same key. */
@@ -49,7 +46,7 @@ export interface PatternSignature {
  */
 export function derivePatternSignature(rawBody: string): PatternSignature {
   const normalized = normalizeText(rawBody);
-  const distinctive = [...new Set(tokenize(normalized))].filter(
+  const distinctive = [...new Set(tokenizeWords(normalized))].filter(
     (token) => token.length >= MIN_TOKEN_LENGTH && !STOPWORDS.has(token),
   );
 
@@ -60,6 +57,73 @@ export function derivePatternSignature(rawBody: string): PatternSignature {
 
   return { patternKey: top.join("|"), keywords: top };
 }
+
+/**
+ * The most terms a single question contributes to ranking. Generous, because this is in-memory
+ * scoring rather than a database predicate, and bounded so that a customer pasting an essay
+ * cannot turn one reply into a long scan over every candidate.
+ */
+const MAX_QUERY_TERMS = 20;
+
+/**
+ * The content words of a message, for SEARCHING with — as opposed to
+ * `derivePatternSignature`, which produces a cluster KEY.
+ *
+ * These two jobs were being done by one function, and the costs landed on retrieval. A cluster key
+ * wants to be short, stable and order-independent, so that the same recurring intent always hashes
+ * to the same bucket — hence at most five tokens, longest-first, sorted. Every one of those
+ * properties is wrong for a query:
+ *
+ * - **Five terms is a ceiling on how much the ranker can know.** Scoring by how many of at most
+ *   five terms appear gives six possible scores, so hundreds of candidates collapse into a handful
+ *   of ties, and which three reach the customer is then settled by an arbitrary tiebreak.
+ * - **Longest-first is not specificity.** It is a corpus-free guess at it, and a poor one: it
+ *   prefers "internet" to "otp" in a question about one-time passwords. Rarity is the real signal,
+ *   and the ranker can measure it directly (see the BM25 scorer) — but only over terms it was
+ *   given, so a term dropped here can never be weighed there.
+ * - **Alphabetical sorting** is exactly right for a hash key and meaningless for a query.
+ *
+ * So this keeps every content word, in the order it was written, deduplicated. It deliberately
+ * does NOT change `derivePatternSignature`: that key is stored on every `PatternCandidate`, and
+ * altering it would re-bucket the entire Conversation Learning history.
+ */
+export function deriveQueryTerms(rawBody: string, limit = MAX_QUERY_TERMS): string[] {
+  const normalized = normalizeText(rawBody);
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const token of tokenizeWords(normalized)) {
+    if (token.length < MIN_TOKEN_LENGTH || STOPWORDS.has(token) || seen.has(token)) continue;
+    seen.add(token);
+    terms.push(token);
+    if (terms.length >= limit) break;
+  }
+  return terms;
+}
+
+/**
+ * How alike two questions are, 0 to 1, for warning about a likely duplicate knowledge entry.
+ *
+ * Built on `deriveQueryTerms` — the content words knowledge retrieval itself reads — so "these two
+ * questions look the same" means what it means to the assistant: an entry that would compete with
+ * the new one for the same customer question. The score is the share of the SHORTER question's words
+ * that appear in the other (overlap coefficient), not Jaccard: "How to pay my bill?" and "How can I
+ * pay my monthly internet bill?" are the same question even though the second has extra words.
+ * A question with fewer than two content words is never matched — "bill" alone is too little to call
+ * anything a duplicate. Deterministic and order-independent.
+ */
+export function questionSimilarity(a: string, b: string): number {
+  const termsA = new Set(deriveQueryTerms(a, 50));
+  const termsB = new Set(deriveQueryTerms(b, 50));
+  const smaller = termsA.size <= termsB.size ? termsA : termsB;
+  const larger = smaller === termsA ? termsB : termsA;
+  if (smaller.size < 2) return 0;
+  let shared = 0;
+  for (const term of smaller) if (larger.has(term)) shared += 1;
+  return shared / smaller.size;
+}
+
+/** At or above this, a knowledge entry is offered as "may already cover this question". */
+export const DUPLICATE_QUESTION_THRESHOLD = 0.75;
 
 export interface CandidateFloorInputs {
   occurrenceCount: number;

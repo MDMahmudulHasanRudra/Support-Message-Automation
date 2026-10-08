@@ -46,7 +46,7 @@ export default function LoginPage() {
               <circle cx="7" cy="18.4" r="2.3" fill="currentColor" />
             </svg>
           </span>
-          <span className="text-[15px] font-semibold tracking-[-0.01em]">Support Message Automation</span>
+          <span className="text-[15px] font-semibold tracking-[-0.01em]">Softify Assist</span>
         </div>
 
         <div className="relative max-w-md">
@@ -72,7 +72,7 @@ export default function LoginPage() {
         </div>
 
         <p className="relative text-xs text-white/30">
-          &copy; {new Date().getFullYear()} Support Automation
+          &copy; {new Date().getFullYear()} Softify Assist
         </p>
       </aside>
 
@@ -82,7 +82,7 @@ export default function LoginPage() {
           <div className="mb-8 flex items-center gap-3 lg:hidden">
             <BrandMark className="size-8" />
             <span className="text-[15px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
-              Support Automation
+              Softify Assist
             </span>
           </div>
 

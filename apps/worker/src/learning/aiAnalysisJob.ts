@@ -1,9 +1,11 @@
-import { prisma } from "@support-automation/db";
+import { projectHasFeature } from "../project/features.js";
+import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import type { LearningBatchJobTrigger } from "@prisma/client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { getLearningSettings } from "./sessionSegmentation.js";
 import { rescoreCandidate } from "./patternDetectionJob.js";
+import { getAiSettings } from "../ai/settings.js";
 
 /**
  * Conversation Learning — Phase 5 (AI-assisted batch analysis, fully optional). The only file in
@@ -28,14 +30,15 @@ export async function processOneAiAnalysisBatch(
   trigger: LearningBatchJobTrigger = "SCHEDULED",
   clientOverride?: AiClient,
 ): Promise<boolean> {
-  const aiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+  const aiSettings = await getAiSettings();
   if (!aiSettings.aiEngineEnabled || !aiSettings.learningEnabled) return false;
+  if (!(await projectHasFeature("CONVERSATION_LEARNING"))) return false; // entitlement, MULTI_PROJECT_PLAN.md §9
 
-  const client = clientOverride ?? (await resolveAiClient("LEARNING"));
+  const client = clientOverride ?? (await resolveAiClient("LEARNING", prisma));
   if (!client) return false;
 
   const settings = await getLearningSettings();
-  const modelConfig = await prisma.aiModelConfig.findUnique({ where: { job: "LEARNING" } });
+  const modelConfig = await prisma.aiModelConfig.findFirst({ where: { job: "LEARNING" } });
   const humanReviewThreshold = aiSettings.humanReviewThreshold;
 
   const candidates = await prisma.patternCandidate.findMany({

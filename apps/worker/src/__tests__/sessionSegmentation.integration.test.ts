@@ -1,13 +1,14 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { LearningSettings, WhatsAppAccount } from "@prisma/client";
 import { getLearningSettings, processOneSegmentationBatch } from "../learning/sessionSegmentation.js";
 
 /**
  * Integration test for Conversation Learning Phase 1 (session segmentation). Run this against the
  * isolated test database (`pnpm test:isolated` — see README.md's Testing section), never the
- * shared dev/live one: this suite's queries (via processOneSegmentationBatch()) are NOT scoped to
+ * shared dev/live one: this suite's queries (via inIsp(() => processOneSegmentationBatch())) are NOT scoped to
  * its own fixtures — they process every real unsegmented Message already in whatever database
  * DATABASE_URL points at, which has twice copied real customer messages into new tables when run
  * against the live database (see feedback_shared_db_live_worker_risk in project memory).
@@ -52,7 +53,7 @@ beforeAll(async () => {
   account =
     (await prisma.whatsAppAccount.findFirst()) ??
     (await prisma.whatsAppAccount.create({ data: { label: "Test Account (isolated DB fallback)", status: "CONNECTED" } }));
-  originalLearningSettings = await getLearningSettings();
+  originalLearningSettings = await inIsp(() => getLearningSettings());
 });
 
 afterEach(async () => {
@@ -75,7 +76,7 @@ describe("session segmentation — feature disabled (default)", () => {
     testChatIds.push(chatId);
     const message = await createIncomingMessage({ chatId, senderPhone: "+8801111111111", timestampWa: new Date() });
 
-    const didWork = await processOneSegmentationBatch();
+    const didWork = await inIsp(() => processOneSegmentationBatch());
 
     expect(didWork).toBe(false);
     const reloaded = await prisma.message.findUniqueOrThrow({ where: { id: message.id } });
@@ -95,7 +96,7 @@ describe("session segmentation — feature enabled", () => {
     await createIncomingMessage({ chatId, senderPhone: "+8801111111111", timestampWa: new Date(base.getTime() + 5 * 60_000) });
     await createIncomingMessage({ chatId, senderPhone: "+8802222222222", timestampWa: new Date(base.getTime() + 10 * 60_000) });
 
-    const didWork = await processOneSegmentationBatch();
+    const didWork = await inIsp(() => processOneSegmentationBatch());
     expect(didWork).toBe(true);
 
     const sessions = await prisma.conversationSession.findMany({ where: { chatId } });
@@ -116,7 +117,7 @@ describe("session segmentation — feature enabled", () => {
     await createIncomingMessage({ chatId, senderPhone: "+8801111111111", timestampWa: base });
     await createIncomingMessage({ chatId, senderPhone: "+8801111111111", timestampWa: new Date(base.getTime() + 60 * 60_000) });
 
-    await processOneSegmentationBatch();
+    await inIsp(() => processOneSegmentationBatch());
 
     const sessions = await prisma.conversationSession.findMany({ where: { chatId }, orderBy: { firstMessageAt: "asc" } });
     expect(sessions).toHaveLength(2);
@@ -131,7 +132,7 @@ describe("session segmentation — feature enabled", () => {
     const chatId = uniqueChatId();
     testChatIds.push(chatId);
     await createIncomingMessage({ chatId, senderPhone: "+8801111111111", timestampWa: new Date() });
-    await processOneSegmentationBatch(); // creates the OPEN session, fresh — not yet idle
+    await inIsp(() => processOneSegmentationBatch()); // creates the OPEN session, fresh — not yet idle
 
     const opened = await prisma.conversationSession.findFirstOrThrow({ where: { chatId } });
     expect(opened.status).toBe("OPEN");
@@ -143,7 +144,7 @@ describe("session segmentation — feature enabled", () => {
       data: { lastMessageAt: new Date(Date.now() - 60 * 60_000) },
     });
 
-    const didWork = await processOneSegmentationBatch(); // no new messages — only the idle sweep should fire
+    const didWork = await inIsp(() => processOneSegmentationBatch()); // no new messages — only the idle sweep should fire
     expect(didWork).toBe(true);
 
     const closed = await prisma.conversationSession.findUniqueOrThrow({ where: { id: opened.id } });
@@ -157,7 +158,7 @@ describe("session segmentation — feature enabled", () => {
     testChatIds.push(chatId);
     await createIncomingMessage({ chatId, senderPhone: "+8801111111111", timestampWa: new Date() });
 
-    await processOneSegmentationBatch();
+    await inIsp(() => processOneSegmentationBatch());
 
     const job = await prisma.learningBatchJob.findFirstOrThrow({
       where: { jobType: "CONVERSATION_SEGMENTATION" },

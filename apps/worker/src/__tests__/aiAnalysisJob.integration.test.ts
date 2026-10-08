@@ -1,6 +1,7 @@
+import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
-import { prisma } from "@support-automation/db";
+import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import type { AiSettings, LearningSettings, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processOneAiAnalysisBatch, parseAnalysisResponse } from "../learning/aiAnalysisJob.js";
 import { processOnePatternDetectionBatch } from "../learning/patternDetectionJob.js";
@@ -10,7 +11,7 @@ import { MockAiClient } from "./mockAiClient.js";
 /**
  * Integration tests for Conversation Learning Phase 5 (AI-assisted batch analysis), run against
  * the same shared Postgres instance as every other suite in this directory. Uses MockAiClient
- * (see mockAiClient.ts) injected via processOneAiAnalysisBatch()'s test-only `clientOverride`
+ * (see mockAiClient.ts) injected via inIsp(() => processOneAiAnalysisBatch())'s test-only `clientOverride`
  * parameter — never a real API key, never a real network call, per this repo's test-group/testing
  * policy of preferring mocks over real external calls wherever possible.
  *
@@ -104,7 +105,7 @@ async function seedFloorClearingCandidate(marker = "connection") {
   await createClosedSession({ groupId: groupB.id, senderPhone: uniquePhone(), body, timestampWa: now });
   await createClosedSession({ groupId: groupA.id, senderPhone: uniquePhone(), body, timestampWa: now });
 
-  await processOnePatternDetectionBatch();
+  await inIsp(() => processOnePatternDetectionBatch());
 
   const candidate = await prisma.patternCandidate.findFirstOrThrow({
     where: { suggestedKeywords: { has: marker } },
@@ -130,7 +131,7 @@ async function enableAi(overrides: Partial<AiSettings> = {}) {
 }
 
 beforeAll(async () => {
-  originalLearningSettings = await getLearningSettings();
+  originalLearningSettings = await inIsp(() => getLearningSettings());
   originalAiSettings = await prisma.aiSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
   account = await prisma.whatsAppAccount.create({ data: { label: `AI Analysis Test ${randomUUID()}`, status: "CONNECTED" } });
 });
@@ -194,7 +195,7 @@ describe("processOneAiAnalysisBatch — AI disabled (default)", () => {
     await prisma.aiSettings.update({ where: { id: "global" }, data: { aiEngineEnabled: false, learningEnabled: false } });
     const candidate = await seedFloorClearingCandidate();
 
-    const didWork = await processOneAiAnalysisBatch("MANUAL", new MockAiClient());
+    const didWork = await inIsp(() => processOneAiAnalysisBatch("MANUAL", new MockAiClient()));
 
     expect(didWork).toBe(false);
     const reloaded = await prisma.patternCandidate.findUniqueOrThrow({ where: { id: candidate.id } });
@@ -223,7 +224,7 @@ describe("processOneAiAnalysisBatch — AI enabled (via injected MockAiClient)",
     createdCandidateIds.push(candidate.id);
     const client = new MockAiClient();
 
-    await processOneAiAnalysisBatch("MANUAL", client);
+    await inIsp(() => processOneAiAnalysisBatch("MANUAL", client));
 
     expect(client.requests).toHaveLength(0);
     const reloaded = await prisma.patternCandidate.findUniqueOrThrow({ where: { id: candidate.id } });
@@ -237,7 +238,7 @@ describe("processOneAiAnalysisBatch — AI enabled (via injected MockAiClient)",
     const client = new MockAiClient();
     client.nextText = "CONFIDENCE: 40\nSUMMARY: Somewhat plausible but not strongly consistent.";
 
-    const didWork = await processOneAiAnalysisBatch("MANUAL", client);
+    const didWork = await inIsp(() => processOneAiAnalysisBatch("MANUAL", client));
 
     expect(didWork).toBe(true);
     expect(client.requests).toHaveLength(1);
@@ -253,7 +254,7 @@ describe("processOneAiAnalysisBatch — AI enabled (via injected MockAiClient)",
     const client = new MockAiClient();
     client.nextText = "CONFIDENCE: 95\nSUMMARY: Highly consistent, clearly a reusable support pattern.";
 
-    await processOneAiAnalysisBatch("MANUAL", client);
+    await inIsp(() => processOneAiAnalysisBatch("MANUAL", client));
 
     const reloaded = await prisma.patternCandidate.findUniqueOrThrow({ where: { id: candidate.id } });
     expect(reloaded.status).toBe("PENDING_REVIEW");
@@ -265,7 +266,7 @@ describe("processOneAiAnalysisBatch — AI enabled (via injected MockAiClient)",
     await prisma.patternCandidate.update({ where: { id: candidate.id }, data: { status: "ANALYZED", aiConfidenceScore: 50 } });
     const client = new MockAiClient();
 
-    const didWork = await processOneAiAnalysisBatch("MANUAL", client);
+    const didWork = await inIsp(() => processOneAiAnalysisBatch("MANUAL", client));
 
     expect(didWork).toBe(false);
     expect(client.requests).toHaveLength(0);
@@ -280,7 +281,7 @@ describe("processOneAiAnalysisBatch — AI enabled (via injected MockAiClient)",
     const client = new MockAiClient();
     client.queuedTexts = ["not in the requested format at all", "CONFIDENCE: 60\nSUMMARY: Reasonable pattern."];
 
-    const didWork = await processOneAiAnalysisBatch("MANUAL", client);
+    const didWork = await inIsp(() => processOneAiAnalysisBatch("MANUAL", client));
 
     expect(didWork).toBe(true);
     expect(client.requests).toHaveLength(2);
@@ -297,7 +298,7 @@ describe("processOneAiAnalysisBatch — AI enabled (via injected MockAiClient)",
     await seedFloorClearingCandidate();
     const client = new MockAiClient();
 
-    await processOneAiAnalysisBatch("MANUAL", client);
+    await inIsp(() => processOneAiAnalysisBatch("MANUAL", client));
 
     const job = await prisma.learningBatchJob.findFirstOrThrow({
       where: { jobType: "AI_ANALYSIS" },

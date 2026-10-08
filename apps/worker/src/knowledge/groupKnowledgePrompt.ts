@@ -38,6 +38,25 @@ export const ALLOWED_KNOWLEDGE_CATEGORIES: AiKnowledgeCategory[] = [
 
 const RECORD_SEPARATOR = "---";
 
+/**
+ * The PROCEDURE field, spelled identically for every extractor that emits this record format.
+ *
+ * Exported and shared rather than restated per prompt for the reason the file header already
+ * gives about the record format itself: a field one extractor words differently is a field
+ * `parseKnowledgeRecords` silently drops, and the two must never drift. The conservative half of
+ * the wording matters as much as the request — the customer-facing prompt tells the model to name
+ * real screens and buttons AND forbids inventing them, so a fabricated step here does not produce
+ * a slightly-wrong answer, it produces a confident one that sends somebody hunting through
+ * software they already find confusing.
+ */
+export const PROCEDURE_FIELD_SPEC = [
+  "PROCEDURE: <the ordered steps, one per line, ONLY if the source actually spells them out —",
+  "  otherwise NONE. Name the real screen, menu or button the source names, in the order the",
+  "  source gives them. NEVER invent a step, a button name, a menu name, a URL, a permission or",
+  "  a prerequisite. If the source describes only part of the task, give only that part. NONE is",
+  "  the correct and expected answer for most entries.>",
+].join("\n");
+
 /** Long enough to hold a real conversation, short enough to stay inside a modest context window. */
 export const MAX_TRANSCRIPT_CHARS = 24_000;
 
@@ -76,6 +95,7 @@ export function buildGroupKnowledgePrompt(input: {
     `CATEGORY: <one of: ${ALLOWED_KNOWLEDGE_CATEGORIES.join(", ")}>`,
     "QUESTION: <the question a customer would ask, or NONE>",
     "ANSWER: <the answer, written so it can be reused with any customer>",
+    PROCEDURE_FIELD_SPEC,
     "CONFIDENCE: <a single integer 0-100 — how well the conversation supports this>",
     "",
     "If there is nothing durable to extract, reply with exactly: NOTHING",
@@ -92,6 +112,19 @@ export interface ExtractedKnowledge {
   confidence: number;
   /** Which part of the product this is about, when the source made that clear. */
   module: string | null;
+  /**
+   * Ordered steps, one per line, when the source actually spelled them out — null otherwise.
+   *
+   * `AiKnowledgeItem.procedure` and the prompt's `Steps:` rendering have both existed all along,
+   * but no extractor ever emitted this field, so the only procedures in the knowledge base were
+   * the ones a person typed by hand. The customer prompt asks for steps naming the real screens
+   * AND forbids inventing them, so with nothing here the model correctly refused and answered
+   * generically. This is the field that closes that gap.
+   *
+   * Null is the honest and expected value for most entries. A fabricated step is worse than no
+   * step — it sends somebody hunting through software they already find confusing.
+   */
+  procedure: string | null;
 }
 
 function parseOne(block: string): ExtractedKnowledge | null {
@@ -100,7 +133,13 @@ function parseOne(block: string): ExtractedKnowledge | null {
   const questionRaw = block.match(/QUESTION:\s*(.+)/i)?.[1]?.trim();
   const moduleRaw = block.match(/MODULE:\s*(.+)/i)?.[1]?.trim();
   // Answer runs to the end of the block or the next known field, whichever comes first.
-  const answer = block.match(/ANSWER:\s*([\s\S]+?)(?:\nCONFIDENCE:|\nMODULE:|$)/i)?.[1]?.trim();
+  // PROCEDURE is in this terminator list because it now sits between ANSWER and CONFIDENCE —
+  // without it the answer would swallow the whole step list.
+  const answer = block.match(/ANSWER:\s*([\s\S]+?)(?:\nPROCEDURE:|\nCONFIDENCE:|\nMODULE:|$)/i)?.[1]?.trim();
+  // Multi-line by design: a procedure is a numbered list, so it runs to the next known field.
+  const procedureRaw = block
+    .match(/PROCEDURE:\s*([\s\S]+?)(?:\nCONFIDENCE:|\nMODULE:|\nTITLE:|$)/i)?.[1]
+    ?.trim();
   const confidenceRaw = block.match(/CONFIDENCE:\s*(-?\d+)/i)?.[1];
 
   if (!title || !answer) return null;
@@ -114,8 +153,20 @@ function parseOne(block: string): ExtractedKnowledge | null {
   const confidence = confidenceRaw ? Math.max(0, Math.min(100, Number(confidenceRaw))) : 0;
 
   const moduleName = !moduleRaw || moduleRaw.toUpperCase() === "NONE" ? null : moduleRaw.slice(0, 120);
+  // "NONE" is the expected answer for most sources and must round-trip to null rather than being
+  // stored as the literal word, which would otherwise be rendered to the model as a step list.
+  const procedure =
+    !procedureRaw || procedureRaw.toUpperCase() === "NONE" ? null : procedureRaw.slice(0, 2000);
 
-  return { title: title.slice(0, 200), category, question, answer, confidence, module: moduleName };
+  return {
+    title: title.slice(0, 200),
+    category,
+    question,
+    answer,
+    confidence,
+    module: moduleName,
+    procedure,
+  };
 }
 
 /**

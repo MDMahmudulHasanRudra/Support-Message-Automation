@@ -12,8 +12,12 @@
  * feature that doesn't exist. `automation_rules`, `users`, `permissions`, `ai_settings`, and
  * `settings` use the finer-grained key lists explicitly requested for those modules; every other
  * real module gets a plain `.view`/`.manage` pair, or a single `.view`-only key for modules with
- * no meaningful separate "manage" action of their own (Messages, Notifications, System Logs).
+ * no meaningful separate "manage" action of their own (Notifications, System Logs). Messages
+ * gained `messages.reply` once the chat inbox could send — see its entry.
  */
+
+/** The Main Admin Portal's keys. Platform-level, and never part of a default role except Administrator. */
+export const MAIN_ADMIN_CATEGORY = "Main Admin";
 
 export interface PermissionDefinition {
   key: string;
@@ -32,6 +36,12 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "automation_rules.bulk_export", label: "Bulk Export Automation Rules", category: "Automation Rules" },
 
   { key: "messages.view", label: "View Messages", category: "Messages" },
+  // Messages had only `.view`, written before the chat inbox could send. Replying to a customer is
+  // the most consequential thing a support role does and it needed a key of its own: mapping it to
+  // an existing one would either let "Read Only" reply to customers (messages.view) or stop support
+  // staff replying unless handed an admin-level key (whatsapp.manage). A one-time migration grants
+  // it to every custom role that could already see Messages, so nobody loses the ability on deploy.
+  { key: "messages.reply", label: "Reply in WhatsApp Chat", category: "Messages" },
 
   { key: "escalations.view", label: "View Escalations", category: "Escalations" },
   { key: "escalations.manage", label: "Manage Escalations", category: "Escalations" },
@@ -39,8 +49,19 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "support_activity.view", label: "View Support Activity", category: "Support Activity" },
   { key: "support_activity.manage", label: "Manage Support Activity", category: "Support Activity" },
 
-  { key: "teams_integration.view", label: "View Teams Integration", category: "Teams Integration" },
-  { key: "teams_integration.manage", label: "Manage Teams Integration", category: "Teams Integration" },
+  // Support Assignment (SUPPORT_ASSIGNMENT.md). Three keys because the three acts differ in kind:
+  // seeing the queue, putting a case on somebody's plate (which messages them), and deciding what
+  // the module treats as support work, who is alerted and when.
+  { key: "support_assignment.view", label: "View Support Assignments", category: "Support Assignment" },
+  { key: "support_assignment.assign", label: "Assign & Reassign Support Cases", category: "Support Assignment" },
+  { key: "support_assignment.manage", label: "Manage Support Assignment Settings", category: "Support Assignment" },
+
+  // Team Management owns the roster, leave and coverage. Separate from support_activity.* on
+  // purpose: reading who was active is a reporting concern, while approving somebody leave or
+  // moving them off a shift changes what the team is contracted to do that day.
+  { key: "team_management.view", label: "View Schedule, Leave & Attendance", category: "Team Management" },
+  { key: "team_management.manage", label: "Manage Schedule, Leave & Coverage", category: "Team Management" },
+
 
   // Covers WhatsApp Accounts, Groups, and Internal Team Members as one category.
   { key: "whatsapp.view", label: "View WhatsApp Accounts, Groups & Team Members", category: "WhatsApp" },
@@ -56,6 +77,14 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
 
   { key: "conversation_learning.view", label: "View Conversation Learning", category: "Conversation Learning" },
   { key: "conversation_learning.manage", label: "Manage Conversation Learning", category: "Conversation Learning" },
+
+  // Release Notes: .view reads published/archived releases (the changelog every user sees);
+  // .manage covers the full authoring lifecycle — draft, edit, publish, unpublish, archive. There
+  // is deliberately no separate delete key: deletion is only ever possible on a DRAFT (a published
+  // or archived release can never be deleted at all, only unpublished/archived — see the model's
+  // own doc comment), so it is not a distinct privilege worth its own permission row.
+  { key: "release_notes.view", label: "View Release Notes", category: "Release Notes" },
+  { key: "release_notes.manage", label: "Manage Release Notes", category: "Release Notes" },
 
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },
@@ -75,6 +104,18 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "permissions.delete", label: "Delete Permission Modules", category: "Users & Permissions" },
   { key: "security_settings.view", label: "View Security Settings", category: "Users & Permissions" },
   { key: "security_settings.edit", label: "Edit Security Settings", category: "Users & Permissions" },
+
+  // Main Admin Portal (MULTI_PROJECT_PLAN.md §7). Platform-level, not a module inside a project:
+  // `projects.view` opens the portal read-only; `projects.manage` makes someone a Main Admin, who can
+  // create projects, change their status, grant and revoke project access, and enter any project.
+  // Inside a project a Main Admin is governed by the same keys above as everybody else.
+  { key: "projects.view", label: "View Main Admin Portal", category: MAIN_ADMIN_CATEGORY },
+  { key: "projects.manage", label: "Manage Projects and Project Access", category: MAIN_ADMIN_CATEGORY },
+  // Main Admin → Configuration: the organisation's departments, job titles and employees. Platform
+  // data, not a project's, so these sit in the Main Admin category and no default role but
+  // Administrator receives them.
+  { key: "configuration.view", label: "View Departments, Job Titles & Employees", category: MAIN_ADMIN_CATEGORY },
+  { key: "configuration.manage", label: "Manage Departments, Job Titles & Employees", category: MAIN_ADMIN_CATEGORY },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number]["key"];
@@ -85,14 +126,20 @@ export function isPermissionKey(value: string): value is PermissionKey {
   return ALL_KEYS.includes(value);
 }
 
-/** Every `.view`-suffixed key — the entire "Read Only" default Permission Module. */
-export const READ_ONLY_PERMISSION_KEYS: readonly string[] = PERMISSIONS.filter((p) => p.key.endsWith(".view")).map(
-  (p) => p.key,
-);
+/**
+ * Every `.view`-suffixed key — the entire "Read Only" default Permission Module — EXCEPT the Main
+ * Admin Portal's. The seed re-syncs this module on every deploy, so without the exclusion adding
+ * `projects.view` would have quietly shown every project on the platform to every Read Only user.
+ * Read Only stays exactly what it was: view-only inside the projects it can enter.
+ */
+export const READ_ONLY_PERMISSION_KEYS: readonly string[] = PERMISSIONS.filter(
+  (p) => p.key.endsWith(".view") && p.category !== MAIN_ADMIN_CATEGORY,
+).map((p) => p.key);
 
 /** Matches the spec's own illustrative example for this default module verbatim. */
 export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
+  "messages.reply",
   "automation_rules.view",
   "automation_rules.create",
   "automation_rules.edit",
@@ -105,6 +152,7 @@ export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
 /** Matches the spec's own illustrative example for this default module verbatim. */
 export const SUPPORT_AGENT_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
+  "messages.reply",
   "automation_rules.view",
   "automation_rules.create",
   "automation_rules.edit",

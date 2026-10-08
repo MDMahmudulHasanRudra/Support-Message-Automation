@@ -1,7 +1,9 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -68,6 +70,6 @@ export async function updateSecuritySettings(
     actorId: session.userId,
     sessionLifetimeHours,
   });
-  revalidatePath("/settings/security");
+  revalidatePath(await projectPath("/settings/security"));
   return { success: true };
 }

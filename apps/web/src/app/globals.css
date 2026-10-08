@@ -1,42 +1,88 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   Design tokens
+   Design tokens — "Midnight Indigo", the product's enterprise visual identity
    ----------------------------------------------------------------------------
-   One neutral family (zinc — a single, consistently-tinted gray), an ink
-   primary, and a vivid semantic status scale. The status colors are the only
-   saturated color in the whole console: on an operations dashboard color has to
-   mean "this needs attention", so brand color is deliberately kept out of
-   buttons, links and chrome. Every surface below is a token, so a theme swap
-   never needs a component edit.
+   A fixed budget, not a vibe: 80% neutral surfaces, 15% Indigo (the brand /
+   interaction hue), 5% Cyan (a restrained secondary accent), with status color
+   (success/warning/danger) kept fully independent of both. Every token below
+   is labelled with which of those four buckets it spends.
+
+   NEUTRAL (80%) — ink, borders, surfaces. Slate family, unchanged in spirit
+   from the console's original "ink, not a brand hue, in ordinary chrome"
+   discipline. Almost every pixel in the app is one of these tokens.
+
+   INDIGO — brand/interaction (15%): the active-nav rail, focus rings, links,
+   primary buttons' hover/active states, and one chart identity slot. This is
+   the hue that should read as unmistakably THIS product whenever it appears —
+   which is why it is spent on interaction and identity, never on routine
+   chrome or status.
+
+   CYAN — secondary accent (5%, `--color-secondary*`): a deliberately smaller,
+   cooler accent for the handful of places that want a second, quieter signal
+   distinct from Indigo's "this is the brand/primary action" role — a
+   secondary badge tone, a secondary button variant, one highlighted "notable
+   but not urgent" metric. It is a genuinely separate token family from
+   `--color-info` (below): info is a STATUS color (something the system is
+   telling you), Cyan-secondary is a BRAND color (a second accent voice) — the
+   two happen to sit in a similar hue family, which is exactly why they must
+   stay distinct tokens rather than one color asked to mean two things.
+
+   STATUS (success/warning/danger/info) — UNCHANGED in role and, other than a
+   documentation pass, in value: already validated for accessible contrast,
+   and a status color's whole job is to mean the same thing everywhere,
+   regardless of brand palette. The six-slot chart palette is likewise
+   unchanged — already validated for CVD-safe separation, and a rebrand is not
+   grounds to re-risk that pass.
    ========================================================================== */
 
 :root {
   color-scheme: light;
 
-  /* Base surfaces */
-  --color-background: #f5f5f6;
+  /* Base surfaces — slate family (was zinc) */
+  --color-background: #f8fafc;
   --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
-  --color-surface-sunken: #fafafa;
-  --color-foreground: #18181b;
-  --color-muted-foreground: #71717a;
-  --color-subtle-foreground: #8b8b95;
-  --color-border: #e7e7ea;
-  --color-border-strong: #d6d6da;
+  --color-surface-sunken: #f1f5f9;
+  --color-foreground: #0f172a;
+  --color-muted-foreground: #64748b;
+  --color-subtle-foreground: #94a3b8;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
 
-  /* Primary action — ink, not a brand hue. Solid, high contrast, no gradient. */
-  --color-primary: #18181b;
-  --color-primary-hover: #2f2f35;
-  --color-primary-active: #09090b;
-  --color-primary-soft: #ececee;
-  --color-primary-softer: #f4f4f5;
-  --color-on-primary: #fafafa;
-  /* Kept under the old token name so existing call sites keep resolving, but it
-     is now a whisper of depth on an ink fill rather than the blue fade it was. */
-  --gradient-primary: linear-gradient(180deg, #2f2f35 0%, #18181b 100%);
+  /* Primary action — the palette's own Primary navy. Solid, high contrast,
+     no gradient: an operations console's main action is authority, not flair. */
+  --color-primary: #0f172a;
+  --color-primary-hover: #1e293b;
+  --color-primary-active: #020617;
+  --color-primary-soft: #e2e8f0;
+  --color-primary-softer: #eef2f6;
+  --color-on-primary: #f8fafc;
+  --gradient-primary: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
 
-  /* Semantic status scale — used identically everywhere */
+  /* Accent — the palette's Secondary indigo. This is the ONE saturated brand
+     hue in the whole console, and it is spent deliberately: the active-nav
+     indicator, focus rings, links, and a single chart identity slot. It never
+     appears in a status badge or an ordinary button — see the standards this
+     app already had for why brand color and status color must stay separate. */
+  --color-accent: #4f46e5;
+  --color-accent-hover: #4338ca;
+  --color-accent-bg: #eef2ff;
+  --color-accent-border: #c7d2fe;
+  --color-accent-fg: #4338ca;
+
+  /* Secondary accent — Cyan, the deliberately smaller 5% voice. A distinct
+     token family from `--color-info` just below even though both sit in a
+     blue-green family: this one is a BRAND accent (secondary buttons, a
+     secondary badge tone, one "notable metric" highlight), not a status. */
+  --color-secondary: #0891b2;
+  --color-secondary-hover: #0e7490;
+  --color-secondary-bg: #ecfeff;
+  --color-secondary-border: #a5f3fc;
+  --color-secondary-fg: #0e7490;
+
+  /* Semantic status scale — used identically everywhere, unchanged by the
+     rebrand: a status color's job is to mean the same thing on every theme. */
   --color-success: #16a34a;
   --color-success-bg: #f0fdf4;
   --color-success-border: #bbf7d0;
@@ -53,25 +99,22 @@
   --color-danger-border: #fecaca;
   --color-danger-fg: #b91c1c;
 
-  --color-info: #2563eb;
-  --color-info-bg: #eff6ff;
-  --color-info-border: #bfdbfe;
-  --color-info-fg: #1d4ed8;
+  /* Info retuned to the palette's own Tertiary sky — the two roles were
+     already the same hue family, so this is one token, not a new category. */
+  --color-info: #0ea5e9;
+  --color-info-bg: #f0f9ff;
+  --color-info-border: #bae6fd;
+  --color-info-fg: #0369a1;
 
-  --color-neutral-bg: #f4f4f5;
-  --color-neutral-border: #e4e4e7;
-  --color-neutral-fg: #52525b;
+  --color-neutral-bg: #f1f5f9;
+  --color-neutral-border: #e2e8f0;
+  --color-neutral-fg: #475569;
 
-  --color-focus-ring: #18181b;
+  --color-focus-ring: #4f46e5;
 
-  /* Chart palette. Charts are the one place color encodes data rather than
-     decorating chrome, so they get their own scale — kept apart from the status
-     tokens above so a series can never impersonate a state. Slots and steps come
-     from the data-viz reference palette, validated against this app's own
-     surfaces (#ffffff light / #131316 dark): lightness band, chroma floor, CVD
-     separation and normal-vision floor all pass on the adjacent pairlist in both
-     modes. Slots 3, 4 and 5 sit below 3:1 on white, so every chart using them
-     ships visible values in its legend rather than relying on the fill alone. */
+  /* Chart palette — UNCHANGED. Already validated (lightness band, chroma
+     floor, CVD separation, normal-vision floor) against this app's own
+     surfaces; a rebrand is not grounds to re-risk an accessibility pass. */
   --chart-1: #2a78d6;
   --chart-2: #eb6834;
   --chart-3: #1baf7a;
@@ -90,11 +133,11 @@
 
   /* Elevation — tinted with the neutral hue, never pure black, plus a hairline
      top highlight so every raised surface reads as one light source. */
-  --shadow-xs: 0 1px 2px 0 rgb(24 24 27 / 0.05);
-  --shadow-sm: 0 1px 2px 0 rgb(24 24 27 / 0.05), 0 1px 6px -2px rgb(24 24 27 / 0.06);
-  --shadow-md: 0 2px 4px -2px rgb(24 24 27 / 0.06), 0 8px 20px -6px rgb(24 24 27 / 0.10);
-  --shadow-lg: 0 4px 8px -4px rgb(24 24 27 / 0.07), 0 16px 36px -10px rgb(24 24 27 / 0.14);
-  --shadow-xl: 0 8px 16px -8px rgb(24 24 27 / 0.10), 0 32px 64px -16px rgb(24 24 27 / 0.22);
+  --shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.05);
+  --shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.05), 0 1px 6px -2px rgb(15 23 42 / 0.06);
+  --shadow-md: 0 2px 4px -2px rgb(15 23 42 / 0.06), 0 8px 20px -6px rgb(15 23 42 / 0.10);
+  --shadow-lg: 0 4px 8px -4px rgb(15 23 42 / 0.07), 0 16px 36px -10px rgb(15 23 42 / 0.14);
+  --shadow-xl: 0 8px 16px -8px rgb(15 23 42 / 0.10), 0 32px 64px -16px rgb(15 23 42 / 0.22);
   --highlight-top: inset 0 1px 0 0 rgb(255 255 255 / 0.7);
 
   /* Motion — a gentle overshoot for entrances, a fast decel for state changes */
@@ -116,6 +159,7 @@
   --space-page-padding: 24px;
   --space-content-max: 1560px;
   --sidebar-width: 264px;
+  --sidebar-width-collapsed: 72px;
 
   /* Canvas grain — breaks the digital flatness of a large empty background */
   --texture-opacity: 0.5;
@@ -124,8 +168,8 @@
 @theme inline {
   --color-background: var(--color-background);
   --color-foreground: var(--color-foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-sans-face);
+  --font-mono: var(--font-mono-face);
 }
 
 /* Dark values, shared by the system preference and the explicit toggle. Spelled
@@ -135,23 +179,42 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
 
-    --color-background: #09090b;
-    --color-surface: #131316;
-    --color-surface-raised: #1a1a1f;
-    --color-surface-sunken: #0d0d0f;
-    --color-foreground: #f4f4f5;
-    --color-muted-foreground: #8f8f99;
-    --color-subtle-foreground: #6c6c75;
-    --color-border: #26262b;
-    --color-border-strong: #3a3a41;
+    /* A dark navy ground (drawn from Primary's own hue), not a neutral black —
+       the brand's anchor color IS the dark-mode canvas, which is the whole
+       point of choosing a near-black "Primary" in the first place. */
+    --color-background: #0b1220;
+    --color-surface: #111a2e;
+    --color-surface-raised: #16213a;
+    --color-surface-sunken: #0a1120;
+    --color-foreground: #f1f5f9;
+    --color-muted-foreground: #94a3b8;
+    --color-subtle-foreground: #64748b;
+    --color-border: #223049;
+    --color-border-strong: #324563;
 
-    --color-primary: #f4f4f5;
+    /* Primary flips to light ink for contrast against the dark navy ground —
+       same reason every dark theme inverts its "solid button" value. */
+    --color-primary: #f1f5f9;
     --color-primary-hover: #ffffff;
-    --color-primary-active: #d4d4d8;
-    --color-primary-soft: #26262b;
-    --color-primary-softer: #1c1c20;
-    --color-on-primary: #131316;
-    --gradient-primary: linear-gradient(180deg, #fafafa 0%, #e4e4e7 100%);
+    --color-primary-active: #cbd5e1;
+    --color-primary-soft: #223049;
+    --color-primary-softer: #16213a;
+    --color-on-primary: #0b1220;
+    --gradient-primary: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%);
+
+    /* Accent stays the same indigo hue, lifted slightly for dark-ground contrast. */
+    --color-accent: #6366f1;
+    --color-accent-hover: #818cf8;
+    --color-accent-bg: #1e1b4b;
+    --color-accent-border: #3730a3;
+    --color-accent-fg: #a5b4fc;
+
+    /* Secondary Cyan, lifted the same way as Accent for the same reason. */
+    --color-secondary: #22d3ee;
+    --color-secondary-hover: #67e8f9;
+    --color-secondary-bg: #083344;
+    --color-secondary-border: #155e75;
+    --color-secondary-fg: #67e8f9;
 
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.45), 0 1px 6px -2px rgb(0 0 0 / 0.4);
@@ -176,16 +239,16 @@
     --color-danger-border: #7f1d1d;
     --color-danger-fg: #fca5a5;
 
-    --color-info: #60a5fa;
-    --color-info-bg: #0d1a30;
-    --color-info-border: #1e3a8a;
-    --color-info-fg: #93c5fd;
+    --color-info: #38bdf8;
+    --color-info-bg: #0c2634;
+    --color-info-border: #075985;
+    --color-info-fg: #7dd3fc;
 
-    --color-neutral-bg: #1c1c20;
-    --color-neutral-border: #2c2c32;
-    --color-neutral-fg: #a1a1aa;
+    --color-neutral-bg: #16213a;
+    --color-neutral-border: #263657;
+    --color-neutral-fg: #94a3b8;
 
-    --color-focus-ring: #e4e4e7;
+    --color-focus-ring: #818cf8;
 
     --chart-1: #3987e5;
     --chart-2: #d95926;
@@ -193,8 +256,8 @@
     --chart-4: #c98500;
     --chart-5: #d55181;
     --chart-6: #008300;
-    --chart-grid: #232328;
-    --chart-track: #1c1c20;
+    --chart-grid: #1c2740;
+    --chart-track: #16213a;
     --texture-opacity: 0.35;
   }
 }
@@ -202,23 +265,35 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --color-background: #09090b;
-  --color-surface: #131316;
-  --color-surface-raised: #1a1a1f;
-  --color-surface-sunken: #0d0d0f;
-  --color-foreground: #f4f4f5;
-  --color-muted-foreground: #8f8f99;
-  --color-subtle-foreground: #6c6c75;
-  --color-border: #26262b;
-  --color-border-strong: #3a3a41;
+  --color-background: #0b1220;
+  --color-surface: #111a2e;
+  --color-surface-raised: #16213a;
+  --color-surface-sunken: #0a1120;
+  --color-foreground: #f1f5f9;
+  --color-muted-foreground: #94a3b8;
+  --color-subtle-foreground: #64748b;
+  --color-border: #223049;
+  --color-border-strong: #324563;
 
-  --color-primary: #f4f4f5;
+  --color-primary: #f1f5f9;
   --color-primary-hover: #ffffff;
-  --color-primary-active: #d4d4d8;
-  --color-primary-soft: #26262b;
-  --color-primary-softer: #1c1c20;
-  --color-on-primary: #131316;
-  --gradient-primary: linear-gradient(180deg, #fafafa 0%, #e4e4e7 100%);
+  --color-primary-active: #cbd5e1;
+  --color-primary-soft: #223049;
+  --color-primary-softer: #16213a;
+  --color-on-primary: #0b1220;
+  --gradient-primary: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%);
+
+  --color-accent: #6366f1;
+  --color-accent-hover: #818cf8;
+  --color-accent-bg: #1e1b4b;
+  --color-accent-border: #3730a3;
+  --color-accent-fg: #a5b4fc;
+
+  --color-secondary: #22d3ee;
+  --color-secondary-hover: #67e8f9;
+  --color-secondary-bg: #083344;
+  --color-secondary-border: #155e75;
+  --color-secondary-fg: #67e8f9;
 
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.45), 0 1px 6px -2px rgb(0 0 0 / 0.4);
@@ -243,16 +318,16 @@
   --color-danger-border: #7f1d1d;
   --color-danger-fg: #fca5a5;
 
-  --color-info: #60a5fa;
-  --color-info-bg: #0d1a30;
-  --color-info-border: #1e3a8a;
-  --color-info-fg: #93c5fd;
+  --color-info: #38bdf8;
+  --color-info-bg: #0c2634;
+  --color-info-border: #075985;
+  --color-info-fg: #7dd3fc;
 
-  --color-neutral-bg: #1c1c20;
-  --color-neutral-border: #2c2c32;
-  --color-neutral-fg: #a1a1aa;
+  --color-neutral-bg: #16213a;
+  --color-neutral-border: #263657;
+  --color-neutral-fg: #94a3b8;
 
-  --color-focus-ring: #e4e4e7;
+  --color-focus-ring: #818cf8;
 
   --chart-1: #3987e5;
   --chart-2: #d95926;
@@ -260,13 +335,21 @@
   --chart-4: #c98500;
   --chart-5: #d55181;
   --chart-6: #008300;
-  --chart-grid: #232328;
-  --chart-track: #1c1c20;
+  --chart-grid: #1c2740;
+  --chart-track: #16213a;
   --texture-opacity: 0.35;
 }
 
-* {
-  border-color: var(--color-border);
+/* The default border colour, in the base layer ON PURPOSE. Unlayered, this rule outranked every
+   Tailwind border-colour utility (utilities live in a layer, and any unlayered style beats any
+   layered one, whatever its specificity), so `border-[var(--color-danger-border)]`,
+   `border-[var(--color-accent)]`, `border-transparent`, `hover:`/`focus-visible:` border colours
+   and `divide-*` colours all rendered as this grey. In `@layer base` it still sets the default for
+   every element with no colour of its own, and any utility now wins over it. */
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
 }
 
 dialog:not([open]) {
@@ -298,24 +381,35 @@ body::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
 }
 
-/* Never orphan a word in a heading or a paragraph of prose. */
-h1, h2, h3 {
-  text-wrap: balance;
-}
+/* Never orphan a word in a heading or a paragraph of prose. In the base layer for the same reason
+   as the border colour above: unlayered, `text-wrap` also set the wrap MODE and outranked
+   `truncate` / `whitespace-nowrap`, so a truncated heading (the chat thread's group name) wrapped
+   instead of ending in an ellipsis. */
+@layer base {
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
 
-p {
-  text-wrap: pretty;
+  p {
+    text-wrap: pretty;
+  }
 }
 
 ::selection {
-  background: var(--color-primary);
-  color: var(--color-on-primary);
+  background: var(--color-accent);
+  color: #ffffff;
 }
 
-:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 2px;
-  border-radius: 3px;
+/* The default keyboard-focus ring, in the base layer: unlayered, it outranked every
+   `focus-visible:` utility — components that draw their own ring still got this outline on top,
+   and its 3px radius replaced their rounded corners while focused. Elements with no focus style
+   of their own still get it. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
 }
 
 /* Keyboard users get a way past the 40-plus-link sidebar on every page. */
@@ -433,19 +527,19 @@ p {
 .stagger-children > *:nth-child(7) { animation-delay: 180ms; }
 .stagger-children > *:nth-child(n + 8) { animation-delay: 210ms; }
 
-/* Inline links. The console has no accent hue, so a link is distinguished by a
-   quiet rule under it that firms up on hover — not by being the one blue word in
-   a paragraph. */
+/* Inline links now use the accent indigo — the one place outside the nav rail
+   and focus rings that this console's brand color is allowed to appear. */
 .link {
-  color: var(--color-foreground);
+  color: var(--color-accent);
   text-decoration-line: underline;
-  text-decoration-color: var(--color-border-strong);
+  text-decoration-color: var(--color-accent-border);
   text-underline-offset: 3px;
-  transition: text-decoration-color var(--duration-fast) var(--ease-out);
+  transition: text-decoration-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 .link:hover {
-  text-decoration-color: var(--color-foreground);
+  color: var(--color-accent-hover);
+  text-decoration-color: var(--color-accent-hover);
 }
 
 /* Every figure in this console sits in a column next to other figures. */
@@ -463,5 +557,47 @@ p {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Touch pointers
+   ---------------------------------------------------------------------------
+   This console is dense on purpose: a support lead reads it on a desktop all
+   day, and small controls in a table row are what let a row stay one line.
+   That same density on a phone means a 32px button under a fingertip.
+
+   Scoped to the pointer rather than the screen width, because that is the real
+   distinction — a narrow browser window on a laptop is still a mouse and keeps
+   the tight spacing; a large tablet is still a finger and gets the bigger
+   targets.
+
+   These grow the controls themselves rather than adding an invisible larger
+   hit area. A halo is tempting because it changes no layout, but two ghost
+   buttons sitting side by side in a table row would end up with overlapping
+   invisible regions, and a tap landing on the wrong action is a worse problem
+   than a row being a few pixels taller.
+   --------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  /* 44px is the Apple HIG minimum and what most people are calibrated to.
+     min-height rather than height, so anything already taller is untouched. */
+  button,
+  [role="button"] {
+    min-height: 40px;
+  }
+
+  /* Checkboxes are the smallest thing anyone is asked to hit, and they sit in
+     the multi-select lists where a mis-tap selects the wrong row. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-height: 20px;
+    min-width: 20px;
+  }
+
+  /* Form controls, so a dropdown or a date field is not a sliver. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+  select,
+  textarea {
+    min-height: 40px;
   }
 }

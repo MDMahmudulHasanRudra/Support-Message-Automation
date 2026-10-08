@@ -1,8 +1,10 @@
 "use server";
 
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import * as XLSX from "xlsx";
-import { prisma } from "@support-automation/db";
+
 import type { Prisma } from "@prisma/client";
 import {
   MAX_EXCEL_FILE_SIZE_BYTES,
@@ -13,7 +15,7 @@ import {
   validateMessageText,
   type GroupMatchResult,
 } from "@support-automation/shared";
-import { requireSession } from "@/server/auth";
+import { checkPermission, requireAccess } from "@/server/authorize";
 
 export interface ExcelPreviewPayload {
   fileErrors: string[];
@@ -27,7 +29,8 @@ export interface ExcelPreviewPayload {
  * match candidates.
  */
 export async function previewExcelUpload(formData: FormData): Promise<ExcelPreviewPayload> {
-  await requireSession();
+  const granted = await checkPermission("bulk_messaging.manage");
+  if ("denied" in granted) return { fileErrors: [granted.denied], results: [] };
 
   const accountId = String(formData.get("accountId") ?? "").trim();
   if (!accountId) return { fileErrors: ["Select a WhatsApp account first."], results: [] };
@@ -97,7 +100,9 @@ export interface CreateBroadcastJobResult {
  * re-checked here against current DB state).
  */
 export async function createGroupBroadcastJob(input: CreateBroadcastJobInput): Promise<CreateBroadcastJobResult> {
-  const session = await requireSession();
+  const granted = await checkPermission("bulk_messaging.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
 
   const account = await prisma.whatsAppAccount.findUnique({ where: { id: input.accountId } });
   if (!account) return { error: "WhatsApp account not found." };
@@ -207,13 +212,13 @@ export async function createGroupBroadcastJob(input: CreateBroadcastJobInput): P
     });
   }
 
-  revalidatePath("/group-message-sender/history");
+  revalidatePath(await projectPath("/group-message-sender/history"));
   return { jobId: job.id };
 }
 
 /** Cancels a job's still-PENDING items (an in-flight PROCESSING send is left to finish naturally). */
 export async function cancelBroadcastJob(jobId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("bulk_messaging.manage");
   await prisma.outboundMessage.updateMany({
     where: { broadcastJobId: jobId, status: "PENDING" },
     data: { status: "CANCELLED", failureReason: "Cancelled by user." },
@@ -222,8 +227,8 @@ export async function cancelBroadcastJob(jobId: string): Promise<void> {
     where: { id: jobId, status: { notIn: ["CANCELLED", "STOPPED_KILL_SWITCH", "COMPLETED"] } },
     data: { status: "CANCELLED", cancelledAt: new Date() },
   });
-  revalidatePath(`/group-message-sender/jobs/${jobId}`);
-  revalidatePath("/group-message-sender/history");
+  revalidatePath(await projectPath(`/group-message-sender/jobs/${jobId}`));
+  revalidatePath(await projectPath("/group-message-sender/history"));
 }
 
 /**
@@ -236,7 +241,7 @@ export async function cancelBroadcastJob(jobId: string): Promise<void> {
  * plain `<form action>`, matching every other mutation action in this app.
  */
 export async function retryFailedBroadcastMessages(jobId: string): Promise<void> {
-  await requireSession();
+  await requireAccess("bulk_messaging.manage");
   const job = await prisma.groupBroadcastJob.findUnique({ where: { id: jobId } });
   if (!job || job.status === "CANCELLED" || job.status === "STOPPED_KILL_SWITCH") {
     return;
@@ -251,7 +256,7 @@ export async function retryFailedBroadcastMessages(jobId: string): Promise<void>
     await prisma.groupBroadcastJob.update({ where: { id: jobId }, data: { status: "RUNNING", completedAt: null } });
   }
 
-  revalidatePath(`/group-message-sender/jobs/${jobId}`);
+  revalidatePath(await projectPath(`/group-message-sender/jobs/${jobId}`));
 }
 
 function dedupeByGroupId(targets: BroadcastTargetInput[]): BroadcastTargetInput[] {

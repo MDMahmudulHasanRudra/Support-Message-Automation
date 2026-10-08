@@ -1,9 +1,13 @@
 "use server";
 
+import { activeProjectId } from "@/server/projectContext";
+import { projectPath } from "@/server/projectPaths";
+import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@support-automation/db";
+
 import type { AiModelJob } from "@prisma/client";
-import { requireSession } from "@/server/auth";
+import { aiProviderProfile } from "@support-automation/shared";
+import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 export interface AiModelFormState {
@@ -18,7 +22,8 @@ function isModelJob(value: string): value is AiModelJob {
 }
 
 export async function setAiModelConfig(_prevState: AiModelFormState, formData: FormData): Promise<AiModelFormState> {
-  await requireSession();
+  const granted = await checkPermission("ai_settings.edit");
+  if ("denied" in granted) return { error: granted.denied };
 
   const jobRaw = String(formData.get("job") ?? "");
   const providerId = String(formData.get("providerId") ?? "").trim();
@@ -31,20 +36,33 @@ export async function setAiModelConfig(_prevState: AiModelFormState, formData: F
   const provider = await prisma.aiProvider.findUnique({ where: { id: providerId } });
   if (!provider) return { error: "Provider not found." };
 
+  // Every other slot goes through packages/ai-client, which is provider-agnostic. The Admin
+  // Assistant does not: it is built on Anthropic's tool-calling wire format
+  // (Anthropic.Tool / ToolUseBlock / ToolResultBlockParam in server/aiAdmin/chat.ts), which the
+  // OpenAI-compatible protocol expresses completely differently — it is not a base-URL swap.
+  // Assigning anything else used to save cleanly and leave the widget insisting it was
+  // "not configured yet" forever, with nothing anywhere naming the real reason.
+  if (jobRaw === "ADMIN_ASSISTANT" && provider.kind !== "ANTHROPIC") {
+    const label = aiProviderProfile(provider.kind)?.label ?? provider.kind;
+    return {
+      error: `The Admin Assistant needs Anthropic's tool-calling API, and "${provider.name}" is ${label}. Add an Anthropic provider and assign that here. Every other job slot works with any provider type.`,
+    };
+  }
+
   await prisma.aiModelConfig.upsert({
-    where: { job: jobRaw },
+    where: { projectId_job: { projectId: await activeProjectId(), job: jobRaw } },
     update: { providerId, modelId },
     create: { job: jobRaw, providerId, modelId },
   });
 
   await logSystemEvent("INFO", "ai-learning", `${jobRaw} model set to "${modelId}" on "${provider.name}"`);
-  revalidatePath("/ai-learning/models");
+  revalidatePath(await projectPath("/ai-learning/models"));
   return { success: true };
 }
 
 export async function clearAiModelConfig(job: string): Promise<void> {
-  await requireSession();
+  await requireAccess("ai_settings.edit");
   if (!isModelJob(job)) return;
   await prisma.aiModelConfig.deleteMany({ where: { job } });
-  revalidatePath("/ai-learning/models");
+  revalidatePath(await projectPath("/ai-learning/models"));
 }

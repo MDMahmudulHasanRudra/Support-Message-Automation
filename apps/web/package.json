@@ -7,17 +7,23 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "validate:intelligence": "vitest run --config scripts/validate.vitest.config.ts",
+    "test:isolated": "cross-env \"DATABASE_URL=postgresql://support_automation_test:support_automation_test@localhost:5433/support_automation_test?schema=public&connection_limit=5&pool_timeout=30&connect_timeout=30\" vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
     "@prisma/client": "^5.20.0",
     "@support-automation/db": "workspace:*",
     "@support-automation/engine": "workspace:*",
+    "@support-automation/forge-client": "workspace:*",
+    "@support-automation/media-storage": "workspace:*",
     "@support-automation/shared": "workspace:*",
-    "@support-automation/teams-client": "workspace:*",
     "lucide-react": "^1.31.0",
+    "mammoth": "^1.12.2",
     "next": "16.3.0",
+    "pdf-parse": "^2.4.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "xlsx": "^0.18.5"
@@ -27,9 +33,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^7.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "2.1.9"
   }
 }
