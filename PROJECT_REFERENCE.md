@@ -116,6 +116,12 @@ Sidebar group: **Support** → Messages (tabs: All messages / Needs attention / 
   as dashed "queued" bubbles; a `SENT` row whose provider message id already exists as a stored
   message is skipped as a duplicate, because WhatsApp echoes our own sends back to us. Polls every
   4s — there is no websocket.
+  Filters: **All / Groups / Personal** (type, kept in the URL as `?type=`), then **Waiting** and
+  **Seen, unanswered**, then categories; each count is for the selected account and type. Personal
+  (1:1) chats are derived from stored messages (chat ids ending `@c.us` / `@lid`), open at
+  `/chat/account/<id>/personal/<chatId>` and are read-only: there is no composer, because the send
+  queue only delivers manual replies to groups. Opening one clears it from Waiting as for a group.
+  Pin, categories and archive apply to groups only.
   - **One WhatsApp account at a time (5 Oct 2026).** `/chat` opens the only account, or the account
     last used in this browser, or asks which one; the workspace lives at
     `/chat/account/<accountId>/<groupId>`. Old `/chat/<groupId>` links redirect to the group's own

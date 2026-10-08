@@ -481,7 +481,7 @@ Three rules worth not undoing:
 - **Logout and Reconnect cancel a running sync first** (`cancelGroupSync`, a per-account generation
   checked before every write): CANCELLED, never FAILED, and a cancelled sync writes nothing more —
   otherwise a sync that read the list before a LOGOUT re-activates every group the logout switched off.
-- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090400`).
+- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090600`).
   Prisma orders by name and `migrate deploy` silently applies an earlier-named one out of order, so
   until 12 Oct 2026 name new migrations after the last one by hand.
 
@@ -1536,6 +1536,28 @@ worth not undoing:
   (`/reports/whatsapp-user-activity`, `messages.view`) both use it. There is no new table or name
   snapshot: users are never deleted and `username` never changes. Echoes are matched by an exact
   `providerMessageId` lookup.
+
+**Groups and Personal (8 Oct 2026, `lib/chatConversationType.ts`).** The list holds an account's
+groups AND its personal (1:1) chats; All / Groups / Personal compose with Waiting, Seen, categories
+and search. Rules worth not undoing:
+- **The type is derived, never stored.** A group is a `WhatsAppGroup` row. A personal chat is the
+  account's `Message` rows with `groupId` NULL and a `@c.us` / `@lid` chat id (WhatsApp's own
+  domains; `status@broadcast` and `@newsletter` are neither). Never the display name.
+  `isPersonalChatId` and `PERSONAL_CHAT_SQL` are one rule in two languages; a test pins them.
+- **Applied in SQL.** `inboxBaseSql` is groups UNION ALL personal chats with a `kind` column, so
+  the 300 limit, search and the views apply per type and the counts carry All, `groups` and
+  `personal`. The partial index `Message_personal_chat_idx` (`groupId IS NULL`) keeps the personal
+  half off the group messages.
+- **A personal chat belongs to the account with the messages.** The same customer writing to two of
+  our numbers is two chats. Only that account's outbound answers it, unlike a group, where any of
+  our numbers' replies count.
+- **Only the review mark is stored** (`PersonalChatReview`, one row once opened). Pin, category and
+  archive stay group-only; a bulk action reports `personalSkipped`.
+- **A personal chat is read-only here.** It opens at `/chat/account/<id>/personal/<chatId>`. The
+  queue's manual-reply path verifies GROUP membership, so a 1:1 send would always be skipped, and
+  changing the send path was out of scope. The page says to reply from the phone.
+- **The type is the URL** (`?type=personal`, `useConversationType`), carried on row links; the view
+  chips stay client state as before.
 
 **Inbox organisation is `chatCategoryId` / `chatPinnedAt` / `chatArchivedAt` on `WhatsAppGroup`,
 plus `ChatCategory`** (`server/actions/chatOrganisation.ts`). All three govern what an operator

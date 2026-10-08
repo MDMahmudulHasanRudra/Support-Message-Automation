@@ -3,9 +3,11 @@
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
 import { getChatConversations, type ConversationSummary, type ConversationView } from "@/server/chatInbox";
+import { parseConversationType, type ConversationType } from "@/lib/chatConversationType";
 
 /**
- * Searches every group of the SELECTED account, not just the ones already on screen.
+ * Searches every conversation of the SELECTED account — its groups and personal chats, narrowed to
+ * the type filter in SQL — not just the ones already on screen.
  *
  * The sidebar loads the 300 most recently active conversations, which is the right thing to
  * RENDER: nobody scrolls two thousand rows, and re-querying all of them every four seconds for a
@@ -17,7 +19,7 @@ import { getChatConversations, type ConversationSummary, type ConversationView }
  * the whole roster into the browser. The account is filtered on the server, so another account's
  * groups are never returned whatever the browser sends.
  */
-export async function searchConversations(accountId: string, query: string): Promise<ConversationSummary[]> {
+export async function searchConversations(accountId: string, query: string, type?: ConversationType): Promise<ConversationSummary[]> {
   const granted = await checkPermission("messages.view");
   if ("denied" in granted) return [];
 
@@ -26,20 +28,22 @@ export async function searchConversations(accountId: string, query: string): Pro
   // keystroke while somebody is still typing the first word.
   if (trimmed.length < 2) return [];
 
-  return getChatConversations(accountId, { search: trimmed });
+  // Parsed rather than trusted: the type arrives from the browser, and anything else is "all".
+  return getChatConversations(accountId, { search: trimmed, type: parseConversationType(type) });
 }
 
 /**
- * The whole of one view (Waiting, Seen-unanswered, a category) for the selected account, when its
- * real count is larger than what the ranked list loaded — so clicking "Waiting 18" shows eighteen,
- * not the twelve that happened to be among the 300 most recently active. Refuses as "nothing to show"
- * like every polled reader.
+ * The whole of one view (Waiting, Seen-unanswered, a category) of one type (all, groups, personal)
+ * for the selected account, when its real count is larger than what the ranked list loaded — so
+ * clicking "Waiting 18" shows eighteen, not the twelve that happened to be among the 300 most
+ * recently active, and "Personal" lists every personal chat, not the ones among those 300. Refuses as
+ * "nothing to show" like every polled reader.
  */
-export async function listConversationView(accountId: string, view: ConversationView): Promise<ConversationSummary[]> {
+export async function listConversationView(accountId: string, view: ConversationView, type?: ConversationType): Promise<ConversationSummary[]> {
   const granted = await checkPermission("messages.view");
   if ("denied" in granted) return [];
   if (view.kind === "category" && typeof view.id !== "string") return [];
-  return getChatConversations(accountId, { view });
+  return getChatConversations(accountId, { view, type: parseConversationType(type) });
 }
 
 /**

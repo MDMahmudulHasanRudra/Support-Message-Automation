@@ -584,6 +584,7 @@ model Project {
   processingCheckpointRows             ProcessingCheckpoint[]
   collectionGapRows                    CollectionGap[]
   whatsappOperationDismissals          WhatsAppOperationDismissal[]
+  personalChatReviews                  PersonalChatReview[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
   groupParticipantAddJobRows           GroupParticipantAddJob[]
@@ -939,6 +940,7 @@ model WhatsAppAccount {
   aiFallbackDecisions  AiFallbackDecision[]
   attendanceEvidence   TeamAttendanceGroup[]
   droppedMessages      MessageDropCounter[]
+  personalChatReviews  PersonalChatReview[]
   scopedKnowledge      AiKnowledgeItem[]        @relation("AiKnowledgeScopeAccount")
 }
 
@@ -5151,6 +5153,30 @@ model WhatsAppOperationDismissal {
 
   @@unique([projectId, userId, kind, jobId])
   @@index([projectId, userId])
+}
+
+/// "Somebody opened this personal (1:1) chat" for the WhatsApp Chat inbox — the personal-chat
+/// counterpart of `WhatsAppGroup.chatReviewedAt`, and nothing more.
+///
+/// A personal chat has no row of its own: it IS its `Message` rows (`groupId` null, a `@c.us` or
+/// `@lid` chat id), and the inbox derives it from them. Only the review mark needs storing, because
+/// "Seen, unanswered" cannot be derived from messages. A row exists once somebody has opened the
+/// chat; no row means never reviewed. A timestamp for the same reason as the group column: the next
+/// customer message is newer than it, so the chat goes straight back to "waiting".
+///
+/// Shared, not per user, like the group column. Display only: nothing in the worker reads it.
+model PersonalChatReview {
+  id         String          @id @default(cuid())
+  projectId  String          @default(dbgenerated("project_id_required()"))
+  project    Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId  String
+  account    WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// The chat id exactly as stored on `Message.chatId` (`8801…@c.us` or `…@lid`).
+  chatId     String
+  reviewedAt DateTime
+  updatedAt  DateTime        @updatedAt
+
+  @@unique([projectId, accountId, chatId])
 }
 
 // ---------------------------------------------------------------------------------------------
