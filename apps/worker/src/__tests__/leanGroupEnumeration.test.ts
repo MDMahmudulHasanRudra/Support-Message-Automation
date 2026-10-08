@@ -312,3 +312,65 @@ describe("a read that never answers (8 Oct 2026)", () => {
   });
 });
 
+
+describe("a WhatsApp Web build without isGroup / isGroupMsg (8 Oct 2026)", () => {
+  // WhatsApp Web 2.3000.1049703040 removed the `isGroup` getter from Chat and `isGroupMsg` from
+  // Msg: both read undefined on every model. Read live on a linked number: 390 chats, 304 of them
+  // `id.server === "g.us"`, `isGroup` undefined on every one — and the sync listed 0 groups.
+  const liveChat = (serialized: string, json: { name?: string; t?: number }) => {
+    const [, server] = serialized.split("@");
+    return { id: { _serialized: serialized, server }, toJSON: () => json } as unknown as FakeChat;
+  };
+
+  it("lists a group by its @g.us id when the chat carries no isGroup at all", async () => {
+    installStore([
+      liveChat("120363000000000001@g.us", { name: "Billing Support", t: 1_790_000_000 }),
+      liveChat("8801700000000@c.us", { name: "A Customer", t: 1_790_000_100 }),
+      liveChat("123456789012345@lid", { name: "Hidden Number", t: 1_790_000_150 }),
+      liveChat("status@broadcast", { t: 1_790_000_160 }),
+      liveChat("120363000000000002@g.us", { name: "Ops", t: 1_790_000_200 }),
+    ]);
+    const getAllGroups = vi.fn();
+    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups });
+
+    expect(await provider.getGroups()).toEqual([
+      { whatsappGroupId: "120363000000000001@g.us", name: "Billing Support" },
+      { whatsappGroupId: "120363000000000002@g.us", name: "Ops" },
+    ]);
+    expect(getAllGroups).not.toHaveBeenCalled();
+  });
+
+  it("a message with no isGroupMsg in a @g.us chat is a GROUP message: group id, author as sender", async () => {
+    installStore([liveChat("120363000000000001@g.us", { name: "Billing Support", t: 1_790_000_500 })]);
+    const groupMessage = {
+      id: "false_120363000000000001@g.us_ABC_8801711111111@c.us",
+      chatId: "120363000000000001@g.us",
+      from: "120363000000000001@g.us",
+      author: "8801711111111@c.us",
+      fromMe: false,
+      type: "chat",
+      body: "internet nai",
+      timestamp: 1_790_000_450,
+      chat: { name: "Billing Support" },
+    };
+    const personalMessage = {
+      id: "false_8801722222222@c.us_DEF",
+      chatId: "8801722222222@c.us",
+      from: "8801722222222@c.us",
+      fromMe: false,
+      type: "chat",
+      body: "hello",
+      timestamp: 1_790_000_460,
+    };
+    const provider = await providerWith({
+      getPage: () => evaluatingPage,
+      getAllGroups: vi.fn(),
+      getAllMessagesInChat: vi.fn().mockResolvedValue([groupMessage, personalMessage]),
+    });
+
+    const [group, personal] = await provider.fetchMessagesSince(new Date(1_790_000_400 * 1000), 10);
+
+    expect(group).toMatchObject({ chatId: "120363000000000001@g.us", whatsappGroupId: "120363000000000001@g.us", groupName: "Billing Support", senderPhone: "8801711111111" });
+    expect(personal).toMatchObject({ chatId: "8801722222222@c.us", whatsappGroupId: null, groupName: null, senderPhone: "8801722222222" });
+  });
+});
