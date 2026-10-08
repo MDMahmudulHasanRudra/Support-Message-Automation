@@ -118,7 +118,7 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
   });
 
   return (
-    <div className="flex flex-col gap-1 px-4 py-5 sm:px-6">
+    <div className="flex flex-col gap-1 px-4 py-5 max-sm:px-3 max-sm:py-4 sm:px-6">
       {rows.map(({ entry, day, showDivider, startsRun, endsRun }) => {
         const isOutbound = entry.kind === "OUTGOING" || entry.kind === "QUEUED";
         const isSystem = entry.kind === "SYSTEM";
@@ -140,7 +140,7 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
               </p>
             ) : (
               <div className={`group/bubble flex ${isOutbound ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[min(38rem,80%)] ${isOutbound ? "items-end" : "items-start"} flex flex-col`}>
+                <div className={`max-w-[min(38rem,80%)] max-sm:max-w-[86%] ${isOutbound ? "items-end" : "items-start"} flex flex-col`}>
                   {/* Named once per run, not once per message. */}
                   {!isOutbound && startsRun ? (
                     <span className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium text-[color:var(--color-muted-foreground)]">
@@ -156,7 +156,7 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
                       side said this", carried by geometry rather than another label. Mid-run
                       bubbles keep both inner corners tight so a run reads as one block. */}
                   <div
-                    className={`${hasFile ? "p-1.5" : "px-3.5 py-2"} text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] transition-shadow duration-[var(--duration-fast)] ease-[var(--ease-out)] group-hover/bubble:shadow-[var(--shadow-sm)] ${
+                    className={`${hasFile ? "p-1.5" : "px-3.5 py-2"} text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] max-sm:text-[14px] transition-shadow duration-[var(--duration-fast)] ease-[var(--ease-out)] group-hover/bubble:shadow-[var(--shadow-sm)] ${
                       isOutbound
                         ? `rounded-l-[var(--radius-lg)] rounded-br-[var(--radius-xs)] ${startsRun ? "rounded-tr-[var(--radius-lg)]" : "rounded-tr-[var(--radius-xs)]"}`
                         : `rounded-r-[var(--radius-lg)] ${startsRun ? "rounded-tl-[var(--radius-lg)]" : "rounded-tl-[var(--radius-xs)]"} rounded-bl-[var(--radius-xs)]`

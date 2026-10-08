@@ -36,7 +36,7 @@ export default async function ChatAccountLayout({
   const [inbox, categories] = await Promise.all([getChatInbox(account.id), getChatCategories(account.id)]);
 
   return (
-    <div className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] min-h-[30rem] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">
+    <div className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] min-h-[30rem] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] max-sm:min-h-0 max-sm:rounded-none max-sm:border-0 max-sm:shadow-none sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">
       {/* Polls the server tree so new messages and delivery-state changes appear without a
           manual reload. Four seconds sits close enough to the outbound queue's own 2s tick
           that a reply's queued → sent transition is visible almost immediately. */}

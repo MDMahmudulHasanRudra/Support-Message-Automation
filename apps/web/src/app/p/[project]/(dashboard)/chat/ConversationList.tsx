@@ -489,7 +489,7 @@ export function ChatWorkspace({
             switching={pending}
           />
 
-          <div className="relative min-w-[12rem] flex-1">
+          <div className="relative min-w-[12rem] flex-1 max-sm:order-last max-sm:basis-full">
             <Search
               className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[color:var(--color-muted-foreground)]"
               aria-hidden
@@ -507,7 +507,7 @@ export function ChatWorkspace({
               placeholder={`Search ${account.label} conversations`}
               aria-label={`Search ${account.label} conversations`}
               aria-keyshortcuts="/"
-              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
+              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] max-sm:pr-10 max-sm:text-base outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
             />
             {query ? (
               <button
@@ -525,7 +525,7 @@ export function ChatWorkspace({
             ) : (
               <kbd
                 aria-hidden
-                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-subtle-foreground)]"
+                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-[var(--radius-xs)] border max-sm:hidden border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-subtle-foreground)]"
               >
                 /
               </kbd>
@@ -548,7 +548,7 @@ export function ChatWorkspace({
             className="flex h-10 shrink-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-[12px] font-medium text-[color:var(--color-muted-foreground)] transition-[border-color,color] duration-[var(--duration-fast)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
           >
             <Archive className="size-3.5" aria-hidden />
-            Archived
+            <span className="max-sm:sr-only">Archived</span>
           </Link>
         </div>
 
@@ -858,27 +858,27 @@ function AccountSelector({
 
   if (!multiple) {
     return (
-      <div className="flex h-10 max-w-[16rem] shrink-0 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 pr-3">
+      <div className="flex h-10 max-w-[16rem] shrink-0 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 pr-3 max-sm:min-w-0 max-sm:max-w-none max-sm:flex-1">
         {face}
       </div>
     );
   }
 
   return (
-    <div ref={wrapRef} className="relative shrink-0">
+    <div ref={wrapRef} className="relative shrink-0 max-sm:min-w-0 max-sm:flex-1">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={switching}
-        className="flex h-10 max-w-[18rem] cursor-pointer items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-primary)]/45 bg-[var(--color-surface)] px-1.5 pr-2.5 shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-primary)] active:translate-y-px disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+        className="flex h-10 max-w-[18rem] cursor-pointer items-center gap-2 max-sm:w-full max-sm:max-w-none rounded-[var(--radius-md)] border border-[var(--color-primary)]/45 bg-[var(--color-surface)] px-1.5 pr-2.5 shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-primary)] active:translate-y-px disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
       >
         {face}
         {switching ? (
-          <Loader2 className="ml-1 size-3.5 shrink-0 animate-spin text-[color:var(--color-muted-foreground)]" aria-hidden />
+          <Loader2 className="ml-1 size-3.5 max-sm:ml-auto shrink-0 animate-spin text-[color:var(--color-muted-foreground)]" aria-hidden />
         ) : (
-          <ChevronDown className={`ml-1 size-4 shrink-0 text-[color:var(--color-muted-foreground)] transition-transform duration-[var(--duration-fast)] ${open ? "rotate-180" : ""}`} aria-hidden />
+          <ChevronDown className={`ml-1 size-4 shrink-0 max-sm:ml-auto text-[color:var(--color-muted-foreground)] transition-transform duration-[var(--duration-fast)] ${open ? "rotate-180" : ""}`} aria-hidden />
         )}
       </button>
 
@@ -1235,7 +1235,7 @@ function Row({
             {conversation.kind === "PERSONAL" ? (
               <span className="text-[10px] text-[color:var(--color-subtle-foreground)]">Personal chat</span>
             ) : !conversation.isMonitored ? (
-              <span className="text-[10px] text-[color:var(--color-subtle-foreground)]">Not monitored</span>
+              <span className="text-[10px] text-[color:var(--color-subtle-foreground)] max-sm:hidden">Not monitored</span>
             ) : null}
           </span>
         ) : null}

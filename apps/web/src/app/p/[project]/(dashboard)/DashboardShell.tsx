@@ -171,6 +171,10 @@ export function DashboardShell({
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const pathname = stripProjectPrefix(usePathname());
+  // WhatsApp Chat on a phone is a full-screen app, not a page in a card: no padding around it, and
+  // nothing floating over its composer (see the content div and the floating controls below).
+  const isChatPage = pathname === "/chat" || pathname.startsWith("/chat/");
+  const phoneChat = isChatPage && !inWorkspace;
   const searchParams = useSearchParams();
   const location = resolveNavLocation(pathname, searchParams);
   // Pages sharing one sidebar entry show their siblings as tabs; see SubNavTabs.
@@ -287,8 +291,16 @@ export function DashboardShell({
             key={pathname}
             // In the workspace the project tabs sit above the page: full-height pages (the chat
             // inbox) read this to leave room for them.
-            style={inWorkspace ? ({ "--chat-inset": "10rem", "--chat-inset-sm": "11.5rem" } as CSSProperties) : undefined}
-            className="mx-auto w-full max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9"
+            // On a phone (below `sm`) the chat drops the page padding and fills the screen under the
+            // 3.25rem top bar, so the inset there is just that bar.
+            style={
+              inWorkspace
+                ? ({ "--chat-inset": "10rem", "--chat-inset-sm": "11.5rem" } as CSSProperties)
+                : phoneChat
+                  ? ({ "--chat-inset": "3.25rem" } as CSSProperties)
+                  : undefined
+            }
+            className={`mx-auto w-full max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9 ${phoneChat ? "max-sm:p-0" : ""}`}
           >
             {workspaceProjects && workspaceCurrent ? (
               <WorkspaceTabs projects={workspaceProjects} current={workspaceCurrent} pathname={pathname} search={searchParams} />
@@ -322,11 +334,17 @@ export function DashboardShell({
       {paletteOpen ? <CommandPalette onClose={closePalette} links={paletteLinks} /> : null}
       {/* Only for roles that can use it: every send is refused without ai_learning.view, and a
           floating button on every page that always answers "not allowed" is worse than none. */}
-      {granted.has("ai_learning.view") ? <FloatingAiChat /> : null}
+      {granted.has("ai_learning.view") ? (
+        <div className={isChatPage ? "max-sm:hidden" : undefined}>
+          <FloatingAiChat />
+        </div>
+      ) : null}
       {/* Long-running WhatsApp jobs stay visible on every page (Add Number to Groups, Groups Admin
           Maker). Offered to whoever may see those modules; the reader refuses everyone else anyway. */}
       {granted.has("bulk_messaging.view") && !featuresOff.has("BULK_MESSAGING") ? (
-        <WhatsAppJobCenter projectSlug={project.slug} besideAiChat={granted.has("ai_learning.view")} />
+        <div className={isChatPage ? "max-sm:hidden" : undefined}>
+          <WhatsAppJobCenter projectSlug={project.slug} besideAiChat={granted.has("ai_learning.view")} />
+        </div>
       ) : null}
     </div>
     </WorkspaceModeContext.Provider>
