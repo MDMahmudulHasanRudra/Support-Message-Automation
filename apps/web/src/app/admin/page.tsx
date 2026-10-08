@@ -5,6 +5,7 @@ import { Alert, Badge, ButtonLink, PageHeader, SectionHeader, StatTile, Table, T
 import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
 import { combineKpis, getProjectSummaries, requireMainAdminPage } from "@/server/mainAdmin";
 import { whatsappLine } from "./ProjectCard";
+import { getBranding } from "@/server/branding";
 
 export const metadata = { title: "Overview" };
 
@@ -15,7 +16,7 @@ export const metadata = { title: "Overview" };
  */
 export default async function MainAdminOverview() {
   const { session, canManage } = await requireMainAdminPage();
-  const projects = await getProjectSummaries(session.userId, { includeArchived: true });
+  const [projects, { productName }] = await Promise.all([getProjectSummaries(session.userId, { includeArchived: true }), getBranding()]);
   const count = (status: ProjectStatusValue) => projects.filter((p) => p.status === status).length;
   const needsAttention = projects.filter((p) => p.status !== "ARCHIVED" && p.attention.length > 0);
   const listed = projects.filter((p) => p.status !== "ARCHIVED");
@@ -25,7 +26,7 @@ export default async function MainAdminOverview() {
     <div>
       <PageHeader
         title="Main Admin"
-        description="Every project on this Softify Assist installation. Open a project to work in it; its own pages and reports are where the detail lives."
+        description={`Every project on this ${productName} installation. Open a project to work in it; its own pages and reports are where the detail lives.`}
         actions={
           canManage ? (
             <ButtonLink href="/admin/projects/new" variant="primary">

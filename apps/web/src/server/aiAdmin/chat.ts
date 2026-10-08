@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { resolveAiAdminClient } from "./resolveAiAdminClient";
 import { AI_ADMIN_TOOLS, AI_ADMIN_TOOL_MAP } from "./tools";
+import { getBranding } from "@/server/branding";
 
 export interface AiAdminChatTurn {
   role: "user" | "assistant";
@@ -12,7 +13,8 @@ export interface AiAdminChatResult {
   toolsUsed: string[];
 }
 
-const SYSTEM_PROMPT = `You are the AI Admin Assistant for Softify Assist, a WhatsApp support automation dashboard.
+/** The product name is the installation's own (BRANDING.md): a white-labelled dashboard's assistant must not introduce itself by another name. */
+const systemPrompt = (productName: string) => `You are the AI Admin Assistant for ${productName}, a WhatsApp support automation dashboard.
 
 Rules:
 - Only state facts you got back from a tool call. If a tool doesn't give you what you need, say the information isn't available — never invent numbers, group names, statuses, or settings.
@@ -53,12 +55,13 @@ export async function runAiAdminChat(history: AiAdminChatTurn[], userMessage: st
   ];
 
   const toolsUsed: string[] = [];
+  const { productName } = await getBranding();
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     const response = await client.messages.create({
       model: modelId,
       max_tokens: 1024,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt(productName),
       messages,
       tools: ANTHROPIC_TOOLS,
     });

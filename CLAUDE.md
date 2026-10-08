@@ -258,6 +258,15 @@ skip it. Never add a check that grants because of a level. **Main Admin Configur
 from the `employee_code_seq` sequence, never from a count. A job title is not a role and a department
 is not a WhatsApp `Team`. See `MAIN_ADMIN_WORKSPACE.md` §5–§7.
 
+**White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
+`projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the
+built-in default (`lib/branding.ts`), so a fresh install is unchanged. Never hard-code the product
+name again: server code reads `getBranding()`, client code `useBranding()` (root-layout provider),
+and the mark is `BrandMark`, which follows the uploaded icon. Saving needs `projects.manage`. The
+colour moves only the accent tokens, never the ink primary. Images are sniffed from their bytes,
+capped at 512 KB, stored in the database and served by `/api/brand/<logo|icon>` with a sandbox CSP.
+A project's NAME is editable on its Main Admin page; its slug never is.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.
@@ -481,7 +490,7 @@ Three rules worth not undoing:
 - **Logout and Reconnect cancel a running sync first** (`cancelGroupSync`, a per-account generation
   checked before every write): CANCELLED, never FAILED, and a cancelled sync writes nothing more —
   otherwise a sync that read the list before a LOGOUT re-activates every group the logout switched off.
-- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090600`).
+- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090700`).
   Prisma orders by name and `migrate deploy` silently applies an earlier-named one out of order, so
   until 12 Oct 2026 name new migrations after the last one by hand.
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import {
   allowedProjectTransitions,
   PROJECT_ACCESS_LEVEL_DESCRIPTIONS,
@@ -11,8 +11,8 @@ import {
   type ProjectAccessLevelValue,
   type ProjectStatusValue,
 } from "@support-automation/shared";
-import { Badge, Button, ConfirmDialog, Select, Switch, useToast } from "@/components/ui";
-import { setProjectAccess, setProjectFeature, setProjectStatus } from "@/server/actions/projects";
+import { Badge, Button, ConfirmDialog, Field, Input, Select, Switch, Textarea, useToast } from "@/components/ui";
+import { setProjectAccess, setProjectFeature, setProjectStatus, updateProjectDetails, type ProjectDetailsState } from "@/server/actions/projects";
 import { setUserAccessLevel } from "@/server/actions/adminUsers";
 
 const VERB: Record<ProjectStatusValue, string> = {
@@ -233,5 +233,60 @@ export function ProjectFeatureList({ projectId, features, canManage }: { project
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Rename the project and edit its description. The slug is shown but not editable: it is the
+ * project's address, and changing it would break every link anybody saved (see updateProjectDetails).
+ */
+export function ProjectDetailsForm({
+  projectId,
+  name,
+  slug,
+  description,
+}: {
+  projectId: string;
+  name: string;
+  slug: string;
+  description: string | null;
+}) {
+  const router = useRouter();
+  const { showToast } = useToast();
+  const [state, formAction, pending] = useActionState(
+    (prev: ProjectDetailsState, formData: FormData) => updateProjectDetails(projectId, prev, formData),
+    {} as ProjectDetailsState,
+  );
+
+  useEffect(() => {
+    if (!state.savedAt) return;
+    showToast({ tone: "success", title: "Project details saved" });
+    router.refresh();
+  }, [state.savedAt, showToast, router]);
+
+  return (
+    <form action={formAction} className="grid gap-4 sm:grid-cols-2">
+      <Field label="Project name" htmlFor="project-name" required error={state.fieldErrors?.name} hint="Shown in the project switcher, the breadcrumb and the Main Admin portal.">
+        <Input id="project-name" name="name" defaultValue={name} required maxLength={80} />
+      </Field>
+      <Field label="Address" htmlFor="project-slug" hint="The address cannot be changed — every saved link and bookmark uses it.">
+        <Input id="project-slug" value={`/p/${slug}/`} readOnly disabled />
+      </Field>
+      <Field
+        label="Description"
+        htmlFor="project-description"
+        className="sm:col-span-2"
+        error={state.fieldErrors?.description}
+        hint="Optional. Shown under the project's name on this page."
+      >
+        <Textarea id="project-description" name="description" defaultValue={description ?? ""} maxLength={500} className="min-h-20" />
+      </Field>
+      {state.error ? <p className="text-[13px] font-medium text-[color:var(--color-danger)] sm:col-span-2">{state.error}</p> : null}
+      <div className="sm:col-span-2">
+        <Button type="submit" loading={pending}>
+          Save details
+        </Button>
+      </div>
+    </form>
   );
 }

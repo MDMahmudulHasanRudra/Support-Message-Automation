@@ -1322,3 +1322,20 @@ is answered instantly.
 - **Multi-account isolation** — every account-scoped model carries `accountId`, and every
   aggregate/report query that needs isolation filters by it; nothing silently merges two accounts'
   data.
+
+## Main Admin → Branding (`/admin/branding`) and project details
+
+White labeling for the whole installation (`BRANDING.md`). Visible to anyone in the Main Admin
+portal; saving needs Manage Projects (a Main Admin).
+
+- **Name and sign-in page**: Product name (browser tab, sidebar, breadcrumb, sign-in page, AI
+  assistant), Sign-in headline, Sign-in text, Brand colour (colour picker + hex; "Built-in colour"
+  clears it). Empty fields use the built-in text, shown as the placeholder. **Save**.
+- **Logo**: a wide wordmark for the sign-in page, previewed on white. Choose file → **Upload**;
+  **Remove** goes back to the icon + name.
+- **App icon**: a square icon for the sidebar mark and the browser tab, previewed on light and dark.
+- **Preview**: the sidebar header and the sign-in panel as they will look.
+- PNG, JPEG, WebP, GIF, ICO or SVG up to 512 KB; an SVG with script is refused.
+
+**Project details** (Main Admin → Projects → a project → Details): rename the project and edit its
+description. The address `/p/<slug>/` is shown but cannot change. Names stay unique, ignoring case.

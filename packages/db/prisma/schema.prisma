@@ -5069,6 +5069,41 @@ model ConversationCandidate {
 }
 
 // ---------------------------------------------------------------------------------------------
+// White labeling (BRANDING.md): what the installation calls itself and how it looks. Platform-wide,
+// no projectId — one installation, one brand. Set by a Main Admin on Main Admin → Branding.
+// ---------------------------------------------------------------------------------------------
+
+/// The installation's brand. ONE row (id "default"), and an absent row or a NULL column means "the
+/// built-in default" (apps/web/src/lib/branding.ts) — so a fresh install looks like it always has,
+/// an unedited field keeps following improvements to the default, and Reset is setting NULL.
+///
+/// The two images are stored here as bytes: they are small (capped at 512 KB each), they must
+/// survive a database backup together with the rest of the configuration, and they are needed on
+/// the sign-in page before anything else is loaded. Their type is the one SNIFFED from the bytes
+/// at upload, never the browser's claim. `assetVersion` moves on every image change and is put in
+/// the image URLs, so browsers can cache an image for good and still see a new one immediately.
+model PlatformBranding {
+  id              String   @id @default("default")
+  /// The product name everywhere it is shown: browser title, sidebar, sign-in page, AI assistant.
+  productName     String?
+  /// The sign-in page's headline and the paragraph under it.
+  loginHeadline   String?
+  loginSubheading String?
+  /// The brand colour (#rrggbb): links, active navigation, focus rings — the app's accent.
+  accentColor     String?
+  /// Wide logo (wordmark), shown on the sign-in page.
+  logo            Bytes?
+  logoMimeType    String?
+  /// Square app icon: the sidebar mark and the browser tab icon.
+  icon            Bytes?
+  iconMimeType    String?
+  assetVersion    Int      @default(0)
+  /// Who saved last, as a snapshot (users are never deleted, and usernames never change).
+  updatedByUsername String?
+  updatedAt       DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------------------------
 // Main Admin Configuration (MAIN_ADMIN_WORKSPACE.md §5): the organisation, platform-wide.
 //
 // None of these carries a projectId: a department, a job title or a person belongs to the company,

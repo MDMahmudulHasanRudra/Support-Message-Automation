@@ -11,6 +11,7 @@ import { featureForPath } from "@support-automation/shared";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { CommandPalette } from "./CommandPalette";
 import { FloatingAiChat } from "./FloatingAiChat";
+import { useBranding } from "@/components/BrandingProvider";
 import { WhatsAppJobCenter } from "@/components/whatsappOperations/WhatsAppJobCenter";
 import {
   isSettingsPath,
@@ -171,6 +172,7 @@ export function DashboardShell({
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const pathname = stripProjectPrefix(usePathname());
+  const { productName } = useBranding();
   // WhatsApp Chat on a phone is a full-screen app, not a page in a card: no padding around it, and
   // nothing floating over its composer (see the content div and the floating controls below).
   const isChatPage = pathname === "/chat" || pathname.startsWith("/chat/");
@@ -265,7 +267,7 @@ export function DashboardShell({
               </>
             ) : null}
             <span className="truncate font-medium text-[color:var(--color-foreground)]">
-              {location?.label ?? "Softify Assist"}
+              {location?.label ?? productName}
             </span>
           </nav>
 

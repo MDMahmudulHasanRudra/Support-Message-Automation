@@ -5,7 +5,7 @@ import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader } from "@/com
 import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
 import { getProjectDetail, requireMainAdminPage } from "@/server/mainAdmin";
 import { whatsappLine } from "../../ProjectCard";
-import { ProjectAccessList, ProjectFeatureList, ProjectStatusControl } from "./ProjectControls";
+import { ProjectAccessList, ProjectDetailsForm, ProjectFeatureList, ProjectStatusControl } from "./ProjectControls";
 
 export const metadata = { title: "Project" };
 
@@ -55,6 +55,13 @@ export default async function ProjectDetailPage({
             Next, open it and link a WhatsApp account on its Accounts page.
           </Alert>
         </div>
+      ) : null}
+
+      {canManage ? (
+        <Card className="mb-6">
+          <SectionHeader title="Details" description="The project's name and description. Renaming changes only what people see; nothing in the project moves." />
+          <ProjectDetailsForm projectId={project.id} name={project.name} slug={project.slug} description={project.description} />
+        </Card>
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
