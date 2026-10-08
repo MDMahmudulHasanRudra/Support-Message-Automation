@@ -1782,6 +1782,19 @@ export class OpenWAProvider implements WhatsAppProvider {
     }
   }
 
+  async verifyPersonalChat(chatId: string): Promise<boolean> {
+    if (!this.client) return false;
+    // Individual chats only: never a group (that is verifyGroupMembership), a status broadcast or a
+    // channel, whatever a queued row says.
+    if (!/^[^@]+@(c\.us|lid)$/.test(chatId)) return false;
+    try {
+      const chat = await this.client.getChatById(chatId as unknown as ContactId);
+      return Boolean(chat);
+    } catch {
+      return false;
+    }
+  }
+
   /** Single-group lookup only — see WhatsAppProvider.ts's doc comment for why this stays out of getGroups(). */
   async getGroupParticipants(chatId: string): Promise<GroupParticipant[]> {
     if (!this.client) return [];

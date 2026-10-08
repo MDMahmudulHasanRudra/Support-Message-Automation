@@ -119,8 +119,9 @@ Sidebar group: **Support** → Messages (tabs: All messages / Needs attention / 
   Filters: **All / Groups / Personal** (type, kept in the URL as `?type=`), then **Waiting** and
   **Seen, unanswered**, then categories; each count is for the selected account and type. Personal
   (1:1) chats are derived from stored messages (chat ids ending `@c.us` / `@lid`), open at
-  `/chat/account/<id>/personal/<chatId>` and are read-only: there is no composer, because the send
-  queue only delivers manual replies to groups. Opening one clears it from Waiting as for a group.
+  `/chat/account/<id>/personal/<chatId>` with the same composer as a group. A reply goes through the
+  same queue and rate limits, and only into a chat the account already has — it never starts a new
+  one. Opening one clears it from Waiting as for a group.
   Pin, categories and archive apply to groups only.
   - **One WhatsApp account at a time (5 Oct 2026).** `/chat` opens the only account, or the account
     last used in this browser, or asks which one; the workspace lives at

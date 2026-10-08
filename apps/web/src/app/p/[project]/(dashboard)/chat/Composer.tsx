@@ -4,7 +4,7 @@ import { ArrowRight, SendHorizontal, Smartphone } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { useActionState, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, Button, Textarea } from "@/components/ui";
-import { sendChatMessage, type ChatSendState } from "@/server/actions/chat";
+import { sendChatMessage, sendPersonalChatMessage, type ChatSendState } from "@/server/actions/chat";
 import { SavedReplyManager } from "./SavedReplyManager";
 import { SavedReplyPicker, type SavedReplyOption } from "./SavedReplyPicker";
 import type { OtherAccountCopy } from "@/server/chatInbox";
@@ -60,6 +60,7 @@ export function Composer({
   disabledReason,
   savedReplies,
   otherCopies = [],
+  personalChatId,
 }: {
   /** The selected account. Every message typed here goes out from it — and only from it. */
   accountId: string;
@@ -71,10 +72,17 @@ export function Composer({
   savedReplies: SavedReplyOption[];
   /** Other connected accounts in this WhatsApp group: offered as a switch, never as a hidden sender. */
   otherCopies?: OtherAccountCopy[];
+  /**
+   * Set for a personal (one-to-one) chat: the message goes to this chat id instead of a group, and
+   * `groupId` is then only the conversation's key (for its draft).
+   */
+  personalChatId?: string;
 }) {
   // The account is bound into the action, and the server re-checks that this conversation really is
   // that account's copy before queueing anything.
-  const sendToGroup = sendChatMessage.bind(null, accountId, groupId);
+  const sendToGroup = personalChatId
+    ? sendPersonalChatMessage.bind(null, accountId, personalChatId)
+    : sendChatMessage.bind(null, accountId, groupId);
   const [state, formAction, pending] = useActionState(sendToGroup, INITIAL);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);

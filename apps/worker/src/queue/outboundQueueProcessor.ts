@@ -396,7 +396,23 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
     }
   }
 
-  if (isManualReply) {
+  if (isManualReply && !message.chatId.endsWith("@g.us")) {
+    // A reply typed into a personal (one-to-one) chat. Checked live, like a group: the chat must be
+    // an individual one that exists on this account, so a manual reply can only ever continue a
+    // conversation — never open one with a stranger. Anything else that is not a group (a status
+    // broadcast, a channel) fails this check too.
+    const reachable = await provider.verifyPersonalChat(message.chatId);
+    if (!reachable) {
+      await prisma.outboundMessage.update({
+        where: { id: message.id },
+        data: {
+          status: "SKIPPED",
+          failureReason: "This chat could not be found on this WhatsApp account, so the message was not sent.",
+        },
+      });
+      return;
+    }
+  } else if (isManualReply) {
     // Same live membership check the broadcast path does, for the same reason: the group list the
     // inbox rendered from can be minutes stale, and sending into a group this account has been
     // removed from is an error worth reporting rather than a silent provider failure.

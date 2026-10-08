@@ -4,10 +4,10 @@ import { ArrowLeft, Smartphone, User } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
-import { Alert } from "@/components/ui";
 import { pageAccess } from "@/server/authorize";
-import { getPersonalChatThread } from "@/server/chatInbox";
+import { getPersonalChatThread, getSavedReplies } from "@/server/chatInbox";
 import { markPersonalChatReviewed } from "@/server/actions/chatOrganisation";
+import { Composer } from "../../../../Composer";
 import { MarkWaitingButton } from "../../../../MarkWaitingButton";
 import { MessageThread } from "../../../../MessageThread";
 import { ThreadScroller } from "../../../../ThreadScroller";
@@ -21,17 +21,16 @@ export const metadata = { title: "WhatsApp Chat" };
  * personal chat has no row of its own, so it is found by (account, chat id); the account in the URL
  * IS the chat's account — another account's chat with the same id is simply not found here.
  *
- * There is no composer. Every send from this inbox goes through the outbound queue, and the queue's
- * manual-reply path verifies GROUP membership right before sending — a 1:1 chat would be skipped
- * every time. Offering a box whose every message is then refused would be worse than saying so, and
- * changing the send path is outside this feature. Replies made from the phone are stored and appear
- * here like any other message.
+ * Replying uses the same composer and the same single outbound queue as a group. The server only
+ * queues a reply into a chat this account already has (`sendPersonalChatMessage`), and the worker
+ * checks, live, that the chat exists on the account before sending (`verifyPersonalChat`) — a reply
+ * continues a conversation, it never starts one.
  */
 export default async function PersonalChatPage({ params }: { params: Promise<{ accountId: string; chatId: string }> }) {
   // Its own check rather than relying on the chat layout's (see the group conversation page).
-  await pageAccess("messages.view", "messages.reply");
+  const { canManage: canReply } = await pageAccess("messages.view", "messages.reply");
   const { accountId, chatId: rawChatId } = await params;
-  const thread = await getPersonalChatThread(accountId, decodeURIComponent(rawChatId));
+  const [thread, savedReplies] = await Promise.all([getPersonalChatThread(accountId, decodeURIComponent(rawChatId)), getSavedReplies()]);
   if (!thread) notFound();
 
   const { chat, entries, hasMore } = thread;
@@ -100,12 +99,21 @@ export default async function PersonalChatPage({ params }: { params: Promise<{ a
         <MessageThread entries={entries} accountLabel={chat.accountLabel} />
       </ThreadScroller>
 
-      <div className="border-t border-[var(--color-border)] p-4 sm:px-6">
-        <Alert tone="info">
-          Replying to personal chats is not available in WhatsApp Chat yet — messages from here go out only to groups. Reply from
-          the phone of {chat.accountLabel}; the reply appears in this chat once WhatsApp delivers it.
-        </Alert>
-      </div>
+      <Composer
+        accountId={chat.accountId}
+        groupId={chat.id}
+        personalChatId={chat.chatId}
+        accountLabel={chat.accountLabel}
+        accountPhone={chat.accountPhone}
+        savedReplies={savedReplies}
+        disabledReason={
+          !canReply
+            ? "Your role can read conversations but not reply to them. Ask an administrator for Reply in WhatsApp Chat."
+            : chat.accountStatus !== "CONNECTED"
+              ? `${chat.accountLabel} is ${tone.label.toLowerCase()}, so nothing can be sent from it right now. Reconnect it on WhatsApp Accounts.`
+              : null
+        }
+      />
     </>
   );
 }

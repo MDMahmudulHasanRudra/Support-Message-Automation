@@ -1562,9 +1562,11 @@ and search. Rules worth not undoing:
   our numbers' replies count.
 - **Only the review mark is stored** (`PersonalChatReview`, one row once opened). Pin, category and
   archive stay group-only; a bulk action reports `personalSkipped`.
-- **A personal chat is read-only here.** It opens at `/chat/account/<id>/personal/<chatId>`. The
-  queue's manual-reply path verifies GROUP membership, so a 1:1 send would always be skipped, and
-  changing the send path was out of scope. The page says to reply from the phone.
+- **A personal chat is answered, never started** (9 Oct 2026). It opens at
+  `/chat/account/<id>/personal/<chatId>` with the ordinary composer. `sendPersonalChatMessage` queues
+  one MANUAL_REPLY only into a chat the account already has a stored message in, and the queue checks
+  `verifyPersonalChat` (an existing `@c.us`/`@lid` chat) instead of group membership for any
+  non-`@g.us` manual reply. Same queue, same rate limits; no cold messages.
 - **The type is the URL** (`?type=personal`, `useConversationType`), carried on row links; the view
   chips stay client state as before.
 

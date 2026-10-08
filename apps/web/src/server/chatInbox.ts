@@ -1022,7 +1022,7 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
  * account has no message in that chat, or the id is not a personal chat id: a URL naming a group
  * id, a status broadcast or another account's chat is "not found", never an empty thread.
  *
- * Read only, like everything in this file. Replying to a personal chat is not offered (see the page).
+ * Read only, like everything in this file. Replying is `sendPersonalChatMessage` (server/actions/chat.ts).
  */
 export async function getPersonalChatThread(accountId: string, chatId: string, limit = THREAD_LIMIT): Promise<PersonalChatThread | null> {
   if (!isPersonalChatId(chatId)) return null;
