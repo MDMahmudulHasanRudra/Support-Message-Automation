@@ -80,8 +80,13 @@ describe("the constraints later phases depend on", () => {
     // + SupportResponseEpisode (Unanswered Groups / Response Time),
     // + CollectionGap (reporting data health), + WhatsAppOperationDismissal (Clear / Hide),
     // + the four Mood Detection tables, + the three Support Assignment tables,
-    // + PersonalChatReview (WhatsApp Chat's Personal filter).
-    expect(refusing).toHaveLength(86);
+    // + PersonalChatReview (WhatsApp Chat's Personal filter),
+    // + GoogleIntegrationAccount (Google Sheets, Phase 1),
+    // + GoogleSpreadsheet and GoogleSpreadsheetAccess (Google Sheets, Phase 2),
+    // + GoogleSpreadsheetMember (Google Sheets, Phase 5),
+    // + GoogleSheetActivity (Phase 6), GoogleSheetWorkSession, GoogleSheetWorkSessionEvent and
+    //   GoogleSheetsSettings (Phase 7).
+    expect(refusing).toHaveLength(94);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -103,11 +108,11 @@ describe("the constraints later phases depend on", () => {
       SELECT conrelid::regclass::text AS table, convalidated AS validated
       FROM pg_constraint
       WHERE contype = 'f' AND confrelid = '"Project"'::regclass AND conname LIKE '%\\_projectId\\_fkey'`;
-    // 86 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
+    // 94 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
     // & Media Storage tables + SupportResponseEpisode + CollectionGap + WhatsAppOperationDismissal
-    // + the four Mood Detection tables + the three Support Assignment tables + PersonalChatReview)
-    // + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(89);
+    // + the four Mood Detection tables + the three Support Assignment tables + PersonalChatReview
+    // + the eight Google Sheets tables) + SystemLog + ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(97);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

@@ -86,6 +86,19 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "release_notes.view", label: "View Release Notes", category: "Release Notes" },
   { key: "release_notes.manage", label: "Manage Release Notes", category: "Release Notes" },
 
+  // Google Sheets work management (GOOGLE_SHEETS.md). Its own keys so no existing role gains
+  // anything by its arrival; the module is also a project feature that ships switched OFF.
+  //   view    — see connected accounts, the sheet list and a sheet's contents
+  //   edit    — change a sheet's cells, rows and columns from the app
+  //   manage  — connect / disconnect Google accounts, link people, assign sheets, settings
+  //   monitor — turn work tracking on for a sheet
+  //   report  — the work reports
+  { key: "google_sheets.view", label: "View Google Sheets", category: "Google Sheets" },
+  { key: "google_sheets.edit", label: "Edit Google Sheets", category: "Google Sheets" },
+  { key: "google_sheets.manage", label: "Manage Google Sheets Accounts & Assignments", category: "Google Sheets" },
+  { key: "google_sheets.monitor", label: "Monitor Google Sheets Work", category: "Google Sheets" },
+  { key: "google_sheets.report", label: "View Google Sheets Work Reports", category: "Google Sheets" },
+
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },
   { key: "settings.edit", label: "Edit Settings", category: "System" },

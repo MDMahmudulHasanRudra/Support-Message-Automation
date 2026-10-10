@@ -23,6 +23,7 @@ import {
   Cpu,
   EyeOff,
   FileEdit,
+  FileSpreadsheet,
   FileUp,
   Fingerprint,
   FlaskConical,
@@ -182,6 +183,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       { href: "/team-management/shifts", label: "Shifts", icon: Clock },
       { href: "/team-management/settings", label: "Team Settings", icon: CalendarDays },
     ],
+  },
+  {
+    label: "Google Sheets",
+    description: "The Google accounts this project's spreadsheets are reached through, and how work time is measured.",
+    links: [{ href: "/settings/google-sheets", label: "Google Accounts", icon: FileSpreadsheet }],
   },
 ];
 
@@ -365,6 +371,17 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // GOOGLE_SHEETS.md. Its account connections and settings live under Settings → Google Sheets.
+    label: "Google Sheets",
+    icon: FileSpreadsheet,
+    links: [
+      { href: "/google-sheets", label: "Spreadsheets", icon: FileSpreadsheet },
+      { href: "/google-sheets/activity", label: "Activity", icon: Activity },
+      { href: "/google-sheets/reports", label: "Work Reports", icon: BarChart3 },
+      { href: "/google-sheets/identity", label: "My Google Identity", icon: Fingerprint },
+    ],
+  },
+  {
     label: "Automation",
     icon: ListChecks,
     links: [
@@ -507,6 +524,10 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/conversation-learning", "conversation_learning.view"],
   ["/notifications", "notifications.view"],
   ["/settings/security", "security_settings.view"],
+  ["/settings/google-sheets", "google_sheets.view"],
+  ["/google-sheets/activity", "google_sheets.monitor"],
+  ["/google-sheets/reports", "google_sheets.report"],
+  ["/google-sheets", "google_sheets.view"],
   ["/settings", "settings.view"],
   ["/logs", "system_logs.view"],
   ["/users", "users.view"],

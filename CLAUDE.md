@@ -490,7 +490,7 @@ Three rules worth not undoing:
 - **Logout and Reconnect cancel a running sync first** (`cancelGroupSync`, a per-account generation
   checked before every write): CANCELLED, never FAILED, and a cancelled sync writes nothing more —
   otherwise a sync that read the list before a LOGOUT re-activates every group the logout switched off.
-- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090700`).
+- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011091000`).
   Prisma orders by name and `migrate deploy` silently applies an earlier-named one out of order, so
   until 12 Oct 2026 name new migrations after the last one by hand.
 
@@ -2407,6 +2407,68 @@ to derive them from exists. Purely operational commits (merges, the GitLab histo
 status updates, planning-only commits describing no shipped change) are deliberately excluded.
 Idempotent by `version` and safe to re-run — it only creates a release that doesn't already exist,
 never overwrites one an admin has since edited.
+
+### Google Sheets work management (`apps/web/src/server/google/`, `GOOGLE_SHEETS.md`)
+
+All ten phases are built (`GOOGLE_SHEETS.md` §12–§20; §21 is how to test it live): accounts,
+the spreadsheet list, members, the editor on each spreadsheet's page, a person's own Google identity,
+the activity log, work / viewing time, changes made in Google (a worker loop) and the employee and
+sheet reports. §3 records what Google's APIs can and cannot say about who did what — read it before
+any attribution work. Feature `GOOGLE_SHEETS`, **off by default in every project**; keys
+`google_sheets.view/edit/manage/monitor/report`. Rules worth not undoing:
+
+- **Tokens are read in exactly one file** (`server/google/accounts.ts`), stored only as `encryptSecret`
+  envelopes, and nothing leaves it except `PUBLIC_ACCOUNT_SELECT`. The client secret is env-only.
+  Google's raw error text never goes into a URL; the callback redirects with a short code.
+- **One OAuth client per installation and ONE callback** (`/api/google/oauth/callback`, outside any
+  project). The project, user, state and PKCE verifier travel in an encrypted, HTTP-only cookie
+  scoped to that path; the callback re-checks the same person, project entry, `google_sheets.manage`
+  and the feature INSIDE the project before redeeming the code.
+- **A row per Google account per project** (`@@unique([projectId, googleSubject])`): reconnecting
+  revives the same row, and disconnecting wipes the tokens and KEEPS the row. A grant missing the
+  Drive-metadata or Sheets scope is revoked and refused; Google refusing a stored grant makes it
+  NEEDS_RECONNECT, never a retry loop.
+- **The list is Drive file METADATA only** (`DRIVE_SPREADSHEET_FIELDS`): never contents, never the
+  Sheets API, not even the sharing list. **One `GoogleSpreadsheet` per Google file per project**,
+  each connected account that reaches it a `GoogleSpreadsheetAccess` path. Nothing is deleted: a file
+  nobody reaches is `removedAt` and comes back as the same row. Removal is decided by the set a
+  COMPLETE listing named — never by timestamps, never from a capped or failed listing. A listing
+  that omits a detail (Google hides emails per requester) never erases a known one, or two accounts
+  would overwrite each other on every refresh.
+- **Sheets are shared team work, and identity is never guessed.** The Google account owner, the
+  file's creator and the account that connected it are none of them "the worker". App work is
+  attributed to the signed-in user (and their team member at that moment); an edit made in Google is
+  attributed only through a Google identity the person linked themselves, otherwise it is
+  UNATTRIBUTED. Google's `lastModifyingUser` is display only. Viewing is never work time.
+- **Sheet members are the app's own record, as HISTORY** (`GoogleSpreadsheetMember`, one row per
+  period, partial unique = one open period per person per sheet). Roles LEAD / EDITOR / MONITOR
+  (`packages/shared/src/googleSheetMembers.ts`); a monitor never works. A manager changes any member;
+  a sheet's Lead with `google_sheets.edit` staffs editors and monitors but never touches a Lead, itself
+  included. Every write goes through `server/google/members.ts`, which applies `decideMemberChange`
+  itself. Nobody is a member by default; Google's sharing list is read live for reference and never
+  copied into members. Attribution of anything done through the app is `resolveSheetActor`: the
+  signed-in user, their role AT that moment, and their team member through the explicit
+  `InternalTeamMember.userId` link only (now audited in System Logs) — never a name or email match.
+- **The editor writes only what still holds what was loaded** (`planSave`): Save re-reads the cells,
+  a cell changed in Google meanwhile comes back as a conflict and is never overwritten; a row or column
+  delete re-reads it and refuses if it moved. Contents open for members (and managers, read-only);
+  edits need LEAD/EDITOR + `google_sheets.edit` + a writable project (`decideEditorAccess`); only an
+  editor receives formulas. Writes go only through an account Google lets edit the file.
+- **The activity log stores no cell value and no search text.** Every application row is credited to
+  the signed-in person with team member and role resolved AT THAT MOMENT — never to the Google account
+  that carried the call (kept beside it as "via"). VIEW ≠ WORK.
+- **Work time is computed, never stored** (`computeSheetTime` in packages/shared over the session
+  events): server-clock signals, gaps ≤ the project's pause threshold, unioned per person across sheets.
+  A work signal from someone who cannot work is recorded as viewing; a save is itself a work signal.
+- **A person's Google identity (`UserGoogleIdentity`, platform) is linked only by them signing in**
+  (openid + email, no token kept, nothing revoked — Google revokes a whole grant, and the same account
+  is often connected to a project). Disconnecting never revokes a grant another project still uses.
+- **Changes made in Google are credited conservatively** (worker `googleSheets/`, monitored sheets
+  only, an account that allowed `drive.activity.readonly`): one known actor, linked by the person
+  themselves, AND the project's identity bridge verified — an account's own change whose `people/<id>`
+  equals its `googleSubject`. A mismatch stops all crediting in that project. Google's record of the
+  app's own save is an APPLICATION_ECHO, never counted twice. Counts only, never time. Plain `fetch`,
+  no `googleapis` SDK, and no `packages/google-client` (two calls did not justify a new build step).
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

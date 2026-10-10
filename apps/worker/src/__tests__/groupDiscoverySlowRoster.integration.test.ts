@@ -230,7 +230,9 @@ describe("8. the primary / an established account is unchanged", () => {
 
     const { provider, state } = scripted(groups, [{ count: 500 }]);
     await inIsp(async () => resyncAndCatchUpAfterConnect(id, provider, "test"));
-    expect(await waitFor(async () => (await logs(id, "GROUP_SYNC_COMPLETED")) >= 1)).toBe(true);
+    // The seed sync above already logged one GROUP_SYNC_COMPLETED, so waiting for "at least one" could
+    // return while the post-connect sync was still RUNNING: wait for this sync's own completion.
+    expect(await waitFor(async () => (await logs(id, "GROUP_SYNC_COMPLETED")) >= 2 && (await account(id)).groupSyncStatus === "COMPLETED")).toBe(true);
     expect((await account(id)).groupSyncStatus).toBe("COMPLETED");
     expect(state.reads).toBeGreaterThanOrEqual(1);
     expect(await logs(id, "GROUP_LIST_STILL_LOADING")).toBe(0);

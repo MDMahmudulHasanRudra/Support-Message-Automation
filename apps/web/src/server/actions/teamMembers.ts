@@ -9,6 +9,7 @@ import { isUniqueViolation } from "@/lib/prismaErrors";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { normalizePhoneNumber } from "@support-automation/shared";
 import { loginsForProject } from "@/server/projectLogins";
+import { logSystemEvent } from "@/server/logSystemEvent";
 
 export interface TeamMemberFormState {
   error?: string;
@@ -523,24 +524,36 @@ export interface LoginLinkState {
 }
 
 /**
- * Link a roster member to the dashboard login they use (SUPPORT_ASSIGNMENT.md). Only Support
- * Assignment's "My assignments" reads it: it grants nothing, and matching messages to people never
- * looks at it. A login can be linked to one member per project; the login must be able to enter it.
+ * Link a roster member to the dashboard login they use (SUPPORT_ASSIGNMENT.md, GOOGLE_SHEETS.md §5).
+ * Support Assignment's "My assignments" reads it, and Google Sheets attributes work done through the
+ * app to the team member linked to the login that did it. It grants nothing, and matching WhatsApp
+ * messages to people never looks at it. A login can be linked to one member per project; the login
+ * must be able to enter it. Every change is recorded in System Logs, since attribution follows it.
  */
 export async function linkTeamMemberLogin(memberId: string, _prev: LoginLinkState, formData: FormData): Promise<LoginLinkState> {
   const granted = await checkPermission("whatsapp.manage");
   if ("denied" in granted) return { error: granted.denied };
   const userId = String(formData.get("userId") ?? "").trim() || null;
 
-  const member = await prisma.internalTeamMember.findUnique({ where: { id: memberId }, select: { id: true, name: true } });
+  const member = await prisma.internalTeamMember.findUnique({ where: { id: memberId }, select: { id: true, name: true, userId: true } });
   if (!member) return { error: "That team member no longer exists." };
+  if (member.userId === userId) return { saved: true };
+  let loginName: string | null = null;
   if (userId) {
-    const allowed = (await loginsForProject()).some((u) => u.id === userId);
-    if (!allowed) return { error: "That login cannot enter this project, or is deactivated. Nothing was changed." };
+    const login = (await loginsForProject()).find((u) => u.id === userId);
+    if (!login) return { error: "That login cannot enter this project, or is deactivated. Nothing was changed." };
+    loginName = login.username;
     const other = await prisma.internalTeamMember.findFirst({ where: { userId, id: { not: memberId } }, select: { name: true } });
     if (other) return { error: `That login is already linked to ${other.name}. Unlink it there first.` };
   }
   await prisma.internalTeamMember.update({ where: { id: memberId }, data: { userId } });
+  await logSystemEvent(
+    "INFO",
+    "team-members",
+    userId ? `Team member ${member.name} linked to login ${loginName}` : `Team member ${member.name} unlinked from their login`,
+    { previousUserId: member.userId, userId },
+    { actorUserId: granted.session.userId, targetType: "InternalTeamMember", targetId: member.id },
+  );
   revalidatePath(await projectPath(`/team-members/${memberId}/edit`));
   return { saved: true };
 }

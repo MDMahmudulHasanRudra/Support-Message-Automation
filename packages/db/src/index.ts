@@ -138,11 +138,11 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
   "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
-  "SupportAssignmentSettings",
+  "SupportAssignmentSettings", "GoogleSheetsSettings",
   // descendants
   "Message", "OutboundMessage", "WhatsAppGroup", "AutomationExecution", "Notification", "WorkerCommand",
   "ProcessingCheckpoint", "MessageDropCounter", "GroupBroadcastJob", "GroupParticipantAddJob",
-  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "SupportResponseEpisode", "SupportAssignment", "SupportAssignmentEvent", "CollectionGap", "WhatsAppOperationDismissal", "PersonalChatReview", "CustomerMoodEvent", "MoodAlert", "MoodAlertAction", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
+  "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "SupportResponseEpisode", "SupportAssignment", "SupportAssignmentEvent", "CollectionGap", "WhatsAppOperationDismissal", "PersonalChatReview", "GoogleIntegrationAccount", "GoogleSpreadsheet", "GoogleSpreadsheetAccess", "GoogleSpreadsheetMember", "GoogleSheetActivity", "GoogleSheetWorkSession", "GoogleSheetWorkSessionEvent", "CustomerMoodEvent", "MoodAlert", "MoodAlertAction", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
   "SupportEscalationEvent", "ConversationSession", "SupportActivity", "SupportSession", "TeamAttendanceDay",
   "TeamAttendanceGroup",
 ]);
@@ -151,7 +151,7 @@ export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
   "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
-  "SupportAssignmentSettings",
+  "SupportAssignmentSettings", "GoogleSheetsSettings",
 ]);
 
 /** `SystemLog.projectId` is optional: a project's operational events carry one, platform events do not. */

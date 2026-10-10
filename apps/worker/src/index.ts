@@ -43,6 +43,7 @@ import {
   startForgeResearchProcessor,
 } from "./forge/forgeProcessor.js";
 import { provisionAiProviderFromEnv } from "./bootstrap/provisionAiProviderFromEnv.js";
+import { startGoogleExternalActivityProcessor } from "./googleSheets/externalActivityProcessor.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -176,6 +177,9 @@ async function main() {
     // are set AND an admin enabled the integration, same convention as Conversation Learning above.
     startForgeKnowledgeProcessor(),
     startForgeResearchProcessor(),
+    // Google Sheets (GOOGLE_SHEETS.md, Phase 8): who changed a MONITORED sheet in Google directly.
+    // A no-op until the server has an OAuth client and a project has the feature on.
+    startGoogleExternalActivityProcessor(),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

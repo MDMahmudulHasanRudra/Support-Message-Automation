@@ -37,3 +37,8 @@ export * from "./outboundAttribution.js";
 export * from "./duration.js";
 export * from "./mood.js";
 export * from "./supportAssignment.js";
+export * from "./googleSheetMembers.js";
+export * from "./googleSheetEditor.js";
+export * from "./googleSheetActivity.js";
+export * from "./googleSheetTime.js";
+export * from "./googleSheetReports.js";

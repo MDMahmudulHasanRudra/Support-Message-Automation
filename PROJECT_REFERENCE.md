@@ -39,6 +39,7 @@ matching section here in the same change.
 13. [System](#system)
 14. [Users & Permissions](#users--permissions)
 15. [Release Notes](#release-notes)
+15a. [Google Sheets](#google-sheets)
 16. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
 17. [Background jobs (apps/worker)](#background-jobs-appsworker)
 17. [Safety & anti-spam features, end to end](#safety--anti-spam-features-end-to-end)
@@ -792,7 +793,10 @@ separate columns. Changing someone's Team closes their old membership and opens 
 now, so reports keep their past work with the Team they were in at the time; a member's first Team
 has no start date and counts back over their whole history. "Add from group" also takes a Team. The edit page also carries an **"Alert this person directly"** card — a checkbox per
 notification event, sending that alert to them as a WhatsApp message *in addition to* whichever
-shared group it already goes to. Disabling stops treating them as staff going forward without
+shared group it already goes to. A **Dashboard login** card links the member to the login they use —
+read by Support Assignment's "My assignments" and by Google Sheets, which credits work done through
+the app to the team member linked to the login that did it. Every link and unlink is recorded in
+System Logs with who made it. Disabling stops treating them as staff going forward without
 losing the record. **Someone with recorded support activity is deactivated
 rather than deleted** — activity rows point at the member, so deleting them orphans their whole
 history; someone added by mistake with no activity is still genuinely deleted.
@@ -1253,6 +1257,178 @@ surface). Permission-gated on `release_notes.view` / `release_notes.manage`.
 Content is seven plain one-bullet-per-line text fields, not a markdown or rich-text body — this app
 has no markdown renderer or rich-text editor anywhere, and a real per-line list is what lets the
 public page render each bullet as its own list item with no parsing involved.
+
+---
+
+## Google Sheets
+
+Feature **Google Sheets** (`GOOGLE_SHEETS`), off by default — a Main Admin switches it on per project
+(Main Admin → Projects → a project → Features). Sidebar module **Google Sheets** (Spreadsheets, Activity,
+Work Reports, My Google Identity); its account connections and settings are under Settings → Google
+Sheets. Full design: `GOOGLE_SHEETS.md` (all ten phases built; §21 is how to test it live).
+
+### Spreadsheets — `/google-sheets` (Google Sheets)
+
+Gated by `google_sheets.view` (to see) and `google_sheets.manage` (Monitor and Refresh). Lists every
+spreadsheet the project's connected Google accounts can reach, read from Google Drive's file details
+— no spreadsheet is opened to build it, and nothing from inside one is stored.
+
+- **Columns:**
+  - **Spreadsheet** — the name, a "Shared" badge when it is shared in Google, the spreadsheet id and
+    the owner;
+  - **Last modified** — the date (hover for the time), and "by … (Google)" when Google says who. That
+    is Google's statement for reference only; the app never uses it to decide who did the work;
+  - **Google account** — every connected account that reaches the sheet now, with "can edit" or
+    "view only", and a badge when that account needs reconnecting or is disconnected. A sheet nobody
+    reaches shows "No longer reachable since …";
+  - **Members** — the people working on it (Leads first, "(Lead)"), "+N" past three, and how many
+    monitor it; "No members yet" otherwise. Opens the spreadsheet's page;
+  - **Monitoring** — Monitor / Stop (manage), or the state (view only);
+  - **Open in Google Sheets** (new tab).
+- The spreadsheet's **name** opens its own page (below).
+- **Search** by name or spreadsheet id; **Google account** selector; chips **All / Monitored / Not
+  monitored / No longer reachable** with counts within the search and account. Active filters can be
+  removed one at a time. Newest first; 50 / 100 / 500 per page.
+- **Refresh from Google** (manage): reads every connected account's list again, one after another;
+  reports how many are new and how many are no longer reachable, and names any account Google would
+  not answer for (its problem shows on its account card).
+- A spreadsheet several accounts reach is listed once. One that no account reaches any more (deleted,
+  unshared, or its account disconnected) stays listed under **No longer reachable** with its history
+  and returns by itself when an account can see it again.
+- **Monitored** marks the sheets whose work the team's activity will be tracked on; it changes nothing
+  in Google and survives every refresh. Changes are recorded in System Logs.
+- With no Google account connected, the page links to Settings → Google Sheets.
+
+### A spreadsheet — `/google-sheets/<id>`
+
+Gated by `google_sheets.view`. Its **contents** open for the spreadsheet's members, and for a
+`google_sheets.manage` holder (read-only unless they add themselves as an Editor). **Editing** needs a
+Lead or Editor role here, `google_sheets.edit`, and a writable project; a Monitor never edits. Changing
+members needs `google_sheets.manage` (any member, including Leads) or being this spreadsheet's **Lead**
+with `google_sheets.edit` (editors and monitors only). A suspended or archived project changes nothing.
+
+- **Header:** the name, Open in Google Sheets, Monitored / Not monitored, "No longer reachable" when so,
+  the owner in Google, the connected accounts that reach it (can edit / view only), and its id.
+- **Spreadsheet** (the editor):
+  - tabs as chips; a grid of 200 rows × 26 columns with row numbers and column letters, paged with the
+    arrows under it ("Rows 1–200 of 1,000 · Columns A–Z of 30 · through <account>");
+  - a cell bar showing the selected cell and what is typed in it (a formula for people who may edit);
+  - for people who may edit: double-click or type to change a cell, Enter / Tab to move on, Esc to
+    cancel, Delete to clear, paste a block from any spreadsheet; changed cells are amber and
+    "N unsaved"; **Save N changes** sends only them to Google; **Discard**. A cell changed in Google
+    since it was loaded is NOT overwritten: it turns red with what Google holds now (hover), and a
+    second Save replaces it on purpose. Paging, switching tab and searching elsewhere ask for Save or
+    Discard first; leaving the page warns;
+  - row numbers and column letters open **Insert above / below** (left / right) and **Delete** —
+    confirmed, and refused when the row or column changed in Google since it was loaded;
+    **Add 10 rows at the end**;
+  - **Refresh**; **Find in this tab** (the whole tab, up to 200 matches; a match jumps to its cell);
+  - "Read-only in Google" when the account it is reached through may only view it; why it is read-only
+    for this person otherwise.
+- **Open right now** and **Recent activity** (people with `google_sheets.monitor` or manage): who has it
+  open in the app (Working / Viewing, since, last), and the latest 25 log entries with a link to all of
+  them. Monitored sheets also show when Google was last read and any problem reading it.
+- **Members** — the app's own record of who works on the spreadsheet, separate from Google's sharing:
+  - roles **Lead** (responsible; works on it and staffs its editors and monitors), **Editor** (works on
+    it; changes count as work) and **Monitor** (read-only; never counted as working);
+  - each person: name and login, their linked Google identity (or that edits they make in Google
+    cannot be credited), their linked team member or "Not linked to a team member — link on
+    Team Members", whether they can work through the app ("Not yet" when their role lacks Edit Google
+    Sheets; Monitors "No — monitors only"), and since when / added by whom;
+  - for people who may change members: a role selector per person, **Remove** (confirmed; history
+    kept), and **Add a person** (any active login that may enter the project, and a role — Lead only
+    for a manager). A Lead cannot change or remove a Lead, themselves included.
+  - Nobody is a member by default — not the owner in Google, not whoever connected the Google account.
+- **Earlier membership** — every ended period: who, which role, from when to when, and whether the
+  role changed or they were removed, and by whom.
+- **Shared in Google Drive** (people who may change members): **Show Google's sharing list** reads it
+  live through a connected account that can share the file — who, and their role in Google (Owner /
+  Editor / Commenter / Viewer, groups, "Anyone with the link"). Reference only: it never adds, changes
+  or removes a member. When no connected account can share the file, it says so.
+- Every member change is recorded in System Logs with who made it.
+
+### Google Accounts — `/settings/google-sheets` (Settings → Google Sheets)
+
+Gated by `google_sheets.view` (to see) and `google_sheets.manage` (to connect, refresh and
+disconnect).
+
+- **+ Connect Google Account** (manage, and only once the server has an OAuth client): goes to
+  Google's own sign-in and consent screen, then back here with "<email> is connected" or the reason
+  it was not (consent refused, spreadsheet access not granted, signed in as someone else, took too
+  long, no permission, …). The account's spreadsheet list is read straight away. No spreadsheet IDs,
+  service accounts or sharing are involved.
+- **Each account**: email and name, a status badge (Connected / Needs reconnecting / Disconnected),
+  "N spreadsheets accessible · checked … · View" ("10,000+" past the cap; View opens Spreadsheets
+  filtered to that account), who connected it and when (or who disconnected it), and the last problem.
+  - **Refresh** reads its spreadsheet list from Google again.
+  - **Disconnect** (confirmed) asks Google to forget the access, removes the stored access, moves the
+    spreadsheets only it reached to "No longer reachable", and keeps the account's history;
+    **Connect again** brings back the same account.
+  - An account whose access Google stopped accepting shows **Needs reconnecting** with what to do.
+- **Set up Google sign-in** (shown until the server is configured): the four steps — enable the
+  Drive and Sheets APIs, the consent screen (Internal vs External / 7-day testing tokens), a Web
+  application client with the exact redirect URI to paste, and the two environment variables.
+- **What the app asks Google for**: name and email, the list of Drive files (to list spreadsheets
+  without opening them), and seeing/editing spreadsheets — with the exact scopes.
+
+- Each connected account also says whether it allowed reading **activity** (changes made in Google);
+  "connect it again and allow activity" when not.
+- **Work time and changes made in Google** (manage to change): **A pause starts after N minutes**
+  (1–60, default 5) and **Read changes made in Google directly** (on by default; monitored sheets only,
+  about every 15 minutes). Below them, whether crediting changes made in Google is **Confirmed**, **Not
+  confirmed yet** or **Stopped** (Google identified an account's own change with a different number
+  from its sign-in).
+- **Set up** lists the Drive, Sheets **and Drive Activity** APIs; **What the app asks Google for** adds
+  the optional activity record.
+
+Several Google accounts can be connected. Each project has its own; the same Google account in two
+projects is connected twice, independently — and disconnecting it in one never revokes Google's access
+for the other. Tokens never reach the browser.
+
+### Activity — `/google-sheets/activity` (Google Sheets)
+
+Gated by `google_sheets.monitor` (other people's work).
+
+- **Open right now** — everyone with a spreadsheet open in the app and a signal within the pause
+  threshold: Working (a change or typing within it) or Viewing, their role and team member, the
+  spreadsheet, since when and the last signal.
+- The **log**, newest first, 100 per page: when; who (with role then and team member), or
+  **Unattributed** with Google's reason, or "Google's record of a change made in the app"; the
+  spreadsheet; what (with In the app / In Google, Work / Viewing badges and a cell count); where (tab
+  or A1 range, "via" the connected account). No cell value and no search text is ever shown or stored.
+- Chips **Everything / Work / Viewing / In Google**, **Today / Last 7 days / Last 30 days**, a person
+  selector, and a spreadsheet filter (from a spreadsheet's "All N entries" link), each removable.
+
+### Work Reports — `/google-sheets/reports` (Google Sheets)
+
+Gated by `google_sheets.report`.
+
+- **By employee**: Employee, Team member, Work time, Viewing time, Spreadsheets worked on, Changes
+  (app), Cells changed, Edits in Google; an **Unattributed** line for edits in Google nobody could be
+  credited with; a **Total**. A name opens that person: the same row, **Day by day** (Dhaka days) and
+  **Spreadsheet by spreadsheet** (with their role at the end of the period).
+- **By spreadsheet**: Spreadsheet, People, Work time (the sum of its people's time — person-hours),
+  Viewing, Changes, Cells, Edits in Google; a name opens its **member breakdown** (Member, Role, Team
+  member, the figures, Unattributed, Total).
+- Periods **Today / Yesterday / Last 7 days / Last 30 days / This month**, or a custom From–To (92 days
+  at most); **Monitored spreadsheets only**. Durations read "2h 14m".
+- **Excel** (Summary + the table, and for a person their days and sheets; for every sheet the member
+  breakdowns) and **CSV** (the table), durations in decimal hours.
+- Work time counts only interaction in the app by someone able to change the sheet, with gaps longer
+  than the pause threshold left out; a person's time is unioned across spreadsheets. Edits in Google are
+  counts, never time. The page's Help says so.
+
+### My Google Identity — `/google-sheets/identity` (Google Sheets)
+
+Gated by `google_sheets.view`; each person sees only their own.
+
+- **Link my Google account** goes to Google's account chooser (name and email only), and back with
+  "<email> is linked to your login", or why not (already linked to another login, refused, …).
+- **Linked Google accounts**, each with when it was confirmed and **Unlink** (confirmed; anything
+  already credited stays).
+- **How it is used**: work in the app never needs it; it is what lets a change made in Google Sheets
+  directly be credited to you; Google never says which cells or how long; nothing is kept that could
+  open your Drive; and which team member your login is linked to.
 
 ---
 

@@ -585,6 +585,14 @@ model Project {
   collectionGapRows                    CollectionGap[]
   whatsappOperationDismissals          WhatsAppOperationDismissal[]
   personalChatReviews                  PersonalChatReview[]
+  googleIntegrationAccounts            GoogleIntegrationAccount[]
+  googleSpreadsheets                   GoogleSpreadsheet[]
+  googleSpreadsheetAccessRows          GoogleSpreadsheetAccess[]
+  googleSpreadsheetMembers             GoogleSpreadsheetMember[]
+  googleSheetActivities                GoogleSheetActivity[]
+  googleSheetWorkSessions              GoogleSheetWorkSession[]
+  googleSheetWorkSessionEvents         GoogleSheetWorkSessionEvent[]
+  googleSheetsSettings                 GoogleSheetsSettings?
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
   groupParticipantAddJobRows           GroupParticipantAddJob[]
@@ -735,9 +743,18 @@ model User {
   knowledgeVerified              AiKnowledgeItem[]         @relation("AiKnowledgeVerifier")
   systemLogs                     SystemLog[]
 
-  projectAccess ProjectAccess[]
+  projectAccess           ProjectAccess[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
-  employee      Employee?
+  employee                Employee?
+  /// Google accounts this person connected (GOOGLE_SHEETS.md). Audit only; grants nothing.
+  googleAccountsConnected GoogleIntegrationAccount[] @relation("GoogleAccountConnectedBy")
+  googleSheetMemberships  GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberUser")
+  googleSheetMembersAdded GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberAddedBy")
+  googleSheetMembersEnded GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberEndedBy")
+  /// Google identities this person proved are theirs by signing in with Google (Phase 4).
+  googleIdentities        UserGoogleIdentity[]
+  googleSheetActivities   GoogleSheetActivity[]      @relation("GoogleSheetActivityUser")
+  googleSheetWorkSessions GoogleSheetWorkSession[]   @relation("GoogleSheetWorkSessionUser")
 }
 
 // ---------------------------------------------------------------------------
@@ -1238,6 +1255,9 @@ model InternalTeamMember {
   assignedSupportCases      SupportAssignment[]                @relation("SupportAssignmentAssignee")
   respondedSupportCases     SupportAssignment[]                @relation("SupportAssignmentResponder")
   supportAssignmentEvents   SupportAssignmentEvent[]
+  /// Google Sheets work credited to this roster member AT THE MOMENT it happened (through the login link).
+  googleSheetActivities     GoogleSheetActivity[]
+  googleSheetWorkSessions   GoogleSheetWorkSession[]
   assignedGroups            WhatsAppGroup[]
   assignedEscalationCases   SupportEscalationCase[]
   SupportEscalationSettings SupportEscalationSettings[]
@@ -2106,31 +2126,31 @@ enum SupportAssignmentEventType {
 /// the customer's message and both open an episode, and two cases for one question would mean one
 /// of them is assigned while its twin sits "unassigned" forever.
 model SupportAssignment {
-  id        String                  @id @default(cuid())
+  id              String                  @id @default(cuid())
   /// The project this row belongs to. Every write must name it: the default raises (no default
   /// project since MULTI_PROJECT_PLAN.md Phase 3).
-  projectId String                  @default(dbgenerated("project_id_required()"))
-  project   Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectId       String                  @default(dbgenerated("project_id_required()"))
+  project         Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// The wait that opened this case. Usually one case per wait; a wait can outlive its case (the
   /// assignee replied without being in the Support Team, an admin cancelled it), and a customer
   /// message after that opens a new case on the same wait, as Clear does on Unanswered groups.
-  episodeId String
-  episode   SupportResponseEpisode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
-  accountId String
-  account   WhatsAppAccount         @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  groupId   String
-  group     WhatsAppGroup           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  episodeId       String
+  episode         SupportResponseEpisode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         WhatsAppAccount         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId         String
+  group           WhatsAppGroup           @relation(fields: [groupId], references: [id], onDelete: Cascade)
   /// The WhatsApp group itself (…@g.us): what identifies "this conversation" across accounts.
   whatsappGroupId String
-  status    SupportAssignmentStatus @default(UNASSIGNED)
+  status          SupportAssignmentStatus @default(UNASSIGNED)
 
   /// The earliest customer message in the wait that is NOT ignored — the "issue" shown and sent.
   /// Null while the case is IGNORED. Points at the Message; no text is copied.
   firstMessageId      String?
-  firstMessage        Message? @relation("SupportAssignmentFirstMessage", fields: [firstMessageId], references: [id], onDelete: SetNull)
+  firstMessage        Message?  @relation("SupportAssignmentFirstMessage", fields: [firstMessageId], references: [id], onDelete: SetNull)
   firstMessageAt      DateTime?
   /// Customer messages in this wait that an ignore rule filtered out.
-  ignoredMessageCount Int      @default(0)
+  ignoredMessageCount Int       @default(0)
 
   assignedMemberId String?
   assignedMember   InternalTeamMember? @relation("SupportAssignmentAssignee", fields: [assignedMemberId], references: [id], onDelete: SetNull)
@@ -5069,6 +5089,405 @@ model ConversationCandidate {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Google Sheets work management (GOOGLE_SHEETS.md). Project-scoped: a Google account is connected
+// to one project, by someone allowed to manage the module there.
+// ---------------------------------------------------------------------------------------------
+
+/// Whether a connected Google account can be used right now.
+enum GoogleAccountStatus {
+  /// Tokens held and working.
+  CONNECTED
+  /// Google refused the stored refresh token (revoked, expired, password reset): someone must
+  /// connect the account again. History is kept; nothing is deleted.
+  NEEDS_RECONNECT
+  /// Disconnected from the app on purpose. Tokens are wiped; the row stays so every record that
+  /// names the account keeps its meaning.
+  DISCONNECTED
+}
+
+/// One Google account connected to a project through OAuth.
+///
+/// The identity is Google's own stable account id (OpenID `sub`), never the email, which can change.
+/// Tokens are stored ONLY as `encryptSecret` envelopes (AES-256-GCM, key id, rotatable — the same
+/// as AI provider keys) and are never selected into anything a browser receives. Disconnecting
+/// wipes them and keeps the row, so activity recorded against the account is never orphaned;
+/// connecting the same Google account again revives the same row.
+model GoogleIntegrationAccount {
+  id                         String                    @id @default(cuid())
+  projectId                  String                    @default(dbgenerated("project_id_required()"))
+  project                    Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  googleSubject              String
+  email                      String
+  displayName                String?
+  pictureUrl                 String?
+  /// The scopes Google actually granted (the user may untick some on the consent screen).
+  grantedScopes              String[]                  @default([])
+  status                     GoogleAccountStatus       @default(CONNECTED)
+  refreshTokenCiphertext     String?
+  accessTokenCiphertext      String?
+  accessTokenExpiresAt       DateTime?
+  /// The last refusal from Google, in words an admin can act on.
+  lastError                  String?
+  /// How many spreadsheets the account can see, from the last list refresh (Drive metadata only).
+  spreadsheetCount           Int?
+  spreadsheetsCountedAt      DateTime?
+  connectedById              String?
+  connectedBy                User?                     @relation("GoogleAccountConnectedBy", fields: [connectedById], references: [id], onDelete: SetNull)
+  connectedAt                DateTime                  @default(now())
+  disconnectedAt             DateTime?
+  disconnectedByUsername     String?
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
+  spreadsheetAccess          GoogleSpreadsheetAccess[]
+  /// Phase 8. Set when Google's Drive Activity named this account's own edit as `people/<id>` and that
+  /// id EQUALS `googleSubject` — the proof that an external actor's id can be matched to a person's
+  /// own Google sign-in. Google does not document it, so nothing external is credited to anyone
+  /// until some account in the project has shown it.
+  activityIdentityVerifiedAt DateTime?
+  /// Set when the two ids DIFFERED. Then nothing external is credited in the project until somebody
+  /// investigates: crediting the wrong person is worse than crediting nobody.
+  activityIdentityMismatchAt DateTime?
+  activities                 GoogleSheetActivity[]
+
+  @@unique([projectId, googleSubject])
+  @@index([projectId, status])
+}
+
+/// One Google spreadsheet known to a project — METADATA ONLY (name, dates, link, owner). Nothing from
+/// inside the sheet is stored, ever: the list is built from Drive's file metadata, never by opening
+/// a sheet.
+///
+/// One row per Google FILE per project, however many connected accounts can reach it: the same
+/// sheet shared with two connected accounts is one sheet with two paths
+/// (`GoogleSpreadsheetAccess`), so whatever later hangs off a sheet (members, activity, sessions)
+/// hangs off one row. A row per account is what made WhatsApp group setup fail to carry across
+/// numbers.
+///
+/// Never deleted. When no connected account can see the file any more, `removedAt` is set and the
+/// row stays, so history recorded against it keeps its meaning; seeing it again clears it.
+model GoogleSpreadsheet {
+  id                             String                    @id @default(cuid())
+  projectId                      String                    @default(dbgenerated("project_id_required()"))
+  project                        Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Google's file id (the spreadsheet id in its URL).
+  googleFileId                   String
+  name                           String
+  webViewLink                    String?
+  /// Google's own modified time for the file.
+  modifiedTime                   DateTime?
+  ownerEmail                     String?
+  ownerName                      String?
+  /// Who Google says modified the file last — shown in the list as Google's statement, never used
+  /// to attribute work to anybody (it is one person for the whole file, and only the last one).
+  lastModifiedByName             String?
+  lastModifiedByEmail            String?
+  /// Whether the file is shared with anyone in Google (Drive's `shared`).
+  sharedInGoogle                 Boolean                   @default(false)
+  /// Chosen by a manager: the sheets whose work the module tracks.
+  isMonitored                    Boolean                   @default(false)
+  monitoredAt                    DateTime?
+  monitoredByUsername            String?
+  firstSeenAt                    DateTime                  @default(now())
+  /// Set when no connected account can see the file any more; cleared when one can again.
+  removedAt                      DateTime?
+  createdAt                      DateTime                  @default(now())
+  updatedAt                      DateTime                  @updatedAt
+  access                         GoogleSpreadsheetAccess[]
+  members                        GoogleSpreadsheetMember[]
+  activities                     GoogleSheetActivity[]
+  workSessions                   GoogleSheetWorkSession[]
+  /// Phase 8 — Drive Activity polling of a MONITORED sheet: read up to this instant (the next read
+  /// overlaps it a little; rows are deduplicated by `externalKey`), when it was last tried, and the
+  /// last problem worded for the page.
+  externalActivityCheckedThrough DateTime?
+  externalActivityCheckedAt      DateTime?
+  externalActivityError          String?
+
+  @@unique([projectId, googleFileId])
+  @@index([projectId, removedAt, modifiedTime])
+  @@index([projectId, isMonitored])
+}
+
+/// Which connected Google account can reach which spreadsheet, and what Google lets that account
+/// do with it (from Drive's `capabilities` at the last refresh). Google's permission, not the
+/// app's: what a PERSON may do through the app is decided by the app's own permissions.
+model GoogleSpreadsheetAccess {
+  id              String                   @id @default(cuid())
+  projectId       String                   @default(dbgenerated("project_id_required()"))
+  project         Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  spreadsheetId   String
+  spreadsheet     GoogleSpreadsheet        @relation(fields: [spreadsheetId], references: [id], onDelete: Cascade)
+  googleAccountId String
+  googleAccount   GoogleIntegrationAccount @relation(fields: [googleAccountId], references: [id], onDelete: Cascade)
+  canEdit         Boolean                  @default(false)
+  canShare        Boolean                  @default(false)
+  firstSeenAt     DateTime                 @default(now())
+  lastSeenAt      DateTime                 @default(now())
+  /// Set when a refresh of this account no longer lists the file, or the account was disconnected.
+  removedAt       DateTime?
+
+  @@unique([spreadsheetId, googleAccountId])
+  @@index([projectId, googleAccountId, removedAt])
+}
+
+/// A person's role on one spreadsheet IN THE APP (GOOGLE_SHEETS.md §5, Phase 5). Kept in
+/// packages/shared/src/googleSheetMembers.ts (`SHEET_MEMBER_ROLES`) — the two are kept in sync.
+enum GoogleSheetMemberRole {
+  /// Responsible for the sheet: works on it, and staffs its editors and monitors.
+  LEAD
+  /// Works on the sheet through the app.
+  EDITOR
+  /// Follows it read-only; never counted as working on it.
+  MONITOR
+}
+
+/// Why a membership period ended.
+enum GoogleSheetMemberEndReason {
+  /// Replaced by a period with another role, starting the same instant.
+  ROLE_CHANGED
+  /// Taken off the sheet.
+  REMOVED
+}
+
+/// Who works on, or monitors, one spreadsheet through the app — the app's own record, separate from
+/// Google Drive's sharing (which says who may open the FILE in Google; the two are never copied into
+/// each other). Members are app USERS: a CTO who is not on the support roster can still monitor. The
+/// team member is the existing `InternalTeamMember.userId` link, never a name or email match.
+///
+/// HISTORY, never overwritten: each row is one period [startedAt, endedAt) in one role. Changing a
+/// role ends the open row and opens a new one at the same instant; removing ends it; adding back
+/// opens a new one. So "who was an editor on 3 October" stays answerable after any change, the way
+/// `TeamMembership` keeps Team history. A partial unique index (migration) allows ONE open period
+/// per person per sheet.
+model GoogleSpreadsheetMember {
+  id            String                      @id @default(cuid())
+  projectId     String                      @default(dbgenerated("project_id_required()"))
+  project       Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  spreadsheetId String
+  spreadsheet   GoogleSpreadsheet           @relation(fields: [spreadsheetId], references: [id], onDelete: Restrict)
+  userId        String
+  user          User                        @relation("GoogleSheetMemberUser", fields: [userId], references: [id], onDelete: Restrict)
+  role          GoogleSheetMemberRole
+  startedAt     DateTime                    @default(now())
+  endedAt       DateTime?
+  endReason     GoogleSheetMemberEndReason?
+  addedById     String?
+  addedBy       User?                       @relation("GoogleSheetMemberAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  endedById     String?
+  endedBy       User?                       @relation("GoogleSheetMemberEndedBy", fields: [endedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime                    @default(now())
+
+  @@index([projectId, spreadsheetId, endedAt])
+  @@index([projectId, userId, endedAt])
+}
+
+/// A person's own Google identity (GOOGLE_SHEETS.md §5, Phase 4) — proved by THEM signing in with
+/// that Google account (openid + email; no token is kept). Never inferred from a matching email or
+/// name. It is the only bridge from an edit Google reports (`people/<id>`) to a person in the app.
+///
+/// Platform-wide, no projectId: a person's Google account is the same in every project. A Google
+/// account can be linked to one login only. Unlinking deletes the row; activity already credited
+/// keeps the user it was credited to (it is stored on each activity row).
+model UserGoogleIdentity {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Google's stable account id (OpenID `sub`).
+  googleSubject String   @unique
+  email         String
+  displayName   String?
+  /// When the person last proved it by signing in.
+  verifiedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// Viewing, work, or neither (an external comment or sharing change). Kept in sync with
+/// packages/shared/src/googleSheetActivity.ts.
+enum GoogleSheetActivityKind {
+  VIEW
+  WORK
+  OTHER
+}
+
+/// Where an activity happened: in this app, or in Google directly.
+enum GoogleSheetActivitySource {
+  APPLICATION
+  EXTERNAL_GOOGLE
+}
+
+/// What was done. Kept in sync with `SHEET_ACTION_TYPES` in packages/shared.
+enum GoogleSheetActionType {
+  SPREADSHEET_OPENED
+  TAB_OPENED
+  REFRESHED
+  SEARCHED
+  CELLS_EDITED
+  ROWS_ADDED
+  ROWS_DELETED
+  COLUMNS_ADDED
+  COLUMNS_DELETED
+  EXTERNAL_EDIT
+  EXTERNAL_CREATE
+  EXTERNAL_RENAME
+  EXTERNAL_DELETE
+  EXTERNAL_RESTORE
+  EXTERNAL_COMMENT
+  EXTERNAL_PERMISSION_CHANGE
+  EXTERNAL_MOVE
+  EXTERNAL_OTHER
+}
+
+/// How an activity is credited (packages/shared `SHEET_ATTRIBUTIONS`).
+enum GoogleSheetAttribution {
+  /// Done in the app — the signed-in person, by construction.
+  APPLICATION
+  /// Done in Google by a single actor whose Google identity a person linked themselves.
+  ATTRIBUTED
+  /// Done in Google by someone the module cannot name with certainty (`unattributedReason`).
+  UNATTRIBUTED
+  /// Google's own record of a change the app made: already counted as application work.
+  APPLICATION_ECHO
+}
+
+/// The activity log (GOOGLE_SHEETS.md §6, Phase 6) — APPEND-ONLY, one row per thing done.
+///
+/// Application rows are exact: the signed-in person, the tab, the A1 range, the moment. External rows
+/// (Phase 8) say only that Google recorded a change, when, and — sometimes — which Google account.
+/// No cell VALUE is ever stored (no spreadsheet contents in PostgreSQL), and no search text.
+///
+/// Who is credited is resolved AT THAT MOMENT and stored on the row (user, team member, sheet role),
+/// so relinking a login or changing a role later never rewrites the past.
+model GoogleSheetActivity {
+  id                    String                    @id @default(cuid())
+  projectId             String                    @default(dbgenerated("project_id_required()"))
+  project               Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  spreadsheetId         String
+  spreadsheet           GoogleSpreadsheet         @relation(fields: [spreadsheetId], references: [id], onDelete: Restrict)
+  kind                  GoogleSheetActivityKind
+  source                GoogleSheetActivitySource
+  actionType            GoogleSheetActionType
+  attribution           GoogleSheetAttribution
+  /// UNATTRIBUTED only: why (packages/shared `UNATTRIBUTED_REASONS`).
+  unattributedReason    String?
+  /// The tab: Google's numeric sheet id, and its title at that moment.
+  tabId                 Int?
+  tabTitle              String?
+  /// Application only: the A1 range touched (never the values in it).
+  range                 String?
+  /// Application only: how many cells, rows or columns the action touched.
+  itemCount             Int?
+  /// A short description of a structural change ("Deleted row 12") — never cell contents.
+  detail                String?
+  /// The app user credited: the signed-in person (application), or the person whose linked Google
+  /// identity Google named (external). Null for an unattributed external change.
+  userId                String?
+  user                  User?                     @relation("GoogleSheetActivityUser", fields: [userId], references: [id], onDelete: Restrict)
+  /// Their roster member at that moment, through the explicit login link only.
+  teamMemberId          String?
+  teamMember            InternalTeamMember?       @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  /// Their role on the sheet at that moment (null: not a member then).
+  memberRole            GoogleSheetMemberRole?
+  /// The connected Google account whose access carried the call (application), or that read
+  /// Google's record (external). Never the person credited.
+  googleAccountId       String?
+  googleAccount         GoogleIntegrationAccount? @relation(fields: [googleAccountId], references: [id], onDelete: Restrict)
+  /// The open-sheet session it happened in (application, Phase 7).
+  sessionId             String?
+  session               GoogleSheetWorkSession?   @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  occurredAt            DateTime
+  /// External only: a deterministic key built from Google's record (Drive Activity has no id), so
+  /// reading the same period twice never records a change twice.
+  externalKey           String?
+  /// External only: the actor as Google gave it (`people/<id>`), and its kind.
+  externalActorPersonId String?
+  externalActorKind     String?
+  /// External only: the application change this row is Google's echo of.
+  echoOfActivityId      String?
+  echoOf                GoogleSheetActivity?      @relation("GoogleSheetActivityEcho", fields: [echoOfActivityId], references: [id], onDelete: SetNull)
+  echoes                GoogleSheetActivity[]     @relation("GoogleSheetActivityEcho")
+  createdAt             DateTime                  @default(now())
+
+  @@unique([projectId, externalKey])
+  @@index([projectId, spreadsheetId, occurredAt])
+  @@index([projectId, userId, occurredAt])
+  @@index([projectId, occurredAt])
+}
+
+/// One signal from an open sheet page (GOOGLE_SHEETS.md §7). Kept in sync with packages/shared
+/// `SESSION_SIGNAL_KINDS`.
+enum GoogleSheetSessionEventKind {
+  START
+  VIEW_SIGNAL
+  WORK_SIGNAL
+  CLOSE
+}
+
+/// One person with one spreadsheet open in the app (GOOGLE_SHEETS.md §7, Phase 7). Its EVENTS are the
+/// record: work and viewing time are computed from them at read time by ONE pure function
+/// (packages/shared `computeSheetTime`) and never stored as a second number that could drift.
+///
+/// `clientKey` is a random value the open page makes for itself, so its signals find this row without
+/// a round trip, and a repeated signal never opens a second session. A session that goes quiet is not
+/// closed by any job: it simply stops being live, and its time ends at its last signal.
+model GoogleSheetWorkSession {
+  id            String                        @id @default(cuid())
+  projectId     String                        @default(dbgenerated("project_id_required()"))
+  project       Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  spreadsheetId String
+  spreadsheet   GoogleSpreadsheet             @relation(fields: [spreadsheetId], references: [id], onDelete: Restrict)
+  userId        String
+  user          User                          @relation("GoogleSheetWorkSessionUser", fields: [userId], references: [id], onDelete: Restrict)
+  /// Their roster member and sheet role when the session started, through the login link only.
+  teamMemberId  String?
+  teamMember    InternalTeamMember?           @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  memberRole    GoogleSheetMemberRole?
+  /// Whether this person could work when it started (a working role and the edit permission). A work
+  /// signal from someone who cannot work is recorded as a view signal.
+  canWork       Boolean                       @default(false)
+  clientKey     String
+  startedAt     DateTime
+  lastSignalAt  DateTime
+  lastWorkAt    DateTime?
+  closedAt      DateTime?
+  events        GoogleSheetWorkSessionEvent[]
+  activities    GoogleSheetActivity[]
+
+  @@unique([projectId, clientKey])
+  @@index([projectId, spreadsheetId, lastSignalAt])
+  @@index([projectId, userId, lastSignalAt])
+}
+
+/// A signal received from an open sheet page, stamped with the SERVER's clock (the browser's is never
+/// trusted).
+model GoogleSheetWorkSessionEvent {
+  id        String                      @id @default(cuid())
+  projectId String                      @default(dbgenerated("project_id_required()"))
+  project   Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sessionId String
+  session   GoogleSheetWorkSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  kind      GoogleSheetSessionEventKind
+  at        DateTime
+
+  @@index([projectId, sessionId, at])
+  @@index([projectId, at])
+}
+
+/// The project's Google Sheets settings (one row per project; absent = the defaults).
+model GoogleSheetsSettings {
+  id                      String   @id @default("global")
+  projectId               String   @unique @default(dbgenerated("project_id_required()"))
+  project                 Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// T in GOOGLE_SHEETS.md §7: a gap longer than this between two signals is a pause. 1–60.
+  inactivityMinutes       Int      @default(5)
+  /// Phase 8: read who changed MONITORED sheets in Google directly (Drive Activity).
+  externalActivityEnabled Boolean  @default(true)
+  updatedByUsername       String?
+  updatedAt               DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------------------------
 // White labeling (BRANDING.md): what the installation calls itself and how it looks. Platform-wide,
 // no projectId — one installation, one brand. Set by a Main Admin on Main Admin → Branding.
 // ---------------------------------------------------------------------------------------------
@@ -5083,24 +5502,24 @@ model ConversationCandidate {
 /// at upload, never the browser's claim. `assetVersion` moves on every image change and is put in
 /// the image URLs, so browsers can cache an image for good and still see a new one immediately.
 model PlatformBranding {
-  id              String   @id @default("default")
+  id                String   @id @default("default")
   /// The product name everywhere it is shown: browser title, sidebar, sign-in page, AI assistant.
-  productName     String?
+  productName       String?
   /// The sign-in page's headline and the paragraph under it.
-  loginHeadline   String?
-  loginSubheading String?
+  loginHeadline     String?
+  loginSubheading   String?
   /// The brand colour (#rrggbb): links, active navigation, focus rings — the app's accent.
-  accentColor     String?
+  accentColor       String?
   /// Wide logo (wordmark), shown on the sign-in page.
-  logo            Bytes?
-  logoMimeType    String?
+  logo              Bytes?
+  logoMimeType      String?
   /// Square app icon: the sidebar mark and the browser tab icon.
-  icon            Bytes?
-  iconMimeType    String?
-  assetVersion    Int      @default(0)
+  icon              Bytes?
+  iconMimeType      String?
+  assetVersion      Int      @default(0)
   /// Who saved last, as a snapshot (users are never deleted, and usernames never change).
   updatedByUsername String?
-  updatedAt       DateTime @updatedAt
+  updatedAt         DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------------------------

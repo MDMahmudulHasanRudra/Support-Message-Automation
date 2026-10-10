@@ -13,6 +13,18 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Google Sheets work management** (Google Sheets → Spreadsheets / Activity / Work Reports / My
+  Google Identity; Settings → Google Sheets), all ten phases. A manager connects the Google accounts
+  the team's spreadsheets live in through Google's own sign-in; every spreadsheet they reach is listed
+  once from Drive's file details. Each spreadsheet has its own members — a Lead, editors and monitors —
+  and members edit it in the app: a bounded grid, paste, rows and columns, search, and a Save that never
+  overwrites a cell somebody changed in Google meanwhile. Everything done is logged (viewing apart from
+  work, no cell values), credited to the person — never the Google account it went through — and timed
+  from real interaction (a pause threshold, unioned across sheets). For monitored sheets the worker
+  reads Google's own activity record, crediting a change only through a Google account the person
+  linked themselves, once Google is seen to use sign-in's ids. Employee and spreadsheet reports with
+  Excel / CSV. Needs a Google OAuth client on the server; off by default per project
+  (`GOOGLE_SHEETS.md`).
 - **Support Assignment** (Support → Support Assignment). Every customer waiting for a reply becomes a
   case, unless it is only "thanks"/"ok" or from an ignored sender (filtered cases are kept and
   counted). Assign one or many cases to a person; they get a WhatsApp message. The case completes

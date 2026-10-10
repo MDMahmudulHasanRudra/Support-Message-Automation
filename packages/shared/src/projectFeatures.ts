@@ -152,6 +152,16 @@ export const PROJECT_FEATURES = [
     permissionKeys: [],
     workerEffect: "The Forge sync, question research and live answer research stop.",
   },
+  {
+    key: "GOOGLE_SHEETS",
+    label: "Google Sheets",
+    description: "Connecting Google accounts, working on spreadsheets from the app, and tracking that work.",
+    // Additive and new: no project gets it until a Main Admin switches it on.
+    defaultEnabled: false,
+    routes: ["/google-sheets", "/settings/google-sheets", "/api/google-sheets"],
+    permissionKeys: ["google_sheets.view", "google_sheets.edit", "google_sheets.manage", "google_sheets.monitor", "google_sheets.report"],
+    workerEffect: "Stops reading who changed monitored spreadsheets in Google directly. Connected accounts, sheets, members and their history are kept.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];
