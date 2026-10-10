@@ -213,13 +213,16 @@ export function ProjectFeatureList({ projectId, features, canManage }: { project
           <div className="flex items-center justify-between gap-2">
             <span className="text-[13px] font-medium text-[color:var(--color-foreground)]">{feature.label}</span>
             {canManage ? (
-              <Switch
-                checked={feature.enabled}
-                disabled={pendingKey === feature.key}
-                onChange={(event) => toggle(feature, event.target.checked)}
-                aria-label={`${feature.label} enabled for this project`}
-                data-feature={feature.key}
-              />
+              // A label, so a click on the visible track toggles the (visually hidden) checkbox.
+              <label className="inline-flex shrink-0 cursor-pointer">
+                <Switch
+                  checked={feature.enabled}
+                  disabled={pendingKey === feature.key}
+                  onChange={(event) => toggle(feature, event.target.checked)}
+                  aria-label={`${feature.label} enabled for this project`}
+                  data-feature={feature.key}
+                />
+              </label>
             ) : (
               <Badge color={feature.enabled ? "green" : "gray"} dot>
                 {feature.enabled ? "On" : "Off"}
