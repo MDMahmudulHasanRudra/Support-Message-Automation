@@ -11,13 +11,6 @@ export const DRIVE_ACTIVITY_SCOPE = "https://www.googleapis.com/auth/drive.activ
 
 export type FetchImpl = typeof fetch;
 
-/** The server's OAuth client, from the environment — the same one the dashboard uses. Null = not set up. */
-export function googleClientConfig(): { clientId: string; clientSecret: string } | null {
-  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
-  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
-}
-
 export class GoogleApiError extends Error {
   constructor(
     message: string,

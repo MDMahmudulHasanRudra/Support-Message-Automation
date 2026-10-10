@@ -138,7 +138,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
   "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
-  "SupportAssignmentSettings", "GoogleSheetsSettings",
+  "SupportAssignmentSettings", "GoogleSheetsSettings", "GoogleIntegrationConfig",
   // descendants
   "Message", "OutboundMessage", "WhatsAppGroup", "AutomationExecution", "Notification", "WorkerCommand",
   "ProcessingCheckpoint", "MessageDropCounter", "GroupBroadcastJob", "GroupParticipantAddJob",
@@ -151,7 +151,7 @@ export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
   "AutomationSettings", "AiSettings", "GroupBroadcastSettings", "GroupParticipantAddSettings",
   "SupportEscalationSettings", "LearningSettings", "SupportActivitySettings", "ForgeSettings",
   "TeamManagementSettings", "CommunicationStyleProfile", "MediaStorageSettings", "MoodDetectionSettings",
-  "SupportAssignmentSettings", "GoogleSheetsSettings",
+  "SupportAssignmentSettings", "GoogleSheetsSettings", "GoogleIntegrationConfig",
 ]);
 
 /** `SystemLog.projectId` is optional: a project's operational events carry one, platform events do not. */

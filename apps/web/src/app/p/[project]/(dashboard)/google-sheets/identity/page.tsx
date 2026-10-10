@@ -1,7 +1,7 @@
 import { Alert, ButtonLink, Card, PageHeader, SectionHeader } from "@/components/ui";
 import { pageAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
-import { googleOAuthConfig } from "@/server/google/oauth";
+import { resolveProjectGoogleClient } from "@/server/google/clientConfig";
 import { listMyGoogleIdentities } from "@/server/google/identity";
 import { IdentityList } from "./IdentityList";
 
@@ -14,6 +14,9 @@ const ERRORS: Record<string, string> = {
   session: "You were signed in as somebody else when Google answered, so nothing was linked. Sign in as yourself and try again.",
   permission: "Linking a Google identity needs the “View Google Sheets” permission in this project.",
   not_configured: "Google sign-in is not set up on this server yet. A Google Sheets manager can see how under Settings → Google Sheets.",
+  disabled: "The Google integration is switched off for this project. A Google Sheets manager can switch it on under Settings → Google Sheets.",
+  invalid_client: "Google rejected this project's OAuth client. A Google Sheets manager updates it under Settings → Google Sheets.",
+  client_changed: "This project's OAuth client changed while you were on Google's screen. Press Link my Google account again.",
   google_refused: "Google refused the sign-in. Try again in a minute.",
   linked_elsewhere: "That Google account is already linked to another login. Ask that person to unlink it from their own page first.",
   failed: "Linking could not be completed because of a server error. Try again; if it keeps failing, tell an administrator.",
@@ -32,7 +35,7 @@ export default async function MyGoogleIdentityPage({ searchParams }: { searchPar
     searchParams,
     prisma.internalTeamMember.findFirst({ where: { userId: session.userId }, select: { name: true } }),
   ]);
-  const configured = googleOAuthConfig() !== null;
+  const configured = (await resolveProjectGoogleClient()).ok;
 
   return (
     <div className="max-w-3xl">

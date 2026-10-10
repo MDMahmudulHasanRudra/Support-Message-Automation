@@ -7,7 +7,8 @@ import { logSystemEvent } from "@/server/logSystemEvent";
 import { completeGoogleConnection, GoogleConnectionError } from "@/server/google/accounts";
 import { syncAccountSpreadsheets } from "@/server/google/spreadsheets";
 import { completeIdentityLink, GoogleIdentityError } from "@/server/google/identity";
-import { googleOAuthConfig, openOAuthState, publicOrigin, STATE_COOKIE, stateCookieOptions } from "@/server/google/oauth";
+import { openOAuthState, publicOrigin, STATE_COOKIE, stateCookieOptions } from "@/server/google/oauth";
+import { resolveProjectGoogleClient } from "@/server/google/clientConfig";
 
 /**
  * Where Google sends the browser back after consent (GOOGLE_SHEETS.md, Phase 1). ONE fixed address
@@ -30,6 +31,7 @@ import { googleOAuthConfig, openOAuthState, publicOrigin, STATE_COOKIE, stateCoo
 export const dynamic = "force-dynamic";
 
 const SETTINGS_PATH = "/settings/google-sheets";
+const CLIENT_REFUSAL_CODE = { DISABLED: "disabled", NOT_CONFIGURED: "not_configured", INVALID: "invalid_client" } as const;
 const IDENTITY_PATH = "/google-sheets/identity";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -58,10 +60,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const project = await enterableProject(session.userId, state.projectSlug);
   if (!project) return finish(null, "google_error=permission");
 
-  const config = googleOAuthConfig();
-  if (!config) return finish(project.slug, "google_error=not_configured");
   const code = params.get("code");
   if (!code) return finish(project.slug, "google_error=denied");
+  // The code is redeemed with THIS project's client, read inside the project — and only if it is the
+  // client the consent screen was opened with (a change meanwhile makes the code unusable).
+  const client = await runWithProject(project, () => resolveProjectGoogleClient());
+  if (!client.ok) return finish(project.slug, `google_error=${CLIENT_REFUSAL_CODE[client.reason]}`);
+  if (state.clientId && state.clientId !== client.config.clientId) return finish(project.slug, "google_error=client_changed");
+  const config = client.config;
 
   if (state.purpose === "IDENTITY") {
     return runWithProject(project, async () => {

@@ -378,3 +378,49 @@ export async function batchUpdateSpreadsheet(accessToken: string, fileId: string
   });
   if (!response.ok) throw await readError(response);
 }
+
+// ── Checking a project's OAuth client (§22) ──────────────────────────────────────────────────────────
+
+export type ClientCheck = { result: "VALID" } | { result: "INVALID"; message: string } | { result: "UNREACHABLE"; message: string };
+
+/**
+ * Ask Google whether a client ID + secret pair is real, WITHOUT a person signing in: redeem a code
+ * that cannot exist. Google authenticates the client before it looks at the code, so
+ *   - `invalid_grant` means the client ID and secret were accepted (only the dummy code was refused);
+ *   - `invalid_client` / `unauthorized_client` means they were not;
+ *   - `redirect_uri_mismatch` means the client is real but this server's callback is not registered.
+ * Whether the redirect URI is registered is otherwise only known when somebody first presses Connect —
+ * Google shows that error on its own page. Nothing here is stored, and Google's text is never shown.
+ */
+export async function checkGoogleClient(clientId: string, clientSecret: string, redirectUri: string, fetchImpl: FetchImpl = fetch): Promise<ClientCheck> {
+  let response: Response;
+  try {
+    response = await fetchImpl(GOOGLE_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: "softify-assist-credential-check",
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+  } catch {
+    return { result: "UNREACHABLE", message: "Google could not be reached to check these credentials. They were saved; press Validate again later." };
+  }
+  let code = "";
+  try {
+    code = String(((await response.json()) as { error?: unknown }).error ?? "");
+  } catch {
+    /* not JSON */
+  }
+  if (code === "invalid_grant") return { result: "VALID" };
+  if (code === "invalid_client" || code === "unauthorized_client") {
+    return { result: "INVALID", message: "Google did not accept this client ID and secret. Copy both again from Google Cloud → Google Auth Platform → Clients." };
+  }
+  if (code === "redirect_uri_mismatch") {
+    return { result: "INVALID", message: `Google accepted the client, but this server's redirect URI is not registered on it. Add ${redirectUri} under Authorized redirect URIs.` };
+  }
+  return { result: "UNREACHABLE", message: `Google answered unexpectedly (${response.status}) when checking these credentials. They were saved; press Validate again later.` };
+}

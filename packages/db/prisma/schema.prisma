@@ -593,6 +593,7 @@ model Project {
   googleSheetWorkSessions              GoogleSheetWorkSession[]
   googleSheetWorkSessionEvents         GoogleSheetWorkSessionEvent[]
   googleSheetsSettings                 GoogleSheetsSettings?
+  googleIntegrationConfig              GoogleIntegrationConfig?
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
   groupParticipantAddJobRows           GroupParticipantAddJob[]
@@ -5147,6 +5148,9 @@ model GoogleIntegrationAccount {
   /// Set when the two ids DIFFERED. Then nothing external is credited in the project until somebody
   /// investigates: crediting the wrong person is worse than crediting nobody.
   activityIdentityMismatchAt DateTime?
+  /// The OAuth client that issued this account's tokens (a refresh token works only with it). Null =
+  /// connected before this was recorded, through the server's environment client.
+  oauthClientId              String?
   activities                 GoogleSheetActivity[]
 
   @@unique([projectId, googleSubject])
@@ -5472,6 +5476,41 @@ model GoogleSheetWorkSessionEvent {
 
   @@index([projectId, sessionId, at])
   @@index([projectId, at])
+}
+
+/// Whether a project's own Google OAuth client was accepted by Google when it was last checked.
+enum GoogleOAuthClientStatus {
+  /// Saved, but Google could not be reached to check it.
+  UNVALIDATED
+  /// Google accepted the client ID and secret.
+  VALID
+  /// Google rejected them: nothing uses this client until it is updated.
+  INVALID
+}
+
+/// The project's own Google integration (GOOGLE_SHEETS.md §22): its OAuth client and whether the
+/// integration is on. One row per project; absent = on, using the server's environment client if any.
+///
+/// The client SECRET is stored only as an `encryptSecret` envelope and is never selected into anything a
+/// browser receives. The client ID is not a secret (it appears in every consent URL). Switching the
+/// integration off keeps everything — credentials, accounts, tokens — so switching it on resumes.
+model GoogleIntegrationConfig {
+  id                           String                  @id @default("global")
+  projectId                    String                  @unique @default(dbgenerated("project_id_required()"))
+  project                      Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  enabled                      Boolean                 @default(true)
+  clientId                     String?
+  clientSecretCiphertext       String?
+  validationStatus             GoogleOAuthClientStatus @default(UNVALIDATED)
+  validatedAt                  DateTime?
+  /// The last validation problem, worded for the page (never Google's raw text, never a secret).
+  validationError              String?
+  credentialsUpdatedAt         DateTime?
+  credentialsUpdatedByUsername String?
+  enabledChangedAt             DateTime?
+  enabledChangedByUsername     String?
+  createdAt                    DateTime                @default(now())
+  updatedAt                    DateTime                @updatedAt
 }
 
 /// The project's Google Sheets settings (one row per project; absent = the defaults).

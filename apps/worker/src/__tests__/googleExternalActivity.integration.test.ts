@@ -34,11 +34,13 @@ const google = {
   refreshFailure: null as string | null,
   activityStatus: 200,
   validTokens: new Set<string>(),
+  tokenBodies: [] as Array<Record<string, string>>,
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(String(input instanceof Request ? input.url : input));
   if (url.href === "https://oauth2.googleapis.com/token") {
+    google.tokenBodies.push(Object.fromEntries(new URLSearchParams(String(init?.body))));
     if (google.refreshFailure) return json({ error: google.refreshFailure }, 400);
     const token = `fresh-${randomUUID()}`;
     google.validTokens.add(token);
@@ -142,12 +144,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  const sheetIds = [sheet, sheetNoScope, sheetUnmonitored, bizSheet].filter(Boolean);
+  const sheetIds = (await rawPrisma.googleSpreadsheet.findMany({ where: { googleFileId: { startsWith: tag } }, select: { id: true } })).map((r) => r.id);
   await rawPrisma.googleSheetActivity.deleteMany({ where: { spreadsheetId: { in: sheetIds } } });
   await rawPrisma.googleSpreadsheetMember.deleteMany({ where: { spreadsheetId: { in: sheetIds } } });
   await rawPrisma.googleSpreadsheet.deleteMany({ where: { id: { in: sheetIds } } });
   await rawPrisma.googleIntegrationAccount.deleteMany({ where: { googleSubject: { endsWith: tag } } });
   await rawPrisma.googleSheetsSettings.deleteMany({ where: { projectId: { in: [ORIGINAL_PROJECT_ID, ids.bizId] } } });
+  await rawPrisma.googleIntegrationConfig.deleteMany({ where: { projectId: { in: [ORIGINAL_PROJECT_ID, ids.bizId] } } });
   await rawPrisma.userGoogleIdentity.deleteMany({ where: { userId: { in: ids.users } } });
   await rawPrisma.internalTeamMember.deleteMany({ where: { id: borhanTeam } });
   await rawPrisma.projectFeature.deleteMany({ where: { key: "GOOGLE_SHEETS", projectId: { in: [ORIGINAL_PROJECT_ID, ids.bizId] } } });
@@ -269,5 +272,49 @@ describe("3. when Google refuses", () => {
     await read(bizSheet, minutes(300), ids.bizId);
     google.activityStatus = 200;
     expect((await rawPrisma.googleSpreadsheet.findUnique({ where: { id: bizSheet } }))!.externalActivityError).toMatch(/Drive Activity API/);
+  });
+});
+
+describe("4. each project's own OAuth client, and its on/off switch (§22)", () => {
+  const PROJECT_CLIENT = { id: `555-own${tag}.apps.googleusercontent.com`, secret: `GOCSPX-own-${tag}` };
+  let ownSheet = "";
+  let ownAccount = "";
+
+  beforeAll(async () => {
+    await rawPrisma.googleIntegrationConfig.upsert({
+      where: { projectId: ORIGINAL_PROJECT_ID },
+      create: { id: "global", projectId: ORIGINAL_PROJECT_ID, clientId: PROJECT_CLIENT.id, clientSecretCiphertext: encryptSecret(PROJECT_CLIENT.secret), validationStatus: "VALID" },
+      update: { clientId: PROJECT_CLIENT.id, clientSecretCiphertext: encryptSecret(PROJECT_CLIENT.secret), validationStatus: "VALID", enabled: true },
+    });
+    ownAccount = await account(ORIGINAL_PROJECT_ID, `subOwn-${tag}`, [ACTIVITY_SCOPE]);
+    await rawPrisma.googleIntegrationAccount.update({ where: { id: ownAccount }, data: { oauthClientId: PROJECT_CLIENT.id, accessTokenExpiresAt: new Date(0) } });
+    ownSheet = await monitoredSheet(ORIGINAL_PROJECT_ID, "own-client", ownAccount);
+  });
+
+  it("the worker refreshes with the PROJECT's client, not the server's", async () => {
+    google.tokenBodies.length = 0;
+    google.queries.length = 0;
+    await runGoogleExternalActivityTick(minutes(500), fakeFetch);
+    expect(google.queries.map((q) => q.fileId)).toContain(`${tag}-own-client`);
+    expect(google.tokenBodies.find((b) => b.refresh_token === `refresh-subOwn-${tag}`)).toMatchObject({ client_id: PROJECT_CLIENT.id, client_secret: PROJECT_CLIENT.secret });
+  });
+
+  it("switched off: nothing of this project is read, and nothing is deleted", async () => {
+    await rawPrisma.googleIntegrationConfig.update({ where: { projectId: ORIGINAL_PROJECT_ID }, data: { enabled: false } });
+    await rawPrisma.googleSpreadsheet.update({ where: { id: ownSheet }, data: { externalActivityCheckedAt: null } });
+    google.queries.length = 0;
+    await runGoogleExternalActivityTick(minutes(600), fakeFetch);
+    expect(google.queries.map((q) => q.fileId)).not.toContain(`${tag}-own-client`);
+    expect(await rawPrisma.googleIntegrationAccount.findUnique({ where: { id: ownAccount } })).toMatchObject({ status: "CONNECTED" });
+    await rawPrisma.googleIntegrationConfig.update({ where: { projectId: ORIGINAL_PROJECT_ID }, data: { enabled: true } });
+  });
+
+  it("an account another client issued is sent to reconnect, never refreshed with this one", async () => {
+    await rawPrisma.googleIntegrationAccount.update({ where: { id: ownAccount }, data: { oauthClientId: "111-somebody-else.apps.googleusercontent.com", accessTokenExpiresAt: new Date(0) } });
+    await rawPrisma.googleSpreadsheet.update({ where: { id: ownSheet }, data: { externalActivityCheckedAt: null } });
+    google.tokenBodies.length = 0;
+    await runGoogleExternalActivityTick(minutes(700), fakeFetch);
+    expect(google.tokenBodies.filter((b) => b.refresh_token === `refresh-subOwn-${tag}`)).toEqual([]);
+    expect(await rawPrisma.googleIntegrationAccount.findUnique({ where: { id: ownAccount } })).toMatchObject({ status: "NEEDS_RECONNECT", refreshTokenCiphertext: null });
   });
 });

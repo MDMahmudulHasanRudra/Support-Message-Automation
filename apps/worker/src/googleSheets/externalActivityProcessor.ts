@@ -1,11 +1,11 @@
 import { decryptSecret, encryptSecret } from "@support-automation/db";
-import { actionKind, roleAt } from "@support-automation/shared";
+import { actionKind, CLIENT_CHANGED_MESSAGE, decideGoogleClient, roleAt, tokensIssuedTo } from "@support-automation/shared";
 import { platformPrisma, prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
-import { DRIVE_ACTIVITY_SCOPE, GoogleApiError, googleClientConfig, MAX_ACTIVITY_PAGES, queryDriveActivity, refreshAccessToken, type FetchImpl } from "./api.js";
+import { DRIVE_ACTIVITY_SCOPE, GoogleApiError, MAX_ACTIVITY_PAGES, queryDriveActivity, refreshAccessToken, type FetchImpl } from "./api.js";
 import {
   bridgeEvidence,
   decideAttribution,
@@ -28,8 +28,9 @@ import {
  *
  * Idempotent: every row carries a deterministic `externalKey`, unique per project, and each read
  * overlaps the last by READ_OVERLAP_MS, so nothing is missed at the edge and nothing is doubled.
- * Off when the server has no OAuth client, when the project's feature is off, or when a manager
- * switched it off in the module's settings.
+ * Off for a project whose feature is off, whose Google integration is switched off or has no usable
+ * OAuth client (its own, or the server's environment fallback — `decideGoogleClient`, the same rule
+ * the dashboard applies), or whose manager switched external reading off in the module's settings.
  */
 
 const LOOP_NAME = "google-external-activity";
@@ -61,10 +62,10 @@ export function startGoogleExternalActivityProcessor(intervalMs = 60_000): NodeJ
 
 /** One pass over every operating project. Exported for tests. */
 export async function runGoogleExternalActivityTick(now: Date = new Date(), fetchImpl: FetchImpl = fetch): Promise<void> {
-  const config = googleClientConfig();
-  if (!config) return;
   await forEachProject(LOOP_NAME, async () => {
     if (!(await projectHasFeature("GOOGLE_SHEETS"))) return;
+    const config = await projectClient();
+    if (!config) return;
     const settings = await prisma.googleSheetsSettings.findUnique({ where: { id: "global" }, select: { externalActivityEnabled: true } });
     if (settings && !settings.externalActivityEnabled) return;
     const due = await prisma.googleSpreadsheet.findMany({
@@ -91,6 +92,23 @@ export async function runGoogleExternalActivityTick(now: Date = new Date(), fetc
   });
 }
 
+/** This project's OAuth client, or null when its integration is off or has no usable client. */
+async function projectClient(): Promise<{ clientId: string; clientSecret: string } | null> {
+  const row = await prisma.googleIntegrationConfig.findUnique({
+    where: { id: "global" },
+    select: { enabled: true, clientId: true, clientSecretCiphertext: true, validationStatus: true },
+  });
+  const decision = decideGoogleClient(row, { clientId: process.env.GOOGLE_OAUTH_CLIENT_ID, clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET });
+  if (!decision.ok) return null;
+  if (decision.source === "ENVIRONMENT") return { clientId: decision.clientId, clientSecret: decision.secret };
+  try {
+    return { clientId: decision.clientId, clientSecret: decryptSecret(decision.secretCiphertext) };
+  } catch {
+    console.error("[google-sheets] this project's OAuth client secret could not be decrypted; skipping");
+    return null;
+  }
+}
+
 type Sheet = { id: string; name: string; googleFileId: string; monitoredAt: Date | null; firstSeenAt: Date; externalActivityCheckedThrough: Date | null };
 type Context = { config: { clientId: string; clientSecret: string }; now: Date; fetchImpl: FetchImpl };
 
@@ -100,9 +118,17 @@ class AccountUnavailable extends Error {}
 async function accessToken(accountId: string, ctx: Context): Promise<string> {
   const row = await prisma.googleIntegrationAccount.findUnique({
     where: { id: accountId },
-    select: { id: true, email: true, status: true, refreshTokenCiphertext: true, accessTokenCiphertext: true, accessTokenExpiresAt: true },
+    select: { id: true, email: true, status: true, oauthClientId: true, refreshTokenCiphertext: true, accessTokenCiphertext: true, accessTokenExpiresAt: true },
   });
   if (!row || row.status !== "CONNECTED" || !row.refreshTokenCiphertext) throw new AccountUnavailable("The Google account needs to be connected again.");
+  // Tokens another OAuth client issued cannot be used with this one (the project changed its client).
+  if (!tokensIssuedTo(row, ctx.config.clientId, process.env.GOOGLE_OAUTH_CLIENT_ID)) {
+    await prisma.googleIntegrationAccount.update({
+      where: { id: row.id },
+      data: { status: "NEEDS_RECONNECT", refreshTokenCiphertext: null, accessTokenCiphertext: null, accessTokenExpiresAt: null, lastError: CLIENT_CHANGED_MESSAGE },
+    });
+    throw new AccountUnavailable(`${row.email} needs to be connected again.`);
+  }
   if (row.accessTokenCiphertext && row.accessTokenExpiresAt && row.accessTokenExpiresAt > ctx.now) return decryptSecret(row.accessTokenCiphertext);
   try {
     const tokens = await refreshAccessToken(ctx.config, decryptSecret(row.refreshTokenCiphertext), ctx.fetchImpl);

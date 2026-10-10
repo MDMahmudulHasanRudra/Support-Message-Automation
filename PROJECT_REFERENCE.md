@@ -1365,9 +1365,22 @@ disconnect).
     spreadsheets only it reached to "No longer reachable", and keeps the account's history;
     **Connect again** brings back the same account.
   - An account whose access Google stopped accepting shows **Needs reconnecting** with what to do.
-- **Set up Google sign-in** (shown until the server is configured): the four steps — enable the
-  Drive and Sheets APIs, the consent screen (Internal vs External / 7-day testing tokens), a Web
-  application client with the exact redirect URI to paste, and the two environment variables.
+- **Google OAuth client** (first card; changes need manage): this project's own client.
+  - Status: Ready — accepted by Google / Saved — not yet confirmed / Using the server's default client /
+    Rejected by Google / Not set up / Switched off, with the client ID, when Google accepted it, and who
+    saved or switched it and when.
+  - **Integration on/off** switch (switching off is confirmed): off stops everything that talks to Google
+    for this project — connecting, refreshing, opening and saving spreadsheets, Google's sharing list, and
+    reading changes made in Google — and deletes, disconnects and revokes nothing; on resumes as before.
+  - The **redirect URI** to register, with Copy.
+  - **Add / Update credentials**: Client ID and Client secret (password field; when one is saved it says
+    so and may be left empty to keep it, for the same client ID). **Save and check with Google**: Google
+    is asked whether the pair belongs together first — a rejected pair is not saved; if Google cannot be
+    reached it is saved as not yet confirmed. **Check again** re-asks. Changing the client ID sends every
+    account connected through the old client back to Needs reconnecting.
+  - **How to create the OAuth client in Google Cloud** (expandable): APIs to enable, Audience
+    (Internal / External, Testing's 7-day expiry, verification), Data access scopes, the Web application
+    client and its redirect URI — the app cannot create the client itself.
 - **What the app asks Google for**: name and email, the list of Drive files (to list spreadsheets
   without opening them), and seeing/editing spreadsheets — with the exact scopes.
 

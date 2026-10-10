@@ -1,4 +1,5 @@
 import { decryptSecret, encryptSecret } from "@support-automation/db";
+import { CLIENT_CHANGED_MESSAGE, tokensIssuedTo } from "@support-automation/shared";
 import { platformPrisma, prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
 import {
@@ -132,6 +133,8 @@ export async function completeGoogleConnection(input: {
     lastError: null,
     connectedById: input.userId,
     connectedAt: now,
+    // The client that issued these tokens: only it can refresh them.
+    oauthClientId: input.config.clientId,
     disconnectedAt: null,
     disconnectedByUsername: null,
     ...secrets,
@@ -157,11 +160,19 @@ export async function getAccessToken(
 ): Promise<string> {
   const row = await prisma.googleIntegrationAccount.findUnique({
     where: { id: accountId },
-    select: { id: true, email: true, status: true, refreshTokenCiphertext: true, accessTokenCiphertext: true, accessTokenExpiresAt: true },
+    select: { id: true, email: true, status: true, oauthClientId: true, refreshTokenCiphertext: true, accessTokenCiphertext: true, accessTokenExpiresAt: true },
   });
   if (!row) throw new GoogleAccountUnavailableError("That Google account is not connected to this project.");
   if (row.status !== "CONNECTED" || !row.refreshTokenCiphertext) {
     throw new GoogleAccountUnavailableError(`${row.email} needs to be connected again before it can be used.`);
+  }
+  // Tokens another OAuth client issued cannot be used with this one (the project changed its client).
+  if (!tokensIssuedTo(row, options.config.clientId, process.env.GOOGLE_OAUTH_CLIENT_ID)) {
+    await prisma.googleIntegrationAccount.update({
+      where: { id: row.id },
+      data: { status: "NEEDS_RECONNECT", refreshTokenCiphertext: null, accessTokenCiphertext: null, accessTokenExpiresAt: null, lastError: CLIENT_CHANGED_MESSAGE },
+    });
+    throw new GoogleAccountUnavailableError(`${row.email} needs to be connected again: this project's Google OAuth client changed.`);
   }
   const now = options.now ?? new Date();
   if (!options.forceRefresh && row.accessTokenCiphertext && row.accessTokenExpiresAt && row.accessTokenExpiresAt > now) {

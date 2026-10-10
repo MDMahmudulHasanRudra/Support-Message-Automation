@@ -2,7 +2,8 @@
 
 import { isClientKey } from "@/server/google/sessions";
 import { checkPermission } from "@/server/authorize";
-import { googleOAuthConfig, type GoogleOAuthConfig } from "@/server/google/oauth";
+import type { GoogleOAuthConfig } from "@/server/google/oauth";
+import { resolveProjectGoogleClient } from "@/server/google/clientConfig";
 import { sheetEditorAccess, type SheetEditorAccess } from "@/server/google/editorAccess";
 import {
   changeSheetDimension,
@@ -35,8 +36,9 @@ async function asking(spreadsheetId: string, need: "open" | "edit"): Promise<{ s
   if (!access) return { error: "That spreadsheet is not in this project." };
   if (!access.canOpen) return { error: access.openRefusal ?? "You cannot open this spreadsheet." };
   if (need === "edit" && !access.canEdit) return { error: access.editRefusal ?? "You cannot change this spreadsheet." };
-  const config = googleOAuthConfig();
-  if (!config) return { error: "Google sign-in is not set up on this server yet, so spreadsheets cannot be opened." };
+  const client = await resolveProjectGoogleClient();
+  if (!client.ok) return { error: client.message };
+  const config = client.config;
   return { session: viewer.session, access, config };
 }
 

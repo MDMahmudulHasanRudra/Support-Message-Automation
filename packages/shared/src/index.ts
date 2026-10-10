@@ -42,3 +42,4 @@ export * from "./googleSheetEditor.js";
 export * from "./googleSheetActivity.js";
 export * from "./googleSheetTime.js";
 export * from "./googleSheetReports.js";
+export * from "./googleOAuthClient.js";

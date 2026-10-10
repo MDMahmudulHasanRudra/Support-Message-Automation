@@ -15,7 +15,7 @@ import {
   type MemberActorInput,
 } from "@/server/google/members";
 import { readGoogleSharing, type GoogleSharing } from "@/server/google/sharing";
-import { googleOAuthConfig } from "@/server/google/oauth";
+import { resolveProjectGoogleClient } from "@/server/google/clientConfig";
 
 /**
  * Sheet members (GOOGLE_SHEETS.md §5, Phase 5). Every action is a public endpoint, so each decides
@@ -129,8 +129,9 @@ export async function readGoogleSharingAction(spreadsheetId: string): Promise<{ 
   if (!(await canStaffSheet(spreadsheetId, asking.actor))) {
     return { error: "Google's sharing list is shown to the people who manage this spreadsheet's members." };
   }
-  const config = googleOAuthConfig();
-  if (!config) return { error: "Google sign-in is not set up on this server yet." };
+  const client = await resolveProjectGoogleClient();
+  if (!client.ok) return { error: client.message };
+  const config = client.config;
   try {
     const sharing = await readGoogleSharing(spreadsheetId, { config });
     if (!sharing) return { error: "That spreadsheet is not in this project." };

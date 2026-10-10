@@ -21,7 +21,7 @@ import {
 import { formatDate, formatDateTime } from "@/lib/date";
 import { pageAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
-import { googleOAuthConfig } from "@/server/google/oauth";
+import { resolveProjectGoogleClient } from "@/server/google/clientConfig";
 import { isSpreadsheetView, listSpreadsheets, type SpreadsheetRow, type SpreadsheetView } from "@/server/google/spreadsheets";
 import { AccountFilter } from "../groups/AccountFilter";
 import { MonitorButton } from "./MonitorButton";
@@ -69,7 +69,7 @@ export default async function SpreadsheetsPage({ searchParams }: { searchParams:
   const accountId = accounts.some((a) => a.id === params.accountId) ? (params.accountId as string) : null;
   const { rows, total, counts } = await listSpreadsheets({ search, accountId, view, page, pageSize });
   const connected = accounts.filter((a) => a.status === "CONNECTED");
-  const configured = googleOAuthConfig() !== null;
+  const configured = (await resolveProjectGoogleClient()).ok;
 
   const href = (next: Partial<{ search: string; accountId: string; view: SpreadsheetView; page: number; pageSize: number }>) => {
     const merged = { search, accountId: accountId ?? "", view, page: 1, pageSize, ...next };

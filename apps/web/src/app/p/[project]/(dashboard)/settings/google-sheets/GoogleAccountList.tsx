@@ -60,7 +60,7 @@ export function GoogleAccountList({
           <p className="max-w-md text-[13px] text-[color:var(--color-muted-foreground)]">
             {configured
               ? "Connect the Google account your team's spreadsheets are in. You can connect several."
-              : "Once Google sign-in is set up on the server, connect the Google account your team's spreadsheets are in."}
+              : "Once this project's Google OAuth client is saved (above) and the integration is on, connect the Google account your team's spreadsheets are in."}
           </p>
         </div>
       </Card>

@@ -6,7 +6,7 @@ import { prisma } from "@/server/db";
 import { projectPath } from "@/server/projectPaths";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { disconnectGoogleAccount, GoogleAccountUnavailableError } from "@/server/google/accounts";
-import { googleOAuthConfig } from "@/server/google/oauth";
+import { resolveProjectGoogleClient } from "@/server/google/clientConfig";
 import { markAccountSpreadsheetsUnreachable, setSpreadsheetMonitoring, syncAccountSpreadsheets, type SpreadsheetSyncResult } from "@/server/google/spreadsheets";
 
 /**
@@ -26,7 +26,6 @@ async function revalidateModule() {
   revalidatePath(await projectPath("/google-sheets"));
 }
 
-const NOT_CONFIGURED = "Google sign-in is not set up on this server yet (see Settings → Google Sheets → Google Accounts).";
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
@@ -60,8 +59,9 @@ export async function disconnectGoogleAccountAction(accountId: string): Promise<
 export async function refreshGoogleSpreadsheetsAction(accountId: string): Promise<GoogleAccountActionResult> {
   const access = await checkPermission("google_sheets.manage", "GOOGLE_SHEETS");
   if ("denied" in access) return { error: access.denied };
-  const config = googleOAuthConfig();
-  if (!config) return { error: NOT_CONFIGURED };
+  const client = await resolveProjectGoogleClient();
+  if (!client.ok) return { error: client.message };
+  const config = client.config;
   try {
     const result = await syncAccountSpreadsheets(accountId, { config });
     await revalidateModule();
@@ -80,8 +80,9 @@ export async function refreshGoogleSpreadsheetsAction(accountId: string): Promis
 export async function refreshAllGoogleSpreadsheetsAction(): Promise<GoogleAccountActionResult> {
   const access = await checkPermission("google_sheets.manage", "GOOGLE_SHEETS");
   if ("denied" in access) return { error: access.denied };
-  const config = googleOAuthConfig();
-  if (!config) return { error: NOT_CONFIGURED };
+  const client = await resolveProjectGoogleClient();
+  if (!client.ok) return { error: client.message };
+  const config = client.config;
   const accounts = await prisma.googleIntegrationAccount.findMany({ where: { status: "CONNECTED" }, select: { id: true, email: true }, orderBy: { email: "asc" } });
   if (accounts.length === 0) return { error: "No Google account is connected. Connect one on Settings → Google Sheets → Google Accounts." };
 

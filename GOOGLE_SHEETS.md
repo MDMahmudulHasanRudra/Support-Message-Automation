@@ -1109,3 +1109,64 @@ the worker; the dashboard's `api.ts` remains the only Google client the web uses
    account; within about 15 minutes the bridge shows **Confirmed** in Settings and changes made in Google
    by linked people are credited to them.
 6. **Work Reports** shows the time and counts; export them.
+
+---
+
+## 22. Each project's own OAuth client, and switching the integration on and off
+
+Until now one OAuth client served the whole installation, from the server's environment. Each project
+now saves its own under **Settings → Google Sheets → Google OAuth client**, and can switch the integration
+off and on — no `.env` edit, no restart.
+
+### What changed
+
+| Area | Files |
+|---|---|
+| Rule | `packages/shared/src/googleOAuthClient.ts`: `decideGoogleClient` (which client, or why none), `tokensIssuedTo` — read by both apps |
+| Database | `GoogleIntegrationConfig` (per-project singleton: `enabled`, `clientId`, `clientSecretCiphertext`, `validationStatus`, who/when) and `GoogleIntegrationAccount.oauthClientId`; migration `20261011091500_google_project_oauth_client` (additive) |
+| Server | `server/google/clientConfig.ts` (`resolveProjectGoogleClient`, save / check again / on-off, the page's view); `api.ts` `checkGoogleClient` |
+| Callers | The connect and identity routes, the callback, and every action that reaches Google now take the PROJECT's client; the worker resolves it per project |
+| Page | `settings/google-sheets/GoogleClientPanel.tsx`: status, on/off, save / update credentials, check again, the redirect URI to copy, the Google Cloud guide |
+
+### Rules worth not undoing
+
+- **Which client:** switched off → none; the project's own (unless Google rejected it) → that; otherwise
+  the server's environment client, kept ONLY as a fallback so an installation set up before this keeps
+  working unchanged; otherwise not configured. A rejected client never silently falls back.
+- **The secret** is an `encryptSecret` envelope (the server's `AI_CREDENTIALS_ENCRYPTION_KEY`, rotatable
+  key id), read only in `clientConfig.ts`, never sent to a page (the page learns only that one is saved),
+  never logged, never in a URL. A blank secret keeps the saved one — only for the same client ID.
+- **Checked before saving:** Google's token endpoint is asked to redeem an impossible code with the pair;
+  `invalid_grant` means the pair is real, `invalid_client` means it is not (NOT saved — a working client is
+  never replaced by a broken one), `redirect_uri_mismatch` means the callback is not registered. Google
+  unreachable → saved as "not yet confirmed", usable, with **Check again**. Whether the redirect URI is
+  registered may otherwise only show on Google's own page at the first Connect.
+- **A refresh token works only with the client that issued it**, so each account records its issuer
+  (`oauthClientId`; null = the environment client). Changing the client ID sends every account another
+  client issued back to **Needs reconnecting**, its tokens wiped (and revoked unless another project
+  still uses that grant). A sign-in started with one client cannot finish with another (`clientId` is
+  sealed in the state; `client_changed`).
+- **Off stops everything that talks to Google** for that project — connecting, refreshing, opening and
+  saving spreadsheets, the sharing list, the worker's reading — and deletes, disconnects and revokes
+  nothing. On resumes with the saved client and accounts. Disconnecting an account still works while off.
+- **Isolation:** the row is read through the project-scoped client inside the project of the request
+  (in the callback, the project sealed in the state), and in the worker inside `forEachProject`.
+
+### Deploying
+
+1. Apply the migration (`migrate` service). It only adds; a project without a row behaves exactly as
+   before (the environment client if the server has one).
+2. Rebuild and recreate `app` and `worker`.
+3. Per project: Settings → Google Sheets → paste the client ID and secret → **Save and check with Google**.
+   The `.env` variables can then be removed, once no project relies on the fallback (a project relying
+   on it shows "Using the server's default client").
+
+**Rollback:** redeploy the previous images. The new table and column are ignored by older code; the
+environment client is used again (keep it in `.env` until the rollback window has passed). Accounts
+connected with a project's own client would then need reconnecting through the environment client.
+
+### Tests
+
+`apps/web/src/__tests__/googleProjectClient.integration.test.ts` (15), `packages/shared`
+`googleOAuthClient.test.ts` (6), and section 4 of the worker's `googleExternalActivity.integration.test.ts`
+(3). Thirteen guards were removed in turn and their tests failed every time (13 of 13).

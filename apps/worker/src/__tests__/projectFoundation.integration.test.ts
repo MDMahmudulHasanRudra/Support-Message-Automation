@@ -85,8 +85,8 @@ describe("the constraints later phases depend on", () => {
     // + GoogleSpreadsheet and GoogleSpreadsheetAccess (Google Sheets, Phase 2),
     // + GoogleSpreadsheetMember (Google Sheets, Phase 5),
     // + GoogleSheetActivity (Phase 6), GoogleSheetWorkSession, GoogleSheetWorkSessionEvent and
-    //   GoogleSheetsSettings (Phase 7).
-    expect(refusing).toHaveLength(94);
+    //   GoogleSheetsSettings (Phase 7), + GoogleIntegrationConfig (the project's own OAuth client).
+    expect(refusing).toHaveLength(95);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -108,11 +108,11 @@ describe("the constraints later phases depend on", () => {
       SELECT conrelid::regclass::text AS table, convalidated AS validated
       FROM pg_constraint
       WHERE contype = 'f' AND confrelid = '"Project"'::regclass AND conname LIKE '%\\_projectId\\_fkey'`;
-    // 94 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
+    // 95 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
     // & Media Storage tables + SupportResponseEpisode + CollectionGap + WhatsAppOperationDismissal
     // + the four Mood Detection tables + the three Support Assignment tables + PersonalChatReview
-    // + the eight Google Sheets tables) + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(97);
+    // + the nine Google Sheets tables) + SystemLog + ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(98);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

@@ -5,7 +5,9 @@ import { getGoogleSheetsSettings } from "@/server/google/settings";
 import { GoogleSheetsSettingsForm } from "./GoogleSheetsSettingsForm";
 import { listGoogleAccounts } from "@/server/google/accounts";
 import { SPREADSHEET_LIST_CAP } from "@/server/google/api";
-import { expectedRedirectUri, GOOGLE_SCOPES, googleOAuthConfig } from "@/server/google/oauth";
+import { GOOGLE_SCOPES } from "@/server/google/oauth";
+import { getGoogleIntegrationView } from "@/server/google/clientConfig";
+import { GoogleClientPanel } from "./GoogleClientPanel";
 import { GoogleAccountList } from "./GoogleAccountList";
 
 export const metadata = { title: "Google Accounts" };
@@ -17,7 +19,10 @@ const ERRORS: Record<string, string> = {
   denied: "Google access was not granted. Nothing was connected.",
   session: "You were signed in as somebody else when Google answered, so nothing was connected. Sign in as yourself and try again.",
   permission: "Connecting Google accounts needs the “Manage Google Sheets Accounts & Assignments” permission in this project.",
-  not_configured: "Google sign-in is not set up on this server yet. Follow the steps below.",
+  not_configured: "Google sign-in is not set up for this project yet. Add the OAuth client below.",
+  disabled: "The Google integration is switched off for this project. Switch it on below to connect accounts.",
+  invalid_client: "Google rejected this project's OAuth client ID or secret. Update them below.",
+  client_changed: "This project's OAuth client changed while you were on Google's screen. Press Connect again.",
   missing_scopes: "Google did not grant access to see and edit spreadsheets. Connect again and leave every permission ticked on Google's screen.",
   no_refresh_token: "Google did not grant offline access. Remove this app at myaccount.google.com/permissions, then connect again.",
   google_refused: "Google refused the connection. Press Connect Google Account again; if it keeps failing, check the OAuth client settings.",
@@ -31,16 +36,17 @@ const ERRORS: Record<string, string> = {
  */
 export default async function GoogleAccountsPage({ searchParams }: { searchParams: Promise<{ connected?: string; google_error?: string }> }) {
   const { canManage } = await pageAccess("google_sheets.view", "google_sheets.manage", "GOOGLE_SHEETS");
-  const [accounts, params, settings, bridgeRows] = await Promise.all([
+  const [accounts, params, settings, bridgeRows, integration] = await Promise.all([
     listGoogleAccounts(),
     searchParams,
     getGoogleSheetsSettings(),
     prisma.googleIntegrationAccount.findMany({ select: { email: true, activityIdentityVerifiedAt: true, activityIdentityMismatchAt: true } }),
+    getGoogleIntegrationView(),
   ]);
   const mismatch = bridgeRows.find((r) => r.activityIdentityMismatchAt);
   const verified = bridgeRows.find((r) => r.activityIdentityVerifiedAt);
-  const configured = googleOAuthConfig() !== null;
-  const redirectUri = expectedRedirectUri();
+  // Connecting needs this project's integration on, with a client Google has not rejected.
+  const configured = integration.source !== null;
 
   return (
     <div>
@@ -78,36 +84,21 @@ export default async function GoogleAccountsPage({ searchParams }: { searchParam
         </div>
       )}
 
-      {configured ? null : (
-        <Card className="mb-6">
-          <SectionHeader
-            title="Set up Google sign-in (once per server)"
-            description="The server needs its own Google OAuth client before any account can be connected. This is done once, by whoever manages the server."
-          />
-          <ol className="list-decimal space-y-2 pl-5 text-[13px] leading-relaxed text-[color:var(--color-foreground)]">
-            <li>
-              In Google Cloud Console, create (or choose) a project and enable the <strong>Google Drive API</strong>, the{" "}
-              <strong>Google Sheets API</strong> and the <strong>Drive Activity API</strong>.
-            </li>
-            <li>
-              Configure the OAuth consent screen. For accounts inside one Google Workspace organisation choose <strong>Internal</strong>.
-              An <strong>External</strong> app left in <em>Testing</em> only lets listed test users connect, and Google expires their
-              access after 7 days.
-            </li>
-            <li>
-              Create an OAuth client ID of type <strong>Web application</strong> with this authorised redirect URI:
-              <code className="mt-1 block w-fit max-w-full rounded-[var(--radius-sm)] bg-[var(--color-surface-sunken)] px-2 py-1 font-mono text-[12px] break-all">
-                {redirectUri ?? "(set NEXTAUTH_URL on the server first — the redirect URI is built from it)"}
-              </code>
-            </li>
-            <li>
-              Put the client ID and secret in the server&apos;s <code className="font-mono">.env</code> as{" "}
-              <code className="font-mono">GOOGLE_OAUTH_CLIENT_ID</code> and <code className="font-mono">GOOGLE_OAUTH_CLIENT_SECRET</code>, then restart the
-              app and the worker. The secret stays on the server; it is never sent to a browser.
-            </li>
-          </ol>
-        </Card>
-      )}
+      <Card className="mb-6">
+        <SectionHeader
+          title="Google OAuth client"
+          description="The Google Cloud OAuth client this project connects through. Each project has its own; the secret is stored encrypted and never shown again."
+        />
+        <GoogleClientPanel
+          canManage={canManage}
+          view={{
+            ...integration,
+            validatedAt: integration.validatedAt?.toISOString() ?? null,
+            credentialsUpdatedAt: integration.credentialsUpdatedAt?.toISOString() ?? null,
+            enabledChangedAt: integration.enabledChangedAt?.toISOString() ?? null,
+          }}
+        />
+      </Card>
 
       <GoogleAccountList accounts={accounts} canManage={canManage} configured={configured} countCap={SPREADSHEET_LIST_CAP} />
 

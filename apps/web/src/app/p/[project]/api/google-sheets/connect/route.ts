@@ -4,7 +4,6 @@ import { checkPermission } from "@/server/authorize";
 import { activeProjectSlug } from "@/server/projectContext";
 import {
   authorizationUrl,
-  googleOAuthConfig,
   newOAuthState,
   publicOrigin,
   sealOAuthState,
@@ -12,6 +11,7 @@ import {
   STATE_TTL_MS,
   stateCookieOptions,
 } from "@/server/google/oauth";
+import { resolveProjectGoogleClient } from "@/server/google/clientConfig";
 
 /**
  * "Connect Google Account" (GOOGLE_SHEETS.md, Phase 1). Starts Google's OAuth flow for THIS project:
@@ -33,10 +33,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const access = await checkPermission("google_sheets.manage", "GOOGLE_SHEETS");
   if ("denied" in access || !slug) return back("google_error=permission");
 
-  const config = googleOAuthConfig();
-  if (!config) return back("google_error=not_configured");
+  // This project's own client (or the server's fallback), and only while the integration is on.
+  const client = await resolveProjectGoogleClient();
+  if (!client.ok) return back(`google_error=${client.reason === "DISABLED" ? "disabled" : client.reason === "INVALID" ? "invalid_client" : "not_configured"}`);
+  const config = client.config;
 
-  const state = newOAuthState(slug, session.userId);
+  const state = newOAuthState(slug, session.userId, Date.now(), "CONNECT", config.clientId);
   const response = NextResponse.redirect(authorizationUrl(config, state), 303);
   response.cookies.set(STATE_COOKIE, sealOAuthState(state), stateCookieOptions(Math.floor(STATE_TTL_MS / 1000)));
   response.headers.set("Cache-Control", "no-store");

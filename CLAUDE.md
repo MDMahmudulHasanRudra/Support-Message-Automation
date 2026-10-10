@@ -2469,6 +2469,12 @@ any attribution work. Feature `GOOGLE_SHEETS`, **off by default in every project
   equals its `googleSubject`. A mismatch stops all crediting in that project. Google's record of the
   app's own save is an APPLICATION_ECHO, never counted twice. Counts only, never time. Plain `fetch`,
   no `googleapis` SDK, and no `packages/google-client` (two calls did not justify a new build step).
+- **Each project has its own OAuth client and on/off switch** (`GoogleIntegrationConfig`,
+  `server/google/clientConfig.ts`, `decideGoogleClient` in packages/shared, GOOGLE_SHEETS.md §22). Every
+  Google call resolves `resolveProjectGoogleClient()` inside its project (worker: per project); the env
+  client is only a fallback. The secret is encrypted and never leaves `clientConfig.ts`; a pair Google
+  rejects is not saved; tokens refresh only with the client that issued them (`oauthClientId`), so a
+  client change sends accounts back to reconnect. Off stops all Google calls and deletes nothing.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)
