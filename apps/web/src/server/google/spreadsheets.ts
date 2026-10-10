@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
-import { GoogleApiError, listDriveSpreadsheets, type DriveSpreadsheet, type FetchImpl } from "@/server/google/api";
+import { apiDisabledMessage, GoogleApiError, listDriveSpreadsheets, type DriveSpreadsheet, type FetchImpl } from "@/server/google/api";
 import { getAccessToken, GoogleAccountUnavailableError } from "@/server/google/accounts";
 import type { GoogleOAuthConfig } from "@/server/google/oauth";
 
@@ -115,7 +115,7 @@ export async function syncAccountSpreadsheets(
     if (err instanceof GoogleAccountUnavailableError) throw err;
     await prisma.googleIntegrationAccount.update({
       where: { id: accountId },
-      data: { lastError: `Could not read the spreadsheet list: ${(err as Error).message}` },
+      data: { lastError: err instanceof GoogleApiError && err.apiDisabled ? apiDisabledMessage("Google Drive API") : `Could not read the spreadsheet list: ${(err as Error).message}` },
     });
     throw err;
   }

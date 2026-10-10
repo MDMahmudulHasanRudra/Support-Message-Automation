@@ -60,6 +60,8 @@ interface FakeTab {
 const files = new Map<string, FakeTab[]>();
 const writes: Array<{ path: string; body: unknown }> = [];
 let validToken = "";
+/** When set, Google answers as it does for a Sheets API switched off in the Cloud project. */
+let sheetsApiDisabled = false;
 
 function parseA1(range: string) {
   const m = /^'((?:[^']|'')*)'!([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/.exec(range);
@@ -83,6 +85,19 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit): Pro
   const bearer = (init?.headers as Record<string, string> | undefined)?.Authorization?.replace("Bearer ", "") ?? "";
   if (url.hostname !== "sheets.googleapis.com") return json({ error: "unexpected" }, 404);
   if (bearer !== validToken) return json({ error: { code: 401, status: "UNAUTHENTICATED" } }, 401);
+  if (sheetsApiDisabled) {
+    return json(
+      {
+        error: {
+          code: 403,
+          status: "PERMISSION_DENIED",
+          message: "Google Sheets API has not been used in project 381028294433 before or it is disabled.",
+          errors: [{ reason: "accessNotConfigured" }],
+        },
+      },
+      403,
+    );
+  }
   const m = /^\/v4\/spreadsheets\/([^/:]+)(.*)$/.exec(url.pathname)!;
   const tabs = files.get(decodeURIComponent(m[1]!));
   if (!tabs) return json({ error: { code: 404, message: "Requested entity was not found." } }, 404);
@@ -315,6 +330,17 @@ describe("1. who opens a spreadsheet's contents (Phase 3)", () => {
     const monitor = ok(await open(people.cto)).data;
     expect(monitor.raw).toBeNull();
     expect(monitor.display[3]![1]).toBe("42");
+  });
+
+  it("an API switched off in Google Cloud is named as such — never blamed on the account or the sharing", async () => {
+    sheetsApiDisabled = true;
+    try {
+      const result = await open(people.rudra);
+      expect(result).toEqual({ error: expect.stringMatching(/Google Sheets API is not enabled/) });
+      expect((result as { error: string }).error).not.toMatch(/can no longer open/);
+    } finally {
+      sheetsApiDisabled = false;
+    }
   });
 
   it("another project's spreadsheet is not found, and a token never reaches the browser", async () => {

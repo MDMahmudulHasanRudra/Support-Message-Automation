@@ -33,6 +33,19 @@ export class GoogleApiError extends Error {
   get needsReconnect(): boolean {
     return this.code === "invalid_grant" || this.status === 401;
   }
+
+  /**
+   * The Google API itself is switched off in the OAuth client's Google Cloud project — not a problem
+   * with the account or the file. Google answers 403 with `accessNotConfigured` / `SERVICE_DISABLED`.
+   */
+  get apiDisabled(): boolean {
+    return this.status === 403 && /accessNotConfigured|SERVICE_DISABLED|has not been used in project|is disabled/i.test(`${this.code ?? ""} ${this.message}`);
+  }
+}
+
+/** Plain words for an API switched off in Google Cloud, naming the API to enable. */
+export function apiDisabledMessage(api: "Google Drive API" | "Google Sheets API"): string {
+  return `The ${api} is not enabled in the Google Cloud project of this project's OAuth client. Enable it (Google Cloud Console → APIs & Services → Library → ${api} → Enable), wait a few minutes, then try again.`;
 }
 
 async function readError(response: Response): Promise<GoogleApiError> {

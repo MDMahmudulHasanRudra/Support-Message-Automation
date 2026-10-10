@@ -29,6 +29,7 @@ import {
   batchUpdateSpreadsheet,
   batchUpdateValues,
   getSpreadsheetTabs,
+  apiDisabledMessage,
   GoogleApiError,
   type FetchImpl,
   type SheetTab,
@@ -105,6 +106,7 @@ function explain(err: unknown, email: string): SheetEditorError {
   if (err instanceof SheetEditorError) return err;
   if (err instanceof GoogleAccountUnavailableError) return new SheetEditorError(err.message);
   if (err instanceof GoogleApiError) {
+    if (err.apiDisabled) return new SheetEditorError(apiDisabledMessage("Google Sheets API"));
     if (err.status === 404) return new SheetEditorError("Google no longer has this spreadsheet for this account — it was deleted, or moved out of reach.");
     if (err.status === 403) return new SheetEditorError(`Google refused: ${email} can no longer open or change this spreadsheet. Check how it is shared in Google.`);
     if (err.status === 429) return new SheetEditorError("Google is limiting requests just now. Wait a minute and try again.");
