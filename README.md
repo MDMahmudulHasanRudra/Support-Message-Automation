@@ -23,7 +23,10 @@ module, field, and behavior in the app.
   - **Senders keep their WhatsApp domain** (`Message.senderJid`), so a private ID is never shown as a
     phone number.
   - **Reports count each WhatsApp message once.** Our own post seen by our second number no longer
-    becomes a customer message.
+    becomes a customer message, in reports or in the first-response figures.
+  - **The worker recognises our own numbers.** A message one of our numbers posts in a group another
+    of our numbers is also in is stored as the business's own message: no rules, AI, escalation or
+    customer wait.
   - **WhatsApp Chat** names senders by roster name, shows quoted replies, and has contact-info and
     group-info panels; an unrecognised sender can be linked to a team member.
   - **`pnpm db:reconcile:messages`** audits stored history and, with `--apply`, recovers each row's

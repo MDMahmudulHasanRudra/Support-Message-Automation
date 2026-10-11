@@ -10,6 +10,7 @@ import { loadTeamReport, parseTeamReportFilters } from "@/server/teamReport";
 import { loadLastActivity, loadRoster } from "@/server/reports/groupReports";
 import type { ReportContext } from "@/server/reports/context";
 import { getContactProfile, getGroupProfile } from "@/server/chatProfiles";
+import { getFirstResponseStats } from "@/server/supportActivityReports";
 
 /**
  * WHATSAPP_IDENTITY.md, against real rows: the Team Report counts each WhatsApp message once
@@ -136,6 +137,16 @@ beforeAll(async () => {
     at: t(9, 5),
     body: "we are checking",
   });
+  // 09:30 our number B also replies — on its own copy only.
+  await message({
+    groupRow: "B",
+    wamid: `true_${WGID}_K2B${tag}_444400000000002@lid`,
+    senderPhone: "444400000000002",
+    senderJid: "444400000000002@lid",
+    direction: "OUTGOING",
+    at: t(9, 30),
+    body: "any update?",
+  });
   // 10:00 the conflicted colleague writes.
   await message({
     groupRow: "A",
@@ -240,6 +251,15 @@ describe("who sent it", () => {
       "Team member (identity needs review)",
     );
     expect(roster.describeSender({ ...base, senderPhone: people.saraPhone, senderJid: `${people.saraPhone}@c.us` })).toBe(`Team member · Sara ${tag}`);
+  });
+});
+
+describe("first response time (Team Performance) counts one conversation once", () => {
+  it("measures the customer's wait once, from the first reply by any of our numbers", async () => {
+    // Per account copy, B's copy saw our A-reply as a customer line and measured the 09:00 wait to
+    // B's own 09:30 reply: two waits, 5 and 30 minutes. It is one wait, answered at 09:05.
+    const stats = await runWithProject(project, () => getFirstResponseStats({ start: t(8, 0), end: t(10, 0) }));
+    expect(stats).toMatchObject({ answered: 1, medianSeconds: 300, slowestSeconds: 300 });
   });
 });
 

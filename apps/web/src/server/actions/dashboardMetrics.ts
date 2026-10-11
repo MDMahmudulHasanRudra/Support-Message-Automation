@@ -1,6 +1,7 @@
 
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
+import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 
 /**
@@ -338,9 +339,13 @@ export async function getResponseTimeSeries(nowMs: number) {
   const windowStartMs = todayStartMs - (VOLUME_DAYS - 1) * DAY_MS;
 
   const rows = await prisma.$queryRaw<Array<{ bucket: Date; median: number | null }>>`
+    -- One row per WhatsApp message per WhatsApp GROUP (WHATSAPP_IDENTITY.md §5): each of our accounts
+    -- in a group stores its own copy, and partitioning by account copy measured one conversation
+    -- once per number, while our own post seen by our other number read as a customer starting a
+    -- wait. The sending account's copy is the one kept. System messages are nobody speaking.
     WITH ordered AS (
-      SELECT
-        m."groupId" AS group_id,
+      SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
+        g."whatsappGroupId" AS group_id,
         m."timestampWa" AS ts,
         (m."direction" = 'OUTGOING' OR m."isFromTeamMember" = true) AS is_reply
       FROM "Message" m
@@ -348,7 +353,9 @@ export async function getResponseTimeSeries(nowMs: number) {
       WHERE m."groupId" IS NOT NULL
         AND m."projectId" = ${await activeProjectId()}
         AND g."isMonitored" = true
+        AND m."direction" <> 'SYSTEM'
         AND m."timestampWa" >= ${new Date(windowStartMs)}
+      ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."id"
     ),
     marked AS (
       SELECT

@@ -872,6 +872,9 @@ write another identifier→member map. Rules worth not undoing:
   `preferSenderCopySql()`), never on `whatsappMessageId`. That id starts `true_` on the sending
   account and `false_` on our other accounts, so our own posts were counted again as customer
   messages.
+- **A message from another of OUR numbers is stored as OUTGOING** (`pipeline/ownAccounts.ts`) and
+  never automated. "Ours" is learned only from account phone numbers, GROUP outgoing rows and a
+  just-sent outbound with the same key, never from a one-to-one row's sender.
 - **History reconciliation** is `pnpm db:reconcile:messages`: a dry run by default; `--apply` only
   fills NULL `senderJid` from what each row proves.
 - **Identifier changes on Team Members are System Log entries.** WhatsApp Chat's contact panel links

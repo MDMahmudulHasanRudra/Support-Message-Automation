@@ -124,6 +124,27 @@ A display name is never evidence.
 **Response tracking.** `classifyResponseMessage` takes `unattributedRosterMember`. An unsettled
 colleague is `OTHER_TEAM`: they neither open a wait nor answer one.
 
+### Messages from our own numbers
+
+When account A posts in a group account B is also in, B receives it as INCOMING. The pipeline now
+recognises it (`apps/worker/src/pipeline/ownAccounts.ts`) and stores B's copy as the business's own
+message (`OUTGOING`): no rules, no AI, no escalation opened, no customer wait. It counts as a reply
+everywhere, exactly like A's own copy.
+
+The evidence, any one of which suffices:
+
+1. **The sender is one of the project's accounts' phone numbers.**
+2. **The sender id is one our accounts have sent from in a group.** In a group, an outgoing row's
+   sender is its author, which is our own id (usually a LID). One-to-one rows are never used as
+   evidence: their sender field comes from `from`, and a wrong "ours" would silently stop a
+   customer ever being answered. A test pins that a one-to-one outgoing row cannot turn a customer
+   into us.
+3. **One of our outbound rows in the chat, from the last 15 minutes, carries the same WhatsApp
+   key.** This covers the first message from a number whose own echo has not been stored yet.
+
+(1) and (2) are cached per project for five minutes. (2) also learns from every outgoing group
+message as it is stored.
+
 **Attribution is decided when a report is read, never stored.** A stored attribution would drift the
 moment the roster is corrected, so every report reinterprets history against today's roster, exactly
 as the Team Report always did. `Message.isFromTeamMember` stays what it always was: the pipeline's
@@ -165,6 +186,8 @@ the two together.
 **Reports deduplicate on it:**
 
 - Team Report (and every report built on it)
+- Overview's "how long customers wait" chart and Team Performance's first-response figures (also
+  one conversation per WhatsApp group, not per account copy, and system messages excluded)
 - Support Intelligence
 - Call Activity
 - Executive Health's previous-period counts
@@ -294,14 +317,11 @@ Every reader runs through the project-scoped client. Every raw query names `"pro
 - **Edited and deleted messages are not captured.** `onAnyMessage` only delivers new messages; an
   edit or a revoke changes an existing one. A deleted customer message keeps its original body here.
 - **Catch-up covers groups only.** Personal chats missed while the worker was down are not recovered.
-- **Our own number's messages in the live pipeline.** When account A posts in a group account B is
-  also in, B still processes A's message as incoming. Reports collapse it (§5), but the pipeline does
-  not yet recognise our own numbers. Recommended next: treat a sender equal to one of the project's
-  account ids as the business.
 - **`isFromTeamMember` is not backfilled.** It records what the pipeline decided at the time, and
   reports do not depend on it except as a fallback. The figures stand in `reconcile:messages`.
-- **Overview's response-time chart and Team Performance's first-response stats** still partition by
-  account copy and read the stamped flag (SQL in `dashboardMetrics.ts` / `supportActivityReports.ts`).
-  Moving them to the logical key changes figures on the landing page, so it is left for a decision.
+- **Overview's response-time chart and Team Performance's first-response figures still read the
+  stamped `isFromTeamMember`**, not the identity rule, to decide what is a reply. Their waits are
+  now counted once per WhatsApp group (§5), so the figures can drop where two of our numbers share
+  groups: that is the double count going away, not a change in the team's speed.
 - **An invalid WhatsApp timestamp still drops the message.** Storing receive time in its place would
   invent a send time.

@@ -12,6 +12,7 @@ import { getEventDelivery, resolveWhatsAppDestinations } from "../notifications/
 import { checkAutoReplySafety } from "./safety.js";
 import { getAutomationSettings } from "./settings.js";
 import { isActiveTeamMember } from "./teamFilter.js";
+import { isOwnAccountMessage, rememberOwnSender } from "./ownAccounts.js";
 import { toEngineRule } from "./ruleMapping.js";
 import type { RawIncomingMessage } from "./types.js";
 import { markHumanReplied, openOrContinueCase } from "../escalation/escalationQueue.js";
@@ -79,6 +80,16 @@ async function processIncomingMessageInProject(raw: RawIncomingMessage, aiClient
     // Outgoing (our own replies) and system messages must never re-enter
     // client automation — this is the primary loop-prevention guard.
     await storeNonAutomatedMessage(raw);
+    return;
+  }
+
+  // The same guard for a message ANOTHER of our numbers sent into a chat this one is in: it arrives
+  // as INCOMING, and treated as a customer's it could be answered by our own rules or AI — a loop
+  // between our numbers. Stored as the business's own message, which every reader already treats
+  // as a reply (inbox, escalation, reports); nothing automates it (ownAccounts.ts).
+  if (await isOwnAccountMessage(raw)) {
+    traceStage(traceId, "OWN_ACCOUNT_MESSAGE", { senderPhone: raw.senderPhone });
+    await storeNonAutomatedMessage({ ...raw, direction: "OUTGOING" });
     return;
   }
 
@@ -854,6 +865,9 @@ async function resolveGroupInProject(raw: RawIncomingMessage) {
 }
 
 async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> {
+  // Our number's own id in this group (usually its LID): proof that a message another of our
+  // accounts receives from it is the business's, not a customer's (ownAccounts.ts).
+  if (raw.direction === "OUTGOING") rememberOwnSender(currentProjectId(), raw);
   // These messages are never automated, but they are still the other half of every conversation —
   // our own replies come back through this path on WhatsApp's echo. Without groupId the chat
   // inbox's thread query (which filters on it) could not see them at all, so a thread showed only
