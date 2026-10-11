@@ -3,8 +3,13 @@ import { accessibleProjects } from "@/server/projectContext";
 import { getGrantedPermissionKeys } from "@/server/permissions";
 import { logout } from "@/server/actions/session";
 import { AdminShell } from "./AdminShell";
+import type { Metadata } from "next";
+import { getBranding } from "@/server/branding";
 
-export const metadata = { title: { default: "Main Admin", template: "%s · Main Admin · Softify Assist" } };
+export async function generateMetadata(): Promise<Metadata> {
+  const { productName } = await getBranding();
+  return { title: { default: "Main Admin", template: `%s · Main Admin · ${productName}` } };
+}
 
 /**
  * The Main Admin Portal (MULTI_PROJECT_PLAN.md §8), at /admin — outside every project. Needs

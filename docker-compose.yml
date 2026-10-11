@@ -80,6 +80,9 @@ services:
       # WhatsApp media files (MEDIA_STORAGE.md). The dashboard only READS them — through an
       # authorised endpoint, never a public URL — from the same volume the worker writes to.
       MEDIA_STORAGE_DIR: ${MEDIA_STORAGE_DIR:-/app/media}
+      # Google Sheets (GOOGLE_SHEETS.md): the server's own OAuth client. Unset = not set up yet.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
     volumes:
       - whatsapp_media:/app/media
     ports:
@@ -149,6 +152,10 @@ services:
       MEDIA_STORAGE_DIR: ${MEDIA_STORAGE_DIR:-/app/media}
       MEDIA_MIN_FREE_DISK_MB: ${MEDIA_MIN_FREE_DISK_MB:-2048}
       MEDIA_DOWNLOAD_CONCURRENCY: ${MEDIA_DOWNLOAD_CONCURRENCY:-2}
+      # Google Sheets (GOOGLE_SHEETS.md, Phase 8): the worker refreshes a connected account's access
+      # to read changes made in Google directly. The same OAuth client as the app. Unset = nothing runs.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
     # No `ports:` here on purpose: the worker's health endpoint binds to
     # 127.0.0.1 inside the container only, for its own HEALTHCHECK to use.
     # The dashboard never talks to the worker over HTTP (see ARCHITECTURE.md).

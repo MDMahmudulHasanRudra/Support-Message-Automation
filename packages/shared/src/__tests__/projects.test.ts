@@ -95,10 +95,12 @@ describe("the Main Admin keys leave the existing roles exactly as they were", ()
 });
 
 describe("project features", () => {
-  it("default to on, and a stored row overrides its default", () => {
+  it("default to their own default — every feature on except the opt-in Google Sheets and Omnichannel — and a stored row overrides it", () => {
     const all = resolveProjectFeatures([]);
     expect(all).toHaveLength(PROJECT_FEATURES.length);
-    expect(all.every((f) => f.enabled && f.isDefault)).toBe(true);
+    expect(all.every((f) => f.isDefault)).toBe(true);
+    expect(all.filter((f) => !f.enabled).map((f) => f.key)).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL"]);
+    expect(resolveProjectFeatures([{ key: "GOOGLE_SHEETS", enabled: true }]).find((f) => f.key === "GOOGLE_SHEETS")).toMatchObject({ enabled: true, isDefault: false });
     const withOverride = resolveProjectFeatures([{ key: "AI_REPLY", enabled: false }]);
     expect(withOverride.find((f) => f.key === "AI_REPLY")).toMatchObject({ enabled: false, isDefault: false });
   });
@@ -114,6 +116,8 @@ describe("which feature a page or action belongs to", () => {
     expect(featureForPath("/conversation-learning/sandbox")).toBe("CONVERSATION_LEARNING");
     expect(featureForPath("/api/team-report/export")).toBe("TEAM_REPORTS");
     expect(featureForPath("/integrations/forge")).toBe("PRODUCT_KNOWLEDGE_FORGE");
+    expect(featureForPath("/conversations/telegram/c/abc")).toBe("OMNICHANNEL");
+    expect(featureForPath("/settings/channels/new")).toBe("OMNICHANNEL");
   });
 
   it("leaves pages that belong to no feature alone — the core product is never switched off", () => {
@@ -125,6 +129,8 @@ describe("which feature a page or action belongs to", () => {
   it("maps only keys a single feature uses", () => {
     expect(featureForPermissionKey("bulk_messaging.manage")).toBe("BULK_MESSAGING");
     expect(featureForPermissionKey("messages.reply")).toBe("WHATSAPP_CHAT");
+    expect(featureForPermissionKey("conversations.reply")).toBe("OMNICHANNEL");
+    expect(featureForPermissionKey("channels.manage")).toBe("OMNICHANNEL");
     expect(featureForPermissionKey("messages.view")).toBeNull();
     expect(featureForPermissionKey("support_activity.view")).toBeNull(); // shared with Team Report
     expect(featureForPermissionKey("ai_learning.manage")).toBeNull(); // shared with Forge and the assistant
@@ -139,10 +145,16 @@ describe("which feature a page or action belongs to", () => {
 
   it("a disabled feature blocks exactly its own paths", () => {
     const disabled = disabledProjectFeatures([{ key: "WHATSAPP_CHAT", enabled: false }, { key: "AI_REPLY", enabled: true }]);
-    expect([...disabled]).toEqual(["WHATSAPP_CHAT"]);
+    // Google Sheets and Omnichannel are off until a Main Admin switches them on.
+    expect([...disabled]).toEqual(["WHATSAPP_CHAT", "GOOGLE_SHEETS", "OMNICHANNEL"]);
     expect(pathAllowedByFeatures("/chat/1", disabled)).toBe(false);
     expect(pathAllowedByFeatures("/messages", disabled)).toBe(true);
     expect(pathAllowedByFeatures("/ai-learning/activity", disabled)).toBe(true);
-    expect(disabledProjectFeatures([]).size).toBe(0);
+    expect([...disabledProjectFeatures([])]).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL"]);
+    expect(pathAllowedByFeatures("/conversations/all", disabledProjectFeatures([]))).toBe(false);
+    // WhatsApp Chat is its own feature: Omnichannel being off never touches it.
+    expect(pathAllowedByFeatures("/chat", disabledProjectFeatures([]))).toBe(true);
+    expect(pathAllowedByFeatures("/google-sheets", disabledProjectFeatures([]))).toBe(false);
+    expect(disabledProjectFeatures([{ key: "GOOGLE_SHEETS", enabled: true }, { key: "OMNICHANNEL", enabled: true }]).size).toBe(0);
   });
 });

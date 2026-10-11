@@ -2,7 +2,7 @@
 
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, FolderKanban, LayoutDashboard, LogOut, ShieldCheck } from "lucide-react";
+import { Building2, ChevronRight, FolderKanban, LayoutDashboard, LogOut, Palette, ShieldCheck } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
@@ -41,6 +41,8 @@ function buildSections(granted: ReadonlySet<string>): Array<{ title: string; ite
         { href: "/admin/projects", label: "Projects", icon: FolderKanban, exact: false },
         ...(granted.has("configuration.view") ? [{ href: "/admin/configuration", label: "Configuration", icon: Building2, exact: false }] : []),
         ...(granted.has("users.view") ? [{ href: "/admin/users", label: "Users & Permissions", icon: ShieldCheck, exact: false }] : []),
+        // White labeling (BRANDING.md): anyone in the portal can see it; saving needs projects.manage.
+        { href: "/admin/branding", label: "Branding", icon: Palette, exact: false },
         // The other global modules (Release Notes) are the project portal's own pages, opened without tabs.
         ...groups
           .filter((g) => isGlobal(g.links) && g.label !== "Users & Permissions")

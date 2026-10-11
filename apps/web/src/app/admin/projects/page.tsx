@@ -3,19 +3,20 @@ import { Plus } from "lucide-react";
 import { ButtonLink, EmptyState, PageHeader } from "@/components/ui";
 import { getProjectSummaries, requireMainAdminPage } from "@/server/mainAdmin";
 import { ProjectCard } from "../ProjectCard";
+import { getBranding } from "@/server/branding";
 
 export const metadata = { title: "Projects" };
 
 export default async function ProjectsPage({ searchParams }: { searchParams: Promise<{ archived?: string }> }) {
   const { session, canManage } = await requireMainAdminPage();
   const includeArchived = (await searchParams).archived === "1";
-  const projects = await getProjectSummaries(session.userId, { includeArchived });
+  const [projects, { productName }] = await Promise.all([getProjectSummaries(session.userId, { includeArchived }), getBranding()]);
 
   return (
     <div>
       <PageHeader
         title="Projects"
-        description="Each project is its own Softify Assist: its own WhatsApp numbers, groups, rules, AI, knowledge, team and reports. Opening one takes you into the portal you already know, with the permissions your role already has."
+        description={`Each project is its own ${productName}: its own WhatsApp numbers, groups, rules, AI, knowledge, team and reports. Opening one takes you into the portal you already know, with the permissions your role already has.`}
         actions={
           <>
             <NextLink

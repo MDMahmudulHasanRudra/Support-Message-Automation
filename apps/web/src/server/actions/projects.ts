@@ -96,6 +96,59 @@ export interface ProjectActionResult {
   success?: string;
 }
 
+export interface ProjectDetailsState {
+  error?: string;
+  fieldErrors?: { name?: string; description?: string };
+  savedAt?: number;
+}
+
+/**
+ * Rename a project and edit its description. The SLUG is deliberately not editable: it is the
+ * project's address (/p/<slug>/), and changing it would break every bookmark, every shared link
+ * and every browser's remembered last project. A name is only a label — the code never compares a
+ * project's name (or slug) to decide anything — so renaming changes what people see and nothing
+ * else.
+ */
+export async function updateProjectDetails(projectId: string, _prev: ProjectDetailsState, formData: FormData): Promise<ProjectDetailsState> {
+  const access = await requireManage();
+  if ("denied" in access) return { error: access.denied };
+
+  const name = normalizeProjectName(String(formData.get("name") ?? ""));
+  const description = String(formData.get("description") ?? "").trim();
+  const fieldErrors: NonNullable<ProjectDetailsState["fieldErrors"]> = {};
+  const nameError = validateProjectName(name);
+  if (nameError) fieldErrors.name = nameError;
+  if (description.length > 500) fieldErrors.description = "Keep the description under 500 characters.";
+
+  const project = await platformPrisma.project.findUnique({ where: { id: projectId }, select: { id: true, name: true, description: true } });
+  if (!project) return { error: "That project no longer exists." };
+
+  if (!fieldErrors.name) {
+    // The same rule as creating one: two projects told apart only by capital letters would be told
+    // apart by nobody reading the switcher.
+    const sameName = await platformPrisma.project.findFirst({
+      where: { name: { equals: name, mode: "insensitive" }, id: { not: projectId } },
+      select: { id: true },
+    });
+    if (sameName) fieldErrors.name = `A project called "${name}" already exists.`;
+  }
+  if (fieldErrors.name || fieldErrors.description) return { fieldErrors };
+
+  await platformPrisma.project.update({ where: { id: projectId }, data: { name, description: description || null } });
+
+  forgetProjectAccessDecisions();
+  if (project.name !== name) {
+    await logSystemEvent("INFO", "projects", `Project "${project.name}" renamed to "${name}"`, {
+      projectId,
+      from: project.name,
+      to: name,
+      changedBy: access.session.username,
+    });
+  }
+  revalidatePath("/", "layout");
+  return { savedAt: Date.now() };
+}
+
 export async function setProjectStatus(projectId: string, nextRaw: string): Promise<ProjectActionResult> {
   const access = await requireManage();
   if ("denied" in access) return { error: access.denied };

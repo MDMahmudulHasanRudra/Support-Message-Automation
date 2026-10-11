@@ -1,4 +1,5 @@
 import { AlertTriangle, Bot, Check, Clock, ListChecks, Megaphone, Settings2, UserRound } from "lucide-react";
+import Link from "@/components/ProjectLink";
 import type { OutboundSenderType } from "@support-automation/shared";
 import { isMediaPlaceholderBody, mediaCaption } from "@support-automation/shared";
 import type { ThreadEntry } from "@/server/chatInbox";
@@ -80,7 +81,16 @@ function DayDivider({ label }: { label: string }) {
  * outbound queue; the worker does the sending), so without it an operator would press
  * send and watch nothing happen for a couple of seconds.
  */
-export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[]; accountLabel: string }) {
+export function MessageThread({
+  entries,
+  accountLabel,
+  contactHref,
+}: {
+  entries: ThreadEntry[];
+  accountLabel: string;
+  /** Where a sender's name leads: the contact panel for that id. Omitted = names are plain text. */
+  contactHref?: (contactKey: string) => string;
+}) {
   if (entries.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-6 py-12">
@@ -118,7 +128,7 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
   });
 
   return (
-    <div className="flex flex-col gap-1 px-4 py-5 sm:px-6">
+    <div className="flex flex-col gap-1 px-4 py-5 max-sm:px-3 max-sm:py-4 sm:px-6">
       {rows.map(({ entry, day, showDivider, startsRun, endsRun }) => {
         const isOutbound = entry.kind === "OUTGOING" || entry.kind === "QUEUED";
         const isSystem = entry.kind === "SYSTEM";
@@ -140,14 +150,33 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
               </p>
             ) : (
               <div className={`group/bubble flex ${isOutbound ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[min(38rem,80%)] ${isOutbound ? "items-end" : "items-start"} flex flex-col`}>
+                <div className={`max-w-[min(38rem,80%)] max-sm:max-w-[86%] ${isOutbound ? "items-end" : "items-start"} flex flex-col`}>
                   {/* Named once per run, not once per message. */}
+                  {/* The roster name when the identity rule names one member (WHATSAPP_IDENTITY.md),
+                      else their WhatsApp name, else a number — and a private WhatsApp ID is masked,
+                      never printed as if it were a phone number. Opens the contact panel. */}
                   {!isOutbound && startsRun ? (
                     <span className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium text-[color:var(--color-muted-foreground)]">
-                      {entry.isTeamMember ? (
-                        <UserRound className="size-3" aria-hidden />
+                      {entry.isTeamMember || entry.sender?.memberId ? <UserRound className="size-3" aria-hidden /> : null}
+                      {entry.sender && contactHref ? (
+                        <Link
+                          href={contactHref(entry.sender.contactKey)}
+                          className="rounded-[var(--radius-xs)] hover:text-[color:var(--color-foreground)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+                          title="Contact info"
+                        >
+                          {entry.sender.label}
+                        </Link>
+                      ) : (
+                        (entry.sender?.label ?? entry.senderName ?? entry.senderPhone)
+                      )}
+                      {entry.sender?.needsReview ? (
+                        <span
+                          className="rounded-[var(--radius-xs)] bg-[var(--color-warning-bg)] px-1 text-[10px] text-[color:var(--color-warning-fg)]"
+                          title="This WhatsApp ID matches more than one team member, so the message is credited to nobody until Team Members is corrected."
+                        >
+                          identity needs review
+                        </span>
                       ) : null}
-                      {entry.senderName ?? entry.senderPhone}
                     </span>
                   ) : null}
 
@@ -156,7 +185,7 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
                       side said this", carried by geometry rather than another label. Mid-run
                       bubbles keep both inner corners tight so a run reads as one block. */}
                   <div
-                    className={`${hasFile ? "p-1.5" : "px-3.5 py-2"} text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] transition-shadow duration-[var(--duration-fast)] ease-[var(--ease-out)] group-hover/bubble:shadow-[var(--shadow-sm)] ${
+                    className={`${hasFile ? "p-1.5" : "px-3.5 py-2"} text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] max-sm:text-[14px] transition-shadow duration-[var(--duration-fast)] ease-[var(--ease-out)] group-hover/bubble:shadow-[var(--shadow-sm)] ${
                       isOutbound
                         ? `rounded-l-[var(--radius-lg)] rounded-br-[var(--radius-xs)] ${startsRun ? "rounded-tr-[var(--radius-lg)]" : "rounded-tr-[var(--radius-xs)]"}`
                         : `rounded-r-[var(--radius-lg)] ${startsRun ? "rounded-tl-[var(--radius-lg)]" : "rounded-tl-[var(--radius-xs)]"} rounded-bl-[var(--radius-xs)]`
@@ -168,6 +197,19 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
                           : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-foreground)]"
                     }`}
                   >
+                    {/* What this replies to — WhatsApp's swipe-to-reply, kept with the message. */}
+                    {entry.quoted ? (
+                      <div
+                        className={`mb-1.5 rounded-[var(--radius-sm)] border-l-2 px-2 py-1 text-[12px] leading-snug ${
+                          isOutbound
+                            ? "border-[var(--color-on-primary)]/60 bg-black/15"
+                            : "border-[var(--color-accent)] bg-[var(--color-surface-sunken)]"
+                        } ${hasFile ? "mx-1 mt-1" : ""}`}
+                      >
+                        <span className="block font-semibold">{entry.quoted.author}</span>
+                        <span className="line-clamp-2 opacity-80">{entry.quoted.body}</span>
+                      </div>
+                    ) : null}
                     {entry.media ? <MessageAttachment media={entry.media} /> : null}
                     {notArchived ? <MediaNotArchived body={entry.body} /> : null}
                     {text ? <div className={hasFile ? "px-2 pt-1.5 pb-0.5" : undefined}>{text}</div> : null}

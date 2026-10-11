@@ -258,6 +258,15 @@ skip it. Never add a check that grants because of a level. **Main Admin Configur
 from the `employee_code_seq` sequence, never from a count. A job title is not a role and a department
 is not a WhatsApp `Team`. See `MAIN_ADMIN_WORKSPACE.md` §5–§7.
 
+**White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
+`projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the
+built-in default (`lib/branding.ts`), so a fresh install is unchanged. Never hard-code the product
+name again: server code reads `getBranding()`, client code `useBranding()` (root-layout provider),
+and the mark is `BrandMark`, which follows the uploaded icon. Saving needs `projects.manage`. The
+colour moves only the accent tokens, never the ink primary. Images are sniffed from their bytes,
+capped at 512 KB, stored in the database and served by `/api/brand/<logo|icon>` with a sandbox CSP.
+A project's NAME is editable on its Main Admin page; its slug never is.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.
@@ -295,6 +304,9 @@ since `setInterval` doesn't await its callback)
 | `startCommunicationStyleProcessor` | 12h | rebuilds `CommunicationStyleProfile` from the team's own replies — manner, never fact (gated on `aiEngineEnabled` + `communicationStyleLearningEnabled`) |
 | `startForgeKnowledgeProcessor` | 6h | reads ISPDIGITAL's own docs + module source through Softify Forge into the knowledge base (no-op until `FORGE_API_KEY`/`FORGE_API_URL` are set **and** an admin enables it; on-demand via a `FORGE_SYNC_NOW` WorkerCommand) |
 | `startForgeResearchProcessor` | 2min | works through customer questions verified knowledge could not answer, researching each against the product's source (same gate, plus `ForgeSettings.researchUnanswered`, off by default) |
+| `startChannelInboundProcessor` | 2s | Messenger / Instagram / Telegram: recorded webhook events → conversations, echoes, receipts (no-op unless the project has `OMNICHANNEL`; `OMNICHANNEL.md`) |
+| `startChannelOutboundProcessor` | 2s | the channels' send queue (`ChannelMessage` QUEUED → SENT), retries, UNKNOWN on an unknowable outcome |
+| `startChannelAiProcessor` | 3s | AI replies on the channels — the WhatsApp answering logic and gates, 1:1 only, ≤15 min old |
 | heartbeat | 15s | health state + DB connectivity log |
 
 On boot: health server → DB connectivity check (fatal if unreachable) → crash recovery (resets
@@ -481,7 +493,7 @@ Three rules worth not undoing:
 - **Logout and Reconnect cancel a running sync first** (`cancelGroupSync`, a per-account generation
   checked before every write): CANCELLED, never FAILED, and a cancelled sync writes nothing more —
   otherwise a sync that read the list before a LOGOUT re-activates every group the logout switched off.
-- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090400`).
+- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011091800`).
   Prisma orders by name and `migrate deploy` silently applies an earlier-named one out of order, so
   until 12 Oct 2026 name new migrations after the last one by hand.
 
@@ -839,6 +851,35 @@ subscription and a new table, OpenWA's `onReaction()` is gated behind an **Insid
 deployment does not have**, so the trigger would appear configured in the UI and never fire once.
 (`sendTextWithMentions`, used by the handover mention, is *not* licence-gated — the two are often
 assumed to go together.)
+
+### WhatsApp identity — who sent it, and which rows are one message (`packages/shared/src/whatsappIdentity.ts`, `WHATSAPP_IDENTITY.md`)
+
+One rule decides which roster member sent a message, everywhere: the worker (`teamFilter.ts`
+`resolveTeamSender`), every report loader, the chat, Team Members candidates, reconciliation. Never
+write another identifier→member map. Rules worth not undoing:
+
+- **`createSenderResolver(members).resolve(senderPhone, senderJid)`.** The `whatsappId` is matched
+  exactly, the phone digits-only.
+  - The WhatsApp id naming one member and the phone ANOTHER is `CONFLICT`. A shared identifier is
+    `AMBIGUOUS`. Both credit nobody but keep `isRosterMember: true`, so staff safety (no auto-reply,
+    no customer wait) is unchanged.
+  - A group id is `NOT_A_PERSON`.
+  - The worker passes ACTIVE members, reports pass all of them. Attribution is decided at read time,
+    never stored.
+- **`Message.senderJid`** keeps the domain `senderPhone` strips: the only way to tell a LID from a
+  phone number. A LID is never displayed as a number (`describeSenderId`).
+- **Deduplicate on the LOGICAL key** (`logicalMessageKey` / `messageKeySql()` with
+  `preferSenderCopySql()`), never on `whatsappMessageId`. That id starts `true_` on the sending
+  account and `false_` on our other accounts, so our own posts were counted again as customer
+  messages.
+- **A message from another of OUR numbers is stored as OUTGOING** (`pipeline/ownAccounts.ts`) and
+  never automated. "Ours" is learned only from account phone numbers, GROUP outgoing rows and a
+  just-sent outbound with the same key, never from a one-to-one row's sender.
+- **History reconciliation** is `pnpm db:reconcile:messages`: a dry run by default; `--apply` only
+  fills NULL `senderJid` from what each row proves.
+- **Identifier changes on Team Members are System Log entries.** WhatsApp Chat's contact panel links
+  an unresolved sender to a member (`linkWhatsAppSender`, `whatsapp.manage`). Panels are URL state
+  (`?contact=` / `?info=group`).
 
 ### Support response tracking — Messages → Unanswered Groups / Response Time (`apps/worker/src/supportResponse/`, `SUPPORT_RESPONSE.md`)
 
@@ -1536,6 +1577,30 @@ worth not undoing:
   (`/reports/whatsapp-user-activity`, `messages.view`) both use it. There is no new table or name
   snapshot: users are never deleted and `username` never changes. Echoes are matched by an exact
   `providerMessageId` lookup.
+
+**Groups and Personal (8 Oct 2026, `lib/chatConversationType.ts`).** The list holds an account's
+groups AND its personal (1:1) chats; All / Groups / Personal compose with Waiting, Seen, categories
+and search. Rules worth not undoing:
+- **The type is derived, never stored.** A group is a `WhatsAppGroup` row. A personal chat is the
+  account's `Message` rows with `groupId` NULL and a `@c.us` / `@lid` chat id (WhatsApp's own
+  domains; `status@broadcast` and `@newsletter` are neither). Never the display name.
+  `isPersonalChatId` and `PERSONAL_CHAT_SQL` are one rule in two languages; a test pins them.
+- **Applied in SQL.** `inboxBaseSql` is groups UNION ALL personal chats with a `kind` column, so
+  the 300 limit, search and the views apply per type and the counts carry All, `groups` and
+  `personal`. The partial index `Message_personal_chat_idx` (`groupId IS NULL`) keeps the personal
+  half off the group messages.
+- **A personal chat belongs to the account with the messages.** The same customer writing to two of
+  our numbers is two chats. Only that account's outbound answers it, unlike a group, where any of
+  our numbers' replies count.
+- **Only the review mark is stored** (`PersonalChatReview`, one row once opened). Pin, category and
+  archive stay group-only; a bulk action reports `personalSkipped`.
+- **A personal chat is answered, never started** (9 Oct 2026). It opens at
+  `/chat/account/<id>/personal/<chatId>` with the ordinary composer. `sendPersonalChatMessage` queues
+  one MANUAL_REPLY only into a chat the account already has a stored message in, and the queue checks
+  `verifyPersonalChat` (an existing `@c.us`/`@lid` chat) instead of group membership for any
+  non-`@g.us` manual reply. Same queue, same rate limits; no cold messages.
+- **The type is the URL** (`?type=personal`, `useConversationType`), carried on row links; the view
+  chips stay client state as before.
 
 **Inbox organisation is `chatCategoryId` / `chatPinnedAt` / `chatArchivedAt` on `WhatsAppGroup`,
 plus `ChatCategory`** (`server/actions/chatOrganisation.ts`). All three govern what an operator
@@ -2374,6 +2439,114 @@ to derive them from exists. Purely operational commits (merges, the GitLab histo
 status updates, planning-only commits describing no shipped change) are deliberately excluded.
 Idempotent by `version` and safe to re-run — it only creates a release that doesn't already exist,
 never overwrites one an admin has since edited.
+
+### Google Sheets work management (`apps/web/src/server/google/`, `GOOGLE_SHEETS.md`)
+
+All ten phases are built (`GOOGLE_SHEETS.md` §12–§20; §21 is how to test it live): accounts,
+the spreadsheet list, members, the editor on each spreadsheet's page, a person's own Google identity,
+the activity log, work / viewing time, changes made in Google (a worker loop) and the employee and
+sheet reports. §3 records what Google's APIs can and cannot say about who did what — read it before
+any attribution work. Feature `GOOGLE_SHEETS`, **off by default in every project**; keys
+`google_sheets.view/edit/manage/monitor/report`. Rules worth not undoing:
+
+- **Tokens are read in exactly one file** (`server/google/accounts.ts`), stored only as `encryptSecret`
+  envelopes, and nothing leaves it except `PUBLIC_ACCOUNT_SELECT`. The client secret is env-only.
+  Google's raw error text never goes into a URL; the callback redirects with a short code.
+- **One OAuth client per installation and ONE callback** (`/api/google/oauth/callback`, outside any
+  project). The project, user, state and PKCE verifier travel in an encrypted, HTTP-only cookie
+  scoped to that path; the callback re-checks the same person, project entry, `google_sheets.manage`
+  and the feature INSIDE the project before redeeming the code.
+- **A row per Google account per project** (`@@unique([projectId, googleSubject])`): reconnecting
+  revives the same row, and disconnecting wipes the tokens and KEEPS the row. A grant missing the
+  Drive-metadata or Sheets scope is revoked and refused; Google refusing a stored grant makes it
+  NEEDS_RECONNECT, never a retry loop.
+- **The list is Drive file METADATA only** (`DRIVE_SPREADSHEET_FIELDS`): never contents, never the
+  Sheets API, not even the sharing list. **One `GoogleSpreadsheet` per Google file per project**,
+  each connected account that reaches it a `GoogleSpreadsheetAccess` path. Nothing is deleted: a file
+  nobody reaches is `removedAt` and comes back as the same row. Removal is decided by the set a
+  COMPLETE listing named — never by timestamps, never from a capped or failed listing. A listing
+  that omits a detail (Google hides emails per requester) never erases a known one, or two accounts
+  would overwrite each other on every refresh.
+- **Sheets are shared team work, and identity is never guessed.** The Google account owner, the
+  file's creator and the account that connected it are none of them "the worker". App work is
+  attributed to the signed-in user (and their team member at that moment); an edit made in Google is
+  attributed only through a Google identity the person linked themselves, otherwise it is
+  UNATTRIBUTED. Google's `lastModifyingUser` is display only. Viewing is never work time.
+- **Sheet members are the app's own record, as HISTORY** (`GoogleSpreadsheetMember`, one row per
+  period, partial unique = one open period per person per sheet). Roles LEAD / EDITOR / MONITOR
+  (`packages/shared/src/googleSheetMembers.ts`); a monitor never works. A manager changes any member;
+  a sheet's Lead with `google_sheets.edit` staffs editors and monitors but never touches a Lead, itself
+  included. Every write goes through `server/google/members.ts`, which applies `decideMemberChange`
+  itself. Nobody is a member by default; Google's sharing list is read live for reference and never
+  copied into members. Attribution of anything done through the app is `resolveSheetActor`: the
+  signed-in user, their role AT that moment, and their team member through the explicit
+  `InternalTeamMember.userId` link only (now audited in System Logs) — never a name or email match.
+- **The editor writes only what still holds what was loaded** (`planSave`): Save re-reads the cells,
+  a cell changed in Google meanwhile comes back as a conflict and is never overwritten; a row or column
+  delete re-reads it and refuses if it moved. Contents open for members (and managers, read-only);
+  edits need LEAD/EDITOR + `google_sheets.edit` + a writable project (`decideEditorAccess`); only an
+  editor receives formulas. Writes go only through an account Google lets edit the file.
+- **The activity log stores no cell value and no search text.** Every application row is credited to
+  the signed-in person with team member and role resolved AT THAT MOMENT — never to the Google account
+  that carried the call (kept beside it as "via"). VIEW ≠ WORK.
+- **Work time is computed, never stored** (`computeSheetTime` in packages/shared over the session
+  events): server-clock signals, gaps ≤ the project's pause threshold, unioned per person across sheets.
+  A work signal from someone who cannot work is recorded as viewing; a save is itself a work signal.
+- **A person's Google identity (`UserGoogleIdentity`, platform) is linked only by them signing in**
+  (openid + email, no token kept, nothing revoked — Google revokes a whole grant, and the same account
+  is often connected to a project). Disconnecting never revokes a grant another project still uses.
+- **Changes made in Google are credited conservatively** (worker `googleSheets/`, monitored sheets
+  only, an account that allowed `drive.activity.readonly`): one known actor, linked by the person
+  themselves, AND the project's identity bridge verified — an account's own change whose `people/<id>`
+  equals its `googleSubject`. A mismatch stops all crediting in that project. Google's record of the
+  app's own save is an APPLICATION_ECHO, never counted twice. Counts only, never time. Plain `fetch`,
+  no `googleapis` SDK, and no `packages/google-client` (two calls did not justify a new build step).
+- **Each project has its own OAuth client and on/off switch** (`GoogleIntegrationConfig`,
+  `server/google/clientConfig.ts`, `decideGoogleClient` in packages/shared, GOOGLE_SHEETS.md §22). Every
+  Google call resolves `resolveProjectGoogleClient()` inside its project (worker: per project); the env
+  client is only a fallback. The secret is encrypted and never leaves `clientConfig.ts`; a pair Google
+  rejects is not saved; tokens refresh only with the client that issued them (`oauthClientId`), so a
+  client change sends accounts back to reconnect. Off stops all Google calls and deletes nothing.
+
+### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
+
+All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →
+Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.view`, `channels.manage`,
+`conversations.reply` (reading uses `messages.view`). Rules worth not undoing:
+
+- **WhatsApp is read in place, never copied, and never sent from here.** New channels have their own
+  four tables (`ChannelConnection`, `ChannelConversation`, `ChannelMessage`, `ChannelInboundEvent`),
+  because ~40 readers assume every `Message` is WhatsApp. The unified list merges `ChannelConversation`
+  with WhatsApp Chat's own `getChatInbox` / `getChatConversations`, so "waiting" means the same in
+  both. A WhatsApp row opens WhatsApp Chat. Do not put channel rows into `Message`.
+- **The web records, the worker processes.** `/api/channels/<meta|telegram>/<webhookKey>` (no session)
+  verifies the Meta HMAC (app secret, raw body) or the Telegram secret header, splits the body
+  (`splitMetaWebhook` / `telegramDedupKey` in packages/shared), and inserts `ChannelInboundEvent`
+  with `skipDuplicates` on `(projectId, connectionId, dedupKey)`. Nothing else happens on the
+  request. One Meta app has ONE callback URL, so an event is routed to the connection **in the key's
+  project** that owns `entry.id`; an account nobody connected is dropped.
+- **An outbound `ChannelMessage` IS the send queue** (QUEUED → SENDING → SENT → DELIVERED / READ, or
+  FAILED / UNKNOWN), drained only by `channel-outbound`. A timeout after the request left is UNKNOWN and
+  never retried by itself (a retry could message the customer twice); "Send again" on UNKNOWN needs
+  the person's confirmation. The window, the connection and (for AI) the kill switch are re-checked at
+  send time.
+- **Meta's window is `decideReplyWindow`**: 24 h for anything; 24 h–7 days for a PERSON only, tagged
+  HUMAN_AGENT, and only with the connection's Human Agent switch on; AI never uses the tag. Telegram
+  has none. Instagram text is limited to 1,000 BYTES.
+- **Echo handling**: our own send is recognised by `message.metadata` (Messenger, set to our row id),
+  the provider id, or the in-flight row with the same text (Instagram's echo can outrun the send
+  response); `markSent` removes a BUSINESS duplicate. A reply typed in Meta Business Suite is stored as
+  BUSINESS and pauses AI (`aiSuppressedUntil`) — the WhatsApp takeover rule.
+- **Channel AI calls the WhatsApp answering functions, in the same order, with the same gates**
+  (`channels/aiReply.ts`); `runAiFallback` is untouched (only `sendHumanFallbackAlert` was exported and
+  takes a null message id). Never in a group chat, never a bot, never past 15 minutes, only the
+  customer's latest line, claimed once by `aiClaimedAt`, reply keyed `ai:<message id>`.
+- **Credentials** are decrypted only in `server/channels/connections.ts` (web) and the worker's send /
+  profile path. Views never carry a token; the Meta verify token is revealed to `channels.manage` only.
+  Disconnecting wipes credentials, keeps every conversation and cancels QUEUED replies; reconnecting
+  revives the same row with a new webhook key.
+- TikTok is NOT built (beta API, regional, needs approval) and is shown as unavailable, never as a
+  channel. Instagram uses the Page-linked (Facebook Login) flow; Instagram Login is not built.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

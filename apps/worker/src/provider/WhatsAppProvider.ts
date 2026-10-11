@@ -190,6 +190,13 @@ export interface WhatsAppProvider {
    */
   verifyGroupMembership(chatId: string): Promise<boolean>;
   /**
+   * The one-to-one counterpart, checked right before a manual reply to a personal chat: the chat is
+   * an individual one (`@c.us` / `@lid`) and it exists on this account's WhatsApp. A reply is only
+   * ever sent into a conversation that already exists — never a first message to a stranger.
+   * Returns false (never throws) when that cannot be confirmed.
+   */
+  verifyPersonalChat(chatId: string): Promise<boolean>;
+  /**
    * On-demand, single-group participant count. Deliberately NOT part of
    * getGroups()/the bulk sync path — fetching full participant metadata for
    * every group in one call is far more expensive than fetching names alone

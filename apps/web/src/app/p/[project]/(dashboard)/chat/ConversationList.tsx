@@ -21,10 +21,12 @@ import {
   Star,
   Tag,
   TextSearch,
+  User,
+  Users,
   X,
 } from "lucide-react";
 import Link from "@/components/ProjectLink";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { useToast } from "@/components/ui";
@@ -36,7 +38,24 @@ import {
   type ChatOrganisationResult,
 } from "@/server/actions/chatOrganisation";
 import { chatAccountSwitchTarget, listConversationView, searchConversations } from "@/server/actions/chatSearch";
-import type { ChatAccountOption, ChatCategorySummary, ConversationCounts, ConversationSummary, ConversationView } from "@/server/chatInbox";
+import type {
+  ChatAccountOption,
+  ChatCategorySummary,
+  ConversationCounts,
+  ConversationSummary,
+  ConversationView,
+  ConversationViewCounts,
+} from "@/server/chatInbox";
+import { CONVERSATION_LIST_LIMIT } from "@/lib/chatInboxLimits";
+import {
+  CONVERSATION_TYPE_PARAM,
+  conversationPath,
+  conversationTypeQuery,
+  kindMatchesType,
+  parseConversationType,
+  personalConversationKey,
+  type ConversationType,
+} from "@/lib/chatConversationType";
 import { CategoryManager } from "./CategoryManager";
 import { MOOD_EMOJI, MOOD_LABELS, MOOD_LEVEL } from "@support-automation/shared";
 import { conversationAvatar } from "./avatar";
@@ -71,6 +90,11 @@ function viewFromKey(key: string): Filter {
   return { kind: "all" };
 }
 
+/** The account's totals for one type: All (both), Groups or Personal. */
+function countsForType(counts: ConversationCounts, type: ConversationType): ConversationViewCounts {
+  return type === "groups" ? counts.groups : type === "personal" ? counts.personal : counts;
+}
+
 function matchesFilter(conversation: ConversationSummary, filter: Filter): boolean {
   switch (filter.kind) {
     case "waiting":
@@ -82,6 +106,15 @@ function matchesFilter(conversation: ConversationSummary, filter: Filter): boole
     default:
       return true;
   }
+}
+
+/**
+ * The type filter, from the URL. A hook of its own so its value reaches the component as a hook
+ * result: the React Compiler treats a value read off `URLSearchParams` inline as possibly mutable,
+ * which would stop it preserving the list's memoization.
+ */
+function useConversationType(): ConversationType {
+  return parseConversationType(useSearchParams().get(CONVERSATION_TYPE_PARAM));
 }
 
 /** Row height preference. Stored per browser: it is how one person likes to read, not team state. */
@@ -147,6 +180,11 @@ function writeDensity(compact: boolean): void {
  * its complete list from the server, so "Waiting 18" opens eighteen conversations, not the twelve that
  * happened to be among the loaded 300.
  *
+ * The type filter (All / Groups / Personal) composes with the view (Waiting, Seen, a category): the
+ * server applies both in SQL and counts every type, and the type lives in the URL (`?type=personal`),
+ * so a refresh, a link or Back keeps it. A personal (1:1) chat is derived from its messages
+ * (lib/chatConversationType.ts) and opens at `/personal/<chat id>`.
+ *
  * Selection is a mode rather than always-on checkboxes: this list is read far more often than it is
  * reorganised. It belongs to one account and one filter — switching account remounts the whole
  * workspace, and changing the filter clears it — so a bulk action can only ever reach what is on
@@ -169,6 +207,10 @@ export function ChatWorkspace({
 }) {
   const pathname = stripProjectPrefix(usePathname());
   const router = useRouter();
+  // The type is read from the URL, never held in state, so the URL is the one answer: a refresh, a
+  // shared link and Back / Forward all land on the type they show.
+  const type = useConversationType();
+  const typeQuery = conversationTypeQuery(type);
   const [query, setQuery] = useState("");
   const [filter, setFilterState] = useState<Filter>({ kind: "all" });
   const [selecting, setSelecting] = useState(false);
@@ -180,7 +222,7 @@ export function ChatWorkspace({
    * The last completed remote search, stored WITH the query it answered, so "are these results
    * current?" is derived rather than tracked: a stale response can never be shown under a newer query.
    */
-  const [remote, setRemote] = useState<{ query: string; matches: ConversationSummary[] }>({ query: "", matches: [] });
+  const [remote, setRemote] = useState<{ query: string; type: ConversationType; matches: ConversationSummary[] }>({ query: "", type: "all", matches: [] });
   /** A filter's complete list from the server, stored with the filter it answered. */
   const [viewRows, setViewRows] = useState<{ key: string; rows: ConversationSummary[] }>({ key: "", rows: [] });
   const [pending, startTransition] = useTransition();
@@ -189,7 +231,17 @@ export function ChatWorkspace({
 
   const base = `/chat/account/${account.id}`;
   const rest = pathname.startsWith(`${base}/`) ? pathname.slice(base.length + 1) : "";
-  const activeGroupId = rest && rest !== "archived" ? rest.split("/")[0] : undefined;
+  const restParts = rest.split("/");
+  // A group opens at /<group id>; a personal chat at /personal/<chat id>, keyed in the list by
+  // `personalConversationKey`. `activeGroupId` is only ever a group: switching account carries an open
+  // group across to the new account's copy, while a 1:1 chat belongs to this number alone.
+  const activeId =
+    restParts[0] === "personal" && restParts[1]
+      ? personalConversationKey(decodeURIComponent(restParts[1]))
+      : rest && rest !== "archived"
+        ? restParts[0]
+        : undefined;
+  const activeGroupId = restParts[0] === "personal" ? undefined : activeId;
   /** The inbox page itself — on a phone the list IS this page; elsewhere the conversation is. */
   const onIndex = pathname === base || pathname === `${base}/`;
 
@@ -199,19 +251,32 @@ export function ChatWorkspace({
   const toggleDensity = useCallback(() => writeDensity(!densitySnapshot()), []);
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
-  const key = filterKey(filter);
+  const key = `${type}|${filterKey(filter)}`;
+  const typeCounts = countsForType(counts, type);
   const totalFor = (f: Filter): number =>
     f.kind === "all"
-      ? counts.total
+      ? typeCounts.total
       : f.kind === "waiting"
-        ? counts.waiting
+        ? typeCounts.waiting
         : f.kind === "seen-unanswered"
-          ? counts.seenUnanswered
-          : (categoryById.get(f.id)?.count ?? 0);
+          ? typeCounts.seenUnanswered
+          : // Categories file group conversations only.
+            type === "personal"
+            ? 0
+            : (categoryById.get(f.id)?.count ?? 0);
 
-  const loadedMatches = useMemo(() => conversations.filter((c) => matchesFilter(c, filter)), [conversations, filter]);
-  /** The loaded 300 do not hold every row of this filter, so its complete list comes from the server. */
-  const incomplete = filter.kind !== "all" && loadedMatches.length < totalFor(filter);
+  const loadedMatches = useMemo(
+    () => conversations.filter((c) => kindMatchesType(c.kind, type) && matchesFilter(c, filter)),
+    [conversations, filter, type],
+  );
+  /**
+   * The loaded 300 do not hold every row of this filter, so its complete list comes from the server.
+   * Bounded by the list limit, because the server's answer is too: a filter with more rows than that
+   * is complete once it shows as many as the server would. All conversations of All types is the
+   * loaded list itself, as it always was.
+   */
+  const incomplete =
+    (filter.kind !== "all" || type !== "all") && loadedMatches.length < Math.min(totalFor(filter), CONVERSATION_LIST_LIMIT);
 
   // Refetched whenever the layout refreshes (every four seconds) while such a filter is open, so the
   // list keeps up with new messages exactly as the loaded list does. Nothing is set synchronously:
@@ -219,7 +284,7 @@ export function ChatWorkspace({
   useEffect(() => {
     if (!incomplete) return;
     let cancelled = false;
-    listConversationView(account.id, viewFromKey(key))
+    listConversationView(account.id, viewFromKey(filterKey(filter)), type)
       .then((rows) => {
         if (!cancelled) setViewRows({ key, rows });
       })
@@ -227,7 +292,7 @@ export function ChatWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [incomplete, key, conversations, account.id]);
+  }, [incomplete, key, filter, type, conversations, account.id]);
 
   const viewLoading = incomplete && viewRows.key !== key;
   const baseRows = incomplete && viewRows.key === key ? viewRows.rows : loadedMatches;
@@ -240,26 +305,27 @@ export function ChatWorkspace({
   }, [baseRows, needle]);
 
   /** Long enough to search, and the stored answer is for a different query. Derived, never set. */
-  const searching = needle.length >= 2 && remote.query !== needle;
+  const searching = needle.length >= 2 && (remote.query !== needle || remote.type !== type);
 
   const elsewhere = useMemo(() => {
-    if (remote.query !== needle || remote.matches.length === 0) return [];
+    if (remote.query !== needle || remote.type !== type || remote.matches.length === 0) return [];
     const onScreen = new Set(baseRows.map((c) => c.id));
-    // Search reaches every group of the account; within a filter it stays inside that filter.
-    return remote.matches.filter((match) => !onScreen.has(match.id) && matchesFilter(match, filter));
-  }, [remote, needle, baseRows, filter]);
+    // Search reaches every conversation of the account (of the type, on the server); within a filter
+    // it stays inside that filter.
+    return remote.matches.filter((match) => !onScreen.has(match.id) && kindMatchesType(match.kind, type) && matchesFilter(match, filter));
+  }, [remote, needle, baseRows, filter, type]);
 
   /** Everything a bulk action could reach right now: what the filter and search show, nothing else. */
   const selectableIds = useMemo(() => [...filtered.map((c) => c.id), ...elsewhere.map((c) => c.id)], [filtered, elsewhere]);
 
   const pinnedCount = useMemo(() => conversations.filter((c) => c.isPinned).length, [conversations]);
   const { pinnedRows, otherRows, navigable } = useMemo(() => {
-    const split = filter.kind === "all" && !needle && pinnedCount > 0;
+    const split = filter.kind === "all" && type !== "personal" && !needle && pinnedCount > 0;
     const pinned = split ? filtered.filter((c) => c.isPinned) : [];
     const others = split ? filtered.filter((c) => !c.isPinned) : filtered;
     // The keyboard walks what is on screen, in the order it is on screen.
     return { pinnedRows: pinned, otherRows: others, navigable: [...pinned, ...others, ...elsewhere] };
-  }, [filtered, filter, needle, pinnedCount, elsewhere]);
+  }, [filtered, filter, type, needle, pinnedCount, elsewhere]);
 
   // Clamped at read time rather than reset in an effect: typing shrinks the list under a cursor
   // that was valid a keystroke ago.
@@ -274,6 +340,26 @@ export function ChatWorkspace({
     setFilterState(next);
     setSelected(new Set());
     setCursor(-1);
+  }
+
+  /** A view chip toggles: pressing the active one again goes back to every conversation of the type. */
+  function toggleFilter(next: Filter) {
+    setFilter(filterKey(next) === filterKey(filter) ? { kind: "all" } : next);
+  }
+
+  /**
+   * The type is written to the URL with a history entry, so Back returns to the previous type. Next
+   * keeps `useSearchParams` in step with `history.pushState`, and nothing is fetched for it: the list
+   * narrows from what is loaded, or asks the server for the rest.
+   */
+  function setType(next: ConversationType) {
+    setSelected(new Set());
+    setCursor(-1);
+    if (next === type) return;
+    const url = new URL(window.location.href);
+    if (next === "all") url.searchParams.delete(CONVERSATION_TYPE_PARAM);
+    else url.searchParams.set(CONVERSATION_TYPE_PARAM, next);
+    window.history.pushState(null, "", url);
   }
 
   // "/" to search, from anywhere on the page — never while typing in a field.
@@ -296,19 +382,19 @@ export function ChatWorkspace({
     if (trimmed.length < 2) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      searchConversations(account.id, trimmed)
+      searchConversations(account.id, trimmed, type)
         .then((matches) => {
-          if (!cancelled) setRemote({ query: trimmed, matches });
+          if (!cancelled) setRemote({ query: trimmed, type, matches });
         })
         .catch(() => {
-          if (!cancelled) setRemote({ query: trimmed, matches: [] });
+          if (!cancelled) setRemote({ query: trimmed, type, matches: [] });
         });
     }, 250);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, account.id]);
+  }, [query, type, account.id]);
 
   function onSearchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
@@ -319,7 +405,7 @@ export function ChatWorkspace({
       setCursor((current) => Math.max(current - 1, 0));
     } else if (event.key === "Enter" && navigable[activeCursor]) {
       event.preventDefault();
-      router.push(`${base}/${navigable[activeCursor]!.id}`);
+      router.push(`${conversationPath(account.id, navigable[activeCursor]!)}${typeQuery}`);
     } else if (event.key === "Escape") {
       if (query) {
         setQuery("");
@@ -356,6 +442,9 @@ export function ChatWorkspace({
       const notes = [
         result.unchanged ? `${result.unchanged} already ${label}.` : null,
         result.outsideAccount ? `${result.outsideAccount} belong to another account and were left alone.` : null,
+        result.personalSkipped
+          ? `${result.personalSkipped} personal chat${result.personalSkipped === 1 ? " was" : "s were"} left alone — pin, categories and archive are for groups.`
+          : null,
       ].filter(Boolean);
       showToast({
         tone: "success",
@@ -368,9 +457,9 @@ export function ChatWorkspace({
 
   const rowProps = (conversation: ConversationSummary, index: number) => ({
     conversation,
-    href: `${base}/${conversation.id}`,
+    href: `${conversationPath(account.id, conversation)}${typeQuery}`,
     category: conversation.categoryId ? categoryById.get(conversation.categoryId) : undefined,
-    active: conversation.id === activeGroupId,
+    active: conversation.id === activeId,
     cursored: index === activeCursor,
     compact,
     selecting,
@@ -378,7 +467,7 @@ export function ChatWorkspace({
     onToggle: () => toggleSelected(conversation.id),
   });
 
-  const allCapped = filter.kind === "all" && !needle && counts.total > conversations.length;
+  const allCapped = filter.kind === "all" && type === "all" && !needle && counts.total > conversations.length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -400,7 +489,7 @@ export function ChatWorkspace({
             switching={pending}
           />
 
-          <div className="relative min-w-[12rem] flex-1">
+          <div className="relative min-w-[12rem] flex-1 max-sm:order-last max-sm:basis-full">
             <Search
               className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[color:var(--color-muted-foreground)]"
               aria-hidden
@@ -418,7 +507,7 @@ export function ChatWorkspace({
               placeholder={`Search ${account.label} conversations`}
               aria-label={`Search ${account.label} conversations`}
               aria-keyshortcuts="/"
-              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
+              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] max-sm:pr-10 max-sm:text-base outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
             />
             {query ? (
               <button
@@ -436,7 +525,7 @@ export function ChatWorkspace({
             ) : (
               <kbd
                 aria-hidden
-                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-subtle-foreground)]"
+                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-[var(--radius-xs)] border max-sm:hidden border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-subtle-foreground)]"
               >
                 /
               </kbd>
@@ -459,7 +548,7 @@ export function ChatWorkspace({
             className="flex h-10 shrink-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-[12px] font-medium text-[color:var(--color-muted-foreground)] transition-[border-color,color] duration-[var(--duration-fast)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
           >
             <Archive className="size-3.5" aria-hidden />
-            Archived
+            <span className="max-sm:sr-only">Archived</span>
           </Link>
         </div>
 
@@ -470,23 +559,44 @@ export function ChatWorkspace({
           role="group"
           aria-label="Filter conversations"
         >
-          <FilterChip active={filter.kind === "all"} onClick={() => setFilter({ kind: "all" })}>
+          {/* "All" is the whole inbox, as it always was: both types and no view. Groups and Personal
+              narrow the type and keep the view, so Personal + Waiting is both. */}
+          <FilterChip
+            active={type === "all" && filter.kind === "all"}
+            onClick={() => {
+              setType("all");
+              setFilter({ kind: "all" });
+            }}
+          >
             All
             <ChipCount>{counts.total}</ChipCount>
           </FilterChip>
-          <FilterChip tone="warning" active={filter.kind === "waiting"} onClick={() => setFilter({ kind: "waiting" })}>
+          <FilterChip active={type === "groups"} onClick={() => setType(type === "groups" ? "all" : "groups")}>
+            <Users className="size-3.5" aria-hidden />
+            Groups
+            <ChipCount>{counts.groups.total}</ChipCount>
+          </FilterChip>
+          <FilterChip active={type === "personal"} onClick={() => setType(type === "personal" ? "all" : "personal")}>
+            <User className="size-3.5" aria-hidden />
+            Personal
+            <ChipCount>{counts.personal.total}</ChipCount>
+          </FilterChip>
+
+          <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-[var(--color-border-strong)]" />
+
+          <FilterChip tone="warning" active={filter.kind === "waiting"} onClick={() => toggleFilter({ kind: "waiting" })}>
             <Inbox className="size-3.5" aria-hidden />
             Waiting
-            <ChipCount>{counts.waiting}</ChipCount>
+            <ChipCount>{typeCounts.waiting}</ChipCount>
           </FilterChip>
           {/* Separate from "waiting" on purpose: conversations somebody has already opened and the
               customer still has no answer. They leave the waiting count by design — this is where
               they went, so they cannot quietly disappear. */}
-          {counts.seenUnanswered > 0 || filter.kind === "seen-unanswered" ? (
-            <FilterChip active={filter.kind === "seen-unanswered"} onClick={() => setFilter({ kind: "seen-unanswered" })}>
+          {typeCounts.seenUnanswered > 0 || filter.kind === "seen-unanswered" ? (
+            <FilterChip active={filter.kind === "seen-unanswered"} onClick={() => toggleFilter({ kind: "seen-unanswered" })}>
               <EyeOff className="size-3.5" aria-hidden />
               Seen, unanswered
-              <ChipCount>{counts.seenUnanswered}</ChipCount>
+              <ChipCount>{typeCounts.seenUnanswered}</ChipCount>
             </FilterChip>
           ) : null}
 
@@ -496,11 +606,11 @@ export function ChatWorkspace({
             <FilterChip
               key={category.id}
               active={filter.kind === "category" && filter.id === category.id}
-              onClick={() => setFilter({ kind: "category", id: category.id })}
+              onClick={() => toggleFilter({ kind: "category", id: category.id })}
             >
               <span className={`size-2 shrink-0 rounded-full ${categoryDotClass(category.color)}`} aria-hidden />
               {category.name}
-              <ChipCount>{category.count}</ChipCount>
+              <ChipCount>{totalFor({ kind: "category", id: category.id })}</ChipCount>
             </FilterChip>
           ))}
 
@@ -621,10 +731,12 @@ export function ChatWorkspace({
               <EmptyList
                 accountLabel={account.label}
                 total={counts.total}
+                type={type}
                 filter={filter}
                 query={query}
                 onClear={() => {
                   setQuery("");
+                  setType("all");
                   setFilter({ kind: "all" });
                 }}
               />
@@ -668,14 +780,14 @@ export function ChatWorkspace({
 
                 {searching ? (
                   <p className="px-3.5 py-2.5 text-[11px] text-[color:var(--color-subtle-foreground)]" aria-live="polite">
-                    Searching every group of {account.label}…
+                    Searching every {type === "personal" ? "personal chat" : type === "groups" ? "group" : "conversation"} of {account.label}…
                   </p>
                 ) : null}
 
                 {allCapped ? (
                   <p className="border-t border-[var(--color-border)] px-3.5 py-3 text-[11px] leading-relaxed text-[color:var(--color-subtle-foreground)]">
                     Showing the {conversations.length.toLocaleString("en-US")} most recently active of{" "}
-                    {counts.total.toLocaleString("en-US")} groups. Search and the filters reach every group of this account.
+                    {counts.total.toLocaleString("en-US")} conversations. Search and the filters reach every conversation of this account.
                   </p>
                 ) : null}
               </>
@@ -746,27 +858,27 @@ function AccountSelector({
 
   if (!multiple) {
     return (
-      <div className="flex h-10 max-w-[16rem] shrink-0 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 pr-3">
+      <div className="flex h-10 max-w-[16rem] shrink-0 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 pr-3 max-sm:min-w-0 max-sm:max-w-none max-sm:flex-1">
         {face}
       </div>
     );
   }
 
   return (
-    <div ref={wrapRef} className="relative shrink-0">
+    <div ref={wrapRef} className="relative shrink-0 max-sm:min-w-0 max-sm:flex-1">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={switching}
-        className="flex h-10 max-w-[18rem] cursor-pointer items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-primary)]/45 bg-[var(--color-surface)] px-1.5 pr-2.5 shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-primary)] active:translate-y-px disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+        className="flex h-10 max-w-[18rem] cursor-pointer items-center gap-2 max-sm:w-full max-sm:max-w-none rounded-[var(--radius-md)] border border-[var(--color-primary)]/45 bg-[var(--color-surface)] px-1.5 pr-2.5 shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-primary)] active:translate-y-px disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
       >
         {face}
         {switching ? (
-          <Loader2 className="ml-1 size-3.5 shrink-0 animate-spin text-[color:var(--color-muted-foreground)]" aria-hidden />
+          <Loader2 className="ml-1 size-3.5 max-sm:ml-auto shrink-0 animate-spin text-[color:var(--color-muted-foreground)]" aria-hidden />
         ) : (
-          <ChevronDown className={`ml-1 size-4 shrink-0 text-[color:var(--color-muted-foreground)] transition-transform duration-[var(--duration-fast)] ${open ? "rotate-180" : ""}`} aria-hidden />
+          <ChevronDown className={`ml-1 size-4 shrink-0 max-sm:ml-auto text-[color:var(--color-muted-foreground)] transition-transform duration-[var(--duration-fast)] ${open ? "rotate-180" : ""}`} aria-hidden />
         )}
       </button>
 
@@ -817,31 +929,38 @@ function AccountSelector({
 function EmptyList({
   accountLabel,
   total,
+  type,
   filter,
   query,
   onClear,
 }: {
   accountLabel: string;
   total: number;
+  type: ConversationType;
   filter: Filter;
   query: string;
   onClear: () => void;
 }) {
+  const noun = type === "personal" ? "personal chat" : type === "groups" ? "group" : "conversation";
   const message =
     total === 0
       ? `No chats found for ${accountLabel}. Run a group sync on WhatsApp Accounts once it is connected and in groups.`
       : query.trim()
-        ? `No ${accountLabel} group matches “${query}”${filter.kind === "all" ? "" : " in this filter"}.`
+        ? `No ${accountLabel} ${noun} matches “${query}”${filter.kind === "all" ? "" : " in this filter"}.`
         : filter.kind === "seen-unanswered"
           ? "Nothing has been seen and left unanswered."
           : filter.kind === "waiting"
             ? "Nothing is waiting on a reply."
             : filter.kind === "category"
-              ? "No groups match the selected category. Use Select to move conversations into it."
-              : `No chats found for ${accountLabel}.`;
+              ? type === "personal"
+                ? "Categories file group conversations. Personal chats are not filed."
+                : "No groups match the selected category. Use Select to move conversations into it."
+              : type === "personal"
+                ? `No personal chats stored for ${accountLabel}. One-to-one messages to this number appear here as they arrive.`
+                : `No chats found for ${accountLabel}.`;
 
   // When the emptiness is something the reader caused, the way back is one button.
-  const recoverable = total > 0 && (query.trim().length > 0 || filter.kind !== "all");
+  const recoverable = total > 0 && (query.trim().length > 0 || filter.kind !== "all" || type !== "all");
 
   return (
     <div className="px-6 py-12 text-center">
@@ -1034,6 +1153,10 @@ function Row({
             {conversation.isPinned ? (
               <Pin className="size-3 shrink-0 text-[color:var(--color-muted-foreground)]" aria-label="Pinned" />
             ) : null}
+            {/* Marks the 1:1 chats among groups under All — by type, never guessed from the name. */}
+            {conversation.kind === "PERSONAL" ? (
+              <User className="size-3 shrink-0 text-[color:var(--color-muted-foreground)]" aria-label="Personal chat" />
+            ) : null}
             <span className={`truncate text-[13px] text-[color:var(--color-foreground)] ${unread ? "font-semibold" : "font-medium"}`}>
               {conversation.name}
             </span>
@@ -1107,8 +1230,13 @@ function Row({
               </span>
             ) : null}
             {/* Quieter than the rest: on a roster where almost nothing is monitored this appears on
-                almost every row, and a badge with a 99% hit rate should not shout. */}
-            {!conversation.isMonitored ? <span className="text-[10px] text-[color:var(--color-subtle-foreground)]">Not monitored</span> : null}
+                almost every row, and a badge with a 99% hit rate should not shout. Monitoring is a
+                group setting, so a personal chat says what it is instead. */}
+            {conversation.kind === "PERSONAL" ? (
+              <span className="text-[10px] text-[color:var(--color-subtle-foreground)]">Personal chat</span>
+            ) : !conversation.isMonitored ? (
+              <span className="text-[10px] text-[color:var(--color-subtle-foreground)] max-sm:hidden">Not monitored</span>
+            ) : null}
           </span>
         ) : null}
       </span>

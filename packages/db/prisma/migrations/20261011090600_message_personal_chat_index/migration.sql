@@ -1,0 +1,25 @@
+-- DEPLOY NOTE — read before running this against a live database.
+--
+-- One partial index on "Message": the personal (1:1) chats of one account, for the WhatsApp Chat
+-- inbox's Groups / Personal filter. The inbox lists an account's personal chats by grouping its
+-- groupId-NULL messages by chat id, on every 4-second refresh; without this index that is a walk
+-- over every message the account has ever stored (groups included), filtered down to a few rows.
+-- Partial on "groupId" IS NULL, so it holds only the 1:1 (and other non-group) messages and stays
+-- small however many group messages there are. The query names "groupId" IS NULL so the planner
+-- can use it.
+--
+-- Prisma runs each migration inside a transaction, so CREATE INDEX CONCURRENTLY is not available
+-- here and a plain CREATE INDEX blocks writes to Message while it builds. On a busy database,
+-- create it by hand first —
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS "Message_personal_chat_idx"
+--     ON "Message"("projectId", "accountId", "chatId", "timestampWa") WHERE "groupId" IS NULL;
+--
+-- — then mark this migration applied with `prisma migrate resolve --applied
+-- 20261011090600_message_personal_chat_index`. IF NOT EXISTS keeps this file safe either way.
+--
+-- Prisma's schema cannot express a partial index, so it is declared here only (the same as
+-- "SupportAssignment_current_per_group_key").
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Message_personal_chat_idx" ON "Message"("projectId", "accountId", "chatId", "timestampWa") WHERE "groupId" IS NULL;

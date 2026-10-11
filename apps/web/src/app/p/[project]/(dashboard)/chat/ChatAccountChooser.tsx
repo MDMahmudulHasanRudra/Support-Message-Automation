@@ -22,7 +22,7 @@ export function ChatAccountChooser({ accounts }: { accounts: ChatAccountOption[]
   }, [accounts, router]);
 
   return (
-    <div className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] min-h-[30rem] items-center justify-center overflow-y-auto rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-xs),var(--highlight-top)] sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">
+    <div className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] min-h-[30rem] items-center justify-center overflow-y-auto rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-xs),var(--highlight-top)] max-sm:min-h-0 max-sm:rounded-none max-sm:border-0 max-sm:shadow-none sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">
       <div className="w-full max-w-md">
         <span
           aria-hidden

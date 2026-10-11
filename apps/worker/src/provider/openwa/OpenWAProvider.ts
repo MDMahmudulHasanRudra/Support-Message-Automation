@@ -191,6 +191,20 @@ function stripJidDomain(jid: string | null | undefined): string {
 }
 
 /**
+ * A group chat is one whose id is in WhatsApp's group domain (`…@g.us`).
+ *
+ * The id, not a flag, because the flags are gone: WhatsApp Web 2.3000.1049703040 (seen 8 Oct 2026)
+ * removed the `isGroup` getter from Chat and `isGroupMsg` from Msg, so both read `undefined` on
+ * every model and OpenWA passes that through. A number linked on that build listed 0 of its 304
+ * groups and stored every group message as if it were a one-to-one chat. The `@g.us` domain is
+ * WhatsApp's own addressing, which no build can drop without breaking group messaging itself; the
+ * old flag is still honoured where a build sets it. Mirrored inside the page by `readGroupChats`.
+ */
+function isGroupChatId(chatId: unknown): boolean {
+  return typeof chatId === "string" && chatId.endsWith("@g.us");
+}
+
+/**
  * WhatsApp's attachment fields. The library serializes every raw message attribute but declares
  * only some of them — `mediaKey`, `size`, `directPath` and the dimensions are present at runtime
  * (they are exactly what OpenWA's own `@open-wa/wa-decrypt` reads) without being in its types.
@@ -259,21 +273,32 @@ function toMediaDescriptor(message: WaMessage): RawMediaDescriptor | null {
   };
 }
 
-function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomingMessage {
+/** Exported for its unit test (messageConversion.test.ts); the provider is its only production caller. */
+export function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomingMessage {
+  const isGroupMsg = Boolean(message.isGroupMsg) || isGroupChatId(message.chatId);
+  // Who sent it, domain kept (WHATSAPP_IDENTITY.md). In a group that is `author`, with the contact
+  // OpenWA attaches as the second witness. Only when neither names anybody does it fall back to
+  // `from`, which for a group is the GROUP's own id — kept with its `@g.us` so the identity rule
+  // reads it as "not a person" and never matches it to a colleague whose digits happen to agree.
+  const senderJid = String((isGroupMsg ? message.author || message.sender?.id || message.from : message.from) ?? "") || null;
   return {
     accountId,
     whatsappMessageId: message.id,
     chatId: message.chatId,
-    whatsappGroupId: message.isGroupMsg ? message.chatId : null,
+    whatsappGroupId: isGroupMsg ? message.chatId : null,
     // Optional chaining because the history API behind catch-up does not always attach `chat`.
-    groupName: message.isGroupMsg ? message.chat?.name || message.chat?.formattedTitle || null : null,
+    groupName: isGroupMsg ? message.chat?.name || message.chat?.formattedTitle || null : null,
     // OpenWA hands these over as JIDs ("8801XXXXXXXXX@c.us"), not phone numbers. Everything
     // downstream compares this against InternalTeamMember.phoneNumber, which people type as
     // "+8801XXXXXXXXX" — so storing the JID verbatim meant no team member ever matched, and
     // their own messages were processed as if a customer had sent them. The mention list two
     // lines below has always split the domain off; this one was simply missed.
-    senderPhone: stripJidDomain(message.isGroupMsg ? message.author || message.from : message.from),
-    senderName: message.sender?.pushname || message.sender?.formattedName || null,
+    senderPhone: stripJidDomain(senderJid),
+    senderJid,
+    // `notifyName` is the push name carried in the message itself — present for an unsaved LID
+    // contact whose contact object has none. `formattedName` is last because it is often just the
+    // number back again.
+    senderName: message.sender?.pushname || message.notifyName || message.sender?.formattedName || null,
     direction: message.fromMe ? "OUTGOING" : "INCOMING",
     body: resolveMessageBody(message),
     timestampWa: new Date(message.timestamp * 1000),
@@ -1504,7 +1529,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const lean = await client.getPage().evaluate(() => {
         interface PageChat {
           isGroup?: boolean;
-          id?: { _serialized?: string };
+          id?: { _serialized?: string; server?: string };
           formattedTitle?: string;
           toJSON?: () => { name?: string; t?: number };
         }
@@ -1525,7 +1550,12 @@ export class OpenWAProvider implements WhatsAppProvider {
         const total =
           typeof store.Chat.length === "number" ? store.Chat.length : Array.isArray(store.Chat.models) ? store.Chat.models.length : null;
         if (total === 0) return "NOT_LOADED" as const;
-        return store.Chat.filter((chat) => Boolean(chat?.isGroup)).map((chat) => {
+        // By id, not by `isGroup` alone: newer WhatsApp Web builds no longer have that getter and it
+        // reads undefined on every chat (see isGroupChatId). The id's server is WhatsApp's own
+        // addressing; the flag is still honoured where a build sets it.
+        const isGroupChat = (chat: PageChat) =>
+          chat?.isGroup === true || chat?.id?.server === "g.us" || String(chat?.id?._serialized ?? "").endsWith("@g.us");
+        return store.Chat.filter(isGroupChat).map((chat) => {
           // A chat the phone is still sending can be half-built, and one throw here used to fail
           // the whole read over to the slow path. Its id is still readable, so it is listed (and
           // never missed by a sweep) with its name left to the next read.
@@ -1754,7 +1784,22 @@ export class OpenWAProvider implements WhatsAppProvider {
       // getChatById's typings only declare ContactId (a 1:1 chat id), but it works for any ChatId at
       // runtime — a group id is structurally a valid ChatId, just not this specific narrower alias.
       const chat = await this.client.getChatById(chatId as unknown as ContactId);
+      // `isGroup` is undefined on newer WhatsApp Web builds (see isGroupChatId), which this already
+      // read as "still a group"; an explicit false still means it is not one.
       return Boolean(chat && chat.isGroup !== false);
+    } catch {
+      return false;
+    }
+  }
+
+  async verifyPersonalChat(chatId: string): Promise<boolean> {
+    if (!this.client) return false;
+    // Individual chats only: never a group (that is verifyGroupMembership), a status broadcast or a
+    // channel, whatever a queued row says.
+    if (!/^[^@]+@(c\.us|lid)$/.test(chatId)) return false;
+    try {
+      const chat = await this.client.getChatById(chatId as unknown as ContactId);
+      return Boolean(chat);
     } catch {
       return false;
     }

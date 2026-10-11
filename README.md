@@ -13,6 +13,46 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **WhatsApp identity and message integrity** (`WHATSAPP_IDENTITY.md`).
+  - **One sender rule everywhere.** The live pipeline, every report, WhatsApp Chat and Team Members
+    use one rule to decide which team member sent a message: exact WhatsApp ID, digits-only phone,
+    and a group id is never a person.
+  - **Clashes credit nobody.** When the WhatsApp ID and the number point to different members, or two
+    members share one, the message is still treated as staff but credited to nobody, and the Team
+    Members page shows an "Identity clash".
+  - **Senders keep their WhatsApp domain** (`Message.senderJid`), so a private ID is never shown as a
+    phone number.
+  - **Reports count each WhatsApp message once.** Our own post seen by our second number no longer
+    becomes a customer message, in reports or in the first-response figures.
+  - **The worker recognises our own numbers.** A message one of our numbers posts in a group another
+    of our numbers is also in is stored as the business's own message: no rules, AI, escalation or
+    customer wait.
+  - **WhatsApp Chat** names senders by roster name, shows quoted replies, and has contact-info and
+    group-info panels; an unrecognised sender can be linked to a team member.
+  - **`pnpm db:reconcile:messages`** audits stored history and, with `--apply`, recovers each row's
+    sender id.
+- **Omnichannel inbox** (Support → All Conversations, Facebook Messenger, Instagram DM, Telegram;
+  Settings → Messaging Channels). WhatsApp, Messenger, Instagram and Telegram conversations in one
+  inbox, with channel tabs, filters and search across everything; each channel also has its own
+  inbox. A project connects its own Facebook Page, Instagram professional account (linked to a Page)
+  or Telegram bot with credentials checked by the provider and stored encrypted. Webhooks are
+  verified and recorded once per provider event; the worker turns them into conversations, sends
+  replies from one queue (retries, honest "unconfirmed" state, Meta's 24-hour / Human Agent window),
+  and can answer with the same AI and knowledge base as WhatsApp under the same safety rules. WhatsApp
+  itself is unchanged and read in place. Tested against mocked providers; live credentials not yet
+  tested. Off by default per project (`OMNICHANNEL.md`).
+- **Google Sheets work management** (Google Sheets → Spreadsheets / Activity / Work Reports / My
+  Google Identity; Settings → Google Sheets), all ten phases. A manager connects the Google accounts
+  the team's spreadsheets live in through Google's own sign-in; every spreadsheet they reach is listed
+  once from Drive's file details. Each spreadsheet has its own members — a Lead, editors and monitors —
+  and members edit it in the app: a bounded grid, paste, rows and columns, search, and a Save that never
+  overwrites a cell somebody changed in Google meanwhile. Everything done is logged (viewing apart from
+  work, no cell values), credited to the person — never the Google account it went through — and timed
+  from real interaction (a pause threshold, unioned across sheets). For monitored sheets the worker
+  reads Google's own activity record, crediting a change only through a Google account the person
+  linked themselves, once Google is seen to use sign-in's ids. Employee and spreadsheet reports with
+  Excel / CSV. Needs a Google OAuth client on the server; off by default per project
+  (`GOOGLE_SHEETS.md`).
 - **Support Assignment** (Support → Support Assignment). Every customer waiting for a reply becomes a
   case, unless it is only "thanks"/"ok" or from an ignored sender (filtered cases are kept and
   counted). Assign one or many cases to a person; they get a WhatsApp message. The case completes

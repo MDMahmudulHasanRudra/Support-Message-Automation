@@ -174,7 +174,10 @@ describe("the inbox belongs to one account", () => {
 
   it("another project's account is unreachable", async () => {
     current = sessions.viewer;
-    expect(await inIsp(() => inbox.getChatInbox(ids.biz))).toEqual({ conversations: [], counts: { total: 0, waiting: 0, seenUnanswered: 0 } });
+    expect(await inIsp(() => inbox.getChatInbox(ids.biz))).toEqual({
+      conversations: [],
+      counts: { total: 0, waiting: 0, seenUnanswered: 0, groups: { total: 0, waiting: 0, seenUnanswered: 0 }, personal: { total: 0, waiting: 0, seenUnanswered: 0 } },
+    });
     expect(await inIsp(() => search.chatAccountSwitchTarget(ids.biz, null))).toBeNull();
   });
 

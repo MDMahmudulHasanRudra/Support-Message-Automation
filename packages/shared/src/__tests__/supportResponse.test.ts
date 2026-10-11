@@ -11,6 +11,10 @@ describe("classifyResponseMessage", () => {
   it("a roster member is Support only while in a Support Team, otherwise another team", () => {
     expect(classifyResponseMessage({ direction: "INCOMING", memberId: "m1", inSupportTeam: true })).toBe("SUPPORT");
     expect(classifyResponseMessage({ direction: "INCOMING", memberId: "m1", inSupportTeam: false })).toBe("OTHER_TEAM");
+    // A colleague whose identity is in conflict is not a customer, and is credited with nothing.
+    expect(classifyResponseMessage({ direction: "INCOMING", memberId: null, inSupportTeam: false, unattributedRosterMember: true })).toBe(
+      "OTHER_TEAM",
+    );
   });
   it("anything the business number sent — rule, AI, dashboard, business phone — is never a Support reply", () => {
     expect(classifyResponseMessage({ direction: "OUTGOING", memberId: null, inSupportTeam: false })).toBe("BUSINESS");

@@ -87,6 +87,16 @@ export class MockProvider implements WhatsAppProvider {
     return this.membershipByChatId.get(chatId) ?? this.defaultMembership;
   }
 
+  /** Personal chats that exist on this account; a test adds the ones it sends to. */
+  public personalChats = new Set<string>();
+  /** Every personal-chat check asked, so a test can prove the group check was NOT used. */
+  public personalChecks: string[] = [];
+
+  async verifyPersonalChat(chatId: string): Promise<boolean> {
+    this.personalChecks.push(chatId);
+    return this.personalChats.has(chatId);
+  }
+
   /** Per-chat roster, set by a test that needs one; empty otherwise. */
   public participantsByChatId = new Map<string, GroupParticipant[]>();
 

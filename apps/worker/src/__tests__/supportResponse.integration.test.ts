@@ -7,6 +7,7 @@ import { prisma, rawPrisma } from "./helpers/projectFixtures.js";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
 import type { RawIncomingMessage } from "../pipeline/types.js";
 import { resetProjectCachesForTests, withProject } from "../project/context.js";
+import { resetOwnAccountCacheForTests } from "../pipeline/ownAccounts.js";
 
 /**
  * Support response tracking (SUPPORT_RESPONSE.md), driven through the real pipeline exactly as
@@ -277,3 +278,120 @@ describe("isolation", () => {
   });
 });
 
+
+describe("a colleague whose identity is unsettled (WHATSAPP_IDENTITY.md)", () => {
+  /**
+   * The WhatsApp id names one Support member and the phone digits name ANOTHER member. The id used
+   * to win outright, so the reply was credited to the first member and answered the wait. Now
+   * nobody is credited: it is a colleague's message (no customer wait opens), and it answers none.
+   */
+  it("opens no wait and answers none", async () => {
+    const lid = `16${RUN}${String(++seq).padStart(7, "0")}`;
+    const credited = await prisma.internalTeamMember.create({
+      data: { name: "Id holder", phoneNumber: phone(), whatsappId: lid, role: "Support", status: "ACTIVE", teamId: support.id },
+    });
+    await prisma.teamMembership.create({ data: { teamMemberId: credited.id, teamId: support.id, startedAt: null } });
+    const clash = await prisma.internalTeamMember.create({ data: { name: "Phone holder", phoneNumber: lid, role: "Support", status: "ACTIVE" } });
+    try {
+      await send(groupA, lid, 0, { senderJid: `${lid}@lid` });
+      expect(await episodes(groupA)).toHaveLength(0);
+
+      await send(groupA, CUSTOMER, 1);
+      await send(groupA, lid, 2, { senderJid: `${lid}@lid` });
+      const [e] = await episodes(groupA);
+      expect(e).toMatchObject({ status: "UNANSWERED", supportMemberId: null, supportReplyMessageId: null });
+    } finally {
+      await rawPrisma.teamMembership.deleteMany({ where: { teamMemberId: credited.id } });
+      await rawPrisma.internalTeamMember.deleteMany({ where: { id: { in: [credited.id, clash.id] } } });
+    }
+  });
+});
+
+describe("what is stored (WHATSAPP_IDENTITY.md)", () => {
+  it("keeps the sender's domain on an incoming message", async () => {
+    const m = msg(groupA, "161600000000123", 0, { senderJid: "161600000000123@lid" });
+    await processIncomingMessage(m);
+    const stored = await prisma.message.findFirstOrThrow({ where: { whatsappMessageId: m.whatsappMessageId } });
+    expect(stored).toMatchObject({ senderPhone: "161600000000123", senderJid: "161600000000123@lid" });
+  });
+
+  it("keeps the quote and the mentions on a reply typed on the business phone", async () => {
+    const question = msg(groupA, CUSTOMER, 0, { body: "is the link down?" });
+    await processIncomingMessage(question);
+    const reply = msg(groupA, "8801700000999", 1, {
+      direction: "OUTGOING",
+      whatsappMessageId: `true_${groupA.whatsappGroupId}_${randomUUID()}`,
+      senderJid: "8801700000999@c.us",
+      body: "checking now",
+      quotedWhatsappMessageId: question.whatsappMessageId,
+      mentionedPhones: [CUSTOMER],
+    });
+    await processIncomingMessage(reply);
+    const [q, r] = await Promise.all([
+      prisma.message.findFirstOrThrow({ where: { whatsappMessageId: question.whatsappMessageId } }),
+      prisma.message.findFirstOrThrow({ where: { whatsappMessageId: reply.whatsappMessageId } }),
+    ]);
+    expect(r).toMatchObject({ direction: "OUTGOING", quotedMessageId: q.id, mentionedPhones: [CUSTOMER], senderJid: "8801700000999@c.us" });
+  });
+});
+
+describe("a message from another of OUR numbers (WHATSAPP_IDENTITY.md §3)", () => {
+  /**
+   * Account A posts in a group account B is also in; B receives it as INCOMING. Processed as a
+   * customer's it opened a wait on our own reply and could be answered by our own rules or AI. It is
+   * stored as the business's own message instead, and changes no wait.
+   */
+  beforeEach(() => resetOwnAccountCacheForTests());
+
+  const stored = (m: RawIncomingMessage) => prisma.message.findFirstOrThrow({ where: { whatsappMessageId: m.whatsappMessageId } });
+
+  it("recognises our number by the id it sends from in groups", async () => {
+    const ourLid = `17${RUN}${String(++seq).padStart(7, "0")}`;
+    const key = randomUUID().replace(/-/g, "");
+    // A's own copy of its post (the echo) — this is where its group id is learned.
+    await send(groupA, ourLid, 0, { direction: "OUTGOING", whatsappMessageId: `true_${groupA.whatsappGroupId}_${key}`, senderJid: `${ourLid}@lid` });
+    const copy = msg(groupB, ourLid, 0, { whatsappMessageId: `false_${groupB.whatsappGroupId}_${key}_${ourLid}@lid`, senderJid: `${ourLid}@lid` });
+    await processIncomingMessage(copy);
+    expect(await stored(copy)).toMatchObject({ direction: "OUTGOING", processingStatus: "PROCESSED" });
+    expect(await episodes(groupB)).toHaveLength(0);
+  });
+
+  it("recognises our number by the account's own phone number", async () => {
+    const digits = `8801${RUN}${String(++seq).padStart(3, "0")}`;
+    await prisma.whatsAppAccount.update({ where: { id: accountA.id }, data: { phoneNumber: digits } });
+    const copy = msg(groupB, digits, 0, { senderJid: `${digits}@c.us` });
+    await processIncomingMessage(copy);
+    expect((await stored(copy)).direction).toBe("OUTGOING");
+    expect(await episodes(groupB)).toHaveLength(0);
+  });
+
+  it("recognises the first message from our number by the send it echoes, before its own echo arrives", async () => {
+    const unseenLid = `18${RUN}${String(++seq).padStart(7, "0")}`;
+    const key = randomUUID().replace(/-/g, "");
+    await prisma.outboundMessage.create({
+      data: {
+        accountId: accountA.id,
+        chatId: groupA.whatsappGroupId,
+        toPhone: groupA.whatsappGroupId,
+        body: "we are on it",
+        actionType: "MANUAL_REPLY",
+        idempotencyKey: randomUUID(),
+        status: "SENT",
+        providerMessageId: `true_${groupA.whatsappGroupId}_${key}`,
+        scheduledAt: new Date(),
+      },
+    });
+    const copy = msg(groupB, unseenLid, 0, { whatsappMessageId: `false_${groupB.whatsappGroupId}_${key}_${unseenLid}@lid`, senderJid: `${unseenLid}@lid` });
+    await processIncomingMessage(copy);
+    expect((await stored(copy)).direction).toBe("OUTGOING");
+  });
+
+  it("never learns 'ours' from a one-to-one outgoing row, and a customer stays a customer", async () => {
+    // Whatever a one-to-one row's sender field holds, it must not turn the customer into us.
+    await send(groupA, CUSTOMER, 0, { direction: "OUTGOING", chatId: `${CUSTOMER}@c.us`, whatsappGroupId: null });
+    const question = msg(groupA, CUSTOMER, 1, { senderJid: `${CUSTOMER}@c.us` });
+    await processIncomingMessage(question);
+    expect((await stored(question)).direction).toBe("INCOMING");
+    expect(await episodes(groupA)).toHaveLength(1);
+  });
+});

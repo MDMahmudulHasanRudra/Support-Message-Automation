@@ -2,7 +2,7 @@ import "./helpers/requireTestDatabase.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma, inIsp } from "./helpers/projectFixtures.js";
-import { isActiveTeamMember, resolveActiveTeamMember } from "../pipeline/teamFilter.js";
+import { isActiveTeamMember, resolveActiveTeamMember, resolveTeamSender } from "../pipeline/teamFilter.js";
 
 /**
  * Recognising your own staff is the single load-bearing check in this system: it decides whether
@@ -58,10 +58,6 @@ describe("team member matching — sender formats WhatsApp actually delivers", (
     expect(await inIsp(() => resolveActiveTeamMember("8801700000123"))).toMatchObject({ id: member.id });
   });
 
-  it("matches a group JID form (@g.us) as well as a contact one", async () => {
-    const member = await makeMember("8801700000123");
-    expect(await inIsp(() => resolveActiveTeamMember("8801700000123@g.us"))).toMatchObject({ id: member.id });
-  });
 
   it("matches when the roster number was typed with spaces and dashes", async () => {
     const member = await makeMember("+880 170-000 0123");
@@ -92,6 +88,16 @@ describe("team member matching — who must NOT match", () => {
     // whose number ends the same way would be treated as staff.
     await makeMember("+8801700000123");
     expect(await inIsp(() => resolveActiveTeamMember("447700000123@c.us"))).toBeNull();
+  });
+
+  it("never matches a group id (@g.us), even one whose digits equal a member's number", async () => {
+    // This used to be asserted the other way. A group id names a GROUP: it reaches this function
+    // when WhatsApp did not name a message's author and the provider fell back to the chat id, and
+    // crediting that message to whichever colleague's digits agree is the misattribution the
+    // identity rule exists to prevent (WHATSAPP_IDENTITY.md).
+    await makeMember("8801700000123");
+    expect(await inIsp(() => resolveActiveTeamMember("8801700000123@g.us"))).toBeNull();
+    expect(await inIsp(() => isActiveTeamMember("8801700000123", "8801700000123@g.us"))).toBe(false);
   });
 
   it("returns null for junk input rather than throwing", async () => {
@@ -151,6 +157,30 @@ describe("WhatsApp LID senders", () => {
   it("ignores an empty whatsappId rather than matching everything", async () => {
     await makeMember("+8801700000123");
     expect(await inIsp(() => resolveActiveTeamMember(""))).toBeNull();
+  });
+});
+
+describe("a WhatsApp id and a phone number that disagree", () => {
+  /**
+   * Rakib's WhatsApp id ended up in Bipul's phone field. The WhatsApp id used to win outright, so
+   * every message was silently credited to Rakib. Now nobody is credited — but the sender is
+   * certainly a colleague, so automation still treats the message as staff.
+   */
+  it("credits nobody, and still treats the sender as staff", async () => {
+    await makeMember("+8801894431222", "ACTIVE", "161679983804516"); // Rakib
+    await makeMember("161679983804516"); // Bipul, holding Rakib's id as a "phone number"
+    expect(await inIsp(() => resolveActiveTeamMember("161679983804516"))).toBeNull();
+    expect(await inIsp(() => isActiveTeamMember("161679983804516"))).toBe(true);
+    const sender = await inIsp(() => resolveTeamSender("161679983804516", "161679983804516@lid"));
+    expect(sender.status).toBe("CONFLICT");
+    expect(sender.candidateIds).toHaveLength(2);
+  });
+
+  it("calls two members sharing one number AMBIGUOUS rather than picking one", async () => {
+    await makeMember("+8801700000123");
+    await makeMember("8801700000123");
+    const sender = await inIsp(() => resolveTeamSender("8801700000123", "8801700000123@c.us"));
+    expect(sender).toMatchObject({ status: "AMBIGUOUS", member: null, isRosterMember: true });
   });
 });
 

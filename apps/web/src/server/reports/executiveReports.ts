@@ -8,6 +8,7 @@ import {
   type AttentionIssue,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
+import { messageKeySql } from "@/server/messageIdentity";
 import { activeProjectId } from "@/server/projectContext";
 import { measuredTo, type ReportContext } from "./context";
 import { count, duration, percent, when } from "./format";
@@ -40,7 +41,8 @@ async function previousPeriodCounts(ctx: ReportContext, groupKeys: readonly stri
   const prevStart = new Date(ctx.rangeStart - length);
   const start = new Date(ctx.rangeStart);
   const rows = await prisma.$queryRaw<Array<{ wgid: string; previous: bigint }>>`
-    SELECT g."whatsappGroupId" AS wgid, COUNT(DISTINCT m."whatsappMessageId") AS previous
+    -- The logical key (WHATSAPP_IDENTITY.md): one message stored by two of our accounts counts once.
+    SELECT g."whatsappGroupId" AS wgid, COUNT(DISTINCT ${messageKeySql()}) AS previous
     FROM "WhatsAppGroup" g
     JOIN "Message" m ON m."groupId" = g."id"
     WHERE g."projectId" = ${await activeProjectId()}

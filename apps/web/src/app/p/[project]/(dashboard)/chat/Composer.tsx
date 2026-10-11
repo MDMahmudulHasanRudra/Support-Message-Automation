@@ -2,9 +2,9 @@
 
 import { ArrowRight, SendHorizontal, Smartphone } from "lucide-react";
 import Link from "@/components/ProjectLink";
-import { useActionState, useCallback, useEffect, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, Button, Textarea } from "@/components/ui";
-import { sendChatMessage, type ChatSendState } from "@/server/actions/chat";
+import { sendChatMessage, sendPersonalChatMessage, type ChatSendState } from "@/server/actions/chat";
 import { SavedReplyManager } from "./SavedReplyManager";
 import { SavedReplyPicker, type SavedReplyOption } from "./SavedReplyPicker";
 import type { OtherAccountCopy } from "@/server/chatInbox";
@@ -31,6 +31,27 @@ const MAX_COMPOSER_PX = 168;
  * database: a draft is this person's unfinished thought on this machine, and syncing it to a
  * shared table would show a colleague words nobody chose to send.
  */
+/**
+ * Phone width (below Tailwind's `sm`), the same line the chat layout switches at. Read as an
+ * external store so the server and the first client render agree (desktop wording) and the phone
+ * wording follows without a mismatch warning.
+ */
+const PHONE_QUERY = "(max-width: 639.98px)";
+
+function subscribePhone(onChange: () => void): () => void {
+  const query = window.matchMedia(PHONE_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function usePhoneWidth(): boolean {
+  return useSyncExternalStore(
+    subscribePhone,
+    () => window.matchMedia(PHONE_QUERY).matches,
+    () => false,
+  );
+}
+
 export function Composer({
   accountId,
   groupId,
@@ -39,6 +60,7 @@ export function Composer({
   disabledReason,
   savedReplies,
   otherCopies = [],
+  personalChatId,
 }: {
   /** The selected account. Every message typed here goes out from it — and only from it. */
   accountId: string;
@@ -50,14 +72,22 @@ export function Composer({
   savedReplies: SavedReplyOption[];
   /** Other connected accounts in this WhatsApp group: offered as a switch, never as a hidden sender. */
   otherCopies?: OtherAccountCopy[];
+  /**
+   * Set for a personal (one-to-one) chat: the message goes to this chat id instead of a group, and
+   * `groupId` is then only the conversation's key (for its draft).
+   */
+  personalChatId?: string;
 }) {
   // The account is bound into the action, and the server re-checks that this conversation really is
   // that account's copy before queueing anything.
-  const sendToGroup = sendChatMessage.bind(null, accountId, groupId);
+  const sendToGroup = personalChatId
+    ? sendPersonalChatMessage.bind(null, accountId, personalChatId)
+    : sendChatMessage.bind(null, accountId, groupId);
   const [state, formAction, pending] = useActionState(sendToGroup, INITIAL);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [managingReplies, setManagingReplies] = useState(false);
+  const phone = usePhoneWidth();
 
   /**
    * Grows the box to fit what is in it, up to a cap.
@@ -78,6 +108,13 @@ export function Composer({
     textarea.style.height = `${next}px`;
     textarea.style.overflowY = textarea.scrollHeight > MAX_COMPOSER_PX ? "auto" : "hidden";
   }, []);
+
+  // The first render uses the desktop placeholder (the server cannot know the width), which wraps to
+  // three lines on a phone; once the short phone placeholder is in, the box is measured again so an
+  // empty composer is one line tall.
+  useEffect(() => {
+    autoGrow();
+  }, [phone, autoGrow]);
 
   // Restore on arrival. Keyed by group, so switching conversations swaps drafts rather than
   // carrying one into the wrong chat — the worst possible failure for this feature.
@@ -203,8 +240,9 @@ export function Composer({
           rows={1}
           required
           maxLength={4096}
-          placeholder="Type a message…  (Enter to send, Shift+Enter for a new line)"
-          className="min-h-10 resize-none py-2.5 transition-[height] duration-[var(--duration-fast)] ease-[var(--ease-out)]"
+          placeholder={phone ? "Type a message…" : "Type a message…  (Enter to send, Shift+Enter for a new line)"}
+          enterKeyHint={phone ? "enter" : "send"}
+          className="min-h-10 resize-none py-2.5 transition-[height] duration-[var(--duration-fast)] ease-[var(--ease-out)] max-sm:min-h-10 max-sm:text-base"
           onChange={(event) => {
             autoGrow();
             rememberDraft(event.target.value);
@@ -218,7 +256,9 @@ export function Composer({
               formRef.current?.requestSubmit();
               return;
             }
-            if (event.key === "Enter" && !event.shiftKey) {
+            // On a phone the keyboard's return key makes a new line and the Send button sends, as
+            // in WhatsApp itself: there is no Shift on a phone keyboard to ask for a line break.
+            if (event.key === "Enter" && !event.shiftKey && !phone) {
               event.preventDefault();
               formRef.current?.requestSubmit();
             }
@@ -230,7 +270,7 @@ export function Composer({
         </Button>
       </form>
 
-      <p className="mt-2 text-[10px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+      <p className="mt-2 text-[10px] leading-relaxed text-[color:var(--color-muted-foreground)] max-sm:hidden">
         Sent through the same outbound queue as automated replies, so account rate limits still
         apply. Delivery usually takes a couple of seconds.
       </p>

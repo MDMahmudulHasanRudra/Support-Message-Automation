@@ -274,11 +274,13 @@ describe("eligibility follows verified data", () => {
 
 describe("isolation, comparison and exports", () => {
   it("Bizify's messages in the same group never become ISP Digital's cases, and the reverse", async () => {
+    // A message's key is its LOGICAL key, `<chat>|<id>` (WHATSAPP_IDENTITY.md §5); the stored id is after the bar.
+    const storedId = (key: string) => key.slice(key.indexOf("|") + 1);
     const ispIntel = (await intelFor(isp, OCTOBER, [wg.g1])).intel;
-    expect(ispIntel.messages.every((m) => !m.key.startsWith("si-biz-"))).toBe(true);
+    expect(ispIntel.messages.every((m) => !storedId(m.key).startsWith("si-biz-"))).toBe(true);
     const bizIntel = (await intelFor(biz, OCTOBER, [wg.g1])).intel;
     expect(bizIntel.messages.length).toBe(4);
-    expect(bizIntel.messages.every((m) => m.key.startsWith("si-biz-"))).toBe(true);
+    expect(bizIntel.messages.every((m) => storedId(m.key).startsWith("si-biz-"))).toBe(true);
   });
 
   it("Executive Support Intelligence compares with the previous equal period, never a % from zero", async () => {

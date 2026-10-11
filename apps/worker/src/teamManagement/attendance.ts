@@ -1,7 +1,7 @@
 import { projectHasFeature } from "../project/features.js";
 import { currentProjectId } from "../project/context.js";
 import { prisma } from "../db.js";
-import { getDhakaDayRange, normalizePhoneNumber, toDhakaDateOnly } from "@support-automation/shared";
+import { createSenderResolver, getDhakaDayRange, toDhakaDateOnly } from "@support-automation/shared";
 import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
 
 /**
@@ -25,19 +25,6 @@ import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
  * guarantee the roster's first week is blank.
  */
 
-/**
- * Every form this person's `senderPhone` could have been stored in.
- *
- * `resolveActiveTeamMember` matches a sender by `whatsappId` EXACTLY first and then by
- * digits-normalised `phoneNumber`, so the recompute has to look for the same set or it would find
- * a different pile of messages than the one that triggered it. A LID-only member has the same
- * value in both columns, which the `Set` collapses.
- */
-function senderIdentifiers(member: { phoneNumber: string; whatsappId: string | null }): string[] {
-  const candidates = [member.whatsappId, member.phoneNumber, normalizePhoneNumber(member.phoneNumber)];
-  return [...new Set(candidates.filter((value): value is string => Boolean(value)))];
-}
-
 interface GroupTotals {
   groupId: string;
   accountId: string;
@@ -55,6 +42,8 @@ export async function recordTeamAttendance(input: {
   groupId: string | null;
   isFromTeamMember: boolean;
   senderPhone: string;
+  /** The sender with its WhatsApp domain (`Message.senderJid`), when known. */
+  senderJid?: string | null;
   timestampWa: Date;
 }): Promise<void> {
   // Cheap filters first, costing zero queries on the overwhelming majority of messages — the same
@@ -63,16 +52,18 @@ export async function recordTeamAttendance(input: {
   if (!input.isFromTeamMember) return; // a customer
   if (!(await projectHasFeature("TEAM_MANAGEMENT"))) return; // not entitled (MULTI_PROJECT_PLAN.md §9)
 
-  const member = await resolveActiveTeamMember(input.senderPhone);
-  if (!member) return; // no longer on the roster, or deactivated
+  const member = await resolveActiveTeamMember(input.senderPhone, input.senderJid);
+  if (!member) return; // no longer on the roster, deactivated, or an identity conflict nobody can be credited with
 
-  const full = await prisma.internalTeamMember.findUnique({
-    where: { id: member.id },
-    select: { phoneNumber: true, whatsappId: true },
+  // Every stored form of this person's sender id — read through the same rule that just resolved
+  // them (WHATSAPP_IDENTITY.md), so the recompute looks for the same pile of messages that
+  // triggered it. An identifier this member SHARES with another active member is left out: their
+  // messages are credited to nobody, so counting them here would credit them to this person.
+  const roster = await prisma.internalTeamMember.findMany({
+    where: { status: "ACTIVE" },
+    select: { id: true, phoneNumber: true, whatsappId: true },
   });
-  if (!full) return;
-
-  const identifiers = senderIdentifiers(full);
+  const identifiers = createSenderResolver(roster).identifiersFor(member.id);
   if (identifiers.length === 0) return;
 
   const activityDate = toDhakaDateOnly(input.timestampWa);

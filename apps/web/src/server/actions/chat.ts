@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { isPersonalChatId, personalChatFallbackName } from "@/lib/chatConversationType";
 
 export interface ChatSendState {
   error?: string;
@@ -169,6 +170,96 @@ export async function sendChatMessage(
     length: body.length,
   });
 
+  revalidatePath(await projectPath("/chat"), "layout");
+  return { sentAt: Date.now() };
+}
+
+/**
+ * Queues one operator-typed reply to a PERSONAL (one-to-one) chat, from the selected account.
+ *
+ * The same single hand-off as a group reply — one `OutboundMessage` row, `MANUAL_REPLY`, sent by the
+ * worker through the one outbound queue, under the same account rate limits — with the checks a
+ * personal chat needs instead of a group's:
+ *   - the chat id is an individual one (`@c.us` / `@lid`), never a group, broadcast or channel;
+ *   - the account already HAS this conversation (a stored message in it). This is a reply, never a
+ *     first message to a number nobody wrote to us from — the product does not cold-message;
+ *   - the worker checks again, live, that the chat exists on the account before sending
+ *     (`verifyPersonalChat`).
+ * The account comes from the URL and is re-derived on the server, exactly as for a group.
+ */
+export async function sendPersonalChatMessage(
+  accountId: string,
+  chatId: string,
+  _prevState: ChatSendState,
+  formData: FormData,
+): Promise<ChatSendState> {
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
+
+  const body = String(formData.get("body") ?? "").trim();
+  if (!body) return { error: "Type a message before sending." };
+  if (body.length > MAX_BODY_LENGTH) {
+    return { error: `That message is ${body.length} characters. WhatsApp accepts at most ${MAX_BODY_LENGTH}.` };
+  }
+  if (!isPersonalChatId(chatId)) return { error: "That is not a personal chat. Nothing was sent." };
+
+  // The scoped client only finds this project's account; another project's id is "not found".
+  const account = await prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { id: true, label: true, status: true } });
+  if (!account) return { error: "That WhatsApp account is not in this project. Choose an account at the top of WhatsApp Chat." };
+
+  const [existing, named] = await Promise.all([
+    prisma.message.findFirst({ where: { accountId: account.id, chatId, groupId: null }, select: { id: true } }),
+    prisma.message.findFirst({
+      where: { accountId: account.id, chatId, groupId: null, direction: "INCOMING", AND: [{ senderName: { not: null } }, { senderName: { not: "" } }] },
+      orderBy: { timestampWa: "desc" },
+      select: { senderName: true },
+    }),
+  ]);
+  if (!existing) {
+    return { error: `${account.label} has no conversation with this number, so nothing was sent. Replies continue an existing chat; they never start one.` };
+  }
+  const name = named?.senderName || personalChatFallbackName(chatId);
+
+  if (account.status !== "CONNECTED") {
+    return { error: `${account.label} is ${account.status.toLowerCase()}, so nothing was sent. Reconnect it on WhatsApp Accounts.` };
+  }
+
+  try {
+    await prisma.outboundMessage.create({
+      data: {
+        accountId: account.id,
+        chatId,
+        // The per-client rate limit keys off this, as it does for a group's chat id.
+        toPhone: chatId,
+        body,
+        actionType: "MANUAL_REPLY",
+        // Keyed by account AND chat: unlike a group row id, a chat id is the same on every account.
+        idempotencyKey: buildManualReplyIdempotencyKey(`personal:${account.id}:${chatId}`, body),
+        groupNameSnapshot: name,
+        createdById: session.userId,
+      },
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code === "P2002") {
+      revalidatePath(await projectPath("/chat"), "layout");
+      return { sentAt: Date.now() };
+    }
+    await logSystemEvent("ERROR", "chat-inbox", "Failed to queue a manual reply to a personal chat", {
+      error: (err as Error).message,
+      chatId,
+      accountId: account.id,
+      userId: session.userId,
+    });
+    return { error: `Your message to ${name} could not be queued because of a server error, and was not sent. Try again — if it keeps failing, check System Logs.` };
+  }
+
+  await logSystemEvent("INFO", "chat-inbox", `Queued a manual reply to ${name} (personal chat)`, {
+    chatId,
+    accountId: account.id,
+    userId: session.userId,
+    length: body.length,
+  });
   revalidatePath(await projectPath("/chat"), "layout");
   return { sentAt: Date.now() };
 }

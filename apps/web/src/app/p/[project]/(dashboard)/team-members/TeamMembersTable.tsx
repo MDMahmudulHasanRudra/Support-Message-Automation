@@ -16,6 +16,11 @@ export interface TeamMemberRow {
   department: string | null;
   status: string;
   team: { id: string; name: string; status: string } | null;
+  /**
+   * Other members who share one of this member's identifiers (WHATSAPP_IDENTITY.md §3). Messages
+   * from that identifier are credited to nobody until the clash is fixed.
+   */
+  identityClash?: string[];
 }
 
 type DialogState = { kind: "delete" | "toggle"; member: TeamMemberRow } | null;
@@ -66,6 +71,15 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
                   <Tooltip content="This is a WhatsApp id, not a phone number. They will be recognised in groups, but a support escalation cannot reach them directly until you enter their real number.">
                     <span className="ml-2 align-middle">
                       <Badge color="yellow">Needs phone number</Badge>
+                    </span>
+                  </Tooltip>
+                ) : null}
+                {m.identityClash?.length ? (
+                  <Tooltip
+                    content={`Shares a phone number or WhatsApp ID with ${m.identityClash.join(", ")}. Their messages are counted as a team member's but credited to nobody in reports until one of the two records is corrected.`}
+                  >
+                    <span className="ml-2 align-middle">
+                      <Badge color="red">Identity clash</Badge>
                     </span>
                   </Tooltip>
                 ) : null}

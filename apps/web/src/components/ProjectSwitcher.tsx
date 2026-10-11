@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, LayoutGrid, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { PROJECT_STATUS_LABELS, type ProjectStatusValue } from "@support-automation/shared";
 import { Badge, BrandMark } from "@/components/ui";
+import { useBranding } from "@/components/BrandingProvider";
 
 export interface SwitcherProject {
   name: string;
@@ -73,6 +74,7 @@ export function ProjectSwitcher({
   }, [open]);
 
   const title = current?.name ?? "Main Admin";
+  const { productName } = useBranding();
   return (
     <div ref={rootRef} className="relative min-w-0 flex-1">
       <button
@@ -94,7 +96,7 @@ export function ProjectSwitcher({
                 {title}
               </span>
               <span className="block truncate text-[11px] text-[color:var(--color-muted-foreground)]">
-                {current ? "Softify Assist project" : "Softify Assist"}
+                {current ? `${productName} project` : productName}
               </span>
             </span>
             <ChevronsUpDown className="size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)]" aria-hidden />
