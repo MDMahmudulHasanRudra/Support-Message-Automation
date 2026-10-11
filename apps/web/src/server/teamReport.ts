@@ -2,8 +2,10 @@
 import { Prisma } from "@prisma/client";
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
+import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
 import {
   computeTeamReport,
+  createSenderResolver,
   DHAKA_OFFSET_MS,
   formatDhakaDateKey,
   getDhakaDayRange,
@@ -12,7 +14,6 @@ import {
   inTeamAt,
   membersOfTeamDuring,
   NO_TEAM,
-  normalizePhoneNumber,
   type ReportGranularity,
   type ReportMessage,
   type TeamMembershipInterval,
@@ -219,12 +220,6 @@ export interface TeamReportData {
   };
 }
 
-/** Every form a member's senderPhone may be stored in — the same set Duty History matches on. */
-export function senderIdentifiers(member: { phoneNumber: string; whatsappId: string | null }): string[] {
-  const candidates = [member.whatsappId, member.phoneNumber, normalizePhoneNumber(member.phoneNumber)];
-  return [...new Set(candidates.filter((value): value is string => Boolean(value)))];
-}
-
 /**
  * @param onlyWhatsappGroupId  restrict to one group — the drill-down page — which also narrows the
  *                             query instead of computing the whole team and discarding most of it.
@@ -255,39 +250,37 @@ export async function loadTeamReport(
     prisma.team.findMany({ select: { id: true, name: true, status: true }, orderBy: { name: "asc" } }),
     prisma.teamMembership.findMany({ select: { teamMemberId: true, teamId: true, startedAt: true, endedAt: true } }),
     // One row per real message. DISTINCT ON collapses the copies a message gets when two of our
-    // numbers are in the same group (each account stores its own row). Bounded by the timestamp
-    // index; nothing unbounded is scanned, and only six narrow columns cross to Node.
+    // numbers are in the same group (each account stores its own row) — on the LOGICAL message key,
+    // not the stored id, which differs between the sending account's copy and every other's
+    // (WHATSAPP_IDENTITY.md); the sending account's own copy is the one kept. Bounded by the
+    // timestamp index; nothing unbounded is scanned, and only seven narrow columns cross to Node.
     onlyWhatsappGroupId
-      ? prisma.$queryRaw<Array<{ wgid: string; ts: Date; direction: string; fromTeam: boolean; sender: string }>>`
-          SELECT DISTINCT ON (m."whatsappMessageId")
+      ? prisma.$queryRaw<Array<{ wgid: string; ts: Date; direction: string; fromTeam: boolean; sender: string; senderJid: string | null }>>`
+          SELECT DISTINCT ON (${messageKeySql()})
             g."whatsappGroupId" AS wgid, m."timestampWa" AS ts, m."direction"::text AS direction,
-            m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender
+            m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid"
           FROM "Message" m
           JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
           WHERE g."whatsappGroupId" = ${onlyWhatsappGroupId}
             AND m."projectId" = ${await activeProjectId()}
             AND m."timestampWa" >= ${range.start} AND m."timestampWa" < ${lookaheadEnd}
             ${accountFilter}
-          ORDER BY m."whatsappMessageId", m."timestampWa", m."id"`
-      : prisma.$queryRaw<Array<{ wgid: string; ts: Date; direction: string; fromTeam: boolean; sender: string }>>`
-          SELECT DISTINCT ON (g."whatsappGroupId", m."whatsappMessageId")
+          ORDER BY ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`
+      : prisma.$queryRaw<Array<{ wgid: string; ts: Date; direction: string; fromTeam: boolean; sender: string; senderJid: string | null }>>`
+          SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
             g."whatsappGroupId" AS wgid, m."timestampWa" AS ts, m."direction"::text AS direction,
-            m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender
+            m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid"
           FROM "Message" m
           JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
           WHERE m."timestampWa" >= ${range.start} AND m."timestampWa" < ${lookaheadEnd}
             AND m."projectId" = ${await activeProjectId()}
             ${groupFilter}
             ${accountFilter}
-          ORDER BY g."whatsappGroupId", m."whatsappMessageId", m."timestampWa", m."id"`,
+          ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
   ]);
 
-  const identifierToMember = new Map<string, string>();
-  for (const member of members) {
-    for (const identifier of senderIdentifiers(member)) {
-      if (!identifierToMember.has(identifier)) identifierToMember.set(identifier, member.id);
-    }
-  }
+  // Who sent each message: the one identity rule (WHATSAPP_IDENTITY.md), over every member.
+  const resolver = createSenderResolver(members);
 
   const messages: ReportMessage[] = [];
   for (const row of rows) {
@@ -296,13 +289,15 @@ export async function loadTeamReport(
       messages.push({ groupKey: row.wgid, ts: row.ts.getTime(), kind: "BUSINESS", memberId: null });
       continue;
     }
-    const memberId = identifierToMember.get(row.sender) ?? null;
+    const sender = resolver.resolve(row.sender, row.senderJid);
+    const memberId = sender.memberId;
     messages.push({
       groupKey: row.wgid,
       ts: row.ts.getTime(),
-      // A sender stamped as a team member at the time but no longer on the roster still replied as
-      // one: counted as a reply, attributed to nobody.
-      kind: memberId || row.fromTeam ? "MEMBER" : "CUSTOMER",
+      // Counted as a reply but attributed to nobody: a sender stamped as a team member at the time
+      // and no longer on the roster, and a colleague whose WhatsApp id and phone name two different
+      // members (or who shares an identifier with another) — certainly staff, never a guess at who.
+      kind: memberId || sender.isRosterMember || row.fromTeam ? "MEMBER" : "CUSTOMER",
       memberId,
     });
   }

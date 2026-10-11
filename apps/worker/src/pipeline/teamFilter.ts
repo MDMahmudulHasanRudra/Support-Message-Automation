@@ -1,53 +1,71 @@
 import { prisma } from "../db.js";
-import { normalizePhoneNumber } from "@support-automation/shared";
+import { createSenderResolver, type SenderResolution } from "@support-automation/shared";
+import { countMetric } from "../health/metrics.js";
 
 /**
- * Resolves the ACTIVE InternalTeamMember behind a message's sender, or null for a customer.
+ * Which ACTIVE roster member sent a message — the live pipeline's reading of the ONE identity rule
+ * every report also uses (`createSenderResolver`, packages/shared/src/whatsappIdentity.ts;
+ * WHATSAPP_IDENTITY.md).
  *
- * Two identifiers are tried, because WhatsApp has changed what it puts on a message twice now:
+ * Two identifiers, because WhatsApp has changed what it puts on a message twice now:
  *
- *  1. **`whatsappId`** — the sender identifier exactly as WhatsApp delivered it. WhatsApp migrated
- *     group participants to a "LID": a 14-15 digit number that is deliberately *not* the person's
- *     phone number, so their real number never appears on a message sent in a group. Matching on
- *     phone number alone silently stopped working when that landed.
- *  2. **`phoneNumber`, compared digits-only on both sides** — still correct for members whose
- *     messages do carry their number, and tolerant of every format a person might type
- *     ("+880 170-000 0001" included). This replaced an exact string equality that could never
- *     match, because WhatsApp delivers a JID ("8801XXXXXXXXX@c.us") while people enter colleagues
- *     as "+8801XXXXXXXXX".
+ *  1. **`whatsappId`**, compared exactly — WhatsApp migrated group participants to a "LID", a 14-15
+ *     digit id that is deliberately *not* the person's phone number, so their real number never
+ *     appears on a message they send in a group.
+ *  2. **`phoneNumber`, digits-only on both sides** — still correct for members whose messages do
+ *     carry their number, and tolerant of every format a person might type.
  *
- * Both failures had the same consequence, which is why this function is worth the care: every
- * colleague gets processed as a customer. No support activity is recorded, human takeover never
- * pauses the AI, and the loop-prevention filter that stops the system replying to its own staff
- * never engages.
+ * What changed, and why: the WhatsApp id used to win outright, so when it named one colleague and
+ * the phone digits named ANOTHER, the message was silently credited to the first. Now that is a
+ * CONFLICT and nobody is credited — but the sender is still certainly a colleague, so
+ * `isRosterMember` stays true and every safety behaviour that hangs off "this is staff" (no
+ * auto-reply, no customer wait, human takeover) is unchanged. A group id is never a colleague: a
+ * message whose author WhatsApp did not name falls back to the group's own id.
  *
- * The roster is small (a support team, not a customer list), so loading the active members and
- * comparing in memory costs about what a single indexed lookup did, and it needs no second
- * normalized column that could drift from the one people actually edit.
+ * Active members only: a departed colleague is a customer again, and deactivating somebody has to
+ * actually stop them suppressing automation. Reports, which describe history, pass everyone.
+ *
+ * The roster is small (a support team, not a customer list), so loading it per message costs about
+ * what a single indexed lookup did, and it needs no second normalized column that could drift.
  */
-export async function resolveActiveTeamMember(
-  senderId: string,
-): Promise<{ id: string; name: string } | null> {
-  const raw = String(senderId ?? "").trim();
-  if (!raw) return null;
+export interface TeamSenderResolution extends SenderResolution {
+  member: { id: string; name: string } | null;
+}
 
+/** Conflicts are logged once per sender per process, not once per message. */
+const reportedConflicts = new Set<string>();
+
+export async function resolveTeamSender(senderPhone: string, senderJid?: string | null): Promise<TeamSenderResolution> {
   const members = await prisma.internalTeamMember.findMany({
     where: { status: "ACTIVE" },
     select: { id: true, name: true, phoneNumber: true, whatsappId: true },
   });
+  const resolution = createSenderResolver(members).resolve(senderPhone, senderJid);
+  const member = resolution.memberId ? (members.find((m) => m.id === resolution.memberId) ?? null) : null;
 
-  // Exact first. A LID is an opaque identifier, so it is compared as given rather than normalized
-  // — there is no "format" for a person to have typed it in wrongly.
-  const byWhatsAppId = members.find((member) => member.whatsappId && member.whatsappId === raw);
-  if (byWhatsAppId) return { id: byWhatsAppId.id, name: byWhatsAppId.name };
-
-  const senderDigits = normalizePhoneNumber(raw);
-  if (!senderDigits) return null;
-
-  const byPhone = members.find((member) => normalizePhoneNumber(member.phoneNumber) === senderDigits);
-  return byPhone ? { id: byPhone.id, name: byPhone.name } : null;
+  if (resolution.isRosterMember && !resolution.memberId) {
+    countMetric("identityUnattributed");
+    const key = `${resolution.status}:${senderJid ?? senderPhone}`;
+    if (!reportedConflicts.has(key)) {
+      reportedConflicts.add(key);
+      console.warn(
+        `[identity] ${resolution.status}: sender ${senderJid ?? senderPhone} matches team members ${resolution.candidateIds.join(", ")} — ` +
+          "treated as staff, credited to nobody until the roster is corrected (Team Members → Identity check).",
+      );
+    }
+  }
+  return { ...resolution, member: member ? { id: member.id, name: member.name } : null };
 }
 
-export async function isActiveTeamMember(senderId: string): Promise<boolean> {
-  return (await resolveActiveTeamMember(senderId)) !== null;
+/** The member credited with a message, or null — for a customer AND for an unsettled colleague. */
+export async function resolveActiveTeamMember(
+  senderId: string,
+  senderJid?: string | null,
+): Promise<{ id: string; name: string } | null> {
+  return (await resolveTeamSender(String(senderId ?? ""), senderJid)).member;
+}
+
+/** Whether the sender is a colleague at all — true for a CONFLICT or AMBIGUOUS match as well. */
+export async function isActiveTeamMember(senderId: string, senderJid?: string | null): Promise<boolean> {
+  return (await resolveTeamSender(String(senderId ?? ""), senderJid)).isRosterMember;
 }

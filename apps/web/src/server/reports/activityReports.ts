@@ -3,6 +3,7 @@ import {
   activityHeatmap,
   CALL_KIND_LABELS,
   CALL_SQL_PREFILTER,
+  createSenderResolver,
   detectCallMention,
   HEATMAP_METRICS,
   type CallKind,
@@ -10,7 +11,7 @@ import {
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
-import { senderIdentifiers } from "@/server/teamReport";
+import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
 import type { ReportContext } from "./context";
 import { count, duration, hourLabel, when, WEEKDAYS } from "./format";
 import { waitsInScope } from "./responseReports";
@@ -98,10 +99,12 @@ export async function buildCalls(ctx: ReportContext): Promise<BuiltReport> {
   const [candidates, members] = await Promise.all([
     // Only messages whose text could mention a call cross to this process; detectCallMention decides.
     // DISTINCT ON collapses the copies two of our numbers store of one message, as the Team Report does.
-    prisma.$queryRaw<Array<{ wgid: string; wamid: string; ts: Date; direction: string; fromTeam: boolean; sender: string; body: string }>>`
-      SELECT DISTINCT ON (g."whatsappGroupId", m."whatsappMessageId")
+    prisma.$queryRaw<
+      Array<{ wgid: string; wamid: string; ts: Date; direction: string; fromTeam: boolean; sender: string; senderJid: string | null; body: string }>
+    >`
+      SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
         g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."direction"::text AS direction,
-        m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, left(m."body", 400) AS body
+        m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid", left(m."body", 400) AS body
       FROM "Message" m
       JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
       WHERE m."projectId" = ${await activeProjectId()}
@@ -110,19 +113,20 @@ export async function buildCalls(ctx: ReportContext): Promise<BuiltReport> {
         AND m."body" ~* ${CALL_SQL_PREFILTER}
         ${groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty}
         ${accountId ? Prisma.sql`AND m."accountId" = ${accountId}` : Prisma.empty}
-      ORDER BY g."whatsappGroupId", m."whatsappMessageId", m."timestampWa", m."id"`,
+      ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
     prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } }),
   ]);
-  const identifierToMember = new Map<string, string>();
-  for (const member of members) for (const id of senderIdentifiers(member)) if (!identifierToMember.has(id)) identifierToMember.set(id, member.id);
+  // The one identity rule (WHATSAPP_IDENTITY.md), so a sender here is who the Team Report says.
+  const resolver = createSenderResolver(members);
 
   const scope = ctx.data.scope;
   const found = candidates
     .map((row) => {
       const mention = detectCallMention(row.body);
       if (!mention) return null;
-      const memberId = row.direction === "OUTGOING" ? null : (identifierToMember.get(row.sender) ?? null);
-      const who = row.direction === "OUTGOING" ? "BUSINESS" : memberId || row.fromTeam ? "MEMBER" : "CUSTOMER";
+      const sender = row.direction === "OUTGOING" ? null : resolver.resolve(row.sender, row.senderJid);
+      const memberId = sender?.memberId ?? null;
+      const who = row.direction === "OUTGOING" ? "BUSINESS" : memberId || sender?.isRosterMember || row.fromTeam ? "MEMBER" : "CUSTOMER";
       return { ...row, ms: row.ts.getTime(), mention, memberId, who };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)

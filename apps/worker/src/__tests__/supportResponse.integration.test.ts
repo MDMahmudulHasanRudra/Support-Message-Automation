@@ -277,3 +277,59 @@ describe("isolation", () => {
   });
 });
 
+
+describe("a colleague whose identity is unsettled (WHATSAPP_IDENTITY.md)", () => {
+  /**
+   * The WhatsApp id names one Support member and the phone digits name ANOTHER member. The id used
+   * to win outright, so the reply was credited to the first member and answered the wait. Now
+   * nobody is credited: it is a colleague's message (no customer wait opens), and it answers none.
+   */
+  it("opens no wait and answers none", async () => {
+    const lid = `16${RUN}${String(++seq).padStart(7, "0")}`;
+    const credited = await prisma.internalTeamMember.create({
+      data: { name: "Id holder", phoneNumber: phone(), whatsappId: lid, role: "Support", status: "ACTIVE", teamId: support.id },
+    });
+    await prisma.teamMembership.create({ data: { teamMemberId: credited.id, teamId: support.id, startedAt: null } });
+    const clash = await prisma.internalTeamMember.create({ data: { name: "Phone holder", phoneNumber: lid, role: "Support", status: "ACTIVE" } });
+    try {
+      await send(groupA, lid, 0, { senderJid: `${lid}@lid` });
+      expect(await episodes(groupA)).toHaveLength(0);
+
+      await send(groupA, CUSTOMER, 1);
+      await send(groupA, lid, 2, { senderJid: `${lid}@lid` });
+      const [e] = await episodes(groupA);
+      expect(e).toMatchObject({ status: "UNANSWERED", supportMemberId: null, supportReplyMessageId: null });
+    } finally {
+      await rawPrisma.teamMembership.deleteMany({ where: { teamMemberId: credited.id } });
+      await rawPrisma.internalTeamMember.deleteMany({ where: { id: { in: [credited.id, clash.id] } } });
+    }
+  });
+});
+
+describe("what is stored (WHATSAPP_IDENTITY.md)", () => {
+  it("keeps the sender's domain on an incoming message", async () => {
+    const m = msg(groupA, "161600000000123", 0, { senderJid: "161600000000123@lid" });
+    await processIncomingMessage(m);
+    const stored = await prisma.message.findFirstOrThrow({ where: { whatsappMessageId: m.whatsappMessageId } });
+    expect(stored).toMatchObject({ senderPhone: "161600000000123", senderJid: "161600000000123@lid" });
+  });
+
+  it("keeps the quote and the mentions on a reply typed on the business phone", async () => {
+    const question = msg(groupA, CUSTOMER, 0, { body: "is the link down?" });
+    await processIncomingMessage(question);
+    const reply = msg(groupA, "8801700000999", 1, {
+      direction: "OUTGOING",
+      whatsappMessageId: `true_${groupA.whatsappGroupId}_${randomUUID()}`,
+      senderJid: "8801700000999@c.us",
+      body: "checking now",
+      quotedWhatsappMessageId: question.whatsappMessageId,
+      mentionedPhones: [CUSTOMER],
+    });
+    await processIncomingMessage(reply);
+    const [q, r] = await Promise.all([
+      prisma.message.findFirstOrThrow({ where: { whatsappMessageId: question.whatsappMessageId } }),
+      prisma.message.findFirstOrThrow({ where: { whatsappMessageId: reply.whatsappMessageId } }),
+    ]);
+    expect(r).toMatchObject({ direction: "OUTGOING", quotedMessageId: q.id, mentionedPhones: [CUSTOMER], senderJid: "8801700000999@c.us" });
+  });
+});

@@ -9,14 +9,14 @@ import {
   groupMessageCounts,
   groupDataConfidence,
   groupWaitsBy,
-  normalizePhoneNumber,
+  createSenderResolver,
   responseStats,
   type GroupActivityStatus,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
 import { accountsByGroupKey } from "@/server/dataHealth";
-import { bucketLabel, senderIdentifiers } from "@/server/teamReport";
+import { bucketLabel } from "@/server/teamReport";
 import { bucketColumnLabel } from "@/server/teamReportTables";
 import { measuredTo, type ReportContext } from "./context";
 import { count, dateOnly, duration, percent, when } from "./format";
@@ -80,6 +80,7 @@ const STATUS_ORDER: GroupActivityStatus[] = ["NO_COMMUNICATION", "CUSTOMER_NO_RE
 export interface LastActivity {
   at: number;
   senderPhone: string;
+  senderJid: string | null;
   senderName: string | null;
   direction: string;
 }
@@ -92,12 +93,14 @@ export interface LastActivity {
  */
 export async function loadLastActivity(ctx: ReportContext, groupKeys: readonly string[]): Promise<Map<string, LastActivity>> {
   if (!groupKeys.length) return new Map();
-  const rows = await prisma.$queryRaw<Array<{ wgid: string; lastAt: Date; senderPhone: string; senderName: string | null; direction: string }>>`
+  const rows = await prisma.$queryRaw<
+    Array<{ wgid: string; lastAt: Date; senderPhone: string; senderJid: string | null; senderName: string | null; direction: string }>
+  >`
     SELECT DISTINCT ON (g."whatsappGroupId")
-           g."whatsappGroupId" AS wgid, last.ts AS "lastAt", last."senderPhone", last."senderName", last.direction
+           g."whatsappGroupId" AS wgid, last.ts AS "lastAt", last."senderPhone", last."senderJid", last."senderName", last.direction
     FROM "WhatsAppGroup" g
     CROSS JOIN LATERAL (
-      SELECT m."timestampWa" AS ts, m."senderPhone", m."senderName", m."direction"::text AS direction FROM "Message" m
+      SELECT m."timestampWa" AS ts, m."senderPhone", m."senderJid", m."senderName", m."direction"::text AS direction FROM "Message" m
       WHERE m."groupId" = g."id" AND m."timestampWa" < ${new Date(ctx.rangeEnd)}
         AND m."direction" <> 'SYSTEM'
       ORDER BY m."timestampWa" DESC
@@ -106,8 +109,15 @@ export async function loadLastActivity(ctx: ReportContext, groupKeys: readonly s
     WHERE g."projectId" = ${await activeProjectId()}
       AND g."whatsappGroupId" IN (${Prisma.join([...groupKeys])})
       ${ctx.filters.accountId ? Prisma.sql`AND g."accountId" = ${ctx.filters.accountId}` : Prisma.empty}
-    ORDER BY g."whatsappGroupId", last.ts DESC`;
-  return new Map(rows.map((r) => [r.wgid, { at: r.lastAt.getTime(), senderPhone: r.senderPhone, senderName: r.senderName, direction: r.direction }]));
+    -- Two of our accounts store one message with the same WhatsApp timestamp; on that tie the sending
+    -- account's own (OUTGOING) copy wins, so our post never reads as "Customer · <our number>".
+    ORDER BY g."whatsappGroupId", last.ts DESC, (last.direction = 'OUTGOING') DESC`;
+  return new Map(
+    rows.map((r) => [
+      r.wgid,
+      { at: r.lastAt.getTime(), senderPhone: r.senderPhone, senderJid: r.senderJid, senderName: r.senderName, direction: r.direction },
+    ]),
+  );
 }
 
 /**
@@ -133,15 +143,19 @@ export async function loadGroupsWithLaterMessagesOnly(ctx: ReportContext, noneBe
  */
 export async function loadRoster(ctx: ReportContext): Promise<{ teamOf: Map<string, string | null>; describeSender: (l: LastActivity) => string }> {
   const roster = await prisma.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true, teamId: true } });
-  const memberBySender = new Map<string, { name: string }>();
-  for (const member of roster) for (const id of senderIdentifiers(member)) memberBySender.set(id, member);
+  // The one identity rule (WHATSAPP_IDENTITY.md). This copy used to let the LAST member sharing an
+  // identifier win, the opposite of every other report.
+  const resolver = createSenderResolver(roster);
+  const nameById = new Map(roster.map((m) => [m.id, m.name]));
   const teamNameById = new Map(ctx.data.teams.map((t) => [t.id, t.name]));
   return {
     teamOf: new Map(roster.map((m) => [m.id, m.teamId ? (teamNameById.get(m.teamId) ?? null) : null])),
     describeSender: (l) => {
       if (l.direction === "OUTGOING") return "Business number";
-      const member = memberBySender.get(l.senderPhone) ?? memberBySender.get(normalizePhoneNumber(l.senderPhone) ?? "");
-      return member ? `Team member · ${member.name}` : `Customer · ${l.senderName || l.senderPhone}`;
+      const sender = resolver.resolve(l.senderPhone, l.senderJid);
+      if (sender.memberId) return `Team member · ${nameById.get(sender.memberId) ?? "Unknown"}`;
+      if (sender.isRosterMember) return "Team member (identity needs review)";
+      return `Customer · ${l.senderName || l.senderPhone}`;
     },
   };
 }

@@ -195,6 +195,7 @@ async function runAutomationStageInProject(
         groupId: group?.id ?? null,
         isFromTeamMember,
         senderPhone: raw.senderPhone,
+        senderJid: raw.senderJid ?? null,
         messageId: message.id,
         body: raw.body,
         timestampWa: raw.timestampWa,
@@ -233,6 +234,7 @@ async function runAutomationStageInProject(
         groupId: group?.id ?? null,
         isFromTeamMember,
         senderPhone: raw.senderPhone,
+        senderJid: raw.senderJid ?? null,
         timestampWa: raw.timestampWa,
       });
     } catch (err) {
@@ -513,8 +515,8 @@ export interface StoredIncomingMessage {
  * Shared by the live path and the catch-up sweep on purpose. A message recovered after a gap has to
  * land in the database byte-identically to one seen live, or every reader downstream — the inbox,
  * support activity, escalation, learning — quietly sees two classes of message. That drift is not
- * hypothetical: `storeNonAutomatedMessage` below is a second copy of this write that fell behind,
- * and still stores `isFromTeamMember: false` with no quote and no mentions.
+ * hypothetical: `storeNonAutomatedMessage` below is a second copy of this write that fell behind
+ * (it dropped the quote and the mentions until WHATSAPP_IDENTITY.md); keep the two in step.
  */
 async function persistIncomingMessage(
   raw: RawIncomingMessage,
@@ -522,7 +524,7 @@ async function persistIncomingMessage(
   /** Null for a bulk replay: one trace line per message is useful live and is noise a thousand at a time. */
   traceId: string | null,
 ): Promise<StoredIncomingMessage | null> {
-  const isFromTeamMember = await isActiveTeamMember(raw.senderPhone);
+  const isFromTeamMember = await isActiveTeamMember(raw.senderPhone, raw.senderJid);
   if (traceId) traceStage(traceId, "TEAM_MEMBER_CHECK", { isFromTeamMember });
 
   const group = await resolveGroup(raw);
@@ -557,6 +559,7 @@ async function persistIncomingMessage(
         whatsappMessageId: raw.whatsappMessageId,
         chatId: raw.chatId,
         senderPhone: raw.senderPhone,
+        senderJid: raw.senderJid ?? null,
         senderName: raw.senderName,
         isFromTeamMember,
         direction: "INCOMING",
@@ -595,6 +598,7 @@ async function persistIncomingMessage(
     accountId: raw.accountId,
     direction: "INCOMING",
     senderPhone: raw.senderPhone,
+    senderJid: raw.senderJid ?? null,
     timestampWa: raw.timestampWa,
   });
 
@@ -664,6 +668,7 @@ async function storeMissedMessageInProject(raw: RawIncomingMessage): Promise<boo
       groupId: group?.id ?? null,
       isFromTeamMember,
       senderPhone: raw.senderPhone,
+      senderJid: raw.senderJid ?? null,
       messageId: message.id,
       body: raw.body,
       timestampWa: raw.timestampWa,
@@ -689,6 +694,7 @@ async function storeMissedMessageInProject(raw: RawIncomingMessage): Promise<boo
       groupId: group?.id ?? null,
       isFromTeamMember,
       senderPhone: raw.senderPhone,
+      senderJid: raw.senderJid ?? null,
       timestampWa: raw.timestampWa,
     });
   } catch (err) {
@@ -720,6 +726,7 @@ export async function loadStoredMessageContext(
       accountId: true,
       chatId: true,
       senderPhone: true,
+      senderJid: true,
       senderName: true,
       isFromTeamMember: true,
       body: true,
@@ -741,6 +748,7 @@ export async function loadStoredMessageContext(
     chatId: row.chatId,
     whatsappGroupId,
     senderPhone: row.senderPhone,
+    senderJid: row.senderJid,
     senderName: row.senderName,
     direction: "INCOMING",
     body: row.body,
@@ -852,6 +860,17 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
   // the customer's side and its awaiting-reply signal could never clear. An unknown group still
   // stores the message, with groupId null, exactly as the incoming path does.
   const group = await resolveGroup(raw);
+  // The quote and the mentions are the conversation's own structure, not automation inputs, so an
+  // executive's swipe-to-reply on the business phone keeps them exactly as an incoming message does.
+  // This copy of the write used to drop both (the drift `persistIncomingMessage` documents).
+  // `isFromTeamMember` stays false on purpose: an OUTGOING row is the business number, which every
+  // reader already counts as a reply by its direction, and no individual is named by WhatsApp.
+  const quotedMessage = raw.quotedWhatsappMessageId
+    ? await prisma.message.findUnique({
+        where: { accountId_whatsappMessageId: { accountId: raw.accountId, whatsappMessageId: raw.quotedWhatsappMessageId } },
+        select: { id: true },
+      })
+    : null;
   let stored = true;
   try {
     const message = await prisma.message.create({
@@ -861,6 +880,7 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
         whatsappMessageId: raw.whatsappMessageId,
         chatId: raw.chatId,
         senderPhone: raw.senderPhone,
+        senderJid: raw.senderJid ?? null,
         senderName: raw.senderName,
         isFromTeamMember: false,
         direction: raw.direction,
@@ -868,6 +888,8 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
         normalizedBody: raw.body.trim(),
         timestampWa: raw.timestampWa,
         processingStatus: "PROCESSED",
+        quotedMessageId: quotedMessage?.id ?? null,
+        mentionedPhones: raw.mentionedPhones ?? [],
       },
     });
     // A photo an executive sent from the business phone is part of the conversation too.

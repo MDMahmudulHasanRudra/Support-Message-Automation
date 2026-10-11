@@ -44,3 +44,4 @@ export * from "./googleSheetTime.js";
 export * from "./googleSheetReports.js";
 export * from "./googleOAuthClient.js";
 export * from "./channels.js";
+export * from "./whatsappIdentity.js";

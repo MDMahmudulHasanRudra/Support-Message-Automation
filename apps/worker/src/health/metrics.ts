@@ -29,6 +29,12 @@ export interface WorkerMetrics {
   replied: number;
   /** Times a connected account was found not to be collecting, and the sweep was run. */
   collectionBreaks: number;
+  /**
+   * Messages from a roster member whose identity could not be settled — the WhatsApp id and the
+   * phone number name different members, or one identifier is shared (WHATSAPP_IDENTITY.md). Treated
+   * as staff, credited to nobody; a rising count means the roster needs fixing.
+   */
+  identityUnattributed: number;
 }
 
 const counters: WorkerMetrics = {
@@ -38,6 +44,7 @@ const counters: WorkerMetrics = {
   retried: 0,
   replied: 0,
   collectionBreaks: 0,
+  identityUnattributed: 0,
 };
 
 export function countMetric(name: keyof WorkerMetrics, by = 1): void {

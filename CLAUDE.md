@@ -493,7 +493,7 @@ Three rules worth not undoing:
 - **Logout and Reconnect cancel a running sync first** (`cancelGroupSync`, a per-account generation
   checked before every write): CANCELLED, never FAILED, and a cancelled sync writes nothing more —
   otherwise a sync that read the list before a LOGOUT re-activates every group the logout switched off.
-- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011091000`).
+- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011091800`).
   Prisma orders by name and `migrate deploy` silently applies an earlier-named one out of order, so
   until 12 Oct 2026 name new migrations after the last one by hand.
 
@@ -851,6 +851,32 @@ subscription and a new table, OpenWA's `onReaction()` is gated behind an **Insid
 deployment does not have**, so the trigger would appear configured in the UI and never fire once.
 (`sendTextWithMentions`, used by the handover mention, is *not* licence-gated — the two are often
 assumed to go together.)
+
+### WhatsApp identity — who sent it, and which rows are one message (`packages/shared/src/whatsappIdentity.ts`, `WHATSAPP_IDENTITY.md`)
+
+One rule decides which roster member sent a message, everywhere: the worker (`teamFilter.ts`
+`resolveTeamSender`), every report loader, the chat, Team Members candidates, reconciliation. Never
+write another identifier→member map. Rules worth not undoing:
+
+- **`createSenderResolver(members).resolve(senderPhone, senderJid)`.** The `whatsappId` is matched
+  exactly, the phone digits-only.
+  - The WhatsApp id naming one member and the phone ANOTHER is `CONFLICT`. A shared identifier is
+    `AMBIGUOUS`. Both credit nobody but keep `isRosterMember: true`, so staff safety (no auto-reply,
+    no customer wait) is unchanged.
+  - A group id is `NOT_A_PERSON`.
+  - The worker passes ACTIVE members, reports pass all of them. Attribution is decided at read time,
+    never stored.
+- **`Message.senderJid`** keeps the domain `senderPhone` strips: the only way to tell a LID from a
+  phone number. A LID is never displayed as a number (`describeSenderId`).
+- **Deduplicate on the LOGICAL key** (`logicalMessageKey` / `messageKeySql()` with
+  `preferSenderCopySql()`), never on `whatsappMessageId`. That id starts `true_` on the sending
+  account and `false_` on our other accounts, so our own posts were counted again as customer
+  messages.
+- **History reconciliation** is `pnpm db:reconcile:messages`: a dry run by default; `--apply` only
+  fills NULL `senderJid` from what each row proves.
+- **Identifier changes on Team Members are System Log entries.** WhatsApp Chat's contact panel links
+  an unresolved sender to a member (`linkWhatsAppSender`, `whatsapp.manage`). Panels are URL state
+  (`?contact=` / `?info=group`).
 
 ### Support response tracking — Messages → Unanswered Groups / Response Time (`apps/worker/src/supportResponse/`, `SUPPORT_RESPONSE.md`)
 

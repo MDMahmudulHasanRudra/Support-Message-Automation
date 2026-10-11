@@ -1366,6 +1366,14 @@ model Message {
   whatsappMessageId String
   chatId            String
   senderPhone       String
+  /// The sender exactly as WhatsApp named them, domain kept: `8801…@c.us` (a phone number) or
+  /// `1616…@lid` (WhatsApp's opaque per-person id, deliberately NOT a phone number).
+  ///
+  /// `senderPhone` strips the domain, which made the two indistinguishable — 1,118 of 1,151 stored
+  /// messages carried a LID, and nothing could tell which of them was a number anybody could dial.
+  /// Null on rows stored before this column existed; `reconcile:messages` recovers it from what each
+  /// row itself proves (an incoming group message's key names its author). WHATSAPP_IDENTITY.md.
+  senderJid         String?
   senderName        String?
   isFromTeamMember  Boolean          @default(false)
   direction         MessageDirection

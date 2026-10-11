@@ -1,7 +1,7 @@
 import { applyResponseMessage, classifyResponseMessage } from "@support-automation/shared";
 import type { EpisodeAction, ResponseMessageRole } from "@support-automation/shared";
 import { prisma } from "../db.js";
-import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
+import { resolveTeamSender } from "../pipeline/teamFilter.js";
 
 /** What `trackSupportResponse` decided for one message. */
 export interface SupportResponseTrack {
@@ -39,6 +39,8 @@ export async function trackSupportResponse(input: {
   accountId: string;
   direction: "INCOMING" | "OUTGOING" | "SYSTEM";
   senderPhone: string;
+  /** The sender with its WhatsApp domain (`Message.senderJid`), when known. */
+  senderJid?: string | null;
   timestampWa: Date;
 }): Promise<SupportResponseTrack | null> {
   try {
@@ -50,8 +52,13 @@ export async function trackSupportResponse(input: {
     const at = input.timestampWa;
     let memberId: string | null = null;
     let supportTeamId: string | null = null;
+    // A colleague whose identity is unsettled (WHATSAPP_IDENTITY.md): never a customer's wait, never
+    // a credited answer.
+    let unattributedRosterMember = false;
     if (input.direction === "INCOMING") {
-      const member = await resolveActiveTeamMember(input.senderPhone);
+      const sender = await resolveTeamSender(input.senderPhone, input.senderJid);
+      const member = sender.member;
+      unattributedRosterMember = sender.isRosterMember && !member;
       if (member) {
         memberId = member.id;
         const membership = await prisma.teamMembership.findFirst({
@@ -66,7 +73,12 @@ export async function trackSupportResponse(input: {
       }
     }
 
-    const role = classifyResponseMessage({ direction: input.direction, memberId, inSupportTeam: supportTeamId !== null });
+    const role = classifyResponseMessage({
+      direction: input.direction,
+      memberId,
+      inSupportTeam: supportTeamId !== null,
+      unattributedRosterMember,
+    });
     if (role !== "CUSTOMER" && role !== "SUPPORT") return { role, memberId, action: "NONE", episodeId: null }; // nothing else changes an episode
 
     const groupId = input.groupId;

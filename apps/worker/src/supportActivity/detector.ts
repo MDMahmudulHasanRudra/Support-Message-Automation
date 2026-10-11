@@ -1,7 +1,7 @@
 import { projectHasFeature } from "../project/features.js";
 import { prisma } from "../db.js";
 import { matchSupportKeyword } from "@support-automation/engine";
-import { normalizePhoneNumber } from "@support-automation/shared";
+import { createSenderResolver, normalizePhoneNumber } from "@support-automation/shared";
 import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
 import { getSupportActivitySettings } from "./settings.js";
 
@@ -12,6 +12,8 @@ export interface SupportActivityDetectionInput {
   /** Already computed once by isActiveTeamMember() upstream in the pipeline — reused, not recomputed. */
   isFromTeamMember: boolean;
   senderPhone: string;
+  /** The sender with its WhatsApp domain (`Message.senderJid`), when known. */
+  senderJid?: string | null;
   messageId: string;
   body: string;
   timestampWa: Date;
@@ -58,10 +60,11 @@ export async function detectSupportActivity(
   // Project entitlement (MULTI_PROJECT_PLAN.md §9), checked beside the module's own setting: both must be on.
   if (!(await projectHasFeature("SUPPORT_ACTIVITY"))) return null;
 
-  // Same digits-only match the pipeline's own team-member check uses. This was an exact string
-  // lookup on phoneNumber, which never matched a real WhatsApp sender — see teamFilter.ts.
-  const teamMember = await resolveActiveTeamMember(input.senderPhone);
-  if (!teamMember) return null; // defensive; isActiveTeamMember() already implies this row exists
+  // The pipeline's own identity rule (teamFilter.ts, WHATSAPP_IDENTITY.md). Null for a colleague
+  // whose identity is in conflict: they are staff, but whose activity it is cannot be said, and
+  // crediting somebody with it is exactly the misattribution the rule exists to prevent.
+  const teamMember = await resolveActiveTeamMember(input.senderPhone, input.senderJid);
+  if (!teamMember) return null;
 
   const candidateRules = await prisma.supportRule.findMany({
     where: {
@@ -108,16 +111,15 @@ export async function detectSupportActivity(
       mentionsACustomer = false;
       return mentionsACustomer;
     }
-    // Mentions arrive as bare JIDs already split by the provider, but roster numbers are still
-    // human-entered — so this comparison needs normalizing on both sides too, or every mention
-    // would look like a customer mention.
-    const allMembers = await prisma.internalTeamMember.findMany({ select: { phoneNumber: true } });
-    const teamDigits = new Set(
-      allMembers.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((d): d is string => d !== null),
-    );
+    // The one identity rule, so a mention is read the way a sender is. It used to compare phone
+    // digits only, so @-mentioning a colleague by their LID — which is how WhatsApp now addresses
+    // most group participants — read as mentioning a customer.
+    const allMembers = await prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } });
+    const resolver = createSenderResolver(allMembers);
     mentionsACustomer = mentionedPhones.some((phone) => {
-      const digits = normalizePhoneNumber(phone);
-      return digits !== null && !teamDigits.has(digits);
+      if (!normalizePhoneNumber(phone)) return false;
+      const result = resolver.resolve(phone);
+      return result.status === "UNRESOLVED";
     });
     return mentionsACustomer;
   }

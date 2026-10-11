@@ -6,6 +6,8 @@ import { notFound } from "next/navigation";
 import { after } from "next/server";
 import { pageAccess } from "@/server/authorize";
 import { getPersonalChatThread, getSavedReplies } from "@/server/chatInbox";
+import { getContactProfile } from "@/server/chatProfiles";
+import { ContactPanel } from "../../../../ChatInfoPanel";
 import { markPersonalChatReviewed } from "@/server/actions/chatOrganisation";
 import { Composer } from "../../../../Composer";
 import { MarkWaitingButton } from "../../../../MarkWaitingButton";
@@ -26,10 +28,18 @@ export const metadata = { title: "WhatsApp Chat" };
  * checks, live, that the chat exists on the account before sending (`verifyPersonalChat`) — a reply
  * continues a conversation, it never starts one.
  */
-export default async function PersonalChatPage({ params }: { params: Promise<{ accountId: string; chatId: string }> }) {
+export default async function PersonalChatPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ accountId: string; chatId: string }>;
+  /** `?contact=1` opens this person's contact panel (WHATSAPP_IDENTITY.md §7). */
+  searchParams: Promise<{ contact?: string }>;
+}) {
   // Its own check rather than relying on the chat layout's (see the group conversation page).
-  const { canManage: canReply } = await pageAccess("messages.view", "messages.reply");
+  const { session, canManage: canReply } = await pageAccess("messages.view", "messages.reply");
   const { accountId, chatId: rawChatId } = await params;
+  const { contact } = await searchParams;
   const [thread, savedReplies] = await Promise.all([getPersonalChatThread(accountId, decodeURIComponent(rawChatId)), getSavedReplies()]);
   if (!thread) notFound();
 
@@ -45,75 +55,89 @@ export default async function PersonalChatPage({ params }: { params: Promise<{ a
   const lastEntry = entries.at(-1);
   const isUnanswered = lastEntry?.kind === "INCOMING" && !lastEntry.isTeamMember;
   const number = chat.chatId.endsWith("@c.us") ? `+${chat.chatId.split("@")[0]}` : null;
+  const basePath = `/chat/account/${chat.accountId}/personal/${encodeURIComponent(chat.chatId)}`;
+  // A personal chat's id IS the person (`…@c.us` / `…@lid`).
+  const contactProfile = contact ? await getContactProfile(session, chat.accountId, chat.chatId) : null;
 
   return (
-    <>
-      <header className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 sm:px-6">
-        <Link
-          href={`/chat/account/${chat.accountId}?type=personal`}
-          aria-label="Back to conversations"
-          className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] md:hidden"
-        >
-          <ArrowLeft className="size-4.5" aria-hidden />
-        </Link>
+    <div className="relative flex min-h-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 sm:px-6">
+          <Link
+            href={`/chat/account/${chat.accountId}?type=personal`}
+            aria-label="Back to conversations"
+            className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] md:hidden"
+          >
+            <ArrowLeft className="size-4.5" aria-hidden />
+          </Link>
 
-        <span
-          aria-hidden
-          style={{ background: avatar.background, color: avatar.color }}
-          className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-lg)] text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)]"
-        >
-          {avatar.initials}
-        </span>
-
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">{chat.name}</h1>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-muted-foreground)]">
-            <span className="inline-flex items-center gap-1 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px font-medium text-[color:var(--color-neutral-fg)]">
-              <Smartphone className="size-3" aria-hidden />
-              {chat.accountLabel}
-              <span className={`size-1.5 rounded-full ${tone.dot}`} title={tone.label} aria-hidden />
+          {/* The avatar and name open the contact's info, as they do in WhatsApp. */}
+          <Link
+            href={`${basePath}?contact=1`}
+            title="Contact info"
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-md)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+          >
+            <span
+              aria-hidden
+              style={{ background: avatar.background, color: avatar.color }}
+              className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-lg)] text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)]"
+            >
+              {avatar.initials}
             </span>
-            <span className="inline-flex items-center gap-1">
-              <User className="size-3" aria-hidden />
-              Personal chat
-            </span>
-            {number && number !== chat.name ? <span className="tabular">{number}</span> : null}
-          </p>
-        </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          {isUnanswered ? <MarkWaitingButton accountId={chat.accountId} chatId={chat.chatId} /> : null}
-        </div>
-      </header>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)] hover:underline">{chat.name}</h1>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-muted-foreground)]">
+                <span className="inline-flex items-center gap-1 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px font-medium text-[color:var(--color-neutral-fg)]">
+                  <Smartphone className="size-3" aria-hidden />
+                  {chat.accountLabel}
+                  <span className={`size-1.5 rounded-full ${tone.dot}`} title={tone.label} aria-hidden />
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <User className="size-3" aria-hidden />
+                  Personal chat
+                </span>
+                {number && number !== chat.name ? <span className="tabular">{number}</span> : null}
+              </p>
+            </div>
+          </Link>
 
-      <ThreadScroller key={chat.id} latestEntryId={lastEntry?.id ?? null}>
-        {hasMore ? (
-          <p className="px-6 pt-4 text-center text-[11px] text-[color:var(--color-muted-foreground)]">
-            Showing the most recent messages. Older history is on the{" "}
-            <Link href="/messages" className="link">
-              All Messages
-            </Link>{" "}
-            page.
-          </p>
-        ) : null}
-        <MessageThread entries={entries} accountLabel={chat.accountLabel} />
-      </ThreadScroller>
+          <div className="flex shrink-0 items-center gap-2">
+            {isUnanswered ? <MarkWaitingButton accountId={chat.accountId} chatId={chat.chatId} /> : null}
+          </div>
+        </header>
 
-      <Composer
-        accountId={chat.accountId}
-        groupId={chat.id}
-        personalChatId={chat.chatId}
-        accountLabel={chat.accountLabel}
-        accountPhone={chat.accountPhone}
-        savedReplies={savedReplies}
-        disabledReason={
-          !canReply
-            ? "Your role can read conversations but not reply to them. Ask an administrator for Reply in WhatsApp Chat."
-            : chat.accountStatus !== "CONNECTED"
-              ? `${chat.accountLabel} is ${tone.label.toLowerCase()}, so nothing can be sent from it right now. Reconnect it on WhatsApp Accounts.`
-              : null
-        }
-      />
-    </>
+        <ThreadScroller key={chat.id} latestEntryId={lastEntry?.id ?? null}>
+          {hasMore ? (
+            <p className="px-6 pt-4 text-center text-[11px] text-[color:var(--color-muted-foreground)]">
+              Showing the most recent messages. Older history is on the{" "}
+              <Link href="/messages" className="link">
+                All Messages
+              </Link>{" "}
+              page.
+            </p>
+          ) : null}
+          <MessageThread entries={entries} accountLabel={chat.accountLabel} />
+        </ThreadScroller>
+
+        <Composer
+          accountId={chat.accountId}
+          groupId={chat.id}
+          personalChatId={chat.chatId}
+          accountLabel={chat.accountLabel}
+          accountPhone={chat.accountPhone}
+          savedReplies={savedReplies}
+          disabledReason={
+            !canReply
+              ? "Your role can read conversations but not reply to them. Ask an administrator for Reply in WhatsApp Chat."
+              : chat.accountStatus !== "CONNECTED"
+                ? `${chat.accountLabel} is ${tone.label.toLowerCase()}, so nothing can be sent from it right now. Reconnect it on WhatsApp Accounts.`
+                : null
+          }
+        />
+      </div>
+
+      {contactProfile ? <ContactPanel profile={contactProfile} accountId={chat.accountId} closeHref={basePath} /> : null}
+    </div>
   );
 }

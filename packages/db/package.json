@@ -14,6 +14,7 @@
     "migrate:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
     "seed:release-notes": "tsx prisma/seedReleaseNotes.ts",
+    "reconcile:messages": "tsx prisma/reconcileMessages.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

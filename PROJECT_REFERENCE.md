@@ -145,6 +145,32 @@ Sidebar group: **Support** → Messages (tabs: All messages / Needs attention / 
     Primary Account"), or AI / Rule / Broadcast / Automated.
   - **Bulk actions are account-scoped on the server.** Rows of another account are left alone and
     counted.
+  - **Who wrote each customer message (11 Oct 2026, `WHATSAPP_IDENTITY.md`).**
+    - **Names.** A sender is named by the roster when the identity rule names exactly one team member;
+      otherwise by their WhatsApp name, otherwise `+number`. A private WhatsApp ID (LID) is shown as
+      `WhatsApp user ···1234`, never as a number.
+    - **Clashes.** "identity needs review" marks a colleague whose WhatsApp ID and number point to two
+      different members.
+    - **Quoted replies.** A reply shows the message it quotes ("You" for our side).
+  - **Contact info** (click a sender's name in a group, or the header of a personal chat;
+    `?contact=`). It shows:
+    - the phone number (only when the id IS a number), the WhatsApp ID, and the WhatsApp names seen;
+    - the roster match: designation, department and Team; the identifiers on their record need
+      `whatsapp.view`; a clash names both members;
+    - message count and first/last seen, each message counted once even when two of our numbers
+      stored it;
+    - the groups they wrote in, and their personal chat.
+
+    With `whatsapp.manage`, an unrecognised sender can be linked to an active member who has no
+    WhatsApp ID yet ("This person is…"); the change is logged in System Logs. Profile photos and
+    "about" text are not collected, and the panel says so.
+  - **Group info** (click the group's avatar or name; `?info=group`). It shows:
+    - the group id, our number, Member / Monitored / AI / Test badges, and the assigned member;
+    - the participant count, labelled as last read from WhatsApp;
+    - **Members right now:** the last list read from WhatsApp, with its time, and "Read members from
+      WhatsApp" (`whatsapp.manage`);
+    - **People seen in this group:** senders of stored messages, explicitly not the member list.
+      Our own numbers are marked.
 
 - **WhatsApp Chat User Activity** (`/reports/whatsapp-user-activity`, Reports → Team & Employee,
   `messages.view`). Which software user sent what through this software, from which WhatsApp account,

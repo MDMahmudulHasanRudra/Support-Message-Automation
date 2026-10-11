@@ -13,6 +13,21 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **WhatsApp identity and message integrity** (`WHATSAPP_IDENTITY.md`).
+  - **One sender rule everywhere.** The live pipeline, every report, WhatsApp Chat and Team Members
+    use one rule to decide which team member sent a message: exact WhatsApp ID, digits-only phone,
+    and a group id is never a person.
+  - **Clashes credit nobody.** When the WhatsApp ID and the number point to different members, or two
+    members share one, the message is still treated as staff but credited to nobody, and the Team
+    Members page shows an "Identity clash".
+  - **Senders keep their WhatsApp domain** (`Message.senderJid`), so a private ID is never shown as a
+    phone number.
+  - **Reports count each WhatsApp message once.** Our own post seen by our second number no longer
+    becomes a customer message.
+  - **WhatsApp Chat** names senders by roster name, shows quoted replies, and has contact-info and
+    group-info panels; an unrecognised sender can be linked to a team member.
+  - **`pnpm db:reconcile:messages`** audits stored history and, with `--apply`, recovers each row's
+    sender id.
 - **Omnichannel inbox** (Support → All Conversations, Facebook Messenger, Instagram DM, Telegram;
   Settings → Messaging Channels). WhatsApp, Messenger, Instagram and Telegram conversations in one
   inbox, with channel tabs, filters and search across everything; each channel also has its own

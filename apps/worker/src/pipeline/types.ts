@@ -10,7 +10,13 @@ export interface RawIncomingMessage {
   /** The group's name as WhatsApp shows it, when the message carried one. Used only to register a
    *  group the group sync has not stored yet — the sync remains the authority on names. */
   groupName?: string | null;
+  /** The sender's id with the domain stripped — digits for a phone number, the bare LID otherwise. */
   senderPhone: string;
+  /**
+   * The sender exactly as WhatsApp named them, domain kept (`…@c.us`, `…@lid`). The domain is the
+   * only thing that tells a phone number from a LID (WHATSAPP_IDENTITY.md). Null when unknown.
+   */
+  senderJid?: string | null;
   senderName?: string | null;
   direction: "INCOMING" | "OUTGOING" | "SYSTEM";
   body: string;

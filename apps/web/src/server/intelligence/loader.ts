@@ -11,8 +11,9 @@ import {
   formatDhakaDateKey,
   gapIsIncomplete,
   humanWaits,
+  createSenderResolver,
   INTELLIGENCE_SQL_PREFILTER,
-  normalizePhoneNumber,
+  logicalMessageKey,
   preferenceSignals,
   SCHEDULED_DUTY_STATUSES,
   shiftWindow,
@@ -32,7 +33,7 @@ import {
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
-import { senderIdentifiers } from "@/server/teamReport";
+import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
 import { measuredTo as measuredToOf, type ReportContext } from "@/server/reports/context";
 
 /**
@@ -78,11 +79,13 @@ interface Row {
   direction: string;
   fromTeam: boolean;
   sender: string;
+  senderJid: string | null;
   senderName: string | null;
   mentions: string[] | null;
   body: string | null;
   quotedKey: string | null;
   quotedSender: string | null;
+  quotedSenderJid: string | null;
   quotedDirection: string | null;
   actionType: string | null;
   ruleId: string | null;
@@ -118,12 +121,14 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
 
   const [rows, members, escalations, completions, duties] = await Promise.all([
     prisma.$queryRaw<Row[]>`
-      SELECT DISTINCT ON (g."whatsappGroupId", m."whatsappMessageId")
+      SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
         g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts,
         m."direction"::text AS direction, m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender,
+        m."senderJid" AS "senderJid",
         m."senderName" AS "senderName", m."mentionedPhones" AS mentions,
         CASE WHEN length(m."body") BETWEEN 1 AND 24 OR m."body" ~* ${INTELLIGENCE_SQL_PREFILTER} THEN left(m."body", 400) END AS body,
-        q."whatsappMessageId" AS "quotedKey", q."senderPhone" AS "quotedSender", q."direction"::text AS "quotedDirection",
+        q."whatsappMessageId" AS "quotedKey", q."senderPhone" AS "quotedSender", q."senderJid" AS "quotedSenderJid",
+        q."direction"::text AS "quotedDirection",
         o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
       FROM "Message" m
       JOIN "WhatsAppGroup" g ON g."id" = m."groupId" AND g."projectId" = ${projectId}
@@ -140,7 +145,7 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
         AND m."direction" <> 'SYSTEM'
         ${groupFilter}
         ${accountFilter}
-      ORDER BY g."whatsappGroupId", m."whatsappMessageId", m."timestampWa", m."id"`,
+      ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
     prisma.internalTeamMember.findMany({
       select: { id: true, name: true, phoneNumber: true, whatsappId: true, team: { select: { name: true } } },
     }),
@@ -164,12 +169,9 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
     }),
   ]);
 
-  // ---- Roster: the same identifiers the Team Report matches on.
-  const identifierToMember = new Map<string, string>();
-  for (const member of members) {
-    for (const identifier of senderIdentifiers(member)) if (!identifierToMember.has(identifier)) identifierToMember.set(identifier, member.id);
-  }
-  const memberFor = (raw: string | null) => (raw ? (identifierToMember.get(raw) ?? identifierToMember.get(normalizePhoneNumber(raw) ?? "") ?? null) : null);
+  // ---- Roster: the one identity rule the Team Report and the live pipeline use (WHATSAPP_IDENTITY.md).
+  const resolver = createSenderResolver(members);
+  const memberFor = (raw: string | null, jid: string | null = null) => (raw ? resolver.resolve(raw, jid).memberId : null);
   const memberNames = new Map(members.map((m) => [m.id, m.name]));
   const memberTeams = new Map(members.map((m) => [m.id, m.team?.name ?? null]));
 
@@ -183,11 +185,13 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
     let memberId: string | null = null;
     if (row.direction === "OUTGOING") actor = outgoingActor(row);
     else {
-      memberId = memberFor(row.sender);
-      actor = memberId ? "MEMBER" : row.fromTeam ? "MEMBER_UNMAPPED" : "CUSTOMER";
+      const sender = resolver.resolve(row.sender, row.senderJid);
+      memberId = sender.memberId;
+      actor = memberId ? "MEMBER" : sender.isRosterMember || row.fromTeam ? "MEMBER_UNMAPPED" : "CUSTOMER";
     }
     messages.push({
-      key: row.wamid,
+      // The LOGICAL key, so a quote resolves to the message whichever account's copy was kept.
+      key: logicalMessageKey(row.wgid, row.wamid),
       groupKey: row.wgid,
       ts: row.ts.getTime(),
       actor,
@@ -196,9 +200,9 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
       sender: row.sender,
       senderName: row.senderName,
       text: row.body,
-      quotedKey: row.quotedKey,
-      quotedMemberId: row.quotedDirection === "INCOMING" ? memberFor(row.quotedSender) : null,
-      mentionedMemberIds: [...new Set((row.mentions ?? []).map(memberFor).filter((id): id is string => Boolean(id)))],
+      quotedKey: row.quotedKey ? logicalMessageKey(row.wgid, row.quotedKey) : null,
+      quotedMemberId: row.quotedDirection === "INCOMING" ? memberFor(row.quotedSender, row.quotedSenderJid) : null,
+      mentionedMemberIds: [...new Set((row.mentions ?? []).map((m) => memberFor(m)).filter((id): id is string => Boolean(id)))],
     });
   }
 

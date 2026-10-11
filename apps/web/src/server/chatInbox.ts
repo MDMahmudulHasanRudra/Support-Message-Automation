@@ -2,7 +2,15 @@
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
 import { Prisma } from "@prisma/client";
-import { attributeOutbound, MOOD_LEVEL, type Mood, type OutboundSenderType } from "@support-automation/shared";
+import {
+  attributeOutbound,
+  createSenderResolver,
+  describeSenderId,
+  MOOD_LEVEL,
+  type Mood,
+  type OutboundSenderType,
+  type SenderMatchStatus,
+} from "@support-automation/shared";
 import { getGroupMoods, getMessageMoods, type MessageMood } from "@/server/moodDetectionReports";
 import {
   isPersonalChatId,
@@ -687,6 +695,16 @@ export interface ThreadEntry {
   at: Date;
   senderName: string | null;
   senderPhone: string | null;
+  /** The sender with its WhatsApp domain (`Message.senderJid`), when known. */
+  senderJid?: string | null;
+  /**
+   * Who sent an INCOMING message, read through the one identity rule every report uses
+   * (WHATSAPP_IDENTITY.md): the roster member when exactly one matches, and a display name that is
+   * never a guess — a WhatsApp private id (LID) is never printed as if it were a phone number.
+   */
+  sender?: ThreadSenderIdentity;
+  /** The message this one replies to (WhatsApp's swipe-to-reply), when we stored it. */
+  quoted?: ThreadQuote | null;
   /** Present only on QUEUED entries — the outbound row's own state. */
   outboundStatus?: string;
   failureReason?: string | null;
@@ -708,6 +726,24 @@ export interface ThreadEntry {
   media?: ThreadMedia;
   /** Mood Detection's reading of this customer message (concerned or worse), with its signals. */
   mood?: MessageMood;
+}
+
+export interface ThreadSenderIdentity {
+  /** What to call them: the roster name, else their WhatsApp name, else their number or a masked id. */
+  label: string;
+  memberId: string | null;
+  status: SenderMatchStatus;
+  /** A colleague whose identity could not be settled (CONFLICT / AMBIGUOUS). */
+  needsReview: boolean;
+  /** The id the contact panel opens with (domain kept when known). */
+  contactKey: string;
+}
+
+export interface ThreadQuote {
+  id: string;
+  author: string;
+  body: string;
+  outgoing: boolean;
 }
 
 export interface ThreadMedia {
@@ -837,9 +873,11 @@ const THREAD_MESSAGE_SELECT = {
   direction: true,
   senderName: true,
   senderPhone: true,
+  senderJid: true,
   timestampWa: true,
   isFromTeamMember: true,
   whatsappMessageId: true,
+  quotedMessage: { select: { id: true, body: true, direction: true, senderName: true, senderPhone: true, senderJid: true } },
   // Metadata only; one indexed lookup by the unique messageId for the whole window.
   media: {
     select: {
@@ -888,7 +926,25 @@ async function buildThreadEntries(
     : [];
   const attributionByProviderId = new Map(echoed.map((row) => [row.providerMessageId!, attributionOf(row)]));
   const incomingIds = messages.filter((m) => m.direction === "INCOMING" && !m.isFromTeamMember).map((m) => m.whatsappMessageId);
-  const messageMoods = moodChatId ? await getMessageMoods(moodChatId, incomingIds) : new Map<string, MessageMood>();
+  const [messageMoods, roster] = await Promise.all([
+    moodChatId ? getMessageMoods(moodChatId, incomingIds) : Promise.resolve(new Map<string, MessageMood>()),
+    // Every member, deactivated ones included: an old message keeps the name of whoever sent it.
+    prisma.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true } }),
+  ]);
+  const resolver = createSenderResolver(roster);
+  const memberName = new Map(roster.map((m) => [m.id, m.name]));
+  const identityOf = (phone: string, jid: string | null, pushName: string | null): ThreadSenderIdentity => {
+    const res = resolver.resolve(phone, jid);
+    const described = describeSenderId(phone, jid);
+    const fallback = described.phone ?? `WhatsApp user ···${(described.id ?? phone).slice(-4)}`;
+    return {
+      label: (res.memberId ? memberName.get(res.memberId) : null) ?? (pushName?.trim() || fallback),
+      memberId: res.memberId,
+      status: res.status,
+      needsReview: res.isRosterMember && !res.memberId,
+      contactKey: jid ?? phone,
+    };
+  };
 
   const entries: ThreadEntry[] = messages.map((m) => ({
     id: m.id,
@@ -897,7 +953,20 @@ async function buildThreadEntries(
     at: m.timestampWa,
     senderName: m.senderName,
     senderPhone: m.senderPhone,
+    senderJid: m.senderJid,
+    // The stamped flag, deliberately: the inbox's "waiting" definition (inboxBaseSql) reads it, and
+    // the header's Mark-waiting button must agree with the list. Who the sender IS is `sender`.
     isTeamMember: m.isFromTeamMember,
+    ...(m.direction === "INCOMING" ? { sender: identityOf(m.senderPhone, m.senderJid, m.senderName) } : {}),
+    quoted: m.quotedMessage
+      ? {
+          id: m.quotedMessage.id,
+          outgoing: m.quotedMessage.direction === "OUTGOING",
+          // WhatsApp's own word for the business's side of the conversation.
+          author: m.quotedMessage.direction === "OUTGOING" ? "You" : identityOf(m.quotedMessage.senderPhone, m.quotedMessage.senderJid, m.quotedMessage.senderName).label,
+          body: m.quotedMessage.body.length > 160 ? `${m.quotedMessage.body.slice(0, 160)}…` : m.quotedMessage.body,
+        }
+      : null,
     ...(m.direction === "OUTGOING" ? attributionByProviderId.get(m.whatsappMessageId) : undefined),
     ...(() => {
       const mood = messageMoods.get(m.whatsappMessageId);
