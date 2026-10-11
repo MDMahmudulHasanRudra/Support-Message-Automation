@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 
 import type { SupportActivityCountingPeriod } from "@prisma/client";
 import { requireAccess } from "@/server/authorize";
+import { clampFallbackMinutes } from "@support-automation/shared";
 
 const VALID_PERIODS: SupportActivityCountingPeriod[] = ["DAILY", "WEEKLY", "MONTHLY"];
 
@@ -40,6 +41,13 @@ export async function updateSupportActivitySettings(formData: FormData): Promise
     ? Math.min(1440, Math.max(1, Math.round(rawMissed)))
     : 30;
 
+  // Support Overtime's default duty length (TEAM_OVERTIME.md), typed in HOURS and stored in minutes —
+  // converted once, here. Absent from the form (an older tab) or unparseable: left as it is, never
+  // silently reset. Clamped to 1–16 hours by the shared rule the report also applies when reading.
+  const rawFallbackHours = formData.get("overtimeFallbackDutyHours");
+  const parsedFallbackHours = rawFallbackHours === null || String(rawFallbackHours).trim() === "" ? Number.NaN : Number(rawFallbackHours);
+  const overtimeFallbackDutyMinutes = Number.isFinite(parsedFallbackHours) ? clampFallbackMinutes(parsedFallbackHours * 60) : undefined;
+
   const countingPeriod = String(formData.get("countingPeriod") ?? "DAILY");
   if (!VALID_PERIODS.includes(countingPeriod as SupportActivityCountingPeriod)) {
     throw new Error("Invalid counting period.");
@@ -52,6 +60,7 @@ export async function updateSupportActivitySettings(formData: FormData): Promise
       enabled,
       offlineAfterMinutes,
       missedReplyAfterMinutes,
+      ...(overtimeFallbackDutyMinutes !== undefined ? { overtimeFallbackDutyMinutes } : {}),
       countingPeriod: countingPeriod as SupportActivityCountingPeriod,
     },
   });
@@ -59,4 +68,5 @@ export async function updateSupportActivitySettings(formData: FormData): Promise
   revalidatePath(await projectPath("/support-activity/team"));
   revalidatePath(await projectPath("/support-activity/settings"));
   revalidatePath(await projectPath("/overview"));
+  revalidatePath(await projectPath("/team-report"));
 }

@@ -245,6 +245,7 @@ export function ReportDataTable({
                       <button
                         type="button"
                         onClick={() => toggleSort(index)}
+                        title={column.hint}
                         className={`inline-flex cursor-pointer items-center gap-1 rounded-[var(--radius-xs)] hover:text-[color:var(--color-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:outline-none ${
                           active ? "text-[color:var(--color-foreground)]" : ""
                         }`}

@@ -93,7 +93,7 @@ export default async function TeamReportGroupPage({
             <StatTile label="Messages" value={count(row.totalMessages)} hint={group.participantCount ? `${group.participantCount} participants` : undefined} />
             <StatTile label="Customer messages" value={count(row.customerMessages)} />
             <StatTile label="Team replies" value={count(row.memberReplies)} hint={row.businessReplies ? `+ ${count(row.businessReplies)} from the business number` : undefined} />
-            <StatTile label="Support Overtime" value={duration(row.activeSeconds)} />
+            <StatTile label="Support time" value={duration(row.activeSeconds)} hint="team members' time in this group" />
             <StatTile label="Customer waits" value={count(row.waits)} />
             <StatTile label="Missed" value={count(row.missed)} tone={row.missed > 0 ? "warning" : "neutral"} hint={`${count(row.unrecovered)} never answered`} />
             <StatTile label="Recall support" value={count(row.recalled)} tone="accent" />

@@ -905,8 +905,11 @@ Each guard was mutation-checked.
 | Support Activity | "Duration (seconds)", a raw number |
 | Duty History | "Engaged (minutes)", a raw number |
 
-**"Support Overtime".** The Team Report's support time — `activeSeconds`, the idle-gap stretches
-in §4 — is labelled **Support Overtime** everywhere it is shown:
+**"Support Overtime" — superseded 12 Oct 2026 by real overtime (`TEAM_OVERTIME.md`).** The Team
+Report's tile, members and by-day tables, chart and exports now show support time beyond each
+member's regular duty, per day. The support-time analyses below were relabelled **Support time**.
+What follows is the 5 Oct record. Then, the Team Report's support time — `activeSeconds`, the
+idle-gap stretches in §4 — was labelled **Support Overtime** everywhere it was shown:
 - Team Report tiles, tables, chart and Help;
 - the group page;
 - Team Workload, Workload Distribution and Employee Support Breakdown;

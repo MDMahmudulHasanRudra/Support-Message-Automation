@@ -1,4 +1,11 @@
 import { formatDhakaDateKey, getDhakaWeekRange } from "./dhakaDay.js";
+import {
+  computeOvertimeDays,
+  DEFAULT_OVERTIME_FALLBACK_DUTY_MINUTES,
+  resolveRegularDuty,
+  type OvertimeDay,
+  type ResolvedDuty,
+} from "./overtime.js";
 
 /**
  * Team Report calculations — every figure on the Team Report page and in its exports comes from
@@ -34,7 +41,13 @@ import { formatDhakaDateKey, getDhakaWeekRange } from "./dhakaDay.js";
  *   is — and to "Unassigned" when the group has none. So member totals of Missed only add up to the
  *   team total once the Unassigned row is included.
  *
- * Support duration:
+ * Support Overtime (overtime.ts, TEAM_OVERTIME.md):
+ *   Per member per Dhaka day, the support time below MINUS that day's regular duty (roster, weekly
+ *   pattern, default shift, or the project's default duty length), never below zero; a period's
+ *   overtime is the sum of its days. A day off, leave, a holiday or extra duty has no regular duty,
+ *   so all of that day's support time is overtime. Duty is internal: no figure here states it.
+ *
+ * Support time (the duration overtime is measured from; shown only for groups):
  *   A member's messages across ALL groups form one timeline. A new stretch starts at their first
  *   message, after any silence longer than the idle gap (the "offline after" setting Team Performance
  *   uses), and at every Dhaka midnight. Duration = sum of (last message - first message) per stretch.
@@ -99,6 +112,11 @@ export interface TeamReportOptions {
    */
   scope?: ((memberId: string, ts: number) => boolean) | null;
   granularity: ReportGranularity;
+  /**
+   * The member's regular duty on a Dhaka day (`resolveRegularDuty` over the roster, holidays, weekly
+   * pattern and default shift). Absent: every day uses the default duty length.
+   */
+  dutyFor?: ((memberId: string, day: string) => ResolvedDuty) | null;
 }
 
 export interface MemberReportRow {
@@ -110,7 +128,12 @@ export interface MemberReportRow {
   missed: number;
   recalled: number;
   unrecovered: number;
+  /** Support time — what overtime is measured from. Internal to the overtime figure on this row. */
   activeSeconds: number;
+  /** Support time beyond regular duty, summed per day. The figure the report shows. */
+  overtimeSeconds: number;
+  /** Days with work and no schedule at all, where the default duty length was used. */
+  unscheduledDays: number;
   stretches: number;
   firstAt: number | null;
   lastAt: number | null;
@@ -141,6 +164,10 @@ export interface BucketReportRow {
   missed: number;
   recalled: number;
   activeSeconds: number;
+  /** Overtime of the member-days in this bucket. */
+  overtimeSeconds: number;
+  /** Member-days in this bucket that had work and no schedule. */
+  unscheduledMemberDays: number;
 }
 
 export interface TeamReportSummary {
@@ -153,6 +180,9 @@ export interface TeamReportSummary {
   recalled: number;
   unrecovered: number;
   activeSeconds: number;
+  overtimeSeconds: number;
+  /** Member-days with work and no schedule, where the default duty length was used. */
+  unscheduledMemberDays: number;
   activeMembers: number;
   lastActivityAt: number | null;
 }
@@ -167,6 +197,8 @@ export interface TeamReportResult {
   waits: ReportWait[];
   /** The waits behind the summary's Missed and Recall figures, in this report's scope. */
   countedMissedWaits: ReportWait[];
+  /** Daily overtime per member in the period (in scope) — the breakdown behind every overtime figure. */
+  overtimeDays: OvertimeDay[];
 }
 
 /** One stretch of a member belonging to a Team. Null start = since before Teams were recorded. */
@@ -252,7 +284,7 @@ interface Stretch {
   end: number;
 }
 
-/** Splits one person's (or one group's) sorted timestamps into stretches. See "Support Overtime" (the Team Report Help). */
+/** Splits one person's (or one group's) sorted timestamps into stretches. The support time overtime is measured from (TEAM_OVERTIME.md §3). */
 export function splitIntoStretches(sortedTs: readonly number[], idleGapMs: number): Stretch[] {
   const stretches: Stretch[] = [];
   let current: Stretch | null = null;
@@ -374,6 +406,8 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         recalled: 0,
         unrecovered: 0,
         activeSeconds: 0,
+        overtimeSeconds: 0,
+        unscheduledDays: 0,
         stretches: 0,
         firstAt: null,
         lastAt: null,
@@ -444,6 +478,8 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         recalled: 0,
         unrecovered: 0,
         activeSeconds: 0,
+        overtimeSeconds: 0,
+        unscheduledDays: 0,
         stretches: 0,
         firstAt: null,
         lastAt: null,
@@ -519,6 +555,8 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
       missed: 0,
       recalled: 0,
       activeSeconds: 0,
+      overtimeSeconds: 0,
+      unscheduledMemberDays: 0,
       groupSet: new Set(),
     });
   }
@@ -552,6 +590,39 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
       if (b) b.activeSeconds += Math.round((stretch.end - stretch.start) / 1000);
     }
   }
+
+  // ---- Overtime: per member per day, then summed (overtime.ts) ----
+  const fallbackDuty = resolveRegularDuty({
+    assignment: null,
+    isHoliday: false,
+    pattern: null,
+    defaultShift: null,
+    fallbackMinutes: DEFAULT_OVERTIME_FALLBACK_DUTY_MINUTES,
+  });
+  const dutyFor = opts.dutyFor ?? (() => fallbackDuty);
+  const firstDay = formatDhakaDateKey(new Date(opts.rangeStart));
+  const lastDay = formatDhakaDateKey(new Date(opts.rangeEnd - 1));
+  const overtimeDays = computeOvertimeDays(
+    new Map([...timelines].map(([memberId, acc]) => [memberId, splitIntoStretches(acc.ts, opts.idleGapMs)])),
+    dutyFor,
+    // Only the period's own days: work after midnight inside a shift that began the day before the
+    // period belongs to that earlier day, which this report does not cover.
+  ).filter((d) => d.day >= firstDay && d.day <= lastDay);
+  const overtimeRows = scoped ? scopedRows : memberRows;
+  for (const d of overtimeDays) {
+    const row = overtimeRows.get(d.memberId);
+    if (row) {
+      row.overtimeSeconds += d.overtimeSeconds;
+      if (d.source === "FALLBACK") row.unscheduledDays += 1;
+    }
+    const b = buckets.get(bucketKeyFor(Date.parse(`${d.day}T06:00:00Z`), opts.granularity));
+    if (b) {
+      b.overtimeSeconds += d.overtimeSeconds;
+      if (d.source === "FALLBACK") b.unscheduledMemberDays += 1;
+    }
+  }
+  const overtimeTotal = overtimeDays.reduce((sum, d) => sum + d.overtimeSeconds, 0);
+  const unscheduledTotal = overtimeDays.filter((d) => d.source === "FALLBACK").length;
   const bucketRows: BucketReportRow[] = [...buckets.values()].map(({ groupSet, ...row }) => ({
     ...row,
     groups: groupSet.size,
@@ -580,6 +651,8 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         recalled: waits.filter((w) => w.status === "RECALLED" && waitInScopeForRecall(w)).length,
         unrecovered: waits.filter((w) => w.status === "MISSED" && waitInScopeForMissed(w)).length,
         activeSeconds: scopedMemberRows.reduce((sum, r) => sum + r.activeSeconds, 0),
+        overtimeSeconds: overtimeTotal,
+        unscheduledMemberDays: unscheduledTotal,
         activeMembers: scopedAcc.size,
         lastActivityAt: latest(scopedMemberRows),
       }
@@ -593,6 +666,8 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         recalled: waits.filter((w) => w.status === "RECALLED").length,
         unrecovered: waits.filter((w) => w.status === "MISSED").length,
         activeSeconds: [...memberRows.values()].reduce((sum, r) => sum + r.activeSeconds, 0),
+        overtimeSeconds: overtimeTotal,
+        unscheduledMemberDays: unscheduledTotal,
         activeMembers: memberAcc.size,
         lastActivityAt: latest([...memberRows.values()]),
       };
@@ -608,5 +683,5 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     (w) => (isMissed(w) && waitInScopeForMissed(w)) || (w.status === "RECALLED" && waitInScopeForRecall(w)),
   );
 
-  return { summary, members, groups: groupRows, buckets: bucketRows, waits, countedMissedWaits };
+  return { summary, members, groups: groupRows, buckets: bucketRows, waits, countedMissedWaits, overtimeDays };
 }

@@ -3822,6 +3822,10 @@ model SupportActivitySettings {
   /// use their escalation policy's first-alert time instead; this covers every other group, since
   /// no rule for them existed. See packages/shared/src/teamReport.ts.
   missedReplyAfterMinutes Int                           @default(30)
+  /// Team Report Support Overtime (TEAM_OVERTIME.md): the regular duty length assumed for a member-day
+  /// with work and no schedule at all — no roster row, holiday, weekly pattern or default shift.
+  /// Overtime that day is support time beyond this. Clamped to 1–16 hours when read.
+  overtimeFallbackDutyMinutes Int                       @default(480)
   /// The Teams that are the Support Team for Messages → Unanswered Groups / Response Time
   /// (SUPPORT_RESPONSE.md). Only a reply from a member of one of these Teams — at the moment they
   /// replied — answers an episode. Empty = response tracking is not set up, and nothing is tracked.
