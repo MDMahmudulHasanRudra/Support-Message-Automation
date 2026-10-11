@@ -594,6 +594,10 @@ model Project {
   googleSheetWorkSessionEvents         GoogleSheetWorkSessionEvent[]
   googleSheetsSettings                 GoogleSheetsSettings?
   googleIntegrationConfig              GoogleIntegrationConfig?
+  channelConnections                   ChannelConnection[]
+  channelConversations                 ChannelConversation[]
+  channelMessages                      ChannelMessage[]
+  channelInboundEvents                 ChannelInboundEvent[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
   groupParticipantAddJobRows           GroupParticipantAddJob[]
@@ -743,6 +747,8 @@ model User {
   reviewedConversationCandidates ConversationCandidate[]
   knowledgeVerified              AiKnowledgeItem[]         @relation("AiKnowledgeVerifier")
   systemLogs                     SystemLog[]
+  channelMessagesSent            ChannelMessage[]          @relation("ChannelMessageCreatedBy")
+  channelConversationsAssigned   ChannelConversation[]     @relation("ChannelConversationAssignee")
 
   projectAccess           ProjectAccess[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
@@ -5850,4 +5856,277 @@ model MoodAlertAction {
 
   @@unique([alertId, action])
   @@index([status, scheduledAt])
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// Messaging channels beyond WhatsApp — Facebook Messenger, Instagram DM, Telegram (OMNICHANNEL.md)
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//
+// WhatsApp keeps its own tables (Message, WhatsAppGroup, OutboundMessage). These four hold the other
+// channels, and the unified inbox reads both. Kept apart on purpose: Message has ~40 readers that
+// assume WhatsApp semantics (Team Report, attendance, support response, escalation…), and adding
+// Messenger rows to it would silently change every one of those figures.
+
+enum ChannelType {
+  MESSENGER
+  INSTAGRAM
+  TELEGRAM
+}
+
+enum ChannelConnectionStatus {
+  /// Credentials not entered (or not yet checked).
+  SETUP_REQUIRED
+  CONNECTED
+  /// The provider refused a check or a send for a reason other than the credential.
+  ERROR
+  /// The provider no longer accepts the stored credential.
+  NEEDS_RECONNECT
+  /// A person disconnected it. Credentials wiped; history kept.
+  DISCONNECTED
+}
+
+enum ChannelEventStatus {
+  PENDING
+  PROCESSED
+  /// Recorded and deliberately not used (a reaction, an edit, an account nobody connected…).
+  IGNORED
+  FAILED
+}
+
+enum ChannelMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum ChannelSenderType {
+  CUSTOMER
+  /// A person using this app.
+  AGENT
+  AI
+  /// Sent from the provider's own app (Meta Business Suite, the Page inbox) — seen as an echo.
+  BUSINESS
+}
+
+enum ChannelDeliveryStatus {
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  /// The send's outcome could not be confirmed (a timeout mid-request). Never retried automatically.
+  UNKNOWN
+}
+
+enum ChannelContentType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  STICKER
+  LOCATION
+  CONTACT
+  SHARE
+  UNSUPPORTED
+}
+
+enum ChannelThreadKind {
+  DIRECT
+  GROUP
+}
+
+enum ChannelConversationStatus {
+  OPEN
+  CLOSED
+}
+
+enum ChannelAiOutcome {
+  REPLIED
+  HANDED_OVER
+  /// Not eligible (AI off, a person handling it, too old…) — recorded so it is not looked at twice.
+  SKIPPED
+}
+
+/// One connected Facebook Page, Instagram professional account or Telegram bot, in one project.
+/// Credentials are `encryptSecret` envelopes, read only in apps/web `server/channels/connections.ts`
+/// and the worker's send path; nothing returns them to a browser.
+model ChannelConnection {
+  id                           String                  @id @default(cuid())
+  projectId                    String                  @default(dbgenerated("project_id_required()"))
+  project                      Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  type                         ChannelType
+  /// What people call it here ("Softify Page", "@softify_support_bot").
+  name                         String
+  status                       ChannelConnectionStatus @default(SETUP_REQUIRED)
+  /// Off: webhooks are still recorded, nothing is processed or sent.
+  enabled                      Boolean                 @default(true)
+  /// Random and unguessable; the webhook URL is /api/channels/<meta|telegram>/<webhookKey>. Unique
+  /// across the installation because the webhook arrives outside any project.
+  webhookKey                   String                  @unique
+  /// The Page id (Messenger), the Instagram professional account id (Instagram), the bot id (Telegram).
+  externalAccountId            String?
+  externalAccountName          String?
+  /// The Instagram username or the bot's @username.
+  externalUsername             String?
+  /// Instagram: the Facebook Page the account is linked to (replies are sent through it).
+  pageId                       String?
+  /// Meta: the app id. Not a secret; used to recognise the echoes of our own sends.
+  appId                        String?
+  /// The Page access token (Meta) or the bot token (Telegram).
+  accessTokenCiphertext        String?
+  /// Meta: the app secret, which signs every webhook.
+  appSecretCiphertext          String?
+  /// Meta: the token Meta must present when the webhook is registered. Shown to managers to paste.
+  verifyTokenCiphertext        String?
+  /// Telegram: the secret Telegram sends back in X-Telegram-Bot-Api-Secret-Token.
+  webhookSecretCiphertext      String?
+  /// AI may answer customers on this connection (still subject to every AI setting and safety gate).
+  aiAutomationEnabled          Boolean                 @default(false)
+  /// Meta: the admin says the app has the Human Agent permission, so a PERSON may reply for 7 days.
+  humanAgentEnabled            Boolean                 @default(false)
+  webhookVerifiedAt            DateTime?
+  lastEventAt                  DateTime?
+  lastCheckedAt                DateTime?
+  lastError                    String?
+  lastErrorAt                  DateTime?
+  credentialsUpdatedAt         DateTime?
+  credentialsUpdatedByUsername String?
+  createdByUsername            String?
+  disconnectedAt               DateTime?
+  createdAt                    DateTime                @default(now())
+  updatedAt                    DateTime                @updatedAt
+
+  conversations ChannelConversation[]
+  messages      ChannelMessage[]
+  events        ChannelInboundEvent[]
+
+  @@unique([projectId, type, externalAccountId])
+  @@index([projectId, type])
+}
+
+/// One conversation: a customer's thread with a Page / Instagram account, or one Telegram chat.
+model ChannelConversation {
+  id                   String                    @id @default(cuid())
+  projectId            String                    @default(dbgenerated("project_id_required()"))
+  project              Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId         String
+  connection           ChannelConnection         @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  type                 ChannelType
+  /// The customer's page-scoped / Instagram-scoped id, or the Telegram chat id.
+  externalThreadId     String
+  kind                 ChannelThreadKind         @default(DIRECT)
+  /// A Telegram group's title, or the customer's name when the provider gave one.
+  title                String?
+  customerExternalId   String?
+  customerName         String?
+  customerUsername     String?
+  status               ChannelConversationStatus @default(OPEN)
+  assignedUserId       String?
+  assignedUser         User?                     @relation("ChannelConversationAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  lastMessageAt        DateTime?
+  lastMessagePreview   String?
+  lastMessageDirection ChannelMessageDirection?
+  /// The customer's newest message — what Meta's reply window counts from.
+  lastInboundAt        DateTime?
+  /// When somebody last opened it. Unread = a customer message after this (a timestamp, never a
+  /// boolean, so a new message always brings it back).
+  reviewedAt           DateTime?
+  /// A person replied: AI stays quiet until this passes (the same rule as WhatsApp's takeover).
+  aiSuppressedUntil    DateTime?
+  closedAt             DateTime?
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+
+  messages ChannelMessage[]
+
+  @@unique([projectId, connectionId, externalThreadId])
+  @@index([projectId, lastMessageAt])
+  @@index([projectId, type, lastMessageAt])
+}
+
+/// One message on a channel, in either direction. An outbound row IS the send queue entry: it is
+/// written QUEUED when a person or AI replies and the worker moves it through SENDING to SENT (and
+/// DELIVERED / READ when the provider says so), so the thread and the queue cannot disagree.
+model ChannelMessage {
+  id                String                  @id @default(cuid())
+  projectId         String                  @default(dbgenerated("project_id_required()"))
+  project           Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  conversationId    String
+  conversation      ChannelConversation     @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  connectionId      String
+  connection        ChannelConnection       @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  type              ChannelType
+  direction         ChannelMessageDirection
+  senderType        ChannelSenderType
+  senderExternalId  String?
+  senderName        String?
+  /// The provider's id (Meta `mid`, Telegram `<chat>:<message_id>`). Null until an outbound is sent.
+  externalMessageId String?
+  text              String?
+  contentType       ChannelContentType      @default(TEXT)
+  /// References only (kind, provider link or file id, name) — never the file.
+  attachments       Json?
+  replyToExternalId String?
+  /// When it happened: the provider's timestamp for inbound, the queue time for outbound.
+  occurredAt        DateTime
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  // ─ outbound: the send queue ─
+  deliveryStatus   ChannelDeliveryStatus?
+  /// One row per intended send: a double-click, a retried request or a re-run AI pass finds it.
+  idempotencyKey   String?
+  attempts         Int                    @default(0)
+  nextAttemptAt    DateTime?
+  sendingStartedAt DateTime?
+  sentAt           DateTime?
+  deliveredAt      DateTime?
+  readAt           DateTime?
+  failedAt         DateTime?
+  lastError        String?
+  /// Meta: RESPONSE, or MESSAGE_TAG with tag HUMAN_AGENT, decided when it was queued.
+  messagingType    String?
+  messagingTag     String?
+  createdByUserId  String?
+  createdBy        User?                  @relation("ChannelMessageCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  // ─ inbound: the AI decision, claimed once ─
+  aiClaimedAt      DateTime?
+  aiOutcome        ChannelAiOutcome?
+  aiReason         String?
+  aiConfidence     Float?
+  aiModelId        String?
+  /// The AI reply this message received (an outbound row's id).
+  aiReplyMessageId String?
+
+  @@unique([projectId, connectionId, externalMessageId])
+  @@unique([projectId, idempotencyKey])
+  @@index([projectId, conversationId, occurredAt])
+  @@index([conversationId, direction, createdAt])
+  @@index([deliveryStatus, nextAttemptAt])
+}
+
+/// A webhook event exactly as the provider sent it, recorded before anything else so a provider's
+/// retry, a worker restart or a processing failure never loses a customer's message. Processed by
+/// the worker; processed rows are pruned after 14 days.
+model ChannelInboundEvent {
+  id           String             @id @default(cuid())
+  projectId    String             @default(dbgenerated("project_id_required()"))
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId String
+  connection   ChannelConnection  @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  /// From the provider's own ids (packages/shared `splitMetaWebhook` / `telegramDedupKey`).
+  dedupKey     String
+  status       ChannelEventStatus @default(PENDING)
+  payload      Json
+  receivedAt   DateTime           @default(now())
+  processedAt  DateTime?
+  attempts     Int                @default(0)
+  lastError    String?
+  /// Why it was ignored, in words.
+  note         String?
+
+  @@unique([projectId, connectionId, dedupKey])
+  @@index([status, receivedAt])
 }

@@ -40,6 +40,7 @@ matching section here in the same change.
 14. [Users & Permissions](#users--permissions)
 15. [Release Notes](#release-notes)
 15a. [Google Sheets](#google-sheets)
+15b. [Omnichannel inbox (Messenger, Instagram, Telegram)](#omnichannel-inbox-messenger-instagram-telegram)
 16. [AI Admin Assistant (floating chat)](#ai-admin-assistant-floating-chat)
 17. [Background jobs (apps/worker)](#background-jobs-appsworker)
 17. [Safety & anti-spam features, end to end](#safety--anti-spam-features-end-to-end)
@@ -1444,6 +1445,66 @@ Gated by `google_sheets.view`; each person sees only their own.
   open your Drive; and which team member your login is linked to.
 
 ---
+
+## Omnichannel inbox (Messenger, Instagram, Telegram)
+
+Feature **Omnichannel inbox** (`OMNICHANNEL`), off by default — a Main Admin switches it on per project.
+Four entries in the sidebar's **Support** module (All Conversations, Facebook Messenger, Instagram DM,
+Telegram) beside WhatsApp Chat, and **Settings → Messaging Channels**. Full design: `OMNICHANNEL.md`.
+WhatsApp Chat is its own feature and is unchanged; its conversations appear here read in place.
+
+### All Conversations — `/conversations/all` (and `/conversations/<whatsapp|messenger|instagram|telegram>`)
+
+Gated by `messages.view` + the feature. A two-pane inbox, polled every 4 s while visible.
+
+- **Channel tabs** (All, WhatsApp, Messenger, Instagram, Telegram) with open-conversation counts. Each
+  channel inbox lists the same rows filtered; nothing is copied.
+- **Filters**: Open, Unread (a customer message nobody has opened), Needs reply (opened or not),
+  Assigned to me, Closed; **last activity** (any time / 24 h / 7 days / 30 days); **search** over names
+  and message text, answered by the server across every conversation (the list shows the 300 newest).
+- **Rows**: a monogram with the channel's mark, name, time, preview ("You: " for ours), the channel and
+  the Page / account / bot it came in on, Closed, assignee, AI on, and "Can't reply" when the connection
+  is disconnected, off or needs new credentials. WhatsApp rows open the WhatsApp Chat thread (WhatsApp is
+  replied to there, as always). Unread is a solid dot; seen-but-unanswered a hollow ring.
+- WhatsApp rows: "Unread" = WhatsApp Chat's "waiting", "Needs reply" = waiting + seen-unanswered, and
+  "Assigned to me" = groups whose assigned team member is linked to your login. WhatsApp has no Closed.
+
+### A conversation — `/conversations/<scope>/c/<id>`
+
+`messages.view` to read; `conversations.reply` to reply, close/reopen, assign, resume AI. Opening it
+marks it read.
+
+- **Header**: name, channel, connection, @username, assignee, Closed, AI on / AI paused. Buttons:
+  Resume AI (when a person's reply paused it), Assign to me / Take over / Unassign, Close / Reopen
+  (a customer message reopens a closed conversation by itself).
+- **Thread**: the latest 200 messages by day. Ours show who sent them (a person's name, AI, or "sent
+  from the provider's own app" for a reply typed in Meta Business Suite), the delivery state (Queued,
+  Sending…, Sent, Delivered, Read — Telegram never beyond Sent — Not sent, Unconfirmed) and "Send
+  again" for Not sent / Unconfirmed (Unconfirmed asks for confirmation first). A customer message
+  shows what AI did with it when it did not answer.
+- **Composer**: Enter sends, Shift+Enter is a new line, a character count (Instagram counts bytes —
+  1,000), drafts kept per conversation in the browser. Disabled, with the reason, when the connection
+  cannot send or Meta's window is closed. Past 24 h with Human Agent approved it says the reply goes
+  out tagged as a person's.
+
+### Messaging Channels — `/settings/channels` (Settings)
+
+`channels.view` to see, `channels.manage` to change. Lists each channel's connections (status: Connected,
+Needs attention, Needs new credentials, Switched off, Disconnected; AI on; conversations; last error),
+plus WhatsApp (linked to WhatsApp Accounts) and TikTok (not available, with the reason).
+
+- **Connect** — `/settings/channels/new?type=…` (`channels.manage`): Messenger / Instagram take the App
+  ID, App Secret and a Page access token; Telegram takes the bot token. Checked with the provider before
+  anything is saved; a user token, a Page with no linked Instagram account, or the same account twice is
+  refused with the reason. Setup steps and the channel's limits sit beside the form.
+- **A connection** — `/settings/channels/<id>`: switches (Connection on; AI may answer customers; Human
+  Agent permission approved — Meta only), rename, the webhook **Callback URL** and (managers only) the
+  Meta **Verify token** to paste into Meta, when Meta verified it and the last event, **Test
+  connection** (token accepted, Instagram still linked, Page subscribed to the app, webhook verified;
+  Telegram: token, webhook pointing here, Telegram's last delivery error), replace credentials /
+  re-register the Telegram webhook, and **Disconnect** (provider told to stop, credentials deleted,
+  conversations kept, waiting replies cancelled). Reconnecting brings back the same connection with a
+  new webhook address.
 
 ## AI Admin Assistant (floating chat)
 

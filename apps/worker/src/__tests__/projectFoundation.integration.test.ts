@@ -85,8 +85,9 @@ describe("the constraints later phases depend on", () => {
     // + GoogleSpreadsheet and GoogleSpreadsheetAccess (Google Sheets, Phase 2),
     // + GoogleSpreadsheetMember (Google Sheets, Phase 5),
     // + GoogleSheetActivity (Phase 6), GoogleSheetWorkSession, GoogleSheetWorkSessionEvent and
-    //   GoogleSheetsSettings (Phase 7), + GoogleIntegrationConfig (the project's own OAuth client).
-    expect(refusing).toHaveLength(95);
+    //   GoogleSheetsSettings (Phase 7), + GoogleIntegrationConfig (the project's own OAuth client),
+    // + the four Messaging Channels tables (OMNICHANNEL.md).
+    expect(refusing).toHaveLength(99);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -111,8 +112,9 @@ describe("the constraints later phases depend on", () => {
     // 95 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
     // & Media Storage tables + SupportResponseEpisode + CollectionGap + WhatsAppOperationDismissal
     // + the four Mood Detection tables + the three Support Assignment tables + PersonalChatReview
-    // + the nine Google Sheets tables) + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(98);
+    // + the nine Google Sheets tables + the four Messaging Channels tables) + SystemLog + ProjectAccess
+    // + ProjectFeature.
+    expect(rows).toHaveLength(102);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

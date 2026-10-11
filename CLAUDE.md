@@ -304,6 +304,9 @@ since `setInterval` doesn't await its callback)
 | `startCommunicationStyleProcessor` | 12h | rebuilds `CommunicationStyleProfile` from the team's own replies — manner, never fact (gated on `aiEngineEnabled` + `communicationStyleLearningEnabled`) |
 | `startForgeKnowledgeProcessor` | 6h | reads ISPDIGITAL's own docs + module source through Softify Forge into the knowledge base (no-op until `FORGE_API_KEY`/`FORGE_API_URL` are set **and** an admin enables it; on-demand via a `FORGE_SYNC_NOW` WorkerCommand) |
 | `startForgeResearchProcessor` | 2min | works through customer questions verified knowledge could not answer, researching each against the product's source (same gate, plus `ForgeSettings.researchUnanswered`, off by default) |
+| `startChannelInboundProcessor` | 2s | Messenger / Instagram / Telegram: recorded webhook events → conversations, echoes, receipts (no-op unless the project has `OMNICHANNEL`; `OMNICHANNEL.md`) |
+| `startChannelOutboundProcessor` | 2s | the channels' send queue (`ChannelMessage` QUEUED → SENT), retries, UNKNOWN on an unknowable outcome |
+| `startChannelAiProcessor` | 3s | AI replies on the channels — the WhatsApp answering logic and gates, 1:1 only, ≤15 min old |
 | heartbeat | 15s | health state + DB connectivity log |
 
 On boot: health server → DB connectivity check (fatal if unreachable) → crash recovery (resets
@@ -2475,6 +2478,46 @@ any attribution work. Feature `GOOGLE_SHEETS`, **off by default in every project
   client is only a fallback. The secret is encrypted and never leaves `clientConfig.ts`; a pair Google
   rejects is not saved; tokens refresh only with the client that issued them (`oauthClientId`), so a
   client change sends accounts back to reconnect. Off stops all Google calls and deletes nothing.
+
+### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
+
+All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →
+Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.view`, `channels.manage`,
+`conversations.reply` (reading uses `messages.view`). Rules worth not undoing:
+
+- **WhatsApp is read in place, never copied, and never sent from here.** New channels have their own
+  four tables (`ChannelConnection`, `ChannelConversation`, `ChannelMessage`, `ChannelInboundEvent`),
+  because ~40 readers assume every `Message` is WhatsApp. The unified list merges `ChannelConversation`
+  with WhatsApp Chat's own `getChatInbox` / `getChatConversations`, so "waiting" means the same in
+  both. A WhatsApp row opens WhatsApp Chat. Do not put channel rows into `Message`.
+- **The web records, the worker processes.** `/api/channels/<meta|telegram>/<webhookKey>` (no session)
+  verifies the Meta HMAC (app secret, raw body) or the Telegram secret header, splits the body
+  (`splitMetaWebhook` / `telegramDedupKey` in packages/shared), and inserts `ChannelInboundEvent`
+  with `skipDuplicates` on `(projectId, connectionId, dedupKey)`. Nothing else happens on the
+  request. One Meta app has ONE callback URL, so an event is routed to the connection **in the key's
+  project** that owns `entry.id`; an account nobody connected is dropped.
+- **An outbound `ChannelMessage` IS the send queue** (QUEUED → SENDING → SENT → DELIVERED / READ, or
+  FAILED / UNKNOWN), drained only by `channel-outbound`. A timeout after the request left is UNKNOWN and
+  never retried by itself (a retry could message the customer twice); "Send again" on UNKNOWN needs
+  the person's confirmation. The window, the connection and (for AI) the kill switch are re-checked at
+  send time.
+- **Meta's window is `decideReplyWindow`**: 24 h for anything; 24 h–7 days for a PERSON only, tagged
+  HUMAN_AGENT, and only with the connection's Human Agent switch on; AI never uses the tag. Telegram
+  has none. Instagram text is limited to 1,000 BYTES.
+- **Echo handling**: our own send is recognised by `message.metadata` (Messenger, set to our row id),
+  the provider id, or the in-flight row with the same text (Instagram's echo can outrun the send
+  response); `markSent` removes a BUSINESS duplicate. A reply typed in Meta Business Suite is stored as
+  BUSINESS and pauses AI (`aiSuppressedUntil`) — the WhatsApp takeover rule.
+- **Channel AI calls the WhatsApp answering functions, in the same order, with the same gates**
+  (`channels/aiReply.ts`); `runAiFallback` is untouched (only `sendHumanFallbackAlert` was exported and
+  takes a null message id). Never in a group chat, never a bot, never past 15 minutes, only the
+  customer's latest line, claimed once by `aiClaimedAt`, reply keyed `ai:<message id>`.
+- **Credentials** are decrypted only in `server/channels/connections.ts` (web) and the worker's send /
+  profile path. Views never carry a token; the Meta verify token is revealed to `channels.manage` only.
+  Disconnecting wipes credentials, keeps every conversation and cancels QUEUED replies; reconnecting
+  revives the same row with a new webhook key.
+- TikTok is NOT built (beta API, regional, needs approval) and is shown as unavailable, never as a
+  channel. Instagram uses the Page-linked (Facebook Login) flow; Instagram Login is not built.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

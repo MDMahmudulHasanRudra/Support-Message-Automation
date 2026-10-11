@@ -13,6 +13,16 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Omnichannel inbox** (Support → All Conversations, Facebook Messenger, Instagram DM, Telegram;
+  Settings → Messaging Channels). WhatsApp, Messenger, Instagram and Telegram conversations in one
+  inbox, with channel tabs, filters and search across everything; each channel also has its own
+  inbox. A project connects its own Facebook Page, Instagram professional account (linked to a Page)
+  or Telegram bot with credentials checked by the provider and stored encrypted. Webhooks are
+  verified and recorded once per provider event; the worker turns them into conversations, sends
+  replies from one queue (retries, honest "unconfirmed" state, Meta's 24-hour / Human Agent window),
+  and can answer with the same AI and knowledge base as WhatsApp under the same safety rules. WhatsApp
+  itself is unchanged and read in place. Tested against mocked providers; live credentials not yet
+  tested. Off by default per project (`OMNICHANNEL.md`).
 - **Google Sheets work management** (Google Sheets → Spreadsheets / Activity / Work Reports / My
   Google Identity; Settings → Google Sheets), all ten phases. A manager connects the Google accounts
   the team's spreadsheets live in through Google's own sign-in; every spreadsheet they reach is listed

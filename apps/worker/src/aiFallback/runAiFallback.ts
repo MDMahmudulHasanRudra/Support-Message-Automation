@@ -612,9 +612,11 @@ async function maybeDraftRuleFromReply(params: {
  * the rule engine's own NOTIFY_TEAMS/NOTIFY_WHATSAPP actions report "not configured" rather than
  * silently failing).
  */
-async function sendHumanFallbackAlert(params: {
-  messageId: string;
-  accountId: string;
+export async function sendHumanFallbackAlert(params: {
+  /** The WhatsApp message handed over; null for another channel's (OMNICHANNEL.md), whose message lives in ChannelMessage. */
+  messageId: string | null;
+  /** The WhatsApp account; null for another channel. */
+  accountId: string | null;
   groupName: string | null;
   senderPhone: string;
   senderName: string | null;
@@ -731,8 +733,8 @@ async function sendHumanFallbackAlert(params: {
       handoverReason: params.reason,
     },
     {
-      targetType: "Message",
-      targetId: params.messageId,
+      targetType: params.messageId ? "Message" : "ChannelMessage",
+      targetId: params.messageId ?? params.correlationId ?? null,
       correlationId: params.correlationId ?? null,
     },
   );

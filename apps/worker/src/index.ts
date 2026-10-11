@@ -44,6 +44,9 @@ import {
 } from "./forge/forgeProcessor.js";
 import { provisionAiProviderFromEnv } from "./bootstrap/provisionAiProviderFromEnv.js";
 import { startGoogleExternalActivityProcessor } from "./googleSheets/externalActivityProcessor.js";
+import { startChannelInboundProcessor } from "./channels/inboundProcessor.js";
+import { startChannelOutboundProcessor } from "./channels/outboundProcessor.js";
+import { startChannelAiProcessor } from "./channels/aiReply.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -180,6 +183,12 @@ async function main() {
     // Google Sheets (GOOGLE_SHEETS.md, Phase 8): who changed a MONITORED sheet in Google directly.
     // A no-op until the server has an OAuth client and a project has the feature on.
     startGoogleExternalActivityProcessor(),
+    // Messenger, Instagram and Telegram (OMNICHANNEL.md): recorded webhook events → conversations, the
+    // channels' send queue, and AI replies on them. No-ops for a project without the Omnichannel
+    // feature; none of them touches a WhatsApp session.
+    startChannelInboundProcessor(),
+    startChannelOutboundProcessor(),
+    startChannelAiProcessor(),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

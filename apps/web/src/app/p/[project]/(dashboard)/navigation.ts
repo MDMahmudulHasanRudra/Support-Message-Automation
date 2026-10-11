@@ -1,6 +1,9 @@
 import { pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
+  Camera,
+  Inbox,
+  PlugZap,
   AlertCircle,
   AlertTriangle,
   CalendarClock,
@@ -185,6 +188,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     ],
   },
   {
+    label: "Messaging Channels",
+    description: "Facebook Messenger, Instagram DM and Telegram connections, their webhooks and whether AI answers on them.",
+    links: [{ href: "/settings/channels", label: "Messaging Channels", icon: PlugZap }],
+  },
+  {
     label: "Google Sheets",
     description: "The Google accounts this project's spreadsheets are reached through, and how work time is measured.",
     links: [{ href: "/settings/google-sheets", label: "Google Accounts", icon: FileSpreadsheet }],
@@ -302,7 +310,13 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Support",
     icon: MessageCircleMore,
     links: [
+      // The unified inbox and the channel inboxes beside WhatsApp (OMNICHANNEL.md). The Omnichannel
+      // feature hides all four when it is off; WhatsApp Chat is unaffected either way.
+      { href: "/conversations/all", label: "All Conversations", icon: Inbox },
       { href: "/chat", label: "WhatsApp Chat", icon: MessageCircleMore },
+      { href: "/conversations/messenger", label: "Facebook Messenger", icon: MessagesSquare },
+      { href: "/conversations/instagram", label: "Instagram DM", icon: Camera },
+      { href: "/conversations/telegram", label: "Telegram", icon: Send },
       {
         href: "/messages",
         label: "Messages",
@@ -525,6 +539,8 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/notifications", "notifications.view"],
   ["/settings/security", "security_settings.view"],
   ["/settings/google-sheets", "google_sheets.view"],
+  ["/settings/channels", "channels.view"],
+  ["/conversations", "messages.view"],
   ["/google-sheets/activity", "google_sheets.monitor"],
   ["/google-sheets/reports", "google_sheets.report"],
   ["/google-sheets", "google_sheets.view"],

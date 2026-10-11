@@ -144,6 +144,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "ProcessingCheckpoint", "MessageDropCounter", "GroupBroadcastJob", "GroupParticipantAddJob",
   "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "SupportResponseEpisode", "SupportAssignment", "SupportAssignmentEvent", "CollectionGap", "WhatsAppOperationDismissal", "PersonalChatReview", "GoogleIntegrationAccount", "GoogleSpreadsheet", "GoogleSpreadsheetAccess", "GoogleSpreadsheetMember", "GoogleSheetActivity", "GoogleSheetWorkSession", "GoogleSheetWorkSessionEvent", "CustomerMoodEvent", "MoodAlert", "MoodAlertAction", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
   "SupportEscalationEvent", "ConversationSession", "SupportActivity", "SupportSession", "TeamAttendanceDay",
+  "ChannelConnection", "ChannelConversation", "ChannelMessage", "ChannelInboundEvent",
   "TeamAttendanceGroup",
 ]);
 

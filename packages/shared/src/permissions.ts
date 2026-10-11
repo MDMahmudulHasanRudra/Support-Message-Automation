@@ -99,6 +99,18 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "google_sheets.monitor", label: "Monitor Google Sheets Work", category: "Google Sheets" },
   { key: "google_sheets.report", label: "View Google Sheets Work Reports", category: "Google Sheets" },
 
+  // Messaging channels beyond WhatsApp (OMNICHANNEL.md): Facebook Messenger, Instagram DM, Telegram.
+  // Their own keys so no existing role gains anything by their arrival; the module is also a project
+  // feature that ships switched OFF. Reading the unified inbox uses `messages.view`, like WhatsApp Chat.
+  //   view   — see which channels are connected and their health
+  //   manage — connect / disconnect channels, enter credentials, switch AI on for a channel
+  //   reply  — reply to customers on those channels. Separate from `messages.reply`, which belongs to
+  //            WhatsApp Chat (and its feature); a migration grants it to every custom role that
+  //            already holds `messages.reply`, so nobody who answers customers loses the ability.
+  { key: "channels.view", label: "View Messaging Channels", category: "Messaging Channels" },
+  { key: "channels.manage", label: "Manage Messaging Channels", category: "Messaging Channels" },
+  { key: "conversations.reply", label: "Reply on Messenger, Instagram & Telegram", category: "Messaging Channels" },
+
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },
   { key: "settings.edit", label: "Edit Settings", category: "System" },
@@ -153,6 +165,7 @@ export const READ_ONLY_PERMISSION_KEYS: readonly string[] = PERMISSIONS.filter(
 export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
   "messages.reply",
+  "conversations.reply",
   "automation_rules.view",
   "automation_rules.create",
   "automation_rules.edit",
@@ -166,6 +179,7 @@ export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
 export const SUPPORT_AGENT_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
   "messages.reply",
+  "conversations.reply",
   "automation_rules.view",
   "automation_rules.create",
   "automation_rules.edit",
