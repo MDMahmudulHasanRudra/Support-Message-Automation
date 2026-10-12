@@ -29,12 +29,19 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
   const router = useRouter();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [isPending, startTransition] = useTransition();
+  const [notice, setNotice] = useState<{ tone: "error" | "info"; text: string } | null>(null);
 
   function confirm() {
     if (!dialog) return;
     const { kind, member } = dialog;
     startTransition(async () => {
-      if (kind === "delete") await deleteTeamMember(member.id);
+      if (kind === "delete") {
+        const result = await deleteTeamMember(member.id);
+        if (result.error) setNotice({ tone: "error", text: result.error });
+        else if (result.deactivated) {
+          setNotice({ tone: "info", text: `${member.name} has recorded support activity, so they were disabled instead of deleted to keep that history. Their reports are unchanged.` });
+        } else setNotice({ tone: "info", text: `${member.name} was deleted.` });
+      }
       if (kind === "toggle") await toggleTeamMemberStatus(member.id);
       setDialog(null);
       router.refresh();
@@ -47,6 +54,14 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
 
   return (
     <div>
+      {notice ? (
+        <div
+          role={notice.tone === "error" ? "alert" : "status"}
+          className={`mb-3 rounded-md border px-3 py-2 text-sm ${notice.tone === "error" ? "border-[var(--color-danger)] text-[color:var(--color-danger)]" : "border-[var(--color-border)]"}`}
+        >
+          {notice.text}
+        </div>
+      ) : null}
       <Table>
         <thead>
           <tr>
@@ -138,7 +153,7 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
         }
         description={
           dialog?.kind === "delete"
-            ? "This permanently removes the team member record. This cannot be undone."
+            ? "This permanently removes the team member. If they have recorded support activity they are disabled instead, so past reports keep their name."
             : dialog?.kind === "toggle" && dialog.member.status === "ACTIVE"
               ? "Their messages will no longer be treated as internal team member messages by automation."
               : undefined

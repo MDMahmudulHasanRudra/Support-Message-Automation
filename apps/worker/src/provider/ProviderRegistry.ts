@@ -1,7 +1,7 @@
 import { countMetric } from "../health/metrics.js";
 import { OpenWAProvider } from "./openwa/OpenWAProvider.js";
 import type { WhatsAppProvider } from "./WhatsAppProvider.js";
-import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
+import { processWithRetry } from "../pipeline/retryFailedMessage.js";
 import { resyncAndCatchUpAfterConnect } from "../commands/commandProcessor.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { countDroppedMessage } from "../pipeline/dropCounter.js";
@@ -81,6 +81,17 @@ export class ProviderRegistry {
       return false;
     }
 
+    // A message the provider could not even convert never reaches the handler below, so it is
+    // counted here: what this number answers is "how many messages went wrong", and an over-count
+    // that makes somebody look is better than an under-count that lets a shape change pass quietly.
+    provider.onMessageConversionError = (err) => {
+      countDroppedMessage(account.id, "PIPELINE_ERROR");
+      logSystemEvent("ERROR", "pipeline", "Could not read an incoming message", {
+        error: (err as Error)?.message ?? String(err),
+        accountId: account.id,
+      }).catch(() => undefined);
+    };
+
     provider.subscribeToMessages((message) => {
       // Counted here rather than after storing: the question this answers is whether the provider
       // is still handing anything over at all, and a message dropped by a later filter still
@@ -98,18 +109,9 @@ export class ProviderRegistry {
           isGroup: Boolean(message.whatsappGroupId),
         }),
       );
-      processIncomingMessage(message).catch((err) => {
-        console.error("[worker] error processing incoming message", err);
-        // The message may have been stored before the throw or not at all, and from here there is
-        // no way to tell. Counting it either way is the honest choice: what this number answers is
-        // "how many messages went wrong", and an over-count that makes somebody look is far better
-        // than an under-count that lets a shape change pass as a quiet afternoon.
-        countDroppedMessage(message.accountId, "PIPELINE_ERROR");
-        logSystemEvent("ERROR", "pipeline", "Error processing incoming message", {
-          error: (err as Error).message,
-          accountId: message.accountId,
-        });
-      });
+      // A failure is retried a few times before it is counted as a drop (retryFailedMessage.ts); the
+      // count and the System Logs entry it always produced are written when every chance is used.
+      void processWithRetry(message);
     });
 
     // Deliberately NOT awaited — a slow/failed group sync must never delay this account's message

@@ -44,8 +44,9 @@ function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: stri
   const phoneNumber = String(formData.get("phoneNumber") ?? "").trim();
   const role = String(formData.get("role") ?? "").trim();
   // The id as the worker stores a sender: no "@lid" / "@c.us" suffix, which is stripped before
-  // comparing, so pasting either form works.
-  const whatsappId = String(formData.get("whatsappId") ?? "").trim().replace(/@.*$/, "").replace(/\s+/g, "") || null;
+  // comparing, so pasting either form works. A multi-device sender ("176742417301720:26") carries
+  // the device after a colon; the person is the part before it, exactly as the matcher reads it.
+  const whatsappId = whatsappIdKey(String(formData.get("whatsappId") ?? "").replace(/\s+/g, ""));
   const department = String(formData.get("department") ?? "").trim() || null;
   const teamId = String(formData.get("teamId") ?? "").trim() || null;
   const status = formData.get("status") === "INACTIVE" ? "INACTIVE" : "ACTIVE";
@@ -570,6 +571,8 @@ export async function toggleTeamMemberStatus(id: string): Promise<void> {
 export interface DeleteTeamMemberResult {
   /** True when the row was kept and deactivated instead of removed, because it has history. */
   deactivated: boolean;
+  /** Set when nothing was changed, with what to do about it. */
+  error?: string;
 }
 
 /**
@@ -589,17 +592,25 @@ export interface DeleteTeamMemberResult {
 export async function deleteTeamMember(id: string): Promise<DeleteTeamMemberResult> {
   await requireAccess("whatsapp.manage");
 
-  const activityCount = await prisma.supportActivity.count({ where: { teamMemberId: id } });
-  if (activityCount > 0) {
-    await prisma.internalTeamMember.update({ where: { id }, data: { status: "INACTIVE" } });
-    revalidatePath(await projectPath("/team-members"));
-    revalidatePath(await projectPath("/support-activity"));
-    return { deactivated: true };
-  }
+  try {
+    const member = await prisma.internalTeamMember.findUnique({ where: { id }, select: { id: true } });
+    if (!member) return { deactivated: false, error: "That team member no longer exists. Refresh the page." };
 
-  await prisma.internalTeamMember.delete({ where: { id } });
-  revalidatePath(await projectPath("/team-members"));
-  return { deactivated: false };
+    const activityCount = await prisma.supportActivity.count({ where: { teamMemberId: id } });
+    if (activityCount > 0) {
+      await prisma.internalTeamMember.update({ where: { id }, data: { status: "INACTIVE" } });
+      revalidatePath(await projectPath("/team-members"));
+      revalidatePath(await projectPath("/support-activity"));
+      return { deactivated: true };
+    }
+
+    await prisma.internalTeamMember.delete({ where: { id } });
+    revalidatePath(await projectPath("/team-members"));
+    return { deactivated: false };
+  } catch (err) {
+    console.error("deleteTeamMember failed", err);
+    return { deactivated: false, error: "The team member could not be deleted. Nothing was changed; try again, and tell an administrator if it keeps failing." };
+  }
 }
 
 export interface LoginLinkState {
