@@ -66,6 +66,19 @@ export function SupportActivitySettingsForm({ settings }: { settings: SupportAct
               defaultValue={settings.missedReplyAfterMinutes}
             />
           </Field>
+          <Field
+            label="Default duty length for overtime (hours)"
+            hint="Team Report Support Overtime: on a day somebody worked with no schedule at all — no roster entry, weekly pattern or default shift — overtime is support time beyond this. The roster always wins when it exists. Between 1 and 16 hours."
+          >
+            <Input
+              name="overtimeFallbackDutyHours"
+              type="number"
+              min={1}
+              max={16}
+              step={0.25}
+              defaultValue={settings.overtimeFallbackDutyMinutes / 60}
+            />
+          </Field>
         </div>
       </Card>
 

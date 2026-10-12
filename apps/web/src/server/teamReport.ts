@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
 import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
+import { loadDutyResolver } from "@/server/overtimeDuty";
 import {
   computeTeamReport,
   createSenderResolver,
@@ -384,6 +385,8 @@ export async function loadTeamReport(
     memberId,
     scope,
     granularity: filters.granularity,
+    // Support Overtime: each member's regular duty for each day (TEAM_OVERTIME.md).
+    dutyFor: await loadDutyResolver(range),
   });
 
   return {

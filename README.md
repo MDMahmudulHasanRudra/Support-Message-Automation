@@ -13,6 +13,16 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Real Support Overtime on the Team Report** (`TEAM_OVERTIME.md`).
+  - **What it shows.** Support time beyond each member's regular duty, per day, then added up.
+    Before, the column showed all support time.
+  - **Where duty comes from.** The roster for that date, then holidays, the weekly pattern, the
+    default shift, and finally a configurable default duty length (8 hours).
+  - **Only overtime is ever shown**, never a duty length.
+  - **The chart** tells "no data" apart from zero.
+  - **The Excel export** adds an "Overtime by day" sheet.
+  - **Other reports.** Executive Health uses the new figure. Reports that analyse time worked now
+    call it "Support time".
 - **WhatsApp identity and message integrity** (`WHATSAPP_IDENTITY.md`).
   - **One sender rule everywhere.** The live pipeline, every report, WhatsApp Chat and Team Members
     use one rule to decide which team member sent a message: exact WhatsApp ID, digits-only phone,

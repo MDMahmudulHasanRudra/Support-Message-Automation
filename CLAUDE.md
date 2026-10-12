@@ -1085,8 +1085,9 @@ later stage). Three rules worth not undoing:
 ### Team Report (`packages/shared/src/teamReport.ts`, `apps/web/src/server/teamReport.ts`, `(dashboard)/team-report/`)
 
 Per-member and per-group WhatsApp support report — groups supported, replies, customer messages,
-customer waits, **Missed**, **Recall** and **Support Overtime** (the idle-gap support duration —
-the label only; internally still `activeSeconds`/support time, and NOT yet duty-based overtime) — for a day, week, month or custom range
+customer waits, **Missed**, **Recall** and **Support Overtime** (support time beyond each member's
+regular duty, per Dhaka day, summed — `TEAM_OVERTIME.md`; only overtime is ever shown, never a duty
+length) — for a day, week, month or custom range
 (capped at 92 days), for the whole team or one member, broken down by day/week/month, with a group
 drill-down listing every wait and CSV (groups) / Excel (full: Summary, Team Members, Groups, period,
 Missed & Recall) exports. Sidebar: Reports → Team Report; also the first card on All Reports.
@@ -1179,7 +1180,7 @@ one.**
     (`pnpm --filter @support-automation/web validate:intelligence`) cannot disagree.
   - They sit beside the operational figures, never replacing them. Human Response SLA sits beside
     Response SLA. Observed Support Session Time (the union of sessions across groups) sits beside
-    Support Overtime (the Team Report's support time, relabelled). An internal hand-off (the employee's words) is kept apart from an SLA escalation
+    support time (the timeline the Team Report measures overtime from). An internal hand-off (the employee's words) is kept apart from an SLA escalation
     (a recorded fact).
 - **Inference rules worth not undoing.**
   - Every inferred figure carries its confidence and evidence, and is labelled "(inferred)".
@@ -1204,10 +1205,14 @@ one.**
   History). Display only — no stored value or calculation changed.
 - Raw numeric export columns stay numeric: Team Report "Support Overtime (hours)", "Wait
   (minutes)", Support Activity "Duration (seconds)", Duty History "Engaged (minutes)".
-- **"Support Overtime" is a label**, applied 5 Oct 2026 at Rudra's request to the existing
-  idle-gap support time. Internal names (`activeSeconds`, support time) are deliberately unchanged,
-  because it is not yet roster-based overtime. Do not rename internals until that real calculation
-  exists.
+- **"Support Overtime" is real overtime since 12 Oct 2026** (`TEAM_OVERTIME.md`).
+  - `overtimeSeconds` = Σ per member-day of max(0, support time − regular duty).
+  - Regular duty comes from: the roster for that date → holiday → weekly pattern → default shift →
+    `SupportActivitySettings.overtimeFallbackDutyMinutes` (8h). The pattern and default shift apply
+    only to dates after they were last changed.
+  - `activeSeconds` is still support time. Where a report shows it, it is labelled "Support time",
+    never "Support Overtime".
+  - Never show a duty length on the Team Report; Rudra's explicit rule.
 
 **Element-level rules in `globals.css` belong in `@layer base`.** Tailwind's utilities live in a
 layer, and ANY unlayered style beats ANY layered one regardless of specificity: the default

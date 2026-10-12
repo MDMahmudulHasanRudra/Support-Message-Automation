@@ -74,9 +74,13 @@ export default async function TeamReportPage({
     label: bucketLabel(b.key, filters.granularity),
     value: b.memberMessages + b.businessReplies,
   }));
-  const durationSeries = result.buckets.map((b) => ({
+  // Overtime per bucket. A bucket with no recorded team work is drawn as "no data", never as a
+  // confirmed zero; the tooltip states the exact duration rather than decimal hours.
+  const overtimeSeries = result.buckets.map((b) => ({
     label: bucketLabel(b.key, filters.granularity),
-    value: Math.round((b.activeSeconds / 3600) * 10) / 10,
+    value: Math.round((b.overtimeSeconds / 3600) * 100) / 100,
+    display: duration(b.overtimeSeconds),
+    missing: b.memberMessages === 0,
   }));
   const labelEvery = Math.max(1, Math.ceil(result.buckets.length / 10));
 
@@ -188,8 +192,8 @@ export default async function TeamReportPage({
         />
         <StatTile
           label="Support Overtime"
-          value={duration(summary.activeSeconds)}
-          hint={filters.memberId ? "active time, one timeline" : `${summary.activeMembers} member(s), summed`}
+          value={duration(summary.overtimeSeconds)}
+          hint={filters.memberId ? "beyond regular duty, per day" : `${summary.activeMembers} member(s), each day beyond regular duty`}
         />
         <StatTile
           label="Missed"
@@ -205,6 +209,15 @@ export default async function TeamReportPage({
           hint={filters.memberId ? "their most recent message" : teamOnly ? `most recent ${teamName} message` : "most recent team message"}
         />
       </div>
+
+      {summary.unscheduledMemberDays > 0 ? (
+        <p className="mb-5 rounded-[var(--radius-md)] border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] px-4 py-2.5 text-[12px] leading-relaxed text-[color:var(--color-warning-fg)]">
+          {count(summary.unscheduledMemberDays)} member-day(s) with work had no schedule — no roster entry, weekly pattern
+          or default shift that applied on that date — so their overtime is measured against the project&apos;s default
+          duty length. Fill the roster (Team → Roster) for exact figures; the default is in Settings → Support Activity
+          Setup.
+        </p>
+      ) : null}
 
       {summary.waits === 0 && summary.memberReplies === 0 && summary.customerMessages === 0 ? (
         <EmptyState>No WhatsApp group messages were stored for {scopedName ?? teamName ?? "the team"} in {range.label}.</EmptyState>
@@ -225,8 +238,12 @@ export default async function TeamReportPage({
                 emptyMessage="Nothing was missed in this period."
               />
             </ChartCard>
-            <ChartCard className="lg:col-span-3" title="Support Overtime" description={`Support Overtime hours per ${filters.granularity}.`}>
-              <ColumnChart data={durationSeries} ariaLabel="Support Overtime hours over the period" unitLabel="h" labelEvery={labelEvery} />
+            <ChartCard
+              className="lg:col-span-3"
+              title="Support Overtime"
+              description={`Support time beyond regular duty, per ${filters.granularity}. A hatched bar: no team work was recorded.`}
+            >
+              <ColumnChart data={overtimeSeries} ariaLabel="Support Overtime per period" unitLabel="overtime" labelEvery={labelEvery} />
             </ChartCard>
           </section>
 
@@ -324,11 +341,24 @@ function CalculationHelp({
       </HelpSection>
       <HelpSection title="Support Overtime">
         <p>
-          Each member&apos;s messages across all groups form one timeline. A new stretch of work starts after more than{" "}
-          {idleGapMinutes} minutes without a message (the &quot;Offline after&quot; setting Team Performance uses) and at
-          every midnight. Support Overtime adds up first-to-last message of each stretch, so two groups answered at the same time
-          count once. A stretch with a single message is zero. The team figure is the sum of members; group rows measure
-          each group on its own, so they can add up to more.
+          Support Overtime is support time <strong>beyond the person&apos;s regular duty</strong>, worked out for each
+          day on its own and then added up — a long day is never netted against a short one. Only overtime is shown.
+        </p>
+        <p className="mt-2">
+          Support time comes from WhatsApp messages: each member&apos;s messages across all groups form one timeline, and a
+          new stretch of work starts after more than {idleGapMinutes} minutes without a message (the &quot;Offline
+          after&quot; setting) and at every midnight. Each stretch counts first-to-last message, so two groups answered at
+          once count once, and silence is never counted as work.
+        </p>
+        <p className="mt-2">
+          Regular duty for a day is, in order: that date&apos;s roster entry; nothing on a day off, leave, a holiday or
+          extra duty (all of that day&apos;s support time is overtime); the weekly pattern; the default shift; otherwise
+          the project&apos;s default duty length. A weekly pattern or default shift is used for a date only if it was
+          already set then. Work after midnight inside an overnight shift belongs to the day the shift began.
+        </p>
+        <p className="mt-2">
+          Group rows show <strong>support time</strong> in that group, measured on its own — overtime belongs to a
+          person&apos;s day, not to a group.
         </p>
       </HelpSection>
     </>

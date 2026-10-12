@@ -145,7 +145,7 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
     const row = teams.get(team) ?? { members: 0, replies: 0, seconds: 0, missed: 0 };
     row.members += 1;
     row.replies += m.messages;
-    row.seconds += m.activeSeconds;
+    row.seconds += m.overtimeSeconds;
     row.missed += m.missed;
     teams.set(team, row);
   }
@@ -190,7 +190,7 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
       { label: "Average first response", value: duration(stats.averageSeconds) },
       { label: "Median first response", value: duration(stats.medianSeconds) },
       { label: "SLA %", value: percent(stats.slaRatio), hint: "answered within the threshold" },
-      { label: "Support Overtime", value: duration(summary.activeSeconds) },
+      { label: "Support Overtime", value: duration(summary.overtimeSeconds), hint: "beyond regular duty, per day" },
       { label: "Active team members", value: count(summary.activeMembers) },
       { label: "Groups requiring attention", value: count(items.length), tone: tone(items.length, "warning") },
       { label: "Groups with declining activity", value: count(issueCount("DECLINING")), hint: "half or less of the previous period" },
@@ -229,7 +229,7 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
       { title: "Groups", text: "Monitored groups are the ones monitored and active today. Active: at least one stored message of any kind in the period. No communication: none — the Inactive Groups definition." },
       {
         title: "Customer messages, team replies, Support Overtime, active members",
-        text: "The Team Report's own figures for the same filters: one row per real message, team replies including the business number, Support Overtime by the idle-gap rule.",
+        text: "The Team Report's own figures for the same filters: one row per real message, team replies including the business number, and Support Overtime — each person's support time beyond their regular duty, per day (TEAM_OVERTIME.md).",
       },
       {
         title: "Waits, unanswered, missed, response, SLA",

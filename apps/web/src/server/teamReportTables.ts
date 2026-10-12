@@ -19,7 +19,12 @@ export interface ReportTableColumn {
   numeric?: boolean;
   /** Shown in the quieter text colour (date ranges), as the original tables did. */
   muted?: boolean;
+  /** Explains the column on hover / focus of its header. Presentation only; never exported. */
+  hint?: string;
 }
+
+/** The Support Overtime column's explanation, shared by every table that shows it. */
+export const OVERTIME_COLUMN_HINT = "Support time beyond the person's regular duty, worked out per day and added up. Only overtime is shown.";
 
 export interface ReportTableRow {
   key: string;
@@ -69,7 +74,7 @@ export function buildMembersTable(data: TeamReportData): ReportTableData {
       { label: "Customer msgs", numeric: true },
       { label: "Missed", numeric: true },
       { label: "Recall", numeric: true },
-      { label: "Support Overtime" },
+      { label: "Support Overtime", hint: OVERTIME_COLUMN_HINT },
       { label: "First – last", muted: true },
     ],
     rows: result.members.map((row) => {
@@ -84,7 +89,7 @@ export function buildMembersTable(data: TeamReportData): ReportTableData {
           row.customerMessages,
           row.missed,
           row.recalled,
-          formatDuration(row.activeSeconds),
+          formatDuration(row.overtimeSeconds),
           row.firstAt ? `${formatWhen(row.firstAt)} – ${formatWhen(row.lastAt)}` : "—",
         ],
         sort: [
@@ -94,7 +99,7 @@ export function buildMembersTable(data: TeamReportData): ReportTableData {
           row.customerMessages,
           row.missed,
           row.recalled,
-          row.activeSeconds,
+          row.overtimeSeconds,
           row.firstAt ?? 0,
         ],
         href: unassigned ? null : `/team-report?${teamReportQuery(filters, { memberId: row.memberId })}`,
@@ -119,7 +124,7 @@ export function buildBucketsTable(data: TeamReportData): ReportTableData {
       { label: "Customer msgs", numeric: true },
       { label: "Missed", numeric: true },
       { label: "Recall", numeric: true },
-      { label: "Support Overtime" },
+      { label: "Support Overtime", hint: OVERTIME_COLUMN_HINT },
     ],
     rows: result.buckets.map((b) => ({
       key: b.key,
@@ -130,10 +135,10 @@ export function buildBucketsTable(data: TeamReportData): ReportTableData {
         b.customerMessages,
         b.missed,
         b.recalled,
-        formatDuration(b.activeSeconds),
+        formatDuration(b.overtimeSeconds),
       ],
       // The bucket key (2026-09-01) sorts chronologically, which the label ("1 Sept") would not.
-      sort: [b.key, b.groups, b.memberMessages + b.businessReplies, b.customerMessages, b.missed, b.recalled, b.activeSeconds],
+      sort: [b.key, b.groups, b.memberMessages + b.businessReplies, b.customerMessages, b.missed, b.recalled, b.overtimeSeconds],
     })),
   };
 }
@@ -152,7 +157,10 @@ export function buildGroupsTable(data: TeamReportData): ReportTableData {
       { label: "Missed", numeric: true },
       { label: "Recall", numeric: true },
       { label: "First – last support", muted: true },
-      { label: "Support Overtime" },
+      {
+        label: "Support time",
+        hint: "Time team members spent in this group, measured on its own. Overtime belongs to a person's day, not a group.",
+      },
     ],
     rows: result.groups.map((row) => {
       const meta = groups.get(row.groupKey);

@@ -577,6 +577,23 @@ Unchanged figures. New on the page:
 
 Both new filters are empty by default, and the exports carry them.
 
+**Support Overtime (12 Oct 2026, `TEAM_OVERTIME.md`).**
+- **The figure.** The tile, Team members and By day tables, chart and exports show support time
+  beyond each member's regular duty, worked out per Dhaka day and added up. Only overtime is shown,
+  never a duty length.
+- **Where duty comes from:** the roster for that date, then a holiday, the weekly pattern, the
+  default shift, and finally the default duty length.
+  - Off, leave, holiday and extra duty count as no duty, so all of that day's support time is
+    overtime.
+  - The default duty length is set in Settings → Support Activity Setup ("Default duty length for
+    overtime", 8 hours by default).
+- **The chart** shows hatched bars for periods with no recorded work. Hovering gives the exact
+  duration.
+- **A warning** shows how many member-days had no schedule.
+- **The Excel export** adds an "Overtime by day" sheet: per person per day, with the schedule source
+  named but never its length.
+- **The Groups table and the group page** show *support time* in the group.
+
 ### The reports at `/reports/<id>`
 
 Each is one generic page. It has:
@@ -594,8 +611,8 @@ Each is one generic page. It has:
 | `group-trend` | per bucket: customer messages, replies, groups with a message, groups with no reply, waits, missed | by |
 | `response-sla` | SLA %, median / average / p90 / worst response; by group, by who answered, by bucket | by |
 | `missed` | every wait: Waiting / Answered / Answered late / Never answered, with the customer's first line | show |
-| `workload` | per member: groups, replies, waits answered, Support Overtime, stretches, active days | by |
-| `distribution` | each member's share of replies, Support Overtime, groups or waits answered, with the total | share of |
+| `workload` | per member: groups, replies, waits answered, support time, stretches, active days | by |
+| `distribution` | each member's share of replies, support time, groups or waits answered, with the total | share of |
 | `employee-groups` | member × group: replies, waits answered, median response, recall, time in group | — |
 | `heatmap` | weekday × hour counts of customer messages, team replies or waits started | show |
 | `calls` | messages asking for or mentioning a call, inferred from text, with a duration only when stated | — |

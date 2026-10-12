@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
-import { sanitizeExcelRow } from "@support-automation/shared";
+import { DUTY_SOURCE_LABELS, sanitizeExcelRow } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
 import { bucketLabel, loadTeamReport, memberLabel, parseTeamReportFilters, scopeLabel } from "@/server/teamReport";
@@ -85,7 +85,8 @@ export async function GET(request: NextRequest) {
       "Never answered": row.unrecovered,
       "First support": iso(row.firstActivityAt),
       "Last support": iso(row.lastActivityAt),
-      "Support Overtime (hours)": hours(row.activeSeconds),
+      // Support time in the group, not overtime: overtime belongs to a person's day (TEAM_OVERTIME.md).
+      "Support time (hours)": hours(row.activeSeconds),
     }),
   );
 
@@ -129,7 +130,8 @@ export async function GET(request: NextRequest) {
     { Metric: "Missed", Value: summary.missed },
     { Metric: "Recall support", Value: summary.recalled },
     { Metric: "Never answered", Value: summary.unrecovered },
-    { Metric: "Support Overtime (hours)", Value: hours(summary.activeSeconds) },
+    { Metric: "Support Overtime (hours)", Value: hours(summary.overtimeSeconds) },
+    { Metric: "Member-days with no schedule (default duty length used)", Value: summary.unscheduledMemberDays },
     { Metric: "Active team members", Value: summary.activeMembers },
     { Metric: "Last activity", Value: iso(summary.lastActivityAt) },
     { Metric: "Rule: missed after (minutes, groups without a priority)", Value: rules.missedAfterMinutes },
@@ -149,7 +151,8 @@ export async function GET(request: NextRequest) {
       "Missed (assigned groups)": row.missed,
       "Recall (answered late)": row.recalled,
       "Never answered": row.unrecovered,
-      "Support Overtime (hours)": hours(row.activeSeconds),
+      "Support Overtime (hours)": hours(row.overtimeSeconds),
+      "Days with no schedule": row.unscheduledDays,
       "Work stretches": row.stretches,
       "First activity": iso(row.firstAt),
       "Last activity": iso(row.lastAt),
@@ -166,7 +169,18 @@ export async function GET(request: NextRequest) {
       "Customer messages": b.customerMessages,
       Missed: b.missed,
       Recall: b.recalled,
-      "Support Overtime (hours)": hours(b.activeSeconds),
+      "Support Overtime (hours)": hours(b.overtimeSeconds),
+    }),
+  );
+
+  // The breakdown behind every overtime figure: one row per person per day with recorded work. The
+  // schedule column says where the day's regular duty came from — never how long it was.
+  const overtimeDayRows = result.overtimeDays.map((d) =>
+    sanitizeExcelRow({
+      "Team member": memberLabel(d.memberId, memberNames),
+      Date: d.day,
+      "Support Overtime (hours)": hours(d.overtimeSeconds),
+      Schedule: DUTY_SOURCE_LABELS[d.source],
     }),
   );
 
@@ -193,6 +207,7 @@ export async function GET(request: NextRequest) {
   addSheet("Groups", groupRows, "No group messages in this period.");
   addSheet(filters.granularity === "day" ? "Daily" : filters.granularity === "week" ? "Weekly" : "Monthly", bucketRows, "");
   addSheet("Missed & Recall", missedRows, "Nothing was missed in this period.");
+  addSheet("Overtime by day", overtimeDayRows, "No team member work was recorded in this period.");
 
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
   return new NextResponse(buffer as unknown as BodyInit, {

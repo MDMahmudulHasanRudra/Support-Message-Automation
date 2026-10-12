@@ -3,6 +3,13 @@ import { formatCount, niceMax } from "./chartUtils";
 export interface ColumnPoint {
   label: string;
   value: number;
+  /** How the value reads in the tooltip ("2h 30m"); the formatted count otherwise. */
+  display?: string;
+  /**
+   * Nothing was recorded for this bucket — drawn as a hatched stub, not an empty column, so "no data"
+   * never reads as a measured zero.
+   */
+  missing?: boolean;
 }
 
 /**
@@ -61,15 +68,27 @@ export function ColumnChart({
               return (
                 <div
                   key={point.label + index}
-                  title={`${point.label} — ${formatCount(point.value)} ${unitLabel}`}
+                  title={
+                    point.missing
+                      ? `${point.label} — no data recorded`
+                      : `${point.label} — ${point.display ?? formatCount(point.value)} ${unitLabel}`
+                  }
                   className="group flex h-full flex-1 cursor-default items-end justify-center"
                 >
-                  <div
-                    className={`w-full max-w-6 rounded-t-[4px] transition-opacity duration-[var(--duration-fast)] group-hover:opacity-80 ${
-                      isPeak ? "bg-[var(--chart-1)]" : "bg-[var(--chart-1)]/55"
-                    }`}
-                    style={{ height: point.value > 0 ? `max(2px, ${heightPercent}%)` : 0 }}
-                  />
+                  {point.missing ? (
+                    <div
+                      aria-hidden
+                      className="h-1.5 w-full max-w-6 rounded-t-[2px] opacity-60"
+                      style={{ backgroundImage: "repeating-linear-gradient(135deg, var(--chart-grid) 0 2px, transparent 2px 4px)" }}
+                    />
+                  ) : (
+                    <div
+                      className={`w-full max-w-6 rounded-t-[4px] transition-opacity duration-[var(--duration-fast)] group-hover:opacity-80 ${
+                        isPeak ? "bg-[var(--chart-1)]" : "bg-[var(--chart-1)]/55"
+                      }`}
+                      style={{ height: point.value > 0 ? `max(2px, ${heightPercent}%)` : 0 }}
+                    />
+                  )}
                 </div>
               );
             })}
