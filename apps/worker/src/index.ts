@@ -24,6 +24,7 @@ import {
 import { awaitQuiescence, beginShutdown, installProcessGuards } from "./lifecycle.js";
 import { startMessageRecoveryProcessor } from "./pipeline/messageRecovery.js";
 import { startCollectionWatchdog } from "./health/collectionWatchdog.js";
+import { startMessageReconcileProcessor } from "./pipeline/reconcileRecentMessages.js";
 import { readLoops, recordLoopTick, registerLoop } from "./health/loopLiveness.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
@@ -206,6 +207,9 @@ async function main() {
     startMessageRecoveryProcessor(),
     // Detects the failure with no symptom: CONNECTED, heartbeating, and collecting nothing.
     startCollectionWatchdog(registry),
+    // Finds the message the watchdog cannot: a busy number that stores most messages and loses a few
+    // one at a time. Compares WhatsApp's last half hour with what is stored, adds only what is missing.
+    startMessageReconcileProcessor(registry),
     startHeartbeat(state, registry),
   ];
 

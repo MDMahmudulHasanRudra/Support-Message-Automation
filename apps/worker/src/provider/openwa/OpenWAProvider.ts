@@ -1632,9 +1632,32 @@ export class OpenWAProvider implements WhatsAppProvider {
     if (this.listenerClient === client) return; // already wired — a second onAnyMessage would double-process every message
     this.listenerClient = client;
     client.onAnyMessage((message) => {
-      handler(toRawIncomingMessage(this.accountId, message));
+      // Converted inside its own try/catch: a message shape this code cannot read must not throw
+      // into the library's event emitter, where nothing counts it and nothing says it existed. It is
+      // reported through `onMessageConversionError` (the registry counts and logs it) and the next
+      // message is unaffected. The recent-message reconciliation (`reconcileRecentMessages.ts`)
+      // reads the same chat history, so a message this skips is offered there once more.
+      let raw: RawIncomingMessage;
+      try {
+        raw = toRawIncomingMessage(this.accountId, message);
+      } catch (err) {
+        console.error(`[openwa] could not read an incoming message for ${this.sessionId} (id ${String((message as { id?: unknown })?.id ?? "unknown")})`, err);
+        try {
+          this.onMessageConversionError?.(err);
+        } catch {
+          // a reporting failure must never reach the listener either
+        }
+        return;
+      }
+      handler(raw);
     });
   }
+
+  /**
+   * Told when an incoming message could not be converted at all. Set by whoever wires the provider
+   * into the pipeline, so this module stays free of the pipeline's own imports.
+   */
+  onMessageConversionError?: (err: unknown) => void;
 
   /**
    * Everything the browser still holds for chats touched since `since` — how a gap gets filled
