@@ -2553,6 +2553,20 @@ Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.vi
 - TikTok is NOT built (beta API, regional, needs approval) and is shown as unavailable, never as a
   channel. Instagram uses the Page-linked (Facebook Login) flow; Instagram Login is not built.
 
+### Client Management (`CLIENT_CENTER.md`)
+
+One client database per project (`Client`, `ClientChannel`, `ClientNote`, `ClientActivity`, `ClientImportJob`), feature
+`CLIENT_CENTER`, **off by default**; keys `clients.view/create/update/archive/delete/import/export`. Phases 2–3 only:
+records, CRUD, duplicates, list/details, import/export, timeline, per-channel consent DATA. Rules worth not undoing:
+- **No billing and nothing sent.** No invoice/balance/due date is stored or invented (the company's billing is its own
+  system, not connected), and no WhatsApp/SMS/email/Messenger/Instagram message is sent from here. Consent is recorded,
+  not enforced yet. Sending, campaigns, reminders, notices and tasks are later phases.
+- **Duplicates are shown, never merged** — a shared phone/WhatsApp number (one group; local `01…` gets `88`), email,
+  channel reference or code, never a similar name. There is no merge action.
+- **One filter builder** (`lib/clientFilters.ts`) serves the list, select-all, export and bulk actions. Only an ARCHIVED
+  client can be permanently deleted. Import is claimed once by a conditional update, deletes the file's rows when it
+  ends, and runs inside the request (≤2,000 rows) — a durable background import is the extension point.
+
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)
 
