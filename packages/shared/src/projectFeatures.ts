@@ -174,6 +174,16 @@ export const PROJECT_FEATURES = [
     workerEffect:
       "Messenger, Instagram and Telegram messages stop being processed and replies stop being sent; webhooks are still recorded so nothing is lost. Connections and conversation history are kept.",
   },
+  {
+    key: "CLIENT_CENTER",
+    label: "Client Management",
+    description: "One client database across every channel: contacts, channel references, tags, notes, import and export.",
+    // New and unreleased: no project gets it until a Main Admin switches it on.
+    defaultEnabled: false,
+    routes: ["/clients"],
+    permissionKeys: ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export"],
+    workerEffect: "Nothing runs in the background for it. Switching it off hides the pages and refuses the actions; client records are kept.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];

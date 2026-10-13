@@ -111,6 +111,24 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "channels.manage", label: "Manage Messaging Channels", category: "Messaging Channels" },
   { key: "conversations.reply", label: "Reply on Messenger, Instagram & Telegram", category: "Messaging Channels" },
 
+  // Client Management (CLIENT_CENTER.md). A client record holds personal data, so reading, changing,
+  // exporting and deleting it are separate rights. Nothing here sends a message; sending, when it
+  // arrives, gets its own keys. `.view` is read-only and is part of the Read Only role like every other.
+  //   view    — see clients, their channels, notes and timeline
+  //   create  — add a client
+  //   update  — edit a client, its channels, tags, assignee, consent and notes
+  //   archive — archive and restore (soft deletion; nothing is lost)
+  //   delete  — permanently delete an ARCHIVED client
+  //   import  — import clients from a file
+  //   export  — export clients to a file (personal data leaves the system)
+  { key: "clients.view", label: "View Clients", category: "Clients" },
+  { key: "clients.create", label: "Create Clients", category: "Clients" },
+  { key: "clients.update", label: "Edit Clients", category: "Clients" },
+  { key: "clients.archive", label: "Archive & Restore Clients", category: "Clients" },
+  { key: "clients.delete", label: "Permanently Delete Clients", category: "Clients" },
+  { key: "clients.import", label: "Import Clients", category: "Clients" },
+  { key: "clients.export", label: "Export Clients", category: "Clients" },
+
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },
   { key: "settings.edit", label: "Edit Settings", category: "System" },

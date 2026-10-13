@@ -2,6 +2,7 @@ import { pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type Repo
 import {
   Activity,
   Camera,
+  Contact,
   Inbox,
   PlugZap,
   AlertCircle,
@@ -344,6 +345,15 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Client Management (CLIENT_CENTER.md): the one client database. A project feature that ships off.
+    label: "Clients",
+    icon: Contact,
+    links: [
+      { href: "/clients", label: "All Clients", icon: Contact },
+      { href: "/clients/import", label: "Import Clients", icon: FileUp },
+    ],
+  },
+  {
     // Support Activity's two people-pages joined Team Management's three: both answer "what is the
     // team doing" — one from the schedule, one from the messages.
     label: "Team",
@@ -511,6 +521,9 @@ const NAV_KEY_EXACT: Record<string, string> = {
 /** Longest prefix wins, so `/ai-learning/providers` resolves before `/ai-learning`. */
 const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/chat", "messages.view"],
+  ["/clients/import", "clients.import"],
+  ["/clients/new", "clients.create"],
+  ["/clients", "clients.view"],
   ["/messages", "messages.view"],
   ["/support-escalation", "escalations.view"],
   ["/support-activity", "support_activity.view"],

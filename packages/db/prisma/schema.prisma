@@ -597,6 +597,11 @@ model Project {
   channelConnections                   ChannelConnection[]
   channelConversations                 ChannelConversation[]
   channelMessages                      ChannelMessage[]
+  clients                              Client[]
+  clientChannels                       ClientChannel[]
+  clientNotes                          ClientNote[]
+  clientActivities                     ClientActivity[]
+  clientImportJobs                     ClientImportJob[]
   channelInboundEvents                 ChannelInboundEvent[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
@@ -749,6 +754,10 @@ model User {
   systemLogs                     SystemLog[]
   channelMessagesSent            ChannelMessage[]          @relation("ChannelMessageCreatedBy")
   channelConversationsAssigned   ChannelConversation[]     @relation("ChannelConversationAssignee")
+  clientsCreated                 Client[]                  @relation("ClientCreatedBy")
+  clientNotesWritten             ClientNote[]              @relation("ClientNoteAuthor")
+  clientActivitiesDone           ClientActivity[]          @relation("ClientActivityActor")
+  clientImportsStarted           ClientImportJob[]         @relation("ClientImportCreatedBy")
 
   projectAccess           ProjectAccess[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
@@ -1274,6 +1283,7 @@ model InternalTeamMember {
   supportRuleScopes         SupportRuleTeamMember[]
   notificationPreferences   TeamMemberNotificationPreference[]
   answeredSupportEpisodes   SupportResponseEpisode[]
+  assignedClients           Client[]
 
   /// The shift this person normally works, used to pre-fill a weekly pattern and nothing else.
   ///
@@ -1320,6 +1330,7 @@ model Team {
   members         InternalTeamMember[]
   memberships     TeamMembership[]
   supportEpisodes SupportResponseEpisode[]
+  assignedClients Client[]
 
   @@unique([projectId, name])
   @@unique([projectId, code])
@@ -6141,4 +6152,207 @@ model ChannelInboundEvent {
 
   @@unique([projectId, connectionId, dedupKey])
   @@index([status, receivedAt])
+}
+
+
+// ─── Client Management (CLIENT_CENTER.md) ──────────────────────────────────────────────────────────
+//
+// One record per client, whatever app they write from. Deliberately NOT here: billing (the company's
+// invoices live in their own system; a second ledger here could only ever disagree with it) and
+// anything that sends — channel references and consent are DATA for the phases that send. Every
+// table is project-scoped and carries the same-project triggers (migration 20261012100000).
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  ARCHIVED
+  BLOCKED
+}
+
+enum ClientSource {
+  MANUAL
+  IMPORT
+  WHATSAPP
+  FACEBOOK
+  INSTAGRAM
+  API
+}
+
+enum ClientChannelKind {
+  PHONE
+  EMAIL
+  WHATSAPP
+  WHATSAPP_GROUP
+  MESSENGER
+  INSTAGRAM
+  TELEGRAM
+  OTHER
+}
+
+enum ClientConsentStatus {
+  UNKNOWN
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum ClientImportStatus {
+  PREVIEW
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+}
+
+enum ClientDuplicatePolicy {
+  SKIP
+  UPDATE
+  CREATE
+}
+
+model Client {
+  id                   String              @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId            String              @default(dbgenerated("project_id_required()"))
+  project              Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Unique within the project. Generated ("CL-000042") unless the administrator types or imports one.
+  code                 String
+  name                 String
+  companyName          String?
+  status               ClientStatus        @default(ACTIVE)
+  category             String?
+  preferredChannel     ClientChannelKind?
+  preferredLanguage    String?
+  address              String?
+  businessDetails      String?
+  /// What staff should do or remember on the next contact. Internal: never part of a message.
+  followUpInstructions String?
+  /// Lower-cased, trimmed, de-duplicated (packages/shared clients.ts normalizeTags).
+  tags                 String[]            @default([])
+  customFields         Json                @default("{}")
+  source               ClientSource        @default(MANUAL)
+  /// e.g. the import's file name.
+  sourceDetail         String?
+  assignedMemberId     String?
+  assignedMember       InternalTeamMember? @relation(fields: [assignedMemberId], references: [id], onDelete: SetNull)
+  assignedTeamId       String?
+  assignedTeam         Team?               @relation(fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  createdById          String?
+  createdBy            User?               @relation("ClientCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  /// Set by the phases that record real contact (messages, calls); never guessed.
+  lastContactAt        DateTime?
+  /// Soft deletion. An archived client keeps every channel, note and timeline entry.
+  archivedAt           DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  channels   ClientChannel[]
+  notes      ClientNote[]
+  activities ClientActivity[]
+
+  @@unique([projectId, code])
+  @@index([projectId, status, name])
+  @@index([projectId, assignedMemberId])
+  @@index([projectId, createdAt])
+  @@index([tags], type: Gin)
+}
+
+/// One way to reach a client: a phone, an email, a WhatsApp number or group, a Messenger / Instagram /
+/// Telegram reference. `normalizedValue` is what duplicates are matched on (digits for a number,
+/// lower-case for an email). Consent is per channel, because somebody who has asked for no SMS may
+/// still want WhatsApp. Nothing in Client Management sends to a channel; the consent is recorded for
+/// the phases that will. A WHATSAPP_GROUP's value is the group's WhatsApp id; the group's name is
+/// looked up from WhatsAppGroup when shown, so there is no foreign key to choose between accounts' copies.
+model ClientChannel {
+  id               String              @id @default(cuid())
+  projectId        String              @default(dbgenerated("project_id_required()"))
+  project          Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId         String
+  client           Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  kind             ClientChannelKind
+  /// As typed (trimmed), for display.
+  value            String
+  normalizedValue  String
+  label            String?
+  isPrimary        Boolean             @default(false)
+  consentStatus    ClientConsentStatus @default(UNKNOWN)
+  consentChangedAt DateTime?
+  /// Where the consent came from: "recorded by staff", "client reply", "import"…
+  consentSource    String?
+  consentNote      String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@unique([clientId, kind, normalizedValue])
+  @@index([projectId, kind, normalizedValue])
+}
+
+/// Internal notes. A different table from anything that can be sent, so a note can never be sent by accident.
+model ClientNote {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  body      String
+  authorId  String?
+  author    User?    @relation("ClientNoteAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, createdAt])
+}
+
+/// The timeline: what happened to this client and who did it. Append-only; later phases add their own types.
+model ClientActivity {
+  id          String   @id @default(cuid())
+  projectId   String   @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// CREATED, UPDATED, STATUS_CHANGED, ASSIGNED, TAGS_CHANGED, NOTE_ADDED, CHANNEL_ADDED, CHANNEL_REMOVED,
+  /// CONSENT_CHANGED, ARCHIVED, RESTORED, IMPORTED, IMPORT_UPDATED.
+  type        String
+  summary     String
+  details     Json?
+  actorUserId String?
+  actor       User?    @relation("ClientActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([clientId, createdAt])
+  @@index([projectId, createdAt])
+}
+
+/// One CSV / XLSX import, from the preview to its final report. `rows` holds the file's own rows
+/// (text cells, as uploaded) between the upload and the end of the import, and is emptied once the
+/// import finishes or is abandoned: it is personal data that has no reason to stay. `mapping` says
+/// which column is which client field, and can be changed while the job is still a PREVIEW.
+model ClientImportJob {
+  id              String                @id @default(cuid())
+  projectId       String                @default(dbgenerated("project_id_required()"))
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdById     String?
+  createdBy       User?                 @relation("ClientImportCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  fileName        String
+  fileType        String
+  status          ClientImportStatus    @default(PREVIEW)
+  duplicatePolicy ClientDuplicatePolicy @default(SKIP)
+  mapping         Json                  @default("{}")
+  rows            Json                  @default("[]")
+  totalRows       Int                   @default(0)
+  validRows       Int                   @default(0)
+  invalidRows     Int                   @default(0)
+  importedCount   Int                   @default(0)
+  updatedCount    Int                   @default(0)
+  skippedCount    Int                   @default(0)
+  failedCount     Int                   @default(0)
+  /// [{ rowNumber, errors[] }], capped at 200 entries.
+  errors          Json                  @default("[]")
+  createdAt       DateTime              @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  @@index([projectId, createdAt])
 }
