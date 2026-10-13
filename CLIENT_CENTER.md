@@ -99,6 +99,29 @@ project-isolation machinery as the rest of the module. Rules worth not undoing:
   `client_due_event_immutable()`, and delete the migration's `_prisma_migrations` row. It destroys every due,
   so use it only before real dues exist; after that roll forward.
 
+## Linked WhatsApp chats (stage 4B, migration `20261013110000_client_chat_link`)
+
+`ClientWhatsAppChatLink`: a person's statement that a one-to-one chat on an account IS a client. Key
+`clients.link_whatsapp_chat` (an authorized admin's key, apart from `clients.update`; granted to nobody by the
+migration; Read Only does not get it). Rules worth not undoing:
+
+- **Manual, one chat at a time, confirmed.** Only a chat the account ALREADY holds (a stored message with no group
+  and an `@c.us` / `@lid` id) can be linked: never a group, never a number typed from memory. No automatic link, no
+  "link all", no link from an import.
+- **A number match is only a suggestion.** A chat whose number equals one of the client's WhatsApp numbers is
+  marked "Suggested: same number" and listed first; it links nothing. A `@lid` carries no number, so it is never
+  suggested (an admin can still link one deliberately).
+- **One active link per (account, chat)**, enforced by a partial unique index, so two admins linking one chat
+  at once end with one link. A removed link is kept (`unlinkedAt/By`) and frees the chat. A CHECK constraint
+  keeps a group id out of the table.
+- **Audit:** the client timeline says a chat was linked or removed (never the number); a System Log entry
+  records the ids. Deleting a client removes its links.
+- **A link enforces nothing yet** and nothing is sent because of one: a later stage reads it to address an
+  individual campaign. Visible to anyone who can open the client; changed only with the key.
+- Not built: linking from WhatsApp Chat's contact panel (only from the client page).
+- **Rollback (verified on a throwaway database, then re-applied cleanly):** delete the permission row, drop
+  `ClientWhatsAppChatLink` and the migration's `_prisma_migrations` row. Use only before real links exist.
+
 ## Not built (deferred, nothing here depends on them)
 
 Sending of any kind, due reminders, campaigns and the bulk messaging centre, message templates, reminder policies and the
@@ -116,7 +139,9 @@ isolation, archive/delete, notes, channels, consent, bulk),
 `apps/web/src/__tests__/clientsImportExport.integration.test.ts` (import preview/confirm/policies/idempotence,
 export permissions, filters, formula safety, cap, isolation),
 `packages/shared/src/__tests__/clientBilling.test.ts` and `apps/web/src/__tests__/clientBilling.integration.test.ts`
-(billing rules, permissions, currency list, audit, isolation). Web integration tests run only through
+(billing rules, permissions, currency list, audit, isolation),
+`packages/shared/src/__tests__/clientChatLinks.test.ts` and `apps/web/src/__tests__/clientChatLinks.integration.test.ts`
+(chat-link rules, permission, one active link, suggestions, timeline, isolation). Web integration tests run only through
 `pnpm --filter @support-automation/web test:isolated` (the throwaway `postgres-test` database).
 
 ## Deploy and rollback

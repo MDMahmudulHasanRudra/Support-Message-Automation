@@ -2560,7 +2560,9 @@ One client database per project (`Client`, `ClientChannel`, `ClientNote`, `Clien
 records, CRUD, duplicates, list/details, import/export, timeline, per-channel consent DATA. Rules worth not undoing:
 - **Billing is manual and nothing is sent.** Stage 4A: staff-typed dues (`ClientDue`, `ClientDueEvent` append-only,
   `ClientBillingCurrency` empty by default), keys `clients.view_billing` / `clients.edit_billing`. No invoice, ledger or
-  payment link, no default currency (required only with an amount); the timeline never carries an amount or a date. No
+  payment link, no default currency (required only with an amount); the timeline never carries an amount or a date.
+  Stage 4B: `ClientWhatsAppChatLink` (key `clients.link_whatsapp_chat`): manual, one existing individual chat at a
+  time, a number match is only a suggestion, one active link per (account, chat) by partial unique index. No
   WhatsApp/SMS/email/Messenger/Instagram message is sent from here. Consent is recorded, not enforced yet. Sending,
   campaigns, reminders, notices and tasks are later stages (`CLIENT_CENTER_PLAN.md`).
 - **Duplicates are shown, never merged** — a shared phone/WhatsApp number (one group; local `01…` gets `88`), email,

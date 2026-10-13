@@ -380,7 +380,7 @@ unknown member count; refreshing the count updates it; a known count never subst
 added. No SMS dependency. No change to `xlsx` or any current dependency.
 
 ## 13. Proposed order
-**4A** manual billing and Dues (**built 13 Oct 2026, uncommitted, awaiting review**: migration `20261013100000_client_billing`, see CLIENT_CENTER.md) → **4B** WhatsApp chat linking → **4C** Email module (settings, outbox, loop; credentials
+**4A** manual billing and Dues (**built 13 Oct 2026, uncommitted, awaiting review**: migration `20261013100000_client_billing`, see CLIENT_CENTER.md) → **4B** WhatsApp chat linking (**built 13 Oct 2026, uncommitted, awaiting review**: migration `20261013110000_client_chat_link`, key `clients.link_whatsapp_chat`, from the client page only) → **4C** Email module (settings, outbox, loop; credentials
 entered later) → **4D** campaigns with approval, group audience first, then individual, then email → (later, once
 §14 Q7 is answered) due-reminder proposals. SMS stays interface-only. Each stage: migration plus executed rollback on a
 throwaway database, isolation and feature-off tests, a browser pass, then a stop for review.
@@ -402,8 +402,9 @@ Still open (owner confirmation needed — nothing below is decided):
    provider is assumed.
 2. **Email:** which SMTP provider, sender address/domain, credentials (entered later through the existing secret encryption),
    and the provider's real sending limits for the defaults. No provider is assumed.
-3. **Permission for chat linking:** a new key (`clients.link_whatsapp_chat`) or reuse of an existing one — and which existing
-   role, if any, counts as "authorized admin"?
+3. **Permission for chat linking:** *built as a new key `clients.link_whatsapp_chat` (4B), granted to no role by the
+   migration; the Administrator module gets it from the seed.* Which custom role, if any, should also hold it is yours to
+   decide in Permission Modules.
 5a. **Consent evidence vocabulary:** the proposed sources are WRITTEN, VERBAL, SIGNED_FORM, CLIENT_MESSAGE, OTHER; confirm or
     change the list, and whether OTHER requires a longer note.
 7. **Due reminders:** when are proposals generated (how many days before / after a due date), how many per due, who is told that

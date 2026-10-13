@@ -605,6 +605,7 @@ model Project {
   clientDues                           ClientDue[]
   clientDueEvents                      ClientDueEvent[]
   clientBillingCurrencies              ClientBillingCurrency[]
+  clientChatLinks                      ClientWhatsAppChatLink[]
   channelInboundEvents                 ChannelInboundEvent[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
@@ -765,6 +766,8 @@ model User {
   clientDuesUpdated              ClientDue[]               @relation("ClientDueUpdatedBy")
   clientDueEventsDone            ClientDueEvent[]          @relation("ClientDueEventActor")
   clientCurrenciesAdded          ClientBillingCurrency[]   @relation("ClientCurrencyAddedBy")
+  clientChatsLinked              ClientWhatsAppChatLink[]  @relation("ClientChatLinkedBy")
+  clientChatsUnlinked            ClientWhatsAppChatLink[]  @relation("ClientChatUnlinkedBy")
 
   projectAccess           ProjectAccess[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
@@ -959,6 +962,7 @@ model WhatsAppAccount {
 
   groups               WhatsAppGroup[]
   messages             Message[]
+  clientChatLinks      ClientWhatsAppChatLink[]
   outboundMessages     OutboundMessage[]
   broadcastJobs        GroupBroadcastJob[]
   participantAddJobs   GroupParticipantAddJob[]
@@ -6259,6 +6263,7 @@ model Client {
   activities ClientActivity[]
   dues       ClientDue[]
   dueEvents  ClientDueEvent[]
+  chatLinks  ClientWhatsAppChatLink[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -6444,4 +6449,32 @@ model ClientBillingCurrency {
   updatedAt DateTime @updatedAt
 
   @@unique([projectId, code])
+}
+
+// ─── Client ⇄ WhatsApp chat link (CLIENT_CENTER_PLAN.md §3.4, stage 4B) ────────────────────────────
+
+/// A person's statement that this one-to-one chat on this account IS this client. Created only by an
+/// authorized admin, one chat at a time, never from a number match or an import. A link is kept when
+/// removed (`unlinkedAt`): the history of who linked what is the audit. The database allows ONE active
+/// link per (account, chat), so a chat can never belong to two clients at once (partial unique index
+/// in the migration; Prisma cannot express it).
+model ClientWhatsAppChatLink {
+  id           String          @id @default(cuid())
+  projectId    String          @default(dbgenerated("project_id_required()"))
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId     String
+  client       Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  accountId    String
+  account      WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// `…@c.us` or `…@lid` only (a group is never linked this way).
+  chatId       String
+  linkedById   String?
+  linkedBy     User?           @relation("ClientChatLinkedBy", fields: [linkedById], references: [id], onDelete: SetNull)
+  linkedAt     DateTime        @default(now())
+  unlinkedById String?
+  unlinkedBy   User?           @relation("ClientChatUnlinkedBy", fields: [unlinkedById], references: [id], onDelete: SetNull)
+  unlinkedAt   DateTime?
+
+  @@index([clientId, unlinkedAt])
+  @@index([projectId, accountId, chatId])
 }

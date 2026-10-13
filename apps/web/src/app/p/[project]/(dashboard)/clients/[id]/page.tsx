@@ -5,12 +5,14 @@ import { hasPermission } from "@/server/permissions";
 import { prisma } from "@/server/db";
 import { getClientDetail, loadClientFormOptions } from "@/server/clients";
 import { describeDueEvent, getClientBilling } from "@/server/clientBilling";
+import { getClientChatLinks, listLinkableAccounts } from "@/server/clientChatLinks";
 import { formatDateTime } from "@/lib/date";
 import { Alert, Badge, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { CLIENT_SOURCE_LABELS, CLIENT_STATUS_LABELS, describeSharedKey, type ClientSourceValue } from "@support-automation/shared";
 import { ClientForm } from "../ClientForm";
 import { ChannelsPanel, ClientLifecycle, NotesPanel } from "../ClientPanels";
 import { BillingPanel } from "../ClientBilling";
+import { ChatLinksPanel } from "../ClientChatLinks";
 
 const STATUS_COLOR: Record<string, "green" | "gray" | "yellow" | "red"> = { ACTIVE: "green", INACTIVE: "gray", PENDING: "yellow", ARCHIVED: "gray", BLOCKED: "red" };
 
@@ -22,12 +24,15 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const { client, notes, activities, groupNames, duplicates } = detail;
   const archived = client.status === "ARCHIVED";
 
-  const [options, canArchive, canDelete, canViewBilling, canEditBilling, groups] = await Promise.all([
+  const [options, canArchive, canDelete, canViewBilling, canEditBilling, canLinkChats, chatLinks, linkAccounts, groups] = await Promise.all([
     loadClientFormOptions(),
     hasPermission(session, "clients.archive"),
     hasPermission(session, "clients.delete"),
     hasPermission(session, "clients.view_billing"),
     hasPermission(session, "clients.edit_billing"),
+    hasPermission(session, "clients.link_whatsapp_chat"),
+    getClientChatLinks(id),
+    listLinkableAccounts(),
     canManage && !archived
       ? prisma.whatsAppGroup.findMany({ where: { isActive: true }, select: { whatsappGroupId: true, name: true }, distinct: ["whatsappGroupId"], orderBy: { name: "asc" }, take: 2000 })
       : Promise.resolve([]),
@@ -142,6 +147,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             <p className="mt-3 text-xs text-[color:var(--color-muted-foreground)]">
               Last contact: {client.lastContactAt ? formatDateTime(client.lastContactAt) : "none recorded"}. Consent is recorded per channel for later; nothing is sent from here today.
             </p>
+          </Card>
+
+          <Card className="p-6">
+            <SectionHeader title="Linked WhatsApp chats" />
+            <ChatLinksPanel
+              clientId={client.id}
+              clientName={client.name}
+              canLink={canLinkChats}
+              archived={archived}
+              accounts={linkAccounts.map((a) => ({ id: a.id, label: a.label }))}
+              links={chatLinks.map((l) => ({ id: l.id, accountLabel: l.accountLabel, chatLabel: l.chatLabel, chatId: l.chatId, linkedBy: l.linkedBy, linkedAt: formatDateTime(l.linkedAt) }))}
+            />
           </Card>
 
           <Card className="p-6">

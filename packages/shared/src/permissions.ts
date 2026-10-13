@@ -131,6 +131,8 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   // Billing is its own pair; neither key ends in ".view", so Read Only does not receive amounts or dates.
   { key: "clients.view_billing", label: "View Client Billing", category: "Clients" },
   { key: "clients.edit_billing", label: "Edit Client Billing", category: "Clients" },
+  // Linking a chat decides who a later message is addressed to, so it is an authorized admin's key, apart from clients.update.
+  { key: "clients.link_whatsapp_chat", label: "Link WhatsApp Chats to Clients", category: "Clients" },
 
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },

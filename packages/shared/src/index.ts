@@ -48,3 +48,4 @@ export * from "./whatsappIdentity.js";
 export * from "./overtime.js";
 export * from "./clients.js";
 export * from "./clientBilling.js";
+export * from "./clientChatLinks.js";
