@@ -606,6 +606,8 @@ model Project {
   clientDueEvents                      ClientDueEvent[]
   clientBillingCurrencies              ClientBillingCurrency[]
   clientChatLinks                      ClientWhatsAppChatLink[]
+  emailSettings                        EmailSettings?
+  emailOutbox                          EmailOutbox[]
   channelInboundEvents                 ChannelInboundEvent[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
@@ -768,6 +770,7 @@ model User {
   clientCurrenciesAdded          ClientBillingCurrency[]   @relation("ClientCurrencyAddedBy")
   clientChatsLinked              ClientWhatsAppChatLink[]  @relation("ClientChatLinkedBy")
   clientChatsUnlinked            ClientWhatsAppChatLink[]  @relation("ClientChatUnlinkedBy")
+  emailsQueued                   EmailOutbox[]             @relation("EmailQueuedBy")
 
   projectAccess           ProjectAccess[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
@@ -6477,4 +6480,94 @@ model ClientWhatsAppChatLink {
 
   @@index([clientId, unlinkedAt])
   @@index([projectId, accountId, chatId])
+}
+
+// ─── Email (SMTP) — CLIENT_CENTER_PLAN.md §3.1, stage 4C ───────────────────────────────────────────
+
+/// No plain-text SMTP: the password is only ever sent over TLS. STARTTLS is the usual port 587;
+/// TLS (implicit) is the usual port 465.
+enum EmailTlsMode {
+  STARTTLS
+  TLS
+}
+
+enum EmailPurpose {
+  /// A test message to the signed-in administrator's own address — the only way the channel becomes "connected".
+  TEST
+}
+
+/// SMTP only says the server ACCEPTED the message, so the state is ACCEPTED, never "delivered".
+/// UNKNOWN is an outcome nobody can know (a timeout after the message was handed over); it is never
+/// retried by itself, because a retry could email the person twice.
+enum EmailOutboxStatus {
+  QUEUED
+  SENDING
+  ACCEPTED
+  FAILED
+  UNKNOWN
+}
+
+/// One row per project. Ships absent: nothing is configured, nothing is assumed, no provider is chosen.
+/// The password is encrypted with encryptSecret and never returned to a page.
+model EmailSettings {
+  id                 String       @id @default(cuid())
+  projectId          String       @unique @default(dbgenerated("project_id_required()"))
+  project            Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Off until somebody switches it on; a project may configure it first.
+  enabled            Boolean      @default(false)
+  host               String       @default("")
+  port               Int          @default(587)
+  tlsMode            EmailTlsMode @default(STARTTLS)
+  username           String       @default("")
+  passwordCiphertext String?
+  fromName           String       @default("")
+  fromAddress        String       @default("")
+  replyTo            String?
+  /// Conservative defaults; the real ceiling is the provider's allowance, which this code cannot know.
+  maxPerMinute       Int          @default(10)
+  maxPerDay          Int          @default(500)
+  /// Bumped on every change that could alter whether mail is accepted (host, port, TLS, username,
+  /// password, from address). The channel is "connected" only while verifiedVersion equals it, so a
+  /// changed setting must be tested again.
+  settingsVersion    Int          @default(1)
+  /// The settingsVersion a test message was last ACCEPTED under. Null = never verified.
+  verifiedVersion    Int?
+  lastTestAt         DateTime?
+  lastTestOk         Boolean?
+  lastTestError      String?
+  updatedById        String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+}
+
+/// The send queue, drained only by the worker's email loop. Plain text, one recipient per message (no
+/// shared To / CC / BCC), so no recipient ever sees another's address.
+model EmailOutbox {
+  id              String            @id @default(cuid())
+  projectId       String            @default(dbgenerated("project_id_required()"))
+  project         Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  purpose         EmailPurpose
+  status          EmailOutboxStatus @default(QUEUED)
+  toAddress       String
+  subject         String
+  bodyText        String
+  /// Unique per project: the same message can never be queued twice.
+  idempotencyKey  String
+  /// EmailSettings.settingsVersion when it was queued — what a TEST verifies.
+  settingsVersion Int
+  attempts        Int               @default(0)
+  nextAttemptAt   DateTime?
+  sendingStartedAt DateTime?
+  acceptedAt      DateTime?
+  /// The SMTP server's own message id, once it accepted the message.
+  providerMessageId String?
+  lastError       String?
+  createdById     String?
+  createdBy       User?             @relation("EmailQueuedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([projectId, idempotencyKey])
+  @@index([projectId, status, nextAttemptAt])
+  @@index([projectId, createdAt])
 }

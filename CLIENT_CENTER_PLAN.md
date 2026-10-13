@@ -380,7 +380,7 @@ unknown member count; refreshing the count updates it; a known count never subst
 added. No SMS dependency. No change to `xlsx` or any current dependency.
 
 ## 13. Proposed order
-**4A** manual billing and Dues (**built 13 Oct 2026, uncommitted, awaiting review**: migration `20261013100000_client_billing`, see CLIENT_CENTER.md) → **4B** WhatsApp chat linking (**built 13 Oct 2026, uncommitted, awaiting review**: migration `20261013110000_client_chat_link`, key `clients.link_whatsapp_chat`, from the client page only) → **4C** Email module (settings, outbox, loop; credentials
+**4A** manual billing and Dues (**built 13 Oct 2026, uncommitted, awaiting review**: migration `20261013100000_client_billing`, see CLIENT_CENTER.md) → **4B** WhatsApp chat linking (**built 13 Oct 2026, uncommitted, awaiting review**: migration `20261013110000_client_chat_link`, key `clients.link_whatsapp_chat`, from the client page only) → **4C** Email module (**built 13 Oct 2026, uncommitted, awaiting review**: migration `20261013120000_client_email`, key `communications.manage_email`, Settings → Email, worker loop `email-outbox`, nodemailer 10.0.11) (settings, outbox, loop; credentials
 entered later) → **4D** campaigns with approval, group audience first, then individual, then email → (later, once
 §14 Q7 is answered) due-reminder proposals. SMS stays interface-only. Each stage: migration plus executed rollback on a
 throwaway database, isolation and feature-off tests, a browser pass, then a stop for review.

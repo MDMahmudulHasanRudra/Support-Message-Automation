@@ -49,3 +49,4 @@ export * from "./overtime.js";
 export * from "./clients.js";
 export * from "./clientBilling.js";
 export * from "./clientChatLinks.js";
+export * from "./clientEmail.js";

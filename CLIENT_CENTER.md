@@ -122,12 +122,49 @@ migration; Read Only does not get it). Rules worth not undoing:
 - **Rollback (verified on a throwaway database, then re-applied cleanly):** delete the permission row, drop
   `ClientWhatsAppChatLink` and the migration's `_prisma_migrations` row. Use only before real links exist.
 
+## Email — SMTP (stage 4C, migration `20261013120000_client_email`)
+
+`EmailSettings` (one row per project) and `EmailOutbox` (the send queue), key `communications.manage_email`
+(granted to nobody by the migration; Read Only does not get it), page **Settings → Email** (`/settings/email`),
+a worker loop `email-outbox`, and the `nodemailer` library (worker only, pinned `10.0.11`; `pnpm audit` has no
+advisory for it). **No provider is chosen and no credential exists**: until an authorized admin enters a host,
+port, username, password and sender, and a test message is accepted, Email is "not connected". Rules worth not
+undoing:
+
+- **Connected means a test was accepted under the settings as they are NOW.** `settingsVersion` is bumped by any
+  change to host, port, security, username, password or sender address; the channel is connected only while
+  `verifiedVersion` equals it. A test message carries the version it was queued under, and the worker records
+  success only if the settings are still that version — an old test can never verify new settings. Changing the
+  sender name, reply-to or limits does not need a re-test.
+- **The password is write-only:** encrypted with `encryptSecret`, never selected for a page, never echoed back with
+  a refusal, never logged; a blank field keeps the stored one. Without `AI_CREDENTIALS_ENCRYPTION_KEY` it is refused
+  with a sentence, never stored in the clear.
+- **The test goes only to the signed-in administrator's own address**, one at a time, so the module cannot be used
+  to email anybody else. Plain text, one recipient per message (no shared To/CC/BCC), header values stripped of line breaks.
+- **SMTP says only "accepted".** The state is ACCEPTED, never delivered. A refused login or a 5xx is FAILED and not
+  retried; a failure before the body is handed over, or a 4xx, is retried with backoff (1, 5, 15, 60 min) up to 5
+  attempts; a timeout or dropped connection AFTER the body was handed over is **UNKNOWN and never retried by itself**
+  (a retry could email the person twice). A message stuck SENDING becomes UNKNOWN. A claim is a conditional update.
+- **TLS is mandatory:** STARTTLS (required, never falling back to plain) or TLS from the start, certificates
+  verified, TLS 1.2 or later. There is no plain-text option.
+- **The mail server address is guarded:** this machine, link-local (cloud metadata) and unspecified addresses are
+  refused when typed AND when the name resolves to one, at send time. A private network address is allowed (an
+  internal relay is a legitimate setup) — that is a deliberate trade-off.
+- **Limits** (`maxPerMinute` 10, `maxPerDay` 500 by default) are cautious guesses, not any provider's numbers; the
+  loop leaves rows queued rather than exceed them. Set them to the provider's real allowance.
+- Nothing but the TEST purpose exists: no campaign sends email yet (stage 4D). Turning Email on is a separate
+  switch and sends nothing; a project may configure it before enabling it. SPF/DKIM/DMARC are set at the DNS host,
+  outside this repository.
+- **Rollback (verified on a throwaway database, then re-applied cleanly):** delete the permission row, drop
+  `EmailOutbox`, `EmailSettings`, the types `EmailOutboxStatus`, `EmailPurpose`, `EmailTlsMode` and the migration's
+  `_prisma_migrations` row. Use only before anything is queued.
+
 ## Not built (deferred, nothing here depends on them)
 
 Sending of any kind, due reminders, campaigns and the bulk messaging centre, message templates, reminder policies and the
 scheduler, notices and approvals, tasks and follow-ups, the dashboard and reports, saved filters and
-segments, automatic or manual **merge**, billing integration, email/SMS providers, WhatsApp 1:1 sending
-policy. Decisions still open: email/SMS provider and credentials; whether WhatsApp may
+segments, automatic or manual **merge**, billing integration, the SMS provider, WhatsApp 1:1 sending
+policy. Decisions still open: the SMTP provider and SMS provider and credentials; whether WhatsApp may
 message individuals (this product's rule today is answer-only, never first-contact); notice approval;
 expected client and campaign volume.
 
@@ -141,7 +178,10 @@ export permissions, filters, formula safety, cap, isolation),
 `packages/shared/src/__tests__/clientBilling.test.ts` and `apps/web/src/__tests__/clientBilling.integration.test.ts`
 (billing rules, permissions, currency list, audit, isolation),
 `packages/shared/src/__tests__/clientChatLinks.test.ts` and `apps/web/src/__tests__/clientChatLinks.integration.test.ts`
-(chat-link rules, permission, one active link, suggestions, timeline, isolation). Web integration tests run only through
+(chat-link rules, permission, one active link, suggestions, timeline, isolation),
+`packages/shared/src/__tests__/clientEmail.test.ts`, `apps/web/src/__tests__/clientEmail.integration.test.ts` and
+`apps/worker/src/__tests__/emailOutbox.integration.test.ts` (SMTP rules, settings, password handling, connected
+state, the send loop against a fake mail server — no test sends anything). Web integration tests run only through
 `pnpm --filter @support-automation/web test:isolated` (the throwaway `postgres-test` database).
 
 ## Deploy and rollback

@@ -180,8 +180,8 @@ export const PROJECT_FEATURES = [
     description: "One client database across every channel: contacts, channel references, tags, notes, import and export.",
     // New and unreleased: no project gets it until a Main Admin switches it on.
     defaultEnabled: false,
-    routes: ["/clients"],
-    permissionKeys: ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export", "clients.view_billing", "clients.edit_billing", "clients.link_whatsapp_chat"],
+    routes: ["/clients", "/settings/email"],
+    permissionKeys: ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export", "clients.view_billing", "clients.edit_billing", "clients.link_whatsapp_chat", "communications.manage_email"],
     workerEffect: "Nothing runs in the background for it. Switching it off hides the pages and refuses the actions; client records are kept.",
   },
 ] as const satisfies readonly ProjectFeatureDefinition[];

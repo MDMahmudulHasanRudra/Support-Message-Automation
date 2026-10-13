@@ -47,6 +47,7 @@ import { provisionAiProviderFromEnv } from "./bootstrap/provisionAiProviderFromE
 import { startGoogleExternalActivityProcessor } from "./googleSheets/externalActivityProcessor.js";
 import { startChannelInboundProcessor } from "./channels/inboundProcessor.js";
 import { startChannelOutboundProcessor } from "./channels/outboundProcessor.js";
+import { startEmailOutboxProcessor } from "./email/outboxProcessor.js";
 import { startChannelAiProcessor } from "./channels/aiReply.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
@@ -190,6 +191,9 @@ async function main() {
     startChannelInboundProcessor(),
     startChannelOutboundProcessor(),
     startChannelAiProcessor(),
+    // Email (CLIENT_CENTER_PLAN.md §3.1): the SMTP send queue. A no-op for a project without the Client
+    // Management feature or without a configured, enabled Email setup; nothing is queued by default.
+    startEmailOutboxProcessor(),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),
