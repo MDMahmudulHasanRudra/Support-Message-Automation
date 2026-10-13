@@ -2558,9 +2558,11 @@ Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.vi
 One client database per project (`Client`, `ClientChannel`, `ClientNote`, `ClientActivity`, `ClientImportJob`), feature
 `CLIENT_CENTER`, **off by default**; keys `clients.view/create/update/archive/delete/import/export`. Phases 2–3 only:
 records, CRUD, duplicates, list/details, import/export, timeline, per-channel consent DATA. Rules worth not undoing:
-- **No billing and nothing sent.** No invoice/balance/due date is stored or invented (the company's billing is its own
-  system, not connected), and no WhatsApp/SMS/email/Messenger/Instagram message is sent from here. Consent is recorded,
-  not enforced yet. Sending, campaigns, reminders, notices and tasks are later phases.
+- **Billing is manual and nothing is sent.** Stage 4A: staff-typed dues (`ClientDue`, `ClientDueEvent` append-only,
+  `ClientBillingCurrency` empty by default), keys `clients.view_billing` / `clients.edit_billing`. No invoice, ledger or
+  payment link, no default currency (required only with an amount); the timeline never carries an amount or a date. No
+  WhatsApp/SMS/email/Messenger/Instagram message is sent from here. Consent is recorded, not enforced yet. Sending,
+  campaigns, reminders, notices and tasks are later stages (`CLIENT_CENTER_PLAN.md`).
 - **Duplicates are shown, never merged** — a shared phone/WhatsApp number (one group; local `01…` gets `88`), email,
   channel reference or code, never a similar name. There is no merge action.
 - **One filter builder** (`lib/clientFilters.ts`) serves the list, select-all, export and bulk actions. Only an ARCHIVED

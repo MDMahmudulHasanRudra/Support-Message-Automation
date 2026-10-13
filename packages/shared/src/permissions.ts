@@ -128,6 +128,9 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "clients.delete", label: "Permanently Delete Clients", category: "Clients" },
   { key: "clients.import", label: "Import Clients", category: "Clients" },
   { key: "clients.export", label: "Export Clients", category: "Clients" },
+  // Billing is its own pair; neither key ends in ".view", so Read Only does not receive amounts or dates.
+  { key: "clients.view_billing", label: "View Client Billing", category: "Clients" },
+  { key: "clients.edit_billing", label: "Edit Client Billing", category: "Clients" },
 
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },

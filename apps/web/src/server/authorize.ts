@@ -98,7 +98,7 @@ export function accessLevelError(project: ActiveProject): string {
 
 /** Keys that only read: `.view` and the export keys. Everything else changes something. */
 function isReadKey(key: string): boolean {
-  return key.endsWith(".view") || key.endsWith(".bulk_export");
+  return key.endsWith(".view") || key.endsWith(".bulk_export") || key.endsWith(".view_billing");
 }
 
 export function projectReadOnlyError(project: ActiveProject): string {

@@ -4,11 +4,13 @@ import { pageAccess } from "@/server/authorize";
 import { hasPermission } from "@/server/permissions";
 import { prisma } from "@/server/db";
 import { getClientDetail, loadClientFormOptions } from "@/server/clients";
+import { describeDueEvent, getClientBilling } from "@/server/clientBilling";
 import { formatDateTime } from "@/lib/date";
 import { Alert, Badge, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { CLIENT_SOURCE_LABELS, CLIENT_STATUS_LABELS, describeSharedKey, type ClientSourceValue } from "@support-automation/shared";
 import { ClientForm } from "../ClientForm";
 import { ChannelsPanel, ClientLifecycle, NotesPanel } from "../ClientPanels";
+import { BillingPanel } from "../ClientBilling";
 
 const STATUS_COLOR: Record<string, "green" | "gray" | "yellow" | "red"> = { ACTIVE: "green", INACTIVE: "gray", PENDING: "yellow", ARCHIVED: "gray", BLOCKED: "red" };
 
@@ -20,14 +22,25 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const { client, notes, activities, groupNames, duplicates } = detail;
   const archived = client.status === "ARCHIVED";
 
-  const [options, canArchive, canDelete, groups] = await Promise.all([
+  const [options, canArchive, canDelete, canViewBilling, canEditBilling, groups] = await Promise.all([
     loadClientFormOptions(),
     hasPermission(session, "clients.archive"),
     hasPermission(session, "clients.delete"),
+    hasPermission(session, "clients.view_billing"),
+    hasPermission(session, "clients.edit_billing"),
     canManage && !archived
       ? prisma.whatsAppGroup.findMany({ where: { isActive: true }, select: { whatsappGroupId: true, name: true }, distinct: ["whatsappGroupId"], orderBy: { name: "asc" }, take: 2000 })
       : Promise.resolve([]),
   ]);
+
+  // Amounts and dates are read only for someone holding the billing key; the rest of the page never sees them.
+  const billing = canViewBilling ? await getClientBilling(client.id) : null;
+  const dueDateById = new Map(billing?.dues.map((x) => [x.id, x.dueDate]));
+  const summaryText = billing
+    ? billing.summary.openCount === 0
+      ? "No open dues."
+      : `${billing.summary.openCount} open · ${billing.summary.overdueCount} overdue${billing.summary.nextDueDate ? ` · next due ${billing.summary.nextDueDate}` : ""}`
+    : "";
 
   return (
     <div className="space-y-6">
@@ -133,9 +146,19 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
 
           <Card className="p-6">
             <SectionHeader title="Billing and dues" />
-            <p className="text-sm text-[color:var(--color-muted-foreground)]">
-              Not connected. Invoices, balances and due dates will come from the company&apos;s billing system once a source is chosen; this page will not invent or store them.
-            </p>
+            {billing ? (
+              <BillingPanel
+                clientId={client.id}
+                canEdit={canEditBilling}
+                archived={archived}
+                summaryText={summaryText}
+                currencies={billing.currencies.filter((c) => c.enabled).map((c) => c.code)}
+                dues={billing.dues}
+                history={billing.history.map((h) => ({ id: h.id, dueId: h.dueId, type: h.type, summary: describeDueEvent(h.type, h.changes, dueDateById.get(h.dueId) ?? null), actor: h.actor, at: formatDateTime(h.at) }))}
+              />
+            ) : (
+              <p className="text-sm text-[color:var(--color-muted-foreground)]">Billing is visible only to people with the billing permission.</p>
+            )}
           </Card>
 
           <Card className="p-6">

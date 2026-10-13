@@ -25,12 +25,15 @@ describe("project access levels", () => {
 
   it("READ keeps only read keys of the project's modules", () => {
     for (const key of ALL.filter((k) => !exempt(k))) {
-      expect(levelAllows("READ", key), key).toBe(key.endsWith(".view") || key.endsWith(".bulk_export"));
+      expect(levelAllows("READ", key), key).toBe(key.endsWith(".view") || key.endsWith(".bulk_export") || key.endsWith(".view_billing"));
     }
     expect(levelAllows("READ", "messages.view")).toBe(true);
     expect(levelAllows("READ", "messages.reply")).toBe(false);
     expect(levelAllows("READ", "automation_rules.bulk_export")).toBe(true);
     expect(levelAllows("READ", "whatsapp.manage")).toBe(false);
+    // Billing can be looked at under READ, never changed.
+    expect(levelAllows("READ", "clients.view_billing")).toBe(true);
+    expect(levelAllows("READ", "clients.edit_billing")).toBe(false);
   });
 
   it("WRITE keeps day-to-day work but never deleting or the project's automation and AI settings", () => {

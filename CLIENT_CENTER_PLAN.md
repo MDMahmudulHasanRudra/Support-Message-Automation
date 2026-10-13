@@ -95,10 +95,11 @@ committed or pushed without approval; **no message is sent in development, tests
 - "Next due date" and overdue flags in the client list are **derived** from unpaid dues and shown only to billing viewers.
 - No automatic confirmation of payment anywhere: "paid" is a person's statement, recorded with who and when.
 - **Supported-currency list (decision 20):** a per-project, admin-configurable list of enabled ISO 4217 codes
-  (`ProjectCurrency`: `code`, `enabled`, `addedBy/At`). **It ships empty; the plan assumes no currency.** The due form offers only
+  (built as `ClientBillingCurrency`: `code`, `enabled`, `addedBy`). **It ships empty; the plan assumes no currency.** The due form offers only
   enabled codes, and entering an amount needs one; with an empty list a due can still be saved without an amount. A currency
   removed from the list stays on the dues that already use it (shown as entered) and is simply not offered for new ones.
-  Who may edit the list and the initial contents are **open** (§14 Q11).
+  Who may edit the list and the initial contents are **open** (§14 Q11). Stage 4A built it so that **`clients.edit_billing`
+  edits the list** (an assumption pending Q11) and the list ships empty.
 - Nothing is invented: no currency default, no placeholder amount.
 
 ## 3. Channels
@@ -379,7 +380,7 @@ unknown member count; refreshing the count updates it; a known count never subst
 added. No SMS dependency. No change to `xlsx` or any current dependency.
 
 ## 13. Proposed order
-**4A** manual billing and Dues → **4B** WhatsApp chat linking → **4C** Email module (settings, outbox, loop; credentials
+**4A** manual billing and Dues (**built 13 Oct 2026, uncommitted, awaiting review**: migration `20261013100000_client_billing`, see CLIENT_CENTER.md) → **4B** WhatsApp chat linking → **4C** Email module (settings, outbox, loop; credentials
 entered later) → **4D** campaigns with approval, group audience first, then individual, then email → (later, once
 §14 Q7 is answered) due-reminder proposals. SMS stays interface-only. Each stage: migration plus executed rollback on a
 throwaway database, isolation and feature-off tests, a browser pass, then a stop for review.

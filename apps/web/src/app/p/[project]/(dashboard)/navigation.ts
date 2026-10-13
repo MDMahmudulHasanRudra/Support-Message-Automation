@@ -350,6 +350,7 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: Contact,
     links: [
       { href: "/clients", label: "All Clients", icon: Contact },
+      { href: "/clients/dues", label: "Dues", icon: CalendarClock },
       { href: "/clients/import", label: "Import Clients", icon: FileUp },
     ],
   },
@@ -521,6 +522,7 @@ const NAV_KEY_EXACT: Record<string, string> = {
 /** Longest prefix wins, so `/ai-learning/providers` resolves before `/ai-learning`. */
 const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/chat", "messages.view"],
+  ["/clients/dues", "clients.view_billing"],
   ["/clients/import", "clients.import"],
   ["/clients/new", "clients.create"],
   ["/clients", "clients.view"],

@@ -602,6 +602,9 @@ model Project {
   clientNotes                          ClientNote[]
   clientActivities                     ClientActivity[]
   clientImportJobs                     ClientImportJob[]
+  clientDues                           ClientDue[]
+  clientDueEvents                      ClientDueEvent[]
+  clientBillingCurrencies              ClientBillingCurrency[]
   channelInboundEvents                 ChannelInboundEvent[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
@@ -758,6 +761,10 @@ model User {
   clientNotesWritten             ClientNote[]              @relation("ClientNoteAuthor")
   clientActivitiesDone           ClientActivity[]          @relation("ClientActivityActor")
   clientImportsStarted           ClientImportJob[]         @relation("ClientImportCreatedBy")
+  clientDuesCreated              ClientDue[]               @relation("ClientDueCreatedBy")
+  clientDuesUpdated              ClientDue[]               @relation("ClientDueUpdatedBy")
+  clientDueEventsDone            ClientDueEvent[]          @relation("ClientDueEventActor")
+  clientCurrenciesAdded          ClientBillingCurrency[]   @relation("ClientCurrencyAddedBy")
 
   projectAccess           ProjectAccess[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
@@ -6154,7 +6161,6 @@ model ChannelInboundEvent {
   @@index([status, receivedAt])
 }
 
-
 // ─── Client Management (CLIENT_CENTER.md) ──────────────────────────────────────────────────────────
 //
 // One record per client, whatever app they write from. Deliberately NOT here: billing (the company's
@@ -6251,6 +6257,8 @@ model Client {
   channels   ClientChannel[]
   notes      ClientNote[]
   activities ClientActivity[]
+  dues       ClientDue[]
+  dueEvents  ClientDueEvent[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -6355,4 +6363,85 @@ model ClientImportJob {
   completedAt     DateTime?
 
   @@index([projectId, createdAt])
+}
+
+// ─── Client billing (CLIENT_CENTER_PLAN.md §2) — manual records, never a ledger ─────────────────────
+
+/// "Paid" is a person's statement, never a payment confirmation: nothing here is connected to a
+/// payment system, and nothing is sent because of a due.
+enum ClientDueStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  WAIVED
+  CANCELLED
+}
+
+/// One due date for one client, typed by staff. Kept as history: a settled due is never overwritten
+/// or deleted (cancel it instead). The amount is optional; the currency is required only when an
+/// amount is present and comes from the project's ClientBillingCurrency list.
+model ClientDue {
+  id              String          @id @default(cuid())
+  projectId       String          @default(dbgenerated("project_id_required()"))
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId        String
+  client          Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// A calendar day in Dhaka, with no time.
+  dueDate         DateTime        @db.Date
+  amount          Decimal?        @db.Decimal(12, 2)
+  currency        String?
+  status          ClientDueStatus @default(UNPAID)
+  paidAmount      Decimal?        @db.Decimal(12, 2)
+  note            String?
+  createdById     String?
+  createdBy       User?           @relation("ClientDueCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById     String?
+  updatedBy       User?           @relation("ClientDueUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  statusChangedAt DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  events ClientDueEvent[]
+
+  @@index([clientId, dueDate])
+  @@index([projectId, status, dueDate])
+}
+
+/// The audit of every change to a due. Append-only (the database refuses an UPDATE) and separate
+/// from ClientActivity, because the timeline is readable with clients.view while amounts and dates
+/// need the billing key.
+model ClientDueEvent {
+  id          String    @id @default(cuid())
+  projectId   String    @default(dbgenerated("project_id_required()"))
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  dueId       String
+  due         ClientDue @relation(fields: [dueId], references: [id], onDelete: Cascade)
+  clientId    String
+  client      Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// CREATED, UPDATED, STATUS_CHANGED.
+  type        String
+  /// { field: { from, to } } for the fields that changed.
+  changes     Json
+  actorUserId String?
+  actor       User?     @relation("ClientDueEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@index([dueId, createdAt])
+  @@index([clientId, createdAt])
+}
+
+/// The currencies this project's staff may pick on a due. Ships EMPTY: no currency is assumed.
+model ClientBillingCurrency {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// ISO 4217, upper case.
+  code      String
+  enabled   Boolean  @default(true)
+  addedById String?
+  addedBy   User?    @relation("ClientCurrencyAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, code])
 }

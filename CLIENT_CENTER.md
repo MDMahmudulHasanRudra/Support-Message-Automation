@@ -9,9 +9,9 @@ Phases 4–8 (sending, campaigns, reminders, notices, tasks, dashboard) are **no
 - A **project feature**, `CLIENT_CENTER`, **off by default** for every project. A Main Admin switches it on
   (Main Admin Portal → the project's features). Off: the pages 404/redirect, every action refuses, the sidebar
   hides it. Nothing runs in the worker for it.
-- **No billing.** No invoices, balances or due dates exist in this module, and none are invented: the
-  company's billing lives in its own system and is not connected (the client page says so). When a billing
-  source is chosen it is read, not copied into a second ledger.
+- **Billing is manual (stage 4A).** Staff type due dates, an optional amount and a status; there are no
+  invoices, no ledger and no payment connection, and "paid" is a person's statement (see "Client billing"
+  below). Nothing is invented: no default currency, no placeholder amount.
 - **Nothing is sent.** Channel references and consent are data. Consent is recorded per channel
   (UNKNOWN / OPTED_IN / OPTED_OUT) for the phases that will send; today it neither sends nor blocks anything.
 
@@ -72,12 +72,39 @@ limit (`sheetRows`), 240-column cap, 4 M total characters, per-cell 1,000 charac
 reach the prototype dropped, errors logged by code only. `clientsValidation.integration.test.ts` pins them,
 plus a guard that fails if the installed SheetJS is older than 0.20.2.
 
+## Client billing (stage 4A, migration `20261013100000_client_billing`)
+
+`ClientDue` (a Dhaka calendar day, optional amount, currency, status UNPAID / PARTIALLY_PAID / PAID /
+WAIVED / CANCELLED, paid amount, note), `ClientDueEvent` (the audit: append-only, the database refuses an
+UPDATE) and `ClientBillingCurrency` (the project's enabled currencies, **empty to begin with**). Same
+project-isolation machinery as the rest of the module. Rules worth not undoing:
+
+- **Keys:** `clients.view_billing` and `clients.edit_billing`. Neither ends in `.view`, so Read Only does not
+  receive amounts or dates; `.view_billing` counts as a read key for a READ access level and a suspended
+  project, so billing can be looked at there but never changed.
+- **A currency is required only when an amount is present**, and only from the project's list. A currency
+  typed without an amount is dropped. A due keeps the currency it was saved with when the list drops it.
+- **A settled due is never deleted** (cancel it). Deleting a CLIENT deletes its dues and events by cascade
+  (the confirmation says so).
+- **The timeline says THAT billing changed, never an amount or a date** (the timeline needs only
+  `clients.view`); amounts live in `ClientDueEvent`, shown with `clients.view_billing`.
+- **Overdue and "next due" are derived at read time** from open dues against today in Dhaka (`summarizeDues`),
+  never stored. A due today is upcoming.
+- **An edit is conditional on the row as it was read** (`updatedAt`), so two people editing one due cannot
+  silently overwrite each other.
+- Pages: the Billing card on a client and **Clients → Dues** (`/clients/dues`, with the currency list).
+  The client list does not yet show a next-due column.
+- **Rollback (verified on a throwaway database, then re-applied cleanly):** delete the two permission rows,
+  drop `ClientDueEvent`, `ClientDue`, `ClientBillingCurrency`, the type `ClientDueStatus` and the function
+  `client_due_event_immutable()`, and delete the migration's `_prisma_migrations` row. It destroys every due,
+  so use it only before real dues exist; after that roll forward.
+
 ## Not built (deferred, nothing here depends on them)
 
-Sending of any kind, campaigns and the bulk messaging centre, message templates, reminder policies and the
+Sending of any kind, due reminders, campaigns and the bulk messaging centre, message templates, reminder policies and the
 scheduler, notices and approvals, tasks and follow-ups, the dashboard and reports, saved filters and
 segments, automatic or manual **merge**, billing integration, email/SMS providers, WhatsApp 1:1 sending
-policy. Decisions still open: billing source; email/SMS provider and credentials; whether WhatsApp may
+policy. Decisions still open: email/SMS provider and credentials; whether WhatsApp may
 message individuals (this product's rule today is answer-only, never first-contact); notice approval;
 expected client and campaign volume.
 
@@ -87,12 +114,14 @@ expected client and campaign volume.
 `apps/web/src/__tests__/clients.integration.test.ts` (CRUD, permissions, feature switch, duplicates, project
 isolation, archive/delete, notes, channels, consent, bulk),
 `apps/web/src/__tests__/clientsImportExport.integration.test.ts` (import preview/confirm/policies/idempotence,
-export permissions, filters, formula safety, cap, isolation). Web integration tests run only through
+export permissions, filters, formula safety, cap, isolation),
+`packages/shared/src/__tests__/clientBilling.test.ts` and `apps/web/src/__tests__/clientBilling.integration.test.ts`
+(billing rules, permissions, currency list, audit, isolation). Web integration tests run only through
 `pnpm --filter @support-automation/web test:isolated` (the throwaway `postgres-test` database).
 
 ## Deploy and rollback
 
-Deploying applies the migration (new empty tables, a sequence, seven permission rows) and ships the code;
+Deploying applies the migration (new empty tables, a sequence, seven permission rows; the billing migration adds three more empty tables and two rows) and ships the code;
 the feature stays off until a Main Admin enables it per project.
 
 **Rollback, verified** on a throwaway database with a client, channel, note, activity, import job, a project

@@ -263,7 +263,7 @@ export function ClientLifecycle({ clientId, archived, canArchive, canDelete }: {
         title={open === "archive" ? "Archive this client?" : open === "restore" ? "Restore this client?" : "Permanently delete this client?"}
         description={
           open === "delete"
-            ? "The client, its channels, notes and timeline are deleted. This cannot be undone."
+            ? "The client, its channels, notes, timeline and billing records are deleted. This cannot be undone."
             : open === "archive"
               ? "It is hidden from the default list. Everything is kept and you can restore it."
               : "It returns with the status it had when it was archived."

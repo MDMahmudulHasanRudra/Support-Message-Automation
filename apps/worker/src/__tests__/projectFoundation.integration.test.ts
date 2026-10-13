@@ -87,8 +87,8 @@ describe("the constraints later phases depend on", () => {
     // + GoogleSheetActivity (Phase 6), GoogleSheetWorkSession, GoogleSheetWorkSessionEvent and
     //   GoogleSheetsSettings (Phase 7), + GoogleIntegrationConfig (the project's own OAuth client),
     // + the four Messaging Channels tables (OMNICHANNEL.md)
-    // + the five Client Management tables (CLIENT_CENTER.md).
-    expect(refusing).toHaveLength(104);
+    // + the five Client Management tables (CLIENT_CENTER.md) + the three client billing tables.
+    expect(refusing).toHaveLength(107);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -114,8 +114,8 @@ describe("the constraints later phases depend on", () => {
     // & Media Storage tables + SupportResponseEpisode + CollectionGap + WhatsAppOperationDismissal
     // + the four Mood Detection tables + the three Support Assignment tables + PersonalChatReview
     // + the nine Google Sheets tables + the four Messaging Channels tables + the five Client Management
-    // tables) + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(107);
+    // tables + the three client billing tables) + SystemLog + ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(110);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 
