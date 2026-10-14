@@ -2,7 +2,14 @@ import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { redirect } from "next/navigation";
 
-import { isPermissionKey, levelAllows, type PermissionKey, type ProjectAccessLevelValue } from "@support-automation/shared";
+import {
+  isPermissionKey,
+  levelAllows,
+  resolveRoleKeys,
+  type PermissionKey,
+  type ProjectAccessLevelValue,
+  type ProjectMembership,
+} from "@support-automation/shared";
 import { activeProjectSlug, requireActiveProject } from "@/server/projectContext";
 import type { Session } from "@/server/auth";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -25,22 +32,12 @@ export async function requirePermission(session: Session, key: PermissionKey): P
     redirect(await projectPath("/overview"));
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: session.userId },
-    select: {
-      isActive: true,
-      permissionModule: {
-        select: { permissions: { select: { permission: { select: { key: true } } } } },
-      },
-    },
-  });
-
-  if (!user || !user.isActive) {
+  const grantedKeys = await roleKeysForRequest(session);
+  if (grantedKeys === null) {
     await logSystemEvent("WARN", "permissions", "PERMISSION_DENIED_INACTIVE_USER", { userId: session.userId, key });
     redirect(await projectPath("/login"));
   }
 
-  const grantedKeys = new Set(user.permissionModule?.permissions.map((p) => p.permission.key) ?? []);
   if (!grantedKeys.has(key)) {
     await logSystemEvent("WARN", "permissions", "PERMISSION_DENIED", { userId: session.userId, key });
     // Carries the key so the Overview can say what was refused. A bare redirect dropped somebody on
@@ -87,20 +84,63 @@ export async function hasPermission(session: Session, key: PermissionKey): Promi
 /** The role alone — the existing permission system, unchanged. Levels are applied on top by the callers above. */
 async function roleGrants(session: Session, key: PermissionKey): Promise<boolean> {
   if (!isPermissionKey(key)) return false;
+  const grantedKeys = await roleKeysForRequest(session);
+  return grantedKeys !== null && grantedKeys.has(key);
+}
 
+/**
+ * The operator's kill switch for project-level roles (PROJECT_ROLES.md). Set, every user is governed
+ * by their global role again — exactly the behaviour before project roles existed. Nothing is deleted:
+ * the project roles and Leads stay stored and apply again when it is unset.
+ */
+export function projectRolesDisabled(): boolean {
+  return process.env.PROJECT_ROLES_DISABLED === "true";
+}
+
+/**
+ * What the user holds in this request, before the level and the project's features narrow it: their
+ * global role, with their project-level role in THIS project applied (`resolveRoleKeys`). Null for an
+ * inactive or missing user. The ONE place a role becomes a set of keys — requirePermission,
+ * hasPermission, permissionRefusal and getGrantedPermissionKeys all ask here, so they cannot disagree.
+ */
+async function roleKeysForRequest(session: Session): Promise<Set<string> | null> {
   const user = await prisma.user.findUnique({
     where: { id: session.userId },
     select: {
       isActive: true,
-      permissionModule: {
-        select: { permissions: { select: { permission: { select: { key: true } } } } },
-      },
+      permissionModule: { select: { permissions: { select: { permission: { select: { key: true } } } } } },
     },
   });
-  if (!user || !user.isActive) return false;
+  if (!user || !user.isActive) return null;
+  const globalKeys = user.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
+  if (projectRolesDisabled()) return new Set(globalKeys);
+  return resolveRoleKeys(globalKeys, await membershipInThisProject(session.userId));
+}
 
-  const grantedKeys = new Set(user.permissionModule?.permissions.map((p) => p.permission.key) ?? []);
-  return grantedKeys.has(key);
+/**
+ * The user's project-level role in the project this request is for, or null — outside a project, in a
+ * project they may not enter, or with no ProjectMemberRole row (every user before project roles).
+ * Null always means "the global role applies", which is how every check behaved before; for a user
+ * created inside a project (no global role) it means nothing at all, so a failure here fails closed.
+ */
+async function membershipInThisProject(userId: string): Promise<ProjectMembership | null> {
+  if (!(await activeProjectSlug())) return null;
+  let projectId: string;
+  try {
+    projectId = (await requireActiveProject()).id;
+  } catch {
+    return null;
+  }
+  const row = await prisma.projectMemberRole.findFirst({
+    where: { projectId, userId },
+    select: { isLead: true, projectRoleId: true, projectRole: { select: { projectId: true, permissionKeys: true } } },
+  });
+  if (!row) return null;
+  if (!row.projectRoleId) return { isLead: row.isLead, projectRoleKeys: null };
+  // A role of another project cannot be attached (a database trigger refuses it); if it ever were,
+  // it would mean nothing here rather than something.
+  const keys = row.projectRole && row.projectRole.projectId === projectId ? row.projectRole.permissionKeys : [];
+  return { isLead: row.isLead, projectRoleKeys: keys };
 }
 
 /**
@@ -118,7 +158,8 @@ export async function getGrantedPermissionKeys(session: Session): Promise<string
     },
   });
   if (!user || !user.isActive) return [];
-  const keys = user.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
+  const globalKeys = user.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
+  const keys = projectRolesDisabled() ? globalKeys : [...resolveRoleKeys(globalKeys, await membershipInThisProject(session.userId))];
   // What the shell offers follows the project's access level too, so a Read user is not shown
   // buttons for things the level will refuse. Presentation only — every action still checks.
   const level = await levelInThisProject();

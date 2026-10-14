@@ -202,7 +202,12 @@ export async function setProjectAccess(projectId: string, userId: string, grante
       create: { projectId, userId },
     });
   } else {
-    await platformPrisma.projectAccess.deleteMany({ where: { projectId, userId } });
+    // Their project-level role (PROJECT_ROLES.md) goes with the access, so a later re-grant starts
+    // from the global role and never silently revives an old Lead flag.
+    await platformPrisma.$transaction([
+      platformPrisma.projectMemberRole.deleteMany({ where: { projectId, userId } }),
+      platformPrisma.projectAccess.deleteMany({ where: { projectId, userId } }),
+    ]);
   }
 
   forgetProjectAccessDecisions();
