@@ -70,6 +70,13 @@ import {
 const NO_FEATURES_OFF: ReadonlySet<string> = new Set();
 
 /**
+ * Which pages a member's project role opens (projectSections.ts), or undefined when no page selection
+ * applies — every global role, every Lead, every role saved before pages existed. Presentation only:
+ * the page and its actions check again (server/permissions.ts).
+ */
+export type PageFilter = ((href: string) => boolean) | undefined;
+
+/**
  * The single source of truth for dashboard navigation. Lives outside Sidebar.tsx
  * because three things now read it — the sidebar, the ⌘K command palette, and the
  * header's location label — and a second copy would drift the moment a link moved.
@@ -225,16 +232,20 @@ export function isSettingsPath(pathname: string): boolean {
  * feature the page belongs to (MULTI_PROJECT_PLAN.md §9). Presentation only — the page and its
  * actions make both checks themselves.
  */
-function canOffer(href: string, granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string>): boolean {
+function canOffer(href: string, granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string>, pages?: PageFilter): boolean {
   const key = navPermissionFor(href);
-  return (key === null || granted.has(key)) && pathAllowedByFeatures(href, disabledFeatures);
+  return (key === null || granted.has(key)) && pathAllowedByFeatures(href, disabledFeatures) && (pages === undefined || pages(href));
 }
 
 /** The Settings sections reduced to the pages this role can open. Empty sections are dropped. */
-export function settingsSectionsFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF): SettingsSection[] {
+export function settingsSectionsFor(
+  granted: ReadonlySet<string>,
+  disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF,
+  pages?: PageFilter,
+): SettingsSection[] {
   return SETTINGS_SECTIONS.map((section) => ({
     ...section,
-    links: section.links.filter((link) => canOffer(link.href, granted, disabledFeatures)),
+    links: section.links.filter((link) => canOffer(link.href, granted, disabledFeatures, pages)),
   })).filter((section) => section.links.length > 0);
 }
 
@@ -305,8 +316,8 @@ export function isReportPath(pathname: string): boolean {
 }
 
 /** The reports this role can open. */
-export function reportPagesFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF): ReportPage[] {
-  return REPORT_PAGES.filter((page) => canOffer(page.href, granted, disabledFeatures));
+export function reportPagesFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF, pages?: PageFilter): ReportPage[] {
+  return REPORT_PAGES.filter((page) => canOffer(page.href, granted, disabledFeatures, pages));
 }
 
 // Ordered for day-to-day frequency: live/operational areas checked constantly (messages,
@@ -587,17 +598,17 @@ export function navPermissionFor(href: string): string | null {
 }
 
 /** The nav, reduced to what a role can open. Groups left empty are dropped rather than shown bare. */
-export function navGroupsFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF): NavGroup[] {
+export function navGroupsFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF, pages?: PageFilter): NavGroup[] {
   // Settings is shown whenever the role can open ANY settings page, and opens the first one it can:
   // a role with AI access but no general settings access must still find its way to AI Settings.
-  const firstSettingsPage = settingsSectionsFor(granted, disabledFeatures)[0]?.links[0] ?? null;
-  const canOpenAnyReport = reportPagesFor(granted, disabledFeatures).length > 0;
+  const firstSettingsPage = settingsSectionsFor(granted, disabledFeatures, pages)[0]?.links[0] ?? null;
+  const canOpenAnyReport = reportPagesFor(granted, disabledFeatures, pages).length > 0;
   return NAV_GROUPS.map((group) => ({
     ...group,
     links: group.links.flatMap((link) => {
       if (link === SETTINGS_LINK) return firstSettingsPage ? [{ ...SETTINGS_LINK, href: firstSettingsPage.href }] : [];
       if (link === REPORTS_LINK) return canOpenAnyReport ? [link] : [];
-      const permitted = (candidate: NavLink) => canOffer(candidate.href, granted, disabledFeatures);
+      const permitted = (candidate: NavLink) => canOffer(candidate.href, granted, disabledFeatures, pages);
       if (link.tabs) {
         // Shown when ANY tab opens for this role, pointing at the first one that does — a role
         // that can read Broadcast history but not send one still finds its way in.

@@ -3,8 +3,9 @@ import { ArrowUpRight } from "lucide-react";
 import { REPORT_CATEGORIES } from "@support-automation/shared";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireSession } from "@/server/auth";
-import { getGrantedPermissionKeys } from "@/server/permissions";
+import { getGrantedPermissionKeys, getPageAccess } from "@/server/permissions";
 import { reportPagesFor } from "../navigation";
+import { canOpenPath } from "../projectSections";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 
 export const metadata = { title: "All Reports" };
@@ -24,7 +25,9 @@ export const metadata = { title: "All Reports" };
 export default async function AllReportsPage() {
   const session = await requireSession();
   const granted = new Set(await getGrantedPermissionKeys(session));
-  const reports = reportPagesFor(granted, await activeDisabledFeatures());
+  // A project role that selects pages lists only the reports it opens (PROJECT_ROLES.md).
+  const pageAccess = await getPageAccess(session);
+  const reports = reportPagesFor(granted, await activeDisabledFeatures(), pageAccess ? (href) => canOpenPath(href, pageAccess) : undefined);
 
   return (
     <div>

@@ -17,6 +17,13 @@ import {
 } from "@support-automation/shared";
 import { checkPermission, requireAccess } from "@/server/authorize";
 
+/**
+ * The page these actions belong to (PROJECT_ROLES.md, "Pages"). A member whose project role selects
+ * pages needs THIS page at Full to change anything here — holding the same key through a sibling page
+ * is not enough. Ignored for everybody else (global roles, Leads, Main Admins).
+ */
+const NEW_BROADCAST_PAGE = { sections: ["/group-message-sender"] };
+
 export interface ExcelPreviewPayload {
   fileErrors: string[];
   results: GroupMatchResult[];
@@ -29,7 +36,7 @@ export interface ExcelPreviewPayload {
  * match candidates.
  */
 export async function previewExcelUpload(formData: FormData): Promise<ExcelPreviewPayload> {
-  const granted = await checkPermission("bulk_messaging.manage");
+  const granted = await checkPermission("bulk_messaging.manage", NEW_BROADCAST_PAGE);
   if ("denied" in granted) return { fileErrors: [granted.denied], results: [] };
 
   const accountId = String(formData.get("accountId") ?? "").trim();
@@ -100,7 +107,7 @@ export interface CreateBroadcastJobResult {
  * re-checked here against current DB state).
  */
 export async function createGroupBroadcastJob(input: CreateBroadcastJobInput): Promise<CreateBroadcastJobResult> {
-  const granted = await checkPermission("bulk_messaging.manage");
+  const granted = await checkPermission("bulk_messaging.manage", NEW_BROADCAST_PAGE);
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
 
@@ -218,7 +225,7 @@ export async function createGroupBroadcastJob(input: CreateBroadcastJobInput): P
 
 /** Cancels a job's still-PENDING items (an in-flight PROCESSING send is left to finish naturally). */
 export async function cancelBroadcastJob(jobId: string): Promise<void> {
-  await requireAccess("bulk_messaging.manage");
+  await requireAccess("bulk_messaging.manage", { sections: ["/group-message-sender", "/group-message-sender/history"] });
   await prisma.outboundMessage.updateMany({
     where: { broadcastJobId: jobId, status: "PENDING" },
     data: { status: "CANCELLED", failureReason: "Cancelled by user." },
@@ -241,7 +248,7 @@ export async function cancelBroadcastJob(jobId: string): Promise<void> {
  * plain `<form action>`, matching every other mutation action in this app.
  */
 export async function retryFailedBroadcastMessages(jobId: string): Promise<void> {
-  await requireAccess("bulk_messaging.manage");
+  await requireAccess("bulk_messaging.manage", { sections: ["/group-message-sender", "/group-message-sender/history"] });
   const job = await prisma.groupBroadcastJob.findUnique({ where: { id: jobId } });
   if (!job || job.status === "CANCELLED" || job.status === "STOPPED_KILL_SWITCH") {
     return;

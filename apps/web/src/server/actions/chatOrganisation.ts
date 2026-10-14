@@ -319,7 +319,7 @@ export async function markChatReviewed(groupId: string): Promise<void> {
     // show a refusal to and a redirect has nowhere to go. A view-only observer simply does not
     // clear conversations from the team's "waiting" queue — which is right, since reading one is
     // what marks it handled for everybody.
-    if (!(await hasPermission(session, "messages.reply"))) return;
+    if (!(await hasPermission(session, "messages.reply", { sections: ["/chat"] }))) return;
 
     const newest = await prisma.message.findFirst({
       where: { groupId },
@@ -439,7 +439,7 @@ export async function markChatWaiting(groupId: string): Promise<ChatOrganisation
 export async function markPersonalChatReviewed(accountId: string, chatId: string): Promise<void> {
   try {
     const session = await requireSession();
-    if (!(await hasPermission(session, "messages.reply"))) return;
+    if (!(await hasPermission(session, "messages.reply", { sections: ["/chat"] }))) return;
 
     const newest = await prisma.message.findFirst({
       where: { accountId, chatId, groupId: null },

@@ -16,7 +16,7 @@ export default async function ProjectRolesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Project Roles"
-        description={`The roles of ${project.name}: which modules each opens here, read or write. Another project's roles are its own.`}
+        description={`The roles of ${project.name}: which pages each opens here, Read or Full, and what its Dashboard shows. Another project's roles are its own.`}
         actions={
           <>
             <Link href="/project-members">
@@ -28,9 +28,13 @@ export default async function ProjectRolesPage() {
             <HelpButton moduleTitle="Project Roles">
               <HelpSection title="What a project role is">
                 <p>
-                  A set of modules — each as Read (open and look) or Write (change) — that you give members of this project. It applies in this project only: the same person can
-                  hold a different role in another project.
+                  The pages of this project a member may open — chosen module by module and sub-module by sub-module, each as Read (open and look) or Full (also change
+                  things) — and which parts of the Dashboard they see. Members see only those pages in the sidebar, and every other page is refused. It applies in this
+                  project only: the same person can hold a different role in another project.
                 </p>
+              </HelpSection>
+              <HelpSection title="Fine-tune">
+                <p>Full gives every action of its pages. Under Fine-tune you can hold one back — for example, edit clients but never delete them.</p>
               </HelpSection>
               <HelpSection title="What it can never include">
                 <p>The Main Admin Portal, the platform&apos;s App Users and Permission Modules, and running this project&apos;s members and roles. Those stay with Main Admins and the Lead.</p>

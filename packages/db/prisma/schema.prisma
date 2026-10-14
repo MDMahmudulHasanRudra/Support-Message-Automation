@@ -683,6 +683,10 @@ model ProjectRole {
   name           String
   description    String?
   permissionKeys String[]            @default([])
+  /// Which pages (modules and sub-modules) the role opens, as { "<section id>": "READ" | "FULL" }, and
+  /// which parts of the Dashboard it shows (apps/web projectSections.ts). Null = no page selection: the
+  /// role is governed by its keys alone, as every role saved before pages existed.
+  sectionAccess  Json?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
   members        ProjectMemberRole[]

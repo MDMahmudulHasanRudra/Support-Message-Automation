@@ -21,6 +21,13 @@ import { checkPermission, requireAccess } from "@/server/authorize";
 import { decryptSecret, encryptSecret } from "@/server/aiCrypto";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
+/**
+ * The page these actions belong to (PROJECT_ROLES.md, "Pages"). A member whose project role selects
+ * pages needs THIS page at Full to change anything here — holding the same key through a sibling page
+ * is not enough. Ignored for everybody else (global roles, Leads, Main Admins).
+ */
+const AI_PROVIDERS_PAGE = { sections: ["/ai-learning/providers"] };
+
 export interface AiProviderFormState {
   error?: string;
 }
@@ -59,7 +66,7 @@ export async function createAiProvider(
   _prevState: AiProviderFormState,
   formData: FormData,
 ): Promise<AiProviderFormState> {
-  const granted = await checkPermission("ai_settings.edit");
+  const granted = await checkPermission("ai_settings.edit", AI_PROVIDERS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
 
   const name = String(formData.get("name") ?? "").trim();
@@ -96,7 +103,7 @@ export async function updateAiProvider(
   _prevState: AiProviderFormState,
   formData: FormData,
 ): Promise<AiProviderFormState> {
-  const granted = await checkPermission("ai_settings.edit");
+  const granted = await checkPermission("ai_settings.edit", AI_PROVIDERS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
 
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
@@ -156,7 +163,7 @@ export async function updateAiProvider(
 }
 
 export async function toggleAiProviderStatus(id: string): Promise<void> {
-  await requireAccess("ai_settings.edit");
+  await requireAccess("ai_settings.edit", AI_PROVIDERS_PAGE);
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
   if (!provider) return;
   await prisma.aiProvider.update({
@@ -167,7 +174,7 @@ export async function toggleAiProviderStatus(id: string): Promise<void> {
 }
 
 export async function deleteAiProvider(id: string): Promise<void> {
-  await requireAccess("ai_settings.edit");
+  await requireAccess("ai_settings.edit", AI_PROVIDERS_PAGE);
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
   if (!provider) return;
   await prisma.aiProvider.delete({ where: { id } });
@@ -212,7 +219,7 @@ async function recordProviderTestResult(id: string, name: string, ok: boolean, e
  * tokens costs a fraction of a cent and is the only thing that genuinely proves a completion works.
  */
 export async function testAiProviderConnection(id: string): Promise<TestConnectionResult> {
-  const granted = await checkPermission("ai_settings.edit");
+  const granted = await checkPermission("ai_settings.edit", AI_PROVIDERS_PAGE);
   if ("denied" in granted) return { ok: false, error: granted.denied };
   const provider = await prisma.aiProvider.findUnique({ where: { id } });
   if (!provider) return { ok: false, error: "Provider not found." };
@@ -378,7 +385,7 @@ async function probeCompletion(
 export async function listAiProviderModels(
   providerId: string,
 ): Promise<{ models: AiModelListEntry[]; error?: string }> {
-  const granted = await checkPermission("ai_settings.edit");
+  const granted = await checkPermission("ai_settings.edit", { sections: ["/ai-learning/providers", "/ai-learning/models"] });
   if ("denied" in granted) return { models: [], error: granted.denied };
 
   const provider = await prisma.aiProvider.findUnique({ where: { id: providerId } });

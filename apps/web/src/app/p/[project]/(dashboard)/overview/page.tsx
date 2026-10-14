@@ -13,6 +13,9 @@ import {
   Waypoints,
 } from "lucide-react";
 import { requireSession } from "@/server/auth";
+import { getPageAccess } from "@/server/permissions";
+import { canOpenPath, dashboardPartsOf, describePath, type DashboardPartId } from "../projectSections";
+import { YourPages } from "./YourPages";
 import { isProjectAccessLevel, isProjectFeatureKey, PERMISSIONS, PROJECT_ACCESS_LEVEL_LABELS, projectFeatureDefinition } from "@support-automation/shared";
 import { formatDateTime } from "@/lib/date";
 import {
@@ -92,8 +95,12 @@ function formatAgeShort(ms: number): string {
   return `${minutes}m`;
 }
 
-export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ denied?: string; unavailable?: string; level?: string }> }) {
-  await requireSession();
+export default async function OverviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ denied?: string; unavailable?: string; level?: string; page?: string }>;
+}) {
+  const session = await requireSession();
   // Set by requirePermission when a page or an action refused this user. Only a known key is
   // named, so a hand-edited URL cannot put arbitrary text into the banner.
   const deniedParam = (await searchParams).denied ?? "";
@@ -103,6 +110,20 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
   const unavailableParam = (await searchParams).unavailable;
   const unavailable = isProjectFeatureKey(unavailableParam) ? projectFeatureDefinition(unavailableParam) : null;
   const denied = PERMISSIONS.find((p) => p.key === deniedParam) ?? null;
+  // Set when a member's project role does not open a page (PROJECT_ROLES.md). Only a known page is
+  // named, so a hand-edited URL cannot put arbitrary text into the banner.
+  const pageParam = (await searchParams).page ?? "";
+  const blockedPage = pageParam ? (describePath(pageParam) ?? "That page") : null;
+
+  // A project role that selects pages also chooses which parts of this page it shows; null = all of
+  // them, as for every global role, Lead and Main Admin. A link to a page the role does not open is
+  // left out rather than offered and refused.
+  const pageAccess = await getPageAccess(session);
+  const notices = <OverviewNotices denied={denied} deniedLevel={deniedLevel} unavailable={unavailable} blockedPage={blockedPage} />;
+  if (pageAccess && dashboardPartsOf(pageAccess).size === 0) return <YourPages access={pageAccess} notices={notices} />;
+  const parts = pageAccess ? dashboardPartsOf(pageAccess) : null;
+  const show = (part: DashboardPartId) => parts === null || parts.has(part);
+  const link = (href: string) => (pageAccess === null || canOpenPath(href, pageAccess) ? href : undefined);
 
   // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request; not subject to render-purity rules
   const nowMs = Date.now();
@@ -294,10 +315,12 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           <>
             {/* A real destination, never a mutating action — Overview stays entirely read-only,
                 every control here only navigates to a page where the actual change is made. */}
-            <ButtonLink href="/automation-control" variant="secondary">
-              <Power className="size-3.5" aria-hidden />
-              Automation Control
-            </ButtonLink>
+            {link("/automation-control") ? (
+              <ButtonLink href="/automation-control" variant="secondary">
+                <Power className="size-3.5" aria-hidden />
+                Automation Control
+              </ButtonLink>
+            ) : null}
             <HelpButton moduleTitle="Overview">
             <HelpSection title="What this page is for">
               <p>
@@ -347,34 +370,9 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         }
       />
 
-      {denied ? (
-        <div className="mb-5">
-          {deniedLevel ? (
-            <Alert tone="warning" title="Your access to this project does not allow that">
-              You were sent here because your access to this project is{" "}
-              {PROJECT_ACCESS_LEVEL_LABELS[deniedLevel as keyof typeof PROJECT_ACCESS_LEVEL_LABELS]}, which does not include{" "}
-              {denied.label.charAt(0).toLowerCase() + denied.label.slice(1)}. Your role does include it — a Main Admin can
-              change your access level for this project.
-            </Alert>
-          ) : (
-            <Alert tone="warning" title="Your role does not allow that">
-              You were sent here because {denied.label.charAt(0).toLowerCase() + denied.label.slice(1)} is not part
-              of your Permission Module. Ask an administrator to add it if you need it.
-            </Alert>
-          )}
-        </div>
-      ) : null}
+      {notices}
 
-      {unavailable ? (
-        <div className="mb-5">
-          <Alert tone="info" title={`${unavailable.label} is not enabled for this project`}>
-            That page belongs to {unavailable.label}, which this project is not set up to use. A Main Admin can turn it on
-            in the Main Admin Portal.
-          </Alert>
-        </div>
-      ) : null}
-
-      {issues.length > 0 ? (
+      {show("dashboard:alerts") && issues.length > 0 ? (
         <div className="mb-5">
           <Alert
             tone={systemStatus === "DOWN" ? "danger" : "warning"}
@@ -384,9 +382,11 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
               {issues.map((issue) => (
                 <li key={issue.text} className="flex flex-wrap items-baseline gap-x-2">
                   <span>{issue.text}</span>
-                  <Link href={issue.href} className="font-medium underline underline-offset-2">
-                    {issue.linkLabel}
-                  </Link>
+                  {link(issue.href) ? (
+                    <Link href={issue.href} className="font-medium underline underline-offset-2">
+                      {issue.linkLabel}
+                    </Link>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -394,11 +394,12 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         </div>
       ) : null}
 
+      {show("dashboard:tiles") ? (
       <div className="stagger-children mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
         {/* Each href lands on the rows this number counted, already filtered. Where no page
             lists those rows, the tile stays inert — see the outbound queue below. */}
         <StatTile
-          href="/accounts"
+          href={link("/accounts")}
           label="Connected accounts"
           value={`${accountsRouting.connectedCount}/${accountsRouting.accounts.length}`}
           tone={
@@ -408,7 +409,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           }
         />
         <StatTile
-          href="/support-activity/team"
+          href={link("/support-activity/team")}
           label="Waiting for a reply"
           value={awaiting.length}
           tone={awaiting.length > 0 ? "warning" : "success"}
@@ -416,18 +417,18 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         {/* `within=24h` rather than a date: the tile counts a rolling window, and a calendar-day
             filter would land on a different set than the number shown. */}
         <StatTile
-          href="/messages?within=24h"
+          href={link("/messages?within=24h")}
           label="Incoming messages (24h)"
           value={recentActivity.messagesLast24h}
         />
         <StatTile
-          href="/messages?decision=SUPPORT_REQUIRED&within=24h"
+          href={link("/messages?decision=SUPPORT_REQUIRED&within=24h")}
           label="Support required (24h)"
           value={automationOutbound.supportRequiredLast24h}
           tone={automationOutbound.supportRequiredLast24h > 0 ? "warning" : "neutral"}
         />
         <StatTile
-          href="/rules?status=ACTIVE"
+          href={link("/rules?status=ACTIVE")}
           label="Active rules"
           value={automationOutbound.activeRuleCount}
           tone="accent"
@@ -443,26 +444,28 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           tone={automationOutbound.outboundPendingCount > 0 ? "warning" : "neutral"}
         />
         <StatTile
-          href="/notifications?status=FAILED"
+          href={link("/notifications?status=FAILED")}
           label="Failed notifications (24h)"
           value={notifications.failed24h}
           tone={notifications.failed24h > 0 ? "danger" : "neutral"}
         />
         {/* No query needed: Active Cases only ever lists open ones, so the page IS the filter. */}
         <StatTile
-          href="/support-escalation"
+          href={link("/support-escalation")}
           label="Open escalation cases"
           value={escalation.openCaseCount}
           tone={escalation.openCaseCount > 0 ? "warning" : "neutral"}
         />
         <StatTile
-          href="/conversation-learning/unknown-patterns"
+          href={link("/conversation-learning/unknown-patterns")}
           label="Unresolved unknown patterns"
           value={conversationLearning.unknownPatternCount}
           tone={conversationLearning.unknownPatternCount > 0 ? "warning" : "neutral"}
         />
       </div>
+      ) : null}
 
+      {show("dashboard:metrics") ? (
       <section className="mb-5" aria-label="Metrics">
         <SectionHeader
           title="Metrics"
@@ -482,7 +485,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-3">
           <ChartCard
             className="lg:col-span-2"
-            href="/messages?within=14d"
+            href={link("/messages?within=14d")}
             title="Incoming message volume"
             description="Daily totals for the last 14 days, on Asia/Dhaka day boundaries."
             headline={
@@ -508,7 +511,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </ChartCard>
 
           <ChartCard
-            href="/messages?within=24h"
+            href={link("/messages?within=24h")}
             title="Automation decisions"
             description="What the rule engine decided in the last 24 hours."
           >
@@ -522,7 +525,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
 
           <ChartCard
             className="lg:col-span-2"
-            href="/messages?within=24h"
+            href={link("/messages?within=24h")}
             title="Message load by hour"
             description="Rolling 24 hours — the darker column is the busiest hour."
             headline={
@@ -555,7 +558,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
 
           <ChartCard
             className="lg:col-span-2"
-            href="/ai-learning/activity"
+            href={link("/ai-learning/activity")}
             title="AI answers and handovers"
             description="Every message the rule engine missed in an AI-eligible group, by day. A handover is the safety rule working, not a failure."
             headline={
@@ -598,7 +601,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </ChartCard>
 
           <ChartCard
-            href="/support-activity"
+            href={link("/support-activity")}
             title="Support delivered"
             description="Who answered customers over the last 7 days."
             headline={
@@ -620,7 +623,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
 
           <ChartCard
             className="lg:col-span-2"
-            href="/support-activity/team"
+            href={link("/support-activity/team")}
             title="How long customers wait"
             description="Median minutes to a first reply, by day. Median rather than average — one conversation answered next morning would drag an average past every honest reading of the day."
             headline={
@@ -640,7 +643,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </ChartCard>
 
           <ChartCard
-            href="/support-activity/team"
+            href={link("/support-activity/team")}
             title="Busiest executives"
             description="Support messages per person over the last 7 days."
           >
@@ -666,14 +669,16 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </ChartCard>
         </div>
       </section>
+      ) : null}
 
+      {show("dashboard:modules") ? (
       <div className="stagger-children mb-5 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         <DashboardModuleCard
           title="Accounts & Routing"
           icon={Smartphone}
-          href="/accounts"
+          href={link("/accounts")}
           status={moduleStatus.accounts}
-          secondaryLink={accountsRouting.hasRoutingError ? { href: "/accounts/routing", label: "Fix routing" } : undefined}
+          secondaryLink={accountsRouting.hasRoutingError && link("/accounts/routing") ? { href: "/accounts/routing", label: "Fix routing" } : undefined}
         >
           <ModuleCardRow label="Connected">
             <Badge
@@ -697,7 +702,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           ) : null}
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Automation Rules & Outbound" icon={ListChecks} href="/rules" status={moduleStatus.automation}>
+        <DashboardModuleCard title="Automation Rules & Outbound" icon={ListChecks} href={link("/rules")} status={moduleStatus.automation}>
           <ModuleCardRow label="Automation">
             <Badge color={automationOutbound.automationEnabled ? "green" : "red"} dot>
               {automationOutbound.automationEnabled ? "ENABLED" : "PAUSED"}
@@ -711,7 +716,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Escalations" icon={ShieldAlert} href="/support-escalation" status={moduleStatus.escalations}>
+        <DashboardModuleCard title="Escalations" icon={ShieldAlert} href={link("/support-escalation")} status={moduleStatus.escalations}>
           <ModuleCardRow label="Open cases">
             <Badge color={escalation.openCaseCount > 0 ? "yellow" : "green"} dot>
               {escalation.openCaseCount}
@@ -729,7 +734,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Conversation Learning" icon={Waypoints} href="/conversation-learning" status={moduleStatus.conversationLearning}>
+        <DashboardModuleCard title="Conversation Learning" icon={Waypoints} href={link("/conversation-learning")} status={moduleStatus.conversationLearning}>
           <ModuleCardRow label="Status">
             <Badge color={conversationLearning.conversationLearningEnabled ? "green" : "gray"} dot>
               {conversationLearning.conversationLearningEnabled ? "ENABLED" : "DISABLED"}
@@ -744,7 +749,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           <ModuleCardRow label="Proposals pending">{conversationLearning.pendingProposalCount}</ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="AI Learning" icon={Sparkles} href="/ai-learning" status={moduleStatus.aiLearning}>
+        <DashboardModuleCard title="AI Learning" icon={Sparkles} href={link("/ai-learning")} status={moduleStatus.aiLearning}>
           <ModuleCardRow label="Status">
             <Badge color={aiLearning.aiEngineEnabled ? "green" : "gray"} dot>
               {aiLearning.aiEngineEnabled ? "ENABLED" : "DISABLED"}
@@ -761,15 +766,15 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         <DashboardModuleCard
           title="Bulk Messaging"
           icon={Send}
-          href="/group-message-sender"
+          href={link("/group-message-sender")}
           status={moduleStatus.bulkMessaging}
-          secondaryLink={{ href: "/group-member-adder", label: "Add to groups" }}
+          secondaryLink={link("/group-member-adder") ? { href: "/group-member-adder", label: "Add to groups" } : undefined}
         >
           <ModuleCardRow label="Broadcast jobs">{bulkMessaging.broadcastRunning} running/queued</ModuleCardRow>
           <ModuleCardRow label="Add-to-group jobs">{bulkMessaging.addRunning} running/queued</ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Notifications" icon={Bell} href="/notifications" status={moduleStatus.notifications}>
+        <DashboardModuleCard title="Notifications" icon={Bell} href={link("/notifications")} status={moduleStatus.notifications}>
           <ModuleCardRow label="Sent (24h)">{notifications.sent24h}</ModuleCardRow>
           <ModuleCardRow label="Failed (24h)">
             <Badge color={notifications.failed24h > 0 ? "red" : "gray"} dot>
@@ -779,7 +784,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           <ModuleCardRow label="Pending/retrying (24h)">{notifications.pendingRetrying24h}</ModuleCardRow>
         </DashboardModuleCard>
 
-        <DashboardModuleCard title="Support Activity" icon={Activity} href="/support-activity" status={moduleStatus.supportActivity}>
+        <DashboardModuleCard title="Support Activity" icon={Activity} href={link("/support-activity")} status={moduleStatus.supportActivity}>
           <ModuleCardRow label="Status">
             <Badge color={supportActivity.enabled ? "green" : "gray"} dot>
               {supportActivity.enabled ? "ENABLED" : "DISABLED"}
@@ -790,7 +795,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         </DashboardModuleCard>
 
 
-        <DashboardModuleCard title="System Logs" icon={ConsoleIcon} href="/logs" status={moduleStatus.systemLogs}>
+        <DashboardModuleCard title="System Logs" icon={ConsoleIcon} href={link("/logs")} status={moduleStatus.systemLogs}>
           <ModuleCardRow label="Errors (24h)">
             <Badge color={systemLogs.errors24h > 0 ? "red" : "gray"} dot>
               {systemLogs.errors24h}
@@ -803,7 +808,9 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </ModuleCardRow>
         </DashboardModuleCard>
       </div>
+      ) : null}
 
+      {show("dashboard:stream") ? (
       <Card>
         <SectionHeader
           title="Live Traffic & Automation Stream"
@@ -848,12 +855,14 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
                       {m.trace.confidencePercent === null ? "—" : `${m.trace.confidencePercent}%`}
                     </Td>
                     <Td>
+                      {link("/messages") ? (
                       <Link
                         href={`/messages/${m.id}`}
                         className="text-xs font-medium text-[color:var(--color-foreground)] underline-offset-2 hover:underline"
                       >
                         View
                       </Link>
+                      ) : null}
                     </Td>
                   </tr>
                 ))}
@@ -864,13 +873,69 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
                 Showing the latest {recentActivity.recentMessages.length} of {formatCount(recentActivity.messagesLast24h)} incoming
                 messages today.
               </span>
-              <Link href="/messages" className="font-medium text-[color:var(--color-foreground)] underline-offset-2 hover:underline">
-                View full message history
-              </Link>
+              {link("/messages") ? (
+                <Link href="/messages" className="font-medium text-[color:var(--color-foreground)] underline-offset-2 hover:underline">
+                  View full message history
+                </Link>
+              ) : null}
             </div>
           </>
         )}
       </Card>
+      ) : null}
     </div>
+  );
+}
+
+/** The banners explaining why somebody was sent here. Shared by the Overview and "Your pages". */
+function OverviewNotices({
+  denied,
+  deniedLevel,
+  unavailable,
+  blockedPage,
+}: {
+  denied: (typeof PERMISSIONS)[number] | null;
+  deniedLevel: string | null | undefined;
+  unavailable: { label: string } | null;
+  blockedPage: string | null;
+}) {
+  return (
+    <>
+    {denied ? (
+      <div className="mb-5">
+        {deniedLevel ? (
+          <Alert tone="warning" title="Your access to this project does not allow that">
+            You were sent here because your access to this project is{" "}
+            {PROJECT_ACCESS_LEVEL_LABELS[deniedLevel as keyof typeof PROJECT_ACCESS_LEVEL_LABELS]}, which does not include{" "}
+            {denied.label.charAt(0).toLowerCase() + denied.label.slice(1)}. Your role does include it — a Main Admin can
+            change your access level for this project.
+          </Alert>
+        ) : (
+          <Alert tone="warning" title="Your role does not allow that">
+            You were sent here because {denied.label.charAt(0).toLowerCase() + denied.label.slice(1)} is not part
+            of your Permission Module. Ask an administrator to add it if you need it.
+          </Alert>
+        )}
+      </div>
+    ) : null}
+
+    {unavailable ? (
+      <div className="mb-5">
+        <Alert tone="info" title={`${unavailable.label} is not enabled for this project`}>
+          That page belongs to {unavailable.label}, which this project is not set up to use. A Main Admin can turn it on
+          in the Main Admin Portal.
+        </Alert>
+      </div>
+    ) : null}
+
+      {blockedPage ? (
+        <div className="mb-5">
+          <Alert tone="warning" title="Your project role does not include that page">
+            {blockedPage} is not one of the pages your role opens in this project — or your role can only look at it, not
+            change it. The project&apos;s Lead chooses which pages each role opens; ask them if you need it.
+          </Alert>
+        </div>
+      ) : null}
+    </>
   );
 }

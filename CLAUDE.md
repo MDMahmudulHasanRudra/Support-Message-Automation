@@ -270,6 +270,21 @@ a login's password/active state only when it belongs to their project alone (`pr
 `PROJECT_ROLES_DISABLED=true` (web only, deletes nothing). The seed is add-only now: it never strips a
 default role's permissions on deploy.
 
+**Page-level project roles** (`PROJECT_ROLES.md` §Pages, 15 Oct 2026). A project role also chooses
+which pages it opens — module by module, sub-module by sub-module, Hidden / Read / Full — and which
+parts of the Overview it shows (`ProjectRole.sectionAccess`; null = keys alone, every older role). The
+catalogue (`(dashboard)/projectSections.ts`) is DERIVED from the sidebar; only a page's write keys and
+extra paths are written by hand (`SECTION_RULES`). The keys are derived from the pages on the server,
+never taken from the form. A selection applies only to a member with a project role — never a Lead, a
+Main Admin or a global role. Enforced in `requireProjectPage` (every page, keyless ones too) and in
+every permission check (the page posted from must be granted, Full to change). A new page belongs in
+the sidebar, and if it changes something its keys go in `SECTION_RULES` — `projectSections.test.ts`
+fails until every page file and export route is covered. **Sibling pages share keys** (the four
+WhatsApp pages all use `whatsapp.manage`), so the highest-risk actions name their own page:
+`checkPermission(key, { sections: ["/accounts"] })` (Accounts, Automation Control, safety settings,
+broadcast, add-to-groups, admin maker, AI providers). A new dangerous action on a shared key should do
+the same. Kill switch for the page side only: `PROJECT_ROLE_PAGES_DISABLED=true`.
+
 **White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
 `projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the
 built-in default (`lib/branding.ts`), so a fresh install is unchanged. Never hard-code the product
