@@ -71,7 +71,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   if (state.purpose === "IDENTITY") {
     return runWithProject(project, async () => {
-      const access = await checkPermission("google_sheets.view", "GOOGLE_SHEETS");
+      const access = await checkPermission("google_sheets.view", { feature: "GOOGLE_SHEETS", sections: ["/google-sheets/identity"] });
       if ("denied" in access) return finish(project.slug, "google_error=permission");
       try {
         const identity = await completeIdentityLink({ config, code, verifier: state.verifier, userId: session.userId });
@@ -95,7 +95,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   return runWithProject(project, async () => {
-    const access = await checkPermission("google_sheets.manage", "GOOGLE_SHEETS");
+    const access = await checkPermission("google_sheets.manage", { feature: "GOOGLE_SHEETS", sections: ["/settings/google-sheets"] });
     if ("denied" in access) return finish(project.slug, "google_error=permission");
     try {
       const account = await completeGoogleConnection({ config, code, verifier: state.verifier, userId: session.userId });

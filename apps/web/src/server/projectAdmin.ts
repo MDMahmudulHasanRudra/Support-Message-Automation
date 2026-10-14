@@ -7,6 +7,7 @@ import {
 import { platformPrisma, prisma } from "@/server/db";
 import { isMainAdmin } from "@/server/projectContext";
 import { PRIVILEGED_KEYS } from "@/server/privilegeGuard";
+import { sanitizeSectionAccess, type SectionLevel } from "@/app/p/[project]/(dashboard)/projectSections";
 
 /**
  * Project administration reads (PROJECT_ROLES.md): the members of ONE project and its project roles.
@@ -136,30 +137,34 @@ export interface ProjectRoleView {
   name: string;
   description: string | null;
   permissionKeys: string[];
+  /** The pages it opens (projectSections.ts), or null for a role saved before pages could be chosen. */
+  sectionAccess: Record<string, SectionLevel> | null;
   memberCount: number;
 }
 
-/** This project's roles (the scoped client confines them to the project in the URL). */
-export async function listProjectRoles(): Promise<ProjectRoleView[]> {
-  const roles = await prisma.projectRole.findMany({
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, description: true, permissionKeys: true, _count: { select: { members: true } } },
-  });
-  return roles.map((r) => ({
+type RoleRow = { id: string; name: string; description: string | null; permissionKeys: string[]; sectionAccess: unknown; _count: { members: number } };
+
+function roleView(r: RoleRow): ProjectRoleView {
+  return {
     id: r.id,
     name: r.name,
     description: r.description,
-    // Read through the same filter as every write: a retired or platform key means nothing here.
+    // Read through the same filters as every write: a retired or platform key, or an unknown page, means nothing here.
     permissionKeys: r.permissionKeys.filter(isProjectAssignableKey),
+    sectionAccess: r.sectionAccess === null || r.sectionAccess === undefined ? null : sanitizeSectionAccess(r.sectionAccess),
     memberCount: r._count.members,
-  }));
+  };
+}
+
+const ROLE_SELECT = { id: true, name: true, description: true, permissionKeys: true, sectionAccess: true, _count: { select: { members: true } } } as const;
+
+/** This project's roles (the scoped client confines them to the project in the URL). */
+export async function listProjectRoles(): Promise<ProjectRoleView[]> {
+  const roles = await prisma.projectRole.findMany({ orderBy: { name: "asc" }, select: ROLE_SELECT });
+  return roles.map(roleView);
 }
 
 export async function getProjectRole(id: string): Promise<ProjectRoleView | null> {
-  const role = await prisma.projectRole.findFirst({
-    where: { id },
-    select: { id: true, name: true, description: true, permissionKeys: true, _count: { select: { members: true } } },
-  });
-  if (!role) return null;
-  return { id: role.id, name: role.name, description: role.description, permissionKeys: role.permissionKeys.filter(isProjectAssignableKey), memberCount: role._count.members };
+  const role = await prisma.projectRole.findFirst({ where: { id }, select: ROLE_SELECT });
+  return role ? roleView(role) : null;
 }

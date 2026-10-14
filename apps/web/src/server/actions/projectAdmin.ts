@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { sanitizeProjectRoleKeys } from "@support-automation/shared";
 import { checkPermission } from "@/server/authorize";
 import { hashPassword } from "@/server/auth";
 import { platformPrisma, prisma } from "@/server/db";
@@ -13,6 +12,7 @@ import { projectPath } from "@/server/projectPaths";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { MIN_PASSWORD_LENGTH } from "@/lib/userRules";
+import { keysForSectionAccess, sanitizeSectionAccess } from "@/app/p/[project]/(dashboard)/projectSections";
 
 /**
  * Project administration (PROJECT_ROLES.md): a project's Lead — or a Main Admin — runs ONE project's
@@ -171,12 +171,31 @@ export async function setProjectMemberActive(userId: string, isActive: boolean):
   return { success: isActive ? "Reactivated." : "Deactivated and signed out everywhere." };
 }
 
+/**
+ * A role is saved as the pages it opens (`sectionAccess`) and the keys those pages need
+ * (`permissionKeys`), the second DERIVED from the first on the server — never taken from the form — so
+ * the two cannot disagree and no key a page does not need can be smuggled in. "Fine-tune" can only
+ * hold back a write key of a Full page, never add one; whatever is submitted is sanitised again.
+ */
 function roleFields(form: FormData) {
+  let submitted: unknown = null;
+  try {
+    submitted = JSON.parse(String(form.get("sectionAccess") ?? "null"));
+  } catch {
+    submitted = null;
+  }
+  const sectionAccess = sanitizeSectionAccess(submitted);
   return {
     name: String(form.get("name") ?? "").trim(),
     description: String(form.get("description") ?? "").trim() || null,
-    permissionKeys: sanitizeProjectRoleKeys(form.getAll("permissionKeys").map(String)),
+    sectionAccess,
+    permissionKeys: keysForSectionAccess(sectionAccess, form.getAll("excludedKeys").map(String)),
   };
+}
+
+function pagesSummary(fields: ReturnType<typeof roleFields>) {
+  const levels = Object.values(fields.sectionAccess);
+  return { keys: fields.permissionKeys.length, pages: levels.length, full: levels.filter((l) => l === "FULL").length };
 }
 
 export async function createProjectRole(_prev: ProjectAdminState, form: FormData): Promise<ProjectAdminState> {
@@ -190,7 +209,7 @@ export async function createProjectRole(_prev: ProjectAdminState, form: FormData
   }
   try {
     const role = await prisma.projectRole.create({ data: { projectId: admin.project.id, ...fields }, select: { id: true } });
-    await logSystemEvent("INFO", "permissions", "PROJECT_ROLE_CREATED", { actorId: admin.session.userId, projectRoleId: role.id, keys: fields.permissionKeys.length });
+    await logSystemEvent("INFO", "permissions", "PROJECT_ROLE_CREATED", { actorId: admin.session.userId, projectRoleId: role.id, ...pagesSummary(fields) });
   } catch (err) {
     if (isUniqueViolation(err)) return { error: `This project already has a role named "${fields.name}".` };
     throw err;
@@ -216,7 +235,7 @@ export async function updateProjectRole(id: string, _prev: ProjectAdminState, fo
     if (isUniqueViolation(err)) return { error: `This project already has a role named "${fields.name}".` };
     throw err;
   }
-  await logSystemEvent("WARN", "permissions", "PROJECT_ROLE_UPDATED", { actorId: admin.session.userId, projectRoleId: id, keys: fields.permissionKeys.length });
+  await logSystemEvent("WARN", "permissions", "PROJECT_ROLE_UPDATED", { actorId: admin.session.userId, projectRoleId: id, ...pagesSummary(fields) });
   revalidatePath(await projectPath("/project-roles"));
   revalidatePath(await projectPath("/project-members"));
   redirect(await projectPath("/project-roles"));

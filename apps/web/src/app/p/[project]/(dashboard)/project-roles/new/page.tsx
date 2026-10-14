@@ -9,7 +9,7 @@ export default async function NewProjectRolePage() {
   await requireAccess("project_roles.manage");
   return (
     <div className="space-y-4">
-      <PageHeader title="New project role" description="Choose the modules this role opens in this project, and for each whether members may only read or also write." />
+      <PageHeader title="New project role" description="Choose which pages this role opens in this project — Read to look, Full to also change things — and what its Dashboard shows." />
       <ProjectRoleForm action={createProjectRole} submitLabel="Create role" />
     </div>
   );

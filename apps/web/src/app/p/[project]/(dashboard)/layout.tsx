@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/server/db";
 import { requireSession } from "@/server/auth";
 import { requireProjectPage } from "@/server/authorize";
-import { getGrantedPermissionKeys } from "@/server/permissions";
+import { getGrantedPermissionKeys, getPageAccess } from "@/server/permissions";
 import { logout } from "@/server/actions/session";
 import { accessibleProjects, activeProjectSlug } from "@/server/projectContext";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
@@ -33,7 +33,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // The project step before anything else renders: a project this user cannot enter is a 404,
   // whatever the page below would have shown (MULTI_PROJECT_PLAN.md §7).
   const project = await requireProjectPage();
-  const [settings, grantedKeys, switchable, disabledFeatures] = await Promise.all([
+  const [settings, grantedKeys, switchable, disabledFeatures, pageAccess] = await Promise.all([
     prisma.automationSettings.findUnique({ where: { id: "global" } }),
     // For what the shell SHOWS — which links, whether the assistant. Every page and action still
     // makes its own check; this only stops the sidebar offering pages that would refuse.
@@ -42,6 +42,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
     accessibleProjects(session.userId),
     // Modules this project is not entitled to (MULTI_PROJECT_PLAN.md §9) — hidden from the nav.
     activeDisabledFeatures(),
+    // The pages this member's project role opens (PROJECT_ROLES.md), or null — keys alone decide.
+    getPageAccess(session),
   ]);
 
   return (
@@ -54,6 +56,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       project={{ name: project.name, slug: project.slug, status: project.status }}
       switchableProjects={switchable.map(({ name, slug, status }) => ({ name, slug, status }))}
       disabledFeatures={[...disabledFeatures]}
+      pageAccess={pageAccess}
       workspaceProjects={workspaceTabs}
     >
       {children}

@@ -11,6 +11,13 @@ import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 /**
+ * The page these actions belong to (PROJECT_ROLES.md, "Pages"). A member whose project role selects
+ * pages needs THIS page at Full to change anything here — holding the same key through a sibling page
+ * is not enough. Ignored for everybody else (global roles, Leads, Main Admins).
+ */
+const ACCOUNTS_PAGE = { sections: ["/accounts"] };
+
+/**
  * Every action here just inserts a WorkerCommand row — the dashboard never calls the worker
  * directly. ENGINEERING_STANDARDS.md §9: a command of the same type FOR THE SAME ACCOUNT that's
  * still PENDING/PROCESSING must not get a duplicate queued behind it (this is exactly how the
@@ -36,7 +43,7 @@ async function enqueueCommand(
 }
 
 export async function requestReconnect(accountId: string): Promise<void> {
-  await requireAccess("whatsapp.manage");
+  await requireAccess("whatsapp.manage", ACCOUNTS_PAGE);
 
   // Drop the stored code first. A reconnect tears the session down and builds a new one, so
   // whatever is on screen belongs to the attempt being replaced and cannot be scanned any more —
@@ -58,7 +65,7 @@ export async function requestReconnect(accountId: string): Promise<void> {
  * pretending a second one started. (The worker also joins a sync already running for the account.)
  */
 export async function requestGroupResync(accountId: string): Promise<{ alreadyRunning: boolean }> {
-  await requireAccess("whatsapp.manage");
+  await requireAccess("whatsapp.manage", ACCOUNTS_PAGE);
   const outcome = await enqueueCommand("RESYNC_GROUPS", accountId);
   revalidatePath(await projectPath("/accounts"));
   revalidatePath(await projectPath("/groups"));
@@ -78,7 +85,7 @@ export interface SyncAllGroupsResult {
  * already PENDING/PROCESSING is simply skipped, not queued twice.
  */
 export async function requestSyncAllGroups(): Promise<SyncAllGroupsResult> {
-  await requireAccess("whatsapp.manage");
+  await requireAccess("whatsapp.manage", { sections: ["/accounts", "/groups"] });
   const accounts = await prisma.whatsAppAccount.findMany({ select: { id: true } });
   let accountsQueued = 0;
   let alreadyRunning = 0;
@@ -93,7 +100,7 @@ export async function requestSyncAllGroups(): Promise<SyncAllGroupsResult> {
 
 /** Ends the current session so a different WhatsApp account can scan a fresh QR. See ENGINEERING_STANDARDS.md §8. */
 export async function requestLogout(accountId: string): Promise<void> {
-  await requireAccess("whatsapp.manage");
+  await requireAccess("whatsapp.manage", ACCOUNTS_PAGE);
   await enqueueCommand("LOGOUT", accountId);
   revalidatePath(await projectPath("/accounts"));
 }
@@ -139,7 +146,7 @@ export interface LinkState {
  * three Route Handlers and each is a file download, which is the one thing an action cannot do.
  */
 export async function readLinkState(accountId: string): Promise<LinkState | null> {
-  const granted = await checkPermission("whatsapp.view");
+  const granted = await checkPermission("whatsapp.view", ACCOUNTS_PAGE);
   if ("denied" in granted) return null;
   const account = await prisma.whatsAppAccount.findUnique({
     where: { id: accountId },
@@ -182,7 +189,7 @@ export interface AddAccountFormState {
  * exists.
  */
 export async function addWhatsAppAccount(formData: FormData): Promise<AddAccountFormState> {
-  const granted = await checkPermission("whatsapp.manage");
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
   const label = String(formData.get("label") ?? "").trim();
   if (!label) return { error: "Label is required." };
@@ -200,7 +207,7 @@ export async function addWhatsAppAccount(formData: FormData): Promise<AddAccount
  * half-applied change can never leave two Primaries even momentarily within the app's own logic.
  */
 export async function setPrimaryAccount(accountId: string): Promise<void> {
-  const session = await requireAccess("whatsapp.manage");
+  const session = await requireAccess("whatsapp.manage", ACCOUNTS_PAGE);
   const target = await prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
   if (!target || target.isPrimary) return;
 
@@ -227,7 +234,7 @@ export async function setPrimaryAccount(accountId: string): Promise<void> {
  * account configured") until an admin sets one — never silently picks a replacement.
  */
 export async function removePrimaryAccount(accountId: string): Promise<void> {
-  const session = await requireAccess("whatsapp.manage");
+  const session = await requireAccess("whatsapp.manage", ACCOUNTS_PAGE);
   const target = await prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
   if (!target || !target.isPrimary) return;
 
@@ -256,7 +263,7 @@ export interface DeleteAccountResult {
  * relations hanging off this row.
  */
 export async function getAccountDeletionImpact(accountId: string): Promise<AccountHistoryImpact> {
-  await requireAccess("whatsapp.manage");
+  await requireAccess("whatsapp.manage", ACCOUNTS_PAGE);
   return countAccountHistory(accountId, prisma);
 }
 
@@ -268,7 +275,7 @@ export async function deleteWhatsAppAccount(
    */
   confirmDestroyHistory = false,
 ): Promise<DeleteAccountResult> {
-  const granted = await checkPermission("whatsapp.manage");
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
   const target = await prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
@@ -336,7 +343,7 @@ export interface GroupSetupCandidate {
  * adds it, and "0 of 1,848 would carry" is the answer that actually explains what to do next.
  */
 export async function getGroupSetupCandidates(targetAccountId: string): Promise<GroupSetupCandidate[]> {
-  const granted = await checkPermission("whatsapp.view");
+  const granted = await checkPermission("whatsapp.view", ACCOUNTS_PAGE);
   if ("denied" in granted) return [];
 
   const targetGroupIds = new Set(
@@ -413,7 +420,7 @@ export async function adoptGroupSetupFromAccount(
   targetAccountId: string,
   sourceAccountId: string,
 ): Promise<AdoptGroupSetupResult> {
-  const granted = await checkPermission("whatsapp.manage");
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
   const session = granted.session;
   if (targetAccountId === sourceAccountId) return { error: "Pick a different account to copy from." };
@@ -509,7 +516,7 @@ export async function setPairingMethod(
   method: "QR_CODE" | "PHONE_CODE",
   phoneNumber?: string,
 ): Promise<PairingMethodResult> {
-  const granted = await checkPermission("whatsapp.manage");
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
 
   let pairingPhoneNumber: string | null = null;
@@ -573,7 +580,7 @@ async function readLatestAccountCommand(
 ): Promise<AccountCommandStatus> {
   // Behind the three polled result readers. A denial answers as a failed command rather than a
   // redirect, which would pull somebody off the page between two polls.
-  const granted = await checkPermission("whatsapp.view");
+  const granted = await checkPermission("whatsapp.view", ACCOUNTS_PAGE);
   if ("denied" in granted) return { status: "FAILED", error: granted.denied };
   const command = await prisma.workerCommand.findFirst({
     where: { type, accountId },
@@ -604,7 +611,7 @@ export async function requestCreateGroup(
   groupName: string,
   contactPhoneNumbersRaw: string,
 ): Promise<CreateGroupResult> {
-  const granted = await checkPermission("whatsapp.manage");
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
 
   const trimmedName = groupName.trim();
@@ -640,7 +647,7 @@ export interface JoinGroupResult {
 
 /** Queues joining a group via its invite link, from this account. Same non-write behaviour as requestCreateGroup. */
 export async function requestJoinGroup(accountId: string, inviteLink: string): Promise<JoinGroupResult> {
-  const granted = await checkPermission("whatsapp.manage");
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
 
   const trimmed = inviteLink.trim();
@@ -675,7 +682,7 @@ export async function requestUpdateProfile(
   accountId: string,
   fields: { displayName?: string; about?: string; pictureDataUrl?: string },
 ): Promise<UpdateProfileResult> {
-  const granted = await checkPermission("whatsapp.manage");
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
 
   const payload: Record<string, string> = {};
@@ -717,7 +724,7 @@ export async function saveAccountProxy(
   accountId: string,
   fields: { address: string; protocol?: string; username?: string; password?: string },
 ): Promise<ProxyFormState> {
-  const granted = await checkPermission("whatsapp.manage");
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
 
   const address = fields.address.trim();

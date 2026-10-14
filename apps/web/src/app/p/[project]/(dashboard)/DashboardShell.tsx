@@ -29,6 +29,7 @@ import { MAIN_ADMIN_LINKS, Sidebar } from "./Sidebar";
 import type { SwitcherProject } from "@/components/ProjectSwitcher";
 import { Alert } from "@/components/ui";
 import { pathAllowedByFeatures } from "@support-automation/shared";
+import { canOpenPath, type SectionAccess } from "./projectSections";
 
 /** First one or two letters of a username, for the header identity chip — "rudra" → "RU". */
 function userInitials(username: string): string {
@@ -120,6 +121,7 @@ export function DashboardShell({
   project,
   switchableProjects,
   disabledFeatures,
+  pageAccess,
   workspaceProjects,
 }: {
   children: ReactNode;
@@ -135,6 +137,11 @@ export function DashboardShell({
   switchableProjects: SwitcherProject[];
   /** Features this project is not entitled to: their pages are not offered anywhere in the shell. */
   disabledFeatures: string[];
+  /**
+   * The pages this member's project role opens (PROJECT_ROLES.md), or null when no page selection
+   * applies. Only those pages are offered — sidebar, settings rail, tabs and ⌘K. Presentation only.
+   */
+  pageAccess?: SectionAccess | null;
   username: string;
   automationEnabled: boolean;
   automationMode: string;
@@ -144,12 +151,13 @@ export function DashboardShell({
 }) {
   const granted = useMemo(() => new Set(grantedKeys), [grantedKeys]);
   const featuresOff = useMemo(() => new Set(disabledFeatures), [disabledFeatures]);
+  const pages = useMemo(() => (pageAccess ? (href: string) => canOpenPath(href, pageAccess) : undefined), [pageAccess]);
   const inWorkspace = Boolean(workspaceProjects);
   // In the workspace the sidebar offers every module that is on in ANY of the viewer's projects; one
   // that is off in THIS project opens in a project that has it (lib/workspace.ts workspaceOpenHref).
   // Global modules (Users & Permissions, Release Notes) move up to the Main Admin section.
   const { navGroups, globalGroups } = useMemo(() => {
-    if (!workspaceProjects) return { navGroups: navGroupsFor(granted, featuresOff), globalGroups: [] as NavGroup[] };
+    if (!workspaceProjects) return { navGroups: navGroupsFor(granted, featuresOff, pages), globalGroups: [] as NavGroup[] };
     const groups = navGroupsFor(granted, new Set(featuresOffEverywhere(workspaceProjects))).map((group) => ({
       ...group,
       links: group.links.map((link) => {
@@ -159,15 +167,15 @@ export function DashboardShell({
     }));
     const isGlobal = (group: NavGroup) => group.links.every((link) => isGlobalPage(link.href));
     return { navGroups: groups.filter((g) => !isGlobal(g)), globalGroups: groups.filter(isGlobal) };
-  }, [granted, featuresOff, workspaceProjects]);
-  const settingsSections = useMemo(() => settingsSectionsFor(granted, featuresOff), [granted, featuresOff]);
+  }, [granted, featuresOff, workspaceProjects, pages]);
+  const settingsSections = useMemo(() => settingsSectionsFor(granted, featuresOff, pages), [granted, featuresOff, pages]);
   const paletteLinks = useMemo(
     () =>
       ALL_NAV_LINKS.filter((link) => {
         const key = navPermissionFor(link.href);
-        return (key === null || granted.has(key)) && pathAllowedByFeatures(link.href, featuresOff);
+        return (key === null || granted.has(key)) && pathAllowedByFeatures(link.href, featuresOff) && (pages === undefined || pages(link.href));
       }),
-    [granted, featuresOff],
+    [granted, featuresOff, pages],
   );
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);

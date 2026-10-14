@@ -198,11 +198,23 @@ describe("3. a Lead runs their own project, and only that", () => {
 
   it("creates a project role, and a platform key smuggled into the form is dropped", async () => {
     const to = await redirected(
-      as(people.lead, A, () => actions.createProjectRole({}, form({ name: "Billing", permissionKeys: ["clients.view", "projects.manage", "users.create", "project_members.manage"] }))),
+      as(people.lead, A, () =>
+        actions.createProjectRole(
+          {},
+          form({
+            name: "Billing",
+            // The keys are derived from the pages on the server; a submitted key list is ignored, and a
+            // platform page is not a page a project role can hold.
+            sectionAccess: JSON.stringify({ "/clients": "READ", "/users": "FULL", "/project-members": "FULL" }),
+            permissionKeys: ["clients.view", "projects.manage", "users.create", "project_members.manage"],
+          }),
+        ),
+      ),
     );
     expect(to).toBe("/p/x/project-roles");
     const role = await rawPrisma.projectRole.findFirstOrThrow({ where: { projectId: A.id, name: "Billing" } });
     expect(role.permissionKeys).toEqual(["clients.view"]);
+    expect(role.sectionAccess).toEqual({ "/clients": "READ" });
   });
 
   it("creates a member for this project only: no global role, enters A only, holds the chosen role", async () => {
