@@ -135,6 +135,14 @@ export interface WhatsAppProvider {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getConnectionStatus(): ConnectionStatus;
+  /**
+   * Whether the provider still holds a live browser/client. Optional: a provider that cannot tell
+   * simply omits it and is treated as live. It exists because `getGroups()` answers `[]` both for a
+   * session with no groups AND for one whose client is gone, and a recovery must not believe the
+   * second as if it were the first. `getConnectionStatus()` alone is not enough: the state label
+   * and the client are updated separately during a disconnect.
+   */
+  hasLiveClient?(): boolean;
   getGroups(): Promise<GroupInfo[]>;
   /**
    * Registers the one handler every incoming message is delivered to.

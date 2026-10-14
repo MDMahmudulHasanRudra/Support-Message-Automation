@@ -1360,6 +1360,11 @@ export class OpenWAProvider implements WhatsAppProvider {
     return toInterfaceStatus(this.state);
   }
 
+  /** False once `disconnect()`/`logout()` has dropped the client — `getGroups()` then answers `[]`, which is not a group list. */
+  hasLiveClient(): boolean {
+    return this.client !== null;
+  }
+
   /**
    * Called by `connectWithRetry` once every automatic attempt has failed. Only an account whose
    * LAST attempt ended with an unscanned code changes: a code being offered means the saved session

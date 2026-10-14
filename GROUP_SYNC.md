@@ -371,3 +371,113 @@ Simulated providers cannot show how fast WhatsApp hands a new device its list. T
   one response is small.
 - **Fallback:** if WhatsApp Web reshapes its internal store, the fallback `getAllGroups()` is heavy
   and has timed out on large rosters before. That remains the slow path.
+
+## 8. Group recovery — finishing a list that never finished arriving
+
+The arrival passes after a connect read for at most twenty minutes, then stop. If WhatsApp had not
+delivered the whole list by then, if the sync failed under load, or if the worker restarted mid-sync,
+the account stayed CONNECTED with `groupSyncStatus` FAILED or PARTIAL and **nothing read the list
+again** until somebody pressed Resync. (Reproduced in the lab, 14 Oct 2026: after the worker's own
+health check failed under CPU load and it restarted the session, WhatsApp Web came back with 477 of
+the 573 known groups; the passes settled there and stopped.)
+
+`commands/groupRecovery.ts` (loop `group-recovery`, 60 s) is that missing retry.
+
+**What is "genuinely partial" and what is history.** The two are never confused:
+
+| Situation | Kind | What it means | Effect on status |
+|---|---|---|---|
+| Sync status FAILED/PARTIAL | `RETRY` | a sync said "not finished" | re-read slowly, no cap, until **no group that was ACTIVE is missing** from the list (and nothing failed to save): then COMPLETED, otherwise PARTIAL |
+| COMPLETED, but inactive groups exist | `VERIFY` | history: a group left long ago, or a logout's casualties | **none** — never writes the status, the discovered count or an error |
+| Inactive groups the list lacks | — | not evidence of anything: they may be gone for good or not delivered yet | never counted as pending, never called "left" |
+
+An ACTIVE group disappearing from a read is the signal of a partial list (it is the sweep guard's own
+signal). An INACTIVE row the list lacks is not. `VERIFY` exists only to catch a group WhatsApp lists
+late: it reactivates what the list now contains, is bounded (`verifyMaxReads`, 4 reads in a row that
+find nothing, waits 2/5/10/30 min), restarts its count on a find, and is then left alone until the
+account reconnects. No account is read forever because of history.
+
+**A read that did not happen is not a result.** `runGroupRecoveryPass` answers `READ`, or `UNKNOWN`:
+- `UNAVAILABLE` — no live client (`WhatsAppProvider.hasLiveClient`; `getGroups()` answers `[]` for a
+  gone client) or the session not CONNECTED before or after the read. The check after runs before
+  anything is persisted, so a list handed back by a session that dropped mid-read is discarded.
+- `EMPTY_LIST` — a connected session returned no group. Never authoritative: a page whose chats have
+  not arrived looks exactly like an account in no groups. Nothing is written or completed.
+`UNKNOWN` writes nothing (no status, no discovered count, no group) and only lengthens the wait.
+
+Other rules:
+
+- **ADD_ONLY, always** (`runGroupRecoveryPass`). It saves groups that appeared and switches back on a
+  group WhatsApp LISTS. It has no sweep, so it can never deactivate anything, and it never switches
+  on a group the list does not contain. The FULL sync and its 10% sweep guard are unchanged.
+- **The need is read from the database, the schedule is not.** A restart forgets only *when* to
+  look. A reconnect (`lastConnectedAt` changes) or a change of kind starts a fresh schedule.
+- **Slow, and slower each time nothing new arrives:** 2, 5, 10, 30 minutes, then every 6 hours. A
+  pass that finds something starts over at 2. A first sighting waits the shortest delay before reading.
+- **Never beside the connect's own passes.** An account connected less than the arrival window
+  (20 min) plus a minute ago is left to the arrival watcher.
+- **At most one read per tick, none while busy, and "busy" is bounded** — see "Load protection" below.
+- **Only a live account:** CONNECTED in the database and in the provider, with a phone number
+  (LOGOUT clears it, and a logged-out account's groups are inactive on purpose), in a project that
+  is operating, and not already syncing. A logout or reconnect during the read cancels it through
+  the sync generation.
+- **A manual FULL resync that arrives while a recovery (or arrival) pass is in flight is queued**
+  behind it and run as a FULL sync of its own — section 9.
+
+Tests: `groupRecovery.integration.test.ts` (isolated database) and `groupRecoverySchedule.test.ts`.
+
+### Load protection
+
+What the guard measures — and what it does not:
+
+- **`loadPerCpu`** = `os.loadavg()[0] / os.availableParallelism()`. On Linux `loadavg()` is
+  `/proc/loadavg`, which is **not namespaced by a container**: in Docker (including Docker Desktop's
+  VM) it is the whole host kernel's figure, every container and the VM itself. It is the 1-minute
+  exponentially damped count of runnable plus uninterruptible tasks, so it lags by about a minute, and
+  `availableParallelism()` is the CPUs the process may use (8 in the lab; a cgroup quota would lower
+  it). `1.0` therefore means "as many runnable tasks as CPUs", **not** "100% busy for sure".
+- **`eventLoopDelayMs`** = the p99 event-loop delay of this Node process over the last tick. It sees
+  this worker's own loop only. **Chromium, where the WhatsApp page does its work, is a separate
+  process and is invisible to it.**
+- Neither is the container's own CPU. cgroup v2 exposes that (`/sys/fs/cgroup/cpu.stat`
+  `usage_usec`; the lab container has `cpu.max = max`, so no quota) and covers Chromium, but it is
+  not wired in.
+
+Policy: busy means `loadPerCpu > maxLoadPerCpu` or `eventLoopDelayMs > maxEventLoopDelayMs`; a busy
+tick defers the read and changes nothing else; after `maxDeferredTicks` (30) busy ticks in a row the
+next due read goes ahead once, and the count restarts, so deferral cannot be indefinite. Backoff
+(2 min to 6 h) and the read's own timeout are unchanged. **The thresholds are not justified by
+measurement** and the 1.5 default will rarely if ever trigger; a 10-minute read-only sample of the lab
+(15 s apart, 39 samples) had load per CPU between 0.24 and 0.56 while the worker's own cgroup used
+0.46 cores on average and peaked at 3.7 — the 1-minute host average smooths the spikes that matter,
+and carries a floor from everything else on the VM. Until measured under the real failure, treat the guard as a brake on
+sustained saturation, not as proof recovery is gentle. Measurement method: sample, read-only, every
+15 s for a session that is actually dropping — `/proc/loadavg`, `docker stats` and the cgroup
+`usage_usec` delta — and compare them with the moments the health check fails.
+
+## 9. Group-list reads, and a FULL sync that arrives during a pass
+
+**Every read of the list is checked.** `readGroupListChecked` (all modes: post-connect, arrival
+passes, manual FULL, recovery) requires `WhatsAppProvider.hasLiveClient()` before and after the read.
+`getGroups()` answers `[]` for a session whose client is gone as well as for an account in no groups;
+a list returned by a session that dropped mid-read proves nothing, and the check after runs before
+anything is persisted. The recovery additionally requires the state label CONNECTED; the others do
+not, because OpenWA reports RECONNECTING for a while after a successful connect.
+
+- Unavailable: `GroupListUnavailableError`. A manual or post-connect FULL records FAILED with the reason
+  and **does not retry** (the session will be as unavailable in ten seconds); the discovered count and
+  every group are untouched. An arrival pass counts it as "unknown" (never towards settled).
+- Empty list: for an account **with groups on record**, a FULL sync refuses it (`EMPTY_LIST`, FAILED,
+  nothing changed — an empty list never sweeps, and recording COMPLETED/0 over a good discovery is
+  the lie). For an account with none it is a real answer (COMPLETED, 0). An arrival pass treats an
+  empty read as unknown, never as "stable". The FULL sweep guard (10%) is unchanged.
+- A provider without `hasLiveClient` is trusted as before.
+
+**A FULL sync keeps its meaning.** Every in-flight sync records its mode. A FULL request that finds
+another FULL joins it (unchanged). One that finds an ADD_ONLY pass is **queued**: one queued request
+per account, shared by later ones (a manual request's options win over a post-connect one's), run
+when the pass has released the account — so there is never more than one read — through the ordinary
+entry point, which re-queues it if another ADD_ONLY slipped in first. A logout or reconnect
+(`cancelGroupSync`), a moved sync generation and worker shutdown each drop it with a "cancelled"
+result, and the RESYNC_GROUPS command records that as DONE/cancelled as it always has.
+
