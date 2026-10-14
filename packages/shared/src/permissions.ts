@@ -133,6 +133,8 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "clients.edit_billing", label: "Edit Client Billing", category: "Clients" },
   // Linking a chat decides who a later message is addressed to, so it is an authorized admin's key, apart from clients.update.
   { key: "clients.link_whatsapp_chat", label: "Link WhatsApp Chats to Clients", category: "Clients" },
+  // SMTP settings hold a credential and decide where mail leaves from: an authorized admin's key.
+  { key: "communications.manage_email", label: "Manage Email Settings", category: "Communications" },
 
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },

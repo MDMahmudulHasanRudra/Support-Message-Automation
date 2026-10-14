@@ -4,6 +4,7 @@ import {
   Camera,
   Contact,
   Inbox,
+  Mail,
   PlugZap,
   AlertCircle,
   AlertTriangle,
@@ -192,6 +193,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     label: "Messaging Channels",
     description: "Facebook Messenger, Instagram DM and Telegram connections, their webhooks and whether AI answers on them.",
     links: [{ href: "/settings/channels", label: "Messaging Channels", icon: PlugZap }],
+  },
+  {
+    label: "Email",
+    description: "The SMTP mail server this project's email leaves from, and a test message to confirm it works.",
+    links: [{ href: "/settings/email", label: "Email", icon: Mail }],
   },
   {
     label: "Google Sheets",
@@ -555,6 +561,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/settings/security", "security_settings.view"],
   ["/settings/google-sheets", "google_sheets.view"],
   ["/settings/channels", "channels.view"],
+  ["/settings/email", "communications.manage_email"],
   ["/conversations", "messages.view"],
   ["/google-sheets/activity", "google_sheets.monitor"],
   ["/google-sheets/reports", "google_sheets.report"],

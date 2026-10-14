@@ -32,6 +32,20 @@ export class MockProvider implements WhatsAppProvider {
   /** Overridden by a test that needs the provider to report a status it is not really in. */
   public connectionStatus: ConnectionStatus = "CONNECTED";
   /**
+   * False models a provider whose browser client is gone while its state label has not caught up
+   * (OpenWAProvider sets `client = null` on disconnect, and `getGroups()` then answers `[]`).
+   */
+  public liveClient = true;
+  hasLiveClient(): boolean {
+    return this.liveClient;
+  }
+  /** What `getBrowserUsage` answers: a figure, null (unknown), or "throw" (a provider that fails). */
+  public browserUsage: { cpuPercent: number; memoryBytes: number; processes: number } | null | "throw" = null;
+  async getBrowserUsage() {
+    if (this.browserUsage === "throw") throw new Error("process stats unavailable");
+    return this.browserUsage;
+  }
+  /**
    * Set by a watchdog test to make the probe fail. Null means "answer normally from
    * `missedMessages`" — the only behaviour every pre-existing test knows about.
    */

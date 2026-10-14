@@ -131,10 +131,33 @@ export type CollectionProbe =
  * interface — never on OpenWA directly (see ARCHITECTURE.md). A future
  * official WhatsApp Business Platform provider is a drop-in implementation.
  */
+/** What `getBrowserUsage` reports. `cpuPercent` is summed over processes, so 100 means one core fully busy. */
+export interface BrowserUsage {
+  cpuPercent: number;
+  memoryBytes: number;
+  processes: number;
+}
+
 export interface WhatsAppProvider {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getConnectionStatus(): ConnectionStatus;
+  /**
+   * Whether the provider still holds a live browser/client. Optional: a provider that cannot tell
+   * simply omits it and is treated as live. It exists because `getGroups()` answers `[]` both for a
+   * session with no groups AND for one whose client is gone, and a recovery must not believe the
+   * second as if it were the first. `getConnectionStatus()` alone is not enough: the state label
+   * and the client are updated separately during a disconnect.
+   */
+  hasLiveClient?(): boolean;
+  /**
+   * CPU and memory of THIS worker process and its browser (Chromium and its children) right now.
+   * Optional and purely informational: a provider that cannot say simply omits it. It answers the
+   * question the host load average cannot — how busy is the thing that actually reads the group
+   * list — because the load average is the whole machine's and the event-loop delay is only Node's.
+   * Never throws; null means "unknown", which callers must treat as "not busy".
+   */
+  getBrowserUsage?(): Promise<BrowserUsage | null>;
   getGroups(): Promise<GroupInfo[]>;
   /**
    * Registers the one handler every incoming message is delivered to.

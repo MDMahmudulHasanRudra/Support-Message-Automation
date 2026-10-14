@@ -307,6 +307,7 @@ since `setInterval` doesn't await its callback)
 | `startChannelInboundProcessor` | 2s | Messenger / Instagram / Telegram: recorded webhook events → conversations, echoes, receipts (no-op unless the project has `OMNICHANNEL`; `OMNICHANNEL.md`) |
 | `startChannelOutboundProcessor` | 2s | the channels' send queue (`ChannelMessage` QUEUED → SENT), retries, UNKNOWN on an unknowable outcome |
 | `startChannelAiProcessor` | 3s | AI replies on the channels — the WhatsApp answering logic and gates, 1:1 only, ≤15 min old |
+| `startGroupRecoveryProcessor` | 60s | re-reads (ADD_ONLY, never deactivates) the group list of a CONNECTED account a sync left FAILED/PARTIAL (RETRY, 2 min → 6 h) or a COMPLETED one holding inactive groups (VERIFY, bounded, never touches the status); an unavailable or empty read is unknown and writes nothing (`GROUP_SYNC.md` §8) |
 | heartbeat | 15s | health state + DB connectivity log |
 
 On boot: health server → DB connectivity check (fatal if unreachable) → crash recovery (resets
@@ -2562,7 +2563,11 @@ records, CRUD, duplicates, list/details, import/export, timeline, per-channel co
   `ClientBillingCurrency` empty by default), keys `clients.view_billing` / `clients.edit_billing`. No invoice, ledger or
   payment link, no default currency (required only with an amount); the timeline never carries an amount or a date.
   Stage 4B: `ClientWhatsAppChatLink` (key `clients.link_whatsapp_chat`): manual, one existing individual chat at a
-  time, a number match is only a suggestion, one active link per (account, chat) by partial unique index. No
+  time, a number match is only a suggestion, one active link per (account, chat) by partial unique index.
+  Stage 4C: Email over SMTP (`EmailSettings`, `EmailOutbox`, worker loop `email-outbox`, key
+  `communications.manage_email`, Settings → Email): no provider assumed; "connected" only after a test message was
+  accepted under the CURRENT settings (`settingsVersion`/`verifiedVersion`); SMTP is ACCEPTED, never delivered; an
+  unknowable outcome is UNKNOWN and never retried; the test goes only to the signed-in admin; the password is write-only. No
   WhatsApp/SMS/email/Messenger/Instagram message is sent from here. Consent is recorded, not enforced yet. Sending,
   campaigns, reminders, notices and tasks are later stages (`CLIENT_CENTER_PLAN.md`).
 - **Duplicates are shown, never merged** — a shared phone/WhatsApp number (one group; local `01…` gets `88`), email,

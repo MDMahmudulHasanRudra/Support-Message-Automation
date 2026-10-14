@@ -24,6 +24,7 @@ import {
 import { awaitQuiescence, beginShutdown, installProcessGuards } from "./lifecycle.js";
 import { startMessageRecoveryProcessor } from "./pipeline/messageRecovery.js";
 import { startCollectionWatchdog } from "./health/collectionWatchdog.js";
+import { startGroupRecoveryProcessor } from "./commands/groupRecovery.js";
 import { startMessageReconcileProcessor } from "./pipeline/reconcileRecentMessages.js";
 import { readLoops, recordLoopTick, registerLoop } from "./health/loopLiveness.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
@@ -47,6 +48,7 @@ import { provisionAiProviderFromEnv } from "./bootstrap/provisionAiProviderFromE
 import { startGoogleExternalActivityProcessor } from "./googleSheets/externalActivityProcessor.js";
 import { startChannelInboundProcessor } from "./channels/inboundProcessor.js";
 import { startChannelOutboundProcessor } from "./channels/outboundProcessor.js";
+import { startEmailOutboxProcessor } from "./email/outboxProcessor.js";
 import { startChannelAiProcessor } from "./channels/aiReply.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
@@ -190,6 +192,9 @@ async function main() {
     startChannelInboundProcessor(),
     startChannelOutboundProcessor(),
     startChannelAiProcessor(),
+    // Email (CLIENT_CENTER_PLAN.md §3.1): the SMTP send queue. A no-op for a project without the Client
+    // Management feature or without a configured, enabled Email setup; nothing is queued by default.
+    startEmailOutboxProcessor(),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),
@@ -207,6 +212,9 @@ async function main() {
     startMessageRecoveryProcessor(),
     // Detects the failure with no symptom: CONNECTED, heartbeating, and collecting nothing.
     startCollectionWatchdog(registry),
+    // Finishes a group list that never finished arriving: re-reads (ADD_ONLY, slowly, never more
+    // than one account per tick) any CONNECTED account left FAILED/PARTIAL or holding inactive groups.
+    startGroupRecoveryProcessor(registry),
     // Finds the message the watchdog cannot: a busy number that stores most messages and loses a few
     // one at a time. Compares WhatsApp's last half hour with what is stored, adds only what is missing.
     startMessageReconcileProcessor(registry),
