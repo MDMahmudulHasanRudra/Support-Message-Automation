@@ -481,6 +481,9 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/users", label: "App Users", icon: UserCog },
       { href: "/permissions", label: "Permission Modules", icon: ShieldCheck },
+      // This project's own administration (PROJECT_ROLES.md): its Lead's pages, and a Main Admin's.
+      { href: "/project-members", label: "Project Members", icon: UsersRound },
+      { href: "/project-roles", label: "Project Roles", icon: KeyRound },
     ],
   },
   {
@@ -570,6 +573,8 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/logs", "system_logs.view"],
   ["/users", "users.view"],
   ["/permissions", "permissions.view"],
+  ["/project-members", "project_members.manage"],
+  ["/project-roles", "project_roles.manage"],
   ["/release-notes", "release_notes.view"],
 ].sort((a, b) => b[0].length - a[0].length) as Array<[string, string]>;
 

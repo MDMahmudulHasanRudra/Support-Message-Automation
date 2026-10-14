@@ -53,7 +53,9 @@ export function PermissionModuleForm({
         <SectionHeader title="Permission Module" />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field label="Name" required hint={defaults.isSystem ? "Default modules cannot be renamed." : undefined}>
-            <Input name="name" defaultValue={defaults.name} disabled={defaults.isSystem} required />
+            {/* readOnly, never disabled: a disabled field is not submitted, so saving a default module's
+                permissions always failed with "Name is required" (PROJECT_ROLES.md, audit finding 1). */}
+            <Input name="name" defaultValue={defaults.name} readOnly={defaults.isSystem} required />
           </Field>
           <Field label="Description">
             <Textarea name="description" defaultValue={defaults.description} rows={1} />

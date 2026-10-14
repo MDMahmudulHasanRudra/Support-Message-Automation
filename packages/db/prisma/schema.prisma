@@ -533,8 +533,10 @@ model Project {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  access   ProjectAccess[]
-  features ProjectFeature[]
+  access             ProjectAccess[]
+  projectRoles       ProjectRole[]
+  projectMemberRoles ProjectMemberRole[]
+  features           ProjectFeature[]
 
   whatsAppAccountRows                  WhatsAppAccount[]
   whatsAppServiceRouteRows             WhatsAppServiceRoute[]
@@ -670,6 +672,48 @@ model ProjectAccess {
   @@index([userId])
 }
 
+/// A role defined INSIDE one project (PROJECT_ROLES.md), by that project's Lead or a Main Admin. Its
+/// keys are only ever project-scoped ones (`isProjectAssignableKey`): never a Main Admin key, never
+/// the platform's App Users / Permission Modules keys. Stored as key strings, validated against the
+/// shared catalogue on every write and every read, so a retired key simply stops meaning anything.
+model ProjectRole {
+  id             String              @id @default(cuid())
+  projectId      String              @default(dbgenerated("project_id_required()"))
+  project        Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name           String
+  description    String?
+  permissionKeys String[]            @default([])
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  members        ProjectMemberRole[]
+
+  @@unique([projectId, name])
+}
+
+/// A user's PROJECT-LEVEL role in one project (PROJECT_ROLES.md). Kept apart from ProjectAccess, which
+/// still only says who may enter (MULTI_PROJECT_PLAN.md §7). No row — every user before this existed —
+/// means their global role applies here exactly as before.
+///   isLead         the project's Lead: every project key here, plus this project's members and roles.
+///                  Only a Main Admin sets it.
+///   projectRoleId  a ProjectRole of THIS project (a same-project trigger enforces it); replaces the
+///                  project-scoped part of the global role in this project only.
+model ProjectMemberRole {
+  id            String       @id @default(cuid())
+  projectId     String       @default(dbgenerated("project_id_required()"))
+  project       Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isLead        Boolean      @default(false)
+  projectRoleId String?
+  projectRole   ProjectRole? @relation(fields: [projectRoleId], references: [id], onDelete: Restrict)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([projectRoleId])
+}
+
 /// A project's entitlement to one feature. Absent row = the feature catalogue's default, so adding a
 /// feature needs no migration. Read by nothing until Phase 5.
 model ProjectFeature {
@@ -773,6 +817,7 @@ model User {
   emailsQueued                   EmailOutbox[]             @relation("EmailQueuedBy")
 
   projectAccess           ProjectAccess[]
+  projectMemberRoles      ProjectMemberRole[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
   employee                Employee?
   /// Google accounts this person connected (GOOGLE_SHEETS.md). Audit only; grants nothing.
@@ -3825,14 +3870,14 @@ enum SupportSessionStatus {
 /// feature is off until an admin opts in; while off, apps/worker/src/supportActivity/detector.ts
 /// countingPeriod are global, not per-rule, by explicit requirement.
 model SupportActivitySettings {
-  id                      String                        @id @default("global")
+  id                          String                        @id @default("global")
   /// The project this row belongs to. Every write must name it: the default raises (no default
   /// project since MULTI_PROJECT_PLAN.md Phase 3).
-  projectId               String                        @unique @default(dbgenerated("project_id_required()"))
-  project                 Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  enabled                 Boolean                       @default(false)
-  countingPeriod          SupportActivityCountingPeriod @default(DAILY)
-  updatedAt               DateTime                      @updatedAt
+  projectId                   String                        @unique @default(dbgenerated("project_id_required()"))
+  project                     Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  enabled                     Boolean                       @default(false)
+  countingPeriod              SupportActivityCountingPeriod @default(DAILY)
+  updatedAt                   DateTime                      @updatedAt
   /// How long an executive can go without messaging any group before they count as offline, and
   /// the gap that splits one stretch of work from the next.
   ///
@@ -3841,25 +3886,25 @@ model SupportActivitySettings {
   /// which is what happened when availability used a hardcoded 30 minutes while work time was
   /// measured per group per day — produces a page where somebody shows as offline inside a stretch
   /// of work the same page is counting.
-  offlineAfterMinutes     Int                           @default(120)
+  offlineAfterMinutes         Int                           @default(120)
   /// Team Report: a customer wait answered later than this — or not at all, once older than this —
   /// counts as Missed (and as Recall if it was answered in the end). Groups with a support priority
   /// use their escalation policy's first-alert time instead; this covers every other group, since
   /// no rule for them existed. See packages/shared/src/teamReport.ts.
-  missedReplyAfterMinutes Int                           @default(30)
+  missedReplyAfterMinutes     Int                           @default(30)
   /// Team Report Support Overtime (TEAM_OVERTIME.md): the regular duty length assumed for a member-day
   /// with work and no schedule at all — no roster row, holiday, weekly pattern or default shift.
   /// Overtime that day is support time beyond this. Clamped to 1–16 hours when read.
-  overtimeFallbackDutyMinutes Int                       @default(480)
+  overtimeFallbackDutyMinutes Int                           @default(480)
   /// The Teams that are the Support Team for Messages → Unanswered Groups / Response Time
   /// (SUPPORT_RESPONSE.md). Only a reply from a member of one of these Teams — at the moment they
   /// replied — answers an episode. Empty = response tracking is not set up, and nothing is tracked.
-  responseTrackingTeamIds String[]                      @default([])
+  responseTrackingTeamIds     String[]                      @default([])
   /// Reporting is verified from this moment (SUPPORT_INTELLIGENCE_IMPLEMENTATION_AUDIT.md). Before
   /// it every report labels its figures historical / unverified; after it a period is verified
   /// unless a CollectionGap overlaps it. Null = nothing is verified yet — the honest default, since
   /// collection health was not recorded before CollectionGap existed. Set by an admin.
-  reportingVerifiedFrom   DateTime?
+  reportingVerifiedFrom       DateTime?
 }
 
 /// Admin-managed keyword/phrase. Referenced by zero or more SupportRules via SupportRuleKeyword —
@@ -6543,29 +6588,29 @@ model EmailSettings {
 /// The send queue, drained only by the worker's email loop. Plain text, one recipient per message (no
 /// shared To / CC / BCC), so no recipient ever sees another's address.
 model EmailOutbox {
-  id              String            @id @default(cuid())
-  projectId       String            @default(dbgenerated("project_id_required()"))
-  project         Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  purpose         EmailPurpose
-  status          EmailOutboxStatus @default(QUEUED)
-  toAddress       String
-  subject         String
-  bodyText        String
+  id                String            @id @default(cuid())
+  projectId         String            @default(dbgenerated("project_id_required()"))
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  purpose           EmailPurpose
+  status            EmailOutboxStatus @default(QUEUED)
+  toAddress         String
+  subject           String
+  bodyText          String
   /// Unique per project: the same message can never be queued twice.
-  idempotencyKey  String
+  idempotencyKey    String
   /// EmailSettings.settingsVersion when it was queued — what a TEST verifies.
-  settingsVersion Int
-  attempts        Int               @default(0)
-  nextAttemptAt   DateTime?
-  sendingStartedAt DateTime?
-  acceptedAt      DateTime?
+  settingsVersion   Int
+  attempts          Int               @default(0)
+  nextAttemptAt     DateTime?
+  sendingStartedAt  DateTime?
+  acceptedAt        DateTime?
   /// The SMTP server's own message id, once it accepted the message.
   providerMessageId String?
-  lastError       String?
-  createdById     String?
-  createdBy       User?             @relation("EmailQueuedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+  lastError         String?
+  createdById       String?
+  createdBy         User?             @relation("EmailQueuedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   @@unique([projectId, idempotencyKey])
   @@index([projectId, status, nextAttemptAt])

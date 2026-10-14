@@ -1,4 +1,4 @@
-import { MAIN_ADMIN_CATEGORY, PERMISSIONS } from "@support-automation/shared";
+import { MAIN_ADMIN_CATEGORY, PERMISSIONS, PROJECT_ADMIN_CATEGORY } from "@support-automation/shared";
 import { platformPrisma } from "@/server/db";
 import { isMainAdmin } from "@/server/projectContext";
 
@@ -19,7 +19,15 @@ import { isMainAdmin } from "@/server/projectContext";
  * else changes: every action still checks its own existing key first.
  */
 
-export const PRIVILEGED_KEYS: readonly string[] = PERMISSIONS.filter((p) => p.category === MAIN_ADMIN_CATEGORY).map((p) => p.key);
+/**
+ * The Main Admin keys, plus a project's administration keys (PROJECT_ROLES.md): on a platform role
+ * those would make someone the administrator of every project they can enter, which only a Main
+ * Admin may decide. A Lead receives them for ONE project through `ProjectMemberRole.isLead`, also a
+ * Main Admin's decision.
+ */
+export const PRIVILEGED_KEYS: readonly string[] = PERMISSIONS.filter(
+  (p) => p.category === MAIN_ADMIN_CATEGORY || p.category === PROJECT_ADMIN_CATEGORY,
+).map((p) => p.key);
 
 export const MAIN_ADMIN_ONLY_ERROR =
   "Only a Main Admin can do this: it would give, or change, access to the Main Admin Portal and every project.";

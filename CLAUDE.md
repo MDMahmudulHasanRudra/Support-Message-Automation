@@ -167,8 +167,10 @@ install-wide uniques were removed in Phase 3 (below).
 
 Two rules that hold from here on:
 - **Project access ≠ permission.** `ProjectAccess` says which projects a user may enter, nothing
-  more. What they may do inside is the EXISTING permission system, unchanged, the same in every
-  project. Never add a role or permission column to `ProjectAccess`.
+  more. Never add a role or permission column to `ProjectAccess`. What they may do inside is the
+  permission system: their global role, unless a project-level role applies in THAT project
+  (`ProjectMemberRole`: a project role or the Lead flag — `PROJECT_ROLES.md`). One resolver,
+  `resolveRoleKeys` (packages/shared), feeds every check; no row = the global role exactly.
 - **`projectId` means the platform project, everywhere.** ForgeSettings' own Forge-repository
   project is `forgeProjectId`/`forgeProjectName` (renamed in the Phase 1 migration) so the two
   cannot be confused.
@@ -257,6 +259,16 @@ skip it. Never add a check that grants because of a level. **Main Admin Configur
 `JobTitle`, `Employee`, keys `configuration.*`) is platform data with no `projectId`; employee IDs come
 from the `employee_code_seq` sequence, never from a count. A job title is not a role and a department
 is not a WhatsApp `Team`. See `MAIN_ADMIN_WORKSPACE.md` §5–§7.
+
+**Two-level permissions** (`PROJECT_ROLES.md`, 14 Oct 2026). A Main Admin (global role with
+`projects.manage`) runs the platform; a project's **Lead** (`ProjectMemberRole.isLead`, set only by a
+Main Admin) runs one project: its members (`/project-members`, creates logins for that project only)
+and its project roles (`/project-roles`, `ProjectRole.permissionKeys`, project-scoped keys only — a
+CHECK refuses platform keys). Leads never manage themselves, another Lead or a Main Admin, and change
+a login's password/active state only when it belongs to their project alone (`projectMemberActions`).
+`project_members.manage` / `project_roles.manage` are privileged on a platform role. Kill switch:
+`PROJECT_ROLES_DISABLED=true` (web only, deletes nothing). The seed is add-only now: it never strips a
+default role's permissions on deploy.
 
 **White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
 `projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the

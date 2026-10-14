@@ -19,6 +19,13 @@
 /** The Main Admin Portal's keys. Platform-level, and never part of a default role except Administrator. */
 export const MAIN_ADMIN_CATEGORY = "Main Admin";
 
+/**
+ * A project's own administration: its members and its project roles (PROJECT_ROLES.md). Held by a
+ * project's Lead (a Main Admin's designation, `ProjectAccess.isLead`) and by Administrator; never
+ * part of a project role, and adding one to a platform role is a Main Admin's call (privilegeGuard).
+ */
+export const PROJECT_ADMIN_CATEGORY = "Project Administration";
+
 export interface PermissionDefinition {
   key: string;
   label: string;
@@ -166,6 +173,11 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   // Administrator receives them.
   { key: "configuration.view", label: "View Departments, Job Titles & Employees", category: MAIN_ADMIN_CATEGORY },
   { key: "configuration.manage", label: "Manage Departments, Job Titles & Employees", category: MAIN_ADMIN_CATEGORY },
+
+  // Project Administration (PROJECT_ROLES.md): inside ONE project, its members and its project roles.
+  // A Lead holds both in the project they lead; neither reaches another project or the platform.
+  { key: "project_members.manage", label: "Manage This Project's Members", category: PROJECT_ADMIN_CATEGORY },
+  { key: "project_roles.manage", label: "Manage This Project's Roles", category: PROJECT_ADMIN_CATEGORY },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number]["key"];
