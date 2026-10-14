@@ -1049,6 +1049,8 @@ export async function runGroupRecoveryPass(
   accountId: string,
   provider: WhatsAppProvider,
   mode: GroupRecoveryMode,
+  /** Extra facts for the pass's System Log entry (the caller's browser-load sample). Informational only. */
+  context: Record<string, unknown> = {},
 ): Promise<GroupRecoveryPassResult | null> {
   if (isGroupSyncRunning(accountId)) return null;
   const generation = generationOf(accountId);
@@ -1089,6 +1091,7 @@ export async function runGroupRecoveryPass(
       }
       if (mode === "RETRY" || grew) {
         await logSystemEvent("INFO", "provider", "GROUP_RECOVERY_PASS", {
+          ...context,
           accountId,
           mode,
           discovered: outcome.discovered,

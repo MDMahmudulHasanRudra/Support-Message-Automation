@@ -541,6 +541,65 @@ describe("load protection is bounded", () => {
   });
 });
 
+describe("the browser's own CPU", () => {
+  const saved = GROUP_RECOVERY_SETTINGS.maxBrowserLoadPerCpu;
+  afterEach(() => {
+    GROUP_RECOVERY_SETTINGS.maxBrowserLoadPerCpu = saved;
+  });
+  const hot = { cpuPercent: 100_000, memoryBytes: 2 * 1_048_576 * 1024, processes: 9 }; // far above any host
+
+  it("is measured and logged with every pass, but changes nothing while no threshold is set", async () => {
+    const id = await newAccount();
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: false }]);
+    const { provider } = listing(tag, [0]);
+    provider.browserUsage = hot;
+    registry.registerForTesting(id, provider);
+
+    expect(GROUP_RECOVERY_SETTINGS.maxBrowserLoadPerCpu).toBe(0);
+    await pastGrace(id);
+    expect(await tick()).toMatchObject({ result: "RECOVERED" }); // read despite the huge figure: no threshold chosen
+    const log = await prisma.systemLog.findFirstOrThrow({ where: { message: "GROUP_RECOVERY_PASS" }, orderBy: { createdAt: "desc" } });
+    expect((log.metadata as { browser: unknown }).browser).toEqual({ cpuPercent: 100_000, memoryMb: 2048, processes: 9 });
+  });
+
+  it("with a threshold set, defers a due read while the browser is busy — a bounded number of ticks — then goes ahead", async () => {
+    GROUP_RECOVERY_SETTINGS.maxBrowserLoadPerCpu = 0.5;
+    const id = await newAccount();
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: false }]);
+    const { provider, state } = listing(tag, [0]);
+    provider.browserUsage = hot;
+    registry.registerForTesting(id, provider);
+    await pastGrace(id);
+
+    for (let n = 0; n < GROUP_RECOVERY_SETTINGS.maxDeferredTicks; n += 1) {
+      expect(await tick()).toEqual({ ran: false, reason: "OVERLOADED" });
+    }
+    expect(state.reads).toBe(0);
+    expect(await tick()).toMatchObject({ ran: true, result: "RECOVERED" });
+    expect(state.reads).toBe(1);
+  });
+
+  it("a calm browser reading does not defer, and unknown or failing readings count as not busy", async () => {
+    GROUP_RECOVERY_SETTINGS.maxBrowserLoadPerCpu = 0.5;
+    for (const usage of [{ cpuPercent: 1, memoryBytes: 1, processes: 1 }, null, "throw" as const]) {
+      resetGroupRecoveryState();
+      clock.t = 10_000_000;
+      const id = await newAccount();
+      const tag = randomUUID().slice(0, 6);
+      await seedGroups(id, tag, [{ i: 0, active: false }]);
+      const { provider } = listing(tag, [0]);
+      provider.browserUsage = usage;
+      registry = new ProviderRegistry();
+      registry.registerForTesting(id, provider);
+      await pastGrace(id);
+      expect(await tick()).toMatchObject({ result: "RECOVERED" });
+      expect(await activeOf(id, tag, 0)).toBe(true);
+    }
+  });
+});
+
 describe("the schedule follows the connection, not the process", () => {
   it("a worker restart forgets the schedule, not the need: a FAILED account is found again and recovered", async () => {
     const id = await newAccount({ sync: "FAILED" });

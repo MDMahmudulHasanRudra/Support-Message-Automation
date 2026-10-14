@@ -39,6 +39,12 @@ export class MockProvider implements WhatsAppProvider {
   hasLiveClient(): boolean {
     return this.liveClient;
   }
+  /** What `getBrowserUsage` answers: a figure, null (unknown), or "throw" (a provider that fails). */
+  public browserUsage: { cpuPercent: number; memoryBytes: number; processes: number } | null | "throw" = null;
+  async getBrowserUsage() {
+    if (this.browserUsage === "throw") throw new Error("process stats unavailable");
+    return this.browserUsage;
+  }
   /**
    * Set by a watchdog test to make the probe fail. Null means "answer normally from
    * `missedMessages`" — the only behaviour every pre-existing test knows about.

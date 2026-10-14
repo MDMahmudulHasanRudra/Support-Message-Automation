@@ -31,7 +31,8 @@ import type {
   SendResult,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
-import { GroupListNotReadyError, SessionNotReadyError } from "../WhatsAppProvider.js";
+import { GroupListNotReadyError, SessionNotReadyError, type BrowserUsage } from "../WhatsAppProvider.js";
+import { summariseProcessStats } from "./processStats.js";
 import {
   readPairingPreference,
   recordLinkWindow,
@@ -1358,6 +1359,17 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   getConnectionStatus(): ConnectionStatus {
     return toInterfaceStatus(this.state);
+  }
+
+  /** See `WhatsAppProvider.getBrowserUsage`. Local only (reads /proc through pidusage): no WhatsApp request, no page script. */
+  async getBrowserUsage(): Promise<BrowserUsage | null> {
+    const client = this.client;
+    if (!client) return null;
+    try {
+      return summariseProcessStats(await withTimeout(client.getProcessStats(), 5_000, "process stats"));
+    } catch {
+      return null;
+    }
   }
 
   /** False once `disconnect()`/`logout()` has dropped the client — `getGroups()` then answers `[]`, which is not a group list. */

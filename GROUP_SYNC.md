@@ -439,9 +439,15 @@ What the guard measures — and what it does not:
 - **`eventLoopDelayMs`** = the p99 event-loop delay of this Node process over the last tick. It sees
   this worker's own loop only. **Chromium, where the WhatsApp page does its work, is a separate
   process and is invisible to it.**
-- Neither is the container's own CPU. cgroup v2 exposes that (`/sys/fs/cgroup/cpu.stat`
-  `usage_usec`; the lab container has `cpu.max = max`, so no quota) and covers Chromium, but it is
-  not wired in.
+- **`getBrowserUsage`** (OpenWA `getProcessStats`, `pidusage` over this worker's process tree and
+  Chromium's, read from /proc: local, no WhatsApp request, no page script) is the figure that was
+  missing — the CPU of the thing that actually reads the list. It is **always measured** and written
+  to each recovery pass's System Log entry (`browser: { cpuPercent, memoryMb, processes }`; 100 =
+  one core). It only defers a read once `WHATSAPP_GROUP_RECOVERY_MAX_BROWSER_LOAD_PER_CPU` (cores
+  busy per available CPU) is set; **0 = off, and off is the default**, because no number has been
+  chosen from measurements yet. Unknown or failing readings count as "not busy"; deferral is bounded
+  by `maxDeferredTicks` like the other signals. cgroup v2 `cpu.stat` (`usage_usec`) would be the
+  container-level equivalent and is not wired in.
 
 Policy: busy means `loadPerCpu > maxLoadPerCpu` or `eventLoopDelayMs > maxEventLoopDelayMs`; a busy
 tick defers the read and changes nothing else; after `maxDeferredTicks` (30) busy ticks in a row the

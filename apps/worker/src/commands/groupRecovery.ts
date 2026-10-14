@@ -3,6 +3,7 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import { platformPrisma, prisma } from "../db.js";
 import { projectIsOperating, withAccountProject } from "../project/context.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
+import type { BrowserUsage } from "../provider/WhatsAppProvider.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { trackTick } from "../lifecycle.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
@@ -75,6 +76,14 @@ export const GROUP_RECOVERY_SETTINGS = {
    * is a bounded cost; an indefinite deferral is not a safety property, it is the outage continuing.
    */
   maxDeferredTicks: Number(process.env.WHATSAPP_GROUP_RECOVERY_MAX_DEFERRED_TICKS) || 30,
+  /**
+   * The browser's own CPU (`WhatsAppProvider.getBrowserUsage`: this process tree plus Chromium),
+   * as cores busy per available CPU. **0 = off, and off is the default**: it is always measured and
+   * written to the pass's System Log entry (`browser`), but it only defers a read once somebody has
+   * chosen a number from those measurements. A threshold picked without them would be a guess.
+   * Deferral is bounded by `maxDeferredTicks` like the other load signals.
+   */
+  maxBrowserLoadPerCpu: Number(process.env.WHATSAPP_GROUP_RECOVERY_MAX_BROWSER_LOAD_PER_CPU) || 0,
 };
 
 interface RecoveryState {
@@ -97,10 +106,13 @@ const states = new Map<string, RecoveryState>();
 export function resetGroupRecoveryState(): void {
   states.clear();
   busyStreak = 0;
+  browserBusyStreak = 0;
 }
 
 /** Consecutive ticks skipped for load. Only the policy's own bookkeeping; not persisted. */
 let busyStreak = 0;
+/** The same, for the browser-CPU signal (checked per account, just before its read). */
+let browserBusyStreak = 0;
 
 /** Read-only view of an account's schedule, for tests and diagnostics. */
 export function groupRecoverySchedule(accountId: string): { step: number; nextAt: number; kind: GroupRecoveryMode; done: boolean } | null {
@@ -140,6 +152,12 @@ export function readMachineLoad(): MachineLoad {
 
 export function isOverloaded(load: MachineLoad, settings = GROUP_RECOVERY_SETTINGS): boolean {
   return load.loadPerCpu > settings.maxLoadPerCpu || load.eventLoopDelayMs > settings.maxEventLoopDelayMs;
+}
+
+/** Browser CPU as cores busy per available CPU; null when the provider cannot say. */
+export function browserLoadPerCpu(usage: BrowserUsage | null): number | null {
+  if (!usage || !Number.isFinite(usage.cpuPercent)) return null;
+  return usage.cpuPercent / 100 / os.availableParallelism();
 }
 
 export interface RecoveryDeps {
@@ -217,8 +235,23 @@ export async function checkGroupRecovery(registry: ProviderRegistry, deps: Recov
     if (prior.done || now() < prior.nextAt) continue;
     const step = prior.step;
 
+    // The browser's own CPU: always measured (it goes into the pass's log so a threshold can be
+    // chosen from real numbers), and only acted on when a threshold has been set. Unknown = not busy.
+    const usage = (await provider.getBrowserUsage?.().catch(() => null)) ?? null;
+    const perCpu = browserLoadPerCpu(usage);
+    if (GROUP_RECOVERY_SETTINGS.maxBrowserLoadPerCpu > 0 && perCpu !== null && perCpu > GROUP_RECOVERY_SETTINGS.maxBrowserLoadPerCpu) {
+      browserBusyStreak += 1;
+      if (browserBusyStreak <= GROUP_RECOVERY_SETTINGS.maxDeferredTicks) return { ran: false, reason: "OVERLOADED" };
+      browserBusyStreak = 0; // deferred long enough: this read goes ahead
+    } else {
+      browserBusyStreak = 0;
+    }
+    const browser = usage
+      ? { cpuPercent: Math.round(usage.cpuPercent), memoryMb: Math.round(usage.memoryBytes / 1_048_576), processes: usage.processes }
+      : null;
+
     try {
-      const result = await runGroupRecoveryPass(account.id, provider, kind);
+      const result = await runGroupRecoveryPass(account.id, provider, kind, { browser });
       if (!result) return { ran: true, accountId: account.id, result: "SKIPPED" };
 
       if (result.kind === "UNKNOWN") {
