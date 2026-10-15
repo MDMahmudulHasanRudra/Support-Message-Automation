@@ -29,10 +29,16 @@ import {
  *
  * - **ADD_ONLY, always** (`runGroupRecoveryPass`). It cannot deactivate a group and it cannot
  *   activate one WhatsApp does not list. The FULL sync and its sweep guard are untouched.
- * - **Two kinds of work, and the difference is the point.**
+ * - **Three kinds of work, and the difference is the point.**
  *   - `RETRY` — the account's recorded sync status is FAILED or PARTIAL: a sync said "not finished".
  *     Re-read slowly and without a cap (2, 5, 10, 30 minutes, then every 6 hours) until no group
  *     that was ACTIVE is missing from the list. This is what "genuinely incomplete" means.
+ *   - `FOLLOW` — the account connected within the last `followWindowMs` (24 h). A newly linked
+ *     phone keeps sending chats for hours after the connect's own passes stop (twenty minutes), and
+ *     the original worker collected those overnight only because nothing ever closed its browser
+ *     and a later sync found them. So a recent connection is re-read slowly (2, 5, 10, then every
+ *     30 minutes; a find starts over) until the window ends. Never writes the status: arriving
+ *     groups are not a failure. GROUP_SYNC.md §10.
  *   - `VERIFY` — the sync says COMPLETED but the account holds inactive groups. Those are history
  *     (a group left long ago, or a logout's casualties) and are NOT pending work: they never change
  *     the status. They are checked a bounded number of times per connection (`verifyMaxReads`
@@ -57,6 +63,10 @@ export const GROUP_RECOVERY_SETTINGS = {
   tickMs: Number(process.env.WHATSAPP_GROUP_RECOVERY_TICK_MS) || 60_000,
   /** Wait before the next look: first sighting, then each look that found nothing new. The last repeats. */
   backoffMs: [2, 5, 10, 30, 6 * 60].map((minutes) => minutes * 60_000),
+  /** How long after a connect the phone may still be delivering chats worth following (FOLLOW). */
+  followWindowMs: (Number(process.env.WHATSAPP_GROUP_FOLLOW_WINDOW_HOURS) || 24) * 60 * 60_000,
+  /** FOLLOW's own cadence: the same start, but it never slows past 30 minutes inside the window. */
+  followBackoffMs: [2, 5, 10, 30].map((minutes) => minutes * 60_000),
   /** A VERIFY account is left alone after this many reads in a row that found nothing. */
   verifyMaxReads: 4,
   /** The connect's own arrival passes run this long (plus the follow-up sync); recovery stays out of their way. */
@@ -124,6 +134,11 @@ export function backoffAfter(step: number, backoffMs: readonly number[] = GROUP_
   return backoffMs[Math.min(step, backoffMs.length - 1)]!;
 }
 
+/** The wait for one kind of work: FOLLOW keeps its own, shorter ceiling. */
+export function backoffFor(kind: GroupRecoveryMode, step: number): number {
+  return backoffAfter(step, kind === "FOLLOW" ? GROUP_RECOVERY_SETTINGS.followBackoffMs : GROUP_RECOVERY_SETTINGS.backoffMs);
+}
+
 export interface MachineLoad {
   loadPerCpu: number;
   eventLoopDelayMs: number;
@@ -169,15 +184,20 @@ export type RecoveryTickReport =
   | { ran: false; reason: "OVERLOADED" | "NOTHING_DUE" }
   | { ran: true; accountId: string; result: "RECOVERED" | "NO_CHANGE" | "UNKNOWN" | "ERROR" | "SKIPPED"; pending?: number };
 
-/** What an account's stored state says about its group list; null means nothing to do. */
-async function recoveryKind(accountId: string, groupSyncStatus: string | null): Promise<GroupRecoveryMode | null> {
+/**
+ * What an account's stored state says about its group list; null means nothing to do. A sync that
+ * said "not finished" comes first, then a recent connection still worth following (its ADD_ONLY
+ * read also brings back any inactive group WhatsApp lists), then inactive groups worth a check.
+ */
+async function recoveryKind(accountId: string, groupSyncStatus: string | null, sinceConnectMs: number): Promise<GroupRecoveryMode | null> {
   if (groupSyncStatus === "FAILED" || groupSyncStatus === "PARTIAL") return "RETRY";
+  if (sinceConnectMs < GROUP_RECOVERY_SETTINGS.followWindowMs) return "FOLLOW";
   const hasInactive = await withAccountProject(accountId, async () => (await prisma.whatsAppGroup.count({ where: { accountId, isActive: false } })) > 0);
   return hasInactive ? "VERIFY" : null;
 }
 
 function firstSighting(kind: GroupRecoveryMode, connectedAt: number, now: number): RecoveryState {
-  return { kind, step: 1, nextAt: now + backoffAfter(0), noGrowthReads: 0, done: false, connectedAt };
+  return { kind, step: 1, nextAt: now + backoffFor(kind, 0), noGrowthReads: 0, done: false, connectedAt };
 }
 
 /**
@@ -222,7 +242,7 @@ export async function checkGroupRecovery(registry: ProviderRegistry, deps: Recov
     const statusIsIncomplete = account.groupSyncStatus === "FAILED" || account.groupSyncStatus === "PARTIAL";
     if (prior?.done && prior.connectedAt === connectedAt && !statusIsIncomplete) continue;
 
-    const kind = await recoveryKind(account.id, account.groupSyncStatus);
+    const kind = await recoveryKind(account.id, account.groupSyncStatus, now() - connectedAt);
     if (!kind) {
       states.delete(account.id); // nothing is pending any more
       continue;
@@ -256,7 +276,7 @@ export async function checkGroupRecovery(registry: ProviderRegistry, deps: Recov
 
       if (result.kind === "UNKNOWN") {
         // Nothing was learned: wait longer, and do not spend a VERIFY read on it.
-        states.set(account.id, { ...prior, step: step + 1, nextAt: now() + backoffAfter(step) });
+        states.set(account.id, { ...prior, step: step + 1, nextAt: now() + backoffFor(kind, step) });
         return { ran: true, accountId: account.id, result: "UNKNOWN" };
       }
 
@@ -265,7 +285,14 @@ export async function checkGroupRecovery(registry: ProviderRegistry, deps: Recov
           states.delete(account.id);
           return { ran: true, accountId: account.id, result: "RECOVERED", pending: 0 };
         }
-        states.set(account.id, result.grew ? firstSighting(kind, connectedAt, now()) : { ...prior, step: step + 1, nextAt: now() + backoffAfter(step) });
+        states.set(account.id, result.grew ? firstSighting(kind, connectedAt, now()) : { ...prior, step: step + 1, nextAt: now() + backoffFor(kind, step) });
+        return { ran: true, accountId: account.id, result: result.grew ? "RECOVERED" : "NO_CHANGE", pending: result.pending };
+      }
+
+      // FOLLOW: a find starts the cadence over; nothing new waits longer, up to its 30-minute
+      // ceiling. No budget: the window since the connect is what ends it.
+      if (kind === "FOLLOW") {
+        states.set(account.id, result.grew ? firstSighting(kind, connectedAt, now()) : { ...prior, step: step + 1, nextAt: now() + backoffFor(kind, step) });
         return { ran: true, accountId: account.id, result: result.grew ? "RECOVERED" : "NO_CHANGE", pending: result.pending };
       }
 
@@ -280,7 +307,7 @@ export async function checkGroupRecovery(registry: ProviderRegistry, deps: Recov
         noGrowthReads,
         done: noGrowthReads >= GROUP_RECOVERY_SETTINGS.verifyMaxReads,
         step: step + 1,
-        nextAt: now() + backoffAfter(step),
+        nextAt: now() + backoffFor(kind, step),
       });
       return { ran: true, accountId: account.id, result: "NO_CHANGE", pending: result.pending };
     } catch (err) {
@@ -289,10 +316,10 @@ export async function checkGroupRecovery(registry: ProviderRegistry, deps: Recov
         return { ran: true, accountId: account.id, result: "SKIPPED" };
       }
       // Still loading, session not ready, timeout, a failed write: a longer wait, never a loop.
-      states.set(account.id, { ...prior, step: step + 1, nextAt: now() + backoffAfter(step) });
+      states.set(account.id, { ...prior, step: step + 1, nextAt: now() + backoffFor(kind, step) });
       console.warn(`[groupsync] GROUP_RECOVERY_FAILED account ${account.id}: ${(err as Error).message.slice(0, 200)}`);
       await withAccountProject(account.id, () =>
-        logSystemEvent("WARN", "provider", "GROUP_RECOVERY_FAILED", { accountId: account.id, error: (err as Error).message.slice(0, 300), nextWaitMs: backoffAfter(step) }),
+        logSystemEvent("WARN", "provider", "GROUP_RECOVERY_FAILED", { accountId: account.id, error: (err as Error).message.slice(0, 300), nextWaitMs: backoffFor(kind, step) }),
       ).catch(() => undefined);
       return { ran: true, accountId: account.id, result: "ERROR" };
     }

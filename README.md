@@ -13,6 +13,18 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **A newly linked number finishes loading its chats** (`GROUP_SYNC.md` §10). Built on `rudra`; not
+  deployed.
+  - **The problem.** Since 23 Sep a scan got a fixed 4 minutes. A large number was killed mid-copy,
+    and the phone's progress froze at 30%, 50% or 80%.
+  - **After a scan.** The worker waits for as long as WhatsApp keeps writing chats (up to 45
+    minutes), and resumes an interrupted copy instead of starting again from 0%.
+  - **Health check.** A busy page is no longer restarted as if it were dead.
+  - **Overnight arrivals.** Groups that arrive during the first 24 hours are re-read and saved
+    automatically, as they were originally.
+- **Page-level project roles** (`PROJECT_ROLES.md` §Pages). A Lead chooses, module by module and
+  page by page, Hidden / Read / Full, plus which parts of the Dashboard a role shows. Built on
+  `rudra`; not deployed.
 - **Real Support Overtime on the Team Report** (`TEAM_OVERTIME.md`).
   - **What it shows.** Support time beyond each member's regular duty, per day, then added up.
     Before, the column showed all support time.

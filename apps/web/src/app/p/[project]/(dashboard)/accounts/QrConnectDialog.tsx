@@ -623,9 +623,9 @@ function MethodTab({
  * Shown from the instant WhatsApp accepts the pairing until the session is actually usable.
  *
  * It occupies the same space the code did, and that is the point: a code that has been used is
- * spent, and leaving it on screen invites a second scan of something that will not work. The
- * session still has a few seconds of loading to do, so this says so rather than claiming success
- * early — `CONNECTED` is the only thing that closes the dialog.
+ * spent, and leaving it on screen invites a second scan of something that will not work. WhatsApp
+ * still has to copy the chats — minutes, for a large number — so this says so rather than claiming
+ * success early; `CONNECTED` is the only thing that closes the dialog.
  */
 function AcceptedPanel({ byPhone }: { byPhone: boolean }) {
   return (
@@ -637,7 +637,8 @@ function AcceptedPanel({ byPhone }: { byPhone: boolean }) {
         {byPhone ? "Code accepted" : "Scan accepted"}
       </p>
       <p className="max-w-[17rem] text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-        WhatsApp has linked this device. Getting the session ready — you can put the phone down.
+        WhatsApp has linked this device and is copying the chats. A number in many groups can take 10–30 minutes —
+        keep the phone online with WhatsApp open.
       </p>
       <Loader2 className="size-4 animate-spin text-[color:var(--color-muted-foreground)]" aria-hidden />
     </div>
