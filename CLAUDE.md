@@ -334,7 +334,7 @@ since `setInterval` doesn't await its callback)
 | `startChannelInboundProcessor` | 2s | Messenger / Instagram / Telegram: recorded webhook events → conversations, echoes, receipts (no-op unless the project has `OMNICHANNEL`; `OMNICHANNEL.md`) |
 | `startChannelOutboundProcessor` | 2s | the channels' send queue (`ChannelMessage` QUEUED → SENT), retries, UNKNOWN on an unknowable outcome |
 | `startChannelAiProcessor` | 3s | AI replies on the channels — the WhatsApp answering logic and gates, 1:1 only, ≤15 min old |
-| `startGroupRecoveryProcessor` | 60s | re-reads (ADD_ONLY, never deactivates) the group list of a CONNECTED account a sync left FAILED/PARTIAL (RETRY, 2 min → 6 h) or a COMPLETED one holding inactive groups (VERIFY, bounded, never touches the status); an unavailable or empty read is unknown and writes nothing (`GROUP_SYNC.md` §8) |
+| `startGroupRecoveryProcessor` | 60s | re-reads (ADD_ONLY, never deactivates) the group list of a CONNECTED account a sync left FAILED/PARTIAL (RETRY, 2 min → 6 h), one connected in the last 24 h whose phone may still be sending chats (FOLLOW, 2 → 30 min, never touches the status — `GROUP_SYNC.md` §10), or a COMPLETED one holding inactive groups (VERIFY, bounded, never touches the status); an unavailable or empty read is unknown and writes nothing (`GROUP_SYNC.md` §8) |
 | heartbeat | 15s | health state + DB connectivity log |
 
 On boot: health server → DB connectivity check (fatal if unreachable) → crash recovery (resets
@@ -376,6 +376,23 @@ Offline", and the orphan kept writing codes to the dashboard after the last retr
 are now killed by process, matched on the exact `--user-data-dir` argument (one profile per
 account), before every launch and when an attempt unwinds; a code arriving with no attempt in
 flight is never published; and an attempt ending clears its stored QR.
+
+**After a scan, the attempt waits for as long as WhatsApp keeps copying chats — never a fixed
+time** (`provider/openwa/linkLoading.ts`, `GROUP_SYNC.md` §10, 15 Oct 2026). `create()` resolves
+only when WhatsApp's "Loading your chats" finishes, and the session file is written only then. A
+fixed 240 s post-scan limit (23 Sep) killed every large number mid-copy, which froze the phone's
+percentage at 30%, 50% or 80%. The retry then hit the library's 120 s race, and two such retries
+deleted the profile, sending the copy back to 0%. Now:
+- An accepted scan starts a progress watch over the profile's IndexedDB (file metadata only). It
+  ends after 10 minutes without a write, or 45 minutes in total.
+- The scan is recorded in `<sessionId>.link-pending.json`. The next attempt RESUMES: progress
+  watch, no no-code deadline, `authTimeout: 0`, and the profile is never reset under it.
+- A phone code is recognised by IndexedDB growth when its window ends. A QR attempt never uses
+  that inference.
+- The health check needs 5 unanswered checks, but still only 2 proven failures, before a restart.
+
+Never put a fixed deadline back on the post-scan load. `connectTimeouts.test.ts` fails if one
+appears.
 
 ### Replacing the number that serves customers (`accounts.ts`, `GroupSetupTransfer.tsx`)
 

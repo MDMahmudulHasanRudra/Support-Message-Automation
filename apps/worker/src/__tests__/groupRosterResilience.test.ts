@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The health check's answer window, shortened so a page that never answers can be played in a test.
+process.env.WHATSAPP_HEALTH_CHECK_ANSWER_MS = "40";
+
 /**
  * The three things that let production lose three quarters of its inbox on 24 Sep 2026, each
  * pinned. The account was linked at 3:11 PM; a sync two minutes later read 498 of its 1,952 groups;
@@ -179,6 +182,44 @@ describe("a CONNECTED session with no WhatsApp in its page is noticed", () => {
 
     expect(provider.getConnectionStatus()).toBe("CONNECTED");
     expect(recordedStates).toEqual([]);
+  });
+
+  it("gives a page that does not ANSWER five checks, because a busy page is not a dead one", async () => {
+    // A newly linked number's page spends hours storing the chats the phone is still sending, and
+    // can miss the answer window without being dead. Restarting it there stopped the copy halfway.
+    const { OpenWAProvider } = await import("../provider/openwa/OpenWAProvider.js");
+    const provider = new OpenWAProvider("acc-busy", "busy-session", "/tmp/busy");
+    const page = { isClosed: () => false, evaluate: () => new Promise(() => undefined) }; // never answers
+    Object.assign(provider as unknown as Record<string, unknown>, { client: { getPage: () => page }, state: "CONNECTED" });
+
+    for (let n = 0; n < 4; n += 1) await provider.checkSessionHealth();
+    expect(provider.getConnectionStatus()).toBe("CONNECTED");
+    expect(recordedStates).toEqual([]);
+
+    await provider.checkSessionHealth(); // the fifth: about ten minutes of silence in production
+    expect(provider.getConnectionStatus()).toBe("DISCONNECTED");
+  });
+
+  it("an answer in between starts the count over", async () => {
+    const { OpenWAProvider } = await import("../provider/openwa/OpenWAProvider.js");
+    const provider = new OpenWAProvider("acc-busy2", "busy-session-2", "/tmp/busy2");
+    let answering = false;
+    const page = {
+      isClosed: () => false,
+      evaluate: (fn: () => boolean) => {
+        if (!answering) return new Promise(() => undefined);
+        (globalThis as unknown as { Store?: unknown }).Store = { Chat: [] };
+        return Promise.resolve(fn());
+      },
+    };
+    Object.assign(provider as unknown as Record<string, unknown>, { client: { getPage: () => page }, state: "CONNECTED" });
+
+    for (let n = 0; n < 4; n += 1) await provider.checkSessionHealth();
+    answering = true;
+    await provider.checkSessionHealth();
+    answering = false;
+    for (let n = 0; n < 4; n += 1) await provider.checkSessionHealth();
+    expect(provider.getConnectionStatus()).toBe("CONNECTED");
   });
 
   it("never touches a session that is mid-connect", async () => {

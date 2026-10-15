@@ -44,6 +44,19 @@ import {
 import { serializeMessageId } from "./messageId.js";
 import { withTimeout } from "../../util/withTimeout.js";
 import { killBrowsersUsingProfile } from "./orphanBrowsers.js";
+import {
+  clearLinkMarker,
+  growthBytes,
+  hasProgressed,
+  isResumableLink,
+  judgeLoading,
+  LINK_LOADING_SETTINGS,
+  linkMarkerPath,
+  readLinkMarker,
+  readProfileActivity,
+  writeLinkMarker,
+  type ProfileActivity,
+} from "./linkLoading.js";
 
 /**
  * Ceilings on the two teardown calls into Chromium, neither of which had one.
@@ -392,10 +405,13 @@ interface LeanGroupChat {
   t: number | null;
 }
 
-const ACCEPTED_STARTUP_MESSAGES = new Set([
-  "QR code scanned. Loading session...",
-  "Authenticated",
-]);
+/**
+ * The message the library prints when WhatsApp accepts a QR scan (`QrManager.smartQr`): the one
+ * moment a NEW link is known to exist before its chats have loaded — see `markLinkAccepted`.
+ */
+const SCAN_ACCEPTED_MESSAGE = "QR code scanned. Loading session...";
+
+const ACCEPTED_STARTUP_MESSAGES = new Set([SCAN_ACCEPTED_MESSAGE, "Authenticated"]);
 
 
 /**
@@ -416,6 +432,16 @@ const LIBRARY_EFFECTIVE_AUTH_TIMEOUT_SECONDS = 120;
  * `shouldResetProfile()` for why it is not one.
  */
 const CODELESS_FAILURES_BEFORE_PROFILE_RESET = 2;
+
+/** How long the session health check waits for the page to answer one line. */
+const HEALTH_CHECK_ANSWER_MS = Number(process.env.WHATSAPP_HEALTH_CHECK_ANSWER_MS) || 20_000;
+/** Checks in a row that PROVE the page has no WhatsApp (closed, or no chat store) before a restart. */
+const HEALTH_FAILED_CHECKS_BEFORE_RESTART = 2;
+/**
+ * Checks in a row the page did not answer at all before a restart: about ten minutes at the
+ * registry's two-minute cadence. Longer than a proven failure on purpose — see `checkSessionHealth`.
+ */
+const HEALTH_UNANSWERED_CHECKS_BEFORE_RESTART = 5;
 
 /**
  * The first-code deadline, and the rule it has to obey:
@@ -447,17 +473,6 @@ const MIN_FIRST_CODE_TIMEOUT_MS = 240_000;
  */
 const LINK_WINDOW_MS = 300_000;
 
-/**
- * What replaces the linking window the moment a scan is accepted.
- *
- * Without this a scan at 4:55 would be cut off by the window at 5:00, in the middle of the phone
- * syncing — killing a pairing that had already succeeded, and presenting it as time having run out.
- * From the scan onward the attempt is not waiting on a person, so the person's window stops
- * applying. It is replaced rather than cancelled because this is still the only bound on a wedged
- * `create()`: the library allows `authTimeout` + `oorTimeout` = 180s for the sync, and this clears
- * that by a minute.
- */
-const POST_SCAN_GRACE_MS = 240_000;
 
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
@@ -587,6 +602,12 @@ export class OpenWAProvider implements WhatsAppProvider {
    * once — the moment WhatsApp accepts the scan — and cleared when the attempt settles.
    */
   private extendAfterScan: (() => void) | null = null;
+  /**
+   * Called when a code reaches the dashboard during THIS attempt. Only a resumed link acts on it: a
+   * code means WhatsApp no longer holds the half-finished link, so the resume is over and an
+   * ordinary linking window starts. Set per attempt, cleared when the attempt settles.
+   */
+  private onCodeShown: (() => void) | null = null;
 
   constructor(
     private readonly accountId: string,
@@ -638,6 +659,12 @@ export class OpenWAProvider implements WhatsAppProvider {
    */
   private async shouldResetProfile(): Promise<boolean> {
     if (this.codelessFailures < CODELESS_FAILURES_BEFORE_PROFILE_RESET) return false;
+    // A profile holding an ACCEPTED scan whose chats had not finished loading is not a suspect,
+    // it is the link. It has no session file only because WhatsApp writes that at the end of the
+    // load — which is exactly how it used to look like a profile that never produced a code, and
+    // got deleted, sending the number back to 0% (GROUP_SYNC.md §10). `resumableLink()` has
+    // already removed a marker that is too old to honour, so one still here is current.
+    if (await readLinkMarker(this.linkMarker())) return false;
     const sessionDataFile = join(this.sessionDataPath, `${this.sessionId}.data.json`);
     try {
       await access(sessionDataFile);
@@ -783,6 +810,9 @@ export class OpenWAProvider implements WhatsAppProvider {
       if (!this.connecting) return;
       // An accepted scan is plainly not an attempt that failed to produce a code.
       this.attemptReachedLinkingScreen = true;
+      // A NEW link now exists and its chats have not loaded. Recorded on disk, because WhatsApp
+      // writes the session file only once they have — see `markLinkAccepted`.
+      if (message.trim() === SCAN_ACCEPTED_MESSAGE) this.markLinkAccepted();
       this.cancelFirstCodeDeadline?.();
       // Nobody is being waited on any more, so the person's five minutes stop applying.
       this.extendAfterScan?.();
@@ -810,6 +840,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     // reasoning, as the STARTUP listener.
     if (!this.connecting) return;
     this.attemptReachedLinkingScreen = true;
+    this.onCodeShown?.();
     this.setState("QR_AVAILABLE", metadata, qrCode).catch(() => undefined);
   }
 
@@ -847,6 +878,13 @@ export class OpenWAProvider implements WhatsAppProvider {
     this.attemptGeneration += 1;
     const generation = this.attemptGeneration;
     this.attemptReachedLinkingScreen = false;
+
+    // An earlier attempt had a scan accepted and was cut off while the chats were loading. This
+    // one resumes that load rather than treating the profile as broken. Decided first: it is what
+    // the profile reset below must not undo.
+    const resuming = await this.resumableLink();
+    // Resuming is not an attempt that failed to produce a code: the code was produced and used.
+    if (resuming) this.attemptReachedLinkingScreen = true;
 
     // Before anything is launched, because the profile directory is what gets launched AGAINST.
     if (await this.shouldResetProfile()) {
@@ -894,29 +932,120 @@ export class OpenWAProvider implements WhatsAppProvider {
     // connectWithRetry can then actually retry.
     const watchdogMs = Number(process.env.WHATSAPP_CONNECT_WATCHDOG_MS) || LINK_WINDOW_MS;
     let watchdogTimer: NodeJS.Timeout | undefined;
-    // Set only by the LINKING-window timer, never by the post-scan one that may replace it, so the
+    // Set only by the LINKING-window timer, never by the load watch that may replace it, so the
     // catch below can tell "nobody scanned in time" from "the attempt wedged".
     let linkWindowExpired = false;
     let rejectWatchdog: (reason: Error) => void = () => undefined;
-    const watchdog = new Promise<never>((_, reject) => {
-      rejectWatchdog = reject;
-      watchdogTimer = setTimeout(() => {
-        linkWindowExpired = true;
-        reject(new Error(`No scan within the ${Math.round(watchdogMs / 1000)}s linking window — starting a fresh one.`));
-      }, watchdogMs);
-    });
-    this.extendAfterScan = () => {
+    // Once the attempt has settled, nothing below may act on it: a poll already in flight must not
+    // re-arm a timer or reject a promise nobody is waiting on.
+    let settled = false;
+    const profileDir = this.chromiumProfileDir();
+    // What the profile held before this attempt asked for a code. A phone-code pairing raises no
+    // "accepted" event, so when its window runs out, growth since here is how a load is recognised.
+    const baseline = await readProfileActivity(profileDir);
+
+    /**
+     * Waiting for WhatsApp to copy the chats, for as long as it keeps doing so (`linkLoading.ts`).
+     *
+     * Replaces the linking window — nobody is being waited on any more — and is a bound of a
+     * different kind: not "this long", but "until nothing new has been written for `stallMs`, or
+     * `maxMs` at most". Polls file metadata only; it never touches the page.
+     */
+    interface LoadingWatch {
+      startedAt: number;
+      lastProgressAt: number;
+      last: ProfileActivity | null;
+      timer?: NodeJS.Timeout;
+    }
+    let loading: LoadingWatch | null = null as LoadingWatch | null;
+    const stopLoadingWatch = () => {
+      if (loading?.timer) clearTimeout(loading.timer);
+      loading = null;
+    };
+    const startLoadingWatch = (why: string) => {
+      if (loading || settled) return;
       clearTimeout(watchdogTimer);
-      watchdogTimer = setTimeout(
-        () =>
+      const startedAt = Date.now();
+      const watch: LoadingWatch = { startedAt, lastProgressAt: startedAt, last: null };
+      loading = watch;
+      console.log(
+        `[openwa] ${why} for ${this.sessionId} — waiting for WhatsApp to copy this number's chats for as long as it keeps writing them (gives up after ${Math.round(LINK_LOADING_SETTINGS.stallMs / 60_000)} min without progress, ${Math.round(LINK_LOADING_SETTINGS.maxMs / 60_000)} min at most)`,
+      );
+      const tick = async () => {
+        if (settled || loading !== watch) return;
+        const sample = await readProfileActivity(profileDir);
+        if (settled || loading !== watch) return;
+        const now = Date.now();
+        if (hasProgressed(watch.last, sample)) watch.lastProgressAt = now;
+        if (sample) watch.last = sample;
+        const verdict = judgeLoading({ startedAt: watch.startedAt, lastProgressAt: watch.lastProgressAt, now });
+        if (verdict.kind === "STALLED") {
           rejectWatchdog(
             new Error(
-              `The scan was accepted but the session did not finish loading within ${Math.round(POST_SCAN_GRACE_MS / 1000)}s — treating as stalled.`,
+              `WhatsApp stopped sending this number's chats: nothing new arrived for ${Math.round(verdict.quietMs / 60_000)} minutes while linking. Keep the phone online with WhatsApp open; the next attempt carries on from where this one stopped.`,
             ),
-          ),
-        POST_SCAN_GRACE_MS,
-      );
+          );
+          return;
+        }
+        if (verdict.kind === "TOO_LONG") {
+          rejectWatchdog(
+            new Error(
+              `WhatsApp was still copying this number's chats after ${Math.round(verdict.elapsedMs / 60_000)} minutes. Stopping this attempt; the next one carries on from where it stopped.`,
+            ),
+          );
+          return;
+        }
+        watch.timer = setTimeout(() => void tick(), LINK_LOADING_SETTINGS.pollMs);
+      };
+      watch.timer = setTimeout(() => void tick(), LINK_LOADING_SETTINGS.pollMs);
+    };
+
+    const watchdog = new Promise<never>((_, reject) => {
+      rejectWatchdog = reject;
+    });
+    /**
+     * The human's window. On expiry, a phone-code attempt asks the profile first whether chats are
+     * already arriving: a phone-code pairing announces nothing when the code is accepted, so without
+     * this one that worked would be killed at five minutes exactly like an unused code.
+     */
+    const armLinkWindow = () => {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = setTimeout(() => {
+        void (async () => {
+          const grown = growthBytes(baseline, await readProfileActivity(profileDir));
+          if (settled || loading) return;
+          // Phone codes only: a QR scan announces itself (SCAN_ACCEPTED_MESSAGE), so for a QR this
+          // inference would only ever be a second opinion, and a wrong one could hold an unscanned
+          // window open. A phone code has nothing else to go on.
+          if (this.pairingMode === "PHONE_CODE" && grown >= LINK_LOADING_SETTINGS.loadingDetectBytes) {
+            this.attemptReachedLinkingScreen = true;
+            this.markLinkAccepted();
+            this.cancelFirstCodeDeadline?.();
+            if (this.state !== "CONNECTED") this.setState("AUTHENTICATED", { detectedBy: "profile growth", grownBytes: grown }).catch(() => undefined);
+            startLoadingWatch(`The linking window ended with ${Math.round(grown / 1024)} KB of chats already written, so the code was accepted`);
+            return;
+          }
+          // Logged with the measured growth, so the detection threshold can be set from real numbers.
+          console.log(`[openwa] linking window ended for ${this.sessionId} with ${grown} bytes written to the profile — no pairing detected`);
+          linkWindowExpired = true;
+          rejectWatchdog(new Error(`No scan within the ${Math.round(watchdogMs / 1000)}s linking window — starting a fresh one.`));
+        })();
+      }, watchdogMs);
+    };
+    armLinkWindow();
+    this.extendAfterScan = () => {
       this.extendAfterScan = null;
+      startLoadingWatch("The pairing was accepted");
+    };
+    this.onCodeShown = () => {
+      // Only a resumed link acts on a code: WhatsApp is asking for a NEW scan, so the half-finished
+      // link it was resuming no longer exists. Forget it, and give the person a full window.
+      if (!resuming || !loading) return;
+      this.onCodeShown = null;
+      stopLoadingWatch();
+      void clearLinkMarker(this.linkMarker());
+      console.log(`[openwa] ${this.sessionId}: WhatsApp asked for a new code, so the interrupted link cannot be resumed — linking from scratch`);
+      armLinkWindow();
     };
     // The dashboard counts down to this. Chained onto the same write queue as every state change,
     // so it cannot land after — and undo — a transition that has already closed the window.
@@ -984,6 +1113,12 @@ export class OpenWAProvider implements WhatsAppProvider {
       clearTimeout(firstCodeTimer);
       this.cancelFirstCodeDeadline = null;
     };
+    if (resuming) {
+      // No code will appear — the browser already holds the login — and none is needed.
+      this.cancelFirstCodeDeadline();
+      this.setState("AUTHENTICATED", { resumingLink: true }).catch(() => undefined);
+      startLoadingWatch("Resuming a link whose chats had not finished loading");
+    }
 
     try {
       this.client = await Promise.race([
@@ -1058,7 +1193,15 @@ export class OpenWAProvider implements WhatsAppProvider {
           // recovers from the state this failure leaves behind rather than trying to prevent it.
           // `connectTimeouts.test.ts` now asserts the library's own expression, so a version that
           // fixes the precedence makes that test fail and this decision gets revisited.
-          authTimeout: 120,
+          //
+          // RESUMING A LINK IS THE ONE EXCEPTION, and passes 0 (GROUP_SYNC.md §10). There the page
+          // is WhatsApp's own "Loading your chats" for a scan already accepted, and the library's
+          // 120 s race killed it every time — "Authentication timed out" → "App Offline" — so an
+          // interrupted first load could never finish. With 0 the library pushes no timeout at all
+          // (`config.authTimeout !== 0`), and the load watch above is the bound instead: it ends the
+          // attempt when nothing has been written for `stallMs`, which is also what a page wedged
+          // the way the paragraph above describes looks like.
+          authTimeout: resuming ? 0 : 120,
           popup: false,
           cacheEnabled: false,
           /**
@@ -1178,12 +1321,18 @@ export class OpenWAProvider implements WhatsAppProvider {
       await this.setState("ERROR", { error: (err as Error).message, stack: (err as Error).stack });
       throw err;
     } finally {
+      settled = true;
       clearTimeout(watchdogTimer);
       clearTimeout(firstCodeTimer);
+      stopLoadingWatch();
       this.cancelFirstCodeDeadline = null;
       this.extendAfterScan = null;
+      this.onCodeShown = null;
       this.abandonAttempt = null;
     }
+
+    // The chats finished loading (create() resolves only then), so there is nothing to resume.
+    await clearLinkMarker(this.linkMarker());
 
     // create() only resolves after a successful scan+auth — OpenWA's public
     // API has no earlier observable boundary between "QR scanned" and
@@ -1329,6 +1478,42 @@ export class OpenWAProvider implements WhatsAppProvider {
    * refusing to change state would leave the operator with no working control at all — which is
    * the situation this whole method exists to end.
    */
+  /** Where this session's record of an accepted-but-unfinished link lives (`linkLoading.ts`). */
+  private linkMarker(): string {
+    return linkMarkerPath(this.sessionDataPath, this.sessionId);
+  }
+
+  /**
+   * Records that a scan was accepted for this profile. Fire-and-forget and never throws: failing to
+   * write it costs only the resume, never the attempt in flight.
+   */
+  private markLinkAccepted(): void {
+    writeLinkMarker(this.linkMarker(), Date.now()).catch((err) =>
+      console.warn(`[openwa] could not record the accepted link for ${this.sessionId} — an interrupted load will not be resumed`, err),
+    );
+  }
+
+  /**
+   * Whether this attempt resumes an interrupted first load (`isResumableLink`). A marker that no
+   * longer applies — the load finished, or it is too old to honour — is removed here, so the rest
+   * of the attempt (and the profile reset) sees only a current one.
+   */
+  private async resumableLink(): Promise<boolean> {
+    const markerPath = this.linkMarker();
+    const marker = await readLinkMarker(markerPath);
+    if (!marker) return false;
+    const hasSessionData = await access(join(this.sessionDataPath, `${this.sessionId}.data.json`)).then(
+      () => true,
+      () => false,
+    );
+    if (isResumableLink(marker, hasSessionData, Date.now())) {
+      console.log(`[openwa] ${this.sessionId}: resuming a link accepted ${Math.round((Date.now() - marker.scannedAt) / 60_000)} min ago whose chats had not finished loading`);
+      return true;
+    }
+    await clearLinkMarker(markerPath);
+    return false;
+  }
+
   private async removeSessionProfile(): Promise<void> {
     const profileDir = join(this.sessionDataPath, `_IGNORE_${this.sessionId}`);
     try {
@@ -1344,6 +1529,8 @@ export class OpenWAProvider implements WhatsAppProvider {
         maxRetries: 5,
         retryDelay: 200,
       });
+      // And the record of a half-finished link in it: there is no link left to resume.
+      await clearLinkMarker(this.linkMarker());
       console.log(`[openwa] removed session profile at ${profileDir} — the next connect will ask for a fresh code`);
     } catch (err) {
       // Loud, because of what a survivor does. A profile left HALF-deleted rather than absent is
@@ -1392,6 +1579,8 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   /** Consecutive health checks that found no working WhatsApp in the page. */
   private unhealthyChecks = 0;
+  /** Consecutive health checks the page did not answer in time — busy, not proven dead. */
+  private unresponsiveChecks = 0;
 
   /**
    * Notices a session that says CONNECTED while its page holds no WhatsApp at all.
@@ -1405,7 +1594,8 @@ export class OpenWAProvider implements WhatsAppProvider {
    *
    * Two failed checks in a row, never one: WhatsApp Web can briefly rebuild its store (an in-page
    * update), and restarting a working session over that would cost a minute of collection for
-   * nothing. When it does trip, the account is recorded DISCONNECTED — which is the truth, and
+   * nothing. A check the page does not ANSWER needs five (about ten minutes): a page still storing
+   * a new link's chats can be too busy to answer, and restarting it stops that copy (15 Oct 2026). When it does trip, the account is recorded DISCONNECTED — which is the truth, and
    * which `recoverIfDropped` already knows what to do with: restart the browser from the saved
    * session, then sync groups and run the catch-up sweep. No second recovery path.
    */
@@ -1416,29 +1606,43 @@ export class OpenWAProvider implements WhatsAppProvider {
       return;
     }
     let healthy: boolean;
+    let unanswered = false;
     try {
       const page = client.getPage();
       healthy =
         !page.isClosed() &&
         (await withTimeout(
           page.evaluate(() => Boolean((globalThis as unknown as { Store?: { Chat?: unknown } }).Store?.Chat)),
-          20_000,
+          HEALTH_CHECK_ANSWER_MS,
           "session health check",
         ));
-    } catch {
-      // A browser that cannot answer twenty seconds' worth of a one-line question is not
-      // collecting messages either.
+    } catch (err) {
       healthy = false;
+      // No answer in time is a different finding from a wrong answer. A newly linked number's page
+      // spends its first hours storing the chats the phone is still sending, and a page busy doing
+      // that can miss twenty seconds without being dead — restarting it there is what stopped the
+      // copy halfway (GROUP_SYNC.md §10). A closed page, or one that answers "no chat store", is
+      // proof, and keeps the two-strike rule.
+      unanswered = (err as Error).message?.includes("timed out") ?? false;
     }
     if (healthy) {
       this.unhealthyChecks = 0;
+      this.unresponsiveChecks = 0;
       return;
     }
-    this.unhealthyChecks += 1;
-    console.warn(`[openwa] session health check failed for ${this.sessionId} (${this.unhealthyChecks}/2)`);
+    if (unanswered) this.unresponsiveChecks += 1;
+    else this.unhealthyChecks += 1;
+    console.warn(
+      unanswered
+        ? `[openwa] session health check got no answer from ${this.sessionId} within ${HEALTH_CHECK_ANSWER_MS / 1000}s (${this.unresponsiveChecks}/${HEALTH_UNANSWERED_CHECKS_BEFORE_RESTART}) — busy, not yet treated as dead`
+        : `[openwa] session health check failed for ${this.sessionId} (${this.unhealthyChecks}/${HEALTH_FAILED_CHECKS_BEFORE_RESTART})`,
+    );
+    const tripped =
+      this.unhealthyChecks >= HEALTH_FAILED_CHECKS_BEFORE_RESTART || this.unresponsiveChecks >= HEALTH_UNANSWERED_CHECKS_BEFORE_RESTART;
     // Re-checked after the await: a reconnect may have begun while the page was being asked.
-    if (this.unhealthyChecks < 2 || this.state !== "CONNECTED" || this.connecting) return;
+    if (!tripped || this.state !== "CONNECTED" || this.connecting) return;
     this.unhealthyChecks = 0;
+    this.unresponsiveChecks = 0;
     await this.setState("DISCONNECTED", {
       reason: "The account said it was connected, but WhatsApp Web in its browser had stopped working. Reconnecting automatically.",
     });

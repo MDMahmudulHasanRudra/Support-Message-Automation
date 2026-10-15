@@ -487,3 +487,118 @@ entry point, which re-queues it if another ADD_ONLY slipped in first. A logout o
 (`cancelGroupSync`), a moved sync generation and worker shutdown each drop it with a "cancelled"
 result, and the RESYNC_GROUPS command records that as DONE/cancelled as it always has.
 
+
+## 10. A newly linked number gets as long as WhatsApp needs (15 Oct 2026)
+
+Built on `rudra`; not deployed.
+
+### What went wrong
+
+After a scan, WhatsApp copies the number's chats from the phone to the new device. That copy is
+the "Loading your chats" percentage on the phone. OpenWA's `create()` resolves only when it
+finishes, and the library writes `<sessionId>.data.json` only then.
+
+| Date | Commit | Change | Effect on a number in ~2,000 groups |
+|---|---|---|---|
+| 11 Aug | `a5fd3a3` | No limit after a scan | The copy finished overnight |
+| 14 Aug | `8f765db` | 10-minute bound on the whole attempt, browser left running | More forgiving than later |
+| 23 Sep | `ceb4c99` | **240 s after the scan**, then the attempt failed | Killed mid-copy |
+| 23 Sep | `8cec1f2` | Two failed attempts with no code and no session file: **profile deleted** | An interrupted copy restarted from 0% |
+| 24 Sep | `f88f830` | The browser of a failed attempt is killed by process | The copy stopped for certain |
+| 24 Sep | `6a66010` | Health check: two 20 s timeouts restart the session | A page busy storing chats could be restarted |
+
+The retry after an interrupted copy showed no QR, because the browser held the login. The library's
+own 120 s race then killed it ("Authentication timed out" → "App Offline"). That attempt counted as
+"codeless", and after two of them the profile was deleted. The percentage froze at a different
+value each round.
+
+### What replaced it
+
+- **A progress watch, not a fixed limit** (`provider/openwa/linkLoading.ts`). An accepted scan
+  starts a watch over the profile's IndexedDB (size, file count, newest change), read from file
+  metadata every 30 s. The page is never touched.
+  - The attempt waits while anything is written.
+  - It ends when nothing is written for `stallMs` (10 min), or after `maxMs` (45 min) in total.
+- **The accepted scan is recorded** (`<sessionId>.link-pending.json`) when WhatsApp accepts it, and
+  removed when the load finishes, on logout, on a profile reset, or when it is older than
+  `resumeMaxAgeMs` (6 h).
+- **The next attempt resumes the copy.** While the record exists and no session file does:
+  - the progress watch starts at once;
+  - the no-code deadline is dropped;
+  - `authTimeout: 0` is passed, so the library's 120 s race no longer applies;
+  - the dashboard shows "Accepted — copying chats";
+  - the profile is **never reset**.
+
+  If WhatsApp shows a code instead (the phone removed the device), the record is dropped and an
+  ordinary 5-minute window starts.
+- **Phone-code pairing** raises no "accepted" event. When its linking window ends, IndexedDB growth
+  of at least `loadingDetectBytes` (2 MB) since the attempt began counts as accepted, and the
+  watch starts. QR attempts never use this inference. The measured growth is logged on every
+  expiry, so the threshold can be set from real numbers.
+- **The health check tells "no answer" from "wrong answer."**
+  - A page that is closed, or answers that it has no chat store, still trips after 2 checks.
+  - A page that does not answer within 20 s needs 5 checks in a row (about 10 minutes).
+- **The group recovery loop follows a recent connection (`FOLLOW`).**
+  - For 24 h after a connect, an ADD_ONLY re-read runs at 2, 5, 10, then every 30 minutes. A find
+    starts the cadence over.
+  - It never writes the sync status and never deactivates anything.
+  - RETRY (a FAILED/PARTIAL sync) still comes first. VERIFY applies after the window.
+  - This restores the original "collected overnight" behaviour without relying on restarts.
+- **RECONNECT's stuck-command cutoff is 180 minutes** (`COMMAND_STUCK_RECONNECT_MINUTES`); every
+  other command stays at 20. Before, a RECONNECT still loading was marked FAILED with "run it again".
+
+### Cost and limits
+
+- One attempt can hold the serial command queue, or the registry loop, for up to `maxMs`. With
+  three automatic attempts the worst case is about 2.3 h. This only happens when WhatsApp keeps
+  writing without ever finishing.
+- A RECONNECT after three stalled attempts needs a person, as before. Drop recovery needs a number
+  that has connected before.
+- FOLLOW costs one lean in-page read per account every 30 minutes for a day after each connect,
+  under the loop's existing load deferral.
+
+### Settings (all optional, defaults in code)
+
+| Variable | Default |
+|---|---|
+| `WHATSAPP_LINK_LOADING_STALL_MS` | 600000 (10 min) |
+| `WHATSAPP_LINK_LOADING_MAX_MS` | 2700000 (45 min) |
+| `WHATSAPP_LINK_LOADING_POLL_MS` | 30000 |
+| `WHATSAPP_LINK_LOADING_DETECT_BYTES` | 2097152 |
+| `WHATSAPP_LINK_RESUME_MAX_AGE_MS` | 21600000 (6 h) |
+| `WHATSAPP_HEALTH_CHECK_ANSWER_MS` | 20000 |
+| `WHATSAPP_GROUP_FOLLOW_WINDOW_HOURS` | 24 |
+| `COMMAND_STUCK_RECONNECT_MINUTES` | 180 |
+
+### Operating it
+
+- After scanning, keep the phone online with WhatsApp open until the account shows CONNECTED.
+  Don't press Reconnect while it reads "Accepted — copying chats".
+- Don't recreate the worker while a new number is loading: that restarts Chromium. The next
+  attempt resumes, but only within 6 h.
+- Logs to look for:
+  - "waiting for WhatsApp to copy this number's chats": the watch started;
+  - "WhatsApp stopped sending this number's chats": stalled;
+  - "resuming a link accepted … min ago": the next attempt resumed;
+  - "no pairing detected" with a byte count: an expired phone-code window.
+
+### Tests
+
+- `linkLoading.test.ts`: pure decisions and the disk helpers.
+- `linkLoading.integration.test.ts`: the connect path with a stand-in library that only loads when
+  told to:
+  - a load longer than six stall periods survives;
+  - stall and total bounds;
+  - resume with `authTimeout: 0`;
+  - the profile is kept;
+  - a code during a resume;
+  - stale record;
+  - phone code;
+  - a QR is never extended by inference.
+- `groupRosterResilience.test.ts`: busy vs dead health checks.
+- `groupRecovery.integration.test.ts`: FOLLOW. The suite's clock moved past the 24 h window so its
+  "connected long ago" fixtures keep their meaning.
+- `recoveryRobustness.integration.test.ts`: RECONNECT cutoff.
+- `connectTimeouts.test.ts`: no fixed post-scan limit, and the ordering.
+
+Each protection was confirmed to fail its test when removed (17 mutations).

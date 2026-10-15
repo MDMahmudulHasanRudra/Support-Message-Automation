@@ -15,9 +15,9 @@ import { withTimeout } from "../util/withTimeout.js";
 
 const createdCommandIds: string[] = [];
 
-async function command(status: "PROCESSING" | "PENDING", startedAt: Date | null) {
+async function command(status: "PROCESSING" | "PENDING", startedAt: Date | null, type: "RESYNC_GROUPS" | "RECONNECT" = "RESYNC_GROUPS") {
   const row = await prisma.workerCommand.create({
-    data: { type: "RESYNC_GROUPS", status, startedAt },
+    data: { type, status, startedAt },
   });
   createdCommandIds.push(row.id);
   return row;
@@ -62,6 +62,18 @@ describe("stuck-command recovery", () => {
     // into a customer's chat, and a re-run LOGOUT would tear down a session that may have come up
     // healthy since. The operator gets a reason and one click, not a silent repeat.
     expect(JSON.stringify(after.result)).toMatch(/ran for far longer/i);
+  });
+
+  it("leaves a RECONNECT alone while it may still be waiting for a new number's chats to load", async () => {
+    // A newly linked number may take as long as WhatsApp needs to copy its chats (GROUP_SYNC.md
+    // §10). At the general twenty-minute cutoff, a RECONNECT an hour into that load was marked
+    // FAILED — "run it again" — while it was still working.
+    const loading = await command("PROCESSING", new Date(Date.now() - 60 * 60_000), "RECONNECT");
+    const wedged = await command("PROCESSING", new Date(Date.now() - 4 * 60 * 60_000), "RECONNECT");
+
+    expect(await recoverStuckCommands()).toBe(1);
+    expect((await prisma.workerCommand.findUniqueOrThrow({ where: { id: loading.id } })).status).toBe("PROCESSING");
+    expect((await prisma.workerCommand.findUniqueOrThrow({ where: { id: wedged.id } })).status).toBe("FAILED");
   });
 
   it("releases everything at boot, whatever its age", async () => {

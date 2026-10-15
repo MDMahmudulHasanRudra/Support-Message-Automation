@@ -5,6 +5,7 @@ import { prisma } from "./helpers/projectFixtures.js";
 import { cancelGroupSync, runGroupRecoveryPass } from "../commands/commandProcessor.js";
 import {
   backoffAfter,
+  backoffFor,
   checkGroupRecovery,
   GROUP_RECOVERY_SETTINGS,
   groupRecoverySchedule,
@@ -84,7 +85,13 @@ function listing(tag: string, indexes: number[]) {
 }
 
 let registry: ProviderRegistry;
-const clock = { t: 10_000_000 };
+/**
+ * Forty days in. The fixtures' default connection time (epoch 0) means "long ago", and it has to
+ * stay further back than FOLLOW's 24-hour window as well as the arrival watcher's twenty minutes —
+ * otherwise every account here would be a recent connection still being followed.
+ */
+const START = 40 * 24 * 60 * MIN;
+const clock = { t: START };
 const tick = () => checkGroupRecovery(registry, { now: () => clock.t, load: calm });
 /** Waits out the first-sighting grace so the next tick is the one that reads. */
 async function pastGrace(accountId: string) {
@@ -96,7 +103,7 @@ async function pastGrace(accountId: string) {
 beforeEach(() => {
   registry = new ProviderRegistry();
   resetGroupRecoveryState();
-  clock.t = 10_000_000;
+  clock.t = START;
 });
 
 afterEach(async () => {
@@ -585,7 +592,7 @@ describe("the browser's own CPU", () => {
     GROUP_RECOVERY_SETTINGS.maxBrowserLoadPerCpu = 0.5;
     for (const usage of [{ cpuPercent: 1, memoryBytes: 1, processes: 1 }, null, "throw" as const]) {
       resetGroupRecoveryState();
-      clock.t = 10_000_000;
+      clock.t = START;
       const id = await newAccount();
       const tag = randomUUID().slice(0, 6);
       await seedGroups(id, tag, [{ i: 0, active: false }]);
@@ -736,4 +743,96 @@ describe("accounts that must not be touched", () => {
       expect(await activeOf(id, tag, 0)).toBe(isCompleted);
     });
   }
+});
+
+describe("a recent connection is followed while the phone may still be sending chats", () => {
+  /** Connected just after the arrival watcher's window, so FOLLOW (not the watcher) owns it. */
+  const recently = () => new Date(clock.t - GROUP_RECOVERY_SETTINGS.afterConnectQuietMs - MIN);
+
+  it("saves a group that arrives hours after the connect, without anybody pressing Sync", async () => {
+    const id = await newAccount({ sync: "COMPLETED", connectedAt: recently() });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: true }]);
+    const { provider, state } = listing(tag, [0]);
+    registry.registerForTesting(id, provider);
+
+    await pastGrace(id);
+    expect(await tick()).toMatchObject({ result: "NO_CHANGE" }); // nothing new yet
+    expect(groupRecoverySchedule(id)).toMatchObject({ kind: "FOLLOW" });
+
+    // Three hours later WhatsApp has delivered two more groups to the device.
+    for (let n = 0; n < 6; n += 1) {
+      clock.t += 30 * MIN;
+      await tick();
+    }
+    state.indexes = [0, 1, 2];
+    clock.t += 30 * MIN;
+    expect(await tick()).toMatchObject({ result: "RECOVERED" });
+    expect(await rowCount(id)).toBe(3);
+    expect(await activeOf(id, tag, 2)).toBe(true);
+  });
+
+  it("never slows past 30 minutes inside the window, and a find starts the cadence over", async () => {
+    expect([0, 1, 2, 3, 4, 9].map((step) => backoffFor("FOLLOW", step) / MIN)).toEqual([2, 5, 10, 30, 30, 30]);
+    const id = await newAccount({ sync: "COMPLETED", connectedAt: recently() });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: true }]);
+    const { provider, state } = listing(tag, [0]);
+    registry.registerForTesting(id, provider);
+
+    await pastGrace(id);
+    for (let n = 0; n < 5; n += 1) {
+      await tick();
+      const next = groupRecoverySchedule(id)!;
+      expect(next.nextAt - clock.t).toBeLessThanOrEqual(30 * MIN);
+      clock.t = next.nextAt;
+    }
+    state.indexes = [0, 1];
+    expect(await tick()).toMatchObject({ result: "RECOVERED" });
+    expect(groupRecoverySchedule(id)!.nextAt - clock.t).toBe(backoffFor("FOLLOW", 0));
+  });
+
+  it("stops when the window since the connect ends", async () => {
+    const id = await newAccount({ sync: "COMPLETED", connectedAt: recently() });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: true }]);
+    const { provider, state } = listing(tag, [0]);
+    registry.registerForTesting(id, provider);
+
+    await pastGrace(id);
+    await tick();
+    const readsInWindow = state.reads;
+    clock.t += GROUP_RECOVERY_SETTINGS.followWindowMs; // a day later: no longer a recent connection
+    for (let n = 0; n < 10; n += 1) {
+      clock.t += 60 * MIN;
+      await tick();
+    }
+    expect(state.reads).toBe(readsInWindow);
+    expect(groupRecoverySchedule(id)).toBeNull();
+  });
+
+  it("only ever adds: a shorter list switches nothing off and never writes the sync status", async () => {
+    const id = await newAccount({ sync: "COMPLETED", connectedAt: recently() });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: true }, { i: 1, active: true }, { i: 2, active: false }]);
+    const { provider } = listing(tag, [0, 2]); // 1 missing from this read; 2 listed again
+    registry.registerForTesting(id, provider);
+
+    await pastGrace(id);
+    expect(await tick()).toMatchObject({ result: "RECOVERED" });
+    expect(await activeOf(id, tag, 1)).toBe(true); // not deactivated by a partial read
+    expect(await activeOf(id, tag, 2)).toBe(true); // brought back, as any ADD_ONLY read does
+    expect(await accountRow(id)).toMatchObject({ groupSyncStatus: "COMPLETED", groupSyncError: null, groupSyncDiscovered: SENTINEL_DISCOVERED });
+  });
+
+  it("a sync that said 'not finished' is still retried as RETRY, which does write the status", async () => {
+    const id = await newAccount({ sync: "PARTIAL", connectedAt: recently() });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: false }]);
+    registry.registerForTesting(id, listing(tag, [0]).provider);
+    await pastGrace(id);
+    expect(groupRecoverySchedule(id)).toMatchObject({ kind: "RETRY" });
+    expect(await tick()).toMatchObject({ result: "RECOVERED", pending: 0 });
+    expect((await accountRow(id)).groupSyncStatus).toBe("COMPLETED");
+  });
 });

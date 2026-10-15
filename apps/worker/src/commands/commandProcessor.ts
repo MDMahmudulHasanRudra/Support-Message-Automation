@@ -1043,7 +1043,12 @@ export type GroupRecoveryPassResult =
   | { kind: "READ"; outcome: GroupSyncOutcome; pending: number; grew: boolean }
   | { kind: "UNKNOWN"; reason: "UNAVAILABLE" | "EMPTY_LIST" };
 
-export type GroupRecoveryMode = "RETRY" | "VERIFY";
+/**
+ * Why the recovery loop is reading an account (`groupRecovery.ts`): RETRY - a sync said "not
+ * finished"; FOLLOW - a recent connect whose phone may still be sending chats; VERIFY - inactive
+ * groups worth a bounded second look. Only RETRY writes the account's sync status.
+ */
+export type GroupRecoveryMode = "RETRY" | "FOLLOW" | "VERIFY";
 
 export async function runGroupRecoveryPass(
   accountId: string,
@@ -1120,6 +1125,14 @@ export async function runGroupRecoveryPass(
 const COMMAND_STUCK_TIMEOUT_MS = Number(process.env.COMMAND_STUCK_TIMEOUT_MINUTES || 20) * 60_000;
 
 /**
+ * RECONNECT's own, longer bound. Since a newly linked number may take as long as WhatsApp needs to
+ * copy its chats (up to 45 minutes per attempt while it keeps making progress, three attempts —
+ * GROUP_SYNC.md §10), twenty minutes would mark a RECONNECT FAILED while it was still loading and
+ * tell the operator to run it again on top of itself. Three hours clears three full attempts.
+ */
+const RECONNECT_STUCK_TIMEOUT_MS = Number(process.env.COMMAND_STUCK_RECONNECT_MINUTES || 180) * 60_000;
+
+/**
  * Crash recovery for commands interrupted mid-flight. Until this existed a PROCESSING row was
  * never reclaimed, so the dashboard button spun forever with no error.
  *
@@ -1149,7 +1162,13 @@ export async function recoverStuckCommands(options: { atBoot?: boolean } = {}): 
   const result = await platformPrisma.workerCommand.updateMany({
     where: options.atBoot
       ? { status: "PROCESSING" }
-      : { status: "PROCESSING", startedAt: { lt: new Date(Date.now() - COMMAND_STUCK_TIMEOUT_MS) } },
+      : {
+          status: "PROCESSING",
+          OR: [
+            { type: { not: "RECONNECT" }, startedAt: { lt: new Date(Date.now() - COMMAND_STUCK_TIMEOUT_MS) } },
+            { type: "RECONNECT", startedAt: { lt: new Date(Date.now() - RECONNECT_STUCK_TIMEOUT_MS) } },
+          ],
+        },
     data: {
       status: "FAILED",
       processedAt: new Date(),

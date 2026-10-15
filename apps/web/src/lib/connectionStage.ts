@@ -44,8 +44,12 @@ const STAGE_COPY: Record<string, ConnectionStageCopy> = {
   // nothing to say between "here is a code" and "connected", so a successful scan looked exactly
   // like a dead one for as long as the session took to finish loading.
   AUTHENTICATED: {
-    title: "Accepted — linking now",
-    detail: "WhatsApp accepted it. Getting the session ready; this takes a few seconds.",
+    title: "Accepted — copying chats",
+    // Not "a few seconds": WhatsApp copies every chat to the new device before the session is
+    // usable, and for a number in a couple of thousand groups that is many minutes. Saying so stops
+    // people pressing Reconnect mid-copy, which is what used to restart it (GROUP_SYNC.md §10).
+    detail:
+      "WhatsApp accepted it and is copying this number's chats to the server. A number in many groups can take 10–30 minutes — keep the phone online with WhatsApp open, and don't press Reconnect.",
     accepted: true,
   },
   AUTHENTICATING: {
