@@ -1,4 +1,4 @@
-import type { MessageMediaKind } from "@support-automation/shared";
+import type { MessageMediaKind, RichContent } from "@support-automation/shared";
 
 /** Provider-agnostic shape of a message event, as delivered by any WhatsAppProvider. */
 export interface RawIncomingMessage {
@@ -27,7 +27,21 @@ export interface RawIncomingMessage {
   mentionedPhones?: string[];
   /** The attachment, when the message carried a file. Absent for text, locations and contact cards. */
   media?: RawMediaDescriptor | null;
+  /**
+   * WhatsApp delivered this as deleted for everyone (type "revoked") — no content is left, so it is
+   * never stored as a message of its own; it marks the stored original instead (CHAT_RICH_MESSAGING.md §3).
+   */
+  revoked?: boolean;
+  /** For a message this account sent: the ack level WhatsApp reported with it (1–4), else null. */
+  ackLevel?: number | null;
+  /** A poll or a location, as WhatsApp described it (display only; `body` stays the text). */
+  richContent?: RichContent | null;
 }
+
+/** A change to a message already sent or received, reported by the provider after the fact. */
+export type MessageUpdateEvent =
+  | { kind: "ACK"; accountId: string; whatsappMessageId: string; ackLevel: number }
+  | { kind: "REVOKED"; accountId: string; whatsappMessageId: string };
 
 /**
  * The file a message carried, as the provider described it (MEDIA_STORAGE.md). Only metadata and

@@ -1,4 +1,5 @@
-import type { MediaDownloadInfo, RawIncomingMessage } from "../pipeline/types.js";
+import type { LocationContent, PollContent } from "@support-automation/shared";
+import type { MediaDownloadInfo, MessageUpdateEvent, RawIncomingMessage } from "../pipeline/types.js";
 
 export type ConnectionStatus =
   | "CONNECTED"
@@ -360,4 +361,30 @@ export interface WhatsAppProvider {
    * could not confirm changing is simply absent (or false) in the result, not an exception.
    */
   updateProfile(update: ProfileUpdate): Promise<ProfileUpdateResult>;
+
+  // ---- Chat v2 rich messaging (CHAT_RICH_MESSAGING.md). Optional: a provider without one of these
+  // ---- makes the caller report "this connection cannot …" rather than pretend. None of them throws.
+
+  /**
+   * Registers the handler for changes to messages already seen: a delivery / read receipt on one this
+   * account sent, or a message deleted for everyone. Kept wired across reconnects exactly like
+   * `subscribeToMessages`. Safe to call before connect().
+   */
+  subscribeToMessageUpdates?(handler: (update: MessageUpdateEvent) => void): void;
+  /**
+   * Asks WhatsApp for one more page of a chat's earlier messages and returns every message the
+   * session now holds for that chat (the caller stores only the ones it does not have).
+   */
+  loadEarlierMessages?(chatId: string): Promise<{ ok: true; messages: RawIncomingMessage[]; reachedStart: boolean } | { ok: false; reason: string }>;
+  /** A poll, to a group only (WhatsApp's own rule). */
+  sendPoll?(chatId: string, poll: PollContent): Promise<SendResult>;
+  sendLocation?(chatId: string, location: LocationContent): Promise<SendResult>;
+  /** A WebP sticker as it is — no conversion, no third-party service. */
+  sendSticker?(chatId: string, webpBase64: string, animated: boolean): Promise<SendResult>;
+  /** Forwards one message this session holds to another chat of the same account. */
+  forwardMessage?(chatId: string, whatsappMessageId: string): Promise<SendResult>;
+  setMessageStarred?(whatsappMessageId: string, star: boolean): Promise<SendResult>;
+  /** Pin / archive on the phone. `changed: false` = it already was in that state. */
+  setChatPinned?(chatId: string, pin: boolean): Promise<SendResult & { changed?: boolean }>;
+  setChatArchived?(chatId: string, archive: boolean): Promise<SendResult & { changed?: boolean }>;
 }

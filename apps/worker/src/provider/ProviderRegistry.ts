@@ -5,6 +5,7 @@ import { processWithRetry } from "../pipeline/retryFailedMessage.js";
 import { resyncAndCatchUpAfterConnect } from "../commands/commandProcessor.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { countDroppedMessage } from "../pipeline/dropCounter.js";
+import { recordMessageAck, recordMessageRevoked } from "../pipeline/messageUpdates.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 // Moved to its own module to break the ProviderRegistry <-> commandProcessor import cycle; still
 // re-exported here so existing callers and tests are unaffected by where it lives.
@@ -112,6 +113,13 @@ export class ProviderRegistry {
       // A failure is retried a few times before it is counted as a drop (retryFailedMessage.ts); the
       // count and the System Logs entry it always produced are written when every chance is used.
       void processWithRetry(message);
+    });
+
+    // Receipts and deletions on messages already seen (CHAT_RICH_MESSAGING.md). Facts only: each sets
+    // a column on a stored row and starts nothing. Both writers swallow their own errors.
+    provider.subscribeToMessageUpdates?.((update) => {
+      if (update.kind === "ACK") void recordMessageAck(update.accountId, update.whatsappMessageId, update.ackLevel);
+      else void recordMessageRevoked(update.accountId, update.whatsappMessageId);
     });
 
     // Deliberately NOT awaited — a slow/failed group sync must never delay this account's message

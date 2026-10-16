@@ -17,6 +17,7 @@ import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { shouldHoldDeactivationSweep } from "./groupSyncGuard.js";
 import type { Prisma } from "@prisma/client";
 import type { GroupSyncBasis } from "@support-automation/shared";
+import { storeHistoryMessages } from "../pipeline/messageUpdates.js";
 
 /** Name this loop reports itself under in the per-loop liveness view. */
 const LOOP_NAME = "command-processor";
@@ -1826,6 +1827,84 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         await prisma.workerCommand.update({
           where: { id: command.id },
           data: { status: "DONE", processedAt: new Date(), result: { ...result } },
+        });
+        break;
+      }
+
+      // ---- Chat v2 rich messaging (CHAT_RICH_MESSAGING.md) ---------------------------------------
+
+      case "LOAD_EARLIER_MESSAGES": {
+        const payload = command.payload as { chatId?: string } | null;
+        if (!payload?.chatId) throw new Error("LOAD_EARLIER_MESSAGES requires { chatId } in the command payload.");
+        if (!provider.loadEarlierMessages) throw new Error("This WhatsApp connection cannot load earlier messages.");
+        const page = await provider.loadEarlierMessages(payload.chatId);
+        if (!page.ok) {
+          await prisma.workerCommand.update({
+            where: { id: command.id },
+            data: { status: "FAILED", processedAt: new Date(), result: { success: false, error: page.reason } },
+          });
+          break;
+        }
+        // Store-only: nothing loaded here is answered, tracked as a wait or alerted on (§4).
+        const stored = await storeHistoryMessages(accountId, payload.chatId, page.messages);
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: {
+            status: "DONE",
+            processedAt: new Date(),
+            result: {
+              success: true,
+              seen: stored.seen,
+              stored: stored.stored,
+              markedDeleted: stored.markedDeleted,
+              oldestAt: stored.oldestAt?.toISOString() ?? null,
+              reachedStart: page.reachedStart,
+            },
+          },
+        });
+        break;
+      }
+
+      case "STAR_MESSAGE": {
+        const payload = command.payload as { messageId?: string; whatsappMessageId?: string; star?: boolean } | null;
+        if (!payload?.messageId || !payload.whatsappMessageId || typeof payload.star !== "boolean") {
+          throw new Error("STAR_MESSAGE requires { messageId, whatsappMessageId, star } in the command payload.");
+        }
+        if (!provider.setMessageStarred) throw new Error("This WhatsApp connection cannot star messages.");
+        const result = await provider.setMessageStarred(payload.whatsappMessageId, payload.star);
+        // The row records what WhatsApp accepted, nothing sooner. Scoped to the command's own account, so
+        // a payload naming another account's row changes nothing.
+        if (result.success) {
+          await prisma.message.updateMany({
+            where: { id: payload.messageId, accountId, whatsappMessageId: payload.whatsappMessageId },
+            data: { starredAt: payload.star ? new Date() : null },
+          });
+        }
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: { status: result.success ? "DONE" : "FAILED", processedAt: new Date(), result: { success: result.success, error: result.error ?? null } },
+        });
+        break;
+      }
+
+      case "PIN_CHAT":
+      case "ARCHIVE_CHAT": {
+        const pin = command.type === "PIN_CHAT";
+        const payload = command.payload as { chatId?: string; pin?: boolean; archive?: boolean } | null;
+        const on = pin ? payload?.pin : payload?.archive;
+        if (!payload?.chatId || typeof on !== "boolean") {
+          throw new Error(`${command.type} requires { chatId, ${pin ? "pin" : "archive"} } in the command payload.`);
+        }
+        const call = pin ? provider.setChatPinned : provider.setChatArchived;
+        if (!call) throw new Error(`This WhatsApp connection cannot ${pin ? "pin" : "archive"} chats.`);
+        const result = await call.call(provider, payload.chatId, on);
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: {
+            status: result.success ? "DONE" : "FAILED",
+            processedAt: new Date(),
+            result: { success: result.success, changed: result.changed ?? null, error: result.error ?? null },
+          },
         });
         break;
       }

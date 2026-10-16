@@ -12,6 +12,7 @@ import type { ConversationRef } from "@/server/chatThreadV2";
 import { SavedReplyManager } from "../SavedReplyManager";
 import { SavedReplyPicker, type SavedReplyOption } from "../SavedReplyPicker";
 import { EmojiPicker } from "./EmojiPicker";
+import { RichComposer } from "./RichComposer";
 
 /**
  * The v2 composer (CHAT_UI_V2.md). Everything the v1 composer does — drafts per conversation, saved
@@ -308,7 +309,8 @@ export function ComposerV2({
 
         <SavedReplyPicker quiet replies={savedReplies} onInsert={(body) => insertAtCursor(body)} onManage={() => setManagingReplies(true)} />
 
-        <div className="relative">
+        {/* Hidden on a phone, where the keyboard has its own emoji key and the attach button needs the room. */}
+        <div className="relative max-sm:hidden">
           <button
             type="button"
             onClick={() => setEmojiOpen((v) => !v)}
@@ -329,6 +331,9 @@ export function ComposerV2({
             />
           ) : null}
         </div>
+
+        {/* A poll, location or sticker: its own queued send, never part of this text (CHAT_RICH_MESSAGING.md §5). */}
+        <RichComposer conversation={conversation} isGroup={isGroup} onSent={onSent} />
 
         <div className="relative min-w-0 flex-1">
           {mentionQuery && (filtered.length || candidateError || candidates) ? (

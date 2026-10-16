@@ -58,3 +58,4 @@ export * from "./chatMentions.js";
 export * from "./groupSyncBasis.js";
 export * from "./whatsappChats.js";
 export * from "./teamReportReliability.js";
+export * from "./chatRichMessages.js";
