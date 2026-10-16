@@ -15,8 +15,19 @@ import {
   type Message as WaMessage,
   type MessageId,
 } from "@open-wa/wa-automate";
-import type { MediaDownloadInfo, RawIncomingMessage, RawMediaDescriptor } from "../../pipeline/types.js";
-import { classifyWhatsAppMedia, isPersonalChatId, selectCatchUpChats, type ChatActivity } from "@support-automation/shared";
+import type { MediaDownloadInfo, MessageUpdateEvent, RawIncomingMessage, RawMediaDescriptor } from "../../pipeline/types.js";
+import {
+  classifyWhatsAppMedia,
+  isPersonalChatId,
+  readRichContent,
+  recordableAckLevel,
+  REVOKED_WA_TYPE,
+  selectCatchUpChats,
+  type ChatActivity,
+  type LocationContent,
+  type PollContent,
+  type RichContent,
+} from "@support-automation/shared";
 import type {
   AccountInfo,
   CollectionProbe,
@@ -147,6 +158,18 @@ function toInterfaceStatus(state: OpenWAConnectionState): ConnectionStatus {
  * the message body. `caption`/`filename`/`loc` hold the actual human text.
  */
 function resolveMessageBody(message: WaMessage): string {
+  // Read by type FIRST for the three that are not text whatever `isMedia` says (CHAT_RICH_MESSAGING.md):
+  // a location's `body` is its map thumbnail, a poll's is empty, a deleted message has none left.
+  const type = String((message as { type?: unknown }).type ?? "");
+  if (type === REVOKED_WA_TYPE) return "";
+  if (type === MessageTypes.LOCATION) {
+    const loc = message.loc?.trim();
+    return loc ? `[Location] ${loc}` : "[Location]";
+  }
+  if (isPollType(type)) {
+    const name = readPollName(message);
+    return name ? `[Poll] ${name}` : "[Poll]";
+  }
   if (!message.isMedia) {
     return message.body ?? message.text ?? "";
   }
@@ -173,6 +196,39 @@ function resolveMessageBody(message: WaMessage): string {
     default:
       return caption ? `[Media] ${caption}` : "[Media]";
   }
+}
+
+/** WhatsApp Web names a poll message "poll_creation" (older builds: "poll"). */
+function isPollType(type: string): boolean {
+  return type === "poll_creation" || type === "poll";
+}
+
+/** WhatsApp Web keeps a poll's question in `pollName`; some builds leave it in `body` or `caption`. */
+function readPollName(message: WaMessage): string {
+  const fields = message as unknown as { pollName?: unknown; body?: unknown; caption?: unknown };
+  for (const value of [fields.pollName, fields.caption, fields.body]) {
+    if (typeof value === "string" && value.trim() && value.length < 2_000) return value.trim();
+  }
+  return "";
+}
+
+/**
+ * A poll's or a location's own details, as WhatsApp delivered them — display only. Read defensively
+ * through `readRichContent`, so a shape this build of WhatsApp Web changed comes back null (the body
+ * label still says what it was) instead of storing something half-read.
+ */
+export function toRichContent(message: WaMessage): RichContent | null {
+  const type = String((message as { type?: unknown }).type ?? "");
+  if (type === MessageTypes.LOCATION) {
+    return readRichContent({ kind: "LOCATION", latitude: message.lat, longitude: message.lng, name: message.loc ?? "" });
+  }
+  if (isPollType(type)) {
+    const fields = message as unknown as { pollOptions?: Array<{ name?: unknown }>; pollSelectableOptionsCount?: unknown };
+    const options = Array.isArray(fields.pollOptions) ? fields.pollOptions.map((o) => (typeof o?.name === "string" ? o.name : "")).filter(Boolean) : [];
+    // WhatsApp's own field: 1 = one choice, 0 = any number.
+    return readRichContent({ kind: "POLL", name: readPollName(message), options, allowMultiple: fields.pollSelectableOptionsCount === 0 });
+  }
+  return null;
 }
 
 /** "8801XXXXXXXXX@c.us" -> "8801XXXXXXXXX". Leaves an already-bare number untouched. */
@@ -329,7 +385,12 @@ export function toRawIncomingMessage(accountId: string, message: WaMessage): Raw
     // this as WhatsApp's key object, not the string the live listener gets — see messageId.ts.
     quotedWhatsappMessageId: message.isQuotedMsgAvailable ? serializeMessageId(message.quotedMsg?.id) : null,
     mentionedPhones: (message.mentionedJidList ?? []).map((jid) => String(jid).split("@")[0] ?? "").filter(Boolean),
-    media: toMediaDescriptor(message),
+    // A location is not a file to fetch (its `body` is only a map preview), whatever `isMedia` says.
+    media: String((message as { type?: unknown }).type ?? "") === MessageTypes.LOCATION ? null : toMediaDescriptor(message),
+    revoked: String((message as { type?: unknown }).type ?? "") === REVOKED_WA_TYPE,
+    // Receipts are only ever about what THIS account sent (CHAT_RICH_MESSAGING.md §2).
+    ackLevel: message.fromMe ? recordableAckLevel((message as { ack?: unknown }).ack) : null,
+    richContent: toRichContent(message),
   };
 }
 
@@ -378,6 +439,12 @@ export function toRawIncomingMessage(accountId: string, message: WaMessage): Raw
  * subclass for a two-call-site signal is more machinery than the signal is worth.
  */
 const ABANDONED = "OPENWA_ATTEMPT_ABANDONED";
+
+/**
+ * The longest one "load earlier" read may hold the command processor (CHAT_RICH_MESSAGING.md §4). The
+ * phone answers a page within seconds; past this the load is reported failed and can be pressed again.
+ */
+const HISTORY_LOAD_TIMEOUT_MS = 60_000;
 
 /**
  * The exact messages `@open-wa/wa-automate` 4.76.0 emits on `STARTUP.<sessionId>` at the moment a
@@ -513,6 +580,10 @@ export class OpenWAProvider implements WhatsAppProvider {
   // THIS client wired up", so a re-attach after a reconnect happens and a second attach to the
   // same client (which would process every message twice) cannot.
   private listenerClient: Client | null = null;
+  // Receipts and deletions (CHAT_RICH_MESSAGING.md), held on the instance for the same reason as the
+  // message handler above, and attached to each new client exactly once.
+  private updateHandler: ((update: MessageUpdateEvent) => void) | null = null;
+  private updateListenerClient: Client | null = null;
   // The in-flight connect, if there is one. `connect()` launches Chromium and does a
   // process-global `process.chdir()` first; two overlapping attempts for the same account would
   // race each other exactly as two accounts connecting concurrently would. Now that a dropped
@@ -1855,7 +1926,55 @@ export class OpenWAProvider implements WhatsAppProvider {
     this.attachMessageListener();
   }
 
+  subscribeToMessageUpdates(handler: (update: MessageUpdateEvent) => void): void {
+    this.updateHandler = handler;
+    this.attachUpdateListeners();
+  }
+
+  /**
+   * Receipts (`onAck`, public) and deletions (`onMessageDeleted`, public) on the current client.
+   * Like the message listener, gated on client identity so a reconnect re-wires them and a second
+   * call cannot wire them twice. Each event is converted inside its own try/catch: a shape this code
+   * cannot read must never throw into the library's emitter.
+   *
+   * Whether `onMessageDeleted` fires on this deployment depends on the library's runtime patch, which
+   * cannot be checked offline — the catch-up and history paths also notice a "revoked" message, so a
+   * deletion is not lost if it does not (CHAT_RICH_MESSAGING.md §3).
+   */
+  private attachUpdateListeners(): void {
+    const handler = this.updateHandler;
+    const client = this.client;
+    if (!handler || !client) return;
+    if (this.updateListenerClient === client) return;
+    this.updateListenerClient = client;
+    const accountId = this.accountId;
+    const idOf = (message: unknown) => serializeMessageId((message as { id?: unknown } | null)?.id);
+    void client
+      .onAck((message) => {
+        try {
+          if (!(message as { fromMe?: unknown })?.fromMe) return;
+          const whatsappMessageId = idOf(message);
+          const ackLevel = recordableAckLevel((message as { ack?: unknown }).ack);
+          if (whatsappMessageId && ackLevel !== null) handler({ kind: "ACK", accountId, whatsappMessageId, ackLevel });
+        } catch (err) {
+          console.error(`[openwa] could not read a receipt for ${this.sessionId}`, err);
+        }
+      })
+      .catch((err) => console.error(`[openwa] could not listen for receipts on ${this.sessionId}`, err));
+    void client
+      .onMessageDeleted((message) => {
+        try {
+          const whatsappMessageId = idOf(message);
+          if (whatsappMessageId) handler({ kind: "REVOKED", accountId, whatsappMessageId });
+        } catch (err) {
+          console.error(`[openwa] could not read a deleted message for ${this.sessionId}`, err);
+        }
+      })
+      .catch((err) => console.error(`[openwa] could not listen for deleted messages on ${this.sessionId}`, err));
+  }
+
   private attachMessageListener(): void {
+    this.attachUpdateListeners();
     const handler = this.messageHandler;
     const client = this.client;
     if (!handler || !client) return;
@@ -2326,6 +2445,115 @@ export class OpenWAProvider implements WhatsAppProvider {
         return { success: false, error: "This account cannot edit messages, or the message is too old to edit." };
       }
       return { success: true, providerMessageId: typeof result === "string" ? result : whatsappMessageId };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  // ---- Chat v2 rich messaging (CHAT_RICH_MESSAGING.md). Every call here is a public, unlicensed
+  // ---- method of wa-automate 4.76; none of them throws.
+
+  async loadEarlierMessages(
+    chatId: string,
+  ): Promise<{ ok: true; messages: RawIncomingMessage[]; reachedStart: boolean } | { ok: false; reason: string }> {
+    const client = this.client;
+    if (!client) return { ok: false, reason: "This WhatsApp account is not connected." };
+    if (!isGroupChatId(chatId) && !isPersonalChatId(chatId)) return { ok: false, reason: "Only a group or a personal chat has history to load." };
+    try {
+      // One more page (up to ~50) from the phone into the session, then everything the session now holds
+      // for the chat — the caller stores only what it does not have. Bounded: an unanswered page is a
+      // failed load, never a held command processor.
+      const page = await withTimeout(client.loadEarlierMessages(chatId as ContactId), HISTORY_LOAD_TIMEOUT_MS, "loading earlier messages");
+      const held = await withTimeout(client.getAllMessagesInChat(chatId as ChatId, true, false), HISTORY_LOAD_TIMEOUT_MS, "reading the chat's messages");
+      const messages: RawIncomingMessage[] = [];
+      for (const message of held ?? []) {
+        try {
+          messages.push(toRawIncomingMessage(this.accountId, message));
+        } catch {
+          // One unreadable message must not cost the page; the next load offers it again.
+        }
+      }
+      return { ok: true, messages, reachedStart: !page || page.length === 0 };
+    } catch (err) {
+      return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  async sendPoll(chatId: string, poll: PollContent): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    if (!isGroupChatId(chatId)) return { success: false, error: "WhatsApp allows polls in groups only." };
+    try {
+      const id = await this.client.sendPoll(chatId as GroupChatId, poll.name, poll.options, undefined, poll.allowMultiple);
+      const providerMessageId = serializeMessageId(id);
+      return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the poll." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async sendLocation(chatId: string, location: LocationContent): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      // `address` and `url` are licence-only parameters, so only the name is passed.
+      const id = await this.client.sendLocation(chatId as ChatId, String(location.latitude), String(location.longitude), location.name);
+      const providerMessageId = typeof id === "boolean" ? null : serializeMessageId(id);
+      return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the location." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async sendSticker(chatId: string, webpBase64: string, animated: boolean): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      // The raw-WebP path only: `sendImageAsSticker` uploads the image to the library's own conversion
+      // server, and a customer's picture must never leave this deployment for a third party.
+      const id = await this.client.sendRawWebpAsSticker(chatId as ChatId, webpBase64, animated);
+      const providerMessageId = typeof id === "boolean" ? null : serializeMessageId(id);
+      return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the sticker." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async forwardMessage(chatId: string, whatsappMessageId: string): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const result = await this.client.forwardMessages(chatId as ChatId, [whatsappMessageId as MessageId], false);
+      if (result === false) return { success: false, error: "WhatsApp did not forward the message. It may no longer be on this account's phone." };
+      const providerMessageId = Array.isArray(result) ? serializeMessageId(result[0]) : null;
+      return { success: true, providerMessageId: providerMessageId ?? undefined };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async setMessageStarred(whatsappMessageId: string, star: boolean): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const ok = star ? await this.client.starMessage(whatsappMessageId as MessageId) : await this.client.unstarMessage(whatsappMessageId as MessageId);
+      return ok ? { success: true } : { success: false, error: star ? "WhatsApp did not star the message." : "WhatsApp did not unstar the message." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async setChatPinned(chatId: string, pin: boolean): Promise<SendResult & { changed?: boolean }> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const changed = await this.client.pinChat(chatId as ChatId, pin);
+      // `false` is the library's "probably already in that state"; WhatsApp also caps pinned chats at three.
+      return { success: true, changed: changed === true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async setChatArchived(chatId: string, archive: boolean): Promise<SendResult & { changed?: boolean }> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const changed = await this.client.archiveChat(chatId as ChatId, archive);
+      return { success: true, changed: changed === true };
     } catch (err) {
       return { success: false, error: (err as Error).message };
     }

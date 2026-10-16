@@ -160,7 +160,8 @@ with touch (actions visible, no horizontal scroll); dark mode.
 - **Quote, react and mention are verified up to the provider call** (mock provider) — not against
   WhatsApp. §6 lists the three checks to run on a test number before switching v2 on.
 - **No real-time stream** — the existing 4 s visibility-aware poll is kept (§7).
-- **No delivery / read ticks** — acknowledgements are not stored; one tick means "stored as sent".
+- ~~No delivery / read ticks~~ — added 16 Oct 2026 with deleted messages, history loading, polls, locations,
+  stickers, forward, star and pin/archive on the phone: see `CHAT_RICH_MESSAGING.md`.
 - **Message edits and deletions made elsewhere are not reflected** — the pipeline does not collect them.
 - Polish, not defects: on a narrow phone the attribution line under our own messages wraps into three
   short lines (the same meta line v1 uses); a quote preview shows the original's text without formatting.

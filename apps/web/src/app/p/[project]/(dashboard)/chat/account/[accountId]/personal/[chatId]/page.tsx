@@ -15,6 +15,7 @@ import { MessageThread } from "../../../../MessageThread";
 import { ThreadScroller } from "../../../../ThreadScroller";
 import { conversationAvatar } from "../../../../avatar";
 import { ConversationV2, ThreadSearchToggle } from "../../../../v2/ConversationV2";
+import { PhoneChatMenu } from "../../../../v2/PhoneChatMenu";
 import { attachOwnReactions, isChatUiV2Enabled, mentionNamesFor } from "@/server/chatThreadV2";
 import { accountStatusTone } from "../../../../chatAccounts";
 
@@ -112,6 +113,7 @@ export default async function PersonalChatPage({
 
         <div className={`flex shrink-0 items-center ${withSearch ? "gap-0.5 sm:gap-2" : "gap-2"}`}>
           {withSearch ? <ThreadSearchToggle /> : null}
+          {withSearch ? <PhoneChatMenu conversation={{ accountId: chat.accountId, personalChatId: chat.chatId }} accountLabel={chat.accountLabel} /> : null}
           {isUnanswered ? <MarkWaitingButton accountId={chat.accountId} chatId={chat.chatId} /> : null}
         </div>
       </header>

@@ -2616,6 +2616,17 @@ rmyndharis/OpenWA@078b8aa — `docs/third-party/OPENWA_REFERENCE.md`. Rules wort
   removal is not offered (unverified contract).
 - **Nothing new works with the feature off**: `replyTo` / `mentions` on a send and every v2 read
   action refuse unless `CHAT_UI_V2` is on for the project.
+- **Rich messaging (16 Oct 2026, `CHAT_RICH_MESSAGING.md`)**: delivery/read ticks, deleted-for-everyone,
+  "Load earlier from WhatsApp", polls, locations, stickers, forward, star, pin/archive on the phone —
+  all on the current engine, all behind `CHAT_UI_V2`. Rules worth not undoing:
+  - Receipts only rise and each time is written once (`applyAck`; conditional `updateMany`s in
+    `recordMessageAck`), OUTGOING rows of that account only. A deletion sets `Message.revokedAt` and
+    KEEPS the row and its text; a revoked event is never stored as a message.
+  - A poll / location / sticker / forward is ONE `OutboundMessage` (`contentType` + `content`,
+    MANUAL_REPLY only), re-validated by the worker at send time (`sendRichContent`). Stickers are only
+    stored WebPs sent raw — never `sendImageAsSticker`, which uploads to a third-party server.
+  - History loaded on request is STORE-ONLY (`storeHistoryMessages`): no rules, AI, waits, cases,
+    escalation or mood, no checkpoint move. Never route it through `persistIncomingMessage`.
 
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 

@@ -23,6 +23,7 @@ import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
 import { recordTeamAttendance } from "../teamManagement/attendance.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { countDroppedMessage } from "./dropCounter.js";
+import { initialMessageColumns, recordMessageRevoked } from "./messageUpdates.js";
 import { registerMessageMedia } from "../media/registerMessageMedia.js";
 import { trackSupportResponse } from "../supportResponse/tracker.js";
 import { trackSupportAssignment } from "../supportAssignment/tracker.js";
@@ -64,6 +65,13 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
 
 async function processIncomingMessageInProject(raw: RawIncomingMessage, aiClientOverride?: AiClient): Promise<void> {
   const traceId = `${raw.accountId}:${raw.whatsappMessageId}`;
+
+  // Deleted for everyone: nothing is left to store or answer, so it only marks the stored original
+  // (CHAT_RICH_MESSAGING.md §3) — and is not counted as a dropped message, because it is not one.
+  if (raw.revoked) {
+    await recordMessageRevoked(raw.accountId, raw.whatsappMessageId);
+    return;
+  }
 
   if (!raw.body || raw.body.trim().length === 0) {
     // Counted, not merely returned from. This is the one exit where a message the provider handed
@@ -580,6 +588,7 @@ async function persistIncomingMessage(
         processingStatus,
         quotedMessageId: quotedMessage?.id ?? null,
         mentionedPhones: raw.mentionedPhones ?? [],
+        ...initialMessageColumns(raw),
       },
     });
   } catch (err: any) {
@@ -653,6 +662,10 @@ export async function storeMissedMessage(raw: RawIncomingMessage): Promise<boole
 }
 
 async function storeMissedMessageInProject(raw: RawIncomingMessage): Promise<boolean> {
+  if (raw.revoked) {
+    await recordMessageRevoked(raw.accountId, raw.whatsappMessageId);
+    return false;
+  }
   if (!raw.body || raw.body.trim().length === 0) return false;
 
   if (raw.direction !== "INCOMING") {
@@ -904,6 +917,8 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
         processingStatus: "PROCESSED",
         quotedMessageId: quotedMessage?.id ?? null,
         mentionedPhones: raw.mentionedPhones ?? [],
+        // The first receipt of our own send, and a poll / location's details (CHAT_RICH_MESSAGING.md).
+        ...initialMessageColumns(raw),
       },
     });
     // A photo an executive sent from the business phone is part of the conversation too.

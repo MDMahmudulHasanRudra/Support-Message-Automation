@@ -7,8 +7,11 @@ import {
   createSenderResolver,
   describeSenderId,
   MOOD_LEVEL,
+  readRichContent,
   type Mood,
+  type OutboundContentKind,
   type OutboundSenderType,
+  type RichContent,
   type OwnReactionState,
   type SenderMatchStatus,
 } from "@support-automation/shared";
@@ -732,6 +735,19 @@ export interface ThreadEntry {
    * Others' reactions are never here — receiving them needs a licence this deployment lacks.
    */
   ownReaction?: OwnReactionState;
+  // ---- Chat v2 rich messaging (CHAT_RICH_MESSAGING.md) ----
+  /** A message this account sent: WhatsApp's highest reported ack (null = none reported). */
+  ackLevel?: number | null;
+  /** Deleted for everyone on WhatsApp — the text is still shown, marked as deleted. */
+  revokedAt?: Date | null;
+  /** Starred on WhatsApp by this account, as the worker confirmed. */
+  starred?: boolean;
+  /** A poll's or a location's own details, when WhatsApp delivered them. */
+  rich?: RichContent | null;
+  /** Stored by "Load earlier from WhatsApp", not as it happened. */
+  fromHistory?: boolean;
+  /** A queued send's type (TEXT for a typed reply) and, for a sticker, the file it sends. */
+  queuedContent?: { type: OutboundContentKind; stickerMediaId?: string | null; rich?: RichContent | null };
 }
 
 export interface ThreadSenderIdentity {
@@ -889,6 +905,11 @@ export const THREAD_MESSAGE_SELECT = {
   timestampWa: true,
   isFromTeamMember: true,
   whatsappMessageId: true,
+  ackLevel: true,
+  revokedAt: true,
+  starredAt: true,
+  richContent: true,
+  loadedFromHistoryAt: true,
   quotedMessage: { select: { id: true, body: true, direction: true, senderName: true, senderPhone: true, senderJid: true } },
   // Metadata only; one indexed lookup by the unique messageId for the whole window.
   media: {
@@ -982,6 +1003,11 @@ export async function buildThreadEntries(
     isTeamMember: m.isFromTeamMember,
     ...(m.direction === "INCOMING" ? { sender: identityOf(m.senderPhone, m.senderJid, m.senderName) } : {}),
     quoted: quoteOf(m.quotedMessage),
+    ...(m.direction === "OUTGOING" ? { ackLevel: m.ackLevel } : {}),
+    ...(m.revokedAt ? { revokedAt: m.revokedAt } : {}),
+    ...(m.starredAt ? { starred: true } : {}),
+    ...(m.richContent ? { rich: readRichContent(m.richContent) } : {}),
+    ...(m.loadedFromHistoryAt ? { fromHistory: true } : {}),
     ...(m.direction === "OUTGOING" ? attributionByProviderId.get(m.whatsappMessageId) : undefined),
     ...(() => {
       const mood = messageMoods.get(m.whatsappMessageId);
@@ -1026,6 +1052,7 @@ export async function buildThreadEntries(
       failureReason: row.failureReason,
       quoted: quoteOf(row.replyToMessage),
       ...attributionOf(row),
+      ...(row.contentType !== "TEXT" ? { queuedContent: queuedContentOf(row.contentType, row.content) } : {}),
     });
   }
 
@@ -1034,9 +1061,20 @@ export async function buildThreadEntries(
   return entries;
 }
 
+/** What a queued poll / location / sticker / forward shows before WhatsApp echoes it (display only). */
+function queuedContentOf(type: OutboundContentKind, content: unknown): NonNullable<ThreadEntry["queuedContent"]> {
+  const raw = (content ?? {}) as Record<string, unknown>;
+  if (type === "STICKER") return { type, stickerMediaId: typeof raw.mediaId === "string" ? raw.mediaId : null };
+  if (type === "POLL") return { type, rich: readRichContent({ kind: "POLL", ...raw }) };
+  if (type === "LOCATION") return { type, rich: readRichContent({ kind: "LOCATION", ...raw }) };
+  return { type };
+}
+
 export const QUEUED_SELECT = {
   ...OUTBOUND_ATTRIBUTION_SELECT,
   body: true,
+  contentType: true,
+  content: true,
   status: true,
   createdAt: true,
   failureReason: true,

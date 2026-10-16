@@ -29,6 +29,9 @@ export const MEDIA_PLACEHOLDER_LABELS = [
   "[Location]",
   "[Contact card]",
   "[Media]",
+  // A poll carries its question after the label ("[Poll] Which plan?"), but that is a vote somebody
+  // opened, not a question for support — `isMediaOnlyBody` treats every poll as having nothing to answer.
+  "[Poll]",
 ] as const;
 
 /**
@@ -37,10 +40,12 @@ export const MEDIA_PLACEHOLDER_LABELS = [
  *
  * A captioned image ("[Image] amar bill ashe nai") is deliberately NOT media-only: the caption is
  * a real question the customer typed, and it can be answered on its own terms. Only a bare label
- * means there is genuinely nothing to read.
+ * means there is genuinely nothing to read — except a poll, whose text is its question to the group,
+ * never something the AI should answer.
  */
 export function isMediaOnlyBody(body: string | null | undefined): boolean {
   if (!body) return false;
   const trimmed = body.trim();
+  if (trimmed === "[Poll]" || trimmed.startsWith("[Poll] ")) return true;
   return MEDIA_PLACEHOLDER_LABELS.some((label) => trimmed === label);
 }

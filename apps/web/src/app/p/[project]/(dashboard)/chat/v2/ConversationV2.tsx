@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowDown, Loader2, Search, X } from "lucide-react";
+import { ArrowDown, DownloadCloud, Loader2, Search, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { encodeThreadCursor, mergeThreadPages, type OwnReactionState } from "@support-automation/shared";
 import { Alert } from "@/components/ui";
 import { useProjectRouter } from "@/components/ProjectLink";
 import { cancelQueuedChatMessage, reactToChatMessage } from "@/server/actions/chat";
 import { loadOlderChatMessages, refreshOwnReactions, searchChatThread } from "@/server/actions/chatThread";
+import { loadEarlierFromWhatsApp, readRichCommand, starChatMessage } from "@/server/actions/chatRich";
 import type { OtherAccountCopy, ThreadEntry } from "@/server/chatInbox";
 import type { ConversationRef, ThreadSearchHit } from "@/server/chatThreadV2";
 import { decideOnArrival, distanceFromBottom, NEAR_BOTTOM_PX, scrollTopAfterPrepend, shouldLoadOlder, type ScrollGeometry } from "@/lib/chatScroll";
@@ -14,6 +15,7 @@ import { formatDateTime } from "@/lib/date";
 import type { SavedReplyOption } from "../SavedReplyPicker";
 import { continues, dayFormat } from "../threadPresentation";
 import { ComposerV2, type ReplyTarget } from "./ComposerV2";
+import { ForwardDialog } from "./ForwardDialog";
 import { GalleryLightbox, type GalleryImage } from "./GalleryLightbox";
 import { MessageBubbleV2 } from "./MessageBubbleV2";
 
@@ -371,6 +373,77 @@ export function ConversationV2({
     [contactHrefBase],
   );
 
+  // ---- Forward and star (CHAT_RICH_MESSAGING.md §5–§6) ----------------------------------------------
+  const [forwarding, setForwarding] = useState<ThreadEntry | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+  const star = useCallback(
+    async (entry: ThreadEntry, on: boolean) => {
+      const result = await starChatMessage(entry.id, on);
+      if (result.error) {
+        setNotice(result.error);
+        return;
+      }
+      // The star is drawn once the worker confirmed WhatsApp took it — the next refresh carries it.
+      setToast(on ? "Starring on WhatsApp…" : "Removing the star on WhatsApp…");
+      if (!result.commandId) return;
+      for (let attempt = 0; attempt < 16; attempt++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const state = await readRichCommand(result.commandId);
+        if (state.status === "DONE") {
+          router.refresh();
+          return;
+        }
+        if (state.status === "FAILED" || state.status === "UNKNOWN") {
+          setNotice(`WhatsApp did not ${on ? "star" : "unstar"} the message${state.error ? `: ${state.error}` : "."}`);
+          return;
+        }
+      }
+    },
+    [router],
+  );
+
+  // ---- Earlier messages from WhatsApp itself (§4) ------------------------------------------------
+  // Only once the stored history is exhausted: it asks the phone for one more page, stores what is new
+  // (for reading only — nothing is answered or alerted on), then pages it in like any older page.
+  const [history, setHistory] = useState<{ state: "idle" | "loading" | "done"; text?: string }>({ state: "idle" });
+  const loadFromWhatsApp = useCallback(async () => {
+    setHistory({ state: "loading" });
+    const queued = await loadEarlierFromWhatsApp(conversation);
+    if (queued.error || !queued.commandId) {
+      setHistory({ state: "done", text: queued.error ?? "WhatsApp could not be asked." });
+      return;
+    }
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const state = await readRichCommand(queued.commandId);
+      if (state.status === "FAILED" || state.status === "UNKNOWN") {
+        setHistory({ state: "done", text: `WhatsApp did not return earlier messages${state.error ? `: ${state.error}` : "."} You can try again.` });
+        return;
+      }
+      if (state.status === "DONE") {
+        const stored = state.stored ?? 0;
+        if (stored > 0) {
+          setHasMoreOlder(true);
+          setHistory({ state: "done", text: `${stored} earlier ${stored === 1 ? "message" : "messages"} loaded from WhatsApp.` });
+          await loadOlder();
+          router.refresh();
+        } else {
+          setHistory({
+            state: "done",
+            text: state.reachedStart ? "WhatsApp has no earlier messages for this chat on this phone." : "Nothing new in that page. Press again to go further back.",
+          });
+        }
+        return;
+      }
+    }
+    setHistory({ state: "done", text: "Still waiting for the worker. Try again in a minute." });
+  }, [conversation, loadOlder, router]);
+
   // ---- Rows ------------------------------------------------------------------------------------
   const rows = merged.map((entry, index) => {
     const previous = index === 0 ? null : merged[index - 1]!;
@@ -468,7 +541,21 @@ export function ConversationV2({
                       {loadingOlder ? "Loading earlier messages…" : "Load earlier messages"}
                     </button>
                   ) : (
-                    <p className="text-[11px] text-[color:var(--color-subtle-foreground)]">Start of the stored history — messages from before monitoring began were not recorded.</p>
+                    <div className="flex flex-col items-center gap-1.5 text-center">
+                      <p className="text-[11px] text-[color:var(--color-subtle-foreground)]">
+                        {history.text ?? "Start of the stored history — messages from before monitoring began were not recorded."}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void loadFromWhatsApp()}
+                        disabled={history.state === "loading"}
+                        title="Ask the WhatsApp phone for earlier messages. They are stored for reading only: nothing is answered, tracked or alerted on."
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-[11px] font-medium text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] disabled:opacity-60 max-sm:py-2"
+                      >
+                        {history.state === "loading" ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <DownloadCloud className="size-3" aria-hidden />}
+                        {history.state === "loading" ? "Asking WhatsApp…" : "Load earlier from WhatsApp"}
+                      </button>
+                    </div>
                   )}
                 </div>
               ) : (
@@ -525,6 +612,8 @@ export function ConversationV2({
                         await cancelQueuedChatMessage(outboundId);
                         router.refresh();
                       }}
+                      onForward={(e) => setForwarding(e)}
+                      onStar={(e, on) => void star(e, on)}
                     />
                   )}
                 </div>
@@ -564,6 +653,29 @@ export function ConversationV2({
           onSent={() => scrollToBottom()}
         />
       </div>
+
+      {forwarding ? (
+        <ForwardDialog
+          accountId={conversation.accountId}
+          accountLabel={accountLabel}
+          messageId={forwarding.id}
+          preview={forwarding.body.slice(0, 200)}
+          currentKey={conversation.groupId ?? conversation.personalChatId ?? null}
+          onClose={() => setForwarding(null)}
+          onForwarded={(name) => {
+            setForwarding(null);
+            setToast(`Forward to ${name} queued. It appears in that conversation once sent.`);
+          }}
+        />
+      ) : null}
+      {toast ? (
+        <p
+          role="status"
+          className="pointer-events-none fixed inset-x-0 bottom-24 z-50 mx-auto w-fit max-w-[90vw] rounded-full bg-[var(--color-foreground)] px-4 py-2 text-[12.5px] text-[color:var(--color-background,white)] shadow-[var(--shadow-lg)] animate-fade-in-rise"
+        >
+          {toast}
+        </p>
+      ) : null}
 
       {galleryIndex !== null && images.length ? (
         <GalleryLightbox images={images} index={galleryIndex} onIndex={setGalleryIndex} onClose={() => setGalleryIndex(null)} />

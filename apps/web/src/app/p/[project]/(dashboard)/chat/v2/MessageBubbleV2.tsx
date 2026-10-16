@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, Clock, Copy, CornerUpLeft, Loader2, RotateCcw, SmilePlus, UserRound, X } from "lucide-react";
+import { AlertTriangle, Check, Clock, Copy, CornerUpLeft, Forward, History, Loader2, RotateCcw, SmilePlus, Star, UserRound, X } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from "react";
 import { isMediaPlaceholderBody, mediaCaption, QUICK_REACTIONS } from "@support-automation/shared";
@@ -12,6 +12,7 @@ import { AUTHOR_BADGE, QUEUED_LABEL } from "../threadPresentation";
 import { EmojiPicker } from "./EmojiPicker";
 import { FormattedBody } from "./FormattedBody";
 import { MessageActionSheet } from "./MessageActionSheet";
+import { ForwardedLabel, QueuedSticker, ReceiptTicks, RevokedNotice, RichContentCard } from "./RichContentViews";
 import { senderColor } from "./senderColor";
 
 /** What the bubble shows for this account's own reaction: confirmed, still with the worker, or failed. */
@@ -45,6 +46,8 @@ export function MessageBubbleV2({
   onOpenImage,
   onResend,
   onCancelQueued,
+  onForward,
+  onStar,
 }: {
   entry: ThreadEntry;
   startsRun: boolean;
@@ -62,6 +65,8 @@ export function MessageBubbleV2({
   onOpenImage: (mediaId: string) => void;
   onResend: (body: string) => void;
   onCancelQueued: (outboundId: string) => void;
+  onForward: (entry: ThreadEntry) => void;
+  onStar: (entry: ThreadEntry, star: boolean) => void;
 }) {
   const [reactOpen, setReactOpen] = useState<"quick" | "all" | null>(null);
   const [copied, setCopied] = useState(false);
@@ -70,12 +75,25 @@ export function MessageBubbleV2({
   const isStored = entry.kind === "INCOMING" || entry.kind === "OUTGOING";
   const queued = entry.kind === "QUEUED" ? QUEUED_LABEL[entry.outboundStatus ?? ""] : undefined;
   const notArchived = !entry.media && entry.kind !== "QUEUED" && isMediaPlaceholderBody(entry.body);
-  const hasFile = Boolean(entry.media) || notArchived;
-  const text = hasFile ? mediaCaption(entry.body, entry.media?.type ?? null) : entry.body;
+  // A poll or a location is drawn as its card; its "[Poll] …" label is only the stored text (§5).
+  const rich = entry.rich ?? entry.queuedContent?.rich ?? null;
+  const queuedSticker = entry.queuedContent?.type === "STICKER" ? (entry.queuedContent.stickerMediaId ?? null) : null;
+  const forwarded = entry.queuedContent?.type === "FORWARD";
+  const hasFile = Boolean(entry.media) || notArchived || Boolean(queuedSticker);
+  const text = rich || queuedSticker
+    ? null
+    : forwarded
+      ? entry.body.replace(/^\[Forwarded\]\s?/, "")
+      : hasFile
+        ? mediaCaption(entry.body, entry.media?.type ?? null)
+        : entry.body;
   const { confirmed, latest } = reactionView(entry, reactionOverlay);
   const outboundId = entry.kind === "QUEUED" ? entry.id.replace(/^outbound-/, "") : null;
   const canCancel = entry.kind === "QUEUED" && entry.outboundStatus === "PENDING" && entry.authoredBy === "HUMAN_USER" && canReply;
-  const canResend = entry.kind === "QUEUED" && queued?.tone === "bad" && entry.authoredBy === "HUMAN_USER" && canReply;
+  // "Edit and send again" puts TEXT back in the composer; a poll, location, sticker or forward is redone from its own menu.
+  const canResend = entry.kind === "QUEUED" && queued?.tone === "bad" && entry.authoredBy === "HUMAN_USER" && canReply && !entry.queuedContent;
+  const canForward = isStored && canReply && !entry.revokedAt;
+  const canStar = isStored && canReply;
   const senderKey = entry.sender?.contactKey ?? entry.senderPhone ?? "";
   const href = entry.sender ? contactHref(entry.sender.contactKey) : null;
 
@@ -97,7 +115,7 @@ export function MessageBubbleV2({
   // is that control's own.
   const [menu, setMenu] = useState<{ anchor: { x: number; y: number } | null } | null>(null);
   const press = useRef<{ timer: number; x: number; y: number } | null>(null);
-  const hasMenu = (isStored && canReply) || (entry.body !== "" && entry.kind !== "SYSTEM") || canCancel || canResend;
+  const hasMenu = (isStored && canReply) || (entry.body !== "" && entry.kind !== "SYSTEM") || canCancel || canResend || canForward;
   const cancelPress = () => {
     if (press.current) window.clearTimeout(press.current.timer);
     press.current = null;
@@ -192,6 +210,8 @@ export function MessageBubbleV2({
                   : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-foreground)]"
             }`}
           >
+            {entry.revokedAt ? <RevokedNotice outgoing={isOutbound} /> : null}
+            {forwarded ? <ForwardedLabel /> : null}
             {entry.quoted ? (
               <button
                 type="button"
@@ -209,8 +229,10 @@ export function MessageBubbleV2({
             ) : null}
             {entry.media ? <MessageAttachment media={entry.media} onOpenImage={entry.media.type === "IMAGE" ? () => onOpenImage(entry.media!.id) : undefined} /> : null}
             {notArchived ? <MediaNotArchived body={entry.body} /> : null}
+            {queuedSticker ? <QueuedSticker mediaId={queuedSticker} /> : null}
+            {rich ? <RichContentCard rich={rich} /> : null}
             {text ? (
-              <div className={hasFile ? "px-2 pt-1.5 pb-0.5" : undefined}>
+              <div className={`${hasFile ? "px-2 pt-1.5 pb-0.5" : ""} ${entry.revokedAt ? "opacity-70" : ""}`}>
                 <FormattedBody body={text} mentionNames={mentionNames} onDark={false} />
               </div>
             ) : null}
@@ -228,6 +250,22 @@ export function MessageBubbleV2({
             {isStored && canReply ? (
               <button type="button" className={ACTION_BTN} onClick={() => setReactOpen(reactOpen ? null : "quick")} aria-label="React" aria-expanded={reactOpen !== null}>
                 <SmilePlus className="size-3.5" aria-hidden />
+              </button>
+            ) : null}
+            {canForward ? (
+              <button type="button" className={ACTION_BTN} onClick={() => onForward(entry)} aria-label="Forward" title="Forward to another conversation">
+                <Forward className="size-3.5" aria-hidden />
+              </button>
+            ) : null}
+            {canStar ? (
+              <button
+                type="button"
+                className={ACTION_BTN}
+                onClick={() => onStar(entry, !entry.starred)}
+                aria-label={entry.starred ? "Unstar" : "Star"}
+                title={entry.starred ? "Unstar on WhatsApp" : "Star on WhatsApp"}
+              >
+                <Star className={`size-3.5 ${entry.starred ? "fill-current text-[color:var(--color-warning)]" : ""}`} aria-hidden />
               </button>
             ) : null}
             {entry.body && entry.kind !== "SYSTEM" ? (
@@ -326,7 +364,7 @@ export function MessageBubbleV2({
           className={`mt-1 flex max-w-full flex-wrap items-center gap-x-1 gap-y-0.5 px-1 text-[10.5px] text-[color:var(--color-neutral-fg)] ${isOutbound ? "justify-end" : ""} ${
             endsRun || queued ? "" : "h-0 overflow-hidden opacity-0 transition-opacity duration-[var(--duration-fast)] group-hover/bubble:h-auto group-hover/bubble:opacity-100"
           }`}
-          title={formatDateTime(entry.at)}
+          title={`${formatDateTime(entry.at)}${entry.fromHistory ? " · loaded from WhatsApp history on request" : ""}`}
         >
           {isOutbound ? <Attribution entry={entry} accountLabel={accountLabel} /> : null}
           {queued ? (
@@ -337,10 +375,12 @@ export function MessageBubbleV2({
             </span>
           ) : (
             <>
+              {entry.starred ? <Star className="size-2.5 fill-current text-[color:var(--color-warning)]" aria-label="Starred" /> : null}
+              {entry.fromHistory ? <History className="size-2.5" aria-label="Loaded from WhatsApp history" /> : null}
               <span className="tabular">{formatTime(entry.at)}</span>
-              {/* One tick: stored as sent by this account. Delivery and read receipts are not recorded,
-                  so no second tick is ever drawn. */}
-              {entry.kind === "OUTGOING" ? <Check className="size-3" aria-label="Sent" /> : null}
+              {/* The receipts WhatsApp reported: one tick sent, two delivered, blue read (in a group,
+                  by everyone). No receipt reported yet reads as one tick — what storing it proves. */}
+              {entry.kind === "OUTGOING" ? <ReceiptTicks ackLevel={entry.ackLevel} isGroup={isGroup} /> : null}
             </>
           )}
         </span>
@@ -360,6 +400,11 @@ export function MessageBubbleV2({
           canCopy={entry.body !== "" && entry.kind !== "SYSTEM"}
           canCancel={canCancel && Boolean(outboundId)}
           canResend={canResend}
+          canForward={canForward}
+          canStar={canStar}
+          starred={Boolean(entry.starred)}
+          onForward={() => onForward(entry)}
+          onStar={() => onStar(entry, !entry.starred)}
           onReply={() => onReply(entry)}
           onReact={(emoji) => onReact(entry, emoji)}
           onCopy={copy}

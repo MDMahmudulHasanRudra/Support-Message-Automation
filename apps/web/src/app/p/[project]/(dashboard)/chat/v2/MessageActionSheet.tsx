@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, CornerUpLeft, RotateCcw, SmilePlus, X } from "lucide-react";
+import { Check, Copy, CornerUpLeft, Forward, RotateCcw, SmilePlus, Star, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { QUICK_REACTIONS } from "@support-automation/shared";
@@ -28,11 +28,16 @@ export interface MessageActionSheetProps {
   canCopy: boolean;
   canCancel: boolean;
   canResend: boolean;
+  canForward?: boolean;
+  canStar?: boolean;
+  starred?: boolean;
   onReply: () => void;
   onReact: (emoji: string) => void;
   onCopy: () => Promise<boolean>;
   onCancel: () => void;
   onResend: () => void;
+  onForward?: () => void;
+  onStar?: () => void;
   onClose: () => void;
 }
 
@@ -112,6 +117,18 @@ export function MessageActionSheet(props: MessageActionSheetProps) {
           <button type="button" className={ITEM} onClick={act(props.onReply)}>
             <CornerUpLeft className="size-[18px] text-[color:var(--color-muted-foreground)]" aria-hidden />
             Reply
+          </button>
+        ) : null}
+        {props.canForward && props.onForward ? (
+          <button type="button" className={ITEM} onClick={act(props.onForward)}>
+            <Forward className="size-[18px] text-[color:var(--color-muted-foreground)]" aria-hidden />
+            Forward
+          </button>
+        ) : null}
+        {props.canStar && props.onStar ? (
+          <button type="button" className={ITEM} onClick={act(props.onStar)}>
+            <Star className={`size-[18px] ${props.starred ? "fill-current text-[color:var(--color-warning)]" : "text-[color:var(--color-muted-foreground)]"}`} aria-hidden />
+            {props.starred ? "Unstar" : "Star"}
           </button>
         ) : null}
         {props.canCopy ? (

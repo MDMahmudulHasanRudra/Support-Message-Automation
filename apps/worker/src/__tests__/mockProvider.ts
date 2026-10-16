@@ -12,6 +12,7 @@ import type {
   SendResult,
   WhatsAppProvider,
 } from "../provider/WhatsAppProvider.js";
+import type { LocationContent, PollContent } from "@support-automation/shared";
 import type { MediaDownloadInfo, RawIncomingMessage } from "../pipeline/types.js";
 
 /**
@@ -239,5 +240,46 @@ export class MockProvider implements WhatsAppProvider {
   async updateProfile(update: ProfileUpdate): Promise<ProfileUpdateResult> {
     this.profileUpdates.push(update);
     return this.nextProfileUpdateResult;
+  }
+
+  // ---- Chat v2 rich messaging (CHAT_RICH_MESSAGING.md) ----
+  public richSends: Array<{ kind: "POLL" | "LOCATION" | "STICKER" | "FORWARD"; chatId: string; detail: unknown }> = [];
+  public nextRichResult: SendResult = { success: true, providerMessageId: "mock-rich-id" };
+  async sendPoll(chatId: string, poll: PollContent): Promise<SendResult> {
+    this.richSends.push({ kind: "POLL", chatId, detail: poll });
+    return this.nextRichResult;
+  }
+  async sendLocation(chatId: string, location: LocationContent): Promise<SendResult> {
+    this.richSends.push({ kind: "LOCATION", chatId, detail: location });
+    return this.nextRichResult;
+  }
+  async sendSticker(chatId: string, webpBase64: string, animated: boolean): Promise<SendResult> {
+    this.richSends.push({ kind: "STICKER", chatId, detail: { webpBase64, animated } });
+    return this.nextRichResult;
+  }
+  async forwardMessage(chatId: string, whatsappMessageId: string): Promise<SendResult> {
+    this.richSends.push({ kind: "FORWARD", chatId, detail: whatsappMessageId });
+    return this.nextRichResult;
+  }
+  public stars: Array<{ whatsappMessageId: string; star: boolean }> = [];
+  public nextStarResult: SendResult = { success: true };
+  async setMessageStarred(whatsappMessageId: string, star: boolean): Promise<SendResult> {
+    this.stars.push({ whatsappMessageId, star });
+    return this.nextStarResult;
+  }
+  public chatStates: Array<{ chatId: string; pin?: boolean; archive?: boolean }> = [];
+  async setChatPinned(chatId: string, pin: boolean): Promise<SendResult & { changed?: boolean }> {
+    this.chatStates.push({ chatId, pin });
+    return { success: true, changed: true };
+  }
+  async setChatArchived(chatId: string, archive: boolean): Promise<SendResult & { changed?: boolean }> {
+    this.chatStates.push({ chatId, archive });
+    return { success: true, changed: false };
+  }
+  /** What one "load earlier" returns; null = a failed read. */
+  public earlierMessages: RawIncomingMessage[] | null = [];
+  async loadEarlierMessages(chatId: string): Promise<{ ok: true; messages: RawIncomingMessage[]; reachedStart: boolean } | { ok: false; reason: string }> {
+    void chatId;
+    return this.earlierMessages === null ? { ok: false, reason: "mock read failed" } : { ok: true, messages: this.earlierMessages, reachedStart: this.earlierMessages.length === 0 };
   }
 }

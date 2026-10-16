@@ -398,6 +398,32 @@ enum WorkerCommandType {
   /// { displayName?, about?, pictureDataUrl? }). A partial update: a field left out of the payload
   /// is left untouched on WhatsApp.
   UPDATE_PROFILE
+  /// Chat v2 (CHAT_RICH_MESSAGING.md §4): read up to one page of a chat's earlier messages from
+  /// WhatsApp (payload: { chatId, conversationKey }) and store the ones we do not have. Stored for
+  /// reading only — no rule, AI, wait, case, alert or escalation is ever opened for them.
+  LOAD_EARLIER_MESSAGES
+  /// Star or unstar one stored message on WhatsApp (payload: { messageId, whatsappMessageId, star }).
+  /// The worker writes `Message.starredAt` only after WhatsApp accepted it.
+  STAR_MESSAGE
+  /// Pin or unpin a chat on the WhatsApp phone (payload: { chatId, pin }). Not the inbox's own pin.
+  PIN_CHAT
+  /// Archive or unarchive a chat on the WhatsApp phone (payload: { chatId, archive }). Not the
+  /// inbox's own archive, and never a change to monitoring.
+  ARCHIVE_CHAT
+}
+
+/// What an outbound row carries (CHAT_RICH_MESSAGING.md §5). TEXT is every row that existed before;
+/// the others are typed by a person in Chat v2 only (`MANUAL_REPLY`) and described by `content`.
+enum OutboundContentType {
+  TEXT
+  /// payload: { name, options[], allowMultiple } — groups only.
+  POLL
+  /// payload: { latitude, longitude, name }.
+  LOCATION
+  /// payload: { mediaId } — a sticker already stored in media storage, sent as it is.
+  STICKER
+  /// payload: { sourceMessageId } — a stored message of the same account, forwarded.
+  FORWARD
 }
 
 enum WorkerCommandStatus {
@@ -1487,10 +1513,29 @@ model Message {
   /// Powers Support Activity Tracking's MENTION trigger type.
   mentionedPhones  String[]  @default([])
 
+  /// Receipts for a message this account sent (CHAT_RICH_MESSAGING.md §2): WhatsApp's own ack level
+  /// (1 sent, 2 delivered, 3 read, 4 played), only ever raised, and when we first learned each step.
+  /// In a group, 2 and 3 mean every participant. Null on incoming rows and on rows from before.
+  ackLevel            Int?
+  deliveredAt         DateTime?
+  readAt              DateTime?
+  playedAt            DateTime?
+  /// When WhatsApp told us this message was deleted for everyone. The row and its text are kept —
+  /// what was said stays on record; the thread marks it as deleted (§3).
+  revokedAt           DateTime?
+  /// Starred on WhatsApp by this account, as the worker confirmed it (§6).
+  starredAt           DateTime?
+  /// A poll or a location, as WhatsApp described it: { kind: "POLL", name, options[], allowMultiple }
+  /// or { kind: "LOCATION", latitude, longitude, name }. Display only; `body` stays the searchable text.
+  richContent         Json?
+  /// Stored on request by "Load earlier from WhatsApp" (§4), never live: no rule, wait, case or alert
+  /// was opened for it.
+  loadedFromHistoryAt DateTime?
+
   executions               AutomationExecution[]
-  outboundReplies          OutboundMessage[] @relation("OutboundRelatedMessage")
+  outboundReplies          OutboundMessage[]          @relation("OutboundRelatedMessage")
   /// Chat v2 manual replies that quote this message (OutboundMessage.replyToMessageId).
-  quotedByOutbound         OutboundMessage[] @relation("OutboundReplyTo")
+  quotedByOutbound         OutboundMessage[]          @relation("OutboundReplyTo")
   notifications            Notification[]
   triggeredEscalationCases SupportEscalationCase[]    @relation("EscalationTriggerMessage")
   patternCandidateEvidence PatternCandidateEvidence[]
@@ -1618,6 +1663,10 @@ model OutboundMessage {
   /// handover mention, which tags a team member inside the customer's own group so a human is
   /// pulled into the conversation rather than told about it somewhere else.
   mentions         String[]              @default([])
+  /// TEXT for everything but the Chat v2 composer's poll / location / sticker / forward (§5). The
+  /// worker sends a non-TEXT row only for a MANUAL_REPLY; `body` is its readable summary.
+  contentType      OutboundContentType   @default(TEXT)
+  content          Json?
   actionType       ActionType
   idempotencyKey   String                @unique
   status           OutboundMessageStatus @default(PENDING)

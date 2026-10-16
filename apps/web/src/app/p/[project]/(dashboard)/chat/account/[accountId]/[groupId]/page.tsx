@@ -18,6 +18,7 @@ import { AiActiveNotice, MessageThread } from "../../../MessageThread";
 import { ThreadScroller } from "../../../ThreadScroller";
 import { conversationAvatar } from "../../../avatar";
 import { ConversationV2, ThreadSearchToggle } from "../../../v2/ConversationV2";
+import { PhoneChatMenu } from "../../../v2/PhoneChatMenu";
 import { attachOwnReactions, isChatUiV2Enabled, mentionNamesFor } from "@/server/chatThreadV2";
 import { accountStatusTone } from "../../../chatAccounts";
 
@@ -154,6 +155,7 @@ export default async function ChatConversationPage({
             </span>
           ) : null}
           {withSearch ? <ThreadSearchToggle /> : null}
+          {withSearch ? <PhoneChatMenu conversation={{ accountId: group.accountId, groupId: group.id }} accountLabel={group.accountLabel} /> : null}
           {isUnanswered ? <MarkWaitingButton groupId={group.id} /> : null}
           <Link
             href="/groups"
