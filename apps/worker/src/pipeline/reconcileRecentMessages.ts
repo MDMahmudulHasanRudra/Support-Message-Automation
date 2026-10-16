@@ -27,7 +27,7 @@ import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
  *
  * Whether a recovered message is answered follows the catch-up rule unchanged: inside the
  * automation window it goes through the ordinary pipeline, older ones are stored without rules.
- * Groups only, like the rest of collection; the history read is bounded by chat activity.
+ * Groups and one-to-one chats, like the gap sweep (the same probe); bounded by chat activity.
  */
 const LOOP_NAME = "message-reconcile";
 const INTERVAL_MS = () => Number(process.env.MESSAGE_RECONCILE_INTERVAL_MINUTES || 10) * 60_000;

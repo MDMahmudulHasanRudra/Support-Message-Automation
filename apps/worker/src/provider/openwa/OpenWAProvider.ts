@@ -16,7 +16,7 @@ import {
   type MessageId,
 } from "@open-wa/wa-automate";
 import type { MediaDownloadInfo, RawIncomingMessage, RawMediaDescriptor } from "../../pipeline/types.js";
-import { classifyWhatsAppMedia } from "@support-automation/shared";
+import { classifyWhatsAppMedia, isPersonalChatId, selectCatchUpChats, type ChatActivity } from "@support-automation/shared";
 import type {
   AccountInfo,
   CollectionProbe,
@@ -28,10 +28,17 @@ import type {
   NumberCheckResult,
   ProfileUpdate,
   ProfileUpdateResult,
+  SendOptions,
   SendResult,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
-import { GroupListNotReadyError, SessionNotReadyError, type BrowserUsage } from "../WhatsAppProvider.js";
+import {
+  chooseSendRoute,
+  GroupListNotReadyError,
+  REPLY_WITH_MENTIONS_REFUSAL,
+  SessionNotReadyError,
+  type BrowserUsage,
+} from "../WhatsAppProvider.js";
 import { summariseProcessStats } from "./processStats.js";
 import {
   readPairingPreference,
@@ -482,6 +489,8 @@ export class OpenWAProvider implements WhatsAppProvider {
    * the next caller joins it instead of queueing a second read behind it.
    */
   private groupRead: { client: Client; promise: Promise<LeanGroupChat[]> } | null = null;
+  /** The same guard for the gap probe's personal-chat read (`listActivePersonalChats`). */
+  private personalRead: { client: Client; promise: Promise<ChatActivity[]> } | null = null;
   private state: OpenWAConnectionState = "DISCONNECTED";
   // OpenWA's onStateChanged can fire several transitions within milliseconds of each other (e.g.
   // OPENING -> PAIRING -> CONNECTED), and each call site below fires setState() without awaiting
@@ -1884,6 +1893,8 @@ export class OpenWAProvider implements WhatsAppProvider {
    * Everything the browser still holds for chats touched since `since` — how a gap gets filled
    * after the worker was down, restarted, or reconnecting.
    *
+   * Groups and one-to-one chats (`selectCatchUpChats`); status, channels and broadcast lists never.
+   *
    * Bounded by chat activity, not by the roster: `getAllGroups()` reports each chat's last
    * interaction, so a fifteen-minute gap reads the handful of groups that actually received
    * something rather than scanning all 1,848. `getAllMessagesInChat` returns what WhatsApp Web has
@@ -1914,8 +1925,9 @@ export class OpenWAProvider implements WhatsAppProvider {
    *   groups it cannot be one. WhatsApp Web returning an empty roster is a statement about the
    *   page's state, not about the account, so it is `unknown` too.
    *
-   * A failure to read ONE chat's history is not a failure of the probe — the other chats still
-   * answered, which is what the question was.
+   * A failure to read ONE chat's history, or the personal-chat list, is not a failure of the probe —
+   * the other chats still answered, which is what the question was. It is reported as `incomplete`,
+   * so a gap sweep records PARTIAL rather than RECOVERED.
    */
   async probeCollection(since: Date, limit: number): Promise<CollectionProbe> {
     if (!this.client) {
@@ -1953,10 +1965,25 @@ export class OpenWAProvider implements WhatsAppProvider {
       return { ok: false, reason: "WhatsApp returned no chats at all, which an account in groups cannot truly be." };
     }
 
-    // `t` is seconds since the epoch of the chat's last interaction. A chat that has not been
-    // touched since the gap began cannot be hiding a message from inside it.
-    const active = chats.filter((chat) => typeof chat.t === "number" && chat.t * 1000 > sinceMs);
+    // Personal chats too (Phase 2): the live path stores one-to-one messages, so one that arrived
+    // while the worker was down was lost for good when only groups were read back. Read separately
+    // and AFTER the group list, which stays the proof that the session can be read at all: a failure
+    // here leaves the probe's answer standing and says what it could not check.
+    const gaps: string[] = [];
+    let personal: ChatActivity[] = [];
+    try {
+      personal = await withTimeout(this.listActivePersonalChats(Math.floor(sinceMs / 1000)), PROBE_ENUMERATION_TIMEOUT_MS, "personal chat list");
+    } catch (err) {
+      const message = (err as Error).message || "unknown error";
+      console.warn("[openwa] could not list personal chats for the gap probe", err);
+      gaps.push(`One-to-one chats could not be listed (${message}), so personal messages in this window were not checked.`);
+    }
 
+    // `t` is seconds since the epoch of the chat's last interaction. A chat that has not been
+    // touched since the gap began cannot be hiding a message from inside it (selectCatchUpChats).
+    const active = selectCatchUpChats([...chats, ...personal], sinceMs);
+
+    let unreadable = 0;
     for (const chat of active) {
       if (collected.length >= limit) break;
       try {
@@ -1969,15 +1996,92 @@ export class OpenWAProvider implements WhatsAppProvider {
           if (collected.length >= limit) break;
         }
       } catch (err) {
+        unreadable += 1;
         console.warn(`[openwa] could not read history for chat ${chat.id} — skipping it`, err);
       }
     }
+    if (unreadable > 0) gaps.push(`The history of ${unreadable} chat(s) could not be read.`);
 
-    return { ok: true, messages: collected.sort((a, b) => a.timestampWa.getTime() - b.timestampWa.getTime()) };
+    const messages = collected.sort((a, b) => a.timestampWa.getTime() - b.timestampWa.getTime());
+    return gaps.length > 0 ? { ok: true, messages, incomplete: gaps.join(" ") } : { ok: true, messages };
   }
 
-  async sendMessage(chatId: string, body: string, mentions?: string[]): Promise<SendResult> {
+  /**
+   * One-to-one chats (`@c.us` / `@lid`) touched after `sinceSeconds`: ids and activity times only,
+   * read inside the page so nothing is serialised for the thousands of chats that are not. Same
+   * one-read-per-session rule as `listGroupChats`, for the same reason: an evaluate the caller
+   * stopped waiting for keeps running in the page, and a second one would queue behind it.
+   */
+  private async listActivePersonalChats(sinceSeconds: number): Promise<ChatActivity[]> {
+    const client = this.client;
+    if (!client) throw new Error("No live WhatsApp session in this process.");
+    const running = this.personalRead;
+    if (running && running.client === client) return running.promise;
+    const promise = this.readActivePersonalChats(client, sinceSeconds);
+    this.personalRead = { client, promise };
+    const release = () => {
+      if (this.personalRead?.promise === promise) this.personalRead = null;
+    };
+    promise.then(release, release);
+    return promise;
+  }
+
+  private async readActivePersonalChats(client: Client, sinceSeconds: number): Promise<ChatActivity[]> {
+    try {
+      const lean = await client.getPage().evaluate((since: number) => {
+        interface PageChat {
+          id?: { _serialized?: string; server?: string };
+          t?: unknown;
+          toJSON?: () => { t?: number };
+        }
+        const store = (
+          globalThis as unknown as { Store?: { Chat?: { filter?: (fn: (chat: PageChat) => boolean) => PageChat[] } } }
+        ).Store;
+        if (!store?.Chat || typeof store.Chat.filter !== "function") return null;
+        // WhatsApp's individual domains, as isPersonalChatId (packages/shared/src/whatsappChats.ts).
+        const isPersonal = (chat: PageChat) => {
+          const server = chat?.id?.server;
+          const id = String(chat?.id?._serialized ?? "");
+          return server === "c.us" || server === "lid" || id.endsWith("@c.us") || id.endsWith("@lid");
+        };
+        const lastActivity = (chat: PageChat): number | null => {
+          if (typeof chat.t === "number") return chat.t;
+          try {
+            const json = typeof chat.toJSON === "function" ? chat.toJSON() : {};
+            return typeof json.t === "number" ? json.t : null;
+          } catch {
+            return null; // a chat still arriving from the phone; its activity is read next time
+          }
+        };
+        const active: { id: string; t: number }[] = [];
+        for (const chat of store.Chat.filter(isPersonal)) {
+          const id = chat?.id?._serialized;
+          const t = lastActivity(chat);
+          if (typeof id === "string" && typeof t === "number" && t > since) active.push({ id, t });
+        }
+        return active;
+      }, sinceSeconds);
+      if (Array.isArray(lean)) return lean;
+      console.warn("[openwa] lean personal-chat read found no usable chat store — falling back to getAllChats()");
+    } catch (err) {
+      console.warn("[openwa] lean personal-chat read failed — falling back to getAllChats()", err);
+    }
+    const chats: unknown = await client.getAllChats();
+    if (!Array.isArray(chats)) {
+      throw new Error(`WhatsApp Web returned no chat list (got ${chats === null ? "null" : typeof chats}).`);
+    }
+    const active: ChatActivity[] = [];
+    for (const chat of chats as Array<{ id?: unknown; t?: unknown }>) {
+      if (typeof chat?.id !== "string" || !isPersonalChatId(chat.id)) continue;
+      if (typeof chat.t === "number" && chat.t > sinceSeconds) active.push({ id: chat.id, t: chat.t });
+    }
+    return active;
+  }
+
+  async sendMessage(chatId: string, body: string, mentions?: string[], options?: SendOptions): Promise<SendResult> {
     if (!this.client) return { success: false, error: "Provider is not connected." };
+    const route = chooseSendRoute(mentions, options);
+    if (route === "REFUSE_REPLY_WITH_MENTIONS") return { success: false, error: REPLY_WITH_MENTIONS_REFUSAL };
     try {
       // ChatId is a branded template-literal string type; a plain runtime
       // string (from our DB) is structurally valid but needs an explicit
@@ -1988,15 +2092,27 @@ export class OpenWAProvider implements WhatsAppProvider {
       // would change the behaviour of every message in the product to serve one feature.
       // `hideTags: false` keeps the @name visible in the message — the whole point here is that a
       // person reading the group can see who is being asked.
+      //
+      // A quoted reply goes through `reply()`, the library's public call (no Insiders licence). It
+      // returns false when WhatsApp Web cannot find the quoted message on this device; that is a
+      // failure with a reason, never a fallback to an unquoted send.
       const result =
-        mentions && mentions.length > 0
-          ? await this.client.sendTextWithMentions(
-              chatId as ChatId,
-              body as Content,
-              false,
-              mentions as ContactId[],
-            )
-          : await this.client.sendText(chatId as ChatId, body as Content);
+        route === "REPLY"
+          ? await this.client.reply(chatId as ChatId, body as Content, options!.quotedMessageId as MessageId)
+          : route === "MENTIONS"
+            ? await this.client.sendTextWithMentions(
+                chatId as ChatId,
+                body as Content,
+                false,
+                mentions as ContactId[],
+              )
+            : await this.client.sendText(chatId as ChatId, body as Content);
+      if (route === "REPLY" && !result) {
+        return {
+          success: false,
+          error: "WhatsApp did not accept the reply — the quoted message may no longer be on this account's WhatsApp. Nothing was sent.",
+        };
+      }
       return {
         success: Boolean(result),
         providerMessageId: typeof result === "string" ? result : undefined,

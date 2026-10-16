@@ -1,4 +1,5 @@
 import { formatDhakaDateKey, getDhakaWeekRange } from "./dhakaDay.js";
+import type { IntelActor } from "./intelligence/model.js";
 import {
   computeOvertimeDays,
   DEFAULT_OVERTIME_FALLBACK_DUTY_MINUTES,
@@ -25,6 +26,13 @@ import {
  *   A customer message STARTS a wait when the message before it in that group was a reply (MEMBER or
  *   BUSINESS) or there was none. Four customer lines in a row are one wait, not four. The wait ends at
  *   the next reply in that group. Only waits that START inside the report period are counted.
+ *   The reply that ends a wait may be AUTOMATED (AI, a rule): this is the "first observed response".
+ *   Who sent it, and the separate human-only measure, are teamReportReliability.ts — beside these
+ *   figures, never changing them.
+ *   Messages before the period may be passed in as CONTEXT: they are never counted, but a customer
+ *   line just after midnight that continues a wait begun before it is then not a second wait — so a
+ *   month's waits are the sum of its days' (the loader passes the 4 hours before the period, plus
+ *   each group's last message before that).
  *
  * Missed and Recall — never double-counted:
  *   threshold = the group's escalation-policy first alert if it has a priority, else the "missed
@@ -80,6 +88,12 @@ export interface ReportMessage {
   kind: ReportMessageKind;
   /** Set for MEMBER messages the roster could attribute; null otherwise. */
   memberId: string | null;
+  /**
+   * Who sent it, more finely than `kind` (Phase 2 reply provenance, teamReportReliability.ts): a
+   * BUSINESS message as AI, RULE, BROADCAST, OPERATOR or BUSINESS_PHONE from the send it echoes.
+   * Optional and never used for counting — every figure above is decided by `kind` alone.
+   */
+  actor?: IntelActor;
 }
 
 export type ReportGranularity = "day" | "week" | "month";
@@ -92,6 +106,8 @@ export interface ReportWait {
   askedAt: number;
   repliedAt: number | null;
   repliedBy: WaitReplier;
+  /** The closing reply's `actor`, when the caller classified it (present only then). */
+  repliedByActor?: IntelActor;
   waitSeconds: number | null;
   thresholdSeconds: number;
   status: WaitStatus;
@@ -350,6 +366,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         askedAt: message.ts,
         repliedAt: reply?.ts ?? null,
         repliedBy: reply ? (reply.kind === "BUSINESS" ? "BUSINESS" : reply.memberId) : null,
+        ...(reply?.actor ? { repliedByActor: reply.actor } : {}),
         waitSeconds: waitMs === null ? null : Math.round(waitMs / 1000),
         thresholdSeconds: Math.round(thresholdMs / 1000),
         status,

@@ -100,6 +100,13 @@ export interface RosterIdentity {
   id: string;
   phoneNumber: string;
   whatsappId: string | null;
+  /**
+   * Messages before this moment are never credited to this member (`InternalTeamMember.attributeFrom`,
+   * Phase 2): a customer's number that later joins the team keeps its customer history. Null or
+   * absent: every message counts, as it always did. Applied only when `resolve` is given the
+   * message's time — reports do; the live pipeline does not, so anyone on the roster is staff now.
+   */
+  attributeFrom?: Date | number | null;
 }
 
 export type SenderMatchStatus =
@@ -134,8 +141,10 @@ export interface SenderResolver {
   /**
    * @param senderPhone  `Message.senderPhone` (domain stripped) — always available.
    * @param senderJid    `Message.senderJid` (domain kept) — null on rows stored before it existed.
+   * @param at           the message's time (ms). Given, a member whose `attributeFrom` is later is
+   *                     not a candidate; omitted, `attributeFrom` is ignored.
    */
-  resolve(senderPhone: string | null | undefined, senderJid?: string | null): SenderResolution;
+  resolve(senderPhone: string | null | undefined, senderJid?: string | null, at?: number | null): SenderResolution;
   /**
    * Every stored `senderPhone` value that resolves to exactly this member — for SQL that has to
    * select a member's own messages (`senderPhone = ANY(...)`). An identifier the member shares
@@ -161,23 +170,35 @@ function push(map: Map<string, string[]>, key: string | null, id: string) {
 export function createSenderResolver(members: readonly RosterIdentity[]): SenderResolver {
   const byWhatsAppId = new Map<string, string[]>();
   const byPhoneDigits = new Map<string, string[]>();
+  const attributeFrom = new Map<string, number>();
   for (const member of members) {
     push(byWhatsAppId, whatsappIdKey(member.whatsappId), member.id);
     push(byPhoneDigits, normalizePhoneNumber(member.phoneNumber), member.id);
+    const from = member.attributeFrom instanceof Date ? member.attributeFrom.getTime() : member.attributeFrom;
+    if (typeof from === "number" && Number.isFinite(from)) attributeFrom.set(member.id, from);
   }
-  const cache = new Map<string, SenderResolution>();
 
-  function resolveUncached(senderPhone: string | null | undefined, senderJid: string | null | undefined): SenderResolution {
+  interface Matches {
+    parsed: ReturnType<typeof parseWhatsAppId>;
+    idMatches: string[];
+    phoneMatches: string[];
+  }
+  const matchCache = new Map<string, Matches>();
+  const decisionCache = new Map<string, SenderResolution>();
+
+  function matchesFor(senderPhone: string | null | undefined, senderJid: string | null | undefined): Matches {
     // The domain-carrying id is the better witness when we have it; the stripped one is the fallback.
     const parsed = parseWhatsAppId(senderJid) ?? parseWhatsAppId(senderPhone);
+    if (!parsed || !isPersonKind(parsed.kind)) return { parsed, idMatches: [], phoneMatches: [] };
+    const digits = normalizePhoneNumber(parsed.user);
+    return { parsed, idMatches: byWhatsAppId.get(parsed.user) ?? [], phoneMatches: digits ? (byPhoneDigits.get(digits) ?? []) : [] };
+  }
+
+  function decide({ parsed, idMatches, phoneMatches }: Matches): SenderResolution {
     if (!parsed) return { ...UNRESOLVED, idKind: null };
     if (!isPersonKind(parsed.kind)) {
       return { status: "NOT_A_PERSON", memberId: null, isRosterMember: false, candidateIds: [], idKind: parsed.kind };
     }
-
-    const idMatches = byWhatsAppId.get(parsed.user) ?? [];
-    const digits = normalizePhoneNumber(parsed.user);
-    const phoneMatches = digits ? (byPhoneDigits.get(digits) ?? []) : [];
     const candidates = [...new Set([...idMatches, ...phoneMatches])].sort();
 
     if (candidates.length === 0) return { ...UNRESOLVED, idKind: parsed.kind };
@@ -196,12 +217,25 @@ export function createSenderResolver(members: readonly RosterIdentity[]): Sender
     return { status, memberId: null, isRosterMember: true, candidateIds: candidates, idKind: parsed.kind };
   }
 
-  function resolve(senderPhone: string | null | undefined, senderJid?: string | null): SenderResolution {
+  function resolve(senderPhone: string | null | undefined, senderJid?: string | null, at?: number | null): SenderResolution {
     const key = `${senderPhone ?? ""}\u0000${senderJid ?? ""}`;
-    let hit = cache.get(key);
+    let matches = matchCache.get(key);
+    if (!matches) {
+      matches = matchesFor(senderPhone, senderJid);
+      matchCache.set(key, matches);
+    }
+    // Before a member's attribute-from date, they are not a candidate at all: the decision is taken
+    // on the members who were. Rarely needed, so never cached (one entry per message time).
+    if (typeof at === "number" && attributeFrom.size > 0) {
+      const counts = (id: string) => (attributeFrom.get(id) ?? -Infinity) <= at;
+      if (![...matches.idMatches, ...matches.phoneMatches].every(counts)) {
+        return decide({ parsed: matches.parsed, idMatches: matches.idMatches.filter(counts), phoneMatches: matches.phoneMatches.filter(counts) });
+      }
+    }
+    let hit = decisionCache.get(key);
     if (!hit) {
-      hit = resolveUncached(senderPhone, senderJid);
-      cache.set(key, hit);
+      hit = decide(matches);
+      decisionCache.set(key, hit);
     }
     return hit;
   }

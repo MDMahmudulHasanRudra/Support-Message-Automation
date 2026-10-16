@@ -9,6 +9,7 @@ import {
   MOOD_LEVEL,
   type Mood,
   type OutboundSenderType,
+  type OwnReactionState,
   type SenderMatchStatus,
 } from "@support-automation/shared";
 import { getGroupMoods, getMessageMoods, type MessageMood } from "@/server/moodDetectionReports";
@@ -726,6 +727,11 @@ export interface ThreadEntry {
   media?: ThreadMedia;
   /** Mood Detection's reading of this customer message (concerned or worse), with its signals. */
   mood?: MessageMood;
+  /**
+   * Chat v2: the reaction THIS account sent, as far as the worker confirmed it (chatReactions.ts).
+   * Others' reactions are never here — receiving them needs a licence this deployment lacks.
+   */
+  ownReaction?: OwnReactionState;
 }
 
 export interface ThreadSenderIdentity {
@@ -738,6 +744,8 @@ export interface ThreadSenderIdentity {
   /** The id the contact panel opens with (domain kept when known). */
   contactKey: string;
 }
+
+type QuotedRow = { id: string; body: string; direction: string; senderName: string | null; senderPhone: string; senderJid: string | null };
 
 export interface ThreadQuote {
   id: string;
@@ -779,6 +787,8 @@ export interface ChatThread {
     participantCount: number | null;
     /** The conversation's detected mood (concerned or worse), or null. */
     mood: Mood | null;
+    /** When somebody last opened it (before this view marks it again) — the v2 unread divider. */
+    reviewedAt: Date | null;
   };
   entries: ThreadEntry[];
   /** True when older messages exist beyond the window this returned. */
@@ -796,12 +806,14 @@ export interface PersonalChatThread {
     accountLabel: string;
     accountPhone: string | null;
     accountStatus: string;
+    /** When somebody last opened it (before this view marks it again) — the v2 unread divider. */
+    reviewedAt: Date | null;
   };
   entries: ThreadEntry[];
   hasMore: boolean;
 }
 
-const THREAD_LIMIT = 80;
+export const THREAD_LIMIT = 80;
 
 /** Another of our accounts in the same WhatsApp group — its own copy of this conversation. */
 export interface OtherAccountCopy {
@@ -867,7 +879,7 @@ function attributionOf(row: {
 }
 
 /** The message columns a thread renders: text, sender, attribution keys and media metadata. */
-const THREAD_MESSAGE_SELECT = {
+export const THREAD_MESSAGE_SELECT = {
   id: true,
   body: true,
   direction: true,
@@ -904,10 +916,10 @@ const THREAD_MESSAGE_SELECT = {
  * same for a group and a personal chat. `moodChatId` is the group's WhatsApp id (Mood Detection reads
  * monitored groups only), or null for a personal chat.
  */
-async function buildThreadEntries(
+export async function buildThreadEntries(
   accountId: string,
   messages: Prisma.MessageGetPayload<{ select: typeof THREAD_MESSAGE_SELECT }>[],
-  queued: Array<Prisma.OutboundMessageGetPayload<{ select: typeof OUTBOUND_ATTRIBUTION_SELECT }> & { body: string; status: string; createdAt: Date; failureReason: string | null; providerMessageId: string | null }>,
+  queued: Array<Prisma.OutboundMessageGetPayload<{ select: typeof QUEUED_SELECT }>>,
   moodChatId: string | null,
 ): Promise<ThreadEntry[]> {
   const storedWhatsAppIds = new Set(messages.map((m) => m.whatsappMessageId));
@@ -946,6 +958,17 @@ async function buildThreadEntries(
     };
   };
 
+  const quoteOf = (q: QuotedRow | null): ThreadQuote | null =>
+    q
+      ? {
+          id: q.id,
+          outgoing: q.direction === "OUTGOING",
+          // WhatsApp's own word for the business's side of the conversation.
+          author: q.direction === "OUTGOING" ? "You" : identityOf(q.senderPhone, q.senderJid, q.senderName).label,
+          body: q.body.length > 160 ? `${q.body.slice(0, 160)}…` : q.body,
+        }
+      : null;
+
   const entries: ThreadEntry[] = messages.map((m) => ({
     id: m.id,
     kind: m.direction as ThreadEntryKind,
@@ -958,15 +981,7 @@ async function buildThreadEntries(
     // the header's Mark-waiting button must agree with the list. Who the sender IS is `sender`.
     isTeamMember: m.isFromTeamMember,
     ...(m.direction === "INCOMING" ? { sender: identityOf(m.senderPhone, m.senderJid, m.senderName) } : {}),
-    quoted: m.quotedMessage
-      ? {
-          id: m.quotedMessage.id,
-          outgoing: m.quotedMessage.direction === "OUTGOING",
-          // WhatsApp's own word for the business's side of the conversation.
-          author: m.quotedMessage.direction === "OUTGOING" ? "You" : identityOf(m.quotedMessage.senderPhone, m.quotedMessage.senderJid, m.quotedMessage.senderName).label,
-          body: m.quotedMessage.body.length > 160 ? `${m.quotedMessage.body.slice(0, 160)}…` : m.quotedMessage.body,
-        }
-      : null,
+    quoted: quoteOf(m.quotedMessage),
     ...(m.direction === "OUTGOING" ? attributionByProviderId.get(m.whatsappMessageId) : undefined),
     ...(() => {
       const mood = messageMoods.get(m.whatsappMessageId);
@@ -1009,15 +1024,27 @@ async function buildThreadEntries(
       senderPhone: null,
       outboundStatus: row.status,
       failureReason: row.failureReason,
+      quoted: quoteOf(row.replyToMessage),
       ...attributionOf(row),
     });
   }
 
-  entries.sort((a, b) => a.at.getTime() - b.at.getTime());
+  // Ties at one timestamp keep a stable order (the row id), the same order the older-page cursor uses.
+  entries.sort((a, b) => a.at.getTime() - b.at.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return entries;
 }
 
-const QUEUED_SELECT = { ...OUTBOUND_ATTRIBUTION_SELECT, body: true, status: true, createdAt: true, failureReason: true, providerMessageId: true } as const;
+export const QUEUED_SELECT = {
+  ...OUTBOUND_ATTRIBUTION_SELECT,
+  body: true,
+  status: true,
+  createdAt: true,
+  failureReason: true,
+  providerMessageId: true,
+  // Chat v2: what a queued reply quotes. Shown as the intent on the dashed bubble; the quote a stored
+  // message shows comes only from WhatsApp's own echo (CHAT_UI_V2.md §4).
+  replyToMessage: { select: { id: true, body: true, direction: true, senderName: true, senderPhone: true, senderJid: true } },
+} as const;
 
 export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Promise<ChatThread | null> {
   const group = await prisma.whatsAppGroup.findUnique({
@@ -1032,6 +1059,7 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
       aiAutomationEnabled: true,
       aiSuppressedUntil: true,
       participantCount: true,
+      chatReviewedAt: true,
       account: { select: { label: true, status: true, phoneNumber: true } },
     },
   });
@@ -1040,7 +1068,9 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
   const [windowed, queued] = await Promise.all([
     prisma.message.findMany({
       where: { groupId },
-      orderBy: { timestampWa: "desc" },
+      // The row id breaks timestamp ties, so the window and the older pages (chatThreadV2.ts) agree on
+      // exactly where one ends and the next begins.
+      orderBy: [{ timestampWa: "desc" }, { id: "desc" }],
       // One row past the window is all it takes to know older history exists. This used to be a
       // COUNT of the group's entire message history, run on every 4s poll of every open tab, for
       // a value only ever read as a boolean.
@@ -1079,6 +1109,7 @@ export async function getChatThread(groupId: string, limit = THREAD_LIMIT): Prom
       aiSuppressedUntil: group.aiSuppressedUntil,
       participantCount: group.participantCount,
       mood: groupMoods.get(group.whatsappGroupId) ?? null,
+      reviewedAt: group.chatReviewedAt,
     },
     entries,
     hasMore,
@@ -1100,14 +1131,15 @@ export async function getPersonalChatThread(accountId: string, chatId: string, l
   if (!account) return null;
 
   const where = { accountId: account.id, chatId, groupId: null };
-  const [windowed, queued, named] = await Promise.all([
-    prisma.message.findMany({ where, orderBy: { timestampWa: "desc" }, take: limit + 1, select: THREAD_MESSAGE_SELECT }),
+  const [windowed, queued, named, review] = await Promise.all([
+    prisma.message.findMany({ where, orderBy: [{ timestampWa: "desc" }, { id: "desc" }], take: limit + 1, select: THREAD_MESSAGE_SELECT }),
     prisma.outboundMessage.findMany({ where: { chatId, accountId: account.id }, orderBy: { createdAt: "desc" }, take: limit, select: QUEUED_SELECT }),
     prisma.message.findFirst({
       where: { ...where, direction: "INCOMING", AND: [{ senderName: { not: null } }, { senderName: { not: "" } }] },
       orderBy: { timestampWa: "desc" },
       select: { senderName: true },
     }),
+    prisma.personalChatReview.findFirst({ where: { accountId: account.id, chatId }, select: { reviewedAt: true } }),
   ]);
   if (windowed.length === 0) return null;
 
@@ -1122,6 +1154,7 @@ export async function getPersonalChatThread(accountId: string, chatId: string, l
       accountLabel: account.label,
       accountPhone: account.phoneNumber,
       accountStatus: account.status,
+      reviewedAt: review?.reviewedAt ?? null,
     },
     entries: await buildThreadEntries(account.id, messages, queued, null),
     hasMore,

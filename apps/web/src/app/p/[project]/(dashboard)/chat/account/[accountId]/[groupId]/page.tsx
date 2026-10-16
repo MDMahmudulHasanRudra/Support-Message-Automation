@@ -17,6 +17,8 @@ import { MarkWaitingButton } from "../../../MarkWaitingButton";
 import { AiActiveNotice, MessageThread } from "../../../MessageThread";
 import { ThreadScroller } from "../../../ThreadScroller";
 import { conversationAvatar } from "../../../avatar";
+import { ConversationV2, ThreadSearchToggle } from "../../../v2/ConversationV2";
+import { attachOwnReactions, isChatUiV2Enabled, mentionNamesFor } from "@/server/chatThreadV2";
 import { accountStatusTone } from "../../../chatAccounts";
 
 export const metadata = { title: "WhatsApp Chat" };
@@ -43,10 +45,12 @@ export default async function ChatConversationPage({
   const { session, canManage: canReply } = await pageAccess("messages.view", "messages.reply");
   const { accountId, groupId } = await params;
   const { info, contact } = await searchParams;
-  const [thread, savedReplies, otherCopies] = await Promise.all([
+  const [thread, savedReplies, otherCopies, v2] = await Promise.all([
     getChatThread(groupId),
     getSavedReplies(),
     getOtherAccountCopies(groupId),
+    // CHAT_UI_V2.md: the new conversation view, per project, off by default.
+    isChatUiV2Enabled(),
   ]);
   if (!thread) notFound();
 
@@ -88,77 +92,122 @@ export default async function ChatConversationPage({
         ? `${group.accountLabel} is ${tone.label.toLowerCase()}, so nothing can be sent from it right now. Reconnect it on WhatsApp Accounts.`
         : null;
 
+  // One header for both views; v2 adds its search button to it. `withSearch` is true only for v2, so
+  // it also marks the v2 layout: one compact row on a phone, a round avatar, and a subline that
+  // truncates instead of wrapping onto a second and third line. v1 renders exactly as before.
+  const renderHeader = (withSearch: boolean) => (
+      <header className={`flex shrink-0 items-center border-b border-[var(--color-border)] ${withSearch ? "gap-2 px-2 py-2 sm:gap-3 sm:px-6 sm:py-3" : "gap-3 px-4 py-3 sm:px-6"}`}>
+        <Link
+          href={`/chat/account/${group.accountId}`}
+          aria-label="Back to conversations"
+          className={`flex shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] md:hidden ${withSearch ? "size-10 active:bg-[var(--color-neutral-bg)]" : "size-8"}`}
+        >
+          <ArrowLeft className={withSearch ? "size-5" : "size-4.5"} aria-hidden />
+        </Link>
+
+        {/* The avatar and name open the group's info, as they do in WhatsApp. */}
+        <Link
+          href={`${basePath}?info=group`}
+          title="Group info"
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-md)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+        >
+          <span
+            aria-hidden
+            style={{ background: avatar.background, color: avatar.color }}
+            className={`flex shrink-0 items-center justify-center text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] ${withSearch ? "size-10 rounded-full" : "size-9 rounded-[var(--radius-lg)]"}`}
+          >
+            {avatar.initials}
+          </span>
+
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)] hover:underline">{group.name}</h1>
+            <p className={`mt-0.5 flex items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-muted-foreground)] ${withSearch ? "min-w-0 flex-nowrap overflow-hidden" : "flex-wrap"}`}>
+              {/* Which number this conversation, and every reply typed below, belongs to. */}
+              <span className={`inline-flex items-center gap-1 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px font-medium text-[color:var(--color-neutral-fg)] ${withSearch ? "min-w-0 shrink" : ""}`}>
+                <Smartphone className={withSearch ? "size-3 shrink-0" : "size-3"} aria-hidden />
+                <span className={withSearch ? "truncate" : undefined}>{group.accountLabel}</span>
+                <span className={`size-1.5 rounded-full ${tone.dot} ${withSearch ? "shrink-0" : ""}`} title={tone.label} aria-hidden />
+              </span>
+              {group.participantCount !== null ? (
+                <span className={`inline-flex items-center gap-1 ${withSearch ? "shrink-0" : ""}`}>
+                  <Users className="size-3" aria-hidden />
+                  {group.participantCount}
+                </span>
+              ) : null}
+            </p>
+          </div>
+        </Link>
+
+        <div className={`flex shrink-0 items-center ${withSearch ? "gap-0.5 sm:gap-2" : "gap-2"}`}>
+          {group.mood ? <MoodBadge mood={group.mood} /> : null}
+          {group.aiAutomationEnabled ? (
+            <span className="hidden sm:inline">
+              <Badge color="blue" dot>
+                <Bot className="size-3" aria-hidden />
+                AI
+              </Badge>
+            </span>
+          ) : null}
+          {!group.isMonitored ? (
+            <span className="hidden sm:inline">
+              <Badge color="gray">Not monitored</Badge>
+            </span>
+          ) : null}
+          {withSearch ? <ThreadSearchToggle /> : null}
+          {isUnanswered ? <MarkWaitingButton groupId={group.id} /> : null}
+          <Link
+            href="/groups"
+            title="Open this group's settings"
+            className={`flex items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] ${withSearch ? "size-10 sm:size-8" : "size-8"}`}
+          >
+            <ExternalLink className="size-4" aria-hidden />
+            <span className="sr-only">Group settings</span>
+          </Link>
+        </div>
+      </header>
+  );
+
+  const otherCopiesForReply = canReply ? otherCopies.filter((copy) => copy.connected) : [];
+  const contactPanels = (
+    <>
+      {contactProfile ? <ContactPanel profile={contactProfile} accountId={group.accountId} closeHref={basePath} /> : null}
+      {groupProfile ? <GroupPanel profile={groupProfile} contactHref={contactHref} closeHref={basePath} /> : null}
+    </>
+  );
+
+  if (v2) {
+    const [withReactions, mentionNames] = await Promise.all([attachOwnReactions(group.accountId, entries), mentionNamesFor(entries)]);
+    return (
+      <div className="relative flex min-h-0 flex-1">
+        <ConversationV2
+          key={group.id}
+          conversation={{ accountId: group.accountId, groupId: group.id }}
+          isGroup
+          header={renderHeader(true)}
+          belowThread={group.aiAutomationEnabled ? <AiActiveNotice suppressedUntil={group.aiSuppressedUntil} compact /> : null}
+          entries={withReactions}
+          hasMore={hasMore}
+          reviewedAt={group.reviewedAt}
+          mentionNames={mentionNames}
+          accountLabel={group.accountLabel}
+          accountPhone={group.accountPhone}
+          canReply={canReply}
+          disabledReason={disabledReason}
+          savedReplies={savedReplies}
+          otherCopies={otherCopiesForReply}
+          contactHrefBase={basePath}
+          draftId={group.id}
+          emptyText="No messages stored for this group yet. Anything sent or received from now on appears here."
+        />
+        {contactPanels}
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 sm:px-6">
-          <Link
-            href={`/chat/account/${group.accountId}`}
-            aria-label="Back to conversations"
-            className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] md:hidden"
-          >
-            <ArrowLeft className="size-4.5" aria-hidden />
-          </Link>
-
-          {/* The avatar and name open the group's info, as they do in WhatsApp. */}
-          <Link
-            href={`${basePath}?info=group`}
-            title="Group info"
-            className="flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-md)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
-          >
-            <span
-              aria-hidden
-              style={{ background: avatar.background, color: avatar.color }}
-              className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-lg)] text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)]"
-            >
-              {avatar.initials}
-            </span>
-
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)] hover:underline">{group.name}</h1>
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-muted-foreground)]">
-                {/* Which number this conversation, and every reply typed below, belongs to. */}
-                <span className="inline-flex items-center gap-1 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px font-medium text-[color:var(--color-neutral-fg)]">
-                  <Smartphone className="size-3" aria-hidden />
-                  {group.accountLabel}
-                  <span className={`size-1.5 rounded-full ${tone.dot}`} title={tone.label} aria-hidden />
-                </span>
-                {group.participantCount !== null ? (
-                  <span className="inline-flex items-center gap-1">
-                    <Users className="size-3" aria-hidden />
-                    {group.participantCount}
-                  </span>
-                ) : null}
-              </p>
-            </div>
-          </Link>
-
-          <div className="flex shrink-0 items-center gap-2">
-            {group.mood ? <MoodBadge mood={group.mood} /> : null}
-            {group.aiAutomationEnabled ? (
-              <span className="hidden sm:inline">
-                <Badge color="blue" dot>
-                  <Bot className="size-3" aria-hidden />
-                  AI
-                </Badge>
-              </span>
-            ) : null}
-            {!group.isMonitored ? (
-              <span className="hidden sm:inline">
-                <Badge color="gray">Not monitored</Badge>
-              </span>
-            ) : null}
-            {isUnanswered ? <MarkWaitingButton groupId={group.id} /> : null}
-            <Link
-              href="/groups"
-              title="Open this group's settings"
-              className="flex size-8 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
-            >
-              <ExternalLink className="size-4" aria-hidden />
-              <span className="sr-only">Group settings</span>
-            </Link>
-          </div>
-        </header>
+        {renderHeader(false)}
 
         {/* Opens on the newest message rather than the oldest, and stays put while you read back. */}
         <ThreadScroller key={group.id} latestEntryId={lastEntry?.id ?? null}>
@@ -182,12 +231,11 @@ export default async function ChatConversationPage({
           accountPhone={group.accountPhone}
           disabledReason={disabledReason}
           savedReplies={savedReplies}
-          otherCopies={canReply ? otherCopies.filter((copy) => copy.connected) : []}
+          otherCopies={otherCopiesForReply}
         />
       </div>
 
-      {contactProfile ? <ContactPanel profile={contactProfile} accountId={group.accountId} closeHref={basePath} /> : null}
-      {groupProfile ? <GroupPanel profile={groupProfile} contactHref={contactHref} closeHref={basePath} /> : null}
+      {contactPanels}
     </div>
   );
 }

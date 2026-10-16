@@ -14,6 +14,8 @@ import { MarkWaitingButton } from "../../../../MarkWaitingButton";
 import { MessageThread } from "../../../../MessageThread";
 import { ThreadScroller } from "../../../../ThreadScroller";
 import { conversationAvatar } from "../../../../avatar";
+import { ConversationV2, ThreadSearchToggle } from "../../../../v2/ConversationV2";
+import { attachOwnReactions, isChatUiV2Enabled, mentionNamesFor } from "@/server/chatThreadV2";
 import { accountStatusTone } from "../../../../chatAccounts";
 
 export const metadata = { title: "WhatsApp Chat" };
@@ -40,7 +42,12 @@ export default async function PersonalChatPage({
   const { session, canManage: canReply } = await pageAccess("messages.view", "messages.reply");
   const { accountId, chatId: rawChatId } = await params;
   const { contact } = await searchParams;
-  const [thread, savedReplies] = await Promise.all([getPersonalChatThread(accountId, decodeURIComponent(rawChatId)), getSavedReplies()]);
+  const [thread, savedReplies, v2] = await Promise.all([
+    getPersonalChatThread(accountId, decodeURIComponent(rawChatId)),
+    getSavedReplies(),
+    // CHAT_UI_V2.md: the new conversation view, per project, off by default.
+    isChatUiV2Enabled(),
+  ]);
   if (!thread) notFound();
 
   const { chat, entries, hasMore } = thread;
@@ -59,53 +66,95 @@ export default async function PersonalChatPage({
   // A personal chat's id IS the person (`…@c.us` / `…@lid`).
   const contactProfile = contact ? await getContactProfile(session, chat.accountId, chat.chatId) : null;
 
+  // One header for both views; v2 adds its search button to it. `withSearch` is true only for v2, so
+  // it also marks the v2 layout: one compact row on a phone, a round avatar, and a subline that
+  // truncates instead of wrapping onto a second and third line. v1 renders exactly as before.
+  const renderHeader = (withSearch: boolean) => (
+      <header className={`flex shrink-0 items-center border-b border-[var(--color-border)] ${withSearch ? "gap-2 px-2 py-2 sm:gap-3 sm:px-6 sm:py-3" : "gap-3 px-4 py-3 sm:px-6"}`}>
+        <Link
+          href={`/chat/account/${chat.accountId}?type=personal`}
+          aria-label="Back to conversations"
+          className={`flex shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] md:hidden ${withSearch ? "size-10 active:bg-[var(--color-neutral-bg)]" : "size-8"}`}
+        >
+          <ArrowLeft className={withSearch ? "size-5" : "size-4.5"} aria-hidden />
+        </Link>
+
+        {/* The avatar and name open the contact's info, as they do in WhatsApp. */}
+        <Link
+          href={`${basePath}?contact=1`}
+          title="Contact info"
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-md)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+        >
+          <span
+            aria-hidden
+            style={{ background: avatar.background, color: avatar.color }}
+            className={`flex shrink-0 items-center justify-center text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] ${withSearch ? "size-10 rounded-full" : "size-9 rounded-[var(--radius-lg)]"}`}
+          >
+            {avatar.initials}
+          </span>
+
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)] hover:underline">{chat.name}</h1>
+            <p className={`mt-0.5 flex items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-muted-foreground)] ${withSearch ? "min-w-0 flex-nowrap overflow-hidden" : "flex-wrap"}`}>
+              <span className={`inline-flex items-center gap-1 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px font-medium text-[color:var(--color-neutral-fg)] ${withSearch ? "min-w-0 shrink" : ""}`}>
+                <Smartphone className={withSearch ? "size-3 shrink-0" : "size-3"} aria-hidden />
+                <span className={withSearch ? "truncate" : undefined}>{chat.accountLabel}</span>
+                <span className={`size-1.5 rounded-full ${tone.dot} ${withSearch ? "shrink-0" : ""}`} title={tone.label} aria-hidden />
+              </span>
+              <span className={`inline-flex items-center gap-1 ${withSearch ? "shrink-0" : ""}`}>
+                <User className="size-3" aria-hidden />
+                <span className={withSearch ? "max-sm:sr-only" : undefined}>Personal chat</span>
+              </span>
+              {number && number !== chat.name ? <span className={`tabular ${withSearch ? "truncate" : ""}`}>{number}</span> : null}
+            </p>
+          </div>
+        </Link>
+
+        <div className={`flex shrink-0 items-center ${withSearch ? "gap-0.5 sm:gap-2" : "gap-2"}`}>
+          {withSearch ? <ThreadSearchToggle /> : null}
+          {isUnanswered ? <MarkWaitingButton accountId={chat.accountId} chatId={chat.chatId} /> : null}
+        </div>
+      </header>
+  );
+
+  const disabledReason = !canReply
+    ? "Your role can read conversations but not reply to them. Ask an administrator for Reply in WhatsApp Chat."
+    : chat.accountStatus !== "CONNECTED"
+      ? `${chat.accountLabel} is ${tone.label.toLowerCase()}, so nothing can be sent from it right now. Reconnect it on WhatsApp Accounts.`
+      : null;
+
+  if (v2) {
+    const [withReactions, mentionNames] = await Promise.all([attachOwnReactions(chat.accountId, entries), mentionNamesFor(entries)]);
+    return (
+      <div className="relative flex min-h-0 flex-1">
+        <ConversationV2
+          key={chat.id}
+          conversation={{ accountId: chat.accountId, personalChatId: chat.chatId }}
+          isGroup={false}
+          header={renderHeader(true)}
+          entries={withReactions}
+          hasMore={hasMore}
+          reviewedAt={chat.reviewedAt}
+          mentionNames={mentionNames}
+          accountLabel={chat.accountLabel}
+          accountPhone={chat.accountPhone}
+          canReply={canReply}
+          disabledReason={disabledReason}
+          savedReplies={savedReplies}
+          otherCopies={[]}
+          contactHrefBase={null}
+          draftId={chat.id}
+          emptyText="No messages stored for this chat yet."
+        />
+        {contactProfile ? <ContactPanel profile={contactProfile} accountId={chat.accountId} closeHref={basePath} /> : null}
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 sm:px-6">
-          <Link
-            href={`/chat/account/${chat.accountId}?type=personal`}
-            aria-label="Back to conversations"
-            className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] md:hidden"
-          >
-            <ArrowLeft className="size-4.5" aria-hidden />
-          </Link>
-
-          {/* The avatar and name open the contact's info, as they do in WhatsApp. */}
-          <Link
-            href={`${basePath}?contact=1`}
-            title="Contact info"
-            className="flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-md)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
-          >
-            <span
-              aria-hidden
-              style={{ background: avatar.background, color: avatar.color }}
-              className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-lg)] text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)]"
-            >
-              {avatar.initials}
-            </span>
-
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)] hover:underline">{chat.name}</h1>
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-muted-foreground)]">
-                <span className="inline-flex items-center gap-1 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px font-medium text-[color:var(--color-neutral-fg)]">
-                  <Smartphone className="size-3" aria-hidden />
-                  {chat.accountLabel}
-                  <span className={`size-1.5 rounded-full ${tone.dot}`} title={tone.label} aria-hidden />
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <User className="size-3" aria-hidden />
-                  Personal chat
-                </span>
-                {number && number !== chat.name ? <span className="tabular">{number}</span> : null}
-              </p>
-            </div>
-          </Link>
-
-          <div className="flex shrink-0 items-center gap-2">
-            {isUnanswered ? <MarkWaitingButton accountId={chat.accountId} chatId={chat.chatId} /> : null}
-          </div>
-        </header>
+        {renderHeader(false)}
 
         <ThreadScroller key={chat.id} latestEntryId={lastEntry?.id ?? null}>
           {hasMore ? (
@@ -127,13 +176,7 @@ export default async function PersonalChatPage({
           accountLabel={chat.accountLabel}
           accountPhone={chat.accountPhone}
           savedReplies={savedReplies}
-          disabledReason={
-            !canReply
-              ? "Your role can read conversations but not reply to them. Ask an administrator for Reply in WhatsApp Chat."
-              : chat.accountStatus !== "CONNECTED"
-                ? `${chat.accountLabel} is ${tone.label.toLowerCase()}, so nothing can be sent from it right now. Reconnect it on WhatsApp Accounts.`
-                : null
-          }
+          disabledReason={disabledReason}
         />
       </div>
 

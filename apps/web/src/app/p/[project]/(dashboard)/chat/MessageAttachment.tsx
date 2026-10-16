@@ -162,7 +162,14 @@ function Lightbox({ src, alt, downloadHref, openHref, onClose }: { src: string; 
   );
 }
 
-export function MessageAttachment({ media }: { media: ThreadMedia }) {
+export function MessageAttachment({
+  media,
+  onOpenImage,
+}: {
+  media: ThreadMedia;
+  /** Chat v2: open the conversation's gallery at this image instead of this component's own lightbox. */
+  onOpenImage?: () => void;
+}) {
   const toProject = useProjectHref();
   const [lightbox, setLightbox] = useState(false);
   const [broken, setBroken] = useState(false);
@@ -198,7 +205,7 @@ export function MessageAttachment({ media }: { media: ThreadMedia }) {
       <>
         <button
           type="button"
-          onClick={() => setLightbox(true)}
+          onClick={() => (onOpenImage ? onOpenImage() : setLightbox(true))}
           className={`group/media relative block overflow-hidden rounded-[var(--radius-md)] focus-visible:outline-2 focus-visible:outline-offset-2 ${
             isSticker ? "w-[9rem]" : `w-[min(17rem,62vw)] ${SURFACE}`
           }`}

@@ -202,7 +202,8 @@ describe("one WhatsApp message, stored by two of our numbers", () => {
   it("is counted once, as the business's reply — never again as a customer message", async () => {
     const data = await report();
     const at905 = data.messages.filter((m) => m.ts === t(9, 5).getTime());
-    expect(at905).toEqual([{ groupKey: WGID, ts: t(9, 5).getTime(), kind: "BUSINESS", memberId: null }]);
+    // `actor`: it echoes no send of ours, so it was sent outside this system (Phase 2 provenance).
+    expect(at905).toEqual([{ groupKey: WGID, ts: t(9, 5).getTime(), kind: "BUSINESS", memberId: null, actor: "BUSINESS_PHONE" }]);
     // And the customer's 09:00 question, stored twice, is one message too.
     expect(data.messages.filter((m) => m.ts === t(9, 0).getTime())).toHaveLength(1);
   });

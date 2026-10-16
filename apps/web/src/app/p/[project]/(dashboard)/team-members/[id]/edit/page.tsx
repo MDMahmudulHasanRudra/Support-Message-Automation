@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { requireAccess } from "@/server/authorize";
 import { Alert, Button, Card, Checkbox, PageHeader, SectionHeader } from "@/components/ui";
 import { NOTIFICATION_EVENTS } from "@/lib/notificationEvents";
-import { hasReachablePhoneNumber } from "@support-automation/shared";
+import { formatDhakaDateKey, hasReachablePhoneNumber } from "@support-automation/shared";
 import { EditTeamMemberForm } from "./EditTeamMemberForm";
 import { loadMemberFormOptions } from "../../memberFormOptions";
 import { updateMemberNotificationPreferences } from "@/server/actions/notificationEvents";
@@ -61,6 +61,7 @@ export default async function EditTeamMemberPage({ params }: { params: Promise<{
             department: member.department,
             teamId: member.teamId,
             status: member.status,
+            attributeFrom: member.attributeFrom ? formatDhakaDateKey(member.attributeFrom) : null,
           }}
         />
       </Card>

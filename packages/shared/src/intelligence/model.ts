@@ -51,6 +51,28 @@ export const INTEL_ACTOR_LABELS: Record<IntelActor, string> = {
   BUSINESS_PHONE: "Business phone (person unknown)",
 };
 
+/**
+ * Who sent an OUTGOING message, from the `OutboundMessage` it echoes (matched on
+ * `providerMessageId = whatsappMessageId`, so never from direction alone). No send at all: the
+ * business phone — somebody typed it there, or it is an alert the worker posted (a `Notification`
+ * keeps no WhatsApp id, so it cannot be matched). One rule for every report that classifies replies.
+ */
+export function outgoingActorFor(actionType: string | null, ruleId: string | null): IntelActor {
+  switch (actionType) {
+    case null:
+      return "BUSINESS_PHONE";
+    case "MANUAL_REPLY":
+      return "OPERATOR";
+    case "GROUP_BROADCAST":
+      return "BROADCAST";
+    case "AUTO_REPLY":
+      // The AI fallback, its holding reply and its handover mention send without a rule.
+      return ruleId ? "RULE" : "AI";
+    default:
+      return "RULE";
+  }
+}
+
 /** A reply a human wrote. AI, rules and broadcasts are not. */
 export const HUMAN_REPLY_ACTORS: ReadonlySet<IntelActor> = new Set(["MEMBER", "MEMBER_UNMAPPED", "OPERATOR", "BUSINESS_PHONE"]);
 export const isHumanReply = (actor: IntelActor) => HUMAN_REPLY_ACTORS.has(actor);

@@ -1,63 +1,11 @@
-import { AlertTriangle, Bot, Check, Clock, ListChecks, Megaphone, Settings2, UserRound } from "lucide-react";
+import { AlertTriangle, Bot, Check, Clock, UserRound } from "lucide-react";
 import Link from "@/components/ProjectLink";
-import type { OutboundSenderType } from "@support-automation/shared";
 import { isMediaPlaceholderBody, mediaCaption } from "@support-automation/shared";
 import type { ThreadEntry } from "@/server/chatInbox";
 import { formatDateTime, formatTime } from "@/lib/date";
 import { MediaNotArchived, MessageAttachment } from "./MessageAttachment";
 import { MoodBadge } from "@/components/MoodBadge";
-
-const dayFormat = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Asia/Dhaka",
-  weekday: "short",
-  month: "short",
-  day: "numeric",
-});
-
-/** Copy for each not-yet-settled outbound state, in the operator's terms rather than the enum's. */
-const QUEUED_LABEL: Record<string, { text: string; tone: "wait" | "bad" }> = {
-  PENDING: { text: "Queued — waiting for the worker", tone: "wait" },
-  PROCESSING: { text: "Sending…", tone: "wait" },
-  RATE_LIMITED: { text: "Held back by the account rate limit", tone: "bad" },
-  FAILED: { text: "Failed to send", tone: "bad" },
-  CANCELLED: { text: "Cancelled", tone: "bad" },
-  SKIPPED: { text: "Not sent", tone: "bad" },
-  SENT: { text: "Sent — waiting for WhatsApp to confirm", tone: "wait" },
-};
-
-/**
- * Automated authorship, in the operator's terms. A person's send is named instead (the software user
- * who pressed send), so it has no badge here.
- */
-const AUTHOR_BADGE: Partial<Record<OutboundSenderType, { text: string; icon: typeof Bot }>> = {
-  AI: { text: "AI", icon: Bot },
-  RULE_AUTOMATION: { text: "Rule", icon: ListChecks },
-  BROADCAST: { text: "Broadcast", icon: Megaphone },
-  SYSTEM: { text: "Automated", icon: Settings2 },
-};
-
-/** Longer and the next message reads as a new thought rather than the same one continued. */
-const RUN_GAP_MS = 5 * 60_000;
-
-/** Whether `next` continues `current` — same speaker, same side, close in time. */
-function continues(current: ThreadEntry, next: ThreadEntry): boolean {
-  if (current.kind === "SYSTEM" || next.kind === "SYSTEM") return false;
-
-  const currentOutbound = current.kind === "OUTGOING" || current.kind === "QUEUED";
-  const nextOutbound = next.kind === "OUTGOING" || next.kind === "QUEUED";
-  if (currentOutbound !== nextOutbound) return false;
-
-  // Inbound runs also need the same person: a group has many speakers, and merging two of them
-  // into one run would attribute somebody's message to whoever spoke above them.
-  if (!nextOutbound && (current.senderPhone ?? null) !== (next.senderPhone ?? null)) return false;
-
-  // Outbound runs need the same author — and, for people, the same person — so an AI reply never
-  // merges into a person's, and Hasan's reply never appears under Rudra's name.
-  if (nextOutbound && (current.authoredBy ?? null) !== (next.authoredBy ?? null)) return false;
-  if (nextOutbound && (current.sentBy?.id ?? null) !== (next.sentBy?.id ?? null)) return false;
-
-  return next.at.getTime() - current.at.getTime() <= RUN_GAP_MS;
-}
+import { AUTHOR_BADGE, continues, dayFormat, QUEUED_LABEL } from "./threadPresentation";
 
 function DayDivider({ label }: { label: string }) {
   return (
@@ -274,21 +222,28 @@ export function MessageThread({
 }
 
 /** Shown above the composer while a group has AI automation switched on. */
-export function AiActiveNotice({ suppressedUntil }: { suppressedUntil: Date | null }) {
+export function AiActiveNotice({ suppressedUntil, compact = false }: { suppressedUntil: Date | null; compact?: boolean }) {
   const suppressed = suppressedUntil && new Date(suppressedUntil) > new Date();
   return (
-    <div className="flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-2 text-[11px] text-[color:var(--color-muted-foreground)] sm:px-6">
+    <div className={`flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 text-[11px] text-[color:var(--color-muted-foreground)] sm:px-6 ${compact ? "py-1.5 max-sm:px-3 sm:py-2" : "py-2"}`}>
       <Bot className="size-3.5 shrink-0" aria-hidden />
       {suppressed ? (
-        <span>
-          AI is paused for this group until {formatTime(new Date(suppressedUntil))} because a team
-          member replied recently.
-        </span>
+        <>
+          {/* `compact` (Chat v2): one short line on a phone, the full sentence everywhere else. */}
+          {compact ? <span className="min-w-0 truncate sm:hidden">AI paused until {formatTime(new Date(suppressedUntil))}</span> : null}
+          <span className={compact ? "max-sm:hidden" : undefined}>
+            AI is paused for this group until {formatTime(new Date(suppressedUntil))} because a team
+            member replied recently.
+          </span>
+        </>
       ) : (
-        <span>
-          AI automation is on for this group. Replying here pauses it while you handle the
-          conversation.
-        </span>
+        <>
+          {compact ? <span className="min-w-0 truncate sm:hidden">AI is on · replying here pauses it</span> : null}
+          <span className={compact ? "max-sm:hidden" : undefined}>
+            AI automation is on for this group. Replying here pauses it while you handle the
+            conversation.
+          </span>
+        </>
       )}
     </div>
   );

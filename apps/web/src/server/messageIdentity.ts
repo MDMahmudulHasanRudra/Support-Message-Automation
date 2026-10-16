@@ -37,6 +37,6 @@ export function preferSenderCopySql(alias = "m"): Prisma.Sql {
  * pipeline (apps/worker teamFilter.ts) passes ACTIVE members only; the rule is the same.
  */
 export async function loadReportSenderResolver(): Promise<SenderResolver> {
-  const members = await prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } });
+  const members = await prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true, attributeFrom: true } });
   return createSenderResolver(members);
 }

@@ -66,6 +66,8 @@ describe("2,000 groups per account", () => {
     expect(await prisma.whatsAppGroup.count({ where: { accountId: id, isActive: true } })).toBe(2000);
     const account = await prisma.whatsAppAccount.findUniqueOrThrow({ where: { id } });
     expect(account).toMatchObject({ groupSyncStatus: "COMPLETED", groupSyncDiscovered: 2000, groupSyncNew: 2000, groupSyncFailed: 0, groupSyncStage: null });
+    // One read is exactly what this result rests on — never "verified complete" (groupSyncBasis.ts).
+    expect(account.groupSyncBasis).toBe("SINGLE_READ");
     expect(account.groupSyncDurationMs).toBeGreaterThanOrEqual(0);
   });
 
@@ -242,7 +244,7 @@ describe("a newly linked phone still sending its chats", () => {
       expect(
         await waitFor(async () => {
           const account = await prisma.whatsAppAccount.findUniqueOrThrow({ where: { id } });
-          return account.groupSyncStatus === "COMPLETED" && account.groupSyncDiscovered === 2000;
+          return account.groupSyncStatus === "COMPLETED" && account.groupSyncDiscovered === 2000 && account.groupSyncBasis === "STABLE_READS";
         }, 15_000),
       ).toBe(true);
     } finally {

@@ -1,3 +1,4 @@
+import { describeGroupSyncBasis, GROUP_SYNC_COMPLETENESS_NOTE } from "@support-automation/shared";
 import { StatusDot } from "@/components/ui";
 
 /**
@@ -16,6 +17,8 @@ export interface GroupSyncSummary {
   failed: number | null;
   durationMs: number | null;
   error: string | null;
+  /** What a COMPLETED/PARTIAL result rests on, in words (groupSyncBasis.ts), or null. */
+  basis: string | null;
 }
 
 /** The columns as the page reads them, for `toGroupSyncSummary`. */
@@ -31,6 +34,7 @@ export interface GroupSyncColumns {
   groupSyncFailed: number | null;
   groupSyncDurationMs: number | null;
   groupSyncError: string | null;
+  groupSyncBasis?: string | null;
 }
 
 export function toGroupSyncSummary(row: GroupSyncColumns): GroupSyncSummary {
@@ -46,6 +50,7 @@ export function toGroupSyncSummary(row: GroupSyncColumns): GroupSyncSummary {
     failed: row.groupSyncFailed,
     durationMs: row.groupSyncDurationMs,
     error: row.groupSyncError,
+    basis: describeGroupSyncBasis(row.groupSyncBasis),
   };
 }
 
@@ -111,7 +116,11 @@ export function GroupSyncStatusLine({ sync, label }: { sync: GroupSyncSummary; l
   }
 
   return (
-    <p suppressHydrationWarning className="flex flex-wrap items-center gap-1.5 text-xs text-[color:var(--color-muted-foreground)]">
+    <p
+      suppressHydrationWarning
+      title={GROUP_SYNC_COMPLETENESS_NOTE}
+      className="flex flex-wrap items-center gap-1.5 text-xs text-[color:var(--color-muted-foreground)]"
+    >
       <StatusDot color={sync.status === "PARTIAL" ? "yellow" : "green"} />
       {prefix}
       <span className="font-medium text-[color:var(--color-foreground)]">
@@ -119,6 +128,8 @@ export function GroupSyncStatusLine({ sync, label }: { sync: GroupSyncSummary; l
       </span>
       <span>
         — {changes}
+        {/* What the count rests on: WhatsApp never says a list is complete (groupSyncBasis.ts). */}
+        {sync.basis ? ` · ${sync.basis}` : ""}
         {when ? ` · ${when}` : ""}
         {sync.durationMs !== null ? ` · took ${seconds(sync.durationMs)}` : ""}
       </span>

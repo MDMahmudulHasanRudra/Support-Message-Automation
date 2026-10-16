@@ -97,12 +97,14 @@ describe("a probe that can see", () => {
   it("reports an empty result as a real answer when chats exist and hold nothing newer", async () => {
     withClient({
       getAllGroups: async () => [{ id: "group@g.us", t: Math.floor(SINCE.getTime() / 1000) - 600 }],
+      getAllChats: async () => [{ id: "8801700000009@c.us", t: Math.floor(SINCE.getTime() / 1000) - 600 }],
       getAllMessagesInChat: async () => [],
     });
 
     const result = await provider.probeCollection(SINCE, 5);
 
     // This is the reading the watchdog is entitled to trust: it asked, and the answer was nothing.
+    // No `incomplete` either: both lists were read, so nothing went unchecked.
     expect(result).toEqual({ ok: true, messages: [] });
   });
 
@@ -122,6 +124,77 @@ describe("a probe that can see", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.messages).toHaveLength(1);
+  });
+});
+
+describe("one-to-one chats are read back too (Phase 2)", () => {
+  function personalMessage(id: string, chatId: string, offsetSeconds: number) {
+    return { ...message(id, offsetSeconds), from: chatId, author: undefined, chatId, isGroupMsg: false };
+  }
+
+  it("recovers a personal message from inside the gap, and never reads status or channels", async () => {
+    const read: string[] = [];
+    withClient({
+      getAllGroups: async () => [activeChat("group@g.us")],
+      getAllChats: async () => [
+        { id: "8801700000009@c.us", t: afterSince(120) },
+        { id: "123456789012345@lid", t: afterSince(-600) }, // quiet since before the gap
+        { id: "status@broadcast", t: afterSince(90) },
+        { id: "120363000000000000@newsletter", t: afterSince(90) },
+      ],
+      getAllMessagesInChat: async (chatId: string) => {
+        read.push(chatId);
+        if (chatId === "8801700000009@c.us") return [personalMessage("p-1", chatId, 100)];
+        if (chatId === "group@g.us") return [message("g-1", 30)];
+        return [];
+      },
+    });
+
+    const result = await provider.probeCollection(SINCE, 10);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.incomplete).toBeUndefined();
+    // Oldest first, groups and personal chats together.
+    expect(result.messages.map((m) => [m.whatsappMessageId, m.chatId])).toEqual([
+      ["g-1", "group@g.us"],
+      ["p-1", "8801700000009@c.us"],
+    ]);
+    expect(result.messages[1]!.whatsappGroupId).toBeNull();
+    expect(read.sort()).toEqual(["8801700000009@c.us", "group@g.us"]);
+  });
+
+  it("still answers from the groups when the personal list cannot be read, and says so", async () => {
+    withClient({
+      getAllGroups: async () => [activeChat("group@g.us")],
+      getAllChats: async () => {
+        throw new Error("Protocol error: Execution context was destroyed");
+      },
+      getAllMessagesInChat: async () => [message("g-1", 30)],
+    });
+
+    const result = await provider.probeCollection(SINCE, 10);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.messages).toHaveLength(1);
+    expect(result.incomplete).toMatch(/one-to-one chats could not be listed/i);
+  });
+
+  it("says how many chats it could not read, so a sweep is never called complete", async () => {
+    withClient({
+      getAllGroups: async () => [activeChat("bad@g.us"), activeChat("good@g.us")],
+      getAllChats: async () => [],
+      getAllMessagesInChat: async (chatId: string) => {
+        if (chatId === "bad@g.us") throw new Error("could not load");
+        return [message("msg-1", 30)];
+      },
+    });
+
+    const result = await provider.probeCollection(SINCE, 5);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.incomplete).toBe("The history of 1 chat(s) could not be read.");
   });
 });
 

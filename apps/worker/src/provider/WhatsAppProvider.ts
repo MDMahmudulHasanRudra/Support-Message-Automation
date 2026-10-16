@@ -81,6 +81,30 @@ export interface SendResult {
   error?: string;
 }
 
+export interface SendOptions {
+  /** The WhatsApp id of the message this send replies to (a real quote, not a visual one). */
+  quotedMessageId?: string | null;
+}
+
+export type SendRoute = "TEXT" | "MENTIONS" | "REPLY" | "REFUSE_REPLY_WITH_MENTIONS";
+
+/**
+ * Which library call a send needs. A reply that ALSO tags people is refused: the installed library's
+ * `sendReplyWithMentions` is a stub that returns false, so attempting it would fail every time with no
+ * better reason than "not accepted", and quietly dropping either half would send something the operator
+ * did not write.
+ */
+export function chooseSendRoute(mentions: readonly string[] | undefined, options?: SendOptions): SendRoute {
+  const quoted = Boolean(options?.quotedMessageId);
+  const tagged = Boolean(mentions && mentions.length > 0);
+  if (quoted && tagged) return "REFUSE_REPLY_WITH_MENTIONS";
+  if (quoted) return "REPLY";
+  return tagged ? "MENTIONS" : "TEXT";
+}
+
+export const REPLY_WITH_MENTIONS_REFUSAL =
+  "A quoted reply cannot also tag people on this WhatsApp connection. Nothing was sent — send it without the quote or without the tags.";
+
 /** What was created, or why not — never a bare boolean, since a group name alone tells nobody its id. */
 export type GroupCreationResult =
   | { success: true; whatsappGroupId: string; name: string }
@@ -123,7 +147,12 @@ export interface ProfileUpdateResult {
  * at all; everything the watchdog does with it depends on this type.
  */
 export type CollectionProbe =
-  | { ok: true; messages: RawIncomingMessage[] }
+  /**
+   * `incomplete` says what the read could not check although the session answered — the one-to-one
+   * chat list, or a chat whose history would not load. The watchdog judges on the rest; a gap sweep
+   * records PARTIAL rather than RECOVERED, because "nothing more to recover" was not shown.
+   */
+  | { ok: true; messages: RawIncomingMessage[]; incomplete?: string }
   | { ok: false; reason: string };
 
 /**
@@ -200,8 +229,12 @@ export interface WhatsAppProvider {
   /**
    * `mentions` are contact ids ("<digits>@c.us") to tag. WhatsApp only notifies a mentioned person
    * if they are a participant of that chat; tagging someone who is not simply renders as text.
+   *
+   * `options.quotedMessageId` (WhatsApp Chat v2, CHAT_UI_V2.md §4) sends the text as a real WhatsApp
+   * reply to that message. A provider that cannot quote must FAIL the send rather than drop the quote:
+   * a reply that silently lost its context reads as a stray message in a busy group.
    */
-  sendMessage(chatId: string, body: string, mentions?: string[]): Promise<SendResult>;
+  sendMessage(chatId: string, body: string, mentions?: string[], options?: SendOptions): Promise<SendResult>;
   getAccountInfo(): Promise<AccountInfo>;
   /**
    * Lightweight, single-chat membership check used by the Group Message

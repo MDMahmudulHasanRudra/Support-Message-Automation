@@ -12,6 +12,8 @@
  * test pins the two together.
  */
 
+import { isPersonalChatId } from "@support-automation/shared";
+
 export type ConversationKind = "GROUP" | "PERSONAL";
 
 /** The inbox's type filter. `all` is groups and personal chats together. */
@@ -31,12 +33,11 @@ export function kindMatchesType(kind: ConversationKind, type: ConversationType):
   return type === "all" || (type === "groups" ? kind === "GROUP" : kind === "PERSONAL");
 }
 
-const PERSONAL_SUFFIXES = ["@c.us", "@lid"] as const;
-
-/** A 1:1 chat id: WhatsApp's individual domains only. */
-export function isPersonalChatId(chatId: string): boolean {
-  return PERSONAL_SUFFIXES.some((suffix) => chatId.endsWith(suffix) && chatId.length > suffix.length);
-}
+/**
+ * A 1:1 chat id: WhatsApp's individual domains only. One rule with the worker's gap recovery, which
+ * reads back exactly the personal chats this inbox lists (packages/shared/src/whatsappChats.ts).
+ */
+export { isPersonalChatId };
 
 /**
  * A personal chat's key in the list. A group's key is its `WhatsAppGroup.id` (a cuid); a personal
