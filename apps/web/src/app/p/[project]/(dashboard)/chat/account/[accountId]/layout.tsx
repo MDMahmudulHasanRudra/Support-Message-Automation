@@ -51,6 +51,7 @@ export default async function ChatAccountLayout({
         conversations={inbox.conversations}
         counts={inbox.counts}
         categories={categories}
+        v2={v2}
       >
         {children}
       </ChatWorkspace>

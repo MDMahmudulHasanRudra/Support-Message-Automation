@@ -618,3 +618,47 @@ body::before {
     min-height: 40px;
   }
 }
+
+/* ── WhatsApp Chat v2 look (CHAT_UI_V2.md §13) ─────────────────────────────────────────────────────
+   Scoped to the chat workspace's `[data-v2]` container, which exists only while CHAT_UI_V2 is on for
+   the project: nothing outside Chat v2 — and nothing in v1 — can read these. WhatsApp's own greens
+   and wallpaper, because a support inbox people use beside WhatsApp all day should read like it. */
+[data-v2] {
+  --wa-green: #00a884;
+  --wa-green-strong: #008069;
+  --wa-green-hover: #017561;
+  --wa-green-soft: #e7f6f0;
+  --wa-green-border: #9fdcc7;
+  --wa-on-green: #ffffff;
+  --wa-in: #ffffff;
+  --wa-out: #d9fdd3;
+  --wa-out-border: #c6ecbf;
+  --wa-bubble-fg: #111b21;
+  --wa-meta: #667781;
+  --wa-wallpaper: #efeae2;
+  --wa-doodle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' fill='none' stroke='%23b6ab9b' stroke-opacity='.16' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 18h16a4 4 0 0 1 4 4v9a4 4 0 0 1-4 4h-9l-6 5v-5h-1a4 4 0 0 1-4-4v-9a4 4 0 0 1 4-4z'/%3E%3Ccircle cx='86' cy='22' r='7'/%3E%3Cpath d='M78 74l8-8 8 8-8 8z'/%3E%3Cpath d='M24 84c4-6 12-6 16 0'/%3E%3Ccircle cx='28' cy='76' r='1.5'/%3E%3Ccircle cx='36' cy='76' r='1.5'/%3E%3Cpath d='M98 100l4-10 4 10m-6.5-3.5h5'/%3E%3Cpath d='M56 50h10M61 45v10'/%3E%3Cpath d='M106 48a6 6 0 1 1-12 0 6 6 0 1 1 12 0zM100 54v6'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) [data-v2] {
+    --wa-green-soft: #0f2a24;
+    --wa-green-border: #1f5a4b;
+    --wa-in: #202c33;
+    --wa-out: #005c4b;
+    --wa-out-border: #0a6b58;
+    --wa-bubble-fg: #e9edef;
+    --wa-meta: #8696a0;
+    --wa-wallpaper: #0b141a;
+    --wa-doodle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' fill='none' stroke='%23ffffff' stroke-opacity='.05' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 18h16a4 4 0 0 1 4 4v9a4 4 0 0 1-4 4h-9l-6 5v-5h-1a4 4 0 0 1-4-4v-9a4 4 0 0 1 4-4z'/%3E%3Ccircle cx='86' cy='22' r='7'/%3E%3Cpath d='M78 74l8-8 8 8-8 8z'/%3E%3Cpath d='M24 84c4-6 12-6 16 0'/%3E%3Cpath d='M98 100l4-10 4 10m-6.5-3.5h5'/%3E%3Cpath d='M56 50h10M61 45v10'/%3E%3Cpath d='M106 48a6 6 0 1 1-12 0 6 6 0 1 1 12 0zM100 54v6'/%3E%3C/svg%3E");
+  }
+}
+:root[data-theme="dark"] [data-v2] {
+  --wa-green-soft: #0f2a24;
+  --wa-green-border: #1f5a4b;
+  --wa-in: #202c33;
+  --wa-out: #005c4b;
+  --wa-out-border: #0a6b58;
+  --wa-bubble-fg: #e9edef;
+  --wa-meta: #8696a0;
+  --wa-wallpaper: #0b141a;
+  --wa-doodle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' fill='none' stroke='%23ffffff' stroke-opacity='.05' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 18h16a4 4 0 0 1 4 4v9a4 4 0 0 1-4 4h-9l-6 5v-5h-1a4 4 0 0 1-4-4v-9a4 4 0 0 1 4-4z'/%3E%3Ccircle cx='86' cy='22' r='7'/%3E%3Cpath d='M78 74l8-8 8 8-8 8z'/%3E%3Cpath d='M24 84c4-6 12-6 16 0'/%3E%3Cpath d='M98 100l4-10 4 10m-6.5-3.5h5'/%3E%3Cpath d='M56 50h10M61 45v10'/%3E%3Cpath d='M106 48a6 6 0 1 1-12 0 6 6 0 1 1 12 0zM100 54v6'/%3E%3C/svg%3E");
+}

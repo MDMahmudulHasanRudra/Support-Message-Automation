@@ -268,3 +268,30 @@ the layout's `--chat-dvh` fallback and `data-v2` marker, the headers' `withSearc
 
 **Still needs a real device:** the keyboard on actual iOS Safari and Android Chrome (only simulated
 here), long-press feel with a production build, and the haptic tick (`navigator.vibrate`, Android only).
+
+## 13. WhatsApp-style look (17 Oct 2026)
+
+Restyled to a reference design: WhatsApp's greens, wallpaper and bubble colours, a round-avatar header
+with a monitoring pill, round composer controls, and a green note under the composer. **Look only — no
+behaviour, data, permission or action changed.**
+
+- **Scoped to v2.** The colours are `--wa-*` tokens declared on the chat workspace's `[data-v2]`
+  container (globals.css), which exists only while `CHAT_UI_V2` is on. The shared conversation list
+  takes a `v2` prop for its two content differences (search placeholder, Waiting icon) and
+  `group-data-[v2]/chat:` classes for the rest; with v2 off it renders exactly what it did.
+- **Verified unchanged:** V1 captured at 8 widths × 3 screens × 2 themes from the committed code and the
+  new code against the same data: 46 of 48 pixel-identical; the 2 others differ only by the thread's
+  transient scrollbar (the V1 thread's code is not touched).
+- **The monitoring pill only reports.** It explains what monitoring means for this group and links to
+  Groups. It is deliberately not a switch: turning monitoring on lets rules and AI answer customers,
+  which belongs on the Groups page with its own permission. Hidden on a phone; the group's info is one
+  tap on its avatar.
+- **Header:** `v2/ChatHeaderV2.tsx` (both conversation pages). The old "Group settings" icon is now the
+  pill's "Change it in Groups" link. v1's header code is unchanged.
+- **Thread:** WhatsApp wallpaper with a faint pattern, white incoming bubbles with the time inside them,
+  green outgoing bubbles with who/via/ticks on the line below, white day chips.
+- **Composer:** attach, emoji (desktop only), saved replies, the message box, a green send button;
+  shorter placeholder so it fits one line beside the sidebar.
+- Not taken from the reference, on purpose: a notification bell, an AI "sparkle" in the message box and
+  a split send button — none of them has a feature behind it, and a control that does nothing is the
+  dead-setting problem this project removes.

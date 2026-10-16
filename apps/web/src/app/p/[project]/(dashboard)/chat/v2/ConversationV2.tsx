@@ -526,7 +526,7 @@ export function ConversationV2({
         ) : null}
 
         <div className="relative min-h-0 flex-1">
-          <div ref={viewport} onScroll={onScroll} className="h-full overflow-y-auto overscroll-contain bg-[var(--color-surface-sunken)]" role="log" aria-live="polite" aria-relevant="additions">
+          <div ref={viewport} onScroll={onScroll} className="h-full overflow-y-auto overscroll-contain bg-[var(--wa-wallpaper)] [background-image:var(--wa-doodle)] [background-size:120px_120px]" role="log" aria-live="polite" aria-relevant="additions">
             <div className="flex flex-col gap-[3px] px-4 py-4 max-sm:px-2.5 sm:px-6">
               {merged.length ? (
                 <div className="mb-2 flex justify-center">
@@ -569,7 +569,7 @@ export function ConversationV2({
                   {showDivider ? (
                     <div className="my-3 flex items-center gap-3" role="separator" aria-label={day}>
                       <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
-                      <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-[11px] font-medium text-[color:var(--color-muted-foreground)] shadow-[var(--shadow-xs)]">{day}</span>
+                      <span className="rounded-full bg-[var(--wa-in)] px-3.5 py-1.5 text-[12px] font-medium text-[color:var(--wa-bubble-fg)] shadow-[var(--shadow-xs)]">{day}</span>
                       <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
                     </div>
                   ) : null}
