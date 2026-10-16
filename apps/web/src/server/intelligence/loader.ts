@@ -14,6 +14,7 @@ import {
   createSenderResolver,
   INTELLIGENCE_SQL_PREFILTER,
   logicalMessageKey,
+  outgoingActorFor,
   preferenceSignals,
   SCHEDULED_DUTY_STATUSES,
   shiftWindow,
@@ -94,22 +95,8 @@ interface Row {
 
 const LOOKAHEAD_MS = 24 * 3_600_000;
 
-/** Who sent an outgoing message, from the send it echoes. No send at all: the business phone. */
-function outgoingActor(row: Pick<Row, "actionType" | "ruleId">): IntelActor {
-  switch (row.actionType) {
-    case null:
-      return "BUSINESS_PHONE";
-    case "MANUAL_REPLY":
-      return "OPERATOR";
-    case "GROUP_BROADCAST":
-      return "BROADCAST";
-    case "AUTO_REPLY":
-      // The AI fallback, its holding reply and its handover mention send without a rule.
-      return row.ruleId ? "RULE" : "AI";
-    default:
-      return "RULE";
-  }
-}
+/** Who sent an outgoing message — the one rule the Team Report shares (`outgoingActorFor`). */
+const outgoingActor = (row: Pick<Row, "actionType" | "ruleId">): IntelActor => outgoingActorFor(row.actionType, row.ruleId);
 
 export async function loadIntelligence(ctx: ReportContext): Promise<IntelligenceData> {
   const projectId = await activeProjectId();
@@ -147,7 +134,7 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
         ${accountFilter}
       ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
     prisma.internalTeamMember.findMany({
-      select: { id: true, name: true, phoneNumber: true, whatsappId: true, team: { select: { name: true } } },
+      select: { id: true, name: true, phoneNumber: true, whatsappId: true, attributeFrom: true, team: { select: { name: true } } },
     }),
     prisma.supportEscalationCase.findMany({
       where: { createdAt: { gte: from, lt: to } },
@@ -185,7 +172,8 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
     let memberId: string | null = null;
     if (row.direction === "OUTGOING") actor = outgoingActor(row);
     else {
-      const sender = resolver.resolve(row.sender, row.senderJid);
+      // At the message's time: before a member's attribute-from date their number is a customer's.
+      const sender = resolver.resolve(row.sender, row.senderJid, row.ts.getTime());
       memberId = sender.memberId;
       actor = memberId ? "MEMBER" : sender.isRosterMember || row.fromTeam ? "MEMBER_UNMAPPED" : "CUSTOMER";
     }

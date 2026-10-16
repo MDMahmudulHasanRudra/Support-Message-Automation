@@ -507,7 +507,7 @@ export function ChatWorkspace({
               placeholder={`Search ${account.label} conversations`}
               aria-label={`Search ${account.label} conversations`}
               aria-keyshortcuts="/"
-              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] max-sm:pr-10 max-sm:text-base outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
+              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] max-sm:pr-10 max-sm:text-base group-data-[v2]/chat:text-ellipsis outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
             />
             {query ? (
               <button
@@ -1118,7 +1118,7 @@ function Row({
           <span
             aria-hidden
             style={{ background: avatar.background, color: avatar.color }}
-            className={`flex ${compact ? "size-7 text-[10px]" : "size-9 text-[12px]"} items-center justify-center rounded-[var(--radius-lg)] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)]`}
+            className={`flex ${compact ? "size-7 text-[10px]" : "size-9 text-[12px] group-data-[v2]/chat:size-11 group-data-[v2]/chat:text-[13px]"} items-center justify-center rounded-[var(--radius-lg)] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] group-data-[v2]/chat:rounded-full`}
           >
             {avatar.initials}
           </span>
@@ -1247,7 +1247,7 @@ function Row({
     "group/row relative flex w-full gap-3 border-b border-[var(--color-border)] text-left",
     compact ? "px-3.5 py-2" : "px-3.5 py-3",
     "transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)]",
-    "active:translate-y-px",
+    "active:translate-y-px group-data-[v2]/chat:active:translate-y-0 group-data-[v2]/chat:active:bg-[var(--color-neutral-bg)]",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus-ring)]",
     cursored ? "ring-2 ring-inset ring-[var(--color-focus-ring)]" : "",
     selected ? "bg-[var(--color-primary)]/[0.07]" : active ? "bg-[var(--color-surface)]" : "hover:bg-[var(--color-neutral-bg)]/60",

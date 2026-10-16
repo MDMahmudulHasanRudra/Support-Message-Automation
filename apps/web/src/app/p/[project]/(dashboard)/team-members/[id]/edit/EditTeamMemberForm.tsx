@@ -29,6 +29,8 @@ export function EditTeamMemberForm({
     department: string | null;
     teamId: string | null;
     status: string;
+    /** YYYY-MM-DD (Asia/Dhaka), or null when all their messages count. */
+    attributeFrom: string | null;
   };
   options: MemberFormOptions;
 }) {
@@ -58,6 +60,12 @@ export function EditTeamMemberForm({
               : "No stored message was sent from this id yet — check it against a message's Sender."}
           </p>
         ) : null}
+      </Field>
+      <Field
+        label="Count their messages from (optional)"
+        hint="Reports credit this person only from this date. Use it when the number wrote to you as a customer before they joined, so that history stays customer history. Leave it empty to count everything. Automation always treats them as staff."
+      >
+        <Input name="attributeFrom" type="date" defaultValue={defaults.attributeFrom ?? ""} />
       </Field>
       <Field
         label="Team"

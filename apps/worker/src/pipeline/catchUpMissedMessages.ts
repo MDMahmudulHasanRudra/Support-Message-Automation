@@ -19,8 +19,8 @@ import { recordGapRecovery } from "../health/collectionGaps.js";
  * message since the pipeline was built and read by nothing at all — this is the reader it was
  * always for.
  *
- * Scoped to groups, which is where this product's conversations live and what `getGroups()`
- * already enumerates.
+ * Groups and one-to-one chats alike (Phase 2): the live path stores both, so the gap sweep reads
+ * both back (`selectCatchUpChats`, packages/shared). Status, channels and broadcast lists never.
  */
 
 /**
@@ -151,18 +151,25 @@ async function catchUpMissedMessagesInProject(accountId: string, provider: Whats
       stored: 0,
       duplicates: 0,
     };
+    // A read that answered but could not check everything (the one-to-one chat list, a chat whose
+    // history would not load) has not shown that nothing more was missed: PARTIAL, with the reason.
+    const incomplete = probe.ok ? (probe.incomplete ?? null) : null;
     const recordRecovery = () =>
       recordGapRecovery(accountId, {
-        status: !probe.ok ? "FAILED" : lookbackCut || missed.length >= MAX_MESSAGES ? "PARTIAL" : "RECOVERED",
+        status: !probe.ok ? "FAILED" : lookbackCut || missed.length >= MAX_MESSAGES || incomplete ? "PARTIAL" : "RECOVERED",
         from: since,
         count: result.automated + result.stored,
         note: !probe.ok
           ? `The session could not be read: ${probe.reason}`
-          : lookbackCut
-            ? `Only the last ${Math.round(MAX_LOOKBACK_MS / 3_600_000)} hours could be read back; anything older in this gap was not recovered.`
-            : missed.length >= MAX_MESSAGES
-              ? `The sweep stopped at its limit of ${MAX_MESSAGES} messages.`
-              : null,
+          : [
+              lookbackCut
+                ? `Only the last ${Math.round(MAX_LOOKBACK_MS / 3_600_000)} hours could be read back; anything older in this gap was not recovered.`
+                : null,
+              missed.length >= MAX_MESSAGES ? `The sweep stopped at its limit of ${MAX_MESSAGES} messages.` : null,
+              incomplete,
+            ]
+              .filter((part): part is string => Boolean(part))
+              .join(" ") || null,
       });
     if (missed.length === 0) {
       await recordRecovery();

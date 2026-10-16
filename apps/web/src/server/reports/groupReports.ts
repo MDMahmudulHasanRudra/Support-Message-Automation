@@ -142,7 +142,7 @@ export async function loadGroupsWithLaterMessagesOnly(ctx: ReportContext, noneBe
  * message (customer / team member / business number) — by the identifiers the Team Report matches on.
  */
 export async function loadRoster(ctx: ReportContext): Promise<{ teamOf: Map<string, string | null>; describeSender: (l: LastActivity) => string }> {
-  const roster = await prisma.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true, teamId: true } });
+  const roster = await prisma.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true, teamId: true, attributeFrom: true } });
   // The one identity rule (WHATSAPP_IDENTITY.md). This copy used to let the LAST member sharing an
   // identifier win, the opposite of every other report.
   const resolver = createSenderResolver(roster);
@@ -152,7 +152,7 @@ export async function loadRoster(ctx: ReportContext): Promise<{ teamOf: Map<stri
     teamOf: new Map(roster.map((m) => [m.id, m.teamId ? (teamNameById.get(m.teamId) ?? null) : null])),
     describeSender: (l) => {
       if (l.direction === "OUTGOING") return "Business number";
-      const sender = resolver.resolve(l.senderPhone, l.senderJid);
+      const sender = resolver.resolve(l.senderPhone, l.senderJid, l.at);
       if (sender.memberId) return `Team member · ${nameById.get(sender.memberId) ?? "Unknown"}`;
       if (sender.isRosterMember) return "Team member (identity needs review)";
       return `Customer · ${l.senderName || l.senderPhone}`;

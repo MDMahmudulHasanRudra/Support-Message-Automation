@@ -138,7 +138,7 @@ describe("a partial list is recovered without deactivating or inventing anything
     expect(await activeOf(id, tag, 6)).toBe(true); // never switched off by a recovery
     expect(await rowCount(id)).toBe(7);
     const row = await accountRow(id);
-    expect(row).toMatchObject({ groupSyncStatus: "PARTIAL", groupSyncDiscovered: 4 });
+    expect(row).toMatchObject({ groupSyncStatus: "PARTIAL", groupSyncDiscovered: 4, groupSyncBasis: null });
     expect(row.groupSyncError).toMatch(/1 group\(s\) that were active/);
   });
 
@@ -152,7 +152,7 @@ describe("a partial list is recovered without deactivating or inventing anything
     await pastGrace(id);
     expect(await tick()).toMatchObject({ result: "RECOVERED", pending: 0 });
     expect(await prisma.whatsAppGroup.count({ where: { accountId: id, isActive: true } })).toBe(3);
-    expect(await accountRow(id)).toMatchObject({ groupSyncStatus: "COMPLETED", groupSyncError: null });
+    expect(await accountRow(id)).toMatchObject({ groupSyncStatus: "COMPLETED", groupSyncError: null, groupSyncBasis: "KNOWN_GROUPS_PRESENT" });
     expect(groupRecoverySchedule(id)).toBeNull();
 
     clock.t += 10 * 60 * MIN;

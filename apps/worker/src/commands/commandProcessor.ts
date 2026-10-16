@@ -16,6 +16,7 @@ import { connectWithRetry } from "../provider/connectWithRetry.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { shouldHoldDeactivationSweep } from "./groupSyncGuard.js";
 import type { Prisma } from "@prisma/client";
+import type { GroupSyncBasis } from "@support-automation/shared";
 
 /** Name this loop reports itself under in the per-loop liveness view. */
 const LOOP_NAME = "command-processor";
@@ -146,6 +147,7 @@ export async function cancelGroupSync(accountId: string, reason: string): Promis
     groupSyncStage: null,
     groupSyncCompletedAt: new Date(),
     groupSyncError: reason,
+    groupSyncBasis: null,
   });
   await logSystemEvent("INFO", "provider", "GROUP_SYNC_CANCELLED", { accountId, reason });
   if (running) {
@@ -478,9 +480,18 @@ function releaseInFlight(accountId: string, entry: InFlightSync): void {
  * rejects it (`cancelGroupSync`), and so does a worker that has begun shutting down, or a generation
  * that moved while it waited.
  */
+/**
+ * How a FULL sync is asked for. `basis` is what its result will rest on (groupSyncBasis.ts): the
+ * arrival passes that settled before it, or one read. Recorded beside COMPLETED/PARTIAL only.
+ */
+export interface FullSyncOptions {
+  afterConnect?: boolean;
+  basis?: GroupSyncBasis;
+}
+
 interface PendingFull {
   promise: Promise<number>;
-  options: { afterConnect?: boolean };
+  options: FullSyncOptions;
   generation: number;
   reject: (err: Error) => void;
 }
@@ -501,12 +512,14 @@ export function hasPendingFullSync(accountId: string): boolean {
 function queueFullAfterAddOnly(
   accountId: string,
   provider: WhatsAppProvider,
-  options: { afterConnect?: boolean },
+  options: FullSyncOptions,
   inFlight: InFlightSync,
 ): Promise<number> {
   const existing = pendingFull.get(accountId);
   if (existing) {
     existing.options.afterConnect = Boolean(existing.options.afterConnect && options.afterConnect);
+    // One read answers both requests; it rests on what the first one asked for.
+    existing.options.basis = existing.options.basis ?? options.basis;
     console.log(`[groupsync] GROUP_FULL_SYNC_ALREADY_QUEUED accountId=${accountId} -- sharing the queued FULL sync`);
     return existing.promise;
   }
@@ -517,7 +530,7 @@ function queueFullAfterAddOnly(
     reject = rej;
   });
   promise.catch(() => undefined); // each caller handles its own copy; this one only prevents an unhandled rejection
-  const pending: PendingFull = { promise, options: { afterConnect: options.afterConnect }, generation: generationOf(accountId), reject };
+  const pending: PendingFull = { promise, options: { afterConnect: options.afterConnect, basis: options.basis }, generation: generationOf(accountId), reject };
   pendingFull.set(accountId, pending);
   console.log(`[groupsync] GROUP_FULL_SYNC_QUEUED accountId=${accountId} -- a FULL sync was asked for while a ${inFlight.mode} pass is reading; it runs when that pass ends`);
 
@@ -547,7 +560,7 @@ export function isGroupSyncRunning(accountId: string): boolean {
 export async function syncGroupsWithTimeoutAndRetry(
   accountId: string,
   provider: WhatsAppProvider,
-  options: { afterConnect?: boolean } = {},
+  options: FullSyncOptions = {},
 ): Promise<number> {
   const alreadyRunning = syncInFlight.get(accountId);
   if (alreadyRunning) {
@@ -579,7 +592,7 @@ export async function syncGroupsWithTimeoutAndRetry(
  * from even starting its arrival passes, and ended in FAILED although nothing was broken. A session
  * whose list reads in a few seconds (every established account) is unaffected.
  */
-async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, options: { afterConnect?: boolean } = {}): Promise<number> {
+async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, options: FullSyncOptions = {}): Promise<number> {
   const attempts = GROUP_SYNC_RETRY_DELAYS_MS.length + 1;
   const started = performance.now();
   const generation = generationOf(accountId);
@@ -594,6 +607,7 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
     groupSyncStage: "Reading the group list from WhatsApp",
     groupSyncStartedAt: new Date(),
     groupSyncError: null,
+    groupSyncBasis: null,
   });
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -639,6 +653,8 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
         groupSyncStatus: outcome.failed > 0 || outcome.sweepHeld ? "PARTIAL" : "COMPLETED",
         groupSyncStage: null,
         groupSyncCompletedAt: new Date(),
+        // What this result rests on — never "verified complete": WhatsApp gives no such signal.
+        groupSyncBasis: options.basis ?? "SINGLE_READ",
         groupSyncDiscovered: outcome.discovered,
         groupSyncNew: outcome.created,
         groupSyncUpdated: outcome.renamed + outcome.reactivated,
@@ -665,6 +681,7 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
         await record({
           groupSyncStatus: "RUNNING",
           groupSyncStage: "Waiting for WhatsApp to load this number's chats — reading the group list again shortly",
+          groupSyncBasis: null,
         });
         throw err;
       }
@@ -686,6 +703,7 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
           groupSyncCompletedAt: new Date(),
           groupSyncDurationMs: Math.round(performance.now() - started),
           groupSyncError: message.slice(0, 500),
+          groupSyncBasis: null,
         });
         throw err;
       }
@@ -877,9 +895,9 @@ function watchGroupListArrival(
     timer.unref?.();
   };
 
-  const fullSync = (label: string) => {
+  const fullSync = (label: string, basis: GroupSyncBasis) => {
     if (cancelled() || provider.getConnectionStatus() !== "CONNECTED") return;
-    syncGroupsWithTimeoutAndRetry(accountId, provider)
+    syncGroupsWithTimeoutAndRetry(accountId, provider, { basis })
       .then((groupCount) => console.log(`[worker] ${label} after ${source}: ${groupCount} group(s) for account ${accountId}`))
       .catch((err) => {
         // It joined an arrival pass whose read is still loading: the passes carry on, nothing failed.
@@ -901,6 +919,7 @@ function watchGroupListArrival(
         groupSyncStatus: "PARTIAL",
         groupSyncStage: null,
         groupSyncCompletedAt: new Date(),
+        groupSyncBasis: null,
         groupSyncError: "The session disconnected while the phone was still sending chats. The groups received so far are saved; the rest arrive after reconnecting.",
       }),
     ).catch(() => undefined);
@@ -959,6 +978,7 @@ function watchGroupListArrival(
               groupSyncStatus: "RUNNING",
               groupSyncStage: `Receiving chats from the phone — ${outcome.discovered.toLocaleString("en-US")} groups so far`,
               groupSyncDiscovered: outcome.discovered,
+              groupSyncBasis: null,
             }),
           );
         }
@@ -966,7 +986,10 @@ function watchGroupListArrival(
         if (decision === "CONTINUE") schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
         else {
           void logTimeline(decision);
-          fullSync(decision === "SETTLED" ? "group list settled; full sync" : "group arrival window ended; full sync");
+          fullSync(
+            decision === "SETTLED" ? "group list settled; full sync" : "group arrival window ended; full sync",
+            decision === "SETTLED" ? "STABLE_READS" : "WINDOW_ENDED",
+          );
         }
       })
       .catch(async (err) => {
@@ -985,6 +1008,7 @@ function watchGroupListArrival(
                 maxReturned > 0
                   ? `Receiving chats from the phone — ${maxReturned.toLocaleString("en-US")} groups so far; WhatsApp is still loading`
                   : "Waiting for WhatsApp to load this number's chats — reading the group list again shortly",
+              groupSyncBasis: null,
             }),
           ).catch(() => undefined);
         } else if (err instanceof GroupListUnavailableError) {
@@ -995,7 +1019,7 @@ function watchGroupListArrival(
         }
         if (groupArrivalDecision(growthPerPass, Date.now() - started) === "GAVE_UP") {
           void logTimeline("GAVE_UP");
-          fullSync("group arrival window ended; full sync");
+          fullSync("group arrival window ended; full sync", "WINDOW_ENDED");
         } else {
           schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
         }
@@ -1006,7 +1030,7 @@ function watchGroupListArrival(
   };
 
   schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
-  schedule(() => fullSync("15-minute follow-up sync"), FINAL_FULL_SYNC_AFTER_MS);
+  schedule(() => fullSync("15-minute follow-up sync", "SINGLE_READ"), FINAL_FULL_SYNC_AFTER_MS);
 }
 
 /**
@@ -1084,6 +1108,8 @@ export async function runGroupRecoveryPass(
           groupSyncStatus: pending === 0 ? "COMPLETED" : "PARTIAL",
           groupSyncStage: null,
           groupSyncCompletedAt: new Date(),
+          // Completed by evidence the recovery has: every group recorded active is in the list.
+          groupSyncBasis: pending === 0 ? "KNOWN_GROUPS_PRESENT" : null,
           groupSyncDiscovered: outcome.discovered,
           groupSyncNew: outcome.created,
           groupSyncUpdated: outcome.renamed + outcome.reactivated,

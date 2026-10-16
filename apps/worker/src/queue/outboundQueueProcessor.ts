@@ -429,8 +429,38 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
     }
   }
 
+  // WhatsApp Chat v2 (CHAT_UI_V2.md §4): a manual reply that quotes a stored message. The web action
+  // already proved the target is in this conversation of this account; checked again here because the
+  // row is what is trusted at send time, not the browser that wrote it. A target that is not this
+  // chat's on this account fails outright — sending it unquoted would be a different message from
+  // the one the operator wrote.
+  let quotedMessageId: string | null = null;
+  if (message.replyToMessageId) {
+    const target = await prisma.message.findUnique({
+      where: { id: message.replyToMessageId },
+      select: { accountId: true, chatId: true, whatsappMessageId: true },
+    });
+    if (!target || target.accountId !== message.accountId || target.chatId !== message.chatId) {
+      await prisma.outboundMessage.update({
+        where: { id: message.id },
+        data: {
+          status: "FAILED",
+          attemptCount: { increment: 1 },
+          failureReason: "The message this reply quotes is not in this conversation on this account, so nothing was sent.",
+        },
+      });
+      return;
+    }
+    quotedMessageId = target.whatsappMessageId;
+  }
+
   try {
-    const result = await provider.sendMessage(message.chatId, message.body, message.mentions);
+    const result = await provider.sendMessage(
+      message.chatId,
+      message.body,
+      message.mentions,
+      quotedMessageId ? { quotedMessageId } : undefined,
+    );
     if (result.success) {
       await prisma.outboundMessage.update({
         where: { id: message.id },

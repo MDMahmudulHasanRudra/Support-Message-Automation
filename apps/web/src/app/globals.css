@@ -513,6 +513,23 @@ body::before {
   animation: scale-in var(--duration-base) var(--ease-spring) both;
 }
 
+/* Chat v2 message actions: a bottom sheet rising from the screen edge over a fading backdrop.
+   transform/opacity only; the reduced-motion rule below collapses both to an instant change. */
+@keyframes sheet-up {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes sheet-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-sheet-up {
+  animation: sheet-up var(--duration-base) var(--ease-out) both;
+}
+.animate-sheet-fade {
+  animation: sheet-fade var(--duration-base) var(--ease-out) both;
+}
+
 /* Direct children cascade in rather than all landing at once. Capped at 8 —
    past that the last delay is longer than anyone is willing to wait. */
 .stagger-children > * {

@@ -8,6 +8,7 @@ import type {
   NumberCheckResult,
   ProfileUpdate,
   ProfileUpdateResult,
+  SendOptions,
   SendResult,
   WhatsAppProvider,
 } from "../provider/WhatsAppProvider.js";
@@ -84,16 +85,27 @@ export class MockProvider implements WhatsAppProvider {
     return probe.ok ? probe.messages : [];
   }
 
+  /** Set by a test whose read answered but could not check everything (`CollectionProbe.incomplete`). */
+  public probeIncomplete: string | null = null;
+
   async probeCollection(since: Date, limit: number): Promise<CollectionProbe> {
     if (this.probeFailureReason) return { ok: false, reason: this.probeFailureReason };
-    return { ok: true, messages: this.missedMessages.filter((m) => m.timestampWa > since).slice(0, limit) };
+    const messages = this.missedMessages.filter((m) => m.timestampWa > since).slice(0, limit);
+    return this.probeIncomplete ? { ok: true, messages, incomplete: this.probeIncomplete } : { ok: true, messages };
   }
   async getAccountInfo() {
     return { phoneNumber: "+8801000000000", pushName: "Mock Account" };
   }
 
-  async sendMessage(chatId: string, body: string): Promise<SendResult> {
+  /**
+   * Each send's tags and quote, index-aligned with `sentMessages` — kept apart so every existing
+   * exact assertion on `sentMessages` stays as it was.
+   */
+  public sentExtras: Array<{ mentions: string[]; quotedMessageId: string | null }> = [];
+
+  async sendMessage(chatId: string, body: string, mentions?: string[], options?: SendOptions): Promise<SendResult> {
     this.sentMessages.push({ chatId, body });
+    this.sentExtras.push({ mentions: mentions ?? [], quotedMessageId: options?.quotedMessageId ?? null });
     return this.nextResult;
   }
 

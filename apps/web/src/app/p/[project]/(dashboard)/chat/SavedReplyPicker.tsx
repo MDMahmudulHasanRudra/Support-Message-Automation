@@ -25,10 +25,13 @@ export function SavedReplyPicker({
   replies,
   onInsert,
   onManage,
+  quiet = false,
 }: {
   replies: SavedReplyOption[];
   onInsert: (body: string) => void;
   onManage: () => void;
+  /** Chat v2: the trigger drawn like the emoji button beside it, not as a boxed one. */
+  quiet?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -86,7 +89,11 @@ export function SavedReplyPicker({
         aria-haspopup="listbox"
         title="Saved replies"
         aria-label="Saved replies"
-        className="flex size-10 cursor-pointer items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] transition-[background-color,border-color,transform] duration-[var(--duration-fast)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+        className={
+          quiet
+            ? "flex size-11 cursor-pointer items-center justify-center rounded-full text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] active:bg-[var(--color-neutral-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] sm:size-10 sm:rounded-[var(--radius-md)]"
+            : "flex size-10 cursor-pointer items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] transition-[background-color,border-color,transform] duration-[var(--duration-fast)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+        }
       >
         <MessageSquareText className="size-4" aria-hidden />
       </button>

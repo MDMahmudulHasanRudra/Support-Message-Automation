@@ -28,6 +28,8 @@ import { loadReportFilterOptions } from "@/server/reports/context";
 import { presetLinks } from "@/server/reports/presets";
 import { loadDataHealth } from "@/server/dataHealth";
 import { DataHealthStrip } from "@/components/reports/DataHealthStrip";
+import { computeReportingReliability } from "@support-automation/shared";
+import { ReliabilitySection } from "./ReliabilitySection";
 
 export const metadata = { title: "Team Report" };
 
@@ -63,6 +65,11 @@ export default async function TeamReportPage({
   ]);
   const { filters, range, result, memberNames, members, rules, teams, teamMemberIds, teamName, filterNote } = report;
   const { summary } = result;
+  const reliability = computeReportingReliability(report.reliabilityCounts, dataHealth, {
+    start: range.start.getTime(),
+    end: range.end.getTime(),
+    now: now.getTime(),
+  });
 
   const scopedName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
   const scope = scopeLabel(teamName, scopedName);
@@ -294,6 +301,8 @@ export default async function TeamReportPage({
           </Card>
         </>
       )}
+
+      <ReliabilitySection response={report.response} reliability={reliability} />
     </div>
   );
 }
@@ -322,8 +331,23 @@ function CalculationHelp({
       <HelpSection title="Customer waits">
         <p>
           A customer message starts a wait when the message before it in that group was a reply, or there was none — so
-          four lines in a row are one wait. The wait ends at the next reply from a team member or the business number.
-          Only waits that start inside the period count; a reply is looked for up to a day after it ends.
+          four lines in a row are one wait. The wait ends at the next reply from a team member or the business number —
+          and a business-number reply includes the AI&apos;s and an automation rule&apos;s, so an automated answer ends a
+          wait here. Only waits that start inside the period count; a reply is looked for up to a day after it ends, and
+          the hours before the period are read only to see whether a wait was already open at its start, so a month&apos;s
+          waits are the sum of its days&apos;.
+        </p>
+      </HelpSection>
+      <HelpSection title="Who answered, and the human response">
+        <p>
+          Below the report, every answered wait is split by who sent the reply that ended it: a verified person (a team
+          member on their own WhatsApp, or someone signed in to this dashboard), the AI, an automation rule, the business
+          number (a broadcast, or a message sent from the phone and not by this system), or a team member the roster
+          cannot name. That comes from the send each reply echoes, never from its direction.
+        </p>
+        <p className="mt-2">
+          The <strong>first human response</strong> is Human Response SLA&apos;s wait: only a person&apos;s reply ends it,
+          and a closing remark such as &quot;thanks&quot; does not start one. Its time is measured to a verified person.
         </p>
       </HelpSection>
       <HelpSection title="Missed and Recall">
@@ -348,7 +372,8 @@ function CalculationHelp({
           Support time comes from WhatsApp messages: each member&apos;s messages across all groups form one timeline, and a
           new stretch of work starts after more than {idleGapMinutes} minutes without a message (the &quot;Offline
           after&quot; setting) and at every midnight. Each stretch counts first-to-last message, so two groups answered at
-          once count once, and silence is never counted as work.
+          once count once, and silence is never counted as work. It is what message timestamps show, not verified
+          working hours.
         </p>
         <p className="mt-2">
           Regular duty for a day is, in order: that date&apos;s roster entry; nothing on a day off, leave, a holiday or

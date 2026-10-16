@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { type Prisma } from "@support-automation/db";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { checkPermission, requireAccess } from "@/server/authorize";
-import { createSenderResolver, normalizePhoneNumber, parseWhatsAppId, whatsappIdKey } from "@support-automation/shared";
+import { createSenderResolver, DHAKA_OFFSET_MS, normalizePhoneNumber, parseWhatsAppId, whatsappIdKey } from "@support-automation/shared";
 import { loginsForProject } from "@/server/projectLogins";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -29,6 +29,11 @@ interface TeamMemberInput {
   department: string | null;
   teamId: string | null;
   status: "ACTIVE" | "INACTIVE";
+  /**
+   * Reports credit this member only from this moment (Dhaka midnight of the chosen day). Null =
+   * every message counts. Undefined = the form did not carry the field, so it is left as it is.
+   */
+  attributeFrom?: Date | null;
 }
 
 /**
@@ -57,7 +62,24 @@ function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: stri
   if (whatsappId && !/^\d{6,}$/.test(whatsappId)) {
     return { error: "The WhatsApp ID is digits only (for example 145938777669643). Leave it empty if you do not have one." };
   }
-  return { name, phoneNumber, whatsappId, role, department, teamId, status };
+  let attributeFrom: Date | null | undefined;
+  if (formData.has("attributeFrom")) {
+    const key = String(formData.get("attributeFrom") ?? "").trim();
+    attributeFrom = key ? dhakaDayStart(key) : null;
+    if (attributeFrom === undefined) return { error: "That date could not be read. Pick a day, or leave it empty to count every message." };
+  }
+  return { name, phoneNumber, whatsappId, role, department, teamId, status, attributeFrom };
+}
+
+/** Dhaka midnight of a YYYY-MM-DD in a year a roster can mean, or undefined for anything else. */
+function dhakaDayStart(key: string): Date | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (!match) return undefined;
+  const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (y < 2000 || y > 2999) return undefined;
+  const utc = new Date(Date.UTC(y, m - 1, d));
+  if (utc.getUTCFullYear() !== y || utc.getUTCMonth() !== m - 1 || utc.getUTCDate() !== d) return undefined;
+  return new Date(utc.getTime() - DHAKA_OFFSET_MS);
 }
 
 /**
@@ -172,20 +194,37 @@ export async function createTeamMember(_prev: TeamMemberFormState, formData: For
   return { success: true };
 }
 
+/** The columns attribution follows, as the identity log records them. */
+interface IdentityColumns {
+  phoneNumber: string;
+  whatsappId: string | null;
+  /** ISO instant, or null; absent where the change could not touch it (adding from a chat). */
+  attributeFrom?: string | null;
+}
+
 /**
  * Identity mapping history (WHATSAPP_IDENTITY.md §4): every change to the identifiers a member's
  * messages are matched on is a System Log entry, old and new side by side. Attribution in every
- * report follows these two columns, so "why did last month's figures move?" has to be answerable.
+ * report follows these columns — and the attribute-from date — so "why did last month's figures
+ * move?" has to be answerable.
  */
+
 async function logIdentityChange(
   actorUserId: string,
   memberId: string,
   memberName: string,
-  before: { phoneNumber: string; whatsappId: string | null } | null,
-  after: { phoneNumber: string; whatsappId: string | null },
+  before: IdentityColumns | null,
+  after: IdentityColumns,
   via: "form" | "chat-link",
 ): Promise<void> {
-  if (before && before.phoneNumber === after.phoneNumber && before.whatsappId === after.whatsappId) return;
+  if (
+    before &&
+    before.phoneNumber === after.phoneNumber &&
+    before.whatsappId === after.whatsappId &&
+    (before.attributeFrom ?? null) === (after.attributeFrom ?? null)
+  ) {
+    return;
+  }
   await logSystemEvent(
     "INFO",
     "team-members",
@@ -471,7 +510,7 @@ export async function updateTeamMember(
   if (conflict) return { error: `${conflict.name} already has that number.` };
   const idConflict = await findWhatsAppIdConflict(input.whatsappId, id);
   if (idConflict) return { error: `${idConflict.name} already has that WhatsApp ID.` };
-  const current = await prisma.internalTeamMember.findUnique({ where: { id }, select: { teamId: true, phoneNumber: true, whatsappId: true } });
+  const current = await prisma.internalTeamMember.findUnique({ where: { id }, select: { teamId: true, phoneNumber: true, whatsappId: true, attributeFrom: true } });
   if (!current) return { error: "This team member no longer exists." };
   const teamProblem = await checkTeam(input.teamId, current.teamId);
   if (teamProblem) return { error: teamProblem };
@@ -489,8 +528,12 @@ export async function updateTeamMember(
     granted.session.userId,
     id,
     input.name,
-    { phoneNumber: current.phoneNumber, whatsappId: current.whatsappId },
-    { phoneNumber: input.phoneNumber, whatsappId: input.whatsappId },
+    { phoneNumber: current.phoneNumber, whatsappId: current.whatsappId, attributeFrom: current.attributeFrom?.toISOString() ?? null },
+    {
+      phoneNumber: input.phoneNumber,
+      whatsappId: input.whatsappId,
+      attributeFrom: input.attributeFrom === undefined ? (current.attributeFrom?.toISOString() ?? null) : (input.attributeFrom?.toISOString() ?? null),
+    },
     "form",
   );
   revalidatePath(await projectPath("/team-members"));

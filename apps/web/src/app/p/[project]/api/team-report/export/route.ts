@@ -1,9 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
-import { DUTY_SOURCE_LABELS, sanitizeExcelRow } from "@support-automation/shared";
+import {
+  computeReportingReliability,
+  DUTY_SOURCE_LABELS,
+  reliabilityLines,
+  REPLY_CATEGORY_LABELS,
+  replyCategoryOf,
+  responseLines,
+  sanitizeExcelRow,
+} from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
 import { bucketLabel, loadTeamReport, memberLabel, parseTeamReportFilters, scopeLabel } from "@/server/teamReport";
+import { loadDataHealth } from "@/server/dataHealth";
 
 /**
  * Team Report export. A Route Handler because a file download cannot come from a Server Action —
@@ -59,7 +68,7 @@ export async function GET(request: NextRequest) {
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
   const format = params.format === "xlsx" ? "xlsx" : "csv";
   const now = new Date();
-  const { filters, range, result, memberNames, groups, rules, teamName } = await loadTeamReport(
+  const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts } = await loadTeamReport(
     parseTeamReportFilters(params, now),
     now,
   );
@@ -196,8 +205,17 @@ export async function GET(request: NextRequest) {
         "Answered by": w.repliedBy ? memberLabel(w.repliedBy, memberNames) : "",
         "Charged to": memberLabel(groups.get(w.groupKey)?.assignedMemberId ?? null, memberNames),
         Result: WAIT_RESULT[w.status] ?? w.status,
+        // Who sent the reply that ended the wait, from the send it echoes (teamReportReliability.ts).
+        "Reply came from": w.repliedByActor ? REPLY_CATEGORY_LABELS[replyCategoryOf(w.repliedByActor)] : "",
       }),
     );
+
+  // The page's "How customers were answered" and "Reporting reliability" sections, line for line.
+  const health = await loadDataHealth({ periodStart: range.start.getTime(), periodEnd: range.end.getTime(), now, accountId: filters.accountId });
+  const reliability = computeReportingReliability(reliabilityCounts, health, { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() });
+  const qualityRows = [...responseLines(response), ...reliabilityLines(reliability)].map((line) =>
+    sanitizeExcelRow({ Section: line.section, Measure: line.label, Value: line.value, Note: line.note }),
+  );
 
   const workbook = XLSX.utils.book_new();
   const addSheet = (name: string, rows: Array<Record<string, unknown>>, emptyNote: string) =>
@@ -208,6 +226,7 @@ export async function GET(request: NextRequest) {
   addSheet(filters.granularity === "day" ? "Daily" : filters.granularity === "week" ? "Weekly" : "Monthly", bucketRows, "");
   addSheet("Missed & Recall", missedRows, "Nothing was missed in this period.");
   addSheet("Overtime by day", overtimeDayRows, "No team member work was recorded in this period.");
+  addSheet("Data quality", qualityRows, "");
 
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
   return new NextResponse(buffer as unknown as BodyInit, {

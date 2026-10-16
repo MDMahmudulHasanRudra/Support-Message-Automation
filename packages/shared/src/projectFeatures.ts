@@ -184,6 +184,19 @@ export const PROJECT_FEATURES = [
     permissionKeys: ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export", "clients.view_billing", "clients.edit_billing", "clients.link_whatsapp_chat", "communications.manage_email"],
     workerEffect: "Nothing runs in the background for it. Switching it off hides the pages and refuses the actions; client records are kept.",
   },
+  {
+    key: "CHAT_UI_V2",
+    label: "WhatsApp Chat — new conversation view",
+    description:
+      "The upgraded thread and composer (CHAT_UI_V2.md): older history, replies that quote, reactions, mentions, formatting, search in a conversation. Off = the current chat.",
+    // A presentation switch, not a module: it owns no page and no key, so it never blocks anything.
+    // Off for every project until a Main Admin switches it on; switching it off again is the
+    // rollback, effective on the next page load, with no data to restore.
+    defaultEnabled: false,
+    routes: [],
+    permissionKeys: [],
+    workerEffect: "Nothing runs in the background for it. Replies already queued with a quote are still sent as replies.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];

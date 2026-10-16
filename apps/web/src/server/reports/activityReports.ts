@@ -114,7 +114,7 @@ export async function buildCalls(ctx: ReportContext): Promise<BuiltReport> {
         ${groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty}
         ${accountId ? Prisma.sql`AND m."accountId" = ${accountId}` : Prisma.empty}
       ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
-    prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } }),
+    prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true, attributeFrom: true } }),
   ]);
   // The one identity rule (WHATSAPP_IDENTITY.md), so a sender here is who the Team Report says.
   const resolver = createSenderResolver(members);
@@ -124,7 +124,7 @@ export async function buildCalls(ctx: ReportContext): Promise<BuiltReport> {
     .map((row) => {
       const mention = detectCallMention(row.body);
       if (!mention) return null;
-      const sender = row.direction === "OUTGOING" ? null : resolver.resolve(row.sender, row.senderJid);
+      const sender = row.direction === "OUTGOING" ? null : resolver.resolve(row.sender, row.senderJid, row.ts.getTime());
       const memberId = sender?.memberId ?? null;
       const who = row.direction === "OUTGOING" ? "BUSINESS" : memberId || sender?.isRosterMember || row.fromTeam ? "MEMBER" : "CUSTOMER";
       return { ...row, ms: row.ts.getTime(), mention, memberId, who };

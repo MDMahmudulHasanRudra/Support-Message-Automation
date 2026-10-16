@@ -466,7 +466,14 @@ has been written on every message since the pipeline was built and read by **not
 the reader it was always for. The provider answers with `fetchMessagesSince()`, bounded by chat
 activity rather than by roster size — `getAllGroups()` reports each chat's last interaction, so a
 fifteen-minute gap reads the handful of groups that actually received something, not all 1,848.
-Groups only; that is where this product's conversations live.
+**Groups and one-to-one chats** (Phase 2, 16 Oct 2026): the live path always stored personal
+messages, so a gap sweep that read groups only lost every personal message sent during a restart.
+`selectCatchUpChats` (`packages/shared/src/whatsappChats.ts`) is the one rule — `@g.us`, `@c.us` and
+`@lid` chats touched since the gap began, never status, channels or broadcast lists — and the inbox's
+`isPersonalChatId` is the same function. The personal list is read separately and after the group
+list, which stays the proof the session can be read; a probe that answered but could not check
+everything (that list, or one chat's history) returns `incomplete`, and the gap is then PARTIAL with
+the reason, never RECOVERED.
 
 **Replay is safe because `Message @@unique([accountId, whatsappMessageId])` already is the dedup
 guard** — `persistIncomingMessage()` returns null on `P2002` and both paths share it, so a message
@@ -526,6 +533,10 @@ Three rules worth not undoing:
   browser can sync it).
 - **Per-account state lives on `WhatsAppAccount.groupSync*`** (RUNNING / COMPLETED / PARTIAL /
   FAILED, counts, timing), shown on Accounts and Groups; a RUNNING left by a restart is closed at boot.
+  WhatsApp never says a group list is complete, so COMPLETED/PARTIAL carry `groupSyncBasis` — what
+  the result rests on (stable reads, every known group present, one read, the arrival window ended;
+  `groupSyncBasis.ts`), printed after the count. Never a "verified complete"; every other status
+  clears it.
   Persistence is batched (500 / 5,000) and a failed batch is retried row by row, so one bad group
   costs only itself. A sync writes only name, `isActive` and `lastSyncedAt`.
 - **A slow first read is "still loading", never FAILED** (8 Oct 2026, second number timing out at
@@ -922,6 +933,12 @@ write another identifier→member map. Rules worth not undoing:
   just-sent outbound with the same key, never from a one-to-one row's sender.
 - **History reconciliation** is `pnpm db:reconcile:messages`: a dry run by default; `--apply` only
   fills NULL `senderJid` from what each row proves.
+- **History keeps its owner** (`InternalTeamMember.attributeFrom`, Phase 2): reports pass each
+  message's time to `resolve(phone, jid, at)`, and before a member's "count their messages from" date
+  they are not a candidate — a customer's number that later joins the team keeps its customer history.
+  Null (every existing member) = all history, as before. The live pipeline passes no time: anyone on
+  the roster is staff for automation. No LID→phone table exists, because no provider evidence for
+  one does; add one only when a provider supplies it.
 - **Identifier changes on Team Members are System Log entries.** WhatsApp Chat's contact panel links
   an unresolved sender to a member (`linkWhatsAppSender`, `whatsapp.manage`). Panels are URL state
   (`?contact=` / `?info=group`).
@@ -1156,6 +1173,25 @@ Missed and unrecovered; still inside it = neither. Missed is charged to the grou
 `assignedTeamMemberId` ("Unassigned" otherwise); Recall to whoever sent the late reply. Business-number
 replies count as replies but carry no person and no duration. Replies are looked for up to 24 h
 past the period end, and only waits starting inside the period count.
+
+**Who answered, the human response, and reliability (Phase 2, `teamReportReliability.ts`).** Beside the
+figures, never changing one:
+- **Provenance from evidence.** Every message carries an `actor`. An outgoing one is AI / RULE /
+  BROADCAST / OPERATOR from the `OutboundMessage` it echoes (`outgoingActorFor`, shared with Support
+  Intelligence), and BUSINESS_PHONE when it echoes none. Six report categories (CUSTOMER,
+  HUMAN_TEAM_MEMBER, AUTOMATED_AI, AUTOMATED_RULE, OTHER_BUSINESS_REPLY, UNKNOWN_OR_UNATTRIBUTED).
+  Direction never decides authorship.
+- **Three response measures, each defined once.** First observed response is the existing wait
+  (`responseStats`, Response SLA's). Automated response is the waits an AI or rule reply closed. First
+  human response is Human Response SLA's `humanWaits`, timed to a verified person (member or
+  dashboard user).
+- **Context, never counted.** The loader also reads the 4 hours before the period and each group's
+  last earlier message, so a wait open at midnight is not counted again: a month's waits are the
+  sum of its days'. `TeamReportData.messages` is still the period and look-ahead only.
+- **Provenance is joined once as a hash, not probed per row.** The per-row probe doubled a month's
+  report (PHASE2.md Stage 9). Text is read only where a customer's line can be.
+- **Reliability is counts only.** Stored copies, logical messages, attribution strength,
+  conflicts, gaps, incomplete and unverified days. Never an accuracy percentage; a test refuses one.
 
 **Team filter (28 Sep 2026): a Team is "who was in it AT THAT MOMENT", not "who is in it now".**
 `Team` rows are created on `/teams` (WhatsApp module); `InternalTeamMember.teamId` is the person's
@@ -2557,6 +2593,29 @@ any attribution work. Feature `GOOGLE_SHEETS`, **off by default in every project
   client is only a fallback. The secret is encrypted and never leaves `clientConfig.ts`; a pair Google
   rejects is not saved; tokens refresh only with the client that issued them (`oauthClientId`), so a
   client change sends accounts back to reconnect. Off stops all Google calls and deletes nothing.
+
+### WhatsApp Chat v2 — the upgraded conversation view (`chat/v2/`, `server/chatThreadV2.ts`, `CHAT_UI_V2.md`)
+
+Behind the `CHAT_UI_V2` project feature, **off by default**; off = the v1 pages render exactly as
+before, and switching it off is the whole rollback. Design patterns (not code) from
+rmyndharis/OpenWA@078b8aa — `docs/third-party/OPENWA_REFERENCE.md`. Rules worth not undoing:
+- **A thread is ordered by `(timestampWa, id)`, on every query** — the live window, older pages
+  (`loadOlderEntries`, opaque `<ms>.<id>` cursor) and jump-to. Timestamp alone repeats or skips the
+  burst that shares a second at a page boundary. Messages that drop out of the 80-row live window
+  are retained client-side so no gap opens above it.
+- **A quote is real only when WhatsApp's echo says so.** `OutboundMessage.replyToMessageId` is the
+  intent (validated: same account, same conversation); the worker sends through `client.reply()` and
+  refuses a target from another chat. The thread shows a stored message's quote only from
+  `Message.quotedMessageId` on the echo. Reply + mentions is refused: the library's
+  `sendReplyWithMentions` is a stub.
+- **Mentions only for phone-number ids** (`chatMentions.ts`): `…@c.us` senders who wrote in this
+  group copy, plus roster members with a typed number. A LID is never offered, converted or printed
+  as a number; the server recomputes candidates on every send.
+- **Reactions shown are this account's own, as the worker settled them** (`chatReactions.ts`, from
+  `REACT_TO_MESSAGE` results). Others' reactions need the Insiders licence and are never invented;
+  removal is not offered (unverified contract).
+- **Nothing new works with the feature off**: `replyTo` / `mentions` on a send and every v2 read
+  action refuse unless `CHAT_UI_V2` is on for the project.
 
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 

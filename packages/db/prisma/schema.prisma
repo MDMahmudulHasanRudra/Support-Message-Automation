@@ -997,6 +997,10 @@ model WhatsAppAccount {
   groupSyncFailed      Int?
   groupSyncDurationMs  Int?
   groupSyncError       String?
+  /// What a COMPLETED / PARTIAL result rests on (packages/shared groupSyncBasis.ts, PHASE2.md):
+  /// STABLE_READS, KNOWN_GROUPS_PRESENT, SINGLE_READ or WINDOW_ENDED. WhatsApp gives no "list
+  /// complete" signal, so this is never "verified". Null for other statuses and older rows.
+  groupSyncBasis       String?
   sessionDataPath      String?
   /// OpenWA's own session identifier — distinct from `id` because it doubles as part of the
   /// on-disk Chromium profile path (`${sessionDataPath}/_IGNORE_${sessionId}`, see
@@ -1308,6 +1312,12 @@ model InternalTeamMember {
   /// picked out of message history matches by this. Editing the phone number to the person's real
   /// one never breaks matching, because this keeps working.
   whatsappId      String?
+  /// Reports credit this person's messages only from this moment on (Phase 2, PHASE2.md Stage 5): a
+  /// number that wrote as a customer before it joined the team keeps that history as customer
+  /// history. Null — every existing row — means all of it counts, exactly as before. Read only by the
+  /// report loaders (`createSenderResolver(...).resolve(…, at)`); the live pipeline ignores it, so a
+  /// person on the roster is always staff for automation.
+  attributeFrom   DateTime?
   /// The person's designation / job title (Support Executive, CTO, ...). Free text, shown as
   /// "Designation" in the UI; the column keeps its original name so nothing reading it changes.
   role            String
@@ -1478,7 +1488,9 @@ model Message {
   mentionedPhones  String[]  @default([])
 
   executions               AutomationExecution[]
-  outboundReplies          OutboundMessage[]
+  outboundReplies          OutboundMessage[] @relation("OutboundRelatedMessage")
+  /// Chat v2 manual replies that quote this message (OutboundMessage.replyToMessageId).
+  quotedByOutbound         OutboundMessage[] @relation("OutboundReplyTo")
   notifications            Notification[]
   triggeredEscalationCases SupportEscalationCase[]    @relation("EscalationTriggerMessage")
   patternCandidateEvidence PatternCandidateEvidence[]
@@ -1592,7 +1604,14 @@ model OutboundMessage {
   toPhone          String
   body             String
   relatedMessageId String?
-  relatedMessage   Message?              @relation(fields: [relatedMessageId], references: [id], onDelete: SetNull)
+  relatedMessage   Message?              @relation("OutboundRelatedMessage", fields: [relatedMessageId], references: [id], onDelete: SetNull)
+  /// WhatsApp Chat v2 (CHAT_UI_V2.md): the stored message this MANUAL_REPLY quotes, as a real WhatsApp
+  /// reply. Set only by the chat composer, after the action proved the message is in the same
+  /// conversation of the same account. The worker sends through `reply()` with that message's
+  /// WhatsApp id; the echo's own `Message.quotedMessageId` is the proof it landed as a quote. SetNull:
+  /// deleting the quoted row never deletes the send — the worker then refuses to send it unquoted.
+  replyToMessageId String?
+  replyToMessage   Message?              @relation("OutboundReplyTo", fields: [replyToMessageId], references: [id], onDelete: SetNull)
   ruleId           String?
   rule             AutomationRule?       @relation(fields: [ruleId], references: [id], onDelete: SetNull)
   /// Contact ids to @mention when this is sent. Empty for almost everything — set only by the AI
@@ -1634,6 +1653,7 @@ model OutboundMessage {
   @@index([broadcastJobId, status])
   @@index([groupId, status])
   @@index([relatedMessageId])
+  @@index([replyToMessageId])
   /// The global rate-limit check's exact WHERE shape (accountId + status SENT + sentAt window),
   /// run several times per outbound send.
   @@index([accountId, status, sentAt])
