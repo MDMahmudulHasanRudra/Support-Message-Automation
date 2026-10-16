@@ -58,7 +58,7 @@ export function RichComposer({ conversation, isGroup, onSent }: { conversation: 
         aria-label="Attach a poll, location or sticker"
         aria-expanded={menuOpen}
         aria-haspopup="menu"
-        className="flex size-11 items-center justify-center rounded-full text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] active:bg-[var(--color-neutral-bg)] sm:size-10 sm:rounded-[var(--radius-md)]"
+        className="flex size-11 items-center justify-center rounded-full text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] active:bg-[var(--color-neutral-bg)] sm:size-11 sm:border sm:border-[var(--color-border)] sm:bg-[var(--color-surface)] sm:hover:border-[var(--color-border-strong)]"
       >
         <Paperclip className="size-4.5" aria-hidden />
       </button>

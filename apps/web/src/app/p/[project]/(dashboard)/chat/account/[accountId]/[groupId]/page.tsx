@@ -19,6 +19,8 @@ import { ThreadScroller } from "../../../ThreadScroller";
 import { conversationAvatar } from "../../../avatar";
 import { ConversationV2, ThreadSearchToggle } from "../../../v2/ConversationV2";
 import { PhoneChatMenu } from "../../../v2/PhoneChatMenu";
+import { ChatHeaderV2, MemberCount } from "../../../v2/ChatHeaderV2";
+import { MonitoringPill } from "../../../v2/MonitoringPill";
 import { attachOwnReactions, isChatUiV2Enabled, mentionNamesFor } from "@/server/chatThreadV2";
 import { accountStatusTone } from "../../../chatAccounts";
 
@@ -185,7 +187,36 @@ export default async function ChatConversationPage({
           key={group.id}
           conversation={{ accountId: group.accountId, groupId: group.id }}
           isGroup
-          header={renderHeader(true)}
+          header={
+            <ChatHeaderV2
+              backHref={`/chat/account/${group.accountId}`}
+              infoHref={`${basePath}?info=group`}
+              infoTitle="Group info"
+              avatar={avatar}
+              isGroup
+              name={group.name}
+              accountLabel={group.accountLabel}
+              tone={tone}
+              detail={<MemberCount count={group.participantCount} />}
+              actions={
+                <>
+                  {group.mood ? <MoodBadge mood={group.mood} /> : null}
+                  {group.aiAutomationEnabled ? (
+                    <span className="hidden lg:inline">
+                      <Badge color="blue" dot>
+                        <Bot className="size-3" aria-hidden />
+                        AI
+                      </Badge>
+                    </span>
+                  ) : null}
+                  <MonitoringPill monitored={group.isMonitored} aiOn={group.aiAutomationEnabled} />
+                  {isUnanswered ? <MarkWaitingButton groupId={group.id} /> : null}
+                  <ThreadSearchToggle />
+                  <PhoneChatMenu conversation={{ accountId: group.accountId, groupId: group.id }} accountLabel={group.accountLabel} />
+                </>
+              }
+            />
+          }
           belowThread={group.aiAutomationEnabled ? <AiActiveNotice suppressedUntil={group.aiSuppressedUntil} compact /> : null}
           entries={withReactions}
           hasMore={hasMore}

@@ -1071,9 +1071,10 @@ export type GroupRecoveryPassResult =
 /**
  * Why the recovery loop is reading an account (`groupRecovery.ts`): RETRY - a sync said "not
  * finished"; FOLLOW - a recent connect whose phone may still be sending chats; VERIFY - inactive
- * groups worth a bounded second look. Only RETRY writes the account's sync status.
+ * groups worth a bounded second look; DAILY - a settled account's once-a-day add-only read. Only
+ * RETRY writes the account's sync status.
  */
-export type GroupRecoveryMode = "RETRY" | "FOLLOW" | "VERIFY";
+export type GroupRecoveryMode = "RETRY" | "FOLLOW" | "VERIFY" | "DAILY";
 
 export async function runGroupRecoveryPass(
   accountId: string,

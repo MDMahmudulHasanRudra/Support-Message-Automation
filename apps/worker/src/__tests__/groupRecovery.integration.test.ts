@@ -100,10 +100,14 @@ async function pastGrace(accountId: string) {
   clock.t += backoffAfter(0);
 }
 
+const DAILY_MS = GROUP_RECOVERY_SETTINGS.dailyCheckMs;
 beforeEach(() => {
   registry = new ProviderRegistry();
   resetGroupRecoveryState();
   clock.t = START;
+  // The tests below each pin ONE kind of work and its own end ("no further reads, ever"); the daily
+  // read for a settled account is its own section at the end, which switches it back on.
+  GROUP_RECOVERY_SETTINGS.dailyCheckMs = 0;
 });
 
 afterEach(async () => {
@@ -834,5 +838,112 @@ describe("a recent connection is followed while the phone may still be sending c
     expect(groupRecoverySchedule(id)).toMatchObject({ kind: "RETRY" });
     expect(await tick()).toMatchObject({ result: "RECOVERED", pending: 0 });
     expect((await accountRow(id)).groupSyncStatus).toBe("COMPLETED");
+  });
+});
+
+describe("a settled account is still read once a day (DAILY)", () => {
+  const DAY = 24 * 60 * MIN;
+  beforeEach(() => {
+    GROUP_RECOVERY_SETTINGS.dailyCheckMs = DAILY_MS || DAY;
+  });
+
+  it("finds groups a COMPLETED sync never saw: 500 shown, the phone has more", async () => {
+    // The scenario that motivated it: connected long ago, sync COMPLETED, nothing inactive, and the
+    // phone now lists groups the stored list never had.
+    const id = await newAccount({ sync: "COMPLETED" });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: true }, { i: 1, active: true }]);
+    const { provider, state } = listing(tag, [0, 1, 2, 3, 4]);
+    registry.registerForTesting(id, provider);
+
+    await pastGrace(id);
+    expect(await tick()).toMatchObject({ result: "RECOVERED" });
+    expect(state.reads).toBe(1);
+    expect(await rowCount(id)).toBe(5);
+    for (const i of [2, 3, 4]) expect(await activeOf(id, tag, i)).toBe(true);
+    // Add-only, and the recorded sync is untouched.
+    expect(await accountRow(id)).toMatchObject({ groupSyncStatus: "COMPLETED", groupSyncError: null, groupSyncDiscovered: SENTINEL_DISCOVERED });
+  });
+
+  it("reads at most once a day, whatever it finds", async () => {
+    const id = await newAccount({ sync: "COMPLETED" });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: true }]);
+    const { provider, state } = listing(tag, [0]);
+    registry.registerForTesting(id, provider);
+
+    const readAt: number[] = [];
+    for (let n = 0; n < 24 * 4; n += 1) {
+      const before = state.reads;
+      await tick();
+      if (state.reads > before) readAt.push(clock.t);
+      clock.t += 60 * MIN; // four days, an hour at a time
+    }
+    expect(readAt.length).toBeGreaterThanOrEqual(3);
+    expect(readAt.length).toBeLessThanOrEqual(4);
+    for (let k = 1; k < readAt.length; k += 1) expect(readAt[k]! - readAt[k - 1]!).toBeGreaterThanOrEqual(DAY);
+  });
+
+  it("only ever adds: a shorter list switches nothing off", async () => {
+    const id = await newAccount({ sync: "COMPLETED" });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: true }, { i: 1, active: true }]);
+    const { provider } = listing(tag, [0]); // 1 is not in this read
+    registry.registerForTesting(id, provider);
+    await pastGrace(id);
+    expect(await tick()).toMatchObject({ result: "NO_CHANGE" });
+    expect(await activeOf(id, tag, 1)).toBe(true);
+    expect(await accountRow(id)).toMatchObject({ groupSyncStatus: "COMPLETED", groupSyncDiscovered: SENTINEL_DISCOVERED });
+  });
+
+  it("waits a day after the last completed sync, and a day after the FOLLOW window", async () => {
+    const synced = await newAccount({ sync: "COMPLETED" });
+    await prisma.whatsAppAccount.update({ where: { id: synced }, data: { groupSyncCompletedAt: new Date(clock.t - 2 * 60 * MIN) } });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(synced, tag, [{ i: 0, active: true }]);
+    const { provider, state } = listing(tag, [0]);
+    registry.registerForTesting(synced, provider);
+
+    await tick();
+    expect(groupRecoverySchedule(synced)).toMatchObject({ kind: "DAILY" });
+    expect(groupRecoverySchedule(synced)!.nextAt).toBe(clock.t - 2 * 60 * MIN + DAY);
+    clock.t += DAY - 3 * 60 * MIN;
+    await tick();
+    expect(state.reads).toBe(0);
+    clock.t += 2 * 60 * MIN;
+    await tick();
+    expect(state.reads).toBe(1);
+  });
+
+  it("follows a spent VERIFY without verifying again, and without a second read the same day", async () => {
+    const id = await newAccount({ sync: "COMPLETED" });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: true }, { i: 1, active: false }]);
+    const { provider, state } = listing(tag, [0]);
+    registry.registerForTesting(id, provider);
+
+    for (let n = 0; n < 40; n += 1) {
+      clock.t += 7 * 60 * MIN; // 280 hours
+      await tick();
+    }
+    // The bounded VERIFY reads, then one a day — not VERIFY over and over.
+    expect(state.reads).toBeGreaterThan(GROUP_RECOVERY_SETTINGS.verifyMaxReads);
+    expect(state.reads).toBeLessThanOrEqual(GROUP_RECOVERY_SETTINGS.verifyMaxReads + 12);
+    expect(groupRecoverySchedule(id)).toMatchObject({ kind: "DAILY" });
+    expect(await activeOf(id, tag, 1)).toBe(false);
+  });
+
+  it("can be switched off, which is the old behaviour", async () => {
+    GROUP_RECOVERY_SETTINGS.dailyCheckMs = 0;
+    const id = await newAccount({ sync: "COMPLETED" });
+    const tag = randomUUID().slice(0, 6);
+    await seedGroups(id, tag, [{ i: 0, active: true }]);
+    const { provider, state } = listing(tag, [0, 1]);
+    registry.registerForTesting(id, provider);
+    for (let n = 0; n < 10; n += 1) {
+      clock.t += 7 * 60 * MIN;
+      await tick();
+    }
+    expect(state.reads).toBe(0);
   });
 });

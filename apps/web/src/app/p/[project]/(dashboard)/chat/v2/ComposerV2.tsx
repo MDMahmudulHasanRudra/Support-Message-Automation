@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, AtSign, CornerUpLeft, SendHorizontal, Smartphone, Smile, X } from "lucide-react";
+import { ArrowRight, AtSign, CornerUpLeft, Info, SendHorizontal, Smartphone, Smile, X } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { useActionState, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { MentionCandidate } from "@support-automation/shared";
@@ -307,14 +307,16 @@ export function ComposerV2({
         <input type="hidden" name="replyTo" value={replyTarget?.id ?? ""} />
         <input type="hidden" name="mentions" value={mentions.length ? JSON.stringify(mentions.map((m) => m.jid)) : ""} />
 
-        <SavedReplyPicker quiet replies={savedReplies} onInsert={(body) => insertAtCursor(body)} onManage={() => setManagingReplies(true)} />
+
+        {/* A poll, location or sticker: its own queued send, never part of this text (CHAT_RICH_MESSAGING.md §5). */}
+        <RichComposer conversation={conversation} isGroup={isGroup} onSent={onSent} />
 
         {/* Hidden on a phone, where the keyboard has its own emoji key and the attach button needs the room. */}
         <div className="relative max-sm:hidden">
           <button
             type="button"
             onClick={() => setEmojiOpen((v) => !v)}
-            className="flex size-11 items-center justify-center rounded-full text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] active:bg-[var(--color-neutral-bg)] sm:size-10 sm:rounded-[var(--radius-md)]"
+            className="flex size-11 items-center justify-center rounded-full text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] active:bg-[var(--color-neutral-bg)] sm:size-11 sm:border sm:border-[var(--color-border)] sm:bg-[var(--color-surface)] sm:hover:border-[var(--color-border-strong)]"
             aria-label="Insert emoji"
             aria-expanded={emojiOpen}
           >
@@ -332,8 +334,7 @@ export function ComposerV2({
           ) : null}
         </div>
 
-        {/* A poll, location or sticker: its own queued send, never part of this text (CHAT_RICH_MESSAGING.md §5). */}
-        <RichComposer conversation={conversation} isGroup={isGroup} onSent={onSent} />
+        <SavedReplyPicker quiet replies={savedReplies} onInsert={(body) => insertAtCursor(body)} onManage={() => setManagingReplies(true)} />
 
         <div className="relative min-w-0 flex-1">
           {mentionQuery && (filtered.length || candidateError || candidates) ? (
@@ -375,9 +376,9 @@ export function ComposerV2({
             rows={1}
             required
             maxLength={4096}
-            placeholder={phone ? "Message" : isGroup ? "Type a message…  (@ to tag, Enter to send, Shift+Enter for a new line)" : "Type a message…  (Enter to send, Shift+Enter for a new line)"}
+            placeholder={phone ? "Message" : isGroup ? "Type a message…  (@ to tag, Shift+Enter for a new line)" : "Type a message…  (Shift+Enter for a new line)"}
             enterKeyHint={phone ? "enter" : "send"}
-            className="min-h-10 w-full resize-none py-2.5 transition-[height] duration-[var(--duration-fast)] ease-[var(--ease-out)] max-sm:min-h-11 max-sm:rounded-[22px] max-sm:px-4 max-sm:py-3 max-sm:text-base"
+            className="min-h-10 w-full resize-none py-2.5 transition-[height] duration-[var(--duration-fast)] ease-[var(--ease-out)] max-sm:min-h-11 max-sm:rounded-[22px] max-sm:px-4 max-sm:py-3 max-sm:text-base sm:min-h-12 sm:rounded-[var(--radius-lg)] sm:px-4 sm:py-3 sm:text-[14px] focus-visible:border-[var(--wa-green)] focus-visible:ring-[var(--wa-green)]/15"
             onChange={(event) => {
               autoGrow();
               rememberDraft(event.target.value);
@@ -418,13 +419,14 @@ export function ComposerV2({
           />
         </div>
 
-        <Button type="submit" loading={pending} disabled={pending || conflict} aria-label="Send message" className="h-10 shrink-0 self-end px-3.5 max-sm:size-11 max-sm:rounded-full max-sm:px-0">
+        <Button type="submit" loading={pending} disabled={pending || conflict} aria-label="Send message" className="h-10 shrink-0 self-end px-3.5 !bg-[var(--wa-green-strong)] !text-[var(--wa-on-green)] hover:!bg-[var(--wa-green-hover)] max-sm:size-11 max-sm:rounded-full max-sm:px-0 sm:h-12 sm:rounded-[var(--radius-lg)] sm:px-5">
           {pending ? null : <SendHorizontal className="size-4" aria-hidden />}
         </Button>
       </form>
 
-      <p className="mt-2 text-[10px] leading-relaxed text-[color:var(--color-muted-foreground)] max-sm:hidden">
-        Sent through the same outbound queue as automated replies, so account rate limits still apply. A reply quotes the original on WhatsApp once it is delivered.
+      <p className="mt-2.5 flex items-start gap-2 rounded-[var(--radius-md)] bg-[var(--wa-green-soft)] px-3 py-2 text-[11.5px] leading-relaxed text-[color:var(--color-foreground)] max-sm:hidden">
+        <Info className="mt-0.5 size-3.5 shrink-0 text-[color:var(--wa-green-strong)]" aria-hidden />
+        <span>Sent through the same outbound queue as automated replies, so account rate limits still apply. A reply quotes the original on WhatsApp once it is delivered.</span>
       </p>
 
       <SavedReplyManager open={managingReplies} onClose={() => setManagingReplies(false)} replies={savedReplies} />

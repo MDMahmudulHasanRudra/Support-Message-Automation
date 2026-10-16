@@ -5,6 +5,7 @@ import {
   Archive,
   BellRing,
   Check,
+  Clock,
   CheckSquare,
   ChevronDown,
   EyeOff,
@@ -196,6 +197,7 @@ export function ChatWorkspace({
   conversations,
   counts,
   categories,
+  v2 = false,
   children,
 }: {
   account: ChatAccountOption;
@@ -203,6 +205,8 @@ export function ChatWorkspace({
   conversations: ConversationSummary[];
   counts: ConversationCounts;
   categories: ChatCategorySummary[];
+  /** CHAT_UI_V2 is on: the WhatsApp-style look (CHAT_UI_V2.md §13). Off renders exactly what v1 always did. */
+  v2?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = stripProjectPrefix(usePathname());
@@ -465,6 +469,7 @@ export function ChatWorkspace({
     selecting,
     selected: selected.has(conversation.id),
     onToggle: () => toggleSelected(conversation.id),
+    v2,
   });
 
   const allCapped = filter.kind === "all" && type === "all" && !needle && counts.total > conversations.length;
@@ -473,7 +478,7 @@ export function ChatWorkspace({
     <div className="flex min-h-0 flex-1 flex-col">
       {/* ── Account, search, filters ─────────────────────────────────────────────────────────── */}
       <div
-        className={`${onIndex ? "flex" : "hidden md:flex"} shrink-0 flex-col gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3 py-3 sm:px-4`}
+        className={`${onIndex ? "flex" : "hidden md:flex"} shrink-0 flex-col gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3 py-3 sm:px-4 group-data-[v2]/chat:gap-3 group-data-[v2]/chat:bg-[var(--color-surface)] group-data-[v2]/chat:sm:px-5 group-data-[v2]/chat:sm:py-4`}
       >
         <div className="flex flex-wrap items-center gap-2">
           <AccountSelector
@@ -491,7 +496,7 @@ export function ChatWorkspace({
 
           <div className="relative min-w-[12rem] flex-1 max-sm:order-last max-sm:basis-full">
             <Search
-              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[color:var(--color-muted-foreground)]"
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[color:var(--color-muted-foreground)] group-data-[v2]/chat:left-3.5"
               aria-hidden
             />
             <input
@@ -504,10 +509,10 @@ export function ChatWorkspace({
                 setCursor(-1);
               }}
               onKeyDown={onSearchKeyDown}
-              placeholder={`Search ${account.label} conversations`}
+              placeholder={v2 ? "Search conversations and contacts…" : `Search ${account.label} conversations`}
               aria-label={`Search ${account.label} conversations`}
               aria-keyshortcuts="/"
-              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] max-sm:pr-10 max-sm:text-base group-data-[v2]/chat:text-ellipsis outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
+              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] max-sm:pr-10 max-sm:text-base group-data-[v2]/chat:text-ellipsis group-data-[v2]/chat:h-11 group-data-[v2]/chat:rounded-[var(--radius-lg)] group-data-[v2]/chat:pl-10 group-data-[v2]/chat:text-[13.5px] group-data-[v2]/chat:focus-visible:border-[var(--wa-green)] group-data-[v2]/chat:focus-visible:ring-[var(--wa-green)]/15 outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
             />
             {query ? (
               <button
@@ -562,6 +567,7 @@ export function ChatWorkspace({
           {/* "All" is the whole inbox, as it always was: both types and no view. Groups and Personal
               narrow the type and keep the view, so Personal + Waiting is both. */}
           <FilterChip
+            v2={v2}
             active={type === "all" && filter.kind === "all"}
             onClick={() => {
               setType("all");
@@ -571,12 +577,12 @@ export function ChatWorkspace({
             All
             <ChipCount>{counts.total}</ChipCount>
           </FilterChip>
-          <FilterChip active={type === "groups"} onClick={() => setType(type === "groups" ? "all" : "groups")}>
+          <FilterChip v2={v2} active={type === "groups"} onClick={() => setType(type === "groups" ? "all" : "groups")}>
             <Users className="size-3.5" aria-hidden />
             Groups
             <ChipCount>{counts.groups.total}</ChipCount>
           </FilterChip>
-          <FilterChip active={type === "personal"} onClick={() => setType(type === "personal" ? "all" : "personal")}>
+          <FilterChip v2={v2} active={type === "personal"} onClick={() => setType(type === "personal" ? "all" : "personal")}>
             <User className="size-3.5" aria-hidden />
             Personal
             <ChipCount>{counts.personal.total}</ChipCount>
@@ -584,8 +590,8 @@ export function ChatWorkspace({
 
           <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-[var(--color-border-strong)]" />
 
-          <FilterChip tone="warning" active={filter.kind === "waiting"} onClick={() => toggleFilter({ kind: "waiting" })}>
-            <Inbox className="size-3.5" aria-hidden />
+          <FilterChip v2={v2} tone="warning" active={filter.kind === "waiting"} onClick={() => toggleFilter({ kind: "waiting" })}>
+            {v2 ? <Clock className="size-3.5" aria-hidden /> : <Inbox className="size-3.5" aria-hidden />}
             Waiting
             <ChipCount>{typeCounts.waiting}</ChipCount>
           </FilterChip>
@@ -593,7 +599,7 @@ export function ChatWorkspace({
               customer still has no answer. They leave the waiting count by design — this is where
               they went, so they cannot quietly disappear. */}
           {typeCounts.seenUnanswered > 0 || filter.kind === "seen-unanswered" ? (
-            <FilterChip active={filter.kind === "seen-unanswered"} onClick={() => toggleFilter({ kind: "seen-unanswered" })}>
+            <FilterChip v2={v2} active={filter.kind === "seen-unanswered"} onClick={() => toggleFilter({ kind: "seen-unanswered" })}>
               <EyeOff className="size-3.5" aria-hidden />
               Seen, unanswered
               <ChipCount>{typeCounts.seenUnanswered}</ChipCount>
@@ -604,6 +610,7 @@ export function ChatWorkspace({
 
           {categories.map((category) => (
             <FilterChip
+              v2={v2}
               key={category.id}
               active={filter.kind === "category" && filter.id === category.id}
               onClick={() => toggleFilter({ kind: "category", id: category.id })}
@@ -630,7 +637,7 @@ export function ChatWorkspace({
         {/* ── The account's conversations ─────────────────────────────────────────────────────── */}
         <aside
           aria-label={`${account.label} conversations`}
-          className={`${onIndex ? "flex" : "hidden"} w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] md:flex md:w-[21rem]`}
+          className={`${onIndex ? "flex" : "hidden"} w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] md:flex md:w-[21rem] group-data-[v2]/chat:bg-[var(--color-surface)] group-data-[v2]/chat:md:w-[22rem] group-data-[v2]/chat:xl:w-[26rem]`}
         >
           <div className="flex shrink-0 items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-1.5 text-[12px]">
             <ToolbarButton onClick={() => (selecting ? exitSelection() : setSelecting(true))} pressed={selecting}>
@@ -992,11 +999,13 @@ function ChipCount({ children }: { children: number }) {
 function FilterChip({
   active,
   tone,
+  v2 = false,
   onClick,
   children,
 }: {
   active: boolean;
   tone?: "warning";
+  v2?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -1005,11 +1014,13 @@ function FilterChip({
   const styles = active
     ? tone === "warning"
       ? "border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] text-[color:var(--color-warning-fg)] shadow-[var(--shadow-xs)]"
-      : "border-[var(--color-primary)] bg-[var(--color-primary)] text-[var(--color-on-primary)] shadow-[var(--shadow-xs)]"
+      : v2
+        ? "border-[var(--wa-green-strong)] bg-[var(--wa-green-strong)] text-[var(--wa-on-green)] shadow-[var(--shadow-xs)]"
+        : "border-[var(--color-primary)] bg-[var(--color-primary)] text-[var(--color-on-primary)] shadow-[var(--shadow-xs)]"
     : "border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)]";
 
   return (
-    <button type="button" onClick={onClick} aria-pressed={active} className={`${base} ${styles}`}>
+    <button type="button" onClick={onClick} aria-pressed={active} className={`${base} ${styles} ${v2 ? "h-9 px-3.5 text-[13px]" : ""}`}>
       {children}
     </button>
   );
@@ -1083,6 +1094,7 @@ function Row({
   selecting,
   selected,
   onToggle,
+  v2 = false,
 }: {
   conversation: ConversationSummary;
   href: string;
@@ -1094,6 +1106,7 @@ function Row({
   selecting: boolean;
   selected: boolean;
   onToggle: () => void;
+  v2?: boolean;
 }) {
   const avatar = conversationAvatar(conversation.id, conversation.name);
   // Weight carries the unread state, not just a dot: an unanswered customer should be legible from
@@ -1157,7 +1170,7 @@ function Row({
             {conversation.kind === "PERSONAL" ? (
               <User className="size-3 shrink-0 text-[color:var(--color-muted-foreground)]" aria-label="Personal chat" />
             ) : null}
-            <span className={`truncate text-[13px] text-[color:var(--color-foreground)] ${unread ? "font-semibold" : "font-medium"}`}>
+            <span className={`truncate text-[color:var(--color-foreground)] ${v2 ? "text-[14px]" : "text-[13px]"} ${unread || v2 ? "font-semibold" : "font-medium"}`}>
               {conversation.name}
             </span>
           </span>
@@ -1175,7 +1188,7 @@ function Row({
 
         <span className="mt-0.5 flex items-center gap-1.5">
           <span
-            className={`min-w-0 flex-1 truncate text-[12px] ${
+            className={`min-w-0 flex-1 truncate ${v2 ? "text-[13px]" : "text-[12px]"} ${
               unread ? "text-[color:var(--color-foreground)]" : "text-[color:var(--color-muted-foreground)]"
             }`}
           >
@@ -1245,19 +1258,25 @@ function Row({
 
   const shell = [
     "group/row relative flex w-full gap-3 border-b border-[var(--color-border)] text-left",
-    compact ? "px-3.5 py-2" : "px-3.5 py-3",
+    compact ? "px-3.5 py-2" : v2 ? "px-4 py-3.5" : "px-3.5 py-3",
     "transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)]",
     "active:translate-y-px group-data-[v2]/chat:active:translate-y-0 group-data-[v2]/chat:active:bg-[var(--color-neutral-bg)]",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus-ring)]",
     cursored ? "ring-2 ring-inset ring-[var(--color-focus-ring)]" : "",
-    selected ? "bg-[var(--color-primary)]/[0.07]" : active ? "bg-[var(--color-surface)]" : "hover:bg-[var(--color-neutral-bg)]/60",
+    selected
+      ? "bg-[var(--color-primary)]/[0.07]"
+      : active
+        ? v2
+          ? "bg-[var(--wa-green-soft)]"
+          : "bg-[var(--color-surface)]"
+        : "hover:bg-[var(--color-neutral-bg)]/60",
   ].join(" ");
 
   // In selection mode the row is a button, not a link: a real href under the cursor would let
   // middle-click and ctrl-click navigate away mid-selection and lose it.
   return (
     <li className="relative">
-      {active ? <span aria-hidden className="absolute inset-y-0 left-0 z-[1] w-[3px] bg-[var(--color-primary)]" /> : null}
+      {active ? <span aria-hidden className={`absolute inset-y-0 left-0 z-[1] w-[3px] ${v2 ? "bg-[var(--wa-green)]" : "bg-[var(--color-primary)]"}`} /> : null}
       {selecting ? (
         <button type="button" onClick={onToggle} aria-pressed={selected} className={`${shell} cursor-pointer`}>
           {inner}

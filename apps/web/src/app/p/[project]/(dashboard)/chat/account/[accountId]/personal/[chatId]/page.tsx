@@ -16,6 +16,7 @@ import { ThreadScroller } from "../../../../ThreadScroller";
 import { conversationAvatar } from "../../../../avatar";
 import { ConversationV2, ThreadSearchToggle } from "../../../../v2/ConversationV2";
 import { PhoneChatMenu } from "../../../../v2/PhoneChatMenu";
+import { ChatHeaderV2, PersonalDetail } from "../../../../v2/ChatHeaderV2";
 import { attachOwnReactions, isChatUiV2Enabled, mentionNamesFor } from "@/server/chatThreadV2";
 import { accountStatusTone } from "../../../../chatAccounts";
 
@@ -133,7 +134,26 @@ export default async function PersonalChatPage({
           key={chat.id}
           conversation={{ accountId: chat.accountId, personalChatId: chat.chatId }}
           isGroup={false}
-          header={renderHeader(true)}
+          header={
+            <ChatHeaderV2
+              backHref={`/chat/account/${chat.accountId}?type=personal`}
+              infoHref={`${basePath}?contact=1`}
+              infoTitle="Contact info"
+              avatar={avatar}
+              isGroup={false}
+              name={chat.name}
+              accountLabel={chat.accountLabel}
+              tone={tone}
+              detail={<PersonalDetail number={number && number !== chat.name ? number : null} />}
+              actions={
+                <>
+                  {isUnanswered ? <MarkWaitingButton accountId={chat.accountId} chatId={chat.chatId} /> : null}
+                  <ThreadSearchToggle />
+                  <PhoneChatMenu conversation={{ accountId: chat.accountId, personalChatId: chat.chatId }} accountLabel={chat.accountLabel} />
+                </>
+              }
+            />
+          }
           entries={withReactions}
           hasMore={hasMore}
           reviewedAt={chat.reviewedAt}

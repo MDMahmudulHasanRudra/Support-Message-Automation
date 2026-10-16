@@ -206,8 +206,8 @@ export function MessageBubbleV2({
               entry.kind === "QUEUED"
                 ? "border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-sunken)] text-[color:var(--color-neutral-fg)]"
                 : isOutbound
-                  ? "border border-[var(--color-accent-border)] bg-[var(--color-accent-bg)] text-[color:var(--color-foreground)]"
-                  : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-foreground)]"
+                  ? "border border-[var(--wa-out-border)] bg-[var(--wa-out)] text-[color:var(--wa-bubble-fg)]"
+                  : "border border-transparent bg-[var(--wa-in)] text-[color:var(--wa-bubble-fg)]"
             }`}
           >
             {entry.revokedAt ? <RevokedNotice outgoing={isOutbound} /> : null}
@@ -235,6 +235,18 @@ export function MessageBubbleV2({
               <div className={`${hasFile ? "px-2 pt-1.5 pb-0.5" : ""} ${entry.revokedAt ? "opacity-70" : ""}`}>
                 <FormattedBody body={text} mentionNames={mentionNames} onDark={false} />
               </div>
+            ) : null}
+            {/* A received message carries its time inside the bubble, as WhatsApp draws it. Ours keep it on
+                the line below, beside who sent it and the ticks. */}
+            {entry.kind === "INCOMING" ? (
+              <span
+                className={`mt-1 flex items-center gap-1 text-[11px] text-[color:var(--wa-meta)] ${hasFile ? "px-2 pb-0.5" : ""}`}
+                title={`${formatDateTime(entry.at)}${entry.fromHistory ? " · loaded from WhatsApp history on request" : ""}`}
+              >
+                {entry.starred ? <Star className="size-2.5 fill-current text-[color:var(--color-warning)]" aria-label="Starred" /> : null}
+                {entry.fromHistory ? <History className="size-2.5" aria-label="Loaded from WhatsApp history" /> : null}
+                <span className="tabular">{formatTime(entry.at)}</span>
+              </span>
             ) : null}
           </div>
 
@@ -359,6 +371,7 @@ export function MessageBubbleV2({
           </span>
         ) : null}
 
+        {isOutbound ? (
         <span
           // neutral-fg, not muted: the muted slate on the sunken thread background is 4.3:1, under AA for 10 px text.
           className={`mt-1 flex max-w-full flex-wrap items-center gap-x-1 gap-y-0.5 px-1 text-[10.5px] text-[color:var(--color-neutral-fg)] ${isOutbound ? "justify-end" : ""} ${
@@ -384,6 +397,7 @@ export function MessageBubbleV2({
             </>
           )}
         </span>
+        ) : null}
 
         {queued?.tone === "bad" && entry.failureReason ? (
           <span className="mt-0.5 max-w-full px-1 text-right text-[10px] leading-relaxed text-[color:var(--color-danger-fg)]">{entry.failureReason}</span>

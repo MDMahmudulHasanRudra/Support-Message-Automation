@@ -389,6 +389,7 @@ the 573 known groups; the passes settled there and stopped.)
 |---|---|---|---|
 | Sync status FAILED/PARTIAL | `RETRY` | a sync said "not finished" | re-read slowly, no cap, until **no group that was ACTIVE is missing** from the list (and nothing failed to save): then COMPLETED, otherwise PARTIAL |
 | COMPLETED, but inactive groups exist | `VERIFY` | history: a group left long ago, or a logout's casualties | **none** — never writes the status, the discovered count or an error |
+| COMPLETED and settled (nothing above applies) | `DAILY` | a list that may have arrived after the 24 h FOLLOW window — e.g. 500 shown, 1,800 on the phone | **none** — once a day, ADD_ONLY; see below |
 | Inactive groups the list lacks | — | not evidence of anything: they may be gone for good or not delivered yet | never counted as pending, never called "left" |
 
 An ACTIVE group disappearing from a read is the signal of a partial list (it is the sweep guard's own
@@ -396,6 +397,18 @@ signal). An INACTIVE row the list lacks is not. `VERIFY` exists only to catch a 
 late: it reactivates what the list now contains, is bounded (`verifyMaxReads`, 4 reads in a row that
 find nothing, waits 2/5/10/30 min), restarts its count on a find, and is then left alone until the
 account reconnects. No account is read forever because of history.
+
+**`DAILY` (17 Oct 2026).** Before it, a settled account was never read again: a sync that said COMPLETED
+with 500 of 1,800 groups, after the FOLLOW window had ended, stayed at 500 until a message came from each
+missing group or somebody pressed Resync. Now every CONNECTED account none of the other kinds covers gets
+one ADD_ONLY read a day (`dailyCheckMs`, `WHATSAPP_GROUP_DAILY_CHECK_HOURS`, `0` = off — the old
+behaviour). It never writes the status, never deactivates anything, and is subject to everything above:
+one read per tick across all accounts, held off while the machine is busy, never beside an arrival pass
+or another sync. The first daily read is a day after the last completed sync or the end of the FOLLOW
+window, whichever is later; the schedule is in memory, so a worker restart costs at most one early read.
+A spent `VERIFY` is carried into it (`verifySpent`), so history is not verified over again.
+A read still sees only what WhatsApp Web has loaded on the linked device: a group the phone never sent
+there appears with its first message, not before.
 
 **A read that did not happen is not a result.** `runGroupRecoveryPass` answers `READ`, or `UNKNOWN`:
 - `UNAVAILABLE` — no live client (`WhatsAppProvider.hasLiveClient`; `getGroups()` answers `[]` for a
