@@ -29,7 +29,7 @@ import {
  *
  * - **ADD_ONLY, always** (`runGroupRecoveryPass`). It cannot deactivate a group and it cannot
  *   activate one WhatsApp does not list. The FULL sync and its sweep guard are untouched.
- * - **Three kinds of work, and the difference is the point.**
+ * - **Four kinds of work, and the difference is the point.**
  *   - `RETRY` — the account's recorded sync status is FAILED or PARTIAL: a sync said "not finished".
  *     Re-read slowly and without a cap (2, 5, 10, 30 minutes, then every 6 hours) until no group
  *     that was ACTIVE is missing from the list. This is what "genuinely incomplete" means.
@@ -44,6 +44,11 @@ import {
  *     the status. They are checked a bounded number of times per connection (`verifyMaxReads`
  *     reads in a row that find nothing), only to catch a group WhatsApp lists late; a find starts
  *     the count over, and the account is left alone after that until it reconnects.
+ *   - `DAILY` — none of the above: a settled account. Read once a day (`dailyCheckMs`, 24 h), ADD_ONLY,
+ *     never writing the status. A sync can say COMPLETED with 500 of 1,800 groups when the phone
+ *     delivered the rest after the 24 h FOLLOW window, and nothing else would ever look again until
+ *     a message arrived from each missing group or somebody pressed Resync. One read of the chat
+ *     store is seconds even for ~1,900 groups, so a day is a small price for that.
  * - **The need is read from the database, the schedule is not.** A restart loses only *when* to
  *   look. A reconnect (`lastConnectedAt` changes) starts a fresh schedule, as does a change of kind.
  * - **Never beside the connect's own passes.** An account connected less than the arrival window
@@ -69,6 +74,11 @@ export const GROUP_RECOVERY_SETTINGS = {
   followBackoffMs: [2, 5, 10, 30].map((minutes) => minutes * 60_000),
   /** A VERIFY account is left alone after this many reads in a row that found nothing. */
   verifyMaxReads: 4,
+  /**
+   * DAILY: how long a settled account goes between add-only reads. `WHATSAPP_GROUP_DAILY_CHECK_HOURS=0`
+   * switches it off (back to "a settled account is never read again"). Mutable for tests.
+   */
+  dailyCheckMs: (process.env.WHATSAPP_GROUP_DAILY_CHECK_HOURS === "0" ? 0 : Number(process.env.WHATSAPP_GROUP_DAILY_CHECK_HOURS) || 24) * 60 * 60_000,
   /** The connect's own arrival passes run this long (plus the follow-up sync); recovery stays out of their way. */
   afterConnectQuietMs: GROUP_ARRIVAL_SETTINGS.maxMs + 60_000,
   /**
@@ -107,6 +117,8 @@ interface RecoveryState {
   done: boolean;
   /** `lastConnectedAt` this schedule belongs to. A different one means a new connection. */
   connectedAt: number;
+  /** DAILY only: this connection's VERIFY budget was spent, so its inactive groups are not counted again. */
+  verifySpent?: boolean;
 }
 
 /** Only the schedule. What needs recovering is always re-derived from the database. */
@@ -189,15 +201,34 @@ export type RecoveryTickReport =
  * said "not finished" comes first, then a recent connection still worth following (its ADD_ONLY
  * read also brings back any inactive group WhatsApp lists), then inactive groups worth a check.
  */
-async function recoveryKind(accountId: string, groupSyncStatus: string | null, sinceConnectMs: number): Promise<GroupRecoveryMode | null> {
+async function recoveryKind(
+  accountId: string,
+  groupSyncStatus: string | null,
+  sinceConnectMs: number,
+  verifyDone: boolean,
+): Promise<GroupRecoveryMode | null> {
   if (groupSyncStatus === "FAILED" || groupSyncStatus === "PARTIAL") return "RETRY";
   if (sinceConnectMs < GROUP_RECOVERY_SETTINGS.followWindowMs) return "FOLLOW";
-  const hasInactive = await withAccountProject(accountId, async () => (await prisma.whatsAppGroup.count({ where: { accountId, isActive: false } })) > 0);
-  return hasInactive ? "VERIFY" : null;
+  if (!verifyDone) {
+    const hasInactive = await withAccountProject(accountId, async () => (await prisma.whatsAppGroup.count({ where: { accountId, isActive: false } })) > 0);
+    if (hasInactive) return "VERIFY";
+  }
+  return GROUP_RECOVERY_SETTINGS.dailyCheckMs > 0 ? "DAILY" : null;
 }
 
-function firstSighting(kind: GroupRecoveryMode, connectedAt: number, now: number): RecoveryState {
-  return { kind, step: 1, nextAt: now + backoffFor(kind, 0), noGrowthReads: 0, done: false, connectedAt };
+/**
+ * When the first DAILY read is due: a day after the account's list was last read in full or followed
+ * (the last completed sync, or the end of the FOLLOW window), and never sooner than the shortest wait.
+ * The schedule is in memory, so a restart costs at most one early read — cheap, and never a missed one.
+ */
+function firstDailyAt(connectedAt: number, completedAt: number | null, now: number): number {
+  const lastLooked = Math.max(completedAt ?? 0, connectedAt + GROUP_RECOVERY_SETTINGS.followWindowMs);
+  return Math.max(now + backoffFor("DAILY", 0), lastLooked + GROUP_RECOVERY_SETTINGS.dailyCheckMs);
+}
+
+function firstSighting(kind: GroupRecoveryMode, connectedAt: number, now: number, completedAt: number | null = null): RecoveryState {
+  const nextAt = kind === "DAILY" ? firstDailyAt(connectedAt, completedAt, now) : now + backoffFor(kind, 0);
+  return { kind, step: 1, nextAt, noGrowthReads: 0, done: false, connectedAt };
 }
 
 /**
@@ -217,7 +248,7 @@ export async function checkGroupRecovery(registry: ProviderRegistry, deps: Recov
 
   const accounts = await platformPrisma.whatsAppAccount.findMany({
     where: { status: "CONNECTED", phoneNumber: { not: null }, lastConnectedAt: { not: null } },
-    select: { id: true, projectId: true, groupSyncStatus: true, lastConnectedAt: true },
+    select: { id: true, projectId: true, groupSyncStatus: true, lastConnectedAt: true, groupSyncCompletedAt: true },
     orderBy: { createdAt: "asc" },
   });
   // Forget accounts that no longer qualify as present at all (deleted, disconnected, logged out).
@@ -237,19 +268,25 @@ export async function checkGroupRecovery(registry: ProviderRegistry, deps: Recov
       continue;
     }
 
-    // A VERIFY account whose budget is spent for this connection costs nothing: not even the count.
+    // A VERIFY account whose budget is spent for this connection moves on to the DAILY read (no count).
     const prior = states.get(account.id);
+    const verifyDone =
+      prior?.connectedAt === connectedAt && (prior.kind === "VERIFY" ? prior.done : prior.verifySpent === true);
+    const completedAt = account.groupSyncCompletedAt?.getTime() ?? null;
+    // With the daily read off, a spent VERIFY is the end for this connection: keep the spent schedule
+    // (forgetting it would start VERIFY over on the next tick) and cost nothing, not even the count.
     const statusIsIncomplete = account.groupSyncStatus === "FAILED" || account.groupSyncStatus === "PARTIAL";
-    if (prior?.done && prior.connectedAt === connectedAt && !statusIsIncomplete) continue;
+    if (verifyDone && !statusIsIncomplete && GROUP_RECOVERY_SETTINGS.dailyCheckMs === 0) continue;
 
-    const kind = await recoveryKind(account.id, account.groupSyncStatus, now() - connectedAt);
+    const kind = await recoveryKind(account.id, account.groupSyncStatus, now() - connectedAt, verifyDone);
     if (!kind) {
       states.delete(account.id); // nothing is pending any more
       continue;
     }
     if (!prior || prior.kind !== kind || prior.connectedAt !== connectedAt) {
       // First sighting, a restart, a reconnect or a change of kind: wait the shortest delay first.
-      states.set(account.id, firstSighting(kind, connectedAt, now()));
+      // A spent VERIFY budget travels with the DAILY schedule, so its inactive groups are not re-verified.
+      states.set(account.id, { ...firstSighting(kind, connectedAt, now(), completedAt), verifySpent: verifyDone && kind === "DAILY" });
       continue;
     }
     if (prior.done || now() < prior.nextAt) continue;
@@ -293,6 +330,12 @@ export async function checkGroupRecovery(registry: ProviderRegistry, deps: Recov
       // ceiling. No budget: the window since the connect is what ends it.
       if (kind === "FOLLOW") {
         states.set(account.id, result.grew ? firstSighting(kind, connectedAt, now()) : { ...prior, step: step + 1, nextAt: now() + backoffFor(kind, step) });
+        return { ran: true, accountId: account.id, result: result.grew ? "RECOVERED" : "NO_CHANGE", pending: result.pending };
+      }
+
+      // DAILY: once a day whatever it found; a find is logged by the pass itself.
+      if (kind === "DAILY") {
+        states.set(account.id, { ...prior, step: 1, nextAt: now() + GROUP_RECOVERY_SETTINGS.dailyCheckMs });
         return { ran: true, accountId: account.id, result: result.grew ? "RECOVERED" : "NO_CHANGE", pending: result.pending };
       }
 
