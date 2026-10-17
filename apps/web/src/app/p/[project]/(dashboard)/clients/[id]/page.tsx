@@ -10,6 +10,7 @@ import { formatDateTime } from "@/lib/date";
 import { Alert, Badge, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { clientDisplayName, CLIENT_SOURCE_LABELS, CLIENT_STATUS_LABELS, describeSharedKey, SUBSCRIPTION_STATE_LABELS, type ClientSourceValue } from "@support-automation/shared";
 import { clientViewerCaps } from "@/server/clientModule";
+import { isMainAdmin } from "@/server/projectContext";
 import { getClient360 } from "@/server/client360";
 import { loadClientFormContext } from "@/server/clientFormContext";
 import { countryName } from "@/lib/clientPhone";
@@ -35,7 +36,8 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const [options, canArchive, canDelete, canViewBilling, canEditBilling, canLinkChats, chatLinks, linkAccounts, groups] = await Promise.all([
     loadClientFormOptions(),
     hasPermission(session, "clients.archive"),
-    hasPermission(session, "clients.delete"),
+    // Deleting is a Main Admin's alone (deleteClients re-checks).
+    isMainAdmin(session.userId),
     hasPermission(session, "clients.view_billing"),
     hasPermission(session, "clients.edit_billing"),
     hasPermission(session, "clients.link_whatsapp_chat"),

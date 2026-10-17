@@ -36,9 +36,11 @@ Tags are a lower-cased `String[]` on the client (GIN index), not a table.
   (one "phone" group; a local `01…` Bangladeshi number gets `88` so it matches `+8801…`), an email, another
   channel reference, or the client code. Never a similar name. Shown before a client is created; creating
   anyway is a separate button. Archived clients are matched too. There is no merge action.
-- **Archive, then delete.** Archiving keeps everything; restoring brings back the previous status. Only an
-  ARCHIVED client can be permanently deleted (`clients.delete`); the deletion is a System Log entry with a
-  count and codes, never names or contact details.
+- **Archive, or delete (Main Admin only).** Archiving keeps everything; restoring brings back the previous status.
+  Permanent deletion is a **Main Admin's alone** (17 Oct 2026, owner's decision): any status, one client or many from
+  the list's bulk bar, with everything that belongs to the client. No other role sees the button or can call the
+  action, whatever keys it holds (`clients.delete` alone no longer suffices). The deletion is a System Log entry with
+  a count and codes, never names or contact details.
 - **Shared rules live in `packages/shared/src/clients.ts`** (normalisation, validation, duplicate matching,
   import column mapping) and **`apps/web/src/lib/clientFilters.ts`** — one filter builder used by the list,
   "select all N matching", the export and the bulk actions, so "export the 312 on screen" is those 312.

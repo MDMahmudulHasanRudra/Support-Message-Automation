@@ -58,7 +58,7 @@ async function user(name: string, roleId: string): Promise<Session> {
   ids.users.push(u.id);
   return { userId: u.id, username: u.username, email: u.email!, name } as Session;
 }
-const people = {} as Record<"manager" | "billing" | "viewer" | "plain", Session>;
+const people = {} as Record<"manager" | "billing" | "viewer" | "plain" | "mainAdmin", Session>;
 const as = <T,>(person: Session, project: Project, fn: () => Promise<T>) => {
   current = person;
   return runWithProject(project, fn);
@@ -76,6 +76,8 @@ const addCurrency = (project: Project, code: string) => as(people.billing, proje
 beforeAll(async () => {
   const all = ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.view_billing", "clients.edit_billing", "messages.view"];
   people.manager = await user("Manager", await role("BL manager", all));
+  // Deleting a client is a Main Admin's alone (17 Oct 2026).
+  people.mainAdmin = await user("MainAdmin", await role("main admin", ["clients.view", "projects.view", "projects.manage"]));
   people.billing = await user("Billing", await role("BL billing", ["clients.view", "clients.view_billing", "clients.edit_billing", "messages.view"]));
   people.viewer = await user("Viewer", await role("BL viewer", ["clients.view", "clients.view_billing", "messages.view"]));
   people.plain = await user("Plain", await role("BL plain", ["clients.view", "clients.update", "messages.view"]));
@@ -248,7 +250,7 @@ describe("5. archived clients and deletion", () => {
     await as(people.manager, A, () => clientActions.archiveClients([clientId]));
     expect((await addDue(people.billing, A, clientId, { dueDate: "2026-12-14" })).error).toMatch(/archived/);
     expect((await editDue(people.billing, A, due.id, { dueDate: "2026-12-13", status: "PAID" })).error).toMatch(/archived/);
-    expect((await as(people.manager, A, () => clientActions.deleteClients([clientId]))).ok).toBe(true);
+    expect((await as(people.mainAdmin, A, () => clientActions.deleteClients([clientId]))).ok).toBe(true);
     expect(await rawPrisma.clientDue.count({ where: { clientId } })).toBe(0);
     expect(await rawPrisma.clientDueEvent.count({ where: { clientId } })).toBe(0);
   });

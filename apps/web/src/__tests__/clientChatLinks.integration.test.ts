@@ -58,7 +58,7 @@ async function user(name: string, roleId: string): Promise<Session> {
   ids.users.push(u.id);
   return { userId: u.id, username: u.username, email: u.email!, name } as Session;
 }
-const people = {} as Record<"admin" | "editor" | "viewer", Session>;
+const people = {} as Record<"admin" | "editor" | "viewer" | "mainAdmin", Session>;
 const as = <T,>(person: Session, project: Project, fn: () => Promise<T>) => {
   current = person;
   return runWithProject(project, fn);
@@ -80,6 +80,8 @@ async function chat(project: Project, accountId: string, chatId: string, senderN
 beforeAll(async () => {
   const keys = ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.link_whatsapp_chat", "messages.view"];
   people.admin = await user("Admin", await role("LK admin", keys));
+  // Deleting a client is a Main Admin's alone (17 Oct 2026).
+  people.mainAdmin = await user("MainAdmin", await role("main admin", ["clients.view", "projects.view", "projects.manage"]));
   people.editor = await user("Editor", await role("LK editor", ["clients.view", "clients.create", "clients.update", "messages.view"]));
   people.viewer = await user("Viewer", await role("LK viewer", ["clients.view", "messages.view"]));
   const make = async (name: string, withFeature: boolean) => {
@@ -262,7 +264,7 @@ describe("5. timeline, archived clients and deletion", () => {
     await as(people.admin, A, () => clientActions.restoreClients([clientId]));
     await link(people.admin, A, clientId, accounts.a1, "8801700100015@c.us");
     await as(people.admin, A, () => clientActions.archiveClients([clientId]));
-    expect((await as(people.admin, A, () => clientActions.deleteClients([clientId]))).ok).toBe(true);
+    expect((await as(people.mainAdmin, A, () => clientActions.deleteClients([clientId]))).ok).toBe(true);
     expect(await rawPrisma.clientWhatsAppChatLink.count({ where: { clientId } })).toBe(0);
   });
 });

@@ -248,7 +248,7 @@ export function ClientLifecycle({ clientId, archived, canArchive, canDelete }: {
             Restore
           </Button>
         ) : null}
-        {canDelete && archived ? (
+        {canDelete ? (
           <Button variant="danger" size="sm" onClick={() => setOpen("delete")}>
             Delete permanently
           </Button>
@@ -263,7 +263,7 @@ export function ClientLifecycle({ clientId, archived, canArchive, canDelete }: {
         title={open === "archive" ? "Archive this client?" : open === "restore" ? "Restore this client?" : "Permanently delete this client?"}
         description={
           open === "delete"
-            ? "The client, its channels, notes, timeline and billing records are deleted. This cannot be undone."
+            ? "The client and everything that belongs to it — channels, notes, timeline, subscriptions, invoices, payments and WhatsApp links — are deleted. This cannot be undone."
             : open === "archive"
               ? "It is hidden from the default list. Everything is kept and you can restore it."
               : "It returns with the status it had when it was archived."

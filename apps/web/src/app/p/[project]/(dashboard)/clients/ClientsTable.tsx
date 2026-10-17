@@ -4,10 +4,11 @@ import { useMemo, useState, useTransition, type ReactNode } from "react";
 import { Eye, MessageCircle, RefreshCw, Users, Wallet } from "lucide-react";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import Link, { useProjectHref } from "@/components/ProjectLink";
-import { Alert, Badge, Button, Checkbox, ConfirmDialog, Input, Select, SelectAllMatchingNotice } from "@/components/ui";
+import { Alert, Badge, Button, Checkbox, ConfirmDialog, Dialog, Field, Input, Select, SelectAllMatchingNotice } from "@/components/ui";
 import {
   archiveClients,
   bulkAssignClients,
+  bulkSetClientDetails,
   bulkSetClientStatus,
   bulkTagClients,
   deleteClients,
@@ -43,6 +44,13 @@ const BULK_STATUSES = ["ACTIVE", "INACTIVE", "PENDING", "BLOCKED"] as const;
 const muted = "text-[color:var(--color-muted-foreground)]";
 const Sub = ({ children }: { children: ReactNode }) => <div className={`mt-0.5 text-xs ${muted}`}>{children}</div>;
 const None = ({ children = "—" }: { children?: ReactNode }) => <span className={muted}>{children}</span>;
+
+export interface BulkOptions {
+  teams: Array<{ id: string; name: string }>;
+  sellers: Array<{ id: string; name: string }>;
+  countries: Array<{ code: string; name: string }>;
+  currencies: string[];
+}
 
 export interface RegisterCaps {
   canUpdate: boolean;
@@ -285,6 +293,7 @@ export function ClientsTable({
   members,
   maxBulk,
   exportBase,
+  bulkOptions,
 }: {
   clients: ClientTableRow[];
   total: number;
@@ -295,6 +304,7 @@ export function ClientsTable({
   members: Array<{ id: string; name: string }>;
   maxBulk: number;
   exportBase: string;
+  bulkOptions?: BulkOptions;
 }) {
   const router = useRouter();
   const toProject = useProjectHref();
@@ -307,6 +317,22 @@ export function ClientsTable({
   const [tagAdd, setTagAdd] = useState("");
   const [tagRemove, setTagRemove] = useState("");
   const [assignTo, setAssignTo] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [details, setDetails] = useState({ teamId: "", soldByMemberId: "", country: "", preferredCurrency: "" });
+
+  function applyDetails() {
+    const ids = [...selected];
+    startTransition(async () => {
+      const result = await bulkSetClientDetails(ids, details);
+      setMessage({ ok: result.ok, text: result.message });
+      if (result.ok) {
+        setDetailsOpen(false);
+        setDetails({ teamId: "", soldByMemberId: "", country: "", preferredCurrency: "" });
+        clear();
+      }
+      router.refresh();
+    });
+  }
   const { canUpdate, canArchive, canDelete, canExport } = caps;
 
   const pageIds = useMemo(() => clients.map((c) => c.id), [clients]);
@@ -389,7 +415,7 @@ export function ClientsTable({
   const confirmCopy: Record<Pending["kind"], { title: string; description: string; label: string; tone: "primary" | "danger" }> = {
     archive: { title: `Archive ${count} client(s)?`, description: "Archived clients are hidden from the default list. Their channels, notes and history are kept, and you can restore them.", label: "Archive", tone: "primary" },
     restore: { title: `Restore ${count} client(s)?`, description: "They return with the status they had when they were archived.", label: "Restore", tone: "primary" },
-    delete: { title: `Permanently delete ${count} client(s)?`, description: "Only archived clients are deleted; others are skipped. Their channels, notes, subscriptions, invoices, payments and timeline go with them. This cannot be undone.", label: "Delete permanently", tone: "danger" },
+    delete: { title: `Permanently delete ${count} client(s)?`, description: "Each client is removed with everything that belongs to it: channels, notes, timeline, subscriptions, invoices, payments and WhatsApp links. This cannot be undone — Archive instead if you may need them again.", label: `Delete ${count} permanently`, tone: "danger" },
     status: { title: `Change the status of ${count} client(s)?`, description: pending?.kind === "status" ? `They will be set to ${CLIENT_STATUS_LABELS[pending.status as keyof typeof CLIENT_STATUS_LABELS] ?? pending.status}. Archived clients are skipped.` : "", label: "Change status", tone: "primary" },
     assign: { title: `Assign ${count} client(s)?`, description: pending?.kind === "assign" ? `To ${pending.label}. Archived clients are skipped.` : "", label: "Assign", tone: "primary" },
     tags: { title: `Update tags on ${count} client(s)?`, description: pending?.kind === "tags" ? `${pending.add ? `Add: ${pending.add}. ` : ""}${pending.remove ? `Remove: ${pending.remove}. ` : ""}Archived clients are skipped.` : "", label: "Update tags", tone: "primary" },
@@ -449,6 +475,11 @@ export function ClientsTable({
                 <Button variant="secondary" size="sm" disabled={!tagAdd.trim() && !tagRemove.trim()} onClick={() => setPending({ kind: "tags", add: tagAdd, remove: tagRemove })}>
                   Update tags
                 </Button>
+                {bulkOptions ? (
+                  <Button variant="secondary" size="sm" onClick={() => setDetailsOpen(true)}>
+                    Set team, seller, country…
+                  </Button>
+                ) : null}
               </>
             ) : null}
             {canArchive && !archivedView ? (
@@ -461,9 +492,9 @@ export function ClientsTable({
                 Restore
               </Button>
             ) : null}
-            {canDelete && archivedView ? (
+            {canDelete ? (
               <Button variant="danger" size="sm" onClick={() => setPending({ kind: "delete" })}>
-                Delete permanently
+                Delete
               </Button>
             ) : null}
             {canExport ? (
@@ -594,6 +625,72 @@ export function ClientsTable({
           );
         })}
       </ul>
+
+      {bulkOptions ? (
+        <Dialog
+          open={detailsOpen}
+          onClose={() => setDetailsOpen(false)}
+          title={`Set details for ${count} client(s)`}
+          description="Only what you choose is changed; everything left on “Keep as is” stays. Archived clients are skipped."
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setDetailsOpen(false)} disabled={busy}>
+                Cancel
+              </Button>
+              <Button type="button" onClick={applyDetails} loading={busy} disabled={!Object.values(details).some(Boolean)}>
+                Apply to {count}
+              </Button>
+            </div>
+          }
+        >
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Team" hint="An assigned staff member outside the new team is cleared.">
+              <Select value={details.teamId} onChange={(e) => setDetails((d) => ({ ...d, teamId: e.target.value }))}>
+                <option value="">Keep as is</option>
+                <option value="__none">No team</option>
+                {bulkOptions.teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Sold by">
+              <Select value={details.soldByMemberId} onChange={(e) => setDetails((d) => ({ ...d, soldByMemberId: e.target.value }))}>
+                <option value="">Keep as is</option>
+                <option value="__none">Not recorded</option>
+                {bulkOptions.sellers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Country">
+              <Select value={details.country} onChange={(e) => setDetails((d) => ({ ...d, country: e.target.value }))}>
+                <option value="">Keep as is</option>
+                <option value="__none">Not set</option>
+                {bulkOptions.countries.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Preferred currency">
+              <Select value={details.preferredCurrency} onChange={(e) => setDetails((d) => ({ ...d, preferredCurrency: e.target.value }))}>
+                <option value="">Keep as is</option>
+                <option value="__none">None</option>
+                {bulkOptions.currencies.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        </Dialog>
+      ) : null}
 
       <ConfirmDialog
         open={pending !== null}

@@ -69,7 +69,7 @@ async function user(name: string, roleId: string): Promise<Session> {
   ids.users.push(u.id);
   return { userId: u.id, username: u.username, email: u.email!, name } as Session;
 }
-const people = {} as Record<"admin" | "seller" | "viewer" | "cashier", Session>;
+const people = {} as Record<"admin" | "seller" | "viewer" | "cashier" | "mainAdmin", Session>;
 const as = <T,>(person: Session, project: Project, fn: () => Promise<T>) => {
   current = person;
   return runWithProject(project, fn);
@@ -108,6 +108,7 @@ beforeAll(async () => {
   people.seller = await user("V3Seller", await role("V3 seller", [...base, "clients.manage_subscriptions"]));
   people.viewer = await user("V3Viewer", await role("V3 viewer", ["clients.view", "messages.view"]));
   people.cashier = await user("V3Cashier", await role("V3 cashier", ["clients.view", "clients.view_billing", "clients.edit_billing"]));
+  people.mainAdmin = await user("V3Main", await role("V3 main", ["clients.view", "clients.update", "clients.delete", "projects.view", "projects.manage"]));
   const make = async (name: string) => {
     const p = await createProjectWithDefaults({ name: `${name} ${tag}`, slug: `${name.toLowerCase()}-${tag}`, status: "ACTIVE", creatorUserId: people.admin.userId }, rawPrisma);
     ids.projects.push(p.id);
@@ -567,5 +568,55 @@ describe("6. the register: columns, filters and what each viewer sees", () => {
     expect((await as(people.admin, B, () => billingReads.listBillingRegister(billingReads.parseBillingFilters({ view: "all" })))).rows).toEqual([]);
     expect((await as(people.admin, B, () => billingReads.listPayments({ q: "", show: "all", page: 1, pageSize: 50 }))).payments).toEqual([]);
     expect(await as(people.admin, B, () => groups.searchLinkableGroups(accounts.a1, ""))).toEqual([]);
+  });
+});
+
+describe("7. bulk delete (Main Admin only) and bulk details", () => {
+  it("lets only a Main Admin delete, any status, with subscriptions, invoices, payments and links", async () => {
+    const a = idOf(await newClient(A, { name: `Bulk Del A ${tag}` }));
+    const b = idOf(await newClient(A, { name: `Bulk Del B ${tag}` }));
+    await sell(people.seller, A, a, { service: "Tiger IPTV", startDate: today, durationValue: "1", durationUnit: "MONTH" });
+    const due = await invoice(A, a, { dueDate: plus(2), amount: "50", currency: "AED" });
+    await record(people.cashier, A, [{ dueId: due.id, amount: "20" }]);
+    const g = await rawPrisma.whatsAppGroup.create({ data: { projectId: A.id, accountId: accounts.a1, whatsappGroupId: `120363${gnum}09@g.us`, name: "Bulk Group" } });
+    await as(people.admin, A, () => groups.linkClientGroup(b, accounts.a1, g.id));
+
+    // Every other role is refused, whatever keys it holds — the admin here holds clients.archive and more.
+    for (const person of [people.admin, people.seller, people.cashier, people.viewer]) {
+      expect((await as(person, A, () => clientActions.deleteClients([a, b]))).ok).toBe(false);
+    }
+    expect(await rawPrisma.client.count({ where: { id: { in: [a, b] } } })).toBe(2);
+
+    // Another project's Main Admin action cannot reach these ids either.
+    expect((await as(people.mainAdmin, B, () => clientActions.deleteClients([a, b]))).ok).toBe(false);
+
+    const r = await as(people.mainAdmin, A, () => clientActions.deleteClients([a, b]));
+    expect(r.message).toMatch(/2 client\(s\) permanently deleted/);
+    expect(await rawPrisma.client.count({ where: { id: { in: [a, b] } } })).toBe(0);
+    expect(await rawPrisma.clientSubscription.count({ where: { clientId: a } })).toBe(0);
+    expect(await rawPrisma.clientPayment.count({ where: { clientId: a } })).toBe(0);
+    expect(await rawPrisma.clientWhatsAppGroupLink.count({ where: { clientId: b } })).toBe(0);
+    // The group itself is untouched.
+    expect(await rawPrisma.whatsAppGroup.findUnique({ where: { id: g.id } })).not.toBeNull();
+  });
+
+  it("sets team, seller, country and currency on many at once, checked like the form", async () => {
+    const ids = [idOf(await newClient(A, { name: `Bulk Set 1 ${tag}`, assignedTeamId: roster.support, assignedMemberId: roster.fahim })), idOf(await newClient(A, { name: `Bulk Set 2 ${tag}` }))];
+    const set = (patch: Record<string, string>, person = people.admin) => as(person, A, () => clientActions.bulkSetClientDetails(ids, patch));
+    expect((await set({ teamId: roster.oldTeam })).message).toMatch(/disabled/);
+    expect((await set({ soldByMemberId: roster.gone })).message).toMatch(/no longer active/);
+    expect((await set({ country: "XX" })).message).toMatch(/country/);
+    expect((await set({ country: "AE" }, people.viewer)).ok).toBe(false);
+    expect((await set({})).ok).toBe(false);
+    const r = await set({ teamId: roster.sales, soldByMemberId: roster.nadia, country: "AE", preferredCurrency: "aed" });
+    expect(r.ok).toBe(true);
+    const rows = await rawPrisma.client.findMany({ where: { id: { in: ids } }, orderBy: { name: "asc" } });
+    for (const row of rows) expect(row).toMatchObject({ assignedTeamId: roster.sales, soldByMemberId: roster.nadia, country: "AE", preferredCurrency: "AED" });
+    // Fahim is not in Sales, so his assignment was cleared rather than left contradicting the team.
+    expect(rows[0]!.assignedMemberId).toBeNull();
+    // "__none" clears; an empty value leaves a field alone.
+    await set({ country: "__none" });
+    expect((await rawPrisma.client.findUniqueOrThrow({ where: { id: ids[0]! } })).country).toBeNull();
+    expect((await rawPrisma.client.findUniqueOrThrow({ where: { id: ids[0]! } })).preferredCurrency).toBe("AED");
   });
 });

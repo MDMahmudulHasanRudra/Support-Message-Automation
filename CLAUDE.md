@@ -2692,8 +2692,9 @@ records, CRUD, duplicates, list/details, import/export, timeline, per-channel co
   campaigns, reminders, notices and tasks are later stages (`CLIENT_CENTER_PLAN.md`).
 - **Duplicates are shown, never merged** — a shared phone/WhatsApp number (one group; local `01…` gets `88`), email,
   channel reference or code, never a similar name. There is no merge action.
-- **One filter builder** (`lib/clientFilters.ts`) serves the list, select-all, export and bulk actions. Only an ARCHIVED
-  client can be permanently deleted. Import is claimed once by a conditional update, deletes the file's rows when it
+- **One filter builder** (`lib/clientFilters.ts`) serves the list, select-all, export and bulk actions. Only a MAIN ADMIN
+  can permanently delete clients (any status, bulk or one; `deleteClients` checks `isMainAdmin`, the button is hidden
+  from everyone else). Import is claimed once by a conditional update, deletes the file's rows when it
   ends, and runs inside the request (≤2,000 rows) — a durable background import is the extension point.
 - **Clients V3 (`CLIENTS_V3.md`, 17 Oct 2026)**: subscriptions, numbered invoices, payments, WhatsApp GROUP links,
   photos, per-person columns, per-project sub-module switches (`ClientModuleSettings`). Rules worth not undoing:

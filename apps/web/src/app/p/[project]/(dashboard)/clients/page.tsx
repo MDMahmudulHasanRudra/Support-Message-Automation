@@ -6,7 +6,10 @@ import { hasPermission } from "@/server/permissions";
 import { getClientRegisterKpis, getRegisterFilterOptions, listClients, resolvePageSize } from "@/server/clients";
 import { clientFilterContext, clientViewerCaps, columnNeeds, getColumnPreference } from "@/server/clientModule";
 import { CLIENT_PAGE_SIZES, EMPTY_CLIENT_FILTERS, MAX_CLIENT_BULK, clientQueryString, parseClientFilters, parseClientSort } from "@/lib/clientFilters";
-import { countryName } from "@/lib/clientPhone";
+import { countryName, countryOptions } from "@/lib/clientPhone";
+import { isMainAdmin } from "@/server/projectContext";
+import { loadClientFormOptions } from "@/server/clients";
+import { prisma } from "@/server/db";
 import { ActiveFilters, Badge, Button, ButtonLink, EmptyState, HelpButton, HelpSection, Input, NoFilterResults, PageHeader, Pagination, Select, StatTile, ViewOnlyNotice, type ActiveFilter } from "@/components/ui";
 import Link from "@/components/ProjectLink";
 import {
@@ -46,11 +49,32 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
     getRegisterFilterOptions(),
     getColumnPreference(session.userId, "clients", caps),
     hasPermission(session, "clients.archive"),
-    hasPermission(session, "clients.delete"),
+    // Deleting clients is a Main Admin's alone (deleteClients re-checks); nobody else sees the button.
+    isMainAdmin(session.userId),
     hasPermission(session, "clients.export"),
     hasPermission(session, "clients.import"),
   ]);
   const available = allowedColumns("clients", columnNeeds(caps));
+  const [roster, billingCurrencies] = await Promise.all([
+    loadClientFormOptions(),
+    prisma.clientBillingCurrency.findMany({ where: { enabled: true }, select: { code: true }, orderBy: { code: "asc" } }),
+  ]);
+  const bulkOptions = {
+    teams: roster.allTeams.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name })),
+    sellers: roster.roster.filter((m) => m.active).map((m) => ({ id: m.id, name: m.teamName ? `${m.name} · ${m.teamName}` : m.name })),
+    countries: countryOptions().map((c) => ({ code: c.code, name: c.name })),
+    currencies: [...new Set([...billingCurrencies.map((c) => c.code), ...options.currencies])].sort(),
+  };
+  // One-click views of what usually needs doing; each is an ordinary filter, so the URL can be shared.
+  const quick: Array<{ label: string; params: Record<string, string>; show: boolean }> = [
+    { label: "Renew soon", params: { state: "EXPIRING" }, show: caps.subscriptions },
+    { label: "Expired", params: { state: "EXPIRED" }, show: caps.subscriptions },
+    { label: "Trials", params: { state: "TRIAL" }, show: caps.subscriptions },
+    { label: "Overdue payment", params: { due: "overdue" }, show: caps.billing },
+    { label: "No WhatsApp group", params: { group: "unlinked" }, show: caps.groups },
+    { label: "Returning", params: { repeat: "1" }, show: caps.subscriptions },
+    { label: "No subscription", params: { state: "NONE" }, show: caps.subscriptions },
+  ];
   const columnLabels = Object.fromEntries(available.map((c) => [c.key, c.label]));
 
   const keep = { sort: sort === "name" && dir === "asc" ? undefined : sort, dir: dir === "asc" ? undefined : dir, pageSize: pageSize === 50 ? undefined : pageSize };
@@ -158,6 +182,25 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
             </Link>
           );
         })}
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-xs font-medium text-[color:var(--color-muted-foreground)]">Quick views:</span>
+        {quick
+          .filter((q) => q.show)
+          .map((q) => {
+            const active = Object.entries(q.params).every(([k, v]) => (filters as unknown as Record<string, string>)[k] === v);
+            return (
+              <Link
+                key={q.label}
+                href={active ? href({ ...filters, ...Object.fromEntries(Object.keys(q.params).map((k) => [k, ""])) }, { page: undefined }) : href({ ...filters, ...q.params }, { page: undefined })}
+                aria-current={active ? "true" : undefined}
+                className={`rounded-[var(--radius-sm)] border px-2.5 py-1 text-xs transition-colors ${active ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-[var(--color-on-primary)]" : "border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-foreground)] hover:border-[var(--color-border-strong)]"}`}
+              >
+                {q.label}
+              </Link>
+            );
+          })}
       </div>
 
       <form method="GET" className="mb-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-xs)]">
@@ -330,6 +373,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
             columns={columns.columns}
             columnLabels={columnLabels}
             caps={registerCaps}
+            bulkOptions={bulkOptions}
             members={data.members}
             maxBulk={MAX_CLIENT_BULK}
             exportBase="/api/clients/export"
