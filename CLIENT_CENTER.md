@@ -44,7 +44,7 @@ Tags are a lower-cased `String[]` on the client (GIN index), not a table.
 - **Shared rules live in `packages/shared/src/clients.ts`** (normalisation, validation, duplicate matching,
   import column mapping) and **`apps/web/src/lib/clientFilters.ts`** — one filter builder used by the list,
   "select all N matching", the export and the bulk actions, so "export the 312 on screen" is those 312.
-- **Import** is upload → preview (auto column mapping, editable) → confirm with a duplicate policy
+- **Import** starts from a downloadable, project-specific Excel template (CLIENTS_V3.md §Import), then is upload → preview (auto column mapping, editable) → confirm with a duplicate policy
   (Skip / Update / Create anyway) → report. The confirmation is claimed with one conditional update, so
   pressing it twice imports once. A bad row is reported, the rest are imported. The file's rows are deleted
   from the job when it ends. **Limit:** it runs inside the request, up to 2,000 rows, 2 MB; a durable

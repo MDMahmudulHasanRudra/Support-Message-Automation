@@ -1,3 +1,4 @@
+import { readImportExtras, type ImportExtras } from "./clientImportExtras.js";
 import { normalizePhoneNumber } from "./groupParticipantAdd.js";
 
 /**
@@ -384,7 +385,7 @@ export const CLIENT_IMPORT_FIELDS = [
   { key: "phone", label: "Phone", required: false, synonyms: ["phone", "phone number", "mobile", "mobile number", "contact number", "tel", "telephone"] },
   { key: "email", label: "Email", required: false, synonyms: ["email", "e-mail", "email address", "mail"] },
   { key: "whatsapp", label: "WhatsApp number", required: false, synonyms: ["whatsapp", "whatsapp number", "wa", "whatsapp no"] },
-  { key: "facebook", label: "Facebook reference", required: false, synonyms: ["facebook", "facebook id", "messenger", "fb"] },
+  { key: "facebook", label: "Facebook reference", required: false, synonyms: ["facebook", "facebook reference", "facebook id", "messenger", "fb"] },
   { key: "instagram", label: "Instagram handle", required: false, synonyms: ["instagram", "instagram handle", "ig"] },
   { key: "telegram", label: "Telegram", required: false, synonyms: ["telegram", "telegram username"] },
   { key: "category", label: "Category", required: false, synonyms: ["category", "type", "client type", "package", "plan"] },
@@ -392,12 +393,25 @@ export const CLIENT_IMPORT_FIELDS = [
   { key: "status", label: "Status", required: false, synonyms: ["status", "state"] },
   { key: "language", label: "Preferred language", required: false, synonyms: ["language", "preferred language", "lang"] },
   { key: "address", label: "Address", required: false, synonyms: ["address", "location"] },
+  // Clients V3 (CLIENTS_V3.md §Import): resolved against the project's own lists on the server.
+  { key: "country", label: "Country", required: false, synonyms: ["country", "country code"] },
+  { key: "currency", label: "Preferred currency", required: false, synonyms: ["preferred currency", "currency"] },
+  { key: "team", label: "Team", required: false, synonyms: ["team", "assigned team"] },
+  { key: "soldBy", label: "Sold by", required: false, synonyms: ["sold by", "seller", "salesperson", "sales person", "sold by staff"] },
+  { key: "assignedTo", label: "Assigned staff", required: false, synonyms: ["assigned staff", "assigned to", "account manager", "assign2emp", "assigned employee"] },
+  { key: "service", label: "Service / plan", required: false, synonyms: ["service / plan", "service/plan", "service", "subscription", "product"] },
+  { key: "subscriptionType", label: "Subscription type", required: false, synonyms: ["subscription type", "plan type", "sub type"] },
+  { key: "startDate", label: "Start date", required: false, synonyms: ["start date", "join date", "joining date", "activation date", "started"] },
+  { key: "duration", label: "Duration", required: false, synonyms: ["duration", "term", "period"] },
+  { key: "durationUnit", label: "Duration unit", required: false, synonyms: ["duration unit", "unit", "period unit"] },
+  { key: "expiryDate", label: "Expiry date", required: false, synonyms: ["expiry date", "expiry", "expires", "exp date", "end date", "expire date"] },
 ] as const;
 
 export type ClientImportFieldKey = (typeof CLIENT_IMPORT_FIELDS)[number]["key"];
 export type ClientImportMapping = Partial<Record<ClientImportFieldKey, string>>;
 
-const headerKey = (header: string) => header.trim().toLowerCase().replace(/[_\-.]+/g, " ").replace(/\s+/g, " ");
+// Trimmed last: "Assign2Emp." must not keep the space its dot became.
+const headerKey = (header: string) => header.toLowerCase().replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim();
 
 /** The mapping a sheet's own headers suggest. The administrator can change every entry before importing. */
 export function autoMapColumns(headers: readonly string[]): ClientImportMapping {
@@ -416,6 +430,8 @@ export function autoMapColumns(headers: readonly string[]): ClientImportMapping 
 
 export interface ImportedClientRow {
   rowNumber: number;
+  /** Country, currency, team, seller, staff and the first subscription (clientImportExtras.ts). */
+  extras: ImportExtras;
   fields: ValidClientFields;
   /** Whether the file gave a status. When it did not, an UPDATE must leave the client's status alone. */
   statusGiven: boolean;
@@ -472,13 +488,26 @@ export function buildImportRows(
       tags: get(row, "tags"),
     });
     const normalized = normalizeChannelDrafts(drafts);
-    const errors = [...fields.errors, ...normalized.errors];
+    const extras = readImportExtras({
+      country: get(row, "country"),
+      currency: get(row, "currency"),
+      team: get(row, "team"),
+      soldBy: get(row, "soldBy"),
+      assignedTo: get(row, "assignedTo"),
+      service: get(row, "service"),
+      subscriptionType: get(row, "subscriptionType"),
+      startDate: get(row, "startDate"),
+      duration: get(row, "duration"),
+      durationUnit: get(row, "durationUnit"),
+      expiryDate: get(row, "expiryDate"),
+    });
+    const errors = [...fields.errors, ...normalized.errors, ...(extras.ok ? [] : extras.errors)];
     if (fields.value?.status === "ARCHIVED") errors.push("A file cannot archive clients; archive them from the client list.");
-    if (errors.length || !fields.value) {
+    if (errors.length || !fields.value || !extras.ok) {
       invalid.push({ rowNumber, errors: errors.length ? errors : ["The row could not be read."] });
       return;
     }
-    valid.push({ rowNumber, fields: fields.value, statusGiven: Boolean(statusText), channels: normalized.channels, matchKeys: normalized.channels.map((c) => c.matchKey) });
+    valid.push({ rowNumber, extras: extras.value, fields: fields.value, statusGiven: Boolean(statusText), channels: normalized.channels, matchKeys: normalized.channels.map((c) => c.matchKey) });
   });
   return { valid, invalid };
 }

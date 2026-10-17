@@ -16,9 +16,41 @@ email), which still describes the parts this did not change.
 | Payments & Receipts | `/clients/payments` | Every receipt, the invoices it settled, collected per currency, and **Reverse** (with a reason). |
 | Settings → Client Module | `/settings/clients` | Sub-module switches, required fields, renewal window, default country for local numbers. |
 
-Unchanged: Import Clients, the client import format, channels and consent, notes, the personal chat links, Email
-settings, Chat V1/V2, workers, AI. The export gained columns (country, currency, team, seller, service, start, expiry,
+| Import Clients | `/clients/import` | Three steps (17 Oct 2026, see §Import): **download the template** (or "Template with my clients"), fill it in (a guide on the page and inside the file), drop the file to preview. |
+
+Unchanged: channels and consent, notes, the personal chat links, Email settings, Chat V1/V2, workers, AI. The export gained columns (country, currency, team, seller, service, start, expiry,
 subscription state, linked groups) — never an amount.
+
+### Import (17 Oct 2026)
+
+- **The template is built for the project** (`server/clientImportTemplate.ts`, `GET /api/clients/import/template`,
+  `clients.import`). It has four sheets. **Clients** comes first, because the import reads the first sheet. **Example**
+  holds three fictional rows. **How to fill** describes every column with an example and its accepted values.
+  **Lists** feeds the drop-downs: Status, Subscription type, Duration unit, this project's ACTIVE teams and staff,
+  countries, and currencies with the project's billing currencies first.
+  - Each column has a tip (an input prompt). The header and first column are frozen.
+  - Phone and code columns are text, so leading zeros survive. Date columns are `yyyy-mm-dd`.
+  - Enum drop-downs refuse other values. Roster, country and currency drop-downs only warn, because a phone number
+    or a two-letter code is also accepted.
+  - SheetJS CE cannot write validations or styles, so `server/xlsxWriter.ts` writes the OOXML itself, with no new
+    dependency.
+- **"Template with my clients"** (`?data=current`) also needs `clients.export`. It holds what the list's default
+  view shows this person: the same `buildClientWhere`, non-archived, capped at 2,000. It is logged like an export.
+  Edit the rows, re-upload, and choose Update.
+- **The headers map themselves.** Every template header is a synonym in `CLIENT_IMPORT_FIELDS`. Another program's
+  headers map too: Mobile, Join.Date, Exp.Date and Assign2Emp. (header normalisation trims after replacing dots).
+- **V3 columns are imported:** Country, Preferred currency, Team, Assigned staff, Sold by, Service / plan,
+  Subscription type, Start date, Duration, Duration unit, Expiry date.
+  - **Parsing is pure** (`packages/shared/src/clientImportExtras.ts`):
+    - Dates are day-first or ISO, with month names, or an Excel date serial. Month-first (10/31/2026) is never guessed.
+    - A subscription is accepted or refused whole.
+    - A duration with no unit is in months.
+  - **Resolution is on the server** (`server/clientImportExtras.ts`), against this project's roster:
+    - A name the roster does not know, a shared name ("write their phone number instead"), an inactive member, a
+      disabled team, or staff outside the chosen team refuses the row with that sentence. It is never a guess.
+  - **Subscriptions are imported only for someone who may sell them** (`clients.manage_subscriptions` with the
+    sub-module on). Anyone else imports the clients without them, and the preview says so beforehand.
+  - **A re-imported file adds no second term** (same service, start and end).
 
 ## 2. Gap analysis (the V3 brief vs. what existed)
 
@@ -103,6 +135,17 @@ reverse), `clientGroupLinks.ts` (search, link, unlink), `clientExtras.ts` (photo
 `clients.ts` (create/update extended), `clientBilling.ts` (numbered invoices, allocation guard).
 
 ## 5. Tests (all on the throwaway database)
+
+- `clientImportTemplate.integration.test.ts` (8) covers:
+  - permissions;
+  - the workbook (sheets, headers that self-map, project-only drop-downs, prompts, frozen panes, date format);
+  - Example rows importing with zero errors, and "with my clients" scope and logging;
+  - V3 columns and the Excel date serial, every roster refusal, re-import idempotence, and import without the
+    subscription permission.
+
+  Four guards were mutation-checked; each removal fails a test.
+- `packages/shared` `clientImportExtras.test.ts` (7) covers the date, unit and kind parsers, whole-term
+  validation, and the other software's headers.
 
 - `packages/shared/src/__tests__/clientsV3.test.ts` — 27: calendar maths (month ends, leap years), validation, state,
   current-term choice, minor units, currency decimals, batch planning (split by client/currency, every refusal),
