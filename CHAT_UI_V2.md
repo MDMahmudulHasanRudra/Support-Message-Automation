@@ -295,3 +295,7 @@ behaviour, data, permission or action changed.**
 - Not taken from the reference, on purpose: a notification bell, an AI "sparkle" in the message box and
   a split send button — none of them has a feature behind it, and a control that does nothing is the
   dead-setting problem this project removes.
+- **Phone header (17 Oct 2026):** on a phone the account, a search button and a filter button share one
+  row; the search box and the filter chips open only when tapped (a typed search keeps its box open),
+  so the conversation list gets the screen. The filter button names the active filter ("Personal ·
+  Waiting"). Desktop and v1 are unchanged.

@@ -18,6 +18,7 @@ import {
   Rows4,
   Search,
   Settings2,
+  SlidersHorizontal,
   Smartphone,
   Star,
   Tag,
@@ -232,6 +233,15 @@ export function ChatWorkspace({
   const [pending, startTransition] = useTransition();
   const { showToast } = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
+  /**
+   * v2 on a phone: the search box and the filter chips fold away behind two buttons, so the list gets
+   * the screen. Which one is open is this visit's state only; a typed search keeps its box open.
+   */
+  const [mobilePanel, setMobilePanel] = useState<"search" | "filters" | null>(null);
+  const toggleMobilePanel = (panel: "search" | "filters") => {
+    setMobilePanel((current) => (current === panel ? null : panel));
+    if (panel === "search" && mobilePanel !== "search") requestAnimationFrame(() => searchRef.current?.focus());
+  };
 
   const base = `/chat/account/${account.id}`;
   const rest = pathname.startsWith(`${base}/`) ? pathname.slice(base.length + 1) : "";
@@ -472,6 +482,18 @@ export function ChatWorkspace({
     v2,
   });
 
+  const typeLabel = type === "groups" ? "Groups" : type === "personal" ? "Personal" : "All";
+  const viewLabel =
+    filter.kind === "waiting"
+      ? "Waiting"
+      : filter.kind === "seen-unanswered"
+        ? "Seen"
+        : filter.kind === "category"
+          ? (categoryById.get(filter.id)?.name ?? "Category")
+          : null;
+  const filterSummary = viewLabel ? `${typeLabel} · ${viewLabel}` : typeLabel;
+  const filterActive = type !== "all" || filter.kind !== "all";
+
   const allCapped = filter.kind === "all" && type === "all" && !needle && counts.total > conversations.length;
 
   return (
@@ -494,7 +516,42 @@ export function ChatWorkspace({
             switching={pending}
           />
 
-          <div className="relative min-w-[12rem] flex-1 max-sm:order-last max-sm:basis-full">
+          {/* v2 on a phone only: search and filters open from here instead of always taking two rows. */}
+          {v2 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => toggleMobilePanel("search")}
+                aria-expanded={mobilePanel === "search" || Boolean(query)}
+                aria-label="Search conversations"
+                className={`hidden size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] border max-sm:flex ${
+                  mobilePanel === "search" || query
+                    ? "border-[var(--wa-green-strong)] bg-[var(--wa-green-soft)] text-[color:var(--wa-green-strong)]"
+                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)]"
+                }`}
+              >
+                <Search className="size-4" aria-hidden />
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleMobilePanel("filters")}
+                aria-expanded={mobilePanel === "filters"}
+                aria-label={`Filters: ${filterSummary}`}
+                className={`hidden h-10 max-w-[8rem] shrink items-center gap-1.5 rounded-[var(--radius-md)] border px-2.5 text-[12px] font-medium max-sm:flex ${
+                  mobilePanel === "filters" || filterActive
+                    ? "border-[var(--wa-green-strong)] bg-[var(--wa-green-soft)] text-[color:var(--wa-green-strong)]"
+                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)]"
+                }`}
+              >
+                <SlidersHorizontal className="size-4 shrink-0" aria-hidden />
+                <span className="truncate">{filterSummary}</span>
+              </button>
+            </>
+          ) : null}
+
+          <div
+            className={`relative min-w-[12rem] flex-1 max-sm:order-last max-sm:basis-full ${v2 && mobilePanel !== "search" && !query ? "max-sm:hidden" : ""}`}
+          >
             <Search
               className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[color:var(--color-muted-foreground)] group-data-[v2]/chat:left-3.5"
               aria-hidden
@@ -540,10 +597,11 @@ export function ChatWorkspace({
           <button
             type="button"
             onClick={toggleDensity}
+            data-v2-phone-hidden={v2 ? "" : undefined}
             aria-pressed={compact}
             title={compact ? "Switch to comfortable rows" : "Switch to compact rows"}
             aria-label={compact ? "Switch to comfortable rows" : "Switch to compact rows"}
-            className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+            className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] data-[v2-phone-hidden]:max-sm:hidden"
           >
             {compact ? <Rows3 className="size-4" aria-hidden /> : <Rows4 className="size-4" aria-hidden />}
           </button>
@@ -560,7 +618,7 @@ export function ChatWorkspace({
         {/* One row of filters, scrolled sideways rather than wrapped, so the header never grows
             downward into the conversation's space however many categories the team keeps. */}
         <div
-          className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:thin]"
+          className={`-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:thin] ${v2 && mobilePanel !== "filters" ? "max-sm:hidden" : ""}`}
           role="group"
           aria-label="Filter conversations"
         >
@@ -853,7 +911,7 @@ function AccountSelector({
         <Smartphone className="size-3.5" aria-hidden />
       </span>
       <span className="min-w-0 text-left">
-        <span className="block text-[10px] font-medium uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]">WhatsApp account</span>
+        <span className="block whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)] group-data-[v2]/chat:max-sm:hidden">WhatsApp account</span>
         <span className="flex items-center gap-1.5 text-[13px] font-semibold leading-tight text-[color:var(--color-foreground)]">
           <span className="truncate">{account.label}</span>
           <span className={`size-1.5 shrink-0 rounded-full ${tone.dot}`} title={tone.label} aria-hidden />
