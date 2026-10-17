@@ -2692,10 +2692,16 @@ records, CRUD, duplicates, list/details, import/export, timeline, per-channel co
   campaigns, reminders, notices and tasks are later stages (`CLIENT_CENTER_PLAN.md`).
 - **Duplicates are shown, never merged** — a shared phone/WhatsApp number (one group; local `01…` gets `88`), email,
   channel reference or code, never a similar name. There is no merge action.
-- **One filter builder** (`lib/clientFilters.ts`) serves the list, select-all, export and bulk actions. Only a MAIN ADMIN
-  can permanently delete clients (any status, bulk or one; `deleteClients` checks `isMainAdmin`, the button is hidden
-  from everyone else). Import is claimed once by a conditional update, deletes the file's rows when it
-  ends, and runs inside the request (≤2,000 rows) — a durable background import is the extension point.
+- **One filter builder** (`lib/clientFilters.ts`) serves the list, select-all, export and bulk actions. Import is claimed
+  once by a conditional update, deletes the file's rows when it ends, and runs inside the request (≤2,000 rows) — a
+  durable background import is the extension point.
+- **Deleting in Clients is the Administrator's by default** (owner's rule, 17 Oct 2026; CLIENTS_V3.md §Delete):
+  clients, subscriptions, invoices, payments and notes. `canDeleteClientRecords` = Main Admin OR `clients.delete`, and
+  `clients.delete` is in `ADMIN_GRANTED_KEYS`: only a Main Admin can ADD it to a role (`adminGrantRefusal`), it is never
+  project-assignable (no project role or Lead carries it; the `ProjectRole_no_platform_keys` CHECK refuses it), and
+  migration `20261017200000_clients_delete_admin_granted` stripped it from every non-Main-Admin role. Every delete
+  action is in `server/actions/clientDeletes.ts`; the controls render only for a viewer with `caps.canDelete`. An
+  invoice a recorded payment still settles is kept; deleting an unreversed payment takes it off its invoices first.
 - **Clients V3 (`CLIENTS_V3.md`, 17 Oct 2026)**: subscriptions, numbered invoices, payments, WhatsApp GROUP links,
   photos, per-person columns, per-project sub-module switches (`ClientModuleSettings`). Rules worth not undoing:
   - **Expiry is not a debt.** Terms (`ClientSubscription`) and money (`ClientDue`/`ClientPayment`) are separate; state is

@@ -55,7 +55,6 @@ import {
   type SubscriptionKind,
 } from "@support-automation/shared";
 import { clientViewerCaps } from "@/server/clientModule";
-import { isMainAdmin } from "@/server/projectContext";
 import { getClient360 } from "@/server/client360";
 import { loadClientFormContext } from "@/server/clientFormContext";
 import { countryName } from "@/lib/clientPhone";
@@ -105,8 +104,8 @@ export default async function ClientDetailPage({ params, searchParams }: { param
   const [options, canArchive, canDelete, canViewBilling, canEditBilling, canLinkChats, chatLinks, linkAccounts, groups] = await Promise.all([
     loadClientFormOptions(),
     hasPermission(session, "clients.archive"),
-    // Deleting is a Main Admin's alone (deleteClients re-checks).
-    isMainAdmin(session.userId),
+    // Deleting: an Administrator, or a role an Administrator gave the delete permission (deleteClients re-checks).
+    Promise.resolve(caps.canDelete),
     hasPermission(session, "clients.view_billing"),
     hasPermission(session, "clients.edit_billing"),
     hasPermission(session, "clients.link_whatsapp_chat"),
@@ -622,6 +621,7 @@ export default async function ClientDetailPage({ params, searchParams }: { param
             canManage={caps.canManageSubscriptions}
             canInvoice={caps.canEditBilling}
             archived={archived}
+            canDelete={caps.canDelete}
           />
         </Card>
       ) : null}
@@ -634,6 +634,7 @@ export default async function ClientDetailPage({ params, searchParams }: { param
             clientId={client.id}
             canEdit={canEditBilling}
             archived={archived}
+            canDelete={caps.canDelete}
             summaryText={summaryText}
             currencies={billing.currencies.filter((c) => c.enabled).map((c) => c.code)}
             dues={billing.dues}
@@ -647,7 +648,7 @@ export default async function ClientDetailPage({ params, searchParams }: { param
       {tab === "payments" && showPayments ? (
         <Card className="p-6">
           <SectionHeader title="Payments & receipts" />
-          <ClientPaymentsPanel client={{ name: clientDisplayName(client.name, client.companyName), code: client.code }} openInvoices={view.openInvoices} payments={view.payments} canRecord={caps.canRecordPayments && !archived} today={view.today} />
+          <ClientPaymentsPanel client={{ name: clientDisplayName(client.name, client.companyName), code: client.code }} openInvoices={view.openInvoices} payments={view.payments} canRecord={caps.canRecordPayments && !archived} today={view.today} canDelete={caps.canDelete} />
         </Card>
       ) : null}
 
@@ -706,6 +707,7 @@ export default async function ClientDetailPage({ params, searchParams }: { param
               <NotesPanel
                 clientId={client.id}
                 canEdit={canManage && !archived}
+                canDelete={caps.canDelete}
                 notes={notes.map((n) => ({ id: n.id, body: n.body, author: n.author?.name ?? null, at: formatDateTime(n.createdAt) }))}
               />
             </Card>

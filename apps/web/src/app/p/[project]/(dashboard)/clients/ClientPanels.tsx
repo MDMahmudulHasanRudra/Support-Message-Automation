@@ -1,5 +1,6 @@
 "use client";
 
+import { DeleteRecordButton } from "./DeleteRecordButton";
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import Link from "@/components/ProjectLink";
@@ -180,7 +181,7 @@ export function ChannelsPanel({ clientId, channels, canEdit, archived, groups }:
   );
 }
 
-export function NotesPanel({ clientId, notes, canEdit }: { clientId: string; notes: Array<{ id: string; body: string; author: string | null; at: string }>; canEdit: boolean }) {
+export function NotesPanel({ clientId, notes, canEdit, canDelete = false }: { clientId: string; notes: Array<{ id: string; body: string; author: string | null; at: string }>; canEdit: boolean; canDelete?: boolean }) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState<ClientFormState, FormData>(addClientNote.bind(null, clientId), {});
   const formRef = useRef<HTMLFormElement>(null);
@@ -206,9 +207,12 @@ export function NotesPanel({ clientId, notes, canEdit }: { clientId: string; not
         {notes.map((n) => (
           <li key={n.id} className="rounded-[var(--radius-md)] bg-[var(--color-surface-sunken)] px-3.5 py-2.5">
             <p className="whitespace-pre-wrap text-sm">{n.body}</p>
-            <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-              {n.author ?? "Someone"} · {n.at}
-            </p>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <p className="text-xs text-[color:var(--color-muted-foreground)]">
+                {n.author ?? "Someone"} · {n.at}
+              </p>
+              {canDelete ? <DeleteRecordButton kind="note" id={n.id} /> : null}
+            </div>
           </li>
         ))}
       </ul>

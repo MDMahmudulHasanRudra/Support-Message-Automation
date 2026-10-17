@@ -87,6 +87,10 @@ export interface ClientRegisterKpis {
   linkedGroups: number;
   renewalAttention: number;
   returning: number;
+  /** Clients added since the 1st of this Dhaka month. */
+  newThisMonth: number;
+  /** What open invoices still owe, per currency (never added across currencies). Null without billing. */
+  outstanding: Array<{ currency: string; remaining: string; overdue: boolean }> | null;
 }
 
 const LIST_SELECT = {
@@ -235,9 +239,12 @@ export async function listClients(opts: {
   page: number;
   pageSize: number;
   ctx?: ClientFilterContext;
+  /** Narrows the list further (the Subscriptions page: clients that have a current term). */
+  extraWhere?: Prisma.ClientWhereInput;
 }) {
   const ctx = opts.ctx ?? defaultFilterContext();
-  const where = buildClientWhere(opts.filters, ctx);
+  const base = buildClientWhere(opts.filters, ctx);
+  const where = opts.extraWhere ? { AND: [base, opts.extraWhere] } : base;
   const [rows, total, statusCounts, categories, members, tagRows] = await Promise.all([
     prisma.client.findMany({ where, orderBy: clientOrderBy(opts.sort, opts.dir), skip: (opts.page - 1) * opts.pageSize, take: opts.pageSize, select: LIST_SELECT }),
     prisma.client.count({ where }),
@@ -274,14 +281,32 @@ export async function getClientRegisterKpis(ctx: ClientFilterContext): Promise<C
   const windowEnd = new Date(today.getTime() + ctx.renewalWindowDays * 86_400_000);
   const recentlyExpired = new Date(today.getTime() - 30 * 86_400_000);
   const current = { status: { not: "ARCHIVED" as const } };
-  const [total, linkedGroups, renewalAttention, returning] = await Promise.all([
+  const monthStart = new Date(`${ctx.today.slice(0, 8)}01T00:00:00.000Z`);
+  // Dhaka is UTC+6: the month began at 18:00 UTC on the last day of the previous month.
+  monthStart.setUTCHours(monthStart.getUTCHours() - 6);
+  const openDue = { status: { in: ["UNPAID", "PARTIALLY_PAID"] as Array<"UNPAID" | "PARTIALLY_PAID"> }, amount: { not: null }, currency: { not: null }, client: current };
+  const [total, linkedGroups, renewalAttention, returning, newThisMonth, owed, overdue] = await Promise.all([
     prisma.client.count({ where: current }),
     prisma.clientWhatsAppGroupLink.count({ where: { unlinkedAt: null, client: current } }),
     // Inside the renewal window, or expired in the last 30 days and not renewed. Not a debt: a reminder to talk to them.
     prisma.client.count({ where: { ...current, currentSubscription: { pausedAt: null, endDate: { gt: recentlyExpired, lte: windowEnd } } } }),
     prisma.client.count({ where: { ...current, subscriptions: { some: { isRenewal: true } } } }),
+    prisma.client.count({ where: { ...current, createdAt: { gte: monthStart } } }),
+    ctx.billing ? prisma.clientDue.groupBy({ by: ["currency"], where: openDue, _sum: { amount: true, paidAmount: true } }) : Promise.resolve(null),
+    ctx.billing ? prisma.clientDue.groupBy({ by: ["currency"], where: { ...openDue, dueDate: { lt: today } }, _count: { _all: true } }) : Promise.resolve(null),
   ]);
-  return { total, linkedGroups, renewalAttention, returning };
+  const overdueCurrencies = new Set((overdue ?? []).map((o) => o.currency));
+  const outstanding = owed
+    ? owed
+        .map((o) => {
+          const remaining = (o._sum.amount ?? new Prisma.Decimal(0)).minus(o._sum.paidAmount ?? new Prisma.Decimal(0));
+          return { currency: o.currency!, remaining, overdue: overdueCurrencies.has(o.currency) };
+        })
+        .filter((o) => o.remaining.gt(0))
+        .map((o) => ({ currency: o.currency, remaining: o.remaining.toFixed(2), overdue: o.overdue }))
+        .sort((a, b) => a.currency.localeCompare(b.currency))
+    : null;
+  return { total, linkedGroups, renewalAttention, returning, newThisMonth, outstanding };
 }
 
 /** Distinct services and countries in use, for the filter dropdowns. */

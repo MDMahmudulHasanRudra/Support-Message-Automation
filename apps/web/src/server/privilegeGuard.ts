@@ -1,4 +1,4 @@
-import { MAIN_ADMIN_CATEGORY, PERMISSIONS, PROJECT_ADMIN_CATEGORY } from "@support-automation/shared";
+import { ADMIN_GRANTED_KEYS, MAIN_ADMIN_CATEGORY, PERMISSIONS, PROJECT_ADMIN_CATEGORY } from "@support-automation/shared";
 import { platformPrisma } from "@/server/db";
 import { isMainAdmin } from "@/server/projectContext";
 
@@ -72,4 +72,17 @@ export async function privilegeRefusal(
     (touches.targetUserId ? await userIsPrivileged(touches.targetUserId) : false);
   if (!privileged) return null;
   return (await isMainAdmin(actorUserId)) ? null : MAIN_ADMIN_ONLY_ERROR;
+}
+
+/**
+ * Keys only a Main Admin may GIVE (`ADMIN_GRANTED_KEYS`: deleting in Clients). Unlike PRIVILEGED_KEYS
+ * these do not make the holder privileged — a role that already has one can still be edited by anyone
+ * with `permissions.edit`; only ADDING one needs a Main Admin. Pass the keys the change adds.
+ */
+export async function adminGrantRefusal(actorUserId: string, addedKeys: readonly string[]): Promise<string | null> {
+  const granted = addedKeys.filter((k) => ADMIN_GRANTED_KEYS.includes(k));
+  if (!granted.length) return null;
+  if (await isMainAdmin(actorUserId)) return null;
+  const labels = granted.map((k) => PERMISSIONS.find((p) => p.key === k)?.label ?? k).join(", ");
+  return `Only an Administrator can give this permission: ${labels}.`;
 }

@@ -132,7 +132,7 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "clients.create", label: "Create Clients", category: "Clients" },
   { key: "clients.update", label: "Edit Clients", category: "Clients" },
   { key: "clients.archive", label: "Archive & Restore Clients", category: "Clients" },
-  { key: "clients.delete", label: "Permanently Delete Clients", category: "Clients" },
+  { key: "clients.delete", label: "Delete Anything in Clients (clients, subscriptions, invoices, payments, notes)", category: "Clients" },
   { key: "clients.import", label: "Import Clients", category: "Clients" },
   { key: "clients.export", label: "Export Clients", category: "Clients" },
   // Billing is its own pair; neither key ends in ".view", so Read Only does not receive amounts or dates.
@@ -204,6 +204,13 @@ export const READ_ONLY_PERMISSION_KEYS: readonly string[] = PERMISSIONS.filter(
 ).map((p) => p.key);
 
 /** Matches the spec's own illustrative example for this default module verbatim. */
+/**
+ * Keys only a Main Admin may GIVE (17 Oct 2026, owner's rule): deleting is the Administrator's by
+ * default, and an Administrator can hand it to a role. Not project-assignable either, so a Lead never
+ * receives it and a project role can never carry it (`PLATFORM_ONLY_KEYS`).
+ */
+export const ADMIN_GRANTED_KEYS: readonly string[] = ["clients.delete"];
+
 export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
   "messages.reply",

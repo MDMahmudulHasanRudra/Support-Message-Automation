@@ -8,18 +8,39 @@ email), which still describes the parts this did not change.
 
 | Page | Route | What it is now |
 |---|---|---|
-| All Clients | `/clients` | A 360° register: identity (photo, code, "Returning"), country, phone/WhatsApp, service, expiry with countdown, subscription state, outstanding **per currency** (billing viewers only), sold by, linked WhatsApp group, row actions. KPI tiles, quick filters + "More filters", per-person **Customize columns**, sticky identity column, phone cards. |
+| All Clients | `/clients` | A 360° register: identity (photo, code, "Returning"), country with flag, phone with a WhatsApp mark, service, expiry with "N days left", subscription state, outstanding **per currency** (billing viewers only), sold by, linked WhatsApp group. Five KPI cards (total with "+N this month", linked groups, renewal attention, outstanding per currency, returning); view chips (All, Active, Renew soon, Trial, Expired, Overdue, Inactive, Archived) with counts; a filter bar whose drop-downs apply themselves; row actions (view, renew, WhatsApp, and a ⋯ menu with edit, payment, links, archive and — for someone allowed — delete). |
 | Add client | `/clients/new` | A guided form: photo (resized in the browser, re-checked and stripped on the server), identity, worldwide phone (E.164) with country/currency **suggestions**, Team → staff → seller from the real roster, an existing WhatsApp group picked by account and **confirmed**, an optional first subscription. Every ordinary field optional unless the project requires it; a client with nothing but a code needs a separate press. |
 | Client page | `/clients/<id>` | A profile header (photo, code with copy, status, country, "Repeat customer"; Edit / Renew / Record payment / Open WhatsApp group, Archive and Delete under ⋮), six fact cards, then tabs as URL state (`?tab=`): **Overview** (client information, current subscription with term progress, team & ownership, billing summary per currency, WhatsApp, recent payments, recent activity, subscription history; `?edit=1` opens the editor), Subscriptions, Billing, Payments, WhatsApp & channels, Activity & notes. A tab the viewer may not see falls back to Overview; billing figures are still read only with `clients.view_billing`. |
-| Subscriptions | `/clients/subscriptions` | Every client's current term by state — Active, Renew soon, Trials & demos, Expired, Starts later, Paused — soonest expiry first, one-click Renew. |
-| Billing List | `/clients/dues` (route kept) | Invoices with number/type, client, service, seller, due, billed, collected, remaining, status; column chooser; filters; **Pay selected** with an editable amount per invoice; Create bill. |
-| Payments & Receipts | `/clients/payments` | Every receipt, the invoices it settled, collected per currency, and **Reverse** (with a reason). |
+| Subscriptions | `/clients/subscriptions` | Every client's current term, soonest expiry first. Six KPI cards and chips (All, Active, Renew soon, Trials & demos, Expired, Paused); filters for service, seller, team and country; a days-left bar; View plus a ⋯ menu (Renew, Pause/Resume, Cancel on profile, Delete); bulk delete for someone allowed. |
+| Billing List | `/clients/dues` (route kept) | Invoices with number/type, client, service, seller, due, billed, collected, remaining, status; KPI cards and view chips with counts; column chooser; filters; **Pay selected** with an editable amount per invoice; Create bill; Delete (single or selected) for someone allowed. |
+| Payments & Receipts | `/clients/payments` | Every receipt, the invoices it settled, collected per currency, and **Reverse** (with a reason). KPI cards, Recorded / Reversed / All chips with counts, filters for method, currency and received dates; Delete (single or selected) for someone allowed. |
 | Settings → Client Module | `/settings/clients` | Sub-module switches, required fields, renewal window, default country for local numbers. |
 
 | Import Clients | `/clients/import` | Three steps (17 Oct 2026, see §Import): **download the template** (or "Template with my clients"), fill it in (a guide on the page and inside the file), drop the file to preview. |
 
 Unchanged: channels and consent, notes, the personal chat links, Email settings, Chat V1/V2, workers, AI. The export gained columns (country, currency, team, seller, service, start, expiry,
 subscription state, linked groups) — never an amount.
+
+### Delete (17 Oct 2026)
+
+- **Who.** The Administrator (Main Admin) by default; anyone else only when an Administrator gives their role
+  "Delete Anything in Clients" (`clients.delete`) on Permission Modules. `canDeleteClientRecords` is the one rule and
+  `caps.canDelete` carries it to every page; a control is rendered only for that viewer and the action checks again.
+- **Only an Administrator can give it.** `clients.delete` is in `ADMIN_GRANTED_KEYS`: `adminGrantRefusal` refuses
+  anyone else ADDING it to a role (keeping it on a role that has it is not refused). It is not project-assignable, so
+  a project role or a Lead never carries it, and the `ProjectRole_no_platform_keys` CHECK refuses it in the database.
+  Migration `20261017200000_clients_delete_admin_granted` removed it from every role that is not a Main Admin role —
+  under the previous rule it granted nothing, so nobody lost anything they could do.
+- **What can be deleted** (`server/actions/clientDeletes.ts`): clients (as before), subscriptions, invoices, payments
+  and notes, single or selected. Each delete is on the client's timeline and in the System Log.
+  - A subscription: the current term is recomputed under the client lock; its invoices stay, unlinked.
+  - An invoice: refused while a recorded (unreversed) payment settles it — reverse or delete that payment first.
+  - A payment: an unreversed one is first taken off the invoices it settled (exactly what a reversal does).
+  - A note: the timeline says a note was deleted, not what it said.
+- **Archive, cancel, pause and reverse stay the everyday tools**; every delete dialog says so.
+- Tests: `clientDeletes.integration.test.ts` (7). Mutation-checked: anyone-may-delete, no grant gate, refusing to keep
+  the key, no current-term recompute and no payment unwind each fail a test. The settled-invoice guard is two layers (a
+  pre-check and a conditional delete); removing either alone is covered by the other, removing both fails the test.
 
 ### Import (17 Oct 2026)
 

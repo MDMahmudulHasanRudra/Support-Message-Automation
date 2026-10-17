@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Plus, Search, Wallet } from "lucide-react";
-import Link from "@/components/ProjectLink";
-import { Badge, Button, Checkbox, Dialog, Input } from "@/components/ui";
+import { useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
+import { Eye, Plus, Search, Trash2, Wallet } from "lucide-react";
+import Link, { useProjectRouter as useRouter } from "@/components/ProjectLink";
+import { Badge, Button, Checkbox, ConfirmDialog, Dialog, Input, useToast } from "@/components/ui";
 import type { BillingRow } from "@/server/clientBilling";
 import { createDue } from "@/server/actions/clientBilling";
 import { searchClientsBrief, type ClientBrief } from "@/server/actions/clientExtras";
@@ -13,6 +13,8 @@ import { formatDay, INVOICE_TONE, money } from "@/lib/clientDisplay";
 import { ClientAvatar } from "../ClientAvatar";
 import { DueForm, type InvoiceSellers } from "../ClientBilling";
 import { PaymentDialog, type PayableInvoice } from "../PaymentDialog";
+import { RowMenu } from "../RowMenu";
+import { deleteDues } from "@/server/actions/clientDeletes";
 
 const muted = "text-[color:var(--color-muted-foreground)]";
 const Sub = ({ children }: { children: ReactNode }) => <div className={`mt-0.5 text-xs ${muted}`}>{children}</div>;
@@ -97,11 +99,17 @@ const toPayable = (r: BillingRow): PayableInvoice => ({
  * currency, never converted. Only invoices that can take money are selectable; "Pay selected" opens
  * the payment dialog with an editable amount per invoice.
  */
-export function BillingTable({ rows, columns, labels, canPay, today }: { rows: BillingRow[]; columns: string[]; labels: Record<string, string>; canPay: boolean; today: string }) {
+export function BillingTable({ rows, columns, labels, canPay, canDelete = false, today }: { rows: BillingRow[]; columns: string[]; labels: Record<string, string>; canPay: boolean; canDelete?: boolean; today: string }) {
+  const router = useRouter();
+  const { showToast } = useToast();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [paying, setPaying] = useState<PayableInvoice[] | null>(null);
-  const payable = rows.filter((r) => r.payable);
-  const allSelected = payable.length > 0 && payable.every((r) => selected.has(r.id));
+  const [deleting, setDeleting] = useState<string[] | null>(null);
+  const [busy, start] = useTransition();
+  // Selecting is for paying (payable invoices) or, for someone allowed to delete, for deleting (any).
+  const selectable = rows.filter((r) => r.payable || canDelete);
+  const canSelect = canPay || canDelete;
+  const allSelected = selectable.length > 0 && selectable.every((r) => selected.has(r.id));
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -110,6 +118,24 @@ export function BillingTable({ rows, columns, labels, canPay, today }: { rows: B
       return next;
     });
   const chosen = rows.filter((r) => selected.has(r.id) && r.payable);
+  const picked = rows.filter((r) => selected.has(r.id));
+  const actionsFor = (r: BillingRow) => (
+    <div className="flex items-center justify-end gap-1.5">
+      {canPay && r.payable ? (
+        <Button size="sm" variant="secondary" onClick={() => setPaying([toPayable(r)])}>
+          <Wallet className="size-3.5" aria-hidden /> Record payment
+        </Button>
+      ) : null}
+      <RowMenu
+        horizontal
+        label={`More actions for ${r.invoiceNumber ?? "this due"}`}
+        items={[
+          { label: "Open client", icon: <Eye className="size-4" aria-hidden />, href: `/clients/${r.client.id}?tab=billing` },
+          { label: "Delete invoice", icon: <Trash2 className="size-4" aria-hidden />, onSelect: () => setDeleting([r.id]), danger: true, hidden: !canDelete },
+        ]}
+      />
+    </div>
+  );
   const data = columns.filter((k) => k !== "invoice");
   const th = "whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
   const td = "border-b border-[var(--color-border)] px-4 py-3 align-middle text-[13px] group-hover:bg-[var(--color-surface-sunken)]";
@@ -123,12 +149,19 @@ export function BillingTable({ rows, columns, labels, canPay, today }: { rows: B
 
   return (
     <div>
-      {canPay ? (
-        <div className="mb-2 flex items-center justify-end gap-3 text-sm">
-          <span className={muted}>{chosen.length} selected</span>
-          <Button size="sm" disabled={!chosen.length} onClick={() => setPaying(chosen.map(toPayable))}>
-            <Wallet className="size-3.5" aria-hidden /> Pay selected
-          </Button>
+      {canSelect ? (
+        <div className="mb-2 flex flex-wrap items-center justify-end gap-2 text-sm">
+          <span className={muted}>{picked.length} selected</span>
+          {canDelete ? (
+            <Button size="sm" variant="danger" disabled={!picked.length} onClick={() => setDeleting(picked.map((r) => r.id))}>
+              <Trash2 className="size-3.5" aria-hidden /> Delete selected
+            </Button>
+          ) : null}
+          {canPay ? (
+            <Button size="sm" disabled={!chosen.length} onClick={() => setPaying(chosen.map(toPayable))}>
+              <Wallet className="size-3.5" aria-hidden /> Pay selected{chosen.length && chosen.length !== picked.length ? ` (${chosen.length})` : ""}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -136,9 +169,9 @@ export function BillingTable({ rows, columns, labels, canPay, today }: { rows: B
         <table className="w-full border-separate border-spacing-0 text-left">
           <thead>
             <tr>
-              {canPay ? (
+              {canSelect ? (
                 <th className={`${th} w-10`}>
-                  <Checkbox checked={allSelected} indeterminate={!allSelected && chosen.length > 0} onChange={() => setSelected(allSelected ? new Set() : new Set(payable.map((r) => r.id)))} aria-label="Select every payable invoice on this page" />
+                  <Checkbox checked={allSelected} indeterminate={!allSelected && picked.length > 0} onChange={() => setSelected(allSelected ? new Set() : new Set(selectable.map((r) => r.id)))} aria-label="Select every invoice on this page" />
                 </th>
               ) : null}
               <th className={`${th} sticky left-0 z-[2] border-r`}>{labels.invoice ?? "Invoice"}</th>
@@ -147,17 +180,15 @@ export function BillingTable({ rows, columns, labels, canPay, today }: { rows: B
                   {labels[k] ?? k}
                 </th>
               ))}
-              {canPay ? <th className={th}>
-                <span className="sr-only">Actions</span>
-              </th> : null}
+              <th className={`${th} text-right`}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id} className="group">
-                {canPay ? (
+                {canSelect ? (
                   <td className={`${td} w-10`}>
-                    <Checkbox disabled={!r.payable} checked={selected.has(r.id)} onChange={() => toggle(r.id)} aria-label={`Select ${r.invoiceNumber ?? "this due"}`} title={r.payable ? undefined : "Nothing left to pay, no amount, or the client is archived"} />
+                    <Checkbox disabled={!r.payable && !canDelete} checked={selected.has(r.id)} onChange={() => toggle(r.id)} aria-label={`Select ${r.invoiceNumber ?? "this due"}`} title={r.payable || canDelete ? undefined : "Nothing left to pay, no amount, or the client is archived"} />
                   </td>
                 ) : null}
                 <td className={`${td} sticky left-0 z-[1] border-r bg-[var(--color-surface)]`}>{invoiceCell(r)}</td>
@@ -166,15 +197,7 @@ export function BillingTable({ rows, columns, labels, canPay, today }: { rows: B
                     {cell(k, r)}
                   </td>
                 ))}
-                {canPay ? (
-                  <td className={td}>
-                    {r.payable ? (
-                      <Button size="sm" variant="ghost" onClick={() => setPaying([toPayable(r)])}>
-                        Record payment
-                      </Button>
-                    ) : null}
-                  </td>
-                ) : null}
+                <td className={td}>{actionsFor(r)}</td>
               </tr>
             ))}
           </tbody>
@@ -185,7 +208,7 @@ export function BillingTable({ rows, columns, labels, canPay, today }: { rows: B
         {rows.map((r) => (
           <li key={r.id} className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
             <div className="flex items-start gap-3">
-              {canPay ? <Checkbox className="mt-1" disabled={!r.payable} checked={selected.has(r.id)} onChange={() => toggle(r.id)} aria-label={`Select ${r.invoiceNumber ?? "this due"}`} /> : null}
+              {canSelect ? <Checkbox className="mt-1" disabled={!r.payable && !canDelete} checked={selected.has(r.id)} onChange={() => toggle(r.id)} aria-label={`Select ${r.invoiceNumber ?? "this due"}`} /> : null}
               <div className="min-w-0 flex-1">{invoiceCell(r)}</div>
               <Badge color={INVOICE_TONE[r.state]}>{INVOICE_STATE_LABELS[r.state]}</Badge>
             </div>
@@ -204,17 +227,31 @@ export function BillingTable({ rows, columns, labels, canPay, today }: { rows: B
                 <dd className="font-medium">{formatDay(r.dueDate)}</dd>
               </div>
             </dl>
-            {canPay && r.payable ? (
-              <div className="mt-3 flex justify-end">
-                <Button size="sm" variant="secondary" onClick={() => setPaying([toPayable(r)])}>
-                  <Wallet className="size-3.5" aria-hidden /> Record payment
-                </Button>
-              </div>
-            ) : null}
+            <div className="mt-3">{actionsFor(r)}</div>
           </li>
         ))}
       </ul>
 
+      {canDelete ? (
+        <ConfirmDialog
+          open={deleting !== null}
+          onClose={() => setDeleting(null)}
+          loading={busy}
+          tone="danger"
+          title={deleting && deleting.length > 1 ? `Delete ${deleting.length} invoices?` : "Delete this invoice?"}
+          description="It is removed for good with its history. An invoice a recorded payment still settles is kept — reverse or delete that payment first. To stop expecting money on a real invoice, waive or cancel it instead."
+          confirmLabel="Delete permanently"
+          onConfirm={() =>
+            start(async () => {
+              const r = await deleteDues(deleting ?? []);
+              showToast({ tone: r.ok ? "success" : "danger", title: r.message });
+              setDeleting(null);
+              setSelected(new Set());
+              router.refresh();
+            })
+          }
+        />
+      ) : null}
       {paying ? (
         <PaymentDialog
           open

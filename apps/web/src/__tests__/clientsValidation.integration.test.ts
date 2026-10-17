@@ -76,7 +76,7 @@ const xlsx = (rows: unknown[][]) => {
 };
 
 beforeAll(async () => {
-  const everything = ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export", "messages.view"];
+  const everything = ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.import", "clients.export", "messages.view"];
   const u = await rawPrisma.user.create({ data: { username: `val_${tag}`, email: `val.${tag}@example.test`, name: "Validator", passwordHash: "x", permissionModuleId: await role("CV admin", everything) } });
   ids.users.push(u.id);
   admin = { userId: u.id, username: u.username, email: u.email!, name: "Validator" } as Session;
@@ -149,8 +149,8 @@ describe("permanent deletion", () => {
   it("is a Main Admin's alone, removes only the chosen client's own rows, and leaves import history alone", async () => {
     const keep = (await create(A, { name: "Keep Me", phone: "+8801766000003" })).clientId!;
     const gone = (await create(A, { name: "Delete Me", phone: "+8801766000004" })).clientId!;
-    // clients.delete is not enough: the holder is refused and nothing goes.
-    expect((await as(A, () => actions.deleteClients([gone]))).message).toMatch(/Only a Main Admin/);
+    // Without the delete permission the request is refused and nothing goes.
+    expect((await as(A, () => actions.deleteClients([gone]))).message).toMatch(/Only an Administrator/);
     expect(await rawPrisma.client.count({ where: { id: gone } })).toBe(1);
     const result = await as(A, () => actions.deleteClients([gone]), mainAdmin);
     expect(result.message).toMatch(/1 client\(s\) permanently deleted/);

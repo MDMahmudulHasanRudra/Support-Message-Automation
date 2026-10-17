@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition, type ReactNode } from "react";
-import { Eye, MessageCircle, RefreshCw, Users, Wallet } from "lucide-react";
+import { Archive, Eye, Link2, MessageCircle, Pencil, RefreshCw, RotateCcw, Trash2, Unlink, Users, Wallet } from "lucide-react";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import Link, { useProjectHref } from "@/components/ProjectLink";
 import { Alert, Badge, Button, Checkbox, ConfirmDialog, Dialog, Field, Input, Select, SelectAllMatchingNotice } from "@/components/ui";
@@ -30,6 +30,8 @@ import {
 import { countryName } from "@/lib/clientPhone";
 import { expiryTextClass, formatDay, groupChatHref, money, SUBSCRIPTION_TONE } from "@/lib/clientDisplay";
 import { ClientAvatar } from "./ClientAvatar";
+import { daysBetween, flag } from "./ModuleKit";
+import { RowMenu } from "./RowMenu";
 
 export type ClientTableRow = ClientListRow;
 
@@ -68,13 +70,14 @@ function primaryPhone(c: ClientTableRow) {
 }
 
 /** One cell of the register. Every value here was already authorised on the server. */
-function cell(key: string, c: ClientTableRow, caps: RegisterCaps): ReactNode {
+function cell(key: string, c: ClientTableRow, caps: RegisterCaps, today: string): ReactNode {
   const sub = c.subscription;
   switch (key) {
     case "country":
       return c.country ? (
         <>
           <div className="whitespace-nowrap font-medium">
+            <span aria-hidden className="mr-1.5">{flag(c.country)}</span>
             {countryName(c.country)}
           </div>
           <Sub>{c.preferredCurrency ?? "No currency set"}</Sub>
@@ -86,7 +89,10 @@ function cell(key: string, c: ClientTableRow, caps: RegisterCaps): ReactNode {
       const p = primaryPhone(c);
       return p ? (
         <>
-          <div className="whitespace-nowrap font-medium tabular">{p.value}</div>
+          <div className="flex items-center gap-1.5 whitespace-nowrap font-medium tabular">
+            {p.value}
+            {p.kind === "WHATSAPP" || c.chatLinked ? <MessageCircle className="size-3.5 text-[color:var(--color-success-fg)]" aria-label="On WhatsApp" /> : null}
+          </div>
           <Sub>{c.chatLinked ? "WhatsApp chat linked" : p.kind === "WHATSAPP" ? "WhatsApp number" : "Phone"}</Sub>
         </>
       ) : (
@@ -97,7 +103,7 @@ function cell(key: string, c: ClientTableRow, caps: RegisterCaps): ReactNode {
       return sub ? (
         <>
           <div className="font-medium">{sub.service}</div>
-          <Sub>{SUBSCRIPTION_KIND_LABELS[sub.kind as SubscriptionKind] ?? sub.kind}</Sub>
+          <Sub>{sub.kind === "PAID" ? describeDuration(sub.durationValue, sub.durationUnit) : (SUBSCRIPTION_KIND_LABELS[sub.kind as SubscriptionKind] ?? sub.kind)}</Sub>
         </>
       ) : (
         <None>No subscription</None>
@@ -105,21 +111,27 @@ function cell(key: string, c: ClientTableRow, caps: RegisterCaps): ReactNode {
     case "expiry":
       return sub ? (
         <>
-          <div className={`whitespace-nowrap font-medium ${expiryTextClass(sub.state)}`}>{formatDay(sub.endDate)}</div>
-          <Sub>{sub.expiryText}</Sub>
+          <div className="whitespace-nowrap font-medium">{formatDay(sub.endDate)}</div>
+          <DaysLeftText today={today} sub={sub} />
         </>
       ) : (
         <None />
       );
     case "subscription":
-      return c.subscriptionState === "NONE" ? <None>None</None> : <Badge color={SUBSCRIPTION_TONE[c.subscriptionState]}>{SUBSCRIPTION_STATE_LABELS[c.subscriptionState]}</Badge>;
+      return c.subscriptionState === "NONE" ? (
+        <None>None</None>
+      ) : (
+        <Badge color={SUBSCRIPTION_TONE[c.subscriptionState]} dot>
+          {SUBSCRIPTION_STATE_LABELS[c.subscriptionState]}
+        </Badge>
+      );
     case "outstanding":
       if (!c.billing) return <None />;
       return c.billing.outstanding.length ? (
         <div className="space-y-0.5">
           {c.billing.outstanding.map((o) => (
-            <div key={o.currency} className={`whitespace-nowrap font-semibold tabular ${o.overdue ? "text-[color:var(--color-danger-fg)]" : "text-[color:var(--color-warning-fg)]"}`}>
-              {money(o.remaining, o.currency)}
+            <div key={o.currency}>
+              <Badge color={o.overdue ? "red" : "yellow"}>{money(o.remaining, o.currency)}</Badge>
             </div>
           ))}
         </div>
@@ -142,8 +154,8 @@ function cell(key: string, c: ClientTableRow, caps: RegisterCaps): ReactNode {
             const href = caps.canOpenChat ? groupChatHref(g.accountId, g.groupId) : null;
             const chip = (
               <span className={`inline-flex max-w-[200px] items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 text-xs font-medium ring-1 ring-inset ${g.active ? "bg-[var(--color-success-bg)] text-[color:var(--color-success-fg)] ring-[var(--color-success-border)]" : "bg-[var(--color-neutral-bg)] text-[color:var(--color-neutral-fg)] ring-[var(--color-neutral-border)]"}`}>
-                <Users className="size-3 shrink-0" aria-hidden />
-                <span className="truncate">{g.name}</span>
+                <MessageCircle className="size-3 shrink-0" aria-hidden />
+                <span className="truncate">{g.active ? "Linked group" : "Group inactive"}</span>
               </span>
             );
             return (
@@ -155,18 +167,24 @@ function cell(key: string, c: ClientTableRow, caps: RegisterCaps): ReactNode {
                 ) : (
                   chip
                 )}
-                <Sub>{g.active ? (g.accountLabel ?? "Account removed") : "Group inactive on this number"}</Sub>
+                <Sub>
+                  <span className="block max-w-[200px] truncate" title={g.name}>
+                    {g.name}
+                  </span>
+                </Sub>
               </div>
             );
           })}
           {c.groups.length > 2 ? <Sub>+{c.groups.length - 2} more</Sub> : null}
         </div>
       ) : caps.canLinkGroups ? (
-        <Link href={`/clients/${c.id}#whatsapp-groups`} className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-dashed border-[var(--color-border-strong)] px-2 py-1 text-xs text-[color:var(--color-muted-foreground)] hover:border-[var(--color-foreground)] hover:text-[color:var(--color-foreground)]">
-          + Link group
+        <Link href={`/clients/${c.id}?tab=whatsapp`} title="Link a WhatsApp group" className={NOT_LINKED}>
+          <Unlink className="size-3" aria-hidden /> Not linked
         </Link>
       ) : (
-        <None>Not linked</None>
+        <span className={NOT_LINKED}>
+          <Unlink className="size-3" aria-hidden /> Not linked
+        </span>
       );
     case "email":
       return c.channels.find((ch) => ch.kind === "EMAIL")?.value ?? <None />;
@@ -246,30 +264,56 @@ function Identity({ c }: { c: ClientTableRow }) {
   );
 }
 
-function RowActions({ c, caps }: { c: ClientTableRow; caps: RegisterCaps }) {
+const NOT_LINKED =
+  "inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] bg-[var(--color-neutral-bg)] px-2 py-1 text-xs font-medium text-[color:var(--color-neutral-fg)] ring-1 ring-inset ring-[var(--color-neutral-border)]";
+
+/** "N days left" in green, amber inside a month, red inside a week or once over. */
+function DaysLeftText({ today, sub }: { today: string; sub: NonNullable<ClientTableRow["subscription"]> }) {
+  if (sub.state === "PAUSED" || sub.state === "SCHEDULED") return <Sub>{sub.expiryText}</Sub>;
+  const left = daysBetween(today, sub.endDate);
+  const tone = left <= 7 ? "text-[color:var(--color-danger-fg)]" : left <= 30 ? "text-[color:var(--color-warning-fg)]" : "text-[color:var(--color-success-fg)]";
+  const plural = (n: number) => (n === 1 ? "" : "s");
+  return <div className={`mt-0.5 text-xs font-medium ${tone}`}>{left < 0 ? `Expired ${-left} day${plural(-left)} ago` : `${left} day${plural(left)} left`}</div>;
+}
+
+type RowAct = "archive" | "restore" | "delete";
+
+function RowActions({ c, caps, onAct }: { c: ClientTableRow; caps: RegisterCaps; onAct: (kind: RowAct, id: string) => void }) {
   const group = c.groups.find((g) => g.active);
   const chat = caps.canOpenChat && group ? groupChatHref(group.accountId, group.groupId) : null;
-  const icon = "inline-flex size-8 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]";
+  const archived = c.status === "ARCHIVED";
+  const icon =
+    "inline-flex size-8 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]";
+  const name = clientDisplayName(c.name, c.companyName);
   return (
-    <div className="flex items-center justify-end gap-0.5">
-      <Link href={`/clients/${c.id}`} className={icon} title="Open the 360° view" aria-label={`Open ${clientDisplayName(c.name, c.companyName)}`}>
+    <div className="flex items-center justify-end gap-1.5">
+      <Link href={`/clients/${c.id}`} className={icon} title="View profile" aria-label={`Open ${name}`}>
         <Eye className="size-4" />
       </Link>
-      {caps.canManageSubscriptions ? (
-        <Link href={`/clients/${c.id}#subscriptions`} className={icon} title={c.subscription ? "Renew or add a subscription" : "Add a subscription"} aria-label="Subscriptions">
+      {caps.canManageSubscriptions && !archived ? (
+        <Link href={`/clients/${c.id}?tab=subscriptions`} className={icon} title={c.subscription ? "Renew subscription" : "Add a subscription"} aria-label={c.subscription ? "Renew subscription" : "Add a subscription"}>
           <RefreshCw className="size-4" />
         </Link>
       ) : null}
-      {caps.canRecordPayments && c.billing?.openInvoices ? (
-        <Link href={`/clients/dues?q=${encodeURIComponent(c.code)}`} className={icon} title="Record a payment" aria-label="Record a payment">
-          <Wallet className="size-4" />
-        </Link>
-      ) : null}
       {chat ? (
-        <Link href={chat} className={icon} title="Open the linked group in WhatsApp Chat" aria-label="Open WhatsApp group">
+        <Link href={chat} className={`${icon} !text-[color:var(--color-success-fg)]`} title="Open the WhatsApp group" aria-label="Open WhatsApp group">
           <MessageCircle className="size-4" />
         </Link>
       ) : null}
+      <RowMenu
+        label={`More actions for ${name}`}
+        items={[
+          { label: "View profile", icon: <Eye className="size-4" aria-hidden />, href: `/clients/${c.id}` },
+          { label: "Edit client", icon: <Pencil className="size-4" aria-hidden />, href: `/clients/${c.id}?edit=1#edit-client`, hidden: !caps.canUpdate || archived },
+          { label: c.subscription ? "Renew subscription" : "Add subscription", icon: <RefreshCw className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=subscriptions`, hidden: !caps.canManageSubscriptions || archived },
+          { label: "Record payment", icon: <Wallet className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=payments`, hidden: !caps.canRecordPayments || !c.billing?.openInvoices || archived },
+          { label: "Open WhatsApp group", icon: <MessageCircle className="size-4" aria-hidden />, href: chat ?? undefined, hidden: !chat },
+          { label: group ? "Manage WhatsApp links" : "Link WhatsApp group", icon: <Link2 className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=whatsapp`, hidden: !caps.canLinkGroups || archived },
+          { label: "Archive", icon: <Archive className="size-4" aria-hidden />, onSelect: () => onAct("archive", c.id), hidden: !caps.canArchive || archived },
+          { label: "Restore", icon: <RotateCcw className="size-4" aria-hidden />, onSelect: () => onAct("restore", c.id), hidden: !caps.canArchive || !archived },
+          { label: "Delete permanently", icon: <Trash2 className="size-4" aria-hidden />, onSelect: () => onAct("delete", c.id), danger: true, hidden: !caps.canDelete },
+        ]}
+      />
     </div>
   );
 }
@@ -294,6 +338,7 @@ export function ClientsTable({
   maxBulk,
   exportBase,
   bulkOptions,
+  today,
 }: {
   clients: ClientTableRow[];
   total: number;
@@ -305,12 +350,16 @@ export function ClientsTable({
   maxBulk: number;
   exportBase: string;
   bulkOptions?: BulkOptions;
+  /** Dhaka today, for "N days left". */
+  today: string;
 }) {
   const router = useRouter();
   const toProject = useProjectHref();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
+  /** One row's archive / restore / delete from its menu; null = the selection. */
+  const [rowTarget, setRowTarget] = useState<string | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, startTransition] = useTransition();
   const [widening, setWidening] = useState(false);
@@ -377,7 +426,7 @@ export function ClientsTable({
 
   function run() {
     if (!pending) return;
-    const ids = [...selected];
+    const ids = rowTarget ? [rowTarget] : [...selected];
     const action = pending;
     startTransition(async () => {
       let result: BulkClientResult;
@@ -390,7 +439,8 @@ export function ClientsTable({
       else result = { ok: false, message: "Unknown action." };
       setMessage({ ok: result.ok, text: result.message });
       setPending(null);
-      if (result.ok) clear();
+      if (result.ok && !rowTarget) clear();
+      setRowTarget(null);
       router.refresh();
     });
   }
@@ -411,7 +461,7 @@ export function ClientsTable({
     URL.revokeObjectURL(url);
   }
 
-  const count = selected.size.toLocaleString();
+  const count = (rowTarget ? 1 : selected.size).toLocaleString();
   const confirmCopy: Record<Pending["kind"], { title: string; description: string; label: string; tone: "primary" | "danger" }> = {
     archive: { title: `Archive ${count} client(s)?`, description: "Archived clients are hidden from the default list. Their channels, notes and history are kept, and you can restore them.", label: "Archive", tone: "primary" },
     restore: { title: `Restore ${count} client(s)?`, description: "They return with the status they had when they were archived.", label: "Restore", tone: "primary" },
@@ -559,11 +609,18 @@ export function ClientsTable({
                 </td>
                 {dataColumns.map((k) => (
                   <td key={k} className={`${td} group-hover:bg-[var(--color-surface-sunken)]`}>
-                    {cell(k, c, caps)}
+                    {cell(k, c, caps, today)}
                   </td>
                 ))}
                 <td className={`${td} group-hover:bg-[var(--color-surface-sunken)]`}>
-                  <RowActions c={c} caps={caps} />
+                  <RowActions
+                    c={c}
+                    caps={caps}
+                    onAct={(kind, id) => {
+                      setRowTarget(id);
+                      setPending({ kind });
+                    }}
+                  />
                 </td>
               </tr>
             ))}
@@ -694,7 +751,10 @@ export function ClientsTable({
 
       <ConfirmDialog
         open={pending !== null}
-        onClose={() => setPending(null)}
+        onClose={() => {
+          setPending(null);
+          setRowTarget(null);
+        }}
         onConfirm={run}
         loading={busy}
         tone={pending ? confirmCopy[pending.kind].tone : "primary"}

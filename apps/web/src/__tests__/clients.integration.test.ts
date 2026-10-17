@@ -265,12 +265,12 @@ describe("4. project isolation", () => {
 });
 
 describe("5. archive, restore, delete, notes, channels, consent", () => {
-  it("archives without losing anything, restores the previous status, and lets only a Main Admin delete", async () => {
+  it("archives without losing anything, restores the previous status, and lets only an Administrator, or a role given the delete permission, delete", async () => {
     const id = idOf(await create(people.manager, A, { name: "Life Cycle", status: "PENDING", phone: "+8801744444444" }));
     await as(people.manager, A, () => actions.addClientNote(id, {}, form({ body: "secret internal note" })));
 
-    // Holding clients.delete is not enough any more: only a Main Admin deletes.
-    expect((await as(people.manager, A, () => actions.deleteClients([id]))).message).toMatch(/Only a Main Admin/);
+    // Without the delete permission (an Administrator gives it), deleting is refused.
+    expect((await as(people.editor, A, () => actions.deleteClients([id]))).message).toMatch(/Only an Administrator/);
     expect((await as(people.manager, A, () => actions.archiveClients([id]))).ok).toBe(true);
     let row = await rawPrisma.client.findUniqueOrThrow({ where: { id }, include: { channels: true, notes: true } });
     expect(row).toMatchObject({ status: "ARCHIVED" });

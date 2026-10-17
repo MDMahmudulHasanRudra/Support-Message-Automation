@@ -29,8 +29,8 @@ import { isUniqueViolation } from "@/lib/prismaErrors";
 import { buildClientWhere, clientOrderBy, MAX_CLIENT_BULK, parseClientFilters } from "@/lib/clientFilters";
 import { isCountryCode, readPhone } from "@/lib/clientPhone";
 import { hasPermission } from "@/server/permissions";
-import { isMainAdmin } from "@/server/projectContext";
-import { clientFilterContext, getClientModuleSettings } from "@/server/clientModule";
+import { canDeleteClientRecords, clientFilterContext, getClientModuleSettings } from "@/server/clientModule";
+import { DELETE_REFUSED } from "@/lib/clientDeleteRule";
 import { checkAssignment, sellerSnapshot } from "@/server/clientSubscriptionStore";
 import { saveClientPhoto } from "@/server/clientPhotoStore";
 import {
@@ -600,10 +600,9 @@ export async function restoreClients(ids: string[]): Promise<BulkClientResult> {
   return { ok: true, message: `${rows.length} restored.` };
 }
 
-/** Permanent deletion. Only ARCHIVED clients are eligible, so deleting is always a second, deliberate step after archiving. */
 /**
- * Permanently deletes clients — ONLY a Main Admin (the owner's rule, 17 Oct 2026): no other role,
- * whatever keys it holds, can delete, and the button is shown to nobody else. Any status may be
+ * Permanently deletes clients — an Administrator (Main Admin), or a role an Administrator gave
+ * `clients.delete` (`canDeleteClientRecords`; the owner's rule, 17 Oct 2026). Any status may be
  * deleted (archiving first is no longer required). Everything that belongs to a client goes with it:
  * channels, notes, timeline, subscriptions, invoices, payments and group/chat links. The System Log
  * keeps how many, which codes and who — never names or contact details.
@@ -612,8 +611,8 @@ export async function deleteClients(ids: string[]): Promise<BulkClientResult> {
   // The project and the Client Management feature are checked as for any client action…
   const granted = await checkPermission("clients.view");
   if ("denied" in granted) return { ok: false, message: granted.denied };
-  // …and the delete itself is a Main Admin's alone.
-  if (!(await isMainAdmin(granted.session.userId))) return { ok: false, message: "Only a Main Admin can delete clients." };
+  // …and the delete itself needs an Administrator, or the delete permission an Administrator gave.
+  if (!(await canDeleteClientRecords(granted.session))) return { ok: false, message: DELETE_REFUSED };
   const clean = cleanIds(ids);
   if (!clean) return { ok: false, message: TOO_MANY };
   const rows = await prisma.client.findMany({ where: { id: { in: clean } }, select: { id: true, code: true } });

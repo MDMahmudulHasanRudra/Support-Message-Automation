@@ -29,7 +29,7 @@ function* subsets(count: number): Generator<string[]> {
 describe("what a project role may hold", () => {
   it("never a Main Admin key, an App Users / Permission Modules key, a project-administration key, or release-note editing", () => {
     for (const p of PERMISSIONS) {
-      const platform = p.category === MAIN_ADMIN_CATEGORY || p.category === "Users & Permissions" || p.category === PROJECT_ADMIN_CATEGORY || p.key === "release_notes.manage";
+      const platform = p.category === MAIN_ADMIN_CATEGORY || p.category === "Users & Permissions" || p.category === PROJECT_ADMIN_CATEGORY || p.key === "release_notes.manage" || p.key === "clients.delete";
       expect(isProjectAssignableKey(p.key), p.key).toBe(!platform);
     }
     expect(PROJECT_ASSIGNABLE_PERMISSIONS.some((p) => p.key === "projects.manage")).toBe(false);

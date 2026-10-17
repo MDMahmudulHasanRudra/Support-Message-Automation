@@ -11,6 +11,7 @@ import { dhakaToday } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import type { ClientFilterContext } from "@/lib/clientFilters";
 import { hasPermission } from "@/server/permissions";
+import { isMainAdmin } from "@/server/projectContext";
 import type { Session } from "@/server/auth";
 
 /**
@@ -43,11 +44,13 @@ export interface ClientViewerCaps {
   canLinkGroups: boolean;
   canManageSettings: boolean;
   canOpenChat: boolean;
+  /** May delete clients and anything in them: an Administrator, or a role an Administrator gave `clients.delete`. */
+  canDelete: boolean;
 }
 
 /** One read of the settings plus every permission the Client pages branch on. */
 export async function clientViewerCaps(session: Session): Promise<ClientViewerCaps> {
-  const [settings, viewBilling, editBilling, create, update, subs, linkGroups, manageSettings, viewMessages] = await Promise.all([
+  const [settings, viewBilling, editBilling, create, update, subs, linkGroups, manageSettings, viewMessages, canDelete] = await Promise.all([
     getClientModuleSettings(),
     hasPermission(session, "clients.view_billing"),
     hasPermission(session, "clients.edit_billing"),
@@ -57,6 +60,7 @@ export async function clientViewerCaps(session: Session): Promise<ClientViewerCa
     hasPermission(session, "clients.link_whatsapp_group"),
     hasPermission(session, "clients.manage_settings"),
     hasPermission(session, "messages.view"),
+    canDeleteClientRecords(session),
   ]);
   return {
     settings,
@@ -72,7 +76,18 @@ export async function clientViewerCaps(session: Session): Promise<ClientViewerCa
     canManageSettings: manageSettings,
     // The "Open chat" link only; the chat page makes its own checks (messages.view + its feature).
     canOpenChat: viewMessages,
+    canDelete,
   };
+}
+
+/**
+ * Deleting in Clients (owner's rule, 17 Oct 2026): an Administrator (Main Admin) always may; anyone
+ * else only when an Administrator gave their role `clients.delete` (`adminGrantRefusal`). The key is
+ * never project-assignable, so a Lead or a project role never carries it.
+ */
+export async function canDeleteClientRecords(session: Session): Promise<boolean> {
+  if (await isMainAdmin(session.userId)) return true;
+  return hasPermission(session, "clients.delete");
 }
 
 export function columnNeeds(caps: Pick<ClientViewerCaps, "billing" | "subscriptions" | "groups">): Partial<Record<ColumnNeed, boolean>> {

@@ -26,7 +26,7 @@ import Link from "@/components/ProjectLink";
 
 export type Accent = "blue" | "green" | "amber" | "indigo" | "red" | "slate";
 
-const ACCENT: Record<Accent, string> = {
+export const ACCENT: Record<Accent, string> = {
   blue: "bg-[var(--color-info-bg)] text-[color:var(--color-info-fg)]",
   green: "bg-[var(--color-success-bg)] text-[color:var(--color-success-fg)]",
   amber: "bg-[var(--color-warning-bg)] text-[color:var(--color-warning-fg)]",

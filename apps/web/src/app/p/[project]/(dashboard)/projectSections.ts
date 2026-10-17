@@ -103,7 +103,6 @@ const SECTION_RULES: Record<string, SectionRule> = {
       "clients.create",
       "clients.update",
       "clients.archive",
-      "clients.delete",
       "clients.export",
       "clients.link_whatsapp_chat",
       "clients.link_whatsapp_group",
