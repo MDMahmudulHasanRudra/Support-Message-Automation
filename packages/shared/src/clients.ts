@@ -256,10 +256,15 @@ function text(value: unknown, max: number, label: string, errors: string[]): str
   return out;
 }
 
-export function validateClientFields(input: ClientInput): { value: ValidClientFields | null; errors: string[] } {
+/**
+ * `allowBlankName`: the Add Client form (CLIENTS_V3.md §6) lets a client be saved with no name — it is
+ * then known by its generated code and shown as "Unnamed client". The import and every older caller
+ * keep requiring one.
+ */
+export function validateClientFields(input: ClientInput, options: { allowBlankName?: boolean } = {}): { value: ValidClientFields | null; errors: string[] } {
   const errors: string[] = [];
-  const name = text(input.name, CLIENT_LIMITS.name, "Name", errors);
-  if (!name && !errors.length) errors.push("A client needs a name.");
+  const name = text(input.name, CLIENT_LIMITS.name, "Name", errors) ?? (options.allowBlankName ? "" : null);
+  if (name === null && !errors.length) errors.push("A client needs a name.");
   const code = text(input.code, CLIENT_LIMITS.code, "Client code", errors);
   if (code && !CODE_PATTERN.test(code)) errors.push("A client code may use letters, digits, dots, dashes and underscores only.");
   const statusRaw = input.status === undefined || input.status === null || input.status === "" ? "ACTIVE" : input.status;
@@ -298,7 +303,7 @@ export function validateClientFields(input: ClientInput): { value: ValidClientFi
   const businessDetails = text(input.businessDetails, CLIENT_LIMITS.businessDetails, "Business details", errors);
   const followUpInstructions = text(input.followUpInstructions, CLIENT_LIMITS.followUp, "Follow-up instructions", errors);
 
-  if (errors.length || !name || !isClientStatus(statusRaw)) return { value: null, errors };
+  if (errors.length || name === null || !isClientStatus(statusRaw)) return { value: null, errors };
   return {
     value: {
       name,
@@ -506,4 +511,4 @@ export function findInFileDuplicates(rows: readonly ImportedClientRow[]): Map<nu
 
 // ── Export ──────────────────────────────────────────────────────────────────────────────────────
 
-export const CLIENT_EXPORT_COLUMNS = ["Client code", "Name", "Company", "Status", "Category", "Tags", "Phone", "Email", "WhatsApp", "Preferred language", "Address", "Source", "Created", "Last contact"] as const;
+export const CLIENT_EXPORT_COLUMNS = ["Client code", "Name", "Company", "Status", "Category", "Tags", "Phone", "Email", "WhatsApp", "Preferred language", "Address", "Source", "Created", "Last contact", "Country", "Preferred currency", "Team", "Sold by", "Service / plan", "Subscription start", "Expires", "Subscription", "Linked WhatsApp groups"] as const;

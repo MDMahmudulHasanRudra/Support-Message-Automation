@@ -3,6 +3,8 @@ import {
   Activity,
   Camera,
   Contact,
+  ReceiptText,
+  Wallet,
   Inbox,
   Mail,
   PlugZap,
@@ -202,6 +204,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     links: [{ href: "/settings/channels", label: "Messaging Channels", icon: PlugZap }],
   },
   {
+    label: "Clients",
+    description: "Which parts of Client Management this project uses, which fields are required, and the renewal window.",
+    links: [{ href: "/settings/clients", label: "Client Module", icon: Contact }],
+  },
+  {
     label: "Email",
     description: "The SMTP mail server this project's email leaves from, and a test message to confirm it works.",
     links: [{ href: "/settings/email", label: "Email", icon: Mail }],
@@ -367,7 +374,10 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: Contact,
     links: [
       { href: "/clients", label: "All Clients", icon: Contact },
-      { href: "/clients/dues", label: "Dues", icon: CalendarClock },
+      { href: "/clients/subscriptions", label: "Subscriptions", icon: CalendarClock },
+      // The route is still /clients/dues (bookmarks keep working); the page is the Billing List now.
+      { href: "/clients/dues", label: "Billing List", icon: ReceiptText },
+      { href: "/clients/payments", label: "Payments & Receipts", icon: Wallet },
       { href: "/clients/import", label: "Import Clients", icon: FileUp },
     ],
   },
@@ -543,6 +553,7 @@ const NAV_KEY_EXACT: Record<string, string> = {
 const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/chat", "messages.view"],
   ["/clients/dues", "clients.view_billing"],
+  ["/clients/payments", "clients.view_billing"],
   ["/clients/import", "clients.import"],
   ["/clients/new", "clients.create"],
   ["/clients", "clients.view"],
@@ -576,6 +587,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/settings/google-sheets", "google_sheets.view"],
   ["/settings/channels", "channels.view"],
   ["/settings/email", "communications.manage_email"],
+  ["/settings/clients", "clients.manage_settings"],
   ["/conversations", "messages.view"],
   ["/google-sheets/activity", "google_sheets.monitor"],
   ["/google-sheets/reports", "google_sheets.report"],

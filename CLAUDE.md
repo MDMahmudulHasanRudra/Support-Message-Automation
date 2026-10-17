@@ -2694,6 +2694,18 @@ records, CRUD, duplicates, list/details, import/export, timeline, per-channel co
 - **One filter builder** (`lib/clientFilters.ts`) serves the list, select-all, export and bulk actions. Only an ARCHIVED
   client can be permanently deleted. Import is claimed once by a conditional update, deletes the file's rows when it
   ends, and runs inside the request (≤2,000 rows) — a durable background import is the extension point.
+- **Clients V3 (`CLIENTS_V3.md`, 17 Oct 2026)**: subscriptions, numbered invoices, payments, WhatsApp GROUP links,
+  photos, per-person columns, per-project sub-module switches (`ClientModuleSettings`). Rules worth not undoing:
+  - **Expiry is not a debt.** Terms (`ClientSubscription`) and money (`ClientDue`/`ClientPayment`) are separate; state is
+    derived (`termState`), only `Client.currentSubscriptionId` is stored, recomputed under the client row lock.
+    `subscriptionStateWhere` is its SQL twin — a test runs both over the same rows.
+  - **Money is BigInt minor units, never summed across currencies.** A batch payment is all-or-nothing, one payment per
+    client+currency, dues locked `FOR UPDATE`, one idempotency key per submission. The DB refuses rewriting a payment,
+    un-reversing it, or allocating across client/currency; mistakes are reversed with a reason.
+  - **A group link is data**: one active owner per WhatsApp group id, never sends or touches monitoring/AI, kept on unlink.
+    Personal chat links are untouched and still refuse `@g.us`.
+  - **Billing figures are never selected for a viewer without `clients.view_billing`**, and a billing filter from one is
+    ignored. Column preferences are re-sanitized on every read. Photos are stripped, bounded thumbnails in `ClientPhoto`.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

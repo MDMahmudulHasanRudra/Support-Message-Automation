@@ -145,7 +145,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "GroupParticipantAddItem", "GroupAdminPromotionJob", "GroupAdminPromotionItem", "MessageMedia", "MediaCleanupJob", "SupportResponseEpisode", "SupportAssignment", "SupportAssignmentEvent", "CollectionGap", "WhatsAppOperationDismissal", "PersonalChatReview", "GoogleIntegrationAccount", "GoogleSpreadsheet", "GoogleSpreadsheetAccess", "GoogleSpreadsheetMember", "GoogleSheetActivity", "GoogleSheetWorkSession", "GoogleSheetWorkSessionEvent", "CustomerMoodEvent", "MoodAlert", "MoodAlertAction", "AiFallbackDecision", "AiEvidenceSnapshot", "AiEvidenceItem", "SupportEscalationCase",
   "SupportEscalationEvent", "ConversationSession", "SupportActivity", "SupportSession", "TeamAttendanceDay",
   "ChannelConnection", "ChannelConversation", "ChannelMessage", "ChannelInboundEvent",
-  "Client", "ClientChannel", "ClientNote", "ClientActivity", "ClientImportJob", "ClientDue", "ClientDueEvent", "ClientBillingCurrency", "ClientWhatsAppChatLink", "EmailSettings", "EmailOutbox", "ProjectRole", "ProjectMemberRole",
+  "Client", "ClientChannel", "ClientNote", "ClientActivity", "ClientImportJob", "ClientDue", "ClientDueEvent", "ClientBillingCurrency", "ClientWhatsAppChatLink", "ClientSubscription", "ClientPhoto", "ClientPayment", "ClientPaymentAllocation", "ClientWhatsAppGroupLink", "ClientModuleSettings", "ListViewPreference", "EmailSettings", "EmailOutbox", "ProjectRole", "ProjectMemberRole",
   "TeamAttendanceGroup",
 ]);
 

@@ -3,6 +3,13 @@
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import {
+  groupLinkRefusal,
+  hasSubscriptionInput,
+  missingRequiredFields,
+  normalizeCountryCode,
+  normalizeCurrencyCode,
+  validateSubscription,
+  type ValidSubscription,
   CLIENT_CHANNEL_KINDS,
   CLIENT_LIMITS,
   isClientConsent,
@@ -20,6 +27,11 @@ import { projectPath } from "@/server/projectPaths";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { buildClientWhere, clientOrderBy, MAX_CLIENT_BULK, parseClientFilters } from "@/lib/clientFilters";
+import { isCountryCode, readPhone } from "@/lib/clientPhone";
+import { hasPermission } from "@/server/permissions";
+import { clientFilterContext, getClientModuleSettings } from "@/server/clientModule";
+import { checkAssignment, sellerSnapshot } from "@/server/clientSubscriptionStore";
+import { saveClientPhoto } from "@/server/clientPhotoStore";
 import {
   channelFields,
   findDuplicateClients,
@@ -41,6 +53,8 @@ export interface ClientFormState {
   clientId?: string;
   /** Existing clients that share an identifier with what was entered. Shown before anything is created. */
   duplicates?: DuplicateClient[];
+  /** Nothing identifies the client: the form offers "Create with only a client code" as a separate press. */
+  needsBlankConfirm?: boolean;
   /**
    * What was typed, returned with a refusal. React clears an uncontrolled form after EVERY action that
    * returns, refusals included, so without this a refused submission (or "Create anyway" after a
@@ -62,7 +76,7 @@ const text = (formData: FormData, key: string) => String(formData.get(key) ?? ""
 function echo(formData: FormData): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of formData.entries()) {
-    if (typeof value === "string" && key !== "confirmDuplicate" && !key.startsWith("$ACTION")) out[key] = value.slice(0, 4000);
+    if (typeof value === "string" && key !== "confirmDuplicate" && key !== "confirmBlank" && key !== "confirmGroup" && !key.startsWith("$ACTION")) out[key] = value.slice(0, 4000);
   }
   return out;
 }
@@ -72,33 +86,68 @@ async function refresh(clientId?: string) {
   if (clientId) revalidatePath(await projectPath(`/clients/${clientId}`));
 }
 
-/** The staff member / team the form named, each checked to exist in THIS project. Null = nobody. */
-async function resolveAssignee(formData: FormData): Promise<{ memberId: string | null; teamId: string | null } | { error: string }> {
+/**
+ * The team and staff member the form named, from THIS project's real roster: a new assignment only to
+ * an active team and member, and the member must be in the team when both are named. An assignment that
+ * has since gone inactive may be kept as it is (`current`). Null = nobody.
+ */
+async function resolveAssignee(
+  formData: FormData,
+  current: { teamId: string | null; memberId: string | null } = { teamId: null, memberId: null },
+): Promise<{ memberId: string | null; teamId: string | null } | { error: string }> {
   const memberId = text(formData, "assignedMemberId") || null;
   const teamId = text(formData, "assignedTeamId") || null;
-  if (memberId && !(await prisma.internalTeamMember.findFirst({ where: { id: memberId }, select: { id: true } }))) {
-    return { error: "That staff member does not exist in this project." };
-  }
-  if (teamId && !(await prisma.team.findFirst({ where: { id: teamId }, select: { id: true } }))) {
-    return { error: "That team does not exist in this project." };
-  }
-  return { memberId, teamId };
+  const refusal = await checkAssignment(teamId, memberId, current);
+  return refusal ?? { memberId, teamId };
 }
 
 function readClientForm(formData: FormData) {
-  return validateClientFields({
-    name: text(formData, "name"),
-    code: text(formData, "code"),
-    companyName: text(formData, "companyName"),
-    status: text(formData, "status") || undefined,
-    category: text(formData, "category"),
-    preferredChannel: text(formData, "preferredChannel"),
-    preferredLanguage: text(formData, "preferredLanguage"),
-    address: text(formData, "address"),
-    businessDetails: text(formData, "businessDetails"),
-    followUpInstructions: text(formData, "followUpInstructions"),
-    tags: text(formData, "tags"),
-  });
+  return validateClientFields(
+    {
+      name: text(formData, "name"),
+      code: text(formData, "code"),
+      companyName: text(formData, "companyName"),
+      status: text(formData, "status") || undefined,
+      category: text(formData, "category"),
+      preferredChannel: text(formData, "preferredChannel"),
+      preferredLanguage: text(formData, "preferredLanguage"),
+      address: text(formData, "address"),
+      businessDetails: text(formData, "businessDetails"),
+      followUpInstructions: text(formData, "followUpInstructions"),
+      tags: text(formData, "tags"),
+    },
+    // The form may save a client known only by its generated code (CLIENTS_V3.md §6); the import may not.
+    { allowBlankName: true },
+  );
+}
+
+/** Country and preferred currency as typed; each must be a real code when present. */
+function readLocale(formData: FormData): { country: string | null; preferredCurrency: string | null } | { error: string } {
+  const countryRaw = text(formData, "country");
+  const country = countryRaw ? normalizeCountryCode(countryRaw) : null;
+  if (countryRaw && (!country || !isCountryCode(country))) return { error: "Choose the country from the list." };
+  const currencyRaw = text(formData, "preferredCurrency");
+  const preferredCurrency = currencyRaw ? normalizeCurrencyCode(currencyRaw) : null;
+  if (currencyRaw && !preferredCurrency) return { error: "The preferred currency must be a three-letter code, such as BDT." };
+  return { country, preferredCurrency };
+}
+
+/** The seller named on the form: an active member of THIS project's roster, or nobody. */
+async function readSeller(formData: FormData, keep: string | null = null): Promise<{ soldByMemberId: string | null } | { error: string }> {
+  const id = text(formData, "soldByMemberId") || null;
+  if (!id || id === keep) return { soldByMemberId: id };
+  const seller = await sellerSnapshot(id);
+  return "error" in seller ? seller : { soldByMemberId: id };
+}
+
+/**
+ * A phone typed on the form, read with the numbering metadata: a valid number is stored in E.164
+ * (+8801711000000). Anything else is passed on as typed to the older rule (`normalizeChannelDrafts`),
+ * which still accepts a local Bangladeshi 01… number and refuses what is not a number at all — so a
+ * stale metadata table, or a number typed without a country, never loses a client that saved before.
+ */
+function phoneValue(raw: string, country: string | null): string {
+  return readPhone(raw, country).e164 ?? raw.trim();
 }
 
 export async function createClient(_prev: ClientFormState, formData: FormData): Promise<ClientFormState> {
@@ -108,28 +157,103 @@ export async function createClient(_prev: ClientFormState, formData: FormData): 
   const parsed = readClientForm(formData);
   if (!parsed.value) return { error: parsed.errors.join(" "), values: echo(formData) };
   if (parsed.value.status === "ARCHIVED") return { error: "A new client cannot start archived.", values: echo(formData) };
+  const locale = readLocale(formData);
+  if ("error" in locale) return { error: locale.error, values: echo(formData) };
+  const settings = await getClientModuleSettings();
+  const country = locale.country ?? settings.defaultCountry;
 
   const drafts: ClientChannelDraft[] = [];
-  const phone = text(formData, "phone");
-  const whatsapp = text(formData, "whatsapp");
+  const phoneRaw = text(formData, "phone");
+  // "Same number on WhatsApp" is the usual case: one number, two channels (they match each other as duplicates anyway).
+  const whatsappSame = formData.get("whatsappSame") === "1";
+  const whatsappRaw = whatsappSame ? phoneRaw : text(formData, "whatsapp");
   const email = text(formData, "email");
-  if (phone) drafts.push({ kind: "PHONE", value: phone, isPrimary: true });
-  if (whatsapp) drafts.push({ kind: "WHATSAPP", value: whatsapp, isPrimary: true });
+  for (const [kind, raw] of [["PHONE", phoneRaw], ["WHATSAPP", whatsappRaw]] as const) {
+    if (raw) drafts.push({ kind, value: phoneValue(raw, country), isPrimary: true });
+  }
   if (email) drafts.push({ kind: "EMAIL", value: email, isPrimary: true });
   const channels = normalizeChannelDrafts(drafts);
   if (channels.errors.length) return { error: channels.errors.join(" "), values: echo(formData) };
 
   const assignee = await resolveAssignee(formData);
   if ("error" in assignee) return { error: assignee.error, values: echo(formData) };
+  const seller = await readSeller(formData);
+  if ("error" in seller) return { error: seller.error, values: echo(formData) };
+  const photo = formData.get("photo");
+  const hasPhoto = photo instanceof File && photo.size > 0;
 
-  const duplicates = await findDuplicateClients({ channels: channels.channels, code: parsed.value.code });
+  // The project's own required fields. A technical rule above is never relaxed by this.
+  const fields = parsed.value;
+  const missing = missingRequiredFields(settings.requiredFields, {
+    name: Boolean(fields.name),
+    companyName: Boolean(fields.companyName),
+    phone: Boolean(phoneRaw || whatsappRaw),
+    email: Boolean(email),
+    country: Boolean(locale.country),
+    address: Boolean(fields.address),
+    preferredCurrency: Boolean(locale.preferredCurrency),
+    category: Boolean(fields.category),
+    assignedTeamId: Boolean(assignee.teamId),
+    soldByMemberId: Boolean(seller.soldByMemberId),
+    assignedMemberId: Boolean(assignee.memberId),
+    photo: hasPhoto,
+  });
+  if (missing.length) return { error: missing.join(" "), values: echo(formData) };
+
+  // A deliberately empty client (only a generated code) is allowed, but never by accident.
+  const identifiable = Boolean(fields.name || fields.companyName || channels.channels.length);
+  if (!identifiable && formData.get("confirmBlank") !== "1") {
+    return {
+      error: "A client needs a name, a company, a number or an email to be recognised later. To keep only a generated client code, confirm it.",
+      needsBlankConfirm: true,
+      values: echo(formData),
+    };
+  }
+
+  // Optional subscription: all-or-nothing, and only with the key and the sub-module on.
+  const subscriptionInput = {
+    service: text(formData, "subService"),
+    kind: text(formData, "subKind"),
+    startDate: text(formData, "subStartDate"),
+    durationValue: text(formData, "subDurationValue"),
+    durationUnit: text(formData, "subDurationUnit"),
+    endDate: text(formData, "subEndDate"),
+    note: "",
+  };
+  let term: ValidSubscription | null = null;
+  if (hasSubscriptionInput(subscriptionInput)) {
+    if (!settings.subscriptions) return { error: "Subscriptions are switched off for this project (Settings → Clients). Clear the subscription fields to create the client.", values: echo(formData) };
+    if (!(await hasPermission(granted.session, "clients.manage_subscriptions"))) return { error: "Adding a subscription needs the Sell, Renew and Cancel Client Subscriptions permission. Clear those fields, or ask someone who has it.", values: echo(formData) };
+    const checked = validateSubscription(subscriptionInput);
+    if (!checked.ok) return { error: `Subscription: ${checked.errors.join(" ")}`, values: echo(formData) };
+    term = checked.value;
+  }
+  const saleSeller = term ? await sellerSnapshot(seller.soldByMemberId) : null;
+  if (saleSeller && "error" in saleSeller) return { error: saleSeller.error, values: echo(formData) };
+
+  // Optional WhatsApp group: confirmed in the form's dialog, checked here exactly as the link action does.
+  const groupId = text(formData, "linkGroupId");
+  const groupAccountId = text(formData, "linkAccountId");
+  let group: { id: string; name: string; whatsappGroupId: string; accountId: string } | null = null;
+  if (groupId) {
+    if (formData.get("confirmGroup") !== "1") return { error: "Confirm the WhatsApp group link first.", values: echo(formData) };
+    if (!settings.whatsappGroups) return { error: "WhatsApp group links are switched off for this project.", values: echo(formData) };
+    if (!(await hasPermission(granted.session, "clients.link_whatsapp_group"))) return { error: "Linking a WhatsApp group needs the Link WhatsApp Groups to Clients permission.", values: echo(formData) };
+    const row = await prisma.whatsAppGroup.findFirst({ where: { id: groupId }, select: { id: true, name: true, whatsappGroupId: true, isActive: true, accountId: true } });
+    const refusal = groupLinkRefusal(row, groupAccountId);
+    if (refusal) return { error: refusal, values: echo(formData) };
+    const owner = await prisma.clientWhatsAppGroupLink.findFirst({ where: { unlinkedAt: null, whatsappGroupId: row!.whatsappGroupId }, select: { client: { select: { code: true, name: true } } } });
+    if (owner) return { error: `That WhatsApp group is already linked to ${owner.client.name || "Unnamed client"} (${owner.client.code}).`, values: echo(formData) };
+    group = row;
+  }
+
+  const duplicates = await findDuplicateClients({ channels: channels.channels, code: fields.code });
   if (duplicates.length && formData.get("confirmDuplicate") !== "1") {
     return { error: "This looks like a client you already have. Check the matches below, or create it anyway.", duplicates, values: echo(formData) };
   }
 
-  const fields = parsed.value;
   try {
-    const clientId = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const code = fields.code ?? (await nextClientCode(tx));
       const created = await tx.client.create({
         data: {
@@ -146,6 +270,9 @@ export async function createClient(_prev: ClientFormState, formData: FormData): 
           tags: fields.tags,
           customFields: fields.customFields,
           source: "MANUAL",
+          country: locale.country,
+          preferredCurrency: locale.preferredCurrency,
+          soldByMemberId: seller.soldByMemberId,
           assignedMemberId: assignee.memberId,
           assignedTeamId: assignee.teamId,
           createdById: granted.session.userId,
@@ -154,15 +281,45 @@ export async function createClient(_prev: ClientFormState, formData: FormData): 
         select: { id: true },
       });
       await recordClientActivity(tx, created.id, granted.session.userId, { type: "CREATED", summary: `Client ${code} created by staff` });
+      if (hasPhoto) {
+        const saved = await saveClientPhoto(tx, created.id, photo, granted.session.userId);
+        if (!saved.ok) throw new PhotoRefused(saved.message);
+      }
+      if (term && saleSeller && !("error" in saleSeller)) {
+        const sub = await tx.clientSubscription.create({
+          data: {
+            clientId: created.id,
+            service: term.service,
+            kind: term.kind,
+            startDate: new Date(`${term.startDate}T00:00:00.000Z`),
+            endDate: new Date(`${term.endDate}T00:00:00.000Z`),
+            durationValue: term.durationValue,
+            durationUnit: term.durationUnit,
+            ...saleSeller,
+            createdById: granted.session.userId,
+          },
+          select: { id: true },
+        });
+        await tx.client.update({ where: { id: created.id }, data: { currentSubscriptionId: sub.id } });
+        await recordClientActivity(tx, created.id, granted.session.userId, { type: "SUBSCRIPTION_ADDED", summary: `Subscription added: ${term.service} (${term.startDate} → ${term.endDate})`, details: { subscriptionId: sub.id } });
+      }
+      if (group) {
+        await tx.clientWhatsAppGroupLink.create({ data: { clientId: created.id, accountId: group.accountId, groupId: group.id, whatsappGroupId: group.whatsappGroupId, groupName: group.name, linkedById: granted.session.userId } });
+        await recordClientActivity(tx, created.id, granted.session.userId, { type: "GROUP_LINKED", summary: `WhatsApp group linked: ${group.name}`, details: { groupId: group.id } });
+      }
       return created.id;
     });
+    if (group) await logSystemEvent("INFO", "clients", "WhatsApp group linked to a client", { clientId: result, groupId: group.id, accountId: group.accountId }, { actorUserId: granted.session.userId, targetType: "Client", targetId: result });
     await refresh();
-    return { success: true, clientId };
+    return { success: true, clientId: result };
   } catch (err) {
-    if (isUniqueViolation(err)) return { error: "That client code is already used by another client.", values: echo(formData) };
+    if (err instanceof PhotoRefused) return { error: `Photo: ${err.message}`, values: echo(formData) };
+    if (isUniqueViolation(err)) return { error: group ? "That client code is already used, or the WhatsApp group was just linked to another client." : "That client code is already used by another client.", values: echo(formData) };
     throw err;
   }
 }
+
+class PhotoRefused extends Error {}
 
 const FIELD_LABELS: Record<string, string> = {
   name: "name",
@@ -174,13 +331,16 @@ const FIELD_LABELS: Record<string, string> = {
   businessDetails: "business details",
   followUpInstructions: "follow-up instructions",
   code: "client code",
+  country: "country",
+  preferredCurrency: "preferred currency",
+  soldByMemberId: "sold by",
 };
 
 export async function updateClient(clientId: string, _prev: ClientFormState, formData: FormData): Promise<ClientFormState> {
   const granted = await checkPermission("clients.update");
   if ("denied" in granted) return { error: granted.denied, values: echo(formData) };
 
-  const current = await prisma.client.findFirst({ where: { id: clientId } });
+  const current = await prisma.client.findFirst({ where: { id: clientId }, include: { channels: { select: { kind: true } }, photo: { select: { id: true } } } });
   if (!current) return { error: "That client no longer exists.", values: echo(formData) };
 
   const parsed = readClientForm(formData);
@@ -188,8 +348,31 @@ export async function updateClient(clientId: string, _prev: ClientFormState, for
   const fields = parsed.value;
   if (fields.status === "ARCHIVED" && current.status !== "ARCHIVED") return { error: "Use Archive to archive a client.", values: echo(formData) };
   if (current.status === "ARCHIVED" && fields.status !== "ARCHIVED") return { error: "Restore this client before editing it.", values: echo(formData) };
-  const assignee = await resolveAssignee(formData);
+  const assignee = await resolveAssignee(formData, { teamId: current.assignedTeamId, memberId: current.assignedMemberId });
   if ("error" in assignee) return { error: assignee.error, values: echo(formData) };
+  // An older form without the V3 fields leaves them as they are.
+  const locale = formData.has("country") || formData.has("preferredCurrency") ? readLocale(formData) : { country: current.country, preferredCurrency: current.preferredCurrency };
+  if ("error" in locale) return { error: locale.error, values: echo(formData) };
+  const seller = formData.has("soldByMemberId") ? await readSeller(formData, current.soldByMemberId) : { soldByMemberId: current.soldByMemberId };
+  if ("error" in seller) return { error: seller.error, values: echo(formData) };
+
+  const settings = await getClientModuleSettings();
+  const kinds = new Set(current.channels.map((c) => c.kind));
+  const missing = missingRequiredFields(settings.requiredFields, {
+    name: Boolean(fields.name),
+    companyName: Boolean(fields.companyName),
+    phone: kinds.has("PHONE") || kinds.has("WHATSAPP"),
+    email: kinds.has("EMAIL"),
+    country: Boolean(locale.country),
+    address: Boolean(fields.address),
+    preferredCurrency: Boolean(locale.preferredCurrency),
+    category: Boolean(fields.category),
+    assignedTeamId: Boolean(assignee.teamId),
+    soldByMemberId: Boolean(seller.soldByMemberId),
+    assignedMemberId: Boolean(assignee.memberId),
+    photo: Boolean(current.photo),
+  });
+  if (missing.length) return { error: missing.join(" "), values: echo(formData) };
 
   const code = fields.code ?? current.code; // clearing the code keeps the old one: a client always has one
   const next = {
@@ -202,6 +385,9 @@ export async function updateClient(clientId: string, _prev: ClientFormState, for
     businessDetails: fields.businessDetails,
     followUpInstructions: fields.followUpInstructions,
     code,
+    country: locale.country,
+    preferredCurrency: locale.preferredCurrency,
+    soldByMemberId: seller.soldByMemberId,
   };
   const changed = (Object.keys(next) as Array<keyof typeof next>).filter((k) => (current[k] ?? null) !== (next[k] ?? null));
   const tagsChanged = [...current.tags].sort().join("|") !== [...fields.tags].sort().join("|");
@@ -357,7 +543,8 @@ export async function selectAllMatchingClientIds(params: Record<string, string>)
   const granted = await checkPermission("clients.view");
   if ("denied" in granted) return { ids: [], truncated: false };
   const filters = parseClientFilters(params ?? {});
-  const rows = await prisma.client.findMany({ where: buildClientWhere(filters), select: { id: true }, orderBy: clientOrderBy("name", "asc"), take: MAX_CLIENT_BULK + 1 });
+  const ctx = await clientFilterContext(granted.session);
+  const rows = await prisma.client.findMany({ where: buildClientWhere(filters, ctx), select: { id: true }, orderBy: clientOrderBy("name", "asc"), take: MAX_CLIENT_BULK + 1 });
   return { ids: rows.slice(0, MAX_CLIENT_BULK).map((r) => r.id), truncated: rows.length > MAX_CLIENT_BULK };
 }
 

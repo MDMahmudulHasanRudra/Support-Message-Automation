@@ -140,6 +140,11 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "clients.edit_billing", label: "Edit Client Billing", category: "Clients" },
   // Linking a chat decides who a later message is addressed to, so it is an authorized admin's key, apart from clients.update.
   { key: "clients.link_whatsapp_chat", label: "Link WhatsApp Chats to Clients", category: "Clients" },
+  // Clients V3 (CLIENTS_V3.md). Selling and renewing changes what a client is owed service for; linking a group
+  // decides where a later reminder may go; the settings switch sub-modules off for everyone in the project.
+  { key: "clients.manage_subscriptions", label: "Sell, Renew and Cancel Client Subscriptions", category: "Clients" },
+  { key: "clients.link_whatsapp_group", label: "Link WhatsApp Groups to Clients", category: "Clients" },
+  { key: "clients.manage_settings", label: "Manage Client Module Settings", category: "Clients" },
   // SMTP settings hold a credential and decide where mail leaves from: an authorized admin's key.
   { key: "communications.manage_email", label: "Manage Email Settings", category: "Communications" },
 
