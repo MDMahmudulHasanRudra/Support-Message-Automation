@@ -18,6 +18,8 @@ import { checkPermission } from "@/server/authorize";
 import { projectPath } from "@/server/projectPaths";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { processImportRows, type RawImportRow } from "@/server/clientImport";
+import { canDeleteClientRecords } from "@/server/clientModule";
+import { DELETE_REFUSED } from "@/lib/clientDeleteRule";
 
 /**
  * Client import: upload → preview with column mapping → confirm → final report. Every step makes its
@@ -222,4 +224,34 @@ export async function abandonClientImport(jobId: string): Promise<ClientImportAc
   });
   await refresh(jobId);
   return r.count === 1 ? { ok: true, message: "Marked as failed." } : { ok: false, message: "Only an import that has been running for over 10 minutes can be closed." };
+}
+
+/**
+ * Clears import HISTORY (rows on the Import Clients page). Clients an import created or updated are
+ * never touched — only the record of the import goes. Clearing is a delete, so it follows the Clients
+ * delete rule: an Administrator, or a role an Administrator gave clients.delete. An import still
+ * running is never cleared, nor a preview younger than a day (somebody may be reviewing it).
+ * `ids` = these rows; "finished" = every clearable row.
+ */
+export async function clearClientImports(ids: string[] | "finished"): Promise<ClientImportActionResult> {
+  const granted = await checkPermission("clients.import");
+  if ("denied" in granted) return { ok: false, message: granted.denied };
+  if (!(await canDeleteClientRecords(granted.session))) return { ok: false, message: DELETE_REFUSED };
+  if (ids !== "finished" && (!Array.isArray(ids) || ids.length === 0 || ids.length > 500 || ids.some((id) => typeof id !== "string"))) {
+    return { ok: false, message: "Choose the imports to clear." };
+  }
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60_000);
+  const clearable: Prisma.ClientImportJobWhereInput = {
+    OR: [{ status: { in: ["COMPLETED", "PARTIAL", "FAILED", "CANCELLED"] } }, { status: "PREVIEW", createdAt: { lt: dayAgo } }],
+  };
+  const where: Prisma.ClientImportJobWhereInput = ids === "finished" ? clearable : { AND: [{ id: { in: ids } }, clearable] };
+  const removed = await prisma.clientImportJob.deleteMany({ where });
+  if (removed.count) {
+    await logSystemEvent("INFO", "clients", `Cleared ${removed.count} import history row(s)`, { count: removed.count, how: ids === "finished" ? "all finished" : "selected" }, { actorUserId: granted.session.userId, targetType: "ClientImportJob" });
+  }
+  await refresh();
+  const kept = ids === "finished" ? 0 : ids.length - removed.count;
+  if (!removed.count) return { ok: false, message: kept ? "Nothing cleared: an import still running, or a preview from today, is kept." : "Nothing to clear." };
+  const keptNote = kept ? ` (${kept} kept: still running, or a preview from today)` : "";
+  return { ok: true, message: `Cleared ${removed.count} import${removed.count === 1 ? "" : "s"} from the history${keptNote}. The clients they imported are not affected.` };
 }

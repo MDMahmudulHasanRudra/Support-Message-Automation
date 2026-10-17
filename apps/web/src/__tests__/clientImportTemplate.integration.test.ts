@@ -195,9 +195,9 @@ describe("1. the template", () => {
   it("its Example rows import without one error", async () => {
     const book = XLSX.read(Buffer.from(await (await download(people.admin, A)).arrayBuffer()), { type: "buffer" });
     const examples = XLSX.utils.sheet_to_json<Record<string, string>>(book.Sheets.Example!, { raw: false, defval: "" });
-    expect(examples).toHaveLength(3);
+    expect(examples).toHaveLength(4);
     const r = await upload(people.admin, A, sheetOf(examples));
-    expect(await previewOf(people.admin, A, r.jobId!)).toMatchObject({ invalidCount: 0, validRows: 3, subscriptionRows: 2 });
+    expect(await previewOf(people.admin, A, r.jobId!)).toMatchObject({ invalidCount: 0, validRows: 4, subscriptionRows: 3 });
   });
 
   it("with my clients: needs clients.export, holds this project's non-archived clients only, and is logged", async () => {

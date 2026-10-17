@@ -405,6 +405,8 @@ export const CLIENT_IMPORT_FIELDS = [
   { key: "duration", label: "Duration", required: false, synonyms: ["duration", "term", "period"] },
   { key: "durationUnit", label: "Duration unit", required: false, synonyms: ["duration unit", "unit", "period unit"] },
   { key: "expiryDate", label: "Expiry date", required: false, synonyms: ["expiry date", "expiry", "expires", "exp date", "end date", "expire date"] },
+  // Becomes the client's first internal note (never sent, never on the timeline as text).
+  { key: "note", label: "Note", required: false, synonyms: ["note", "notes", "internal note", "remarks", "remark", "comment", "comments"] },
 ] as const;
 
 export type ClientImportFieldKey = (typeof CLIENT_IMPORT_FIELDS)[number]["key"];
@@ -435,6 +437,8 @@ export interface ImportedClientRow {
   fields: ValidClientFields;
   /** Whether the file gave a status. When it did not, an UPDATE must leave the client's status alone. */
   statusGiven: boolean;
+  /** The file's note for this client, to add as an internal note (null = none). */
+  note: string | null;
   channels: NormalizedChannel[];
   matchKeys: string[];
 }
@@ -501,13 +505,15 @@ export function buildImportRows(
       durationUnit: get(row, "durationUnit"),
       expiryDate: get(row, "expiryDate"),
     });
+    const note = get(row, "note").trim();
     const errors = [...fields.errors, ...normalized.errors, ...(extras.ok ? [] : extras.errors)];
+    if (note.length > CLIENT_LIMITS.note) errors.push(`Note is longer than ${CLIENT_LIMITS.note.toLocaleString()} characters.`);
     if (fields.value?.status === "ARCHIVED") errors.push("A file cannot archive clients; archive them from the client list.");
     if (errors.length || !fields.value || !extras.ok) {
       invalid.push({ rowNumber, errors: errors.length ? errors : ["The row could not be read."] });
       return;
     }
-    valid.push({ rowNumber, extras: extras.value, fields: fields.value, statusGiven: Boolean(statusText), channels: normalized.channels, matchKeys: normalized.channels.map((c) => c.matchKey) });
+    valid.push({ rowNumber, extras: extras.value, fields: fields.value, statusGiven: Boolean(statusText), note: note || null, channels: normalized.channels, matchKeys: normalized.channels.map((c) => c.matchKey) });
   });
   return { valid, invalid };
 }

@@ -72,6 +72,23 @@ subscription state, linked groups) — never an amount.
   - **Subscriptions are imported only for someone who may sell them** (`clients.manage_subscriptions` with the
     sub-module on). Anyone else imports the clients without them, and the preview says so beforehand.
   - **A re-imported file adds no second term** (same service, start and end).
+- **The template checks itself while it is filled in** (17 Oct 2026, `xlsxWriter` `highlights` / `between` / `autoFilter`):
+  filter arrows on the header; red when a row has no Name, an expiry is before its start, or a duration is not a whole
+  number; amber for a phone or email twice in the file, or a service with no start date. Duration accepts only a whole
+  number 1–1000; the date columns warn on a non-date (a day-first date typed as text still imports). These are
+  conditional-format rules and validations — no cell holds a formula.
+- **Note column** → the client's first internal note; on Update the same note is never added twice.
+- **Preview:** the columns that match no field are named ("Zone, Server are not imported"), and **Download problem rows**
+  (`/api/clients/import/<jobId>/problems`, only while a preview — the rows are deleted afterwards) gives every refused
+  row with a Problem column first and the file's columns after, ordered as the template. Fix, upload, only they import.
+  The stored rows are jsonb, which does not keep column order; the route restores it.
+- **Clearing import history** (`clearClientImports`): the Clients delete rule (Administrator, or `clients.delete`).
+  Never a PROCESSING import or a preview from the last day; the clients an import brought in are never touched. Knowledge
+  Base import history has the same Clear for an Administrator (`clearKnowledgeImports`), and its entries stay
+  (`AiKnowledgeItem.importId` is SetNull). Broadcast history is deliberately NOT clearable: its rows are the record of
+  mass sends and part of the never-twice guard for a job/group pair.
+- Tests: `clientImportClear.integration.test.ts` (5); mutation-checked (delete rule, running/fresh kept, note
+  once, Administrator-only knowledge clear, problem rows only while a preview).
 
 ## 2. Gap analysis (the V3 brief vs. what existed)
 

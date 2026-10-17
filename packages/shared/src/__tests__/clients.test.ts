@@ -99,6 +99,8 @@ describe("import", () => {
       phone: "Mobile Number",
       email: "E-mail",
       category: "Package",
+      // A Notes column becomes the client's first internal note.
+      note: "Notes",
     });
   });
   it("reports bad rows and keeps the good ones", () => {
