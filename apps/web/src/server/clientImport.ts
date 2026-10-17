@@ -110,6 +110,11 @@ export async function computeImportPreview(rows: readonly RawImportRow[], mappin
   };
 }
 
+/** Every row the import would refuse, with its reasons — for the "Download problem rows" file. Not capped. */
+export async function listImportProblems(rows: readonly RawImportRow[], mapping: ClientImportMapping): Promise<Array<{ rowNumber: number; errors: string[] }>> {
+  return (await buildAndResolve(rows, mapping)).invalid;
+}
+
 export interface ImportRunResult {
   imported: number;
   updated: number;
@@ -172,6 +177,7 @@ async function createRow(row: ResolvedImportRow, fileName: string, actorUserId: 
       select: { id: true },
     });
     await recordClientActivity(tx, created.id, actorUserId, { type: "IMPORTED", summary: `Imported from ${fileName.slice(0, 80)} (row ${row.rowNumber})` });
+    if (row.note) await tx.clientNote.create({ data: { clientId: created.id, body: row.note, authorId: actorUserId } });
     if (options.subscriptions && (await addImportedTerm(tx, created.id, row, actorUserId))) {
       await recordClientActivity(tx, created.id, actorUserId, { type: "SUBSCRIPTION_ADDED", summary: `Subscription imported: ${row.resolved.subscription!.service} (${row.resolved.subscription!.startDate} → ${row.resolved.subscription!.endDate})` });
     }
@@ -228,6 +234,11 @@ async function updateRow(clientId: string, row: ResolvedImportRow, fileName: str
     }
     if (Object.keys(data).length) await tx.client.update({ where: { id: clientId }, data });
     if (options.subscriptions && (await addImportedTerm(tx, clientId, row, actorUserId))) changed.push("subscription");
+    // The same note is never added twice: re-importing a file must not stack copies of it.
+    if (row.note && !(await tx.clientNote.findFirst({ where: { clientId, body: row.note }, select: { id: true } }))) {
+      await tx.clientNote.create({ data: { clientId, body: row.note, authorId: actorUserId } });
+      changed.push("note");
+    }
     if (changed.length) await recordClientActivity(tx, clientId, actorUserId, { type: "IMPORT_UPDATED", summary: `Updated from ${fileName.slice(0, 80)}: ${changed.join(", ")}` });
     return "UPDATED" as const;
   });

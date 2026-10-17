@@ -30,20 +30,26 @@ export function PageHeader({
 export function SectionHeader({
   title,
   description,
+  action,
 }: {
   title: string;
   description?: string;
+  /** A control on the right (e.g. "Clear history"). */
+  action?: ReactNode;
 }) {
   return (
-    <div className="mb-3">
-      <h2 className="text-sm font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
-        {title}
-      </h2>
-      {description ? (
-        <p className="mt-1 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">
-          {description}
-        </p>
-      ) : null}
+    <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+      <div className="min-w-0">
+        <h2 className="text-sm font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
+          {title}
+        </h2>
+        {description ? (
+          <p className="mt-1 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );
 }

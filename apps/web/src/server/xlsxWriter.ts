@@ -7,7 +7,9 @@ import { deflateRawSync } from "node:zlib";
  * good template needs: drop-down lists, a tip when a cell is selected, a frozen header, column formats
  * (phones as text so a leading 0 survives, dates as yyyy-mm-dd) and styled headers. Rather than add a
  * heavy dependency for that, this writes the Office Open XML parts itself and zips them with the
- * platform's own deflate. Every string is XML-escaped and nothing is a formula, so no cell can run.
+ * platform's own deflate. Every string is XML-escaped and no CELL holds a formula, so nothing a
+ * person types can run. The only formulas are conditional-formatting rules (`highlights`), which
+ * colour a cell and compute nothing into the sheet.
  */
 
 export type CellValue = string | number | null;
@@ -26,6 +28,8 @@ export interface Validation {
   range: string;
   /** A list source such as `'Lists'!$A$2:$A$5`; omitted for a tip-only rule. */
   list?: string;
+  /** A whole number or a date between `min` and `max` (a date as YYYY-MM-DD), instead of a list. */
+  between?: { kind: "whole" | "date"; min: number | string; max: number | string; error: string };
   /** "stop" refuses other values; "warning" lets the person keep theirs after a warning. */
   errorStyle?: "stop" | "warning";
   promptTitle?: string;
@@ -44,6 +48,23 @@ export interface SheetSpec {
   validations?: Validation[];
   /** Height of row 1 in points (a wrapped header). */
   headerHeight?: number;
+  /** Filter arrows on the header row, over this range (e.g. "A1:Y2001"). */
+  autoFilter?: string;
+  /** Live checks: a cell turns red (`error`) or amber (`warning`) while the formula is true for it. */
+  highlights?: Highlight[];
+}
+
+export interface Highlight {
+  /** e.g. "A2:A2001". */
+  range: string;
+  /** Written for the range's FIRST cell, relative references (e.g. `AND(A2="",COUNTA($B2:$Y2)>0)`). */
+  formula: string;
+  tone: "error" | "warning";
+}
+
+/** Excel's own serial for a calendar day (days from 1899-12-30), as a validation bound. */
+function serial(day: string): number {
+  return Math.round(Date.parse(`${day}T00:00:00Z`) / 86_400_000) + 25569;
 }
 
 const esc = (s: string) =>
@@ -100,28 +121,40 @@ function sheetXml(sheet: SheetSpec): string {
     ? `<dataValidations count="${sheet.validations.length}">${sheet.validations
         .map((v) => {
           const attrs = [
-            v.list ? `type="list"` : "",
+            v.list ? `type="list"` : v.between ? `type="${v.between.kind}" operator="between"` : "",
             `allowBlank="1"`,
             v.prompt ? `showInputMessage="1"` : "",
-            v.list ? `showErrorMessage="1"` : "",
-            v.list && v.errorStyle === "warning" ? `errorStyle="warning"` : "",
+            v.list || v.between ? `showErrorMessage="1"` : "",
+            (v.list || v.between) && v.errorStyle === "warning" ? `errorStyle="warning"` : "",
             v.promptTitle ? `promptTitle="${esc(v.promptTitle.slice(0, 32))}"` : "",
             v.prompt ? `prompt="${esc(v.prompt.slice(0, 255))}"` : "",
-            v.list ? `errorTitle="Not on the list"` : "",
-            v.list ? `error="${esc(v.errorStyle === "warning" ? "This is not on the list. Keep it only if you are sure it is right." : "Choose a value from the drop-down list.")}"` : "",
+            v.list ? `errorTitle="Not on the list"` : v.between ? `errorTitle="Check this value"` : "",
+            v.list
+              ? `error="${esc(v.errorStyle === "warning" ? "This is not on the list. Keep it only if you are sure it is right." : "Choose a value from the drop-down list.")}"`
+              : v.between
+                ? `error="${esc(v.between.error.slice(0, 255))}"`
+                : "",
             `sqref="${v.range}"`,
           ]
             .filter(Boolean)
             .join(" ");
-          return `<dataValidation ${attrs}>${v.list ? `<formula1>${esc(v.list)}</formula1>` : ""}</dataValidation>`;
+          const bound = (x: number | string) => (v.between!.kind === "date" && typeof x === "string" ? serial(x) : x);
+          const formulas = v.list ? `<formula1>${esc(v.list)}</formula1>` : v.between ? `<formula1>${bound(v.between.min)}</formula1><formula2>${bound(v.between.max)}</formula2>` : "";
+          return `<dataValidation ${attrs}>${formulas}</dataValidation>`;
         })
         .join("")}</dataValidations>`
     : "";
+  const autoFilter = sheet.autoFilter ? `<autoFilter ref="${sheet.autoFilter}"/>` : "";
+  // dxf 0 = error (red), 1 = warning (amber) — see STYLES_XML.
+  const highlights = (sheet.highlights ?? [])
+    .map((h, i) => `<conditionalFormatting sqref="${h.range}"><cfRule type="expression" dxfId="${h.tone === "error" ? 0 : 1}" priority="${i + 1}"><formula>${esc(h.formula)}</formula></cfRule></conditionalFormatting>`)
+    .join("");
+  // Schema order: sheetData, autoFilter, conditionalFormatting, dataValidations, pageMargins.
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
     `<sheetViews><sheetView workbookViewId="0">${pane}</sheetView></sheetViews>` +
-    `<sheetFormatPr defaultRowHeight="16"/>${cols}<sheetData>${rows}</sheetData>${validations}` +
+    `<sheetFormatPr defaultRowHeight="16"/>${cols}<sheetData>${rows}</sheetData>${autoFilter}${highlights}${validations}` +
     `<pageMargins left="0.5" right="0.5" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`
   );
 }
@@ -160,6 +193,11 @@ const STYLES_XML =
   `<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
   `</cellXfs>` +
   `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  // Conditional-format looks: 0 = a problem (red), 1 = worth a look (amber).
+  `<dxfs count="2">` +
+  `<dxf><font><color rgb="FF9F1239"/></font><fill><patternFill patternType="solid"><bgColor rgb="FFFEE2E2"/></patternFill></fill></dxf>` +
+  `<dxf><font><color rgb="FF92400E"/></font><fill><patternFill patternType="solid"><bgColor rgb="FFFEF3C7"/></patternFill></fill></dxf>` +
+  `</dxfs>` +
   `</styleSheet>`;
 
 // ── Zip (deflate), enough for a workbook ────────────────────────────────────────────────────────
@@ -234,7 +272,13 @@ export function buildWorkbook(sheets: SheetSpec[], title: string): Buffer {
     `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
     `<bookViews><workbookView activeTab="0"/></bookViews><sheets>${sheets
       .map((s, i) => `<sheet name="${esc(s.name.slice(0, 31))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`)
-      .join("")}</sheets></workbook>`;
+      .join("")}</sheets>${(() => {
+      // Excel keeps a sheet's filter range as a hidden defined name; without it some versions repair the file.
+      const names = sheets
+        .map((s, i) => (s.autoFilter ? `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${esc(s.name.slice(0, 31))}'!${s.autoFilter.replace(/([A-Z]+)(\d+)/g, "$$$1$$$2")}</definedName>` : ""))
+        .join("");
+      return names ? `<definedNames>${names}</definedNames>` : "";
+    })()}</workbook>`;
   const workbookRels =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
     sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("") +

@@ -8,6 +8,10 @@ import Link from "@/components/ProjectLink";
 import { Alert, Badge, Card, PageHeader, ProgressBar, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
 import type { ClientImportMapping } from "@support-automation/shared";
 import { AbandonImport, ImportReview } from "./ImportReview";
+import { ClearImports } from "../ImportHistoryActions";
+import { clientViewerCaps } from "@/server/clientModule";
+import { ButtonLink } from "@/components/ui";
+import { Download } from "lucide-react";
 
 /** Over ten minutes since it started: the same bound `abandonClientImport` enforces on the server. */
 function isStale(startedAt: Date | null): boolean {
@@ -19,15 +23,20 @@ export default async function ClientImportJobPage({ params }: { params: Promise<
   const { jobId } = await params;
   const job = await prisma.clientImportJob.findFirst({ where: { id: jobId }, include: { createdBy: { select: { name: true } } } });
   if (!job) notFound();
+  const caps = await clientViewerCaps(session);
+  const canClear = caps.canDelete && job.status !== "PROCESSING" && job.status !== "PREVIEW";
 
   const header = (
     <PageHeader
       title={job.fileName}
       description={`${job.status.toLowerCase()} · started ${formatDateTime(job.createdAt)}${job.createdBy ? ` by ${job.createdBy.name}` : ""}`}
       actions={
-        <Link href="/clients/import" className="text-sm underline underline-offset-2">
-          All imports
-        </Link>
+        <>
+          {canClear ? <ClearImports id={job.id} afterClear="/clients/import" /> : null}
+          <Link href="/clients/import" className="text-sm underline underline-offset-2">
+            All imports
+          </Link>
+        </>
       }
     />
   );
@@ -37,6 +46,8 @@ export default async function ClientImportJobPage({ params }: { params: Promise<
     const mapping = job.mapping as ClientImportMapping;
     const preview = await computeImportPreview(rows, mapping, await importOptionsFor(session));
     const headers = Object.keys(rows[0] ?? {});
+    const used = new Set(Object.values(mapping as Record<string, string>).filter(Boolean));
+    const ignored = headers.filter((h) => !used.has(h));
     return (
       <div className="space-y-6">
         {header}
@@ -47,6 +58,11 @@ export default async function ClientImportJobPage({ params }: { params: Promise<
           <StatTile label="Repeat an earlier row" value={preview.repeatsInFile.toLocaleString()} tone={preview.repeatsInFile ? "warning" : "neutral"} />
           <StatTile label="Invalid" value={preview.invalidCount.toLocaleString()} tone={preview.invalidCount ? "danger" : "neutral"} />
         </div>
+        {ignored.length ? (
+          <Alert tone="info" title={`${ignored.length} column${ignored.length === 1 ? " is" : "s are"} not imported`}>
+            {ignored.join(", ")}. They match no client field, so they are left out. Map one below if it should be imported.
+          </Alert>
+        ) : null}
         {preview.missingRequired.length ? <Alert tone="warning">Map a column to {preview.missingRequired.join(", ")} before importing.</Alert> : null}
         {preview.subscriptionRows > 0 ? (
           preview.subscriptionsImported ? (
@@ -107,7 +123,15 @@ export default async function ClientImportJobPage({ params }: { params: Promise<
 
         {preview.invalid.length > 0 ? (
           <div>
-            <SectionHeader title={`Invalid rows (${preview.invalidCount.toLocaleString()})`} description={preview.invalidCount > preview.invalid.length ? `Showing the first ${preview.invalid.length}.` : undefined} />
+            <SectionHeader
+              title={`Invalid rows (${preview.invalidCount.toLocaleString()})`}
+              description={`${preview.invalidCount > preview.invalid.length ? `Showing the first ${preview.invalid.length}. ` : ""}Download them with the reason on each row, fix them, and upload that file — only they are imported.`}
+              action={
+                <ButtonLink href={`/api/clients/import/${job.id}/problems`} size="sm" download>
+                  <Download className="size-3.5" aria-hidden /> Download problem rows
+                </ButtonLink>
+              }
+            />
             <Table>
               <thead>
                 <tr>

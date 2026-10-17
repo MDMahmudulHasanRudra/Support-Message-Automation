@@ -3,7 +3,7 @@ import { CLIENT_STATUS_LABELS, dhakaToday, addDuration, SUBSCRIPTION_KIND_LABELS
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { countryName, countryOptions } from "@/lib/clientPhone";
-import { buildWorkbook, columnLetter, type Cell, type SheetSpec, type Validation } from "@/server/xlsxWriter";
+import { buildWorkbook, columnLetter, type Cell, type Highlight, type SheetSpec, type Validation } from "@/server/xlsxWriter";
 
 /**
  * The client import template (CLIENTS_V3.md §Import) — what a person downloads, fills in and uploads.
@@ -57,6 +57,7 @@ export const IMPORT_TEMPLATE_COLUMNS: readonly Column[] = [
   { header: "Facebook reference", width: 18, what: "Messenger page-scoped id or profile reference, if you have one.", example: "" },
   { header: "Instagram handle", width: 16, what: "Instagram username, with or without @.", example: "" },
   { header: "Telegram", width: 14, what: "Telegram username.", example: "" },
+  { header: "Note", width: 34, what: "Anything your team should know (it becomes the client's first internal note; it is never sent to the client). Re-importing the same note does not add it twice.", example: "Prefers a call after 6 pm" },
 ];
 
 /** A cell tip (≤255 characters, Excel's own limit). */
@@ -129,6 +130,30 @@ async function currentClientRows(where: Prisma.ClientWhereInput, limit: number):
   return { rows, truncated: clients.length > limit };
 }
 
+/**
+ * Live checks on the Clients sheet: conditional formatting, so a mistake shows the moment it is typed.
+ * They mirror what the import refuses (red) or would flag (amber); they never change a value.
+ */
+function liveChecks(dataRows: number): Highlight[] {
+  const col = (header: string) => columnLetter(IMPORT_TEMPLATE_COLUMNS.findIndex((c) => c.header === header));
+  const last = columnLetter(IMPORT_TEMPLATE_COLUMNS.length - 1);
+  const range = (header: string) => `${col(header)}2:${col(header)}${dataRows}`;
+  const [name, phone, email, service, start, duration, expiry] = ["Name", "Phone", "Email", "Service / plan", "Start date", "Duration", "Expiry date"].map(col);
+  return [
+    // A row with anything in it needs a Name.
+    { range: range("Name"), formula: `AND(LEN(TRIM(${name}2))=0,COUNTA($B2:$${last}2)>0)`, tone: "error" },
+    // An expiry before its start date.
+    { range: range("Expiry date"), formula: `AND(ISNUMBER(${expiry}2),ISNUMBER(${start}2),${expiry}2<${start}2)`, tone: "error" },
+    // A duration that is not a whole number above zero.
+    { range: range("Duration"), formula: `AND(LEN(${duration}2)>0,OR(NOT(ISNUMBER(${duration}2)),${duration}2<1,${duration}2<>INT(${duration}2)))`, tone: "error" },
+    // A subscription with a service but no start date.
+    { range: range("Start date"), formula: `AND(LEN(TRIM(${service}2))>0,LEN(${start}2)=0)`, tone: "warning" },
+    // The same phone or email twice in this file: the second row would match the first.
+    { range: range("Phone"), formula: `AND(LEN(${phone}2)>0,COUNTIF($${phone}$2:$${phone}$${dataRows},${phone}2)>1)`, tone: "warning" },
+    { range: range("Email"), formula: `AND(LEN(${email}2)>0,COUNTIF($${email}$2:$${email}$${dataRows},${email}2)>1)`, tone: "warning" },
+  ];
+}
+
 export async function buildClientImportTemplate(options: { clientsWhere: Prisma.ClientWhereInput | null; projectName: string; maxRows: number }): Promise<{ bytes: Buffer; truncated: boolean }> {
   const [teams, members, currencies] = await Promise.all([
     prisma.team.findMany({ where: { status: "ACTIVE" }, select: { name: true }, orderBy: { name: "asc" } }),
@@ -148,14 +173,23 @@ export async function buildClientImportTemplate(options: { clientsWhere: Prisma.
   };
 
   const dataRows = options.maxRows + 1;
+  const lastColumn = columnLetter(IMPORT_TEMPLATE_COLUMNS.length - 1);
   const validations: Validation[] = IMPORT_TEMPLATE_COLUMNS.map((col, i) => {
     const letter = columnLetter(i);
     const range = `${letter}2:${letter}${dataRows}`;
     const values = col.list ? lists[col.list] : [];
+    const between: Validation["between"] =
+      col.header === "Duration"
+        ? { kind: "whole", min: 1, max: 1000, error: "Write a whole number from 1 to 1000, with the unit in the next column." }
+        : col.format === "date"
+          ? { kind: "date", min: "2000-01-01", max: "2100-12-31", error: "This does not look like a date. Write 2026-10-17 or 17/10/2026 (day first)." }
+          : undefined;
     return {
       range,
       list: col.list && values.length ? `'Lists'!$${LIST_COLUMNS[col.list]}$2:$${LIST_COLUMNS[col.list]}$${values.length + 1}` : undefined,
-      errorStyle: col.strictList ? "stop" : "warning",
+      between: col.list ? undefined : between,
+      // A date column only warns: a day-first date typed as text is still read correctly on upload.
+      errorStyle: col.strictList || col.header === "Duration" ? "stop" : "warning",
       promptTitle: col.header + (col.required ? " (required)" : ""),
       prompt: tip(col),
     } satisfies Validation;
@@ -172,6 +206,8 @@ export async function buildClientImportTemplate(options: { clientsWhere: Prisma.
     freezeCols: 1,
     headerHeight: 30,
     validations,
+    autoFilter: `A1:${lastColumn}${dataRows}`,
+    highlights: liveChecks(dataRows),
   };
 
   // Example rows: fictional, using this project's own team and staff names where they exist.
@@ -181,7 +217,8 @@ export async function buildClientImportTemplate(options: { clientsWhere: Prisma.
   const examples: Record<string, string>[] = [
     { Name: "Orchid Networks", Company: "Orchid Networks Ltd", Phone: "+8801711122201", Email: "billing@orchid.example", Country: "Bangladesh", "Preferred currency": "BDT", Address: "Mirpur 10, Dhaka", Category: "Corporate", Tags: "vip, dhaka", Status: "Active", "Preferred language": "Bangla", Team: team, "Assigned staff": staff, "Sold by": staff, "Service / plan": "Tiger IPTV", "Subscription type": "Paid", "Start date": today, Duration: "12", "Duration unit": "Months" },
     { Name: "Nova Commerce", Phone: "+971501112201", "WhatsApp number": "+971551112299", Country: "United Arab Emirates", "Preferred currency": "AED", Category: "Reseller", Status: "Active", "Sold by": staff, "Service / plan": "Premium TV", "Subscription type": "Trial", "Start date": today, "Expiry date": addDuration(today, 7, "DAY") },
-    { Name: "Rahim Uddin", Phone: "01811222233", Email: "rahim@example.com; rahim.work@example.com", Country: "BD", Address: "Chattogram", Tags: "home", "Preferred language": "Bangla" },
+    { Name: "Rahim Uddin", Phone: "01811222233", Email: "rahim@example.com; rahim.work@example.com", Country: "BD", Address: "Chattogram", Tags: "home", "Preferred language": "Bangla", Note: "Prefers a call after 6 pm" },
+    { Name: "Sara Khan", Phone: "+966501234567", Country: "Saudi Arabia", "Preferred currency": "SAR", Status: "Pending", "Sold by": staff, "Service / plan": "MBC + Shahid", "Subscription type": "Paid", "Start date": addDuration(today, -60, "DAY"), Duration: "3", "Duration unit": "Months", Note: "Renewed by phone last time" },
   ];
   const exampleSheet: SheetSpec = {
     name: "Example",
@@ -203,6 +240,8 @@ export async function buildClientImportTemplate(options: { clientsWhere: Prisma.
       [{ value: "4. Already have the client (same phone, email or code)? At the confirmation choose Skip, Update or Create anyway. Nothing is merged silently.", style: "muted" }],
       [{ value: "To update many clients at once: download “Template with my clients”, edit the rows, upload it and choose Update.", style: "muted" }],
       [{ value: `Limits: up to 2,000 rows and 2 MB per file. Only Name is required. Phones keep their leading 0 because those columns are formatted as text.`, style: "muted" }],
+      [{ value: "Live checks while you type: a RED cell is a problem the import will refuse (a row with no Name, an expiry before its start date, a duration that is not a whole number). An AMBER cell is worth a look (the same phone or email twice in this file, a subscription with no start date). The import reads only values — the colours are just a guide.", style: "muted" }],
+      [{ value: "Use the filter arrows on the header row to check your rows — for example, to see every client of one team before you upload.", style: "muted" }],
       [],
       ["Column", "Required", "What to write", "Example", "Accepted values"].map((v) => ({ value: v, style: "header" as const })),
       ...IMPORT_TEMPLATE_COLUMNS.map((c) => [

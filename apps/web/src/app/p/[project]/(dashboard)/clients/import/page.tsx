@@ -8,6 +8,8 @@ import { Download, FileSpreadsheet, ListChecks, Upload, Users } from "lucide-rea
 import { hasPermission } from "@/server/permissions";
 import { IMPORT_TEMPLATE_COLUMNS } from "@/server/clientImportTemplate";
 import { ImportUpload } from "./ImportUpload";
+import { ClearImports } from "./ImportHistoryActions";
+import { clientViewerCaps } from "@/server/clientModule";
 
 function Step({ n, title, icon: Icon, children }: { n: number; title: string; icon: typeof Download; children: React.ReactNode }) {
   return (
@@ -26,9 +28,14 @@ function Step({ n, title, icon: Icon, children }: { n: number; title: string; ic
 
 const STATUS_COLOR: Record<string, "green" | "yellow" | "red" | "gray" | "blue"> = { PREVIEW: "blue", PROCESSING: "yellow", COMPLETED: "green", PARTIAL: "yellow", FAILED: "red", CANCELLED: "gray" };
 
+/** The rule clearClientImports applies: never a running import, never a preview from the last day. */
+function clearable(j: { status: string; createdAt: Date }): boolean {
+  return j.status !== "PROCESSING" && !(j.status === "PREVIEW" && Date.now() - j.createdAt.getTime() < 24 * 60 * 60_000);
+}
+
 export default async function ClientImportPage() {
   const session = await requireAccess("clients.import");
-  const canExport = await hasPermission(session, "clients.export");
+  const [canExport, caps] = await Promise.all([hasPermission(session, "clients.export"), clientViewerCaps(session)]);
   const jobs = await prisma.clientImportJob.findMany({
     orderBy: { createdAt: "desc" },
     take: 30,
@@ -106,7 +113,11 @@ export default async function ClientImportPage() {
       </details>
 
       <div>
-        <SectionHeader title="Import history" />
+        <SectionHeader
+          title="Import history"
+          description={caps.canDelete ? "Clearing removes only the record of an import — never the clients it brought in." : undefined}
+          action={caps.canDelete && jobs.length ? <ClearImports count={jobs.filter(clearable).length} /> : undefined}
+        />
         {jobs.length === 0 ? (
           <EmptyState>No imports yet.</EmptyState>
         ) : (
@@ -122,6 +133,7 @@ export default async function ClientImportPage() {
                 <Th>Updated</Th>
                 <Th>Skipped</Th>
                 <Th>Failed</Th>
+                {caps.canDelete ? <Th>Actions</Th> : null}
               </tr>
             </thead>
             <tbody>
@@ -142,6 +154,7 @@ export default async function ClientImportPage() {
                   <Td className="tabular">{j.updatedCount.toLocaleString()}</Td>
                   <Td className="tabular">{j.skippedCount.toLocaleString()}</Td>
                   <Td className="tabular">{j.failedCount.toLocaleString()}</Td>
+                  {caps.canDelete ? <Td className="text-right">{clearable(j) ? <ClearImports id={j.id} /> : null}</Td> : null}
                 </tr>
               ))}
             </tbody>

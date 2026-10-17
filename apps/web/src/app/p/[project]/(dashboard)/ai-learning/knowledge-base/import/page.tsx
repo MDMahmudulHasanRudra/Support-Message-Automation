@@ -20,6 +20,8 @@ import {
 import { formatDateTime } from "@/lib/date";
 import { ImportForm } from "./ImportForm";
 import { RetryImportButton } from "./RetryImportButton";
+import { ClearKnowledgeImports } from "./ClearKnowledgeImports";
+import { isMainAdmin } from "@/server/projectContext";
 
 export const metadata = { title: "Import Knowledge" };
 
@@ -48,7 +50,9 @@ const SOURCE_LABEL = {
  * about your software at all.
  */
 export default async function KnowledgeImportPage() {
-  await requireAccess("ai_learning.manage");
+  const session = await requireAccess("ai_learning.manage");
+  // Clearing import history is a delete: an Administrator's (the action checks again).
+  const canClear = await isMainAdmin(session.userId);
 
   const [imports, moduleRows] = await Promise.all([
     prisma.knowledgeImport.findMany({
@@ -153,7 +157,11 @@ export default async function KnowledgeImportPage() {
         <ImportForm knownModules={knownModules} />
 
         <div>
-          <SectionHeader title="Recent imports" description="Newest first." />
+          <SectionHeader
+            title="Recent imports"
+            description={canClear ? "Newest first. Clearing keeps every entry an import produced." : "Newest first."}
+            action={canClear && imports.length ? <ClearKnowledgeImports count={imports.filter((j) => j.status === "COMPLETED" || j.status === "PARTIAL" || j.status === "FAILED").length} /> : undefined}
+          />
           {imports.length === 0 ? (
             <Card>
               <EmptyState>Nothing imported yet.</EmptyState>
@@ -165,6 +173,7 @@ export default async function KnowledgeImportPage() {
                   <Th>Source</Th>
                   <Th>Status</Th>
                   <Th>Entries</Th>
+                  {canClear ? <Th><span className="sr-only">Clear</span></Th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -223,6 +232,9 @@ export default async function KnowledgeImportPage() {
                         "—"
                       )}
                     </Td>
+                    {canClear ? (
+                      <Td>{job.status === "COMPLETED" || job.status === "PARTIAL" || job.status === "FAILED" ? <ClearKnowledgeImports id={job.id} /> : null}</Td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
