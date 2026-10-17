@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, AtSign, CornerUpLeft, Info, SendHorizontal, Smartphone, Smile, X } from "lucide-react";
+import { ArrowRight, AtSign, CornerUpLeft, SendHorizontal, Smartphone, Smile, X } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { useActionState, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { MentionCandidate } from "@support-automation/shared";
@@ -423,11 +423,6 @@ export function ComposerV2({
           {pending ? null : <SendHorizontal className="size-4" aria-hidden />}
         </Button>
       </form>
-
-      <p className="mt-2.5 flex items-start gap-2 rounded-[var(--radius-md)] bg-[var(--wa-green-soft)] px-3 py-2 text-[11.5px] leading-relaxed text-[color:var(--color-foreground)] max-sm:hidden">
-        <Info className="mt-0.5 size-3.5 shrink-0 text-[color:var(--wa-green-strong)]" aria-hidden />
-        <span>Sent through the same outbound queue as automated replies, so account rate limits still apply. A reply quotes the original on WhatsApp once it is delivered.</span>
-      </p>
 
       <SavedReplyManager open={managingReplies} onClose={() => setManagingReplies(false)} replies={savedReplies} />
     </div>

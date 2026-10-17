@@ -186,6 +186,8 @@ module, field, and behavior in the app.
   provider; a **Teams CSV/xlsx export**; searchable, paginated high-volume lists; loading and error
   states on every page; and touch-sized controls on phones and tablets.
 
+> **Deploying? Follow [DEPLOY.md](DEPLOY.md) — migrations first, every time.**
+>
 > **Deploying requires running the pending migrations** — `pnpm db:migrate:deploy` before starting
 > the new build. Every one is additive, and each new column defaults to the behaviour that existed
 > before it, so an existing deployment behaves identically until someone changes a setting.

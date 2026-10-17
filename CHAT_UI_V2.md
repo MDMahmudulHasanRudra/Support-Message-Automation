@@ -290,7 +290,7 @@ behaviour, data, permission or action changed.**
   pill's "Change it in Groups" link. v1's header code is unchanged.
 - **Thread:** WhatsApp wallpaper with a faint pattern, white incoming bubbles with the time inside them,
   green outgoing bubbles with who/via/ticks on the line below, white day chips.
-- **Composer:** attach, emoji (desktop only), saved replies, the message box, a green send button;
+- **Composer:** attach, emoji (desktop only), saved replies, the message box, a green send button (the queue note under it was removed at Rudra's request);
   shorter placeholder so it fits one line beside the sidebar.
 - Not taken from the reference, on purpose: a notification bell, an AI "sparkle" in the message box and
   a split send button — none of them has a feature behind it, and a control that does nothing is the
