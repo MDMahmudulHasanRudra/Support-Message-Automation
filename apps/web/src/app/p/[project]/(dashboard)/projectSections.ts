@@ -99,10 +99,22 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/support-escalation": { write: ["escalations.manage"] },
   // Clients
   "/clients": {
-    write: ["clients.create", "clients.update", "clients.archive", "clients.delete", "clients.export", "clients.link_whatsapp_chat"],
-    also: ["/api/clients/export"],
+    write: [
+      "clients.create",
+      "clients.update",
+      "clients.archive",
+      "clients.delete",
+      "clients.export",
+      "clients.link_whatsapp_chat",
+      "clients.link_whatsapp_group",
+      "clients.manage_subscriptions",
+    ],
+    // The export and each client's photo.
+    also: ["/api/clients"],
   },
+  "/clients/subscriptions": { write: ["clients.manage_subscriptions"] },
   "/clients/dues": { write: ["clients.edit_billing"] },
+  "/clients/payments": { write: ["clients.edit_billing"] },
   "/clients/import": { fullOnly: true },
   // Team
   "/team-management": { write: ["team_management.manage"], also: ["/api/team-management/export"] },
@@ -170,6 +182,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/team-management/settings": { fullOnly: true, read: ["team_management.view"] },
   "/settings/channels": { write: ["channels.manage"] },
   "/settings/email": { fullOnly: true },
+  "/settings/clients": { write: ["clients.manage_settings"] },
   "/settings/google-sheets": { write: ["google_sheets.manage"], also: ["/api/google-sheets/connect"] },
 };
 

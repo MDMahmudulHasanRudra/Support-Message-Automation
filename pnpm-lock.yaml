@@ -34,6 +34,12 @@ importers:
       '@support-automation/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      country-to-currency:
+        specifier: 3.0.1
+        version: 3.0.1
+      libphonenumber-js:
+        specifier: 1.13.14
+        version: 1.13.14
       lucide-react:
         specifier: ^1.31.0
         version: 1.31.0(react@19.2.8)
@@ -2308,6 +2314,9 @@ packages:
       typescript:
         optional: true
 
+  country-to-currency@3.0.1:
+    resolution: {integrity: sha512-FAo2ga8296d0Ra6vj9TB4Kax36AmqrGEc0aoLflCx5ijMtifNwA8lCqQsFfTLP2lRVKHWh/DedSpqI6v9VHyjw==}
+
   cross-env@7.0.3:
     resolution: {integrity: sha512-+/HKd6EgcQCJGh2PSjZuUitQBQynKor4wrFbRg4DtAgS1aWO+gU52xpH7M9ScGgXSYmAVS9bIJ8EzuaGw0oNAw==}
     engines: {node: '>=10.14', npm: '>=6', yarn: '>=1'}
@@ -3679,6 +3688,9 @@ packages:
   levn@0.4.1:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
     engines: {node: '>= 0.8.0'}
+
+  libphonenumber-js@1.13.14:
+    resolution: {integrity: sha512-llihgCcx0BFLksecLP+x1J+6JDE1GsXS1RN/LoPF6qcwpeQcnjj0lcvZxY8AzbEpYwyZWPZW/nDuqkqzm3amiw==}
 
   lie@3.3.0:
     resolution: {integrity: sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==}
@@ -7783,6 +7795,8 @@ snapshots:
     optionalDependencies:
       typescript: 5.9.3
 
+  country-to-currency@3.0.1: {}
+
   cross-env@7.0.3:
     dependencies:
       cross-spawn: 7.0.6
@@ -9402,6 +9416,8 @@ snapshots:
     dependencies:
       prelude-ls: 1.2.1
       type-check: 0.4.0
+
+  libphonenumber-js@1.13.14: {}
 
   lie@3.3.0:
     dependencies:

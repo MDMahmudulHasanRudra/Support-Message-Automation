@@ -8,7 +8,13 @@ import { describeDueEvent, getClientBilling } from "@/server/clientBilling";
 import { getClientChatLinks, listLinkableAccounts } from "@/server/clientChatLinks";
 import { formatDateTime } from "@/lib/date";
 import { Alert, Badge, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
-import { CLIENT_SOURCE_LABELS, CLIENT_STATUS_LABELS, describeSharedKey, type ClientSourceValue } from "@support-automation/shared";
+import { clientDisplayName, CLIENT_SOURCE_LABELS, CLIENT_STATUS_LABELS, describeSharedKey, SUBSCRIPTION_STATE_LABELS, type ClientSourceValue } from "@support-automation/shared";
+import { clientViewerCaps } from "@/server/clientModule";
+import { getClient360 } from "@/server/client360";
+import { loadClientFormContext } from "@/server/clientFormContext";
+import { countryFlag, countryName } from "@/lib/clientPhone";
+import { expiryTextClass, formatDay, money, SUBSCRIPTION_TONE } from "@/lib/clientDisplay";
+import { ClientPaymentsPanel, GroupLinksPanel, PhotoControl, SubscriptionsPanel } from "../Client360Panels";
 import { ClientForm } from "../ClientForm";
 import { ChannelsPanel, ClientLifecycle, NotesPanel } from "../ClientPanels";
 import { BillingPanel } from "../ClientBilling";
@@ -24,6 +30,8 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const { client, notes, activities, groupNames, duplicates } = detail;
   const archived = client.status === "ARCHIVED";
 
+  const caps = await clientViewerCaps(session);
+  const [view, formContext] = await Promise.all([getClient360(client.id, caps), loadClientFormContext(session)]);
   const [options, canArchive, canDelete, canViewBilling, canEditBilling, canLinkChats, chatLinks, linkAccounts, groups] = await Promise.all([
     loadClientFormOptions(),
     hasPermission(session, "clients.archive"),
@@ -39,7 +47,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   ]);
 
   // Amounts and dates are read only for someone holding the billing key; the rest of the page never sees them.
-  const billing = canViewBilling ? await getClientBilling(client.id) : null;
+  const billing = canViewBilling && caps.settings.billing ? await getClientBilling(client.id) : null;
+  const phone = client.channels.find((c) => c.kind === "WHATSAPP") ?? client.channels.find((c) => c.kind === "PHONE");
+  const activeGroups = view.groupLinks.filter((l) => !l.unlinkedAt);
+  const seller = view.current?.soldBy ?? client.soldByMember?.name ?? null;
+  const facts: Array<[string, string, string | null]> = [
+    ["Country", client.country ? `${countryFlag(client.country)} ${countryName(client.country)}` : "Not set", client.preferredCurrency ? `Prefers ${client.preferredCurrency}` : null],
+    ["Phone & WhatsApp", phone?.value ?? "No number", chatLinks.length ? "WhatsApp chat linked" : null],
+  ];
+  if (caps.subscriptions) facts.push(["Current plan", view.current?.service ?? "None", view.current ? `${formatDay(view.current.endDate)} · ${view.current.expiryText}` : null]);
+  if (view.outstanding) facts.push(["Outstanding", view.outstanding.length ? view.outstanding.map((o) => money(o.remaining, o.currency)).join(" · ") : "Nothing owed", view.outstanding.some((o) => o.overdue) ? "Has overdue invoices" : null]);
+  facts.push(["Sold by", seller ?? "Not recorded", view.current?.soldByTeam ?? client.soldByMember?.team?.name ?? null]);
+  if (caps.groups) facts.push(["WhatsApp group", activeGroups[0]?.groupName ?? "Not linked", activeGroups.length > 1 ? `+${activeGroups.length - 1} more` : (activeGroups[0]?.accountLabel ?? null)]);
   const dueDateById = new Map(billing?.dues.map((x) => [x.id, x.dueDate]));
   const summaryText = billing
     ? billing.summary.openCount === 0
@@ -51,8 +70,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     <div className="space-y-6">
       <PageHeader
         title={
-          <span className="flex flex-wrap items-center gap-3">
-            {client.name}
+          <span className="flex flex-wrap items-center gap-4">
+            <PhotoControl client={{ id: client.id, code: client.code, name: client.name, companyName: client.companyName, photoVersion: client.photoUpdatedAt?.getTime() ?? null }} canEdit={canManage && !archived} />
+            {clientDisplayName(client.name, client.companyName)}
             <Badge color={STATUS_COLOR[client.status] ?? "gray"} dot>
               {CLIENT_STATUS_LABELS[client.status]}
             </Badge>
@@ -62,6 +82,19 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         actions={<ClientLifecycle clientId={client.id} archived={archived} canArchive={canArchive} canDelete={canDelete} />}
       />
       {canManage ? null : <ViewOnlyNotice />}
+
+      {/* The 360° strip: the facts somebody opens a client for, before any card. */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {facts.map(([label, value, sub]) => (
+          <div key={label} className="min-w-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 shadow-[var(--shadow-xs)]">
+            <p className="text-[11px] font-medium uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]">{label}</p>
+            <p className={`mt-1 truncate text-sm font-semibold ${label === "Current plan" && view.current ? expiryTextClass(view.current.state) : ""}`} title={value}>
+              {value}
+            </p>
+            {sub ? <p className="truncate text-xs text-[color:var(--color-muted-foreground)]">{sub}</p> : null}
+          </div>
+        ))}
+      </div>
       {archived ? <Alert tone="info">This client is archived. Restore it to edit it. Its channels, notes and history are all kept.</Alert> : null}
 
       {duplicates.length > 0 ? (
@@ -88,6 +121,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                 mode="edit"
                 clientId={client.id}
                 options={options}
+                context={formContext}
                 values={{
                   name: client.name,
                   code: client.code,
@@ -102,6 +136,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                   followUpInstructions: client.followUpInstructions ?? "",
                   assignedMemberId: client.assignedMemberId ?? "",
                   assignedTeamId: client.assignedTeamId ?? "",
+                  country: client.country ?? "",
+                  preferredCurrency: client.preferredCurrency ?? "",
+                  soldByMemberId: client.soldByMemberId ?? "",
                 }}
               />
             ) : (
@@ -124,6 +161,40 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               </dl>
             )}
           </Card>
+
+          {caps.subscriptions ? (
+            <div id="subscriptions" className="scroll-mt-24">
+            <Card className="p-6">
+              <SectionHeader title="Subscriptions" />
+              {view.current ? (
+                <div className="-mt-2 mb-3">
+                  <Badge color={SUBSCRIPTION_TONE[view.overallState]}>{SUBSCRIPTION_STATE_LABELS[view.overallState]}</Badge>
+                </div>
+              ) : null}
+              <SubscriptionsPanel
+                clientId={client.id}
+                subscriptions={view.subscriptions}
+                roster={options.roster}
+                today={view.today}
+                currencies={formContext.currencies}
+                preferredCurrency={client.preferredCurrency}
+                defaultSeller={client.soldByMemberId}
+                canManage={caps.canManageSubscriptions}
+                canInvoice={caps.canEditBilling}
+                archived={archived}
+              />
+            </Card>
+            </div>
+          ) : null}
+
+          {caps.groups ? (
+            <div id="whatsapp-groups" className="scroll-mt-24">
+            <Card className="p-6">
+              <SectionHeader title="WhatsApp groups" />
+              <GroupLinksPanel clientId={client.id} links={view.groupLinks} accounts={formContext.accounts} canLink={caps.canLinkGroups} canOpenChat={caps.canOpenChat} archived={archived} />
+            </Card>
+            </div>
+          ) : null}
 
           <Card className="p-6">
             <SectionHeader title="Communication channels" />
@@ -162,7 +233,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           </Card>
 
           <Card className="p-6">
-            <SectionHeader title="Billing and dues" />
+            <SectionHeader title="Invoices and dues" />
             {billing ? (
               <BillingPanel
                 clientId={client.id}
@@ -174,9 +245,16 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                 history={billing.history.map((h) => ({ id: h.id, dueId: h.dueId, type: h.type, summary: describeDueEvent(h.type, h.changes, dueDateById.get(h.dueId) ?? null), actor: h.actor, at: formatDateTime(h.at) }))}
               />
             ) : (
-              <p className="text-sm text-[color:var(--color-muted-foreground)]">Billing is visible only to people with the billing permission.</p>
+              <p className="text-sm text-[color:var(--color-muted-foreground)]">{caps.settings.billing ? "Billing is visible only to people with the billing permission." : "Billing is switched off for this project."}</p>
             )}
           </Card>
+
+          {billing && caps.settings.payments ? (
+            <Card className="p-6">
+              <SectionHeader title="Payments & receipts" />
+              <ClientPaymentsPanel client={{ name: clientDisplayName(client.name, client.companyName), code: client.code }} openInvoices={view.openInvoices} payments={view.payments} canRecord={caps.canRecordPayments && !archived} today={view.today} />
+            </Card>
+          ) : null}
 
           <Card className="p-6">
             <SectionHeader title="Internal notes" />

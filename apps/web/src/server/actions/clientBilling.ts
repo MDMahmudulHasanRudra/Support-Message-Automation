@@ -1,12 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { CLIENT_BILLING_LIMITS, diffDue, normalizeCurrencyCode, validateDue, type ValidDue } from "@support-automation/shared";
+import { CLIENT_BILLING_LIMITS, decimalToMinor, dhakaToday, diffDue, formatMinor, normalizeCurrencyCode, toMinor, validateDue, type ValidDue } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
 import { projectPath } from "@/server/projectPaths";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { recordClientActivity } from "@/server/clientRecords";
+import { subModuleOff } from "@/server/clientModule";
+import { createInvoice, readInvoiceExtras } from "@/server/clientBillingStore";
 
 /**
  * Billing actions (CLIENT_CENTER_PLAN.md §2). Every one is a public endpoint, so every one makes its
@@ -62,32 +64,23 @@ async function enabledCodes(): Promise<string[]> {
 export async function createDue(clientId: string, _prev: DueFormState, formData: FormData): Promise<DueFormState> {
   const granted = await checkPermission("clients.edit_billing");
   if ("denied" in granted) return { error: granted.denied, values: echo(formData) };
+  const off = await subModuleOff("billing");
+  if (off) return { error: off, values: echo(formData) };
   const client = await prisma.client.findFirst({ where: { id: clientId }, select: { status: true } });
   if (!client) return { error: "That client no longer exists.", values: echo(formData) };
   if (client.status === "ARCHIVED") return { error: "This client is archived. Restore it before changing its billing.", values: echo(formData) };
 
   const parsed = validateDue(dueInput(formData), await enabledCodes());
   if (!parsed.ok) return { error: parsed.errors.join(" "), values: echo(formData) };
-  const due = parsed.due;
+  const extras = await readInvoiceExtras(
+    { kind: text(formData, "kind"), issuedDate: text(formData, "issuedDate"), service: text(formData, "service"), subscriptionId: text(formData, "subscriptionId"), soldByMemberId: text(formData, "soldByMemberId") },
+    clientId,
+    dhakaToday(new Date()),
+  );
+  if ("error" in extras) return { error: extras.error, values: echo(formData) };
 
-  await prisma.$transaction(async (tx) => {
-    const created = await tx.clientDue.create({
-      data: {
-        clientId,
-        dueDate: new Date(`${due.dueDate}T00:00:00.000Z`),
-        amount: due.amount,
-        currency: due.currency,
-        status: due.status,
-        paidAmount: due.paidAmount,
-        note: due.note,
-        createdById: granted.session.userId,
-        updatedById: granted.session.userId,
-        statusChangedAt: new Date(),
-      },
-    });
-    await tx.clientDueEvent.create({ data: { dueId: created.id, clientId, type: "CREATED", changes: diffDue({}, snapshot(due)), actorUserId: granted.session.userId } });
-    await recordClientActivity(tx, clientId, granted.session.userId, { type: "BILLING_CHANGED", summary: "Billing record added" });
-  });
+  // Every new due is an invoice with its own number (CLIENTS_V3.md §4); the audit and timeline are written with it.
+  await prisma.$transaction((tx) => createInvoice(tx, clientId, granted.session.userId, parsed.due, extras));
   await refresh(clientId);
   return { success: true };
 }
@@ -95,6 +88,8 @@ export async function createDue(clientId: string, _prev: DueFormState, formData:
 export async function updateDue(dueId: string, _prev: DueFormState, formData: FormData): Promise<DueFormState> {
   const granted = await checkPermission("clients.edit_billing");
   if ("denied" in granted) return { error: granted.denied, values: echo(formData) };
+  const off = await subModuleOff("billing");
+  if (off) return { error: off, values: echo(formData) };
   const existing = await prisma.clientDue.findFirst({ where: { id: dueId }, include: { client: { select: { status: true } } } });
   if (!existing) return { error: "That due no longer exists.", values: echo(formData) };
   if (existing.client.status === "ARCHIVED") return { error: "This client is archived. Restore it before changing its billing.", values: echo(formData) };
@@ -102,6 +97,20 @@ export async function updateDue(dueId: string, _prev: DueFormState, formData: Fo
   const parsed = validateDue(dueInput(formData), await enabledCodes(), existing.currency);
   if (!parsed.ok) return { error: parsed.errors.join(" "), values: echo(formData) };
   const due = parsed.due;
+
+  // Money recorded through Payments stays recorded: a hand edit may not drop the paid amount below what
+  // the (unreversed) receipts settled, nor change the currency or remove the amount they were paid against.
+  const allocated = await prisma.clientPaymentAllocation.aggregate({ where: { dueId, payment: { reversedAt: null } }, _sum: { amount: true } });
+  const allocatedMinor = decimalToMinor(allocated._sum.amount) ?? BigInt(0);
+  if (allocatedMinor > BigInt(0)) {
+    const paidMinor = due.paidAmount === null ? BigInt(0) : toMinor(due.paidAmount)!;
+    if (due.amount === null || due.currency !== existing.currency) {
+      return { error: "Payments are recorded against this invoice, so its amount and currency stay. Reverse the payments first.", values: echo(formData) };
+    }
+    if ((due.status === "UNPAID" || due.status === "PARTIALLY_PAID" || due.status === "PAID") && paidMinor < allocatedMinor) {
+      return { error: `Recorded payments already settled ${formatMinor(allocatedMinor, existing.currency)} of this invoice. To lower it, reverse a payment on Payments & Receipts.`, values: echo(formData) };
+    }
+  }
 
   const before: Record<string, string | null> = {
     dueDate: existing.dueDate.toISOString().slice(0, 10),
