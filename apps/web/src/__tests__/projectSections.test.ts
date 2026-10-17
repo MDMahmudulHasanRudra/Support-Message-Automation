@@ -99,6 +99,7 @@ describe("the catalogue mirrors the sidebar", () => {
     expect(labels.filter((l) => navOrder.includes(l))).toEqual(navOrder);
     expect(labels).toContain("Settings");
     expect(labels).not.toContain("Users & Permissions"); // platform and project administration: never a role's
+    expect(labels).not.toContain("Project Users & Permissions");
   });
 
   it("gives every key a project role may hold through some page, so nothing became impossible to grant", () => {

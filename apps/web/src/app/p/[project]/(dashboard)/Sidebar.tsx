@@ -146,8 +146,14 @@ export const MAIN_ADMIN_LINKS: Array<NavLink & { key: string | null }> = [
   { href: "/admin", label: "Admin Overview", icon: LayoutDashboard, key: null },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban, key: null },
   { href: "/admin/configuration", label: "Configuration", icon: Building2, key: "configuration.view" },
-  { href: "/admin/users", label: "Users & Permissions", icon: ShieldCheck, key: "users.view" },
 ];
+
+/**
+ * The Main Admin Portal's own "Users & Permissions" overview (every login, its employee, role and
+ * projects). In the workspace it heads the Users & Permissions group, beside App Users and Permission
+ * Modules, so all three are in one place under Main Admin.
+ */
+export const ADMIN_USERS_OVERVIEW_LINK: NavLink = { href: "/admin/users", label: "Users & Access Overview", icon: ShieldCheck };
 
 function SectionLabel({ children, collapsed }: { children: string; collapsed: boolean }) {
   if (collapsed) return <div className="mx-2 my-1.5 border-t border-[var(--color-border)]" />;
