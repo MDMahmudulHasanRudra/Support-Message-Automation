@@ -32,7 +32,7 @@ const muted = "text-[color:var(--color-muted-foreground)]";
 
 // ── Photo ───────────────────────────────────────────────────────────────────────────────────────
 
-export function PhotoControl({ client, canEdit }: { client: { id: string; code: string; name: string; companyName: string | null; photoVersion: number | null }; canEdit: boolean }) {
+export function PhotoControl({ client, canEdit, size = "lg" }: { client: { id: string; code: string; name: string; companyName: string | null; photoVersion: number | null }; canEdit: boolean; size?: "lg" | "xl" }) {
   const router = useRouter();
   const { showToast } = useToast();
   const input = useRef<HTMLInputElement>(null);
@@ -53,8 +53,8 @@ export function PhotoControl({ client, canEdit }: { client: { id: string; code: 
     });
   }
   return (
-    <div className="relative">
-      <ClientAvatar id={client.id} code={client.code} name={client.name} companyName={client.companyName} photoVersion={client.photoVersion} size="lg" />
+    <div className="relative shrink-0">
+      <ClientAvatar id={client.id} code={client.code} name={client.name} companyName={client.companyName} photoVersion={client.photoVersion} size={size} />
       {canEdit ? (
         <div className="absolute -bottom-1 -right-1 flex gap-0.5">
           <button type="button" disabled={busy} onClick={() => input.current?.click()} title="Change photo" aria-label="Change photo" className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-[var(--shadow-sm)] hover:bg-[var(--color-neutral-bg)]">
