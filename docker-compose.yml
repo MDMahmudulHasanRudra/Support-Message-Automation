@@ -1,3 +1,12 @@
+# ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+# │ DEPLOYING? RUN THE MIGRATIONS FIRST — see DEPLOY.md.                                         │
+# │                                                                                              │
+# │   docker compose run --rm migrate          # every deploy, before restarting app or worker  │
+# │                                                                                              │
+# │ `docker compose up -d --no-deps app` / `… worker` does NOT run them: --no-deps skips the     │
+# │ `migrate` service `app` depends on. New code on an unmigrated database fails with P2022 and  │
+# │ the worker can stop storing messages.                                                        │
+# └──────────────────────────────────────────────────────────────────────────────────────────────┘
 services:
   postgres:
     image: postgres:16-alpine

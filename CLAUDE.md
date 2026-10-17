@@ -35,6 +35,11 @@ query that touches a recently-changed model starts failing, check `_prisma_migra
 `pnpm db:migrate:deploy`'s own status output) before treating it as a new problem — and don't run
 that deploy against the live DB without the user's explicit go-ahead.
 
+**Every deploy runs the migrations first — `DEPLOY.md` is the checklist.** `docker compose up -d
+--no-deps app|worker` skips the `migrate` service, so `docker compose run --rm migrate` must come
+before it. Happened on 17 Oct 2026: a merge was pulled and built without its two migrations. When
+telling Rudra to deploy, always give the migrate step.
+
 ## Commands
 
 ```bash
