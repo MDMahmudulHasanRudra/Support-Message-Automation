@@ -9,7 +9,8 @@ import { redirect } from "next/navigation";
 import { requireSession, hashPassword } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
-import { privilegeRefusal } from "@/server/privilegeGuard";
+import { privilegeRefusal, userIsPrivileged } from "@/server/privilegeGuard";
+import { isMainAdmin } from "@/server/projectContext";
 import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
 
 const PERMISSION_DENIED_ERROR = "You do not have permission to perform this action.";
@@ -164,4 +165,52 @@ export async function resetUserPassword(id: string, newPassword: string): Promis
   await logSystemEvent("WARN", "users", "PASSWORD_RESET", { actorId: session.userId, targetUserId: id });
   revalidatePath(await projectPath("/users"));
   return {};
+}
+
+/**
+ * Permanently deletes a login. Only a Main Admin may, and never an Administrator-level account — a
+ * user whose role holds a Main Admin or project-administration key — nor themselves. Every lower
+ * user may be deleted.
+ *
+ * What the person did stays: records that pointed at them (rules they made, messages they sent,
+ * payments they recorded…) keep their rows and simply show no name, and the System Log keeps who
+ * was deleted and by whom. Their sessions, project access, project role and personal preferences go
+ * with the login. A user with Google Sheets work history cannot be deleted — the database refuses,
+ * because that history is evidence of hours worked — so they are deactivated instead.
+ */
+export async function deleteUser(id: string, confirmUsername: string): Promise<{ error?: string; ok?: true }> {
+  const session = await requireSession();
+  if (!(await isMainAdmin(session.userId))) return { error: "Only a Main Admin can delete users." };
+  if (id === session.userId) return { error: "You cannot delete your own account." };
+
+  const target = await prisma.user.findUnique({ where: { id }, include: { permissionModule: { select: { name: true } } } });
+  if (!target) return { error: "That user no longer exists." };
+  if (String(confirmUsername ?? "").trim() !== target.username) return { error: `Type the username "${target.username}" exactly to confirm.` };
+  if (await userIsPrivileged(id)) {
+    return { error: `${target.name} is an Administrator (their role gives Main Admin or project-administration access), and an Administrator can never be deleted. Move them to a lower role first if they should go.` };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Sessions cascade with the user; revoking first makes the sign-out explicit in the session log.
+      await tx.userSession.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: "ADMIN_REVOKED" } });
+      await tx.user.delete({ where: { id } });
+    });
+  } catch (err) {
+    if ((err as { code?: string })?.code === "P2003") {
+      return { error: `${target.name} has Google Sheets work history, which is kept as a record of hours worked, so this login cannot be deleted. Deactivate it instead.` };
+    }
+    throw err;
+  }
+
+  await logSystemEvent("WARN", "users", "USER_DELETED", {
+    actorId: session.userId,
+    deletedUserId: id,
+    username: target.username,
+    name: target.name,
+    email: target.email,
+    role: target.permissionModule?.name ?? null,
+  });
+  revalidatePath(await projectPath("/users"));
+  return { ok: true };
 }

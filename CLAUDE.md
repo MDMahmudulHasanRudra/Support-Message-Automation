@@ -1666,7 +1666,8 @@ worth not undoing:
   classified by `attributeOutbound()` (`packages/shared/src/outboundAttribution.ts`). The thread
   ("Rudra · via Primary Account") and the WhatsApp Chat User Activity report
   (`/reports/whatsapp-user-activity`, `messages.view`) both use it. There is no new table or name
-  snapshot: users are never deleted and `username` never changes. Echoes are matched by an exact
+  snapshot: `username` never changes, and a user is deleted only by a Main Admin (App Users → Delete, never an
+  Administrator-level account) — their sends then show without a name, and the System Log keeps who it was. Echoes are matched by an exact
   `providerMessageId` lookup.
 
 **Groups and Personal (8 Oct 2026, `lib/chatConversationType.ts`).** The list holds an account's
