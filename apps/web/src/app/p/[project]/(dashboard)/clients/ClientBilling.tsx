@@ -5,10 +5,11 @@ import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import Link from "@/components/ProjectLink";
 import { Alert, Badge, Button, Field, Input, Select, Textarea, useToast } from "@/components/ui";
 import { createDue, updateDue, type DueFormState } from "@/server/actions/clientBilling";
-import { CLIENT_DUE_STATUSES, CLIENT_DUE_STATUS_LABELS, formatMoney, type ClientDueStatusValue } from "@support-automation/shared";
+import { CLIENT_DUE_STATUSES, CLIENT_DUE_STATUS_LABELS, DUE_KINDS, DUE_KIND_LABELS, formatMoney, type ClientDueStatusValue } from "@support-automation/shared";
 
 export interface DueRowView {
   id: string;
+  invoiceNumber?: string | null;
   dueDate: string;
   amount: string | null;
   currency: string | null;
@@ -29,8 +30,17 @@ export interface DueHistoryView {
 
 const STATUS_COLOR: Record<string, "gray" | "green" | "yellow" | "red"> = { UNPAID: "yellow", PARTIALLY_PAID: "yellow", PAID: "green", WAIVED: "gray", CANCELLED: "gray" };
 
-/** One due's fields. Used for adding and for editing; the action it posts to is the only difference. */
-export function DueForm({ action, initial, currencies, submitLabel, onDone }: { action: (prev: DueFormState, formData: FormData) => Promise<DueFormState>; initial?: DueRowView; currencies: string[]; submitLabel: string; onDone?: () => void }) {
+export interface InvoiceSellers {
+  sellers: Array<{ id: string; name: string; teamName: string | null }>;
+  today: string;
+}
+
+/**
+ * One due's fields. Used for adding and for editing; the action it posts to is the only difference.
+ * A NEW due is an invoice (CLIENTS_V3.md §4): it gets a number, and `invoice` adds what it is for, the
+ * service and the seller from the real roster.
+ */
+export function DueForm({ action, initial, currencies, submitLabel, onDone, invoice }: { action: (prev: DueFormState, formData: FormData) => Promise<DueFormState>; initial?: DueRowView; currencies: string[]; submitLabel: string; onDone?: () => void; invoice?: InvoiceSellers }) {
   const router = useRouter();
   const { showToast } = useToast();
   const [state, formAction, pending] = useActionState<DueFormState, FormData>(action, {});
@@ -77,6 +87,36 @@ export function DueForm({ action, initial, currencies, submitLabel, onDone }: { 
           </Select>
         </Field>
       </div>
+      {invoice && !initial ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <Field label="For">
+            <Select name="kind" defaultValue={v("kind", "SERVICE")}>
+              {DUE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {DUE_KIND_LABELS[k]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Service">
+            <Input name="service" maxLength={120} placeholder="e.g. Tiger IPTV" defaultValue={v("service", "")} />
+          </Field>
+          <Field label="Issued on">
+            <Input type="date" name="issuedDate" defaultValue={v("issuedDate", invoice.today)} />
+          </Field>
+          <Field label="Sold by">
+            <Select name="soldByMemberId" defaultValue={v("soldByMemberId", "")}>
+              <option value="">Not recorded</option>
+              {invoice.sellers.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                  {m.teamName ? ` · ${m.teamName}` : ""}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+      ) : null}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <Field label="Paid so far">
           <Input name="paidAmount" inputMode="decimal" placeholder="Only if part-paid" defaultValue={v("paidAmount", initial?.paidAmount ?? "")} />
@@ -89,7 +129,7 @@ export function DueForm({ action, initial, currencies, submitLabel, onDone }: { 
         <p className="text-xs text-[color:var(--color-muted-foreground)]">
           No currency is listed for this project, so an amount cannot be entered yet. A due can still be saved with a date only. A currency is added on the{" "}
           <Link className="link" href="/clients/dues">
-            Dues page
+            Billing List
           </Link>
           .
         </p>
@@ -114,7 +154,10 @@ function DueRow({ due, currencies, canEdit }: { due: DueRowView; currencies: str
   return (
     <li className="py-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <div className="min-w-32 text-sm font-medium">{due.dueDate}</div>
+        <div className="min-w-32 text-sm font-medium">
+          {due.dueDate}
+          {due.invoiceNumber ? <div className="text-xs font-normal text-[color:var(--color-muted-foreground)]">{due.invoiceNumber}</div> : null}
+        </div>
         <div className="min-w-0 flex-1 text-sm">
           {formatMoney(due.amount, due.currency)}
           {due.paidAmount ? <span className="text-[color:var(--color-muted-foreground)]"> · paid {formatMoney(due.paidAmount, due.currency)}</span> : null}
@@ -140,7 +183,7 @@ function DueRow({ due, currencies, canEdit }: { due: DueRowView; currencies: str
 }
 
 /** A client's manual dues. Shown only to someone with `clients.view_billing`; editing needs `clients.edit_billing`. */
-export function BillingPanel({ clientId, dues, history, currencies, summaryText, canEdit, archived }: { clientId: string; dues: DueRowView[]; history: DueHistoryView[]; currencies: string[]; summaryText: string; canEdit: boolean; archived: boolean }) {
+export function BillingPanel({ clientId, dues, history, currencies, summaryText, canEdit, archived, invoice }: { clientId: string; dues: DueRowView[]; history: DueHistoryView[]; currencies: string[]; summaryText: string; canEdit: boolean; archived: boolean; invoice?: InvoiceSellers }) {
   const editable = canEdit && !archived;
   return (
     <div className="space-y-4">
@@ -156,8 +199,8 @@ export function BillingPanel({ clientId, dues, history, currencies, summaryText,
       </ul>
       {editable ? (
         <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] p-4">
-          <p className="mb-3 text-sm font-medium">Add a due</p>
-          <DueForm action={createDue.bind(null, clientId)} currencies={currencies} submitLabel="Add due" />
+          <p className="mb-3 text-sm font-medium">Raise an invoice</p>
+          <DueForm action={createDue.bind(null, clientId)} currencies={currencies} submitLabel="Add invoice" invoice={invoice} />
         </div>
       ) : null}
       {history.length > 0 ? (

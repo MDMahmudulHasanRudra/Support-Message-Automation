@@ -26,7 +26,7 @@ import {
   type ClientSourceValue,
   type SubscriptionKind,
 } from "@support-automation/shared";
-import { countryFlag, countryName } from "@/lib/clientPhone";
+import { countryName } from "@/lib/clientPhone";
 import { expiryTextClass, formatDay, groupChatHref, money, SUBSCRIPTION_TONE } from "@/lib/clientDisplay";
 import { ClientAvatar } from "./ClientAvatar";
 
@@ -67,7 +67,7 @@ function cell(key: string, c: ClientTableRow, caps: RegisterCaps): ReactNode {
       return c.country ? (
         <>
           <div className="whitespace-nowrap font-medium">
-            {countryFlag(c.country)} {countryName(c.country)}
+            {countryName(c.country)}
           </div>
           <Sub>{c.preferredCurrency ?? "No currency set"}</Sub>
         </>
@@ -554,7 +554,7 @@ export function ClientsTable({
                 {c.subscriptionState !== "NONE" ? <Badge color={SUBSCRIPTION_TONE[c.subscriptionState]}>{SUBSCRIPTION_STATE_LABELS[c.subscriptionState]}</Badge> : null}
               </div>
               <p className={`mt-2 truncate text-xs ${muted}`}>
-                {[c.country ? `${countryFlag(c.country)} ${countryName(c.country)}` : null, p?.value].filter(Boolean).join(" · ") || "No country or number yet"}
+                {[c.country ? (countryName(c.country) ?? c.country) : null, p?.value].filter(Boolean).join(" · ") || "No country or number yet"}
               </p>
               <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2.5 rounded-[var(--radius-md)] bg-[var(--color-surface-sunken)] p-3 text-[13px]">
                 <div>

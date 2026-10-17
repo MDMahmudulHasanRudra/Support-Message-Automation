@@ -23,7 +23,7 @@ import {
   type ClientChannelKindValue,
   type ClientRequirableField,
 } from "@support-automation/shared";
-import { countryFlag, countryName, countryOptions, readPhone, suggestedCurrency } from "@/lib/clientPhone";
+import { countryName, countryOptions, readPhone, suggestedCurrency } from "@/lib/clientPhone";
 import { formatDay } from "@/lib/clientDisplay";
 import { shrinkPicture } from "@/lib/clientPhotoResize";
 
@@ -353,7 +353,7 @@ export function ClientForm({
               <option value="">Not set</option>
               {countries.map((c) => (
                 <option key={c.code} value={c.code}>
-                  {countryFlag(c.code)} {c.name} (+{c.callingCode})
+                  {c.name} (+{c.callingCode})
                 </option>
               ))}
             </Select>
@@ -575,6 +575,7 @@ export function ClientForm({
             footer={
               <div className="flex justify-end gap-2">
                 <Button
+                  type="button"
                   variant="secondary"
                   onClick={() => {
                     setConfirmOpen(false);
@@ -584,6 +585,7 @@ export function ClientForm({
                   Cancel
                 </Button>
                 <Button
+                  type="button"
                   onClick={() => {
                     setConfirmed(true);
                     setConfirmOpen(false);

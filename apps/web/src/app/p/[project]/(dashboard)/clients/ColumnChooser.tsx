@@ -62,6 +62,7 @@ export function ColumnChooser({ list, available, selected }: { list: "clients" |
   return (
     <>
       <Button
+        type="button"
         variant="secondary"
         size="sm"
         onClick={() => {
@@ -78,14 +79,14 @@ export function ColumnChooser({ list, available, selected }: { list: "clients" |
         description="Choose what you see and in which order. Saved for you only, in this project."
         footer={
           <div className="flex w-full flex-wrap items-center justify-between gap-2">
-            <Button variant="ghost" size="sm" onClick={reset} disabled={busy}>
+            <Button type="button" variant="ghost" size="sm" onClick={reset} disabled={busy}>
               <RotateCcw className="size-3.5" aria-hidden /> Reset to default
             </Button>
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => setOpen(false)} disabled={busy}>
+              <Button type="button" variant="secondary" onClick={() => setOpen(false)} disabled={busy}>
                 Cancel
               </Button>
-              <Button onClick={save} loading={busy}>
+              <Button type="button" onClick={save} loading={busy}>
                 Save columns
               </Button>
             </div>

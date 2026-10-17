@@ -1,5 +1,9 @@
 # Client Management (CLIENT_CENTER)
 
+> **Clients V3 (subscriptions, invoices, payments, WhatsApp group links, photos, the 360° register and the
+> Client Module settings) is documented in `CLIENTS_V3.md`.** This file still describes records, dues, personal chat
+> links and email.
+
 One client database for a project, whatever channel the client uses. **Phases 2 and 3 are built**
 (records, CRUD, duplicates, list, details, import/export, timeline, per-channel consent data).
 Phases 4–8 (sending, campaigns, reminders, notices, tasks, dashboard) are **not** — see "Not built".

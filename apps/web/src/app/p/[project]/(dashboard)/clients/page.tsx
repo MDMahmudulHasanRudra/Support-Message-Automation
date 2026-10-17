@@ -99,12 +99,12 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
           <>
             {canImport ? (
               <ButtonLink href="/clients/import" variant="secondary" size="md">
-                <Upload className="size-4" aria-hidden /> Import clients
+                <Upload className="size-4" aria-hidden /> <span className="max-sm:sr-only">Import clients</span>
               </ButtonLink>
             ) : null}
             {canExport ? (
               <ButtonLink href={`/api/clients/export${clientQueryString(filters, { format: "xlsx" })}`} variant="secondary" size="md" download>
-                Export {data.total.toLocaleString()}
+                Export <span className="max-sm:sr-only">{data.total.toLocaleString()}</span>
               </ButtonLink>
             ) : null}
             {caps.canCreate ? (

@@ -217,7 +217,7 @@ function AddTermForm({ clientId, roster, today, currencies, preferredCurrency, c
   );
 }
 
-function RenewDialog({ term, roster, today, currencies, preferredCurrency, canInvoice, onClose }: { term: SubscriptionView; roster: RosterMember[]; today: string; currencies: string[]; preferredCurrency: string | null; canInvoice: boolean; onClose: () => void }) {
+export function RenewDialog({ term, roster, today, currencies, preferredCurrency, canInvoice, onClose }: { term: Pick<SubscriptionView, "id" | "service" | "kind" | "endDate" | "durationValue" | "durationUnit" | "soldByMemberId">; roster: RosterMember[]; today: string; currencies: string[]; preferredCurrency: string | null; canInvoice: boolean; onClose: () => void }) {
   const [state, action, pending] = useActionState<SubscriptionFormState, FormData>(renewSubscription.bind(null, term.id), {});
   useFormResult(state, onClose);
   const start = renewalStartDate(term.endDate, today);
@@ -226,7 +226,7 @@ function RenewDialog({ term, roster, today, currencies, preferredCurrency, canIn
       <form action={action} className="space-y-3">
         {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
         <TermFields today={today} defaults={{ service: term.service, kind: term.kind === "TRIAL" || term.kind === "DEMO" ? "PAID" : term.kind, startDate: start, durationValue: String(term.durationValue ?? 1), durationUnit: term.durationUnit ?? "MONTH" }} />
-        <SellerField roster={roster} />
+        <SellerField roster={roster} defaultValue={term.soldByMemberId} />
         {canInvoice ? <InvoiceFields currencies={currencies} preferred={preferredCurrency} today={today} /> : null}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -304,7 +304,7 @@ export function SubscriptionsPanel({
               </div>
               <Badge color={SUBSCRIPTION_TONE[t.state]}>{SUBSCRIPTION_STATE_LABELS[t.state]}</Badge>
             </div>
-            {editable && t.state !== "CANCELLED" ? (
+            {editable && t.state !== "CANCELLED" && (t.isCurrent || t.state !== "EXPIRED") ? (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <Button size="sm" variant="secondary" onClick={() => setRenewing(t)} disabled={busy}>
                   <RefreshCw className="size-3.5" aria-hidden /> Renew

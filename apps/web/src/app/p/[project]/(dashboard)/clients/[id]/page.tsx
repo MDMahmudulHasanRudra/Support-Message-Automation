@@ -12,7 +12,7 @@ import { clientDisplayName, CLIENT_SOURCE_LABELS, CLIENT_STATUS_LABELS, describe
 import { clientViewerCaps } from "@/server/clientModule";
 import { getClient360 } from "@/server/client360";
 import { loadClientFormContext } from "@/server/clientFormContext";
-import { countryFlag, countryName } from "@/lib/clientPhone";
+import { countryName } from "@/lib/clientPhone";
 import { expiryTextClass, formatDay, money, SUBSCRIPTION_TONE } from "@/lib/clientDisplay";
 import { ClientPaymentsPanel, GroupLinksPanel, PhotoControl, SubscriptionsPanel } from "../Client360Panels";
 import { ClientForm } from "../ClientForm";
@@ -52,7 +52,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const activeGroups = view.groupLinks.filter((l) => !l.unlinkedAt);
   const seller = view.current?.soldBy ?? client.soldByMember?.name ?? null;
   const facts: Array<[string, string, string | null]> = [
-    ["Country", client.country ? `${countryFlag(client.country)} ${countryName(client.country)}` : "Not set", client.preferredCurrency ? `Prefers ${client.preferredCurrency}` : null],
+    ["Country", client.country ? (countryName(client.country) ?? client.country) : "Not set", client.preferredCurrency ? `Prefers ${client.preferredCurrency}` : null],
     ["Phone & WhatsApp", phone?.value ?? "No number", chatLinks.length ? "WhatsApp chat linked" : null],
   ];
   if (caps.subscriptions) facts.push(["Current plan", view.current?.service ?? "None", view.current ? `${formatDay(view.current.endDate)} · ${view.current.expiryText}` : null]);
@@ -114,53 +114,6 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
-          <Card className="p-6">
-            <SectionHeader title="Overview" />
-            {canManage && !archived ? (
-              <ClientForm
-                mode="edit"
-                clientId={client.id}
-                options={options}
-                context={formContext}
-                values={{
-                  name: client.name,
-                  code: client.code,
-                  companyName: client.companyName ?? "",
-                  status: client.status,
-                  category: client.category ?? "",
-                  tags: client.tags.join(", "),
-                  preferredChannel: client.preferredChannel ?? "",
-                  preferredLanguage: client.preferredLanguage ?? "",
-                  address: client.address ?? "",
-                  businessDetails: client.businessDetails ?? "",
-                  followUpInstructions: client.followUpInstructions ?? "",
-                  assignedMemberId: client.assignedMemberId ?? "",
-                  assignedTeamId: client.assignedTeamId ?? "",
-                  country: client.country ?? "",
-                  preferredCurrency: client.preferredCurrency ?? "",
-                  soldByMemberId: client.soldByMemberId ?? "",
-                }}
-              />
-            ) : (
-              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-                {[
-                  ["Category", client.category],
-                  ["Tags", client.tags.join(", ")],
-                  ["Assigned staff", client.assignedMember?.name],
-                  ["Assigned team", client.assignedTeam?.name],
-                  ["Preferred language", client.preferredLanguage],
-                  ["Address", client.address],
-                  ["Business details", client.businessDetails],
-                  ["Follow-up instructions", client.followUpInstructions],
-                ].map(([label, value]) => (
-                  <div key={label as string}>
-                    <dt className="text-xs text-[color:var(--color-muted-foreground)]">{label}</dt>
-                    <dd className="whitespace-pre-wrap">{value || "—"}</dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-          </Card>
 
           {caps.subscriptions ? (
             <div id="subscriptions" className="scroll-mt-24">
@@ -242,6 +195,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                 summaryText={summaryText}
                 currencies={billing.currencies.filter((c) => c.enabled).map((c) => c.code)}
                 dues={billing.dues}
+                invoice={{ sellers: options.roster.filter((m) => m.active).map((m) => ({ id: m.id, name: m.name, teamName: m.teamName })), today: view.today }}
                 history={billing.history.map((h) => ({ id: h.id, dueId: h.dueId, type: h.type, summary: describeDueEvent(h.type, h.changes, dueDateById.get(h.dueId) ?? null), actor: h.actor, at: formatDateTime(h.at) }))}
               />
             ) : (
@@ -255,6 +209,58 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               <ClientPaymentsPanel client={{ name: clientDisplayName(client.name, client.companyName), code: client.code }} openInvoices={view.openInvoices} payments={view.payments} canRecord={caps.canRecordPayments && !archived} today={view.today} />
             </Card>
           ) : null}
+
+          <Card className="p-6">
+            <SectionHeader title="Client details" />
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                {[
+                  ["Category", client.category],
+                  ["Tags", client.tags.join(", ")],
+                  ["Assigned staff", client.assignedMember?.name],
+                  ["Assigned team", client.assignedTeam?.name],
+                  ["Preferred language", client.preferredLanguage],
+                  ["Address", client.address],
+                  ["Business details", client.businessDetails],
+                  ["Follow-up instructions", client.followUpInstructions],
+                ].map(([label, value]) => (
+                  <div key={label as string}>
+                    <dt className="text-xs text-[color:var(--color-muted-foreground)]">{label}</dt>
+                    <dd className="whitespace-pre-wrap">{value || "—"}</dd>
+                  </div>
+                ))}
+              </dl>
+            {canManage && !archived ? (
+              <details className="mt-5 rounded-[var(--radius-lg)] border border-[var(--color-border)] p-4 open:pb-0">
+                <summary className="cursor-pointer text-sm font-medium">Edit client details</summary>
+                <div className="mt-4">
+              <ClientForm
+                mode="edit"
+                clientId={client.id}
+                options={options}
+                context={formContext}
+                values={{
+                  name: client.name,
+                  code: client.code,
+                  companyName: client.companyName ?? "",
+                  status: client.status,
+                  category: client.category ?? "",
+                  tags: client.tags.join(", "),
+                  preferredChannel: client.preferredChannel ?? "",
+                  preferredLanguage: client.preferredLanguage ?? "",
+                  address: client.address ?? "",
+                  businessDetails: client.businessDetails ?? "",
+                  followUpInstructions: client.followUpInstructions ?? "",
+                  assignedMemberId: client.assignedMemberId ?? "",
+                  assignedTeamId: client.assignedTeamId ?? "",
+                  country: client.country ?? "",
+                  preferredCurrency: client.preferredCurrency ?? "",
+                  soldByMemberId: client.soldByMemberId ?? "",
+                }}
+              />
+                </div>
+              </details>
+            ) : null}
+          </Card>
 
           <Card className="p-6">
             <SectionHeader title="Internal notes" />

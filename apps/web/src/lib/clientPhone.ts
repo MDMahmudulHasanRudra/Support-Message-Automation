@@ -70,12 +70,6 @@ export function countryName(code: string | null | undefined): string | null {
   }
 }
 
-/** 🇧🇩 from "BD": regional indicator letters, no image. */
-export function countryFlag(code: string | null | undefined): string {
-  if (!code || !/^[A-Z]{2}$/.test(code)) return "";
-  return String.fromCodePoint(...[...code].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
-}
-
 export interface CountryOption {
   code: string;
   name: string;

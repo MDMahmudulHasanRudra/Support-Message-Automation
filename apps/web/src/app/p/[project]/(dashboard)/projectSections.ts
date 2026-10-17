@@ -182,7 +182,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/team-management/settings": { fullOnly: true, read: ["team_management.view"] },
   "/settings/channels": { write: ["channels.manage"] },
   "/settings/email": { fullOnly: true },
-  "/settings/clients": { write: ["clients.manage_settings"] },
+  "/settings/clients": { fullOnly: true },
   "/settings/google-sheets": { write: ["google_sheets.manage"], also: ["/api/google-sheets/connect"] },
 };
 

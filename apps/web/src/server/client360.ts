@@ -33,6 +33,7 @@ export interface SubscriptionView {
   isRenewal: boolean;
   isCurrent: boolean;
   soldBy: string | null;
+  soldByMemberId: string | null;
   soldByTeam: string | null;
   note: string | null;
   cancelReason: string | null;
@@ -113,6 +114,7 @@ export async function getClient360(clientId: string, caps: ClientViewerCaps) {
       isRenewal: t.isRenewal,
       isCurrent: t.id === currentId,
       soldBy: t.soldByMember?.name ?? t.soldByName,
+      soldByMemberId: t.soldByMemberId,
       soldByTeam: t.soldByTeamName,
       note: t.note,
       cancelReason: t.cancelReason,

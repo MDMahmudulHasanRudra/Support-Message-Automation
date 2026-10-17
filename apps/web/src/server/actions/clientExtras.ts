@@ -127,3 +127,39 @@ export async function resetListColumns(list: string): Promise<SimpleResult> {
   await prisma.listViewPreference.deleteMany({ where: { userId: granted.session.userId, listKey: list } });
   return { ok: true, message: "Back to the default columns." };
 }
+
+// ── Picking a client for a new bill ─────────────────────────────────────────────────────────────
+
+export interface ClientBrief {
+  id: string;
+  code: string;
+  name: string;
+  companyName: string | null;
+  preferredCurrency: string | null;
+}
+
+/** Up to 15 current clients by name, code, company or number, for the Billing List's "Create bill". Refuses as an empty list. */
+export async function searchClientsBrief(query: string): Promise<ClientBrief[]> {
+  const granted = await checkPermission("clients.edit_billing");
+  if ("denied" in granted) return [];
+  const q = String(query ?? "").trim().slice(0, 80);
+  const digits = q.replace(/\D/g, "");
+  return prisma.client.findMany({
+    where: {
+      status: { not: "ARCHIVED" },
+      ...(q
+        ? {
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { code: { contains: q, mode: "insensitive" } },
+              { companyName: { contains: q, mode: "insensitive" } },
+              ...(digits.length >= 5 ? [{ channels: { some: { normalizedValue: { contains: digits } } } }] : []),
+            ],
+          }
+        : {}),
+    },
+    select: { id: true, code: true, name: true, companyName: true, preferredCurrency: true },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+    take: 15,
+  });
+}

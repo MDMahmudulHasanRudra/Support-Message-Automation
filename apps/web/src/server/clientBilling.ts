@@ -10,6 +10,7 @@ import { prisma } from "@/server/db";
 
 export interface DueView {
   id: string;
+  invoiceNumber: string | null;
   clientId: string;
   /** `YYYY-MM-DD`, a Dhaka calendar day. */
   dueDate: string;
@@ -48,10 +49,11 @@ export function describeDueEvent(type: string, changes: DueEventView["changes"],
   return `Changed ${fields.join(", ") || "nothing"}${on}`;
 }
 
-export function toDueView(row: { id: string; clientId: string; dueDate: Date; amount: Prisma.Decimal | null; currency: string | null; status: string; paidAmount: Prisma.Decimal | null; note: string | null; updatedAt: Date }, today: string): DueView {
+export function toDueView(row: { id: string; invoiceNumber?: string | null; clientId: string; dueDate: Date; amount: Prisma.Decimal | null; currency: string | null; status: string; paidAmount: Prisma.Decimal | null; note: string | null; updatedAt: Date }, today: string): DueView {
   const dueDate = day(row.dueDate);
   return {
     id: row.id,
+    invoiceNumber: row.invoiceNumber ?? null,
     clientId: row.clientId,
     dueDate,
     amount: money(row.amount),
