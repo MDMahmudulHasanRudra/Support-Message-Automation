@@ -12,7 +12,7 @@ import type { Session } from "@/server/auth";
  *   - an ARCHIVED client refuses notes, channels, consent and removals at the server;
  *   - another project's channel cannot be reached by id, and the DATABASE (not only the scoped
  *     client) refuses every cross-project reference and any move of a client to another project;
- *   - permanent deletion removes only that client's own rows, and never a client restored first;
+ *   - permanent deletion is a Main Admin's alone, and removes only the chosen client's own rows;
  *   - a spreadsheet is read only up to the row limit, a small file holding a huge amount of text or
  *     a very wide sheet is refused, and a malformed file is a message, not an error page;
  *   - the export and the import refuse in a project whose Client Management feature is off.
@@ -41,6 +41,7 @@ let A: Project;
 let B: Project;
 let Off: Project;
 let admin: Session;
+let mainAdmin: Session;
 
 async function role(name: string, keys: string[]) {
   const permissions = await Promise.all(
@@ -53,8 +54,8 @@ async function role(name: string, keys: string[]) {
   ids.roles.push(r.id);
   return r.id;
 }
-const as = <T,>(project: Project, fn: () => Promise<T>) => {
-  current = admin;
+const as = <T,>(project: Project, fn: () => Promise<T>, person: Session = admin) => {
+  current = person;
   return runWithProject(project, fn);
 };
 const form = (fields: Record<string, string>) => {
@@ -75,14 +76,17 @@ const xlsx = (rows: unknown[][]) => {
 };
 
 beforeAll(async () => {
-  const everything = ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export", "messages.view"];
+  const everything = ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.import", "clients.export", "messages.view"];
   const u = await rawPrisma.user.create({ data: { username: `val_${tag}`, email: `val.${tag}@example.test`, name: "Validator", passwordHash: "x", permissionModuleId: await role("CV admin", everything) } });
   ids.users.push(u.id);
   admin = { userId: u.id, username: u.username, email: u.email!, name: "Validator" } as Session;
+  const m = await rawPrisma.user.create({ data: { username: `valmain_${tag}`, email: `valmain.${tag}@example.test`, name: "Main", passwordHash: "x", permissionModuleId: await role("CV main", ["clients.view", "projects.view", "projects.manage"]) } });
+  ids.users.push(m.id);
+  mainAdmin = { userId: m.id, username: m.username, email: m.email!, name: "Main" } as Session;
   const make = async (name: string, enabled: boolean) => {
     const p = await createProjectWithDefaults({ name: `${name} ${tag}`, slug: `${name.toLowerCase()}-${tag}`, status: "ACTIVE", creatorUserId: u.id }, rawPrisma);
     ids.projects.push(p.id);
-    await rawPrisma.projectAccess.createMany({ data: [{ projectId: p.id, userId: u.id }], skipDuplicates: true });
+    await rawPrisma.projectAccess.createMany({ data: [{ projectId: p.id, userId: u.id }, { projectId: p.id, userId: m.id }], skipDuplicates: true });
     if (enabled) await rawPrisma.projectFeature.upsert({ where: { projectId_key: { projectId: p.id, key: "CLIENT_CENTER" } }, create: { projectId: p.id, key: "CLIENT_CENTER", enabled: true }, update: { enabled: true } });
     return { id: p.id, slug: p.slug, name: `${name} ${tag}`, status: "ACTIVE" as const };
   };
@@ -142,13 +146,14 @@ describe("archived clients and cross-project references", () => {
 });
 
 describe("permanent deletion", () => {
-  it("removes only that client's own rows, never a client restored first, and leaves import history alone", async () => {
+  it("is a Main Admin's alone, removes only the chosen client's own rows, and leaves import history alone", async () => {
     const keep = (await create(A, { name: "Keep Me", phone: "+8801766000003" })).clientId!;
     const gone = (await create(A, { name: "Delete Me", phone: "+8801766000004" })).clientId!;
-    await as(A, () => actions.archiveClients([keep, gone]));
-    await as(A, () => actions.restoreClients([keep])); // restored: no longer eligible
-    const result = await as(A, () => actions.deleteClients([keep, gone]));
-    expect(result.message).toMatch(/1 permanently deleted, 1 skipped/);
+    // Without the delete permission the request is refused and nothing goes.
+    expect((await as(A, () => actions.deleteClients([gone]))).message).toMatch(/Only an Administrator/);
+    expect(await rawPrisma.client.count({ where: { id: gone } })).toBe(1);
+    const result = await as(A, () => actions.deleteClients([gone]), mainAdmin);
+    expect(result.message).toMatch(/1 client\(s\) permanently deleted/);
     expect(await rawPrisma.client.count({ where: { id: keep } })).toBe(1);
     expect(await rawPrisma.clientChannel.count({ where: { clientId: keep } })).toBe(1);
     expect(await rawPrisma.clientActivity.count({ where: { clientId: keep } })).toBeGreaterThan(0);
@@ -156,8 +161,8 @@ describe("permanent deletion", () => {
     expect(await rawPrisma.clientChannel.count({ where: { clientId: gone } })).toBe(0);
 
     const job = await rawPrisma.clientImportJob.create({ data: { projectId: A.id, fileName: "history.csv", fileType: "csv", status: "COMPLETED", importedCount: 2 } });
-    await as(A, () => actions.archiveClients([keep]));
-    await as(A, () => actions.deleteClients([keep]));
+    await as(A, () => actions.deleteClients([keep]), mainAdmin);
+    expect(await rawPrisma.client.count({ where: { id: keep } })).toBe(0);
     expect(await rawPrisma.clientImportJob.findUnique({ where: { id: job.id } })).toMatchObject({ fileName: "history.csv", importedCount: 2 });
   });
 });

@@ -1,4 +1,4 @@
-import { MAIN_ADMIN_CATEGORY, PERMISSIONS, PROJECT_ADMIN_CATEGORY, type PermissionDefinition } from "./permissions.js";
+import { ADMIN_GRANTED_KEYS, MAIN_ADMIN_CATEGORY, PERMISSIONS, PROJECT_ADMIN_CATEGORY, type PermissionDefinition } from "./permissions.js";
 
 /**
  * Two-level permissions (PROJECT_ROLES.md): what a user may do INSIDE one project.
@@ -25,7 +25,7 @@ import { MAIN_ADMIN_CATEGORY, PERMISSIONS, PROJECT_ADMIN_CATEGORY, type Permissi
 /** Categories whose keys are the platform's, never a project's to grant. */
 const PLATFORM_ONLY_CATEGORIES: ReadonlySet<string> = new Set([MAIN_ADMIN_CATEGORY, "Users & Permissions", PROJECT_ADMIN_CATEGORY]);
 /** Single keys that are platform content although their category is not (release notes are one changelog for everybody). */
-const PLATFORM_ONLY_KEYS: ReadonlySet<string> = new Set(["release_notes.manage"]);
+const PLATFORM_ONLY_KEYS: ReadonlySet<string> = new Set(["release_notes.manage", ...ADMIN_GRANTED_KEYS]);
 
 const KNOWN: ReadonlyMap<string, PermissionDefinition> = new Map(PERMISSIONS.map((p) => [p.key, p]));
 

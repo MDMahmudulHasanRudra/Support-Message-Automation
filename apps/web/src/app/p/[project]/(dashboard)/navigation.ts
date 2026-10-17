@@ -497,12 +497,20 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Logins and roles of the whole installation — the same in every project. In the Main Admin
+    // Workspace this group sits under Main Admin → Users & Permissions (DashboardShell), not here.
     label: "Users & Permissions",
     icon: ShieldCheck,
     links: [
       { href: "/users", label: "App Users", icon: UserCog },
       { href: "/permissions", label: "Permission Modules", icon: ShieldCheck },
-      // This project's own administration (PROJECT_ROLES.md): its Lead's pages, and a Main Admin's.
+    ],
+  },
+  {
+    // This project's own administration (PROJECT_ROLES.md): its Lead's pages, and a Main Admin's.
+    label: "Project Users & Permissions",
+    icon: UsersRound,
+    links: [
       { href: "/project-members", label: "Project Members", icon: UsersRound },
       { href: "/project-roles", label: "Project Roles", icon: KeyRound },
     ],

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
 import { computeImportPreview, type RawImportRow } from "@/server/clientImport";
+import { importOptionsFor } from "@/server/clientImportExtras";
 import { formatDateTime } from "@/lib/date";
 import Link from "@/components/ProjectLink";
 import { Alert, Badge, Card, PageHeader, ProgressBar, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
@@ -14,7 +15,7 @@ function isStale(startedAt: Date | null): boolean {
 }
 
 export default async function ClientImportJobPage({ params }: { params: Promise<{ jobId: string }> }) {
-  await requireAccess("clients.import");
+  const session = await requireAccess("clients.import");
   const { jobId } = await params;
   const job = await prisma.clientImportJob.findFirst({ where: { id: jobId }, include: { createdBy: { select: { name: true } } } });
   if (!job) notFound();
@@ -34,7 +35,7 @@ export default async function ClientImportJobPage({ params }: { params: Promise<
   if (job.status === "PREVIEW") {
     const rows = job.rows as unknown as RawImportRow[];
     const mapping = job.mapping as ClientImportMapping;
-    const preview = await computeImportPreview(rows, mapping);
+    const preview = await computeImportPreview(rows, mapping, await importOptionsFor(session));
     const headers = Object.keys(rows[0] ?? {});
     return (
       <div className="space-y-6">
@@ -47,6 +48,13 @@ export default async function ClientImportJobPage({ params }: { params: Promise<
           <StatTile label="Invalid" value={preview.invalidCount.toLocaleString()} tone={preview.invalidCount ? "danger" : "neutral"} />
         </div>
         {preview.missingRequired.length ? <Alert tone="warning">Map a column to {preview.missingRequired.join(", ")} before importing.</Alert> : null}
+        {preview.subscriptionRows > 0 ? (
+          preview.subscriptionsImported ? (
+            <Alert tone="info">{preview.subscriptionRows.toLocaleString()} row(s) also carry a subscription; each is added to its client (a term the client already has is not added twice).</Alert>
+          ) : (
+            <Alert tone="warning">{preview.subscriptionRows.toLocaleString()} row(s) carry a subscription, which will NOT be imported: that needs the “Sell, Renew and Cancel Client Subscriptions” permission and Subscriptions switched on. The clients themselves are imported.</Alert>
+          )
+        ) : null}
 
         <Card className="p-6">
           <ImportReview

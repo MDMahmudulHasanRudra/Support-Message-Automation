@@ -59,7 +59,7 @@ async function user(name: string, roleId: string): Promise<Session> {
   ids.users.push(u.id);
   return { userId: u.id, username: u.username, email: u.email!, name } as Session;
 }
-const people = {} as Record<"manager" | "editor" | "viewer" | "outsider", Session>;
+const people = {} as Record<"manager" | "editor" | "viewer" | "outsider" | "mainAdmin", Session>;
 const as = <T,>(person: Session, project: Project, fn: () => Promise<T>) => {
   current = person;
   return runWithProject(project, fn);
@@ -78,6 +78,8 @@ beforeAll(async () => {
   people.editor = await user("Editor", await role("CL editor", ["clients.view", "clients.create", "clients.update", "messages.view"]));
   people.viewer = await user("Viewer", await role("CL viewer", ["clients.view", "messages.view"]));
   people.outsider = await user("Outsider", await role("CL outsider", ["messages.view"]));
+  // Deleting clients is a Main Admin's alone (17 Oct 2026): the role that enters every project.
+  people.mainAdmin = await user("MainAdmin", await role("CL main admin", [...everything, "projects.view", "projects.manage"]));
   const make = async (name: string, withFeature: boolean) => {
     const p = await createProjectWithDefaults({ name: `${name} ${tag}`, slug: `${name.toLowerCase()}-${tag}`, status: "ACTIVE", creatorUserId: people.manager.userId }, rawPrisma);
     ids.projects.push(p.id);
@@ -263,11 +265,12 @@ describe("4. project isolation", () => {
 });
 
 describe("5. archive, restore, delete, notes, channels, consent", () => {
-  it("archives without losing anything, restores the previous status, and deletes only archived clients", async () => {
+  it("archives without losing anything, restores the previous status, and lets only an Administrator, or a role given the delete permission, delete", async () => {
     const id = idOf(await create(people.manager, A, { name: "Life Cycle", status: "PENDING", phone: "+8801744444444" }));
     await as(people.manager, A, () => actions.addClientNote(id, {}, form({ body: "secret internal note" })));
 
-    expect((await as(people.manager, A, () => actions.deleteClients([id]))).message).toMatch(/Only archived/);
+    // Without the delete permission (an Administrator gives it), deleting is refused.
+    expect((await as(people.editor, A, () => actions.deleteClients([id]))).message).toMatch(/Only an Administrator/);
     expect((await as(people.manager, A, () => actions.archiveClients([id]))).ok).toBe(true);
     let row = await rawPrisma.client.findUniqueOrThrow({ where: { id }, include: { channels: true, notes: true } });
     expect(row).toMatchObject({ status: "ARCHIVED" });
@@ -284,8 +287,7 @@ describe("5. archive, restore, delete, notes, channels, consent", () => {
     row = await rawPrisma.client.findUniqueOrThrow({ where: { id }, include: { channels: true, notes: true } });
     expect(row).toMatchObject({ status: "PENDING", archivedAt: null });
 
-    await as(people.manager, A, () => actions.archiveClients([id]));
-    const gone = await as(people.manager, A, () => actions.deleteClients([id]));
+    const gone = await as(people.mainAdmin, A, () => actions.deleteClients([id]));
     expect(gone.ok).toBe(true);
     expect(await rawPrisma.client.count({ where: { id } })).toBe(0);
     expect(await rawPrisma.clientChannel.count({ where: { clientId: id } })).toBe(0);

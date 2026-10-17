@@ -25,7 +25,7 @@ import {
 } from "./navigation";
 import { SubNavTabs } from "./SubNavTabs";
 import { SettingsNav } from "./SettingsNav";
-import { MAIN_ADMIN_LINKS, Sidebar } from "./Sidebar";
+import { ADMIN_USERS_OVERVIEW_LINK, MAIN_ADMIN_LINKS, Sidebar } from "./Sidebar";
 import type { SwitcherProject } from "@/components/ProjectSwitcher";
 import { Alert } from "@/components/ui";
 import { pathAllowedByFeatures } from "@support-automation/shared";
@@ -231,8 +231,12 @@ export function DashboardShell({
         workspace={
           inWorkspace
             ? {
-                // Users & Permissions is the Main Admin's own page there; Release Notes stays a global module.
-                globalGroups: globalGroups.filter((g) => g.label !== "Users & Permissions"),
+                // Users & Permissions (App Users, Permission Modules) sits under Main Admin with the portal's
+                // own overview first, so every login and role is managed from one group; Release Notes
+                // stays a global module. Project Members / Project Roles stay in the workspace below.
+                globalGroups: globalGroups.map((g) =>
+                  g.label === "Users & Permissions" && granted.has("users.view") ? { ...g, links: [ADMIN_USERS_OVERVIEW_LINK, ...g.links] } : g,
+                ),
                 mainAdminLinks: MAIN_ADMIN_LINKS.filter((l) => l.key === null || granted.has(l.key)).map(({ href, label, icon }) => ({ href, label, icon })),
               }
             : null

@@ -29,7 +29,8 @@ import { isUniqueViolation } from "@/lib/prismaErrors";
 import { buildClientWhere, clientOrderBy, MAX_CLIENT_BULK, parseClientFilters } from "@/lib/clientFilters";
 import { isCountryCode, readPhone } from "@/lib/clientPhone";
 import { hasPermission } from "@/server/permissions";
-import { clientFilterContext, getClientModuleSettings } from "@/server/clientModule";
+import { canDeleteClientRecords, clientFilterContext, getClientModuleSettings } from "@/server/clientModule";
+import { DELETE_REFUSED } from "@/lib/clientDeleteRule";
 import { checkAssignment, sellerSnapshot } from "@/server/clientSubscriptionStore";
 import { saveClientPhoto } from "@/server/clientPhotoStore";
 import {
@@ -599,23 +600,110 @@ export async function restoreClients(ids: string[]): Promise<BulkClientResult> {
   return { ok: true, message: `${rows.length} restored.` };
 }
 
-/** Permanent deletion. Only ARCHIVED clients are eligible, so deleting is always a second, deliberate step after archiving. */
+/**
+ * Permanently deletes clients — an Administrator (Main Admin), or a role an Administrator gave
+ * `clients.delete` (`canDeleteClientRecords`; the owner's rule, 17 Oct 2026). Any status may be
+ * deleted (archiving first is no longer required). Everything that belongs to a client goes with it:
+ * channels, notes, timeline, subscriptions, invoices, payments and group/chat links. The System Log
+ * keeps how many, which codes and who — never names or contact details.
+ */
 export async function deleteClients(ids: string[]): Promise<BulkClientResult> {
-  const granted = await checkPermission("clients.delete");
+  // The project and the Client Management feature are checked as for any client action…
+  const granted = await checkPermission("clients.view");
+  if ("denied" in granted) return { ok: false, message: granted.denied };
+  // …and the delete itself needs an Administrator, or the delete permission an Administrator gave.
+  if (!(await canDeleteClientRecords(granted.session))) return { ok: false, message: DELETE_REFUSED };
+  const clean = cleanIds(ids);
+  if (!clean) return { ok: false, message: TOO_MANY };
+  const rows = await prisma.client.findMany({ where: { id: { in: clean } }, select: { id: true, code: true } });
+  if (!rows.length) return { ok: false, message: "Those clients no longer exist." };
+  const removed = await prisma.$transaction(async (tx) => {
+    // The current-term pointer is cleared first so the subscriptions it points at can go in one statement.
+    await tx.client.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { currentSubscriptionId: null } });
+    return tx.client.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } });
+  });
+  await logSystemEvent("WARN", "clients", `Permanently deleted ${removed.count} client(s)`, { count: removed.count, codes: rows.slice(0, 100).map((r) => r.code) }, { actorUserId: granted.session.userId, targetType: "Client" });
+  await refresh();
+  const missing = clean.length - removed.count;
+  return { ok: true, message: `${removed.count} client(s) permanently deleted${missing ? `, ${missing} no longer existed` : ""}. This cannot be undone.` };
+}
+
+export interface BulkDetailsPatch {
+  /** "" = leave as is; "__none" = clear; otherwise the new value. */
+  teamId?: string;
+  soldByMemberId?: string;
+  country?: string;
+  preferredCurrency?: string;
+}
+
+/**
+ * Sets the same team, seller, country or preferred currency on many clients — the fields that are
+ * tedious one by one after an import. Each value is checked like the form checks it: a NEW team must
+ * be active, a seller an active roster member, a country a real region, a currency three letters.
+ * Archived clients are skipped. Changing the team clears an assigned staff member who is not in it.
+ */
+export async function bulkSetClientDetails(ids: string[], patch: BulkDetailsPatch): Promise<BulkClientResult> {
+  const granted = await checkPermission("clients.update");
   if ("denied" in granted) return { ok: false, message: granted.denied };
   const clean = cleanIds(ids);
   if (!clean) return { ok: false, message: TOO_MANY };
-  const rows = await prisma.client.findMany({ where: { id: { in: clean }, status: "ARCHIVED" }, select: { id: true, code: true } });
-  if (!rows.length) return { ok: false, message: "Only archived clients can be permanently deleted. Archive them first." };
-  // `status: ARCHIVED` again in the delete itself: a client restored between the read above and this
-  // statement must not be deleted. The count of what was REALLY deleted is what is reported and logged.
-  const removed = await prisma.client.deleteMany({ where: { id: { in: rows.map((r) => r.id) }, status: "ARCHIVED" } });
-  if (removed.count === 0) return { ok: false, message: "Nothing was deleted — those clients are no longer archived." };
-  // The record that it happened outlives the clients: how many, which codes, and who — never names or contact details.
-  await logSystemEvent("WARN", "clients", `Permanently deleted ${removed.count} client(s)`, { count: removed.count, codes: rows.slice(0, 100).map((r) => r.code) }, { actorUserId: granted.session.userId, targetType: "Client" });
+  const pick = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const team = pick(patch?.teamId);
+  const seller = pick(patch?.soldByMemberId);
+  const countryRaw = pick(patch?.country);
+  const currencyRaw = pick(patch?.preferredCurrency);
+  const data: Prisma.ClientUpdateManyMutationInput & { assignedTeamId?: string | null; soldByMemberId?: string | null } = {};
+  const changed: string[] = [];
+  if (team) {
+    if (team === "__none") data.assignedTeamId = null;
+    else {
+      const refusal = await checkAssignment(team, null);
+      if (refusal) return { ok: false, message: refusal.error };
+      data.assignedTeamId = team;
+    }
+    changed.push("team");
+  }
+  if (seller) {
+    if (seller === "__none") data.soldByMemberId = null;
+    else {
+      const s = await sellerSnapshot(seller);
+      if ("error" in s) return { ok: false, message: s.error };
+      data.soldByMemberId = seller;
+    }
+    changed.push("sold by");
+  }
+  if (countryRaw) {
+    if (countryRaw === "__none") data.country = null;
+    else {
+      const c = normalizeCountryCode(countryRaw);
+      if (!c || !isCountryCode(c)) return { ok: false, message: "Choose the country from the list." };
+      data.country = c;
+    }
+    changed.push("country");
+  }
+  if (currencyRaw) {
+    if (currencyRaw === "__none") data.preferredCurrency = null;
+    else {
+      const c = normalizeCurrencyCode(currencyRaw);
+      if (!c) return { ok: false, message: "The currency must be a three-letter code, such as BDT." };
+      data.preferredCurrency = c;
+    }
+    changed.push("preferred currency");
+  }
+  if (!changed.length) return { ok: false, message: "Choose at least one thing to set." };
+  const rows = await prisma.client.findMany({ where: { id: { in: clean }, status: { not: "ARCHIVED" } }, select: { id: true, assignedMemberId: true, assignedMember: { select: { teamId: true } } } });
+  if (!rows.length) return { ok: true, message: "Nothing changed — those clients are archived or no longer exist." };
+  await prisma.$transaction(async (tx) => {
+    await tx.client.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data });
+    if (data.assignedTeamId) {
+      // A staff member outside the new team would contradict it: cleared, like the form requires.
+      const outside = rows.filter((r) => r.assignedMemberId && r.assignedMember?.teamId !== data.assignedTeamId).map((r) => r.id);
+      if (outside.length) await tx.client.updateMany({ where: { id: { in: outside } }, data: { assignedMemberId: null } });
+    }
+    await tx.clientActivity.createMany({ data: rows.map((r) => ({ clientId: r.id, actorUserId: granted.session.userId, type: "UPDATED", summary: `Updated ${changed.join(", ")} (bulk)` })) });
+  });
   await refresh();
-  const notDeleted = clean.length - removed.count;
-  return { ok: true, message: `${removed.count} permanently deleted${notDeleted ? `, ${notDeleted} skipped because they are not archived` : ""}. This cannot be undone.` };
+  return { ok: true, message: `${rows.length} updated (${changed.join(", ")}).${rows.length < clean.length ? ` ${clean.length - rows.length} archived skipped.` : ""}` };
 }
 
 export async function bulkAssignClients(ids: string[], memberId: string | null, teamId: string | null): Promise<BulkClientResult> {

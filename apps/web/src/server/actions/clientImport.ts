@@ -1,5 +1,6 @@
 "use server";
 
+import { importOptionsFor } from "@/server/clientImportExtras";
 import { revalidatePath } from "next/cache";
 import * as XLSX from "xlsx";
 import {
@@ -162,6 +163,7 @@ export async function confirmClientImport(jobId: string, policy: string): Promis
     return { ok: false, message: "Map a column to Name first — every client needs one." };
   }
 
+  const importOptions = await importOptionsFor(granted.session);
   let result: Awaited<ReturnType<typeof processImportRows>>;
   try {
     result = await processImportRows(job.rows as unknown as RawImportRow[], mapping, policy as ClientDuplicatePolicy, job.fileName, granted.session.userId, async (partial) => {
@@ -169,7 +171,7 @@ export async function confirmClientImport(jobId: string, policy: string): Promis
         where: { id: jobId },
         data: { importedCount: partial.imported, updatedCount: partial.updated, skippedCount: partial.skipped, failedCount: partial.failed },
       });
-    });
+    }, importOptions);
   } catch (err) {
     // The error type and code only: a database error can carry the values of the row it failed on.
     console.error("[clients] import failed", (err as { code?: string; name?: string }).code ?? (err as Error).name);

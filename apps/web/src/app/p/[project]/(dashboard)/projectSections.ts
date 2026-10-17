@@ -103,7 +103,6 @@ const SECTION_RULES: Record<string, SectionRule> = {
       "clients.create",
       "clients.update",
       "clients.archive",
-      "clients.delete",
       "clients.export",
       "clients.link_whatsapp_chat",
       "clients.link_whatsapp_group",
@@ -115,7 +114,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/clients/subscriptions": { write: ["clients.manage_subscriptions"] },
   "/clients/dues": { write: ["clients.edit_billing"] },
   "/clients/payments": { write: ["clients.edit_billing"] },
-  "/clients/import": { fullOnly: true },
+  "/clients/import": { fullOnly: true, also: ["/api/clients/import"] },
   // Team
   "/team-management": { write: ["team_management.manage"], also: ["/api/team-management/export"] },
   "/team-management/schedule": { write: ["team_management.manage"] },

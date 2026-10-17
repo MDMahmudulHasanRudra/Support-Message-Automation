@@ -140,14 +140,22 @@ export async function getClient360(clientId: string, caps: ClientViewerCaps) {
   }));
 
   const minorDues = dues.map((d) => ({ ...d, amountMinor: decimalToMinor(d.amount), paidMinor: decimalToMinor(d.paidAmount) ?? ZERO, day: day(d.dueDate) }));
-  const outstanding = caps.billing
+  const lines = caps.billing
     ? summarizeOutstanding(
         minorDues.map((d) => ({ status: d.status, currency: d.currency, amount: d.amountMinor, paid: d.paidMinor, dueDate: d.day })),
         today,
       )
+    : null;
+  // Billed / collected / remaining per currency for the Billing Summary card — never summed across currencies.
+  const ledger = lines
+    ? lines.map((l) => ({ currency: l.currency, billed: fromMinor(l.billed), collected: fromMinor(l.collected), remaining: fromMinor(l.remaining), openCount: l.openCount, overdueCount: l.overdueCount }))
+    : null;
+  const outstanding = lines
+    ? lines
         .filter((l) => l.remaining > ZERO)
         .map((l) => ({ currency: l.currency, remaining: fromMinor(l.remaining), overdue: l.overdueCount > 0 }))
     : null;
+  const invoiceCount = caps.billing ? dues.filter((d) => d.status !== "CANCELLED").length : 0;
   const openInvoices: OpenInvoice[] = minorDues
     .filter((d) => d.currency && remainingOn({ status: d.status, amount: d.amountMinor, paid: d.paidMinor }) > ZERO)
     .sort((a, b) => a.day.localeCompare(b.day))
@@ -160,6 +168,8 @@ export async function getClient360(clientId: string, caps: ClientViewerCaps) {
     overallState,
     groupLinks,
     outstanding,
+    ledger,
+    invoiceCount,
     openInvoices,
     payments: payments.map((p) => ({
       id: p.id,

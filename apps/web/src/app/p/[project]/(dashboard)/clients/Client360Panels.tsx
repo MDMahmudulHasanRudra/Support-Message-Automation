@@ -26,13 +26,14 @@ import {
 import { formatDay, groupChatHref, money, SUBSCRIPTION_TONE } from "@/lib/clientDisplay";
 import { shrinkPicture } from "@/lib/clientPhotoResize";
 import { ClientAvatar } from "./ClientAvatar";
+import { DeleteRecordButton } from "./DeleteRecordButton";
 import { PaymentDialog } from "./PaymentDialog";
 
 const muted = "text-[color:var(--color-muted-foreground)]";
 
 // ── Photo ───────────────────────────────────────────────────────────────────────────────────────
 
-export function PhotoControl({ client, canEdit }: { client: { id: string; code: string; name: string; companyName: string | null; photoVersion: number | null }; canEdit: boolean }) {
+export function PhotoControl({ client, canEdit, size = "lg" }: { client: { id: string; code: string; name: string; companyName: string | null; photoVersion: number | null }; canEdit: boolean; size?: "lg" | "xl" }) {
   const router = useRouter();
   const { showToast } = useToast();
   const input = useRef<HTMLInputElement>(null);
@@ -53,8 +54,8 @@ export function PhotoControl({ client, canEdit }: { client: { id: string; code: 
     });
   }
   return (
-    <div className="relative">
-      <ClientAvatar id={client.id} code={client.code} name={client.name} companyName={client.companyName} photoVersion={client.photoVersion} size="lg" />
+    <div className="relative shrink-0">
+      <ClientAvatar id={client.id} code={client.code} name={client.name} companyName={client.companyName} photoVersion={client.photoVersion} size={size} />
       {canEdit ? (
         <div className="absolute -bottom-1 -right-1 flex gap-0.5">
           <button type="button" disabled={busy} onClick={() => input.current?.click()} title="Change photo" aria-label="Change photo" className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-[var(--shadow-sm)] hover:bg-[var(--color-neutral-bg)]">
@@ -252,6 +253,7 @@ export function SubscriptionsPanel({
   canManage,
   canInvoice,
   archived,
+  canDelete = false,
 }: {
   clientId: string;
   subscriptions: SubscriptionView[];
@@ -263,6 +265,8 @@ export function SubscriptionsPanel({
   canManage: boolean;
   canInvoice: boolean;
   archived: boolean;
+  /** An Administrator, or a role an Administrator gave the delete permission. */
+  canDelete?: boolean;
 }) {
   const router = useRouter();
   const { showToast } = useToast();
@@ -321,6 +325,11 @@ export function SubscriptionsPanel({
                 <Button size="sm" variant="ghost" onClick={() => setCancelling(t)} disabled={busy}>
                   <X className="size-3.5" aria-hidden /> Cancel
                 </Button>
+                {canDelete ? <DeleteRecordButton kind="subscription" id={t.id} /> : null}
+              </div>
+            ) : canDelete ? (
+              <div className="mt-2">
+                <DeleteRecordButton kind="subscription" id={t.id} />
               </div>
             ) : null}
           </li>
@@ -584,12 +593,14 @@ export function ClientPaymentsPanel({
   payments,
   canRecord,
   today,
+  canDelete = false,
 }: {
   client: { name: string; code: string };
   openInvoices: OpenInvoice[];
   payments: Array<{ id: string; receiptNumber: string; currency: string; amount: string; method: string; reference: string | null; receivedDate: string; recordedBy: string | null; reversed: boolean; invoices: string[] }>;
   canRecord: boolean;
   today: string;
+  canDelete?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -610,6 +621,11 @@ export function ClientPaymentsPanel({
               {p.reference ? ` · ${p.reference}` : ""} · for {p.invoices.join(", ")}
             </span>
             {p.reversed ? <Badge color="gray">Reversed</Badge> : null}
+            {canDelete ? (
+              <span className="ml-auto">
+                <DeleteRecordButton kind="payment" id={p.id} />
+              </span>
+            ) : null}
           </li>
         ))}
       </ul>

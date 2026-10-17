@@ -34,11 +34,11 @@ export function ClientAvatar({
   name: string;
   companyName?: string | null;
   photoVersion: number | null;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl";
 }) {
   const toProject = useProjectHref();
   const path = photoPath(id, photoVersion);
-  const box = size === "lg" ? "size-16 text-lg rounded-2xl" : size === "sm" ? "size-8 text-[11px] rounded-lg" : "size-10 text-[13px] rounded-xl";
+  const box = size === "xl" ? "size-20 sm:size-24 text-2xl rounded-full" : size === "lg" ? "size-16 text-lg rounded-2xl" : size === "sm" ? "size-8 text-[11px] rounded-lg" : "size-10 text-[13px] rounded-xl";
   if (path) {
     // eslint-disable-next-line @next/next/no-img-element -- an authorised, per-project route; next/image would proxy it through the optimiser
     return <img src={toProject(path)} alt="" className={`${box} shrink-0 object-cover ring-1 ring-[var(--color-border)]`} loading="lazy" />;

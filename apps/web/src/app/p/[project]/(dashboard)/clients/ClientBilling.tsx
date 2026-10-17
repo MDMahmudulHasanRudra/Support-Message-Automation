@@ -1,5 +1,6 @@
 "use client";
 
+import { DeleteRecordButton } from "./DeleteRecordButton";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import Link from "@/components/ProjectLink";
@@ -148,7 +149,7 @@ export function DueForm({ action, initial, currencies, submitLabel, onDone, invo
   );
 }
 
-function DueRow({ due, currencies, canEdit }: { due: DueRowView; currencies: string[]; canEdit: boolean }) {
+function DueRow({ due, currencies, canEdit, canDelete }: { due: DueRowView; currencies: string[]; canEdit: boolean; canDelete: boolean }) {
   const [editing, setEditing] = useState(false);
   const status = due.status as ClientDueStatusValue;
   return (
@@ -171,6 +172,7 @@ function DueRow({ due, currencies, canEdit }: { due: DueRowView; currencies: str
               {editing ? "Close" : "Edit"}
             </Button>
           ) : null}
+          {canDelete ? <DeleteRecordButton kind="invoice" id={due.id} /> : null}
         </div>
       </div>
       {editing ? (
@@ -183,7 +185,7 @@ function DueRow({ due, currencies, canEdit }: { due: DueRowView; currencies: str
 }
 
 /** A client's manual dues. Shown only to someone with `clients.view_billing`; editing needs `clients.edit_billing`. */
-export function BillingPanel({ clientId, dues, history, currencies, summaryText, canEdit, archived, invoice }: { clientId: string; dues: DueRowView[]; history: DueHistoryView[]; currencies: string[]; summaryText: string; canEdit: boolean; archived: boolean; invoice?: InvoiceSellers }) {
+export function BillingPanel({ clientId, dues, history, currencies, summaryText, canEdit, archived, invoice, canDelete = false }: { clientId: string; dues: DueRowView[]; history: DueHistoryView[]; currencies: string[]; summaryText: string; canEdit: boolean; archived: boolean; invoice?: InvoiceSellers; canDelete?: boolean }) {
   const editable = canEdit && !archived;
   return (
     <div className="space-y-4">
@@ -194,7 +196,7 @@ export function BillingPanel({ clientId, dues, history, currencies, summaryText,
       {dues.length === 0 ? <p className="text-sm text-[color:var(--color-muted-foreground)]">No dues recorded.</p> : null}
       <ul className="divide-y divide-[var(--color-border)]">
         {dues.map((d) => (
-          <DueRow key={d.id} due={d} currencies={currencies} canEdit={editable} />
+          <DueRow key={d.id} due={d} currencies={currencies} canEdit={editable} canDelete={canDelete} />
         ))}
       </ul>
       {editable ? (

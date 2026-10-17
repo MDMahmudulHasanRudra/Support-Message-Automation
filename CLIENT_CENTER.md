@@ -36,13 +36,15 @@ Tags are a lower-cased `String[]` on the client (GIN index), not a table.
   (one "phone" group; a local `01…` Bangladeshi number gets `88` so it matches `+8801…`), an email, another
   channel reference, or the client code. Never a similar name. Shown before a client is created; creating
   anyway is a separate button. Archived clients are matched too. There is no merge action.
-- **Archive, then delete.** Archiving keeps everything; restoring brings back the previous status. Only an
-  ARCHIVED client can be permanently deleted (`clients.delete`); the deletion is a System Log entry with a
-  count and codes, never names or contact details.
+- **Archive, or delete.** Archiving keeps everything; restoring brings back the previous status. Permanent deletion
+  is the **Administrator's by default** (17 Oct 2026, owner's decision): an Administrator, or a role an Administrator
+  gave `clients.delete` — nobody else, and only an Administrator can give it (CLIENTS_V3.md §Delete). Any status, one
+  client or many from the list's bulk bar, with everything that belongs to the client. The deletion is a System Log
+  entry with a count and codes, never names or contact details.
 - **Shared rules live in `packages/shared/src/clients.ts`** (normalisation, validation, duplicate matching,
   import column mapping) and **`apps/web/src/lib/clientFilters.ts`** — one filter builder used by the list,
   "select all N matching", the export and the bulk actions, so "export the 312 on screen" is those 312.
-- **Import** is upload → preview (auto column mapping, editable) → confirm with a duplicate policy
+- **Import** starts from a downloadable, project-specific Excel template (CLIENTS_V3.md §Import), then is upload → preview (auto column mapping, editable) → confirm with a duplicate policy
   (Skip / Update / Create anyway) → report. The confirmation is claimed with one conditional update, so
   pressing it twice imports once. A bad row is reported, the rest are imported. The file's rows are deleted
   from the job when it ends. **Limit:** it runs inside the request, up to 2,000 rows, 2 MB; a durable

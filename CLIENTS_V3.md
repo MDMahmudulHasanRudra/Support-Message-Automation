@@ -8,17 +8,70 @@ email), which still describes the parts this did not change.
 
 | Page | Route | What it is now |
 |---|---|---|
-| All Clients | `/clients` | A 360° register: identity (photo, code, "Returning"), country, phone/WhatsApp, service, expiry with countdown, subscription state, outstanding **per currency** (billing viewers only), sold by, linked WhatsApp group, row actions. KPI tiles, quick filters + "More filters", per-person **Customize columns**, sticky identity column, phone cards. |
+| All Clients | `/clients` | A 360° register: identity (photo, code, "Returning"), country with flag, phone with a WhatsApp mark, service, expiry with "N days left", subscription state, outstanding **per currency** (billing viewers only), sold by, linked WhatsApp group. Five KPI cards (total with "+N this month", linked groups, renewal attention, outstanding per currency, returning); view chips (All, Active, Renew soon, Trial, Expired, Overdue, Inactive, Archived) with counts; a filter bar whose drop-downs apply themselves; row actions (view, renew, WhatsApp, and a ⋯ menu with edit, payment, links, archive and — for someone allowed — delete). |
 | Add client | `/clients/new` | A guided form: photo (resized in the browser, re-checked and stripped on the server), identity, worldwide phone (E.164) with country/currency **suggestions**, Team → staff → seller from the real roster, an existing WhatsApp group picked by account and **confirmed**, an optional first subscription. Every ordinary field optional unless the project requires it; a client with nothing but a code needs a separate press. |
-| Client page | `/clients/<id>` | A 360° strip (country, phone, current plan, outstanding, sold by, group), then Subscriptions (renew / pause / cancel), WhatsApp groups (link / unlink / open chat), Invoices and dues, Payments & receipts, channels, chat links, details (editor collapsed), notes, timeline. |
-| Subscriptions | `/clients/subscriptions` | Every client's current term by state — Active, Renew soon, Trials & demos, Expired, Starts later, Paused — soonest expiry first, one-click Renew. |
-| Billing List | `/clients/dues` (route kept) | Invoices with number/type, client, service, seller, due, billed, collected, remaining, status; column chooser; filters; **Pay selected** with an editable amount per invoice; Create bill. |
-| Payments & Receipts | `/clients/payments` | Every receipt, the invoices it settled, collected per currency, and **Reverse** (with a reason). |
+| Client page | `/clients/<id>` | A profile header (photo, code with copy, status, country, "Repeat customer"; Edit / Renew / Record payment / Open WhatsApp group, Archive and Delete under ⋮), six fact cards, then tabs as URL state (`?tab=`): **Overview** (client information, current subscription with term progress, team & ownership, billing summary per currency, WhatsApp, recent payments, recent activity, subscription history; `?edit=1` opens the editor), Subscriptions, Billing, Payments, WhatsApp & channels, Activity & notes. A tab the viewer may not see falls back to Overview; billing figures are still read only with `clients.view_billing`. |
+| Subscriptions | `/clients/subscriptions` | Every client's current term, soonest expiry first. Six KPI cards and chips (All, Active, Renew soon, Trials & demos, Expired, Paused); filters for service, seller, team and country; a days-left bar; View plus a ⋯ menu (Renew, Pause/Resume, Cancel on profile, Delete); bulk delete for someone allowed. |
+| Billing List | `/clients/dues` (route kept) | Invoices with number/type, client, service, seller, due, billed, collected, remaining, status; KPI cards and view chips with counts; column chooser; filters; **Pay selected** with an editable amount per invoice; Create bill; Delete (single or selected) for someone allowed. |
+| Payments & Receipts | `/clients/payments` | Every receipt, the invoices it settled, collected per currency, and **Reverse** (with a reason). KPI cards, Recorded / Reversed / All chips with counts, filters for method, currency and received dates; Delete (single or selected) for someone allowed. |
 | Settings → Client Module | `/settings/clients` | Sub-module switches, required fields, renewal window, default country for local numbers. |
 
-Unchanged: Import Clients, the client import format, channels and consent, notes, the personal chat links, Email
-settings, Chat V1/V2, workers, AI. The export gained columns (country, currency, team, seller, service, start, expiry,
+| Import Clients | `/clients/import` | Three steps (17 Oct 2026, see §Import): **download the template** (or "Template with my clients"), fill it in (a guide on the page and inside the file), drop the file to preview. |
+
+Unchanged: channels and consent, notes, the personal chat links, Email settings, Chat V1/V2, workers, AI. The export gained columns (country, currency, team, seller, service, start, expiry,
 subscription state, linked groups) — never an amount.
+
+### Delete (17 Oct 2026)
+
+- **Who.** The Administrator (Main Admin) by default; anyone else only when an Administrator gives their role
+  "Delete Anything in Clients" (`clients.delete`) on Permission Modules. `canDeleteClientRecords` is the one rule and
+  `caps.canDelete` carries it to every page; a control is rendered only for that viewer and the action checks again.
+- **Only an Administrator can give it.** `clients.delete` is in `ADMIN_GRANTED_KEYS`: `adminGrantRefusal` refuses
+  anyone else ADDING it to a role (keeping it on a role that has it is not refused). It is not project-assignable, so
+  a project role or a Lead never carries it, and the `ProjectRole_no_platform_keys` CHECK refuses it in the database.
+  Migration `20261017200000_clients_delete_admin_granted` removed it from every role that is not a Main Admin role —
+  under the previous rule it granted nothing, so nobody lost anything they could do.
+- **What can be deleted** (`server/actions/clientDeletes.ts`): clients (as before), subscriptions, invoices, payments
+  and notes, single or selected. Each delete is on the client's timeline and in the System Log.
+  - A subscription: the current term is recomputed under the client lock; its invoices stay, unlinked.
+  - An invoice: refused while a recorded (unreversed) payment settles it — reverse or delete that payment first.
+  - A payment: an unreversed one is first taken off the invoices it settled (exactly what a reversal does).
+  - A note: the timeline says a note was deleted, not what it said.
+- **Archive, cancel, pause and reverse stay the everyday tools**; every delete dialog says so.
+- Tests: `clientDeletes.integration.test.ts` (7). Mutation-checked: anyone-may-delete, no grant gate, refusing to keep
+  the key, no current-term recompute and no payment unwind each fail a test. The settled-invoice guard is two layers (a
+  pre-check and a conditional delete); removing either alone is covered by the other, removing both fails the test.
+
+### Import (17 Oct 2026)
+
+- **The template is built for the project** (`server/clientImportTemplate.ts`, `GET /api/clients/import/template`,
+  `clients.import`). It has four sheets. **Clients** comes first, because the import reads the first sheet. **Example**
+  holds three fictional rows. **How to fill** describes every column with an example and its accepted values.
+  **Lists** feeds the drop-downs: Status, Subscription type, Duration unit, this project's ACTIVE teams and staff,
+  countries, and currencies with the project's billing currencies first.
+  - Each column has a tip (an input prompt). The header and first column are frozen.
+  - Phone and code columns are text, so leading zeros survive. Date columns are `yyyy-mm-dd`.
+  - Enum drop-downs refuse other values. Roster, country and currency drop-downs only warn, because a phone number
+    or a two-letter code is also accepted.
+  - SheetJS CE cannot write validations or styles, so `server/xlsxWriter.ts` writes the OOXML itself, with no new
+    dependency.
+- **"Template with my clients"** (`?data=current`) also needs `clients.export`. It holds what the list's default
+  view shows this person: the same `buildClientWhere`, non-archived, capped at 2,000. It is logged like an export.
+  Edit the rows, re-upload, and choose Update.
+- **The headers map themselves.** Every template header is a synonym in `CLIENT_IMPORT_FIELDS`. Another program's
+  headers map too: Mobile, Join.Date, Exp.Date and Assign2Emp. (header normalisation trims after replacing dots).
+- **V3 columns are imported:** Country, Preferred currency, Team, Assigned staff, Sold by, Service / plan,
+  Subscription type, Start date, Duration, Duration unit, Expiry date.
+  - **Parsing is pure** (`packages/shared/src/clientImportExtras.ts`):
+    - Dates are day-first or ISO, with month names, or an Excel date serial. Month-first (10/31/2026) is never guessed.
+    - A subscription is accepted or refused whole.
+    - A duration with no unit is in months.
+  - **Resolution is on the server** (`server/clientImportExtras.ts`), against this project's roster:
+    - A name the roster does not know, a shared name ("write their phone number instead"), an inactive member, a
+      disabled team, or staff outside the chosen team refuses the row with that sentence. It is never a guess.
+  - **Subscriptions are imported only for someone who may sell them** (`clients.manage_subscriptions` with the
+    sub-module on). Anyone else imports the clients without them, and the preview says so beforehand.
+  - **A re-imported file adds no second term** (same service, start and end).
 
 ## 2. Gap analysis (the V3 brief vs. what existed)
 
@@ -103,6 +156,17 @@ reverse), `clientGroupLinks.ts` (search, link, unlink), `clientExtras.ts` (photo
 `clients.ts` (create/update extended), `clientBilling.ts` (numbered invoices, allocation guard).
 
 ## 5. Tests (all on the throwaway database)
+
+- `clientImportTemplate.integration.test.ts` (8) covers:
+  - permissions;
+  - the workbook (sheets, headers that self-map, project-only drop-downs, prompts, frozen panes, date format);
+  - Example rows importing with zero errors, and "with my clients" scope and logging;
+  - V3 columns and the Excel date serial, every roster refusal, re-import idempotence, and import without the
+    subscription permission.
+
+  Four guards were mutation-checked; each removal fails a test.
+- `packages/shared` `clientImportExtras.test.ts` (7) covers the date, unit and kind parsers, whole-term
+  validation, and the other software's headers.
 
 - `packages/shared/src/__tests__/clientsV3.test.ts` — 27: calendar maths (month ends, leap years), validation, state,
   current-term choice, minor units, currency decimals, batch planning (split by client/currency, every refusal),

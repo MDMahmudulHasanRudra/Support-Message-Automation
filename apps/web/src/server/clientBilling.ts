@@ -385,8 +385,27 @@ export interface PaymentRow {
   invoices: Array<{ dueId: string; invoiceNumber: string | null; amount: string }>;
 }
 
-export async function listPayments(opts: { q: string; show: "all" | "active" | "reversed"; page: number; pageSize: number }) {
+export interface PaymentFilters {
+  /** A PaymentMethod, or "". */
+  method?: string;
+  /** A three-letter code, or "". */
+  currency?: string;
+  /** Received on or after / on or before, `YYYY-MM-DD`. */
+  from?: string;
+  to?: string;
+}
+
+export async function listPayments(opts: { q: string; show: "all" | "active" | "reversed"; page: number; pageSize: number } & PaymentFilters) {
+  const isDay = (v: string | undefined) => Boolean(v && /^\d{4}-\d{2}-\d{2}$/.test(v));
+  const narrow: Prisma.ClientPaymentWhereInput = {
+    ...(opts.method ? { method: opts.method as never } : {}),
+    ...(opts.currency && /^[A-Z]{3}$/.test(opts.currency) ? { currency: opts.currency } : {}),
+    ...(isDay(opts.from) || isDay(opts.to)
+      ? { receivedDate: { ...(isDay(opts.from) ? { gte: new Date(`${opts.from}T00:00:00.000Z`) } : {}), ...(isDay(opts.to) ? { lte: new Date(`${opts.to}T00:00:00.000Z`) } : {}) } }
+      : {}),
+  };
   const where: Prisma.ClientPaymentWhereInput = {
+    ...narrow,
     ...(opts.show === "active" ? { reversedAt: null } : opts.show === "reversed" ? { reversedAt: { not: null } } : {}),
     ...(opts.q
       ? {
@@ -401,7 +420,10 @@ export async function listPayments(opts: { q: string; show: "all" | "active" | "
         }
       : {}),
   };
-  const [rows, total, totals] = await Promise.all([
+  // The search and narrowing filters without the Recorded / Reversed choice: what the view chips count.
+  const forCounts: Prisma.ClientPaymentWhereInput = { ...where };
+  delete forCounts.reversedAt;
+  const [rows, total, totals, recordedCount, reversedCount, methods] = await Promise.all([
     prisma.clientPayment.findMany({
       where,
       orderBy: [{ receivedDate: "desc" }, { recordedAt: "desc" }],
@@ -417,6 +439,9 @@ export async function listPayments(opts: { q: string; show: "all" | "active" | "
     prisma.clientPayment.count({ where }),
     // Collected per currency for the same filter, reversed payments excluded.
     prisma.clientPayment.groupBy({ by: ["currency"], where: { AND: [where, { reversedAt: null }] }, _sum: { amount: true }, _count: { _all: true } }),
+    prisma.clientPayment.count({ where: { AND: [forCounts, { reversedAt: null }] } }),
+    prisma.clientPayment.count({ where: { AND: [forCounts, { reversedAt: { not: null } }] } }),
+    prisma.clientPayment.groupBy({ by: ["currency"], _count: { _all: true }, orderBy: { currency: "asc" } }),
   ]);
   const payments: PaymentRow[] = rows.map((p) => ({
     id: p.id,
@@ -438,5 +463,8 @@ export async function listPayments(opts: { q: string; show: "all" | "active" | "
     payments,
     total,
     collected: totals.map((t) => ({ currency: t.currency, amount: (t._sum.amount ?? new Prisma.Decimal(0)).toFixed(2), count: t._count._all })).sort((a, b) => a.currency.localeCompare(b.currency)),
+    counts: { active: recordedCount, reversed: reversedCount, all: recordedCount + reversedCount },
+    /** Currencies any payment was recorded in, for the filter. */
+    currencies: methods.map((m) => m.currency),
   };
 }
