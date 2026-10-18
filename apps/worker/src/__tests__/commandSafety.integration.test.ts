@@ -69,6 +69,51 @@ describe("RECONNECT: skip when already healthily connected", () => {
     expect(refreshed.result).toMatchObject({ reconnected: true });
     expect(connectCalled).toBe(true);
   });
+
+  /**
+   * "Reads CONNECTED" is also what a session whose page has died looks like, and the collection
+   * alerts tell operators to press Reconnect for exactly that. A person's Reconnect asked AFTER the
+   * session last connected is a request to restart it, not a stale duplicate.
+   */
+  it("restarts a session that reads CONNECTED when a person asked after it last connected", async () => {
+    const provider = new MockProvider();
+    let disconnectCalled = false;
+    let connectCalled = false;
+    provider.disconnect = async () => {
+      disconnectCalled = true;
+    };
+    provider.connect = async () => {
+      connectCalled = true;
+    };
+    await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { lastConnectedAt: new Date(Date.now() - 60 * 60_000) } });
+
+    const command = await prisma.workerCommand.create({ data: { type: "RECONNECT", accountId: account.id, payload: { force: true } } });
+    await processOneCommand(account.id, provider);
+
+    const refreshed = await prisma.workerCommand.findUniqueOrThrow({ where: { id: command.id } });
+    expect(refreshed.status).toBe("DONE");
+    expect(refreshed.result).toMatchObject({ reconnected: true });
+    expect(disconnectCalled).toBe(true);
+    expect(connectCalled).toBe(true);
+  });
+
+  it("still skips a forced reconnect the session has connected since — the stale double-reconnect", async () => {
+    const provider = new MockProvider();
+    let connectCalled = false;
+    provider.connect = async () => {
+      connectCalled = true;
+    };
+    await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { lastConnectedAt: new Date() } });
+
+    const command = await prisma.workerCommand.create({
+      data: { type: "RECONNECT", accountId: account.id, payload: { force: true }, createdAt: new Date(Date.now() - 5 * 60_000) },
+    });
+    await processOneCommand(account.id, provider);
+
+    const refreshed = await prisma.workerCommand.findUniqueOrThrow({ where: { id: command.id } });
+    expect(refreshed.result).toMatchObject({ reconnected: false });
+    expect(connectCalled).toBe(false);
+  });
 });
 
 describe("Group sync: dedupe concurrent callers", () => {

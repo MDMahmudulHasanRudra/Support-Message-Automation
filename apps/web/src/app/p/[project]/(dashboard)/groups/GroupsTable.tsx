@@ -14,6 +14,7 @@ import {
   Td,
   Th,
   Tooltip,
+  useToast,
 } from "@/components/ui";
 import {
   bulkSetAiAutomation,
@@ -21,12 +22,13 @@ import {
   requestGroupParticipantCount,
   requestGroupKnowledgeBuild,
   selectAllMatchingGroupIds,
-  toggleGroupAiAutomation,
-  toggleGroupTestMode,
-  toggleGroupAiExcluded,
-  toggleGroupMonitoring,
+  setGroupAiAutomation,
+  setGroupAiExcluded,
+  setGroupMonitoring,
+  setGroupTestMode,
   type BulkAiAutomationResult,
   type BulkMonitoringResult,
+  type GroupFlagResult,
 } from "@/server/actions/groups";
 import { GroupPriorityDialog, type TeamMemberOption } from "./GroupPriorityDialog";
 
@@ -97,6 +99,7 @@ export function GroupsTable({
   accountId: string | null;
 }) {
   const router = useRouter();
+  const { showToast } = useToast();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingBulkAction>(null);
@@ -199,11 +202,22 @@ export function GroupsTable({
     }
   }
 
+  /**
+   * Every switch sends the value its button showed, never "flip it": the page only refreshes while a
+   * sync runs, so a colleague may have changed the group already. Then nothing is written, and the
+   * operator is told rather than shown a silent no-op.
+   */
+  function reportFlag(result: GroupFlagResult, alreadyThatWay: string) {
+    if (result.error) showToast({ tone: "danger", title: "Not changed", description: result.error });
+    else if (result.changed === false) showToast({ tone: "info", title: alreadyThatWay, description: "Somebody changed it already. The list now shows it." });
+  }
+
   function confirmSingleToggle() {
     if (!toggleTarget) return;
     const id = toggleTarget.id;
+    const monitor = !toggleTarget.isMonitored;
     startToggle(async () => {
-      await toggleGroupMonitoring(id);
+      reportFlag(await setGroupMonitoring(id, monitor), monitor ? "Already monitored" : "Already not monitored");
       setToggleTarget(null);
       router.refresh();
     });
@@ -217,26 +231,29 @@ export function GroupsTable({
     });
   }
 
-  function toggleAiAutomation(id: string) {
-    setTogglingAiId(id);
+  function toggleAiAutomation(group: GroupRow) {
+    const enable = !group.aiAutomationEnabled;
+    setTogglingAiId(group.id);
     startToggleAi(async () => {
-      await toggleGroupAiAutomation(id);
+      reportFlag(await setGroupAiAutomation(group.id, enable), enable ? "AI was already enabled" : "AI was already disabled");
       router.refresh();
     });
   }
 
-  function toggleTestMode(id: string) {
-    setTogglingAiId(id);
+  function toggleTestMode(group: GroupRow) {
+    const enable = !group.testModeEnabled;
+    setTogglingAiId(group.id);
     startToggleAi(async () => {
-      await toggleGroupTestMode(id);
+      reportFlag(await setGroupTestMode(group.id, enable), enable ? "Already in test mode" : "Already out of test mode");
       router.refresh();
     });
   }
 
-  function toggleAiExcluded(id: string) {
-    setTogglingAiId(id);
+  function toggleAiExcluded(group: GroupRow) {
+    const exclude = !group.aiAutomationExcluded;
+    setTogglingAiId(group.id);
     startToggleAi(async () => {
-      await toggleGroupAiExcluded(id);
+      reportFlag(await setGroupAiExcluded(group.id, exclude), exclude ? "Already excluded from AI" : "AI was already allowed");
       router.refresh();
     });
   }
@@ -487,7 +504,7 @@ export function GroupsTable({
                           variant="ghost"
                           size="sm"
                           loading={isTogglingAi && togglingAiId === g.id}
-                          onClick={() => toggleAiAutomation(g.id)}
+                          onClick={() => toggleAiAutomation(g)}
                         >
                           {g.aiAutomationEnabled ? "Disable AI" : "Enable AI"}
                         </Button>
@@ -496,7 +513,7 @@ export function GroupsTable({
                         variant="ghost"
                         size="sm"
                         loading={isTogglingAi && togglingAiId === g.id}
-                        onClick={() => toggleAiExcluded(g.id)}
+                        onClick={() => toggleAiExcluded(g)}
                       >
                         {g.aiAutomationExcluded ? "Allow AI" : "Exclude"}
                       </Button>
@@ -513,7 +530,7 @@ export function GroupsTable({
                         variant="ghost"
                         size="sm"
                         loading={isTogglingAi && togglingAiId === g.id}
-                        onClick={() => toggleTestMode(g.id)}
+                        onClick={() => toggleTestMode(g)}
                         title={
                           g.testModeEnabled
                             ? "Put this group back under the normal rate limits and cooldowns"

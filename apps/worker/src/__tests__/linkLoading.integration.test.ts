@@ -250,6 +250,39 @@ describe("an interrupted load is resumed, never restarted from 0%", () => {
     await expect(connecting).rejects.toThrow(/linking window/i);
   });
 
+  it("a leftover empty session file does not cancel the resume", async () => {
+    // A multi-device session leaves only `{}` in its data file. One left from an earlier session
+    // is no proof that THIS load finished — reading it as one dropped the record of the scan.
+    const sessionId = `stale-${randomUUID().slice(0, 8)}`;
+    await interruptedLink(sessionId);
+    await writeFile(join(sessionDir, `${sessionId}.data.json`), "{}");
+    const provider = new OpenWAProvider(accountId, sessionId, sessionDir);
+    const connecting = provider.connect().catch(() => undefined);
+    await createdOnce();
+    expect(vi.mocked(create).mock.calls[0]![0]).toMatchObject({ authTimeout: 0 });
+    expect(await exists(markerOf(sessionId))).toBe(true);
+    await provider.disconnect();
+    await connecting;
+  });
+
+  it("an empty session file does not protect a profile that keeps failing (24 Sep 2026)", async () => {
+    // No scan on record, two attempts in a row that produced no code, and a four-byte `{}`: the
+    // profile is broken and holds nothing to restore, so it is cleared and the next attempt can
+    // show a code. Read as "a restore is possible", it kept a live account down for a day.
+    const sessionId = `poisoned-${randomUUID().slice(0, 8)}`;
+    await mkdir(leveldbOf(sessionId), { recursive: true });
+    await writeFile(join(leveldbOf(sessionId), "CURRENT"), "a profile that cannot log in");
+    await writeFile(join(sessionDir, `${sessionId}.data.json`), "{}");
+    const provider = new OpenWAProvider(accountId, sessionId, sessionDir);
+    (provider as unknown as { codelessFailures: number }).codelessFailures = 2;
+    createImpl = async () => {
+      throw new Error("App Offline");
+    };
+
+    await provider.connect().catch(() => undefined);
+    expect(await exists(join(leveldbOf(sessionId), "CURRENT"))).toBe(false);
+  });
+
   it("a marker older than the resume limit is not honoured", async () => {
     const sessionId = `old-${randomUUID().slice(0, 8)}`;
     await writeFile(markerOf(sessionId), JSON.stringify({ scannedAt: Date.now() - 7 * 60 * 60_000 }));

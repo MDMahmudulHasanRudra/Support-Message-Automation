@@ -727,14 +727,17 @@ phone number, status badge (`CONNECTED`/`DISCONNECTED`/`RECONNECTING`/`AUTHENTIC
 `SESSION_ERROR`/`OUTBOUND_PAUSED`/`RATE_LIMITED`/`ERROR`), last connected/heartbeat, session path,
 which services explicitly route to it. When `AUTHENTICATION_REQUIRED`, shows the live QR (or a
 "waiting for a fresh code" placeholder if the last one is stale). Actions (each a confirmed
-`WorkerCommand`, never instant): **Reconnect**, **Resync Groups**, **Set/Remove Primary**,
+`WorkerCommand`, never instant): **Reconnect** (on a CONNECTED number it restarts the session),
+**Resync Groups**, **Set/Remove Primary**,
 **Logout** (danger — ends the session, needs a fresh QR), **Delete** (only if not Primary and more
 than one account exists). A banner shows how many commands are waiting for the worker to pick up.
 
-**Replacing the number that serves customers.** Primary and Account Routing decide where
-*notifications* go — they do **not** decide which number answers a customer. A reply always goes
-out on the account that received the message, because that is the account actually in the group;
-sending from another number fails the live membership check. So switching Primary does not move
+**Replacing the number that serves customers.** Account Routing decides where *notifications* go.
+**Primary decides which number answers customers at all:** with a Primary set, only messages that
+arrive on it are answered, and every other number collects without replying (with no Primary, every
+connected number answers its own groups). A reply still goes out on the account that received the
+message, because that is the account actually in the group. Only a CONNECTED number can be made
+Primary; a project's first number is Primary automatically. Switching Primary does not move
 conversations. When a connected account has another account's group setup available to inherit, a
 **Moving to a new number** card appears here: it copies monitoring, AI, priority tier and assigned
 member for every group both numbers are in, and reports how many would carry before you commit.
@@ -744,8 +747,8 @@ reconnecting the same number restores them.
 
 Two cautions the card states in place: the new number must be added to the groups on WhatsApp
 first (**Add Number to Groups** does it in bulk, but only from an account still in them — so keep
-the old number connected until that is done), and if both numbers stay in the same groups with AI
-on, customers get answered twice.
+the old number connected until that is done), and the new number answers customers only once it is
+made Primary.
 
 ### Account Routing — `/accounts/routing`
 

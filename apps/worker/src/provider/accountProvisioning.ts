@@ -2,6 +2,7 @@ import { ORIGINAL_PROJECT_ID } from "@support-automation/db";
 import { platformPrisma, prisma } from "../db.js";
 import { forEachProject, withAccountProject, withProject } from "../project/context.js";
 import type { WhatsAppAccount } from "@prisma/client";
+import { logSystemEvent } from "../logging/logSystemEvent.js";
 
 const LEGACY_SESSION_ID = process.env.WHATSAPP_SESSION_NAME ?? "support-automation";
 const LEGACY_SESSION_DATA_PATH = process.env.WHATSAPP_SESSION_DIR ?? "/app/sessions";
@@ -17,7 +18,7 @@ const SESSION_ROOT = process.env.WHATSAPP_SESSION_DIR ?? "/app/sessions";
  * OpenWA look in the wrong on-disk Chromium profile subdirectory; see the `sessionId` field's
  * doc comment in schema.prisma).
  */
-export async function ensureLegacyAccountExists(): Promise<WhatsAppAccount> {
+export async function ensureLegacyAccountExists(): Promise<WhatsAppAccount | null> {
   // The session directory is this machine's, so the account using it is looked for across every
   // project — it may since have been moved — and it is only ever CREATED in ISP Digital, the
   // project every pre-multi-project row belongs to (MULTI_PROJECT_PLAN.md Phase 3).
@@ -30,6 +31,11 @@ export async function ensureLegacyAccountExists(): Promise<WhatsAppAccount> {
     }
     return existing;
   }
+  // Created only on a FRESH install. It used to be created whenever no row used the session
+  // folder — so an operator who deleted this account in the dashboard got it back on the next
+  // restart, ready to reconnect with whatever WhatsApp link was still in the folder and to start
+  // collecting into ISP Digital again. Once any account exists, a missing legacy row is a decision.
+  if ((await platformPrisma.whatsAppAccount.count()) > 0) return null;
   return withProject(ORIGINAL_PROJECT_ID, () => createLegacyAccount());
 }
 
@@ -50,10 +56,16 @@ async function createLegacyAccount(): Promise<WhatsAppAccount> {
 }
 
 /**
- * Self-heals a missing Primary — e.g. right after this feature's migration runs against an
- * existing install (every pre-existing row gets isPrimary=false by the column's own default; a
- * single row means there's exactly one reasonable choice), or if a Primary account was ever
- * deleted outright rather than demoted first. Never touches an already-valid Primary.
+ * Self-heals a missing Primary in a project that has exactly ONE account — right after this
+ * feature's migration runs against an existing install (every pre-existing row gets isPrimary=false
+ * by the column's own default, and a single row is the only reasonable choice), or a project whose
+ * first number was added before the dashboard made it Primary. Never touches an existing Primary.
+ *
+ * Never with two or more accounts. Only the Primary answers customers (processIncomingMessage), so
+ * which number is Primary is an operator's decision, and "no Primary" is one too (Remove Primary:
+ * every connected number answers its own groups). Picking the OLDEST account here reversed that
+ * decision on every restart — and the oldest is often a retired or logged-out spare, which then
+ * silenced every customer reply in the project with nothing on screen saying why.
  */
 export async function ensurePrimaryAccountExists(): Promise<void> {
   // Primary is per project: every project with accounts has exactly one, chosen from its own.
@@ -63,11 +75,14 @@ export async function ensurePrimaryAccountExists(): Promise<void> {
 async function ensurePrimaryInProject(): Promise<void> {
   const primaryCount = await prisma.whatsAppAccount.count({ where: { isPrimary: true } });
   if (primaryCount > 0) return;
-  const oldest = await prisma.whatsAppAccount.findFirst({ orderBy: { createdAt: "asc" } });
-  if (oldest) {
-    await prisma.whatsAppAccount.update({ where: { id: oldest.id }, data: { isPrimary: true } });
-    console.log(`[registry] no Primary account found — auto-promoted "${oldest.label}" (${oldest.id})`);
-  }
+  const accounts = await prisma.whatsAppAccount.findMany({ select: { id: true, label: true }, take: 2 });
+  if (accounts.length !== 1) return;
+  const only = accounts[0]!;
+  await prisma.whatsAppAccount.update({ where: { id: only.id }, data: { isPrimary: true } });
+  console.log(`[registry] the project's only account had no Primary — made "${only.label}" (${only.id}) Primary`);
+  await logSystemEvent("INFO", "accounts", `"${only.label}" made Primary: it is the project's only WhatsApp account`, {
+    accountId: only.id,
+  }).catch(() => undefined);
 }
 
 /**

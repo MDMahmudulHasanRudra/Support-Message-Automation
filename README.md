@@ -14,7 +14,7 @@ module, field, and behavior in the app.
 **Most recent additions:**
 
 - **Personal (1:1) messages: collection and visibility hotfix** (18 Oct incident: many personal
-  messages missing, groups fine). Branch `hotfix/personal-messages`; not deployed.
+  messages missing, groups fine). Merged to `main` in PR #19 (branch `hotfix/personal-messages`); not deployed.
   - **Live listener**: a number whose first automatic connect gave up, and was then connected from
     the dashboard, now receives messages live instead of only through the 10-minute re-check.
   - **Recovery** reads personal chats even when the group list fails or the number is in no groups,
@@ -26,6 +26,20 @@ module, field, and behavior in the app.
     groups used to push out of the first 300.
   - **Monitoring**: `/metrics` counts received / stored / dropped / recovered per account per kind.
     `scripts/diagnose-personal-messages.sh` is the read-only production check.
+- **WhatsApp Accounts and Groups: seven fixes from the 18 Oct audit.** Built on `rudra`; not deployed.
+  - **Collecting.** A number whose first automatic connect gave up, and was then connected from
+    the dashboard, now receives messages live. Before, they arrived only through the 10-minute re-check.
+    (Also shipped on its own in the hotfix above.)
+  - **Broken profiles.** An empty `{}` session file no longer counts as a session (Rifat's 24 Sep
+    fix). It had blocked the profile reset and the resume of an accepted scan.
+  - **Primary.** Only a connected number can be made Primary, because only the Primary answers
+    customers. A project's first number is Primary at once. A restart no longer undoes Remove
+    Primary.
+  - **Reconnect** on a number that shows CONNECTED now restarts the session, and saving a proxy
+    applies it.
+  - **Delete** needs the history figures on screen before it will destroy anything.
+  - **Group switches** set the value the button showed, never the opposite.
+  - **Deleted accounts.** A deleted original account no longer comes back on restart.
 - **A newly linked number finishes loading its chats** (`GROUP_SYNC.md` §10). Built on `rudra`; not
   deployed.
   - **The problem.** Since 23 Sep a scan got a fixed 4 minutes. A large number was killed mid-copy,

@@ -1,7 +1,7 @@
 "use client";
 
 import type { AccountHistoryImpact } from "@support-automation/db";
-import type { DeleteAccountResult } from "@/server/actions/accounts";
+import type { DeleteAccountResult, PrimaryChangeResult } from "@/server/actions/accounts";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { QrCode } from "lucide-react";
 import {
@@ -88,9 +88,10 @@ export function AccountCard({
   onReconnect: () => Promise<void>;
   onResync: () => Promise<{ alreadyRunning: boolean }>;
   onLogout: () => Promise<void>;
-  onSetPrimary: () => Promise<void>;
-  onRemovePrimary: () => Promise<void>;
-  onDelete: (confirmDestroyHistory?: boolean) => Promise<DeleteAccountResult>;
+  onSetPrimary: () => Promise<PrimaryChangeResult>;
+  onRemovePrimary: () => Promise<PrimaryChangeResult>;
+  /** Takes the figures the dialog showed: the server refuses to destroy history nobody was shown. */
+  onDelete: (confirmedImpact: AccountHistoryImpact | null) => Promise<DeleteAccountResult>;
   /** Read-only: what a delete would destroy, so the confirmation can name real numbers. */
   onReadDeletionImpact: () => Promise<AccountHistoryImpact>;
 }) {
@@ -98,6 +99,8 @@ export function AccountCard({
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletionImpact, setDeletionImpact] = useState<AccountHistoryImpact | null>(null);
+  /** The impact read failed: the dialog says so and Delete stays disabled, since nothing was shown. */
+  const [impactUnreadable, setImpactUnreadable] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [qrOpen, setQrOpen] = useState(false);
   const previousStatus = useRef(account.status);
@@ -174,7 +177,9 @@ export function AccountCard({
       showToast({
         tone: "info",
         title: "Reconnect requested",
-        description: "The worker will pick this up shortly.",
+        description: isConnected
+          ? "The worker restarts this number's session shortly. This card shows when it is back."
+          : "The worker will pick this up shortly.",
       });
     });
   }
@@ -208,24 +213,32 @@ export function AccountCard({
 
   function confirmSetPrimary() {
     startTransition(async () => {
-      await onSetPrimary();
+      const result = await onSetPrimary();
       closeDialog();
+      if (result.error) {
+        showToast({ tone: "danger", title: "Primary not changed", description: result.error });
+        return;
+      }
       showToast({
         tone: "success",
         title: "Primary account changed",
-        description: `"${account.label}" is now the default account for all unconfigured services.`,
+        description: `"${account.label}" now answers customers. Your other numbers keep collecting messages but no longer reply.`,
       });
     });
   }
 
   function confirmRemovePrimary() {
     startTransition(async () => {
-      await onRemovePrimary();
+      const result = await onRemovePrimary();
       closeDialog();
+      if (result.error) {
+        showToast({ tone: "danger", title: "Primary not removed", description: result.error });
+        return;
+      }
       showToast({
         tone: "info",
         title: "Primary status removed",
-        description: "No account is Primary now — unconfigured services will error until one is set.",
+        description: "No account is Primary now — every connected number answers its own groups, and unconfigured notifications will error until one is set.",
       });
     });
   }
@@ -239,19 +252,19 @@ export function AccountCard({
   function openDeleteDialog() {
     setDeleteError(null);
     setDeletionImpact(null);
+    setImpactUnreadable(false);
     setDialog("delete");
     void onReadDeletionImpact()
       .then(setDeletionImpact)
-      // A failed count must not block the dialog: the server refuses an unconfirmed delete on an
-      // account with history anyway, so the safe path holds either way.
-      .catch(() => setDeletionImpact(null));
+      // Delete stays disabled: confirming figures nobody was shown is what this dialog exists to stop.
+      .catch(() => setImpactUnreadable(true));
   }
 
   function confirmDelete() {
     startTransition(async () => {
-      // The operator has read the figures by the time this button is reachable, which is exactly
-      // what the server is asking to be told.
-      const result = await onDelete(true);
+      // The figures on screen go with the request. The button is only enabled once they are there,
+      // and the server refuses to destroy history the operator was not shown.
+      const result = await onDelete(deletionImpact);
       if (result.error) {
         setDeleteError(result.error);
         if (result.impact) setDeletionImpact(result.impact);
@@ -427,9 +440,13 @@ export function AccountCard({
         onClose={closeDialog}
         onConfirm={confirmReconnect}
         loading={isPending}
-        title="Reconnect this account?"
-        description="Sends a reconnect command to the worker for this WhatsApp account."
-        confirmLabel="Reconnect"
+        title={isConnected ? "Restart this number's session?" : "Reconnect this account?"}
+        description={
+          isConnected
+            ? "The worker closes this number's WhatsApp session and opens it again. It normally comes back by itself within a minute or two, without a new scan, and messages that arrive meanwhile are caught up afterwards. If WhatsApp has unlinked this device, a new QR code will be needed."
+            : "Sends a reconnect command to the worker for this WhatsApp account."
+        }
+        confirmLabel={isConnected ? "Restart session" : "Reconnect"}
       />
 
       <ConfirmDialog
@@ -459,7 +476,7 @@ export function AccountCard({
         onConfirm={confirmSetPrimary}
         loading={isPending}
         title="Set as Primary account?"
-        description="Every WhatsApp-dependent service without its own account configured will start using this account by default, instead of the current Primary."
+        description="Only the Primary number answers customers. Once this is Primary, rules and AI reply only to messages that arrive on this number — your other numbers keep collecting messages but stop replying. Notifications without their own account in Account Routing also go out from it."
         confirmLabel="Set as Primary"
       />
 
@@ -469,7 +486,7 @@ export function AccountCard({
         onConfirm={confirmRemovePrimary}
         loading={isPending}
         title="Remove Primary status?"
-        description="No account will be Primary afterward. Any service that isn't explicitly configured with its own account will show a clear error instead of sending, until a new Primary is set."
+        description="With no Primary, every connected number answers customers in its own groups — a group two of your numbers are in gets answered twice. Notifications without their own account will show an error instead of sending until a new Primary is set. (A project's only number is made Primary again when the worker restarts.)"
         confirmLabel="Remove Primary"
         tone="danger"
       />
@@ -488,8 +505,14 @@ export function AccountCard({
         onConfirm={confirmDelete}
         loading={isPending}
         title="Delete this WhatsApp account?"
-        description={deleteError ?? describeDeletion(deletionImpact)}
+        description={
+          deleteError ??
+          (impactUnreadable
+            ? "Could not read what this account still holds, so it cannot be deleted from here right now. Close this and try again."
+            : describeDeletion(deletionImpact))
+        }
         confirmLabel="Delete"
+        confirmDisabled={!deletionImpact}
         tone="danger"
       />
     </Card>

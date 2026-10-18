@@ -48,8 +48,8 @@ export function AddAccountDialog() {
         {/* The wrong turn is taken here, so the correction belongs here rather than in help text
             nobody opens. Adding an account to REPLACE a number silently strands everything: groups
             are per-account, so the old account keeps the monitoring and AI settings while the new
-            one starts empty, and replies keep going out on whichever account received the message
-            — which is still the old one. */}
+            one starts empty — and only the Primary number answers customers, so the new one stays
+            silent until somebody makes it Primary. */}
         <Alert tone="info">
           This is for running a <strong>second</strong> number alongside your current one. To
           <strong> replace</strong> the number you already use, do not add an account — use{" "}

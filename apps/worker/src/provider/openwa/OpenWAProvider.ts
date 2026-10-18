@@ -1,4 +1,4 @@
-import { access, mkdir, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { toDataURL as renderQrDataUrl } from "qrcode";
 import { join } from "node:path";
 import {
@@ -63,6 +63,7 @@ import {
 import { serializeMessageId } from "./messageId.js";
 import { withTimeout } from "../../util/withTimeout.js";
 import { killBrowsersUsingProfile } from "./orphanBrowsers.js";
+import { hasRestorableSessionData } from "./sessionData.js";
 import { recordCollection } from "../../health/collectionByKind.js";
 import {
   clearLinkMarker,
@@ -768,13 +769,20 @@ export class OpenWAProvider implements WhatsAppProvider {
    * try. Waiting for the pattern costs one extra retry and buys not destroying a session over a
    * blip.
    *
-   * NO SESSION DATA FILE is what makes this safe rather than merely effective. While
-   * `<sessionId>.data.json` exists a restore is genuinely possible, and the profile is the thing
-   * that would restore it — deleting it would turn a recoverable session into a mandatory re-scan,
-   * which on an unattended worker at 3am means an account that stays down until somebody notices.
-   * With no data file there is nothing to preserve: the profile is not restoring anything, it is
-   * demonstrably not producing a code either, and a fresh directory is strictly better than the
-   * one that has failed twice.
+   * NO USABLE SESSION DATA is what makes this safe rather than merely effective. While
+   * `<sessionId>.data.json` holds a session a restore is genuinely possible, and the profile is the
+   * thing that would restore it — deleting it would turn a recoverable session into a mandatory
+   * re-scan, which on an unattended worker at 3am means an account that stays down until somebody
+   * notices. With nothing to restore there is nothing to preserve: the profile is not restoring
+   * anything, it is demonstrably not producing a code either, and a fresh directory is strictly
+   * better than the one that has failed twice.
+   *
+   * CONTENT, not existence (Rifat's fix from 24 Sep 2026, `sessionData.ts`). The check was
+   * `access()`, which asks only whether a file is there. Production sat with a four-byte `{}`: the
+   * library creates the file and, on a multi-device session, has nothing to put in it, because MD
+   * keeps the credentials in the Chromium profile's IndexedDB. So the guard read "a restore is
+   * possible" about a file that could restore nothing, the poisoned profile was never cleared, and
+   * the account looped App Offline for a day without ever showing a code.
    */
   private async shouldResetProfile(): Promise<boolean> {
     if (this.codelessFailures < CODELESS_FAILURES_BEFORE_PROFILE_RESET) return false;
@@ -784,14 +792,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     // got deleted, sending the number back to 0% (GROUP_SYNC.md §10). `resumableLink()` has
     // already removed a marker that is too old to honour, so one still here is current.
     if (await readLinkMarker(this.linkMarker())) return false;
-    const sessionDataFile = join(this.sessionDataPath, `${this.sessionId}.data.json`);
-    try {
-      await access(sessionDataFile);
-      // A restore is still on the table. Leave it alone and let the retries keep trying.
-      return false;
-    } catch {
-      return true;
-    }
+    return !(await hasRestorableSessionData(this.sessionDataPath, this.sessionId));
   }
 
   /**
@@ -1621,10 +1622,10 @@ export class OpenWAProvider implements WhatsAppProvider {
     const markerPath = this.linkMarker();
     const marker = await readLinkMarker(markerPath);
     if (!marker) return false;
-    const hasSessionData = await access(join(this.sessionDataPath, `${this.sessionId}.data.json`)).then(
-      () => true,
-      () => false,
-    );
+    // What the file holds, not whether it is there: a leftover `{}` from an earlier session is no
+    // proof that THIS load finished, and reading it as one dropped the record of the scan and handed
+    // the attempt back to the library's 120 s race — the 0% restart the record exists to prevent.
+    const hasSessionData = await hasRestorableSessionData(this.sessionDataPath, this.sessionId);
     if (isResumableLink(marker, hasSessionData, Date.now())) {
       console.log(`[openwa] ${this.sessionId}: resuming a link accepted ${Math.round((Date.now() - marker.scannedAt) / 60_000)} min ago whose chats had not finished loading`);
       return true;
