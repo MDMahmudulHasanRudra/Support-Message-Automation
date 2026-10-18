@@ -199,6 +199,11 @@ export interface WhatsAppProvider {
    */
   subscribeToMessages(handler: (message: RawIncomingMessage) => void): void;
   /**
+   * Told about a message the provider received but could not convert, so it is counted rather than
+   * vanishing. Optional: a provider that cannot fail that way need not offer it. Set before connect().
+   */
+  onMessageConversionError?: (err: unknown) => void;
+  /**
    * Messages the provider can still see for chats touched since `since`, oldest first, capped at
    * `limit`.
    *

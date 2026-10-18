@@ -12,6 +12,13 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { connectWithRetry } from "./connectWithRetry.js";
 export { connectWithRetry };
 
+/** What the registry needs to know to bring one account's session up. */
+export interface AccountSession {
+  id: string;
+  sessionId: string;
+  sessionDataPath: string;
+}
+
 /**
  * Owns every connected WhatsApp session in this process — one `OpenWAProvider` (one Chromium
  * browser) per account, keyed by accountId. `OpenWAProvider` was already instance-scoped before
@@ -33,6 +40,12 @@ export class ProviderRegistry {
   // MockProvider via registerForTesting() without needing a real OpenWA/Puppeteer session.
   private readonly providers = new Map<string, WhatsAppProvider>();
 
+  /** How a provider is built for an account. Replaceable by a test, which must never launch Chromium. */
+  constructor(
+    private readonly createProvider: (account: AccountSession) => WhatsAppProvider = (account) =>
+      new OpenWAProvider(account.id, account.sessionId, account.sessionDataPath),
+  ) {}
+
   get(accountId: string): WhatsAppProvider | undefined {
     return this.providers.get(accountId);
   }
@@ -50,46 +63,16 @@ export class ProviderRegistry {
     this.providers.set(accountId, provider);
   }
 
-  /**
-   * Connects one account and wires it into the message pipeline exactly as index.ts used to do
-   * for the single account it owned. Awaited fully by every caller before moving to the next
-   * account — see the class doc comment for why that matters here specifically.
-   */
-  async connectAccount(account: { id: string; sessionId: string; sessionDataPath: string }): Promise<boolean> {
-    const provider = new OpenWAProvider(account.id, account.sessionId, account.sessionDataPath);
-    this.providers.set(account.id, provider);
-
-    const connected = await connectWithRetry(provider, account.id);
-
-    // The account can be removed while this is waiting. `connectWithRetry` is up to three attempts
-    // with backoff and a QR wait, so the window is minutes, not milliseconds — long enough for an
-    // operator to delete the number in the dashboard and for the next reconciliation pass to drop
-    // it. Identity rather than `has()`: a reconnect may already have replaced this entry with a
-    // NEWER provider, and tearing that one down would kill a session somebody else just built.
-    if (this.providers.get(account.id) !== provider) {
-      console.log(`[registry] account ${account.id} was removed while connecting — abandoning this attempt`);
-      await provider.disconnect().catch((err) => {
-        console.error(`[registry] error releasing an abandoned connect for account ${account.id}`, err);
-      });
-      return false;
-    }
-
-    if (!connected) {
-      console.error(`[registry] account ${account.id} failed to connect after all retries`);
-      await logSystemEvent("ERROR", "provider", "Failed to connect to WhatsApp after all retries", {
-        accountId: account.id,
-      });
-      return false;
-    }
-
+  /** The pipeline's handlers on one provider: messages, unreadable messages, receipts and deletions. */
+  private wireHandlers(accountId: string, provider: WhatsAppProvider): void {
     // A message the provider could not even convert never reaches the handler below, so it is
     // counted here: what this number answers is "how many messages went wrong", and an over-count
     // that makes somebody look is better than an under-count that lets a shape change pass quietly.
     provider.onMessageConversionError = (err) => {
-      countDroppedMessage(account.id, "PIPELINE_ERROR");
+      countDroppedMessage(accountId, "PIPELINE_ERROR");
       logSystemEvent("ERROR", "pipeline", "Could not read an incoming message", {
         error: (err as Error)?.message ?? String(err),
-        accountId: account.id,
+        accountId,
       }).catch(() => undefined);
     };
 
@@ -121,9 +104,51 @@ export class ProviderRegistry {
       if (update.kind === "ACK") void recordMessageAck(update.accountId, update.whatsappMessageId, update.ackLevel);
       else void recordMessageRevoked(update.accountId, update.whatsappMessageId);
     });
+  }
+
+  /**
+   * Connects one account and wires it into the message pipeline exactly as index.ts used to do
+   * for the single account it owned. Awaited fully by every caller before moving to the next
+   * account — see the class doc comment for why that matters here specifically.
+   */
+  async connectAccount(account: AccountSession): Promise<boolean> {
+    const provider = this.createProvider(account);
+    this.providers.set(account.id, provider);
+
+    // Wired BEFORE the connect, never after it. When this connect gives up (a QR nobody scanned at
+    // boot, or an operator's Connect abandoning this attempt so it runs out of tries first) the
+    // provider stays registered and this method is never called for the account again — so the
+    // RECONNECT or drop recovery that later connects it reaches a provider that must already hold
+    // its handlers. Wiring them only after success left exactly that session CONNECTED and deaf:
+    // nothing pushed in, and only the ten-minute reconcile sweep brought messages in, late.
+    // `connect()` attaches whatever handlers the provider holds, every time it succeeds.
+    this.wireHandlers(account.id, provider);
+
+    const connected = await connectWithRetry(provider, account.id);
+
+    // The account can be removed while this is waiting. `connectWithRetry` is up to three attempts
+    // with backoff and a QR wait, so the window is minutes, not milliseconds — long enough for an
+    // operator to delete the number in the dashboard and for the next reconciliation pass to drop
+    // it. Identity rather than `has()`: a reconnect may already have replaced this entry with a
+    // NEWER provider, and tearing that one down would kill a session somebody else just built.
+    if (this.providers.get(account.id) !== provider) {
+      console.log(`[registry] account ${account.id} was removed while connecting — abandoning this attempt`);
+      await provider.disconnect().catch((err) => {
+        console.error(`[registry] error releasing an abandoned connect for account ${account.id}`, err);
+      });
+      return false;
+    }
+
+    if (!connected) {
+      console.error(`[registry] account ${account.id} failed to connect after all retries`);
+      await logSystemEvent("ERROR", "provider", "Failed to connect to WhatsApp after all retries", {
+        accountId: account.id,
+      });
+      return false;
+    }
 
     // Deliberately NOT awaited — a slow/failed group sync must never delay this account's message
-    // processing (already wired above) or the next account's connectAccount() call. Shared with the
+    // processing (wired before the connect) or the next account's connectAccount() call. Shared with the
     // other two connect paths, which each used to omit it; see the routine's own doc comment.
     resyncAndCatchUpAfterConnect(account.id, provider, "the registry's initial connect");
 
