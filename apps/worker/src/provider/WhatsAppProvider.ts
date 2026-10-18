@@ -1,4 +1,4 @@
-import type { LocationContent, PollContent } from "@support-automation/shared";
+import type { ChatActivity, LocationContent, PollContent } from "@support-automation/shared";
 import type { MediaDownloadInfo, MessageUpdateEvent, RawIncomingMessage } from "../pipeline/types.js";
 
 export type ConnectionStatus =
@@ -165,6 +165,11 @@ export type CollectionProbe =
        */
       uncheckedKinds?: Array<"GROUP" | "PERSONAL">;
     }
+  | { ok: false; reason: string };
+
+/** What `readChatHistory` found in one chat. */
+export type ChatHistoryRead =
+  | { ok: true; messages: RawIncomingMessage[]; undecrypted: number; reachedSince: boolean; earlierPagesLoaded: number }
   | { ok: false; reason: string };
 
 /**
@@ -392,6 +397,18 @@ export interface WhatsAppProvider {
    * session now holds for that chat (the caller stores only the ones it does not have).
    */
   loadEarlierMessages?(chatId: string): Promise<{ ok: true; messages: RawIncomingMessage[]; reachedStart: boolean } | { ok: false; reason: string }>;
+  /**
+   * Personal (1:1) chats active after `since`: ids and last-activity time only. For the personal
+   * backfill (pipeline/personalBackfill.ts). Throws when the list cannot be read.
+   */
+  listPersonalChatsSince?(since: Date): Promise<ChatActivity[]>;
+  /**
+   * One chat's messages from `since` on, as this session holds them, after loading at most
+   * `earlierPages` more pages from the phone when the loaded history does not reach back that far.
+   * `reachedSince` says whether the read covered the whole window; `undecrypted` counts messages
+   * still waiting to be decrypted, which cannot be stored. Never throws.
+   */
+  readChatHistory?(chatId: string, since: Date, options: { earlierPages: number }): Promise<ChatHistoryRead>;
   /** A poll, to a group only (WhatsApp's own rule). */
   sendPoll?(chatId: string, poll: PollContent): Promise<SendResult>;
   sendLocation?(chatId: string, location: LocationContent): Promise<SendResult>;

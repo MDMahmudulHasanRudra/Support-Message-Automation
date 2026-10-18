@@ -521,7 +521,14 @@ messages missing, groups fine"). Rules worth not undoing:
 - **WhatsApp Chat "All" always lists the 100 most recent personal chats** (`PERSONAL_CHATS_ALWAYS_LISTED`)
   on top of the ranked 300, in their place by recency: on a number in ~1,900 busy groups the 300th
   group can be minutes old, and a personal chat behind it was stored but not shown.
-- `scripts/diagnose-personal-messages.sh` is the read-only production check (counts only).
+- `scripts/diagnose-personal-messages.sh` is the read-only production check (counts only; its SQL
+  session is read-only; it fingerprints the RUNNING build inside the containers, not just the checkout).
+- **The personal backfill** (`pipeline/personalBackfill.ts`, `PERSONAL_MESSAGES_RUNBOOK.md` §3) runs in
+  the worker over the loopback health port (`/backfill/personal`). Dry run by default; a write needs
+  `mode=write&confirm=WRITE`; store-only through `storeHistoryMessages` (no rules, AI, waits, cases or
+  notifications); one account, ≤14 days, capped chats and earlier-history pages, one run per worker;
+  a write run checkpoints per chat beside the session and resumes. Never claims complete recovery:
+  PARTIAL chats and unreadable messages are counted.
 
 **A dropped session now reconnects itself.** `accountRegistrySync` skipped any account already in
 the registry (`has()` was true forever, since the provider outlives the session), so a number whose

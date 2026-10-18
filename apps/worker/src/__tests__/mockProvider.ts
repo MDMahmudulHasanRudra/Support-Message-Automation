@@ -1,4 +1,5 @@
 import type {
+  ChatHistoryRead,
   CollectionProbe,
   ConnectionStatus,
   GroupCreationResult,
@@ -12,7 +13,7 @@ import type {
   SendResult,
   WhatsAppProvider,
 } from "../provider/WhatsAppProvider.js";
-import type { LocationContent, PollContent } from "@support-automation/shared";
+import type { ChatActivity, LocationContent, PollContent } from "@support-automation/shared";
 import type { MediaDownloadInfo, RawIncomingMessage } from "../pipeline/types.js";
 
 /**
@@ -88,6 +89,20 @@ export class MockProvider implements WhatsAppProvider {
 
   /** Set by a test whose read answered but could not check everything (`CollectionProbe.incomplete`). */
   public probeIncomplete: string | null = null;
+
+  /** The personal backfill's view of WhatsApp: the chats it lists, and what each chat's history read returns. */
+  public backfillPersonalChats: ChatActivity[] = [];
+  public chatHistory = new Map<string, ChatHistoryRead | (() => Promise<ChatHistoryRead>)>();
+  public historyReads: string[] = [];
+  async listPersonalChatsSince(since: Date): Promise<ChatActivity[]> {
+    return this.backfillPersonalChats.filter((chat) => typeof chat.t === "number" && chat.t * 1000 > since.getTime());
+  }
+  async readChatHistory(chatId: string): Promise<ChatHistoryRead> {
+    this.historyReads.push(chatId);
+    const answer = this.chatHistory.get(chatId);
+    if (!answer) return { ok: true, messages: [], undecrypted: 0, reachedSince: true, earlierPagesLoaded: 0 };
+    return typeof answer === "function" ? answer() : answer;
+  }
 
   /** Set by a test whose read answered for personal chats but could not check the groups. */
   public probeUncheckedGroups: string | null = null;
