@@ -35,6 +35,7 @@ message text.
 |---|---|---|
 | 1. Server checkout | the code ON DISK | not necessarily what is running |
 | 2. What is running | fingerprints inside the containers, image build time | `36ccf91 ... NO` = the hotfix is not running; `3ae4a51 ... NO` = no personal recovery at all |
+| 2b. Memory limits | each running container's limit vs. the checkout's compose file | a running limit the release's compose file does not carry would be REMOVED by the deploy (§5) |
 | 3. Migrations | applied vs. what the running image and the checkout expect | any "not applied" line must be resolved before a deploy |
 | 4. Worker counters | since the worker started | with the hotfix: `collectionByKind` → `PERSONAL.received / stored / dropped / undecrypted` |
 | 5. Worker log | live events by kind, unreadable messages, reconcile recoveries, chat-list failures, P2022 | `live personal` near 0 while customers are writing = the browser is not delivering them |

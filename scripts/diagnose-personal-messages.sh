@@ -34,6 +34,14 @@ echo "  worker 36ccf91 personal-message hotfix .................. $(worker_has '
 app_has() { docker compose exec -T app sh -c "grep -rqs -- '$1' /app/apps/web/.next/server" && echo "yes" || echo "NO"; }
 echo "  app    36ccf91 personal chats kept in 'All' ............. $(app_has 'kindRank')"
 
+section "2b. Container memory limits: running vs. the checkout's compose file (0 = unlimited)"
+for svc in worker app postgres; do
+  cid=$(docker compose ps -q "$svc" 2>/dev/null)
+  [ -n "$cid" ] && echo "  $svc running: memory=$(docker inspect -f '{{.HostConfig.Memory}}' "$cid") shm=$(docker inspect -f '{{.HostConfig.ShmSize}}' "$cid")"
+done
+# Only these two keys are printed: the rest of `docker compose config` holds resolved secrets.
+echo "  checkout compose file:"; docker compose config 2>/dev/null | grep -E '^\s*(mem_limit|shm_size|memory):' | sed 's/^/   /'
+
 section "3. Database migrations (read-only comparison; nothing is applied)"
 psql_ro() { docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -q -v ON_ERROR_STOP=0 -P pager=off "$@"' sh "$@"; }
 applied=$(printf 'SET default_transaction_read_only = on;\nSELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL;\n' | psql_ro -At | LC_ALL=C sort)
