@@ -167,6 +167,15 @@ export type CollectionProbe =
     }
   | { ok: false; reason: string };
 
+/** One message as WhatsApp Web's message store holds it: enough to check whether it is stored. */
+export interface StoreMessageRef {
+  /** The serialized message id — the same value stored as `Message.whatsappMessageId`. */
+  id: string;
+  chatId: string;
+  /** Seconds since the epoch, as WhatsApp reports it. */
+  t: number;
+}
+
 /** What `readChatHistory` found in one chat. */
 export type ChatHistoryRead =
   | { ok: true; messages: RawIncomingMessage[]; undecrypted: number; reachedSince: boolean; earlierPagesLoaded: number }
@@ -409,6 +418,21 @@ export interface WhatsAppProvider {
    * still waiting to be decrypted, which cannot be stored. Never throws.
    */
   readChatHistory?(chatId: string, since: Date, options: { earlierPages: number }): Promise<ChatHistoryRead>;
+  /**
+   * Every message this session's page holds that was sent after `since`, in a group or a personal
+   * chat, read from WhatsApp Web's MESSAGE store rather than its chat list: ids, chat and time only,
+   * newest first, at most `limit`. Null when the page has no message store. For the store sweep
+   * (pipeline/reconcileRecentMessages.ts), which exists because every other recovery path finds a
+   * message through its chat's activity time — and a chat that never shows as active (a first
+   * message from an unknown number) hides its message from all of them. Never throws.
+   */
+  listStoreMessageRefs?(since: Date, limit: number): Promise<StoreMessageRef[] | null>;
+  /**
+   * The full messages for these ids. One still encrypted or not answered is counted in `unreadable`
+   * (worth reading again); one read but in a shape that cannot be stored is listed in `unusableIds`
+   * (not worth reading again). Never throws.
+   */
+  readMessagesById?(ids: readonly string[]): Promise<{ messages: RawIncomingMessage[]; unreadable: number; unusableIds: string[] }>;
   /** A poll, to a group only (WhatsApp's own rule). */
   sendPoll?(chatId: string, poll: PollContent): Promise<SendResult>;
   sendLocation?(chatId: string, location: LocationContent): Promise<SendResult>;

@@ -26,7 +26,7 @@ import { awaitQuiescence, beginShutdown, installProcessGuards } from "./lifecycl
 import { startMessageRecoveryProcessor } from "./pipeline/messageRecovery.js";
 import { startCollectionWatchdog } from "./health/collectionWatchdog.js";
 import { startGroupRecoveryProcessor } from "./commands/groupRecovery.js";
-import { startMessageReconcileProcessor } from "./pipeline/reconcileRecentMessages.js";
+import { startMessageReconcileProcessor, startMessageStoreSweepProcessor } from "./pipeline/reconcileRecentMessages.js";
 import { readLoops, recordLoopTick, registerLoop } from "./health/loopLiveness.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
@@ -222,6 +222,10 @@ async function main() {
     // Finds the message the watchdog cannot: a busy number that stores most messages and loses a few
     // one at a time. Compares WhatsApp's last half hour with what is stored, adds only what is missing.
     startMessageReconcileProcessor(registry),
+    // Every minute, reads WhatsApp Web's MESSAGE store rather than its chat list, so a message whose
+    // chat never shows as active (a first message from an unknown number) is still stored.
+    // MESSAGE_STORE_SWEEP_INTERVAL_SECONDS=0 switches it off.
+    ...[startMessageStoreSweepProcessor(registry)].filter((timer): timer is NodeJS.Timeout => timer !== null),
     startHeartbeat(state, registry),
   ];
 
