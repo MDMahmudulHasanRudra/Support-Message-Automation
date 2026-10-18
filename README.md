@@ -13,6 +13,19 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Personal (1:1) messages: collection and visibility hotfix** (18 Oct incident: many personal
+  messages missing, groups fine). Branch `hotfix/personal-messages`; not deployed.
+  - **Live listener**: a number whose first automatic connect gave up, and was then connected from
+    the dashboard, now receives messages live instead of only through the 10-minute re-check.
+  - **Recovery** reads personal chats even when the group list fails or the number is in no groups,
+    with its own message budget, and never moves the account's checkpoint past a read that was
+    incomplete.
+  - **"Waiting for this message"** — a message WhatsApp delivers still encrypted is read again until
+    it can be, instead of being dropped; voice notes are recognised by type.
+  - **WhatsApp Chat "All"** always lists the 100 most recent personal chats, which hundreds of busy
+    groups used to push out of the first 300.
+  - **Monitoring**: `/metrics` counts received / stored / dropped / recovered per account per kind.
+    `scripts/diagnose-personal-messages.sh` is the read-only production check.
 - **A newly linked number finishes loading its chats** (`GROUP_SYNC.md` §10). Built on `rudra`; not
   deployed.
   - **The problem.** Since 23 Sep a scan got a fixed 4 minutes. A large number was killed mid-copy,

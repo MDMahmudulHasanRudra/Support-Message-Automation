@@ -1,7 +1,25 @@
 import { createServer } from "node:http";
 import { checkDatabaseConnection } from "@support-automation/db";
 import { readMetrics } from "./metrics.js";
+import { readCollectionByKind } from "./collectionByKind.js";
 import { readLoops, stalestLoop } from "./loopLiveness.js";
+
+/**
+ * A loopback-only operations route (the personal backfill): reachable only from inside this
+ * container, i.e. by somebody with `docker compose exec` on the server. Returns null when the path
+ * is not its own.
+ */
+export type OpsRoute = (
+  method: string,
+  url: URL,
+) => { code: number; body: unknown } | null | Promise<{ code: number; body: unknown } | null>;
+
+const opsRoutes: OpsRoute[] = [];
+
+/** Registered once the registry exists (the health server starts before it). */
+export function registerOpsRoute(route: OpsRoute): void {
+  opsRoutes.push(route);
+}
 
 export interface WorkerHealthState {
   startedAt: number;
@@ -23,12 +41,19 @@ export interface WorkerHealthState {
 export function startHealthServer(state: WorkerHealthState, port: number) {
   const server = createServer((req, res) => {
     if (req.url === "/metrics") {
-      respond(res, 200, { uptimeMs: Date.now() - state.startedAt, ...readMetrics(), loops: readLoops() });
+      respond(res, 200, { uptimeMs: Date.now() - state.startedAt, ...readMetrics(), loops: readLoops(), collectionByKind: readCollectionByKind() });
       return;
     }
 
     if (req.url !== "/health") {
-      res.writeHead(404).end();
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      void (async () => {
+        for (const route of opsRoutes) {
+          const answer = await route(req.method ?? "GET", url);
+          if (answer) return respond(res, answer.code, answer.body);
+        }
+        res.writeHead(404).end();
+      })().catch((err) => respond(res, 500, { error: (err as Error).message }));
       return;
     }
 

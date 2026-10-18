@@ -46,7 +46,8 @@ describe("processWithRetry", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(process).toHaveBeenCalledTimes(3); // first attempt + two retries
     expect(countDropped).toHaveBeenCalledTimes(1);
-    expect(countDropped).toHaveBeenCalledWith("acc", "PIPELINE_ERROR");
+    // The chat id travels with it, so the drop is counted as a group or a personal one (collectionByKind).
+    expect(countDropped).toHaveBeenCalledWith("acc", "PIPELINE_ERROR", "1@g.us");
     expect(logEvent).toHaveBeenCalledWith("ERROR", "pipeline", "Error processing incoming message", expect.objectContaining({ attempts: 3 }));
   });
 

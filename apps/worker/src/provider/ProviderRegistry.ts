@@ -2,6 +2,10 @@ import { countMetric } from "../health/metrics.js";
 import { OpenWAProvider } from "./openwa/OpenWAProvider.js";
 import type { WhatsAppProvider } from "./WhatsAppProvider.js";
 import { processWithRetry } from "../pipeline/retryFailedMessage.js";
+import { processIncomingMessage, storeMissedMessage } from "../pipeline/processIncomingMessage.js";
+import { shouldAutomateRecoveredMessage } from "../pipeline/catchUpMissedMessages.js";
+import { recordCollection } from "../health/collectionByKind.js";
+import type { RawIncomingMessage } from "../pipeline/types.js";
 import { resyncAndCatchUpAfterConnect } from "../commands/commandProcessor.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { countDroppedMessage } from "../pipeline/dropCounter.js";
@@ -11,6 +15,24 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 // re-exported here so existing callers and tests are unaffected by where it lives.
 import { connectWithRetry } from "./connectWithRetry.js";
 export { connectWithRetry };
+
+/**
+ * A message the provider hands over after its arrival (`deliveredLate`: WhatsApp decrypted it late)
+ * follows the catch-up's rule, not the live one: inside the automation window it is processed as
+ * usual; older, it is stored and counted but runs no rules — a reply to a question from an hour ago
+ * is worse than none, exactly as for a message recovered after a gap.
+ */
+async function processLateMessage(raw: RawIncomingMessage): Promise<void> {
+  if (shouldAutomateRecoveredMessage(raw.timestampWa, Date.now())) await processIncomingMessage(raw);
+  else await storeMissedMessage(raw);
+}
+
+/** What the registry needs to know to bring one account's session up. */
+export interface AccountSession {
+  id: string;
+  sessionId: string;
+  sessionDataPath: string;
+}
 
 /**
  * Owns every connected WhatsApp session in this process — one `OpenWAProvider` (one Chromium
@@ -33,6 +55,12 @@ export class ProviderRegistry {
   // MockProvider via registerForTesting() without needing a real OpenWA/Puppeteer session.
   private readonly providers = new Map<string, WhatsAppProvider>();
 
+  /** How a provider is built for an account. Replaceable by a test, which must never launch Chromium. */
+  constructor(
+    private readonly createProvider: (account: AccountSession) => WhatsAppProvider = (account) =>
+      new OpenWAProvider(account.id, account.sessionId, account.sessionDataPath),
+  ) {}
+
   get(accountId: string): WhatsAppProvider | undefined {
     return this.providers.get(accountId);
   }
@@ -50,14 +78,68 @@ export class ProviderRegistry {
     this.providers.set(accountId, provider);
   }
 
+  /** The pipeline's handlers on one provider: messages, unreadable messages, receipts and deletions. */
+  private wireHandlers(accountId: string, provider: WhatsAppProvider): void {
+    // A message the provider could not even convert never reaches the handler below, so it is
+    // counted here: what this number answers is "how many messages went wrong", and an over-count
+    // that makes somebody look is better than an under-count that lets a shape change pass quietly.
+    provider.onMessageConversionError = (err) => {
+      countDroppedMessage(accountId, "PIPELINE_ERROR");
+      logSystemEvent("ERROR", "pipeline", "Could not read an incoming message", {
+        error: (err as Error)?.message ?? String(err),
+        accountId,
+      }).catch(() => undefined);
+    };
+
+    provider.subscribeToMessages((message) => {
+      // Counted here rather than after storing: the question this answers is whether the provider
+      // is still handing anything over at all, and a message dropped by a later filter still
+      // proves it was. A message handed over late (decrypted after it arrived) was counted when it
+      // arrived, as `undecrypted`, so it is not counted again here.
+      countMetric("received");
+      if (!message.deliveredLate) recordCollection(accountId, message.chatId, "received");
+      // PHASE 6.1: the exact OpenWA -> worker event handoff point — logged here, not inside the
+      // provider, since this is the provider-agnostic boundary any future provider implementation
+      // would call through identically.
+      console.log(
+        `[pipeline] [${message.accountId}:${message.whatsappMessageId}] MESSAGE_RECEIVED`,
+        JSON.stringify({
+          chatId: message.chatId,
+          senderPhone: message.senderPhone,
+          direction: message.direction,
+          isGroup: Boolean(message.whatsappGroupId),
+        }),
+      );
+      // A failure is retried a few times before it is counted as a drop (retryFailedMessage.ts); the
+      // count and the System Logs entry it always produced are written when every chance is used.
+      void processWithRetry(message, message.deliveredLate ? processLateMessage : undefined);
+    });
+
+    // Receipts and deletions on messages already seen (CHAT_RICH_MESSAGING.md). Facts only: each sets
+    // a column on a stored row and starts nothing. Both writers swallow their own errors.
+    provider.subscribeToMessageUpdates?.((update) => {
+      if (update.kind === "ACK") void recordMessageAck(update.accountId, update.whatsappMessageId, update.ackLevel);
+      else void recordMessageRevoked(update.accountId, update.whatsappMessageId);
+    });
+  }
+
   /**
    * Connects one account and wires it into the message pipeline exactly as index.ts used to do
    * for the single account it owned. Awaited fully by every caller before moving to the next
    * account — see the class doc comment for why that matters here specifically.
    */
-  async connectAccount(account: { id: string; sessionId: string; sessionDataPath: string }): Promise<boolean> {
-    const provider = new OpenWAProvider(account.id, account.sessionId, account.sessionDataPath);
+  async connectAccount(account: AccountSession): Promise<boolean> {
+    const provider = this.createProvider(account);
     this.providers.set(account.id, provider);
+
+    // Wired BEFORE the connect, never after it. When this connect gives up (a QR nobody scanned at
+    // boot, or an operator's Connect abandoning this attempt so it runs out of tries first) the
+    // provider stays registered and this method is never called for the account again — so the
+    // RECONNECT or drop recovery that later connects it reaches a provider that must already hold
+    // its handlers. Wiring them only after success left exactly that session CONNECTED and deaf:
+    // nothing pushed in, and only the ten-minute reconcile sweep brought messages in, late.
+    // `connect()` attaches whatever handlers the provider holds, every time it succeeds.
+    this.wireHandlers(account.id, provider);
 
     const connected = await connectWithRetry(provider, account.id);
 
@@ -82,48 +164,8 @@ export class ProviderRegistry {
       return false;
     }
 
-    // A message the provider could not even convert never reaches the handler below, so it is
-    // counted here: what this number answers is "how many messages went wrong", and an over-count
-    // that makes somebody look is better than an under-count that lets a shape change pass quietly.
-    provider.onMessageConversionError = (err) => {
-      countDroppedMessage(account.id, "PIPELINE_ERROR");
-      logSystemEvent("ERROR", "pipeline", "Could not read an incoming message", {
-        error: (err as Error)?.message ?? String(err),
-        accountId: account.id,
-      }).catch(() => undefined);
-    };
-
-    provider.subscribeToMessages((message) => {
-      // Counted here rather than after storing: the question this answers is whether the provider
-      // is still handing anything over at all, and a message dropped by a later filter still
-      // proves it was.
-      countMetric("received");
-      // PHASE 6.1: the exact OpenWA -> worker event handoff point — logged here, not inside the
-      // provider, since this is the provider-agnostic boundary any future provider implementation
-      // would call through identically.
-      console.log(
-        `[pipeline] [${message.accountId}:${message.whatsappMessageId}] MESSAGE_RECEIVED`,
-        JSON.stringify({
-          chatId: message.chatId,
-          senderPhone: message.senderPhone,
-          direction: message.direction,
-          isGroup: Boolean(message.whatsappGroupId),
-        }),
-      );
-      // A failure is retried a few times before it is counted as a drop (retryFailedMessage.ts); the
-      // count and the System Logs entry it always produced are written when every chance is used.
-      void processWithRetry(message);
-    });
-
-    // Receipts and deletions on messages already seen (CHAT_RICH_MESSAGING.md). Facts only: each sets
-    // a column on a stored row and starts nothing. Both writers swallow their own errors.
-    provider.subscribeToMessageUpdates?.((update) => {
-      if (update.kind === "ACK") void recordMessageAck(update.accountId, update.whatsappMessageId, update.ackLevel);
-      else void recordMessageRevoked(update.accountId, update.whatsappMessageId);
-    });
-
     // Deliberately NOT awaited — a slow/failed group sync must never delay this account's message
-    // processing (already wired above) or the next account's connectAccount() call. Shared with the
+    // processing (wired before the connect) or the next account's connectAccount() call. Shared with the
     // other two connect paths, which each used to omit it; see the routine's own doc comment.
     resyncAndCatchUpAfterConnect(account.id, provider, "the registry's initial connect");
 

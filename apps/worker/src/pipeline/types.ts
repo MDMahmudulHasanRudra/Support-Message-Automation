@@ -32,6 +32,12 @@ export interface RawIncomingMessage {
    * never stored as a message of its own; it marks the stored original instead (CHAT_RICH_MESSAGING.md §3).
    */
   revoked?: boolean;
+  /**
+   * Handed over AFTER its arrival — WhatsApp delivered it encrypted and decrypted it later
+   * (OpenWAProvider `awaitDecryption`). The registry applies the catch-up's automation window to it,
+   * so an old question is stored and counted but not answered late.
+   */
+  deliveredLate?: boolean;
   /** For a message this account sent: the ack level WhatsApp reported with it (1–4), else null. */
   ackLevel?: number | null;
   /** A poll or a location, as WhatsApp described it (display only; `body` stays the text). */

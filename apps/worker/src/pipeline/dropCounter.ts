@@ -1,3 +1,4 @@
+import { recordCollection } from "../health/collectionByKind.js";
 import { withAccountProject } from "../project/context.js";
 import { prisma } from "../db.js";
 import type { MessageDropReason } from "@prisma/client";
@@ -19,7 +20,9 @@ import { toDhakaDateOnly } from "@support-automation/shared";
  * counter failing to increment is a missing statistic; a counter taking down message processing
  * would be the failure it exists to detect, caused by the thing detecting it.
  */
-export function countDroppedMessage(accountId: string, reason: MessageDropReason): void {
+export function countDroppedMessage(accountId: string, reason: MessageDropReason, chatId?: string | null): void {
+  // Group or personal, in memory (health/collectionByKind.ts) — the table has no such column.
+  recordCollection(accountId, chatId, "dropped");
   void recordDrop(accountId, reason).catch((err) => {
     console.warn("[pipeline] could not record a dropped message", err);
   });

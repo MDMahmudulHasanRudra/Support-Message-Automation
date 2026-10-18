@@ -1,4 +1,4 @@
-import type { LocationContent, PollContent } from "@support-automation/shared";
+import type { ChatActivity, LocationContent, PollContent } from "@support-automation/shared";
 import type { MediaDownloadInfo, MessageUpdateEvent, RawIncomingMessage } from "../pipeline/types.js";
 
 export type ConnectionStatus =
@@ -153,7 +153,23 @@ export type CollectionProbe =
    * chat list, or a chat whose history would not load. The watchdog judges on the rest; a gap sweep
    * records PARTIAL rather than RECOVERED, because "nothing more to recover" was not shown.
    */
-  | { ok: true; messages: RawIncomingMessage[]; incomplete?: string }
+  | {
+      ok: true;
+      messages: RawIncomingMessage[];
+      incomplete?: string;
+      /**
+       * A kind of chat the read could not check at all — the group list failed or came back empty,
+       * or the personal list could not be read. The other kind was still read, so a personal message
+       * is recovered even when the group list is too large to read in time. A watchdog that found
+       * nothing must not read an unchecked GROUP half as agreement.
+       */
+      uncheckedKinds?: Array<"GROUP" | "PERSONAL">;
+    }
+  | { ok: false; reason: string };
+
+/** What `readChatHistory` found in one chat. */
+export type ChatHistoryRead =
+  | { ok: true; messages: RawIncomingMessage[]; undecrypted: number; reachedSince: boolean; earlierPagesLoaded: number }
   | { ok: false; reason: string };
 
 /**
@@ -198,6 +214,11 @@ export interface WhatsAppProvider {
    * Safe to call before connect().
    */
   subscribeToMessages(handler: (message: RawIncomingMessage) => void): void;
+  /**
+   * Told about a message the provider received but could not convert, so it is counted rather than
+   * vanishing. Optional: a provider that cannot fail that way need not offer it. Set before connect().
+   */
+  onMessageConversionError?: (err: unknown) => void;
   /**
    * Messages the provider can still see for chats touched since `since`, oldest first, capped at
    * `limit`.
@@ -376,6 +397,18 @@ export interface WhatsAppProvider {
    * session now holds for that chat (the caller stores only the ones it does not have).
    */
   loadEarlierMessages?(chatId: string): Promise<{ ok: true; messages: RawIncomingMessage[]; reachedStart: boolean } | { ok: false; reason: string }>;
+  /**
+   * Personal (1:1) chats active after `since`: ids and last-activity time only. For the personal
+   * backfill (pipeline/personalBackfill.ts). Throws when the list cannot be read.
+   */
+  listPersonalChatsSince?(since: Date): Promise<ChatActivity[]>;
+  /**
+   * One chat's messages from `since` on, as this session holds them, after loading at most
+   * `earlierPages` more pages from the phone when the loaded history does not reach back that far.
+   * `reachedSince` says whether the read covered the whole window; `undecrypted` counts messages
+   * still waiting to be decrypted, which cannot be stored. Never throws.
+   */
+  readChatHistory?(chatId: string, since: Date, options: { earlierPages: number }): Promise<ChatHistoryRead>;
   /** A poll, to a group only (WhatsApp's own rule). */
   sendPoll?(chatId: string, poll: PollContent): Promise<SendResult>;
   sendLocation?(chatId: string, location: LocationContent): Promise<SendResult>;
