@@ -6,6 +6,7 @@ import type { RawIncomingMessage } from "./types.js";
 import { processIncomingMessage, storeMissedMessage } from "./processIncomingMessage.js";
 import { shouldAutomateRecoveredMessage } from "./catchUpMissedMessages.js";
 import { countMetric } from "../health/metrics.js";
+import { recordCollection } from "../health/collectionByKind.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { trackTick } from "../lifecycle.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
@@ -42,6 +43,8 @@ export interface ReconcileResult {
   failed: number;
   /** False when the session could not be read; nothing was changed. */
   read: boolean;
+  /** What the read could not check (a kind of chat, a chat, the message limit), or null. */
+  incomplete: string | null;
 }
 
 /** The messages a pass should add: non-empty and not yet stored. Pure, so it is tested without a database. */
@@ -54,11 +57,16 @@ export async function reconcileRecentMessages(accountId: string, provider: Whats
 }
 
 async function reconcileInProject(accountId: string, provider: WhatsAppProvider, now: number): Promise<ReconcileResult> {
-  const result: ReconcileResult = { offered: 0, alreadyStored: 0, recovered: 0, failed: 0, read: false };
+  const result: ReconcileResult = { offered: 0, alreadyStored: 0, recovered: 0, failed: 0, read: false, incomplete: null };
   const probe = await provider.probeCollection(new Date(now - LOOKBACK_MS()), MAX_MESSAGES);
   // An unreadable session is the watchdog's finding to make, not this loop's; it changes nothing.
   if (!probe.ok) return result;
   result.read = true;
+  result.incomplete = probe.incomplete ?? null;
+  if (result.incomplete) {
+    // Said every pass it applies, so "the sweep ran" is never mistaken for "the sweep saw everything".
+    console.warn(`[reconcile] account ${accountId}: incomplete read — ${result.incomplete}`);
+  }
   result.offered = probe.messages.length;
   if (probe.messages.length === 0) return result;
 
@@ -78,6 +86,7 @@ async function reconcileInProject(accountId: string, provider: WhatsAppProvider,
       else await storeMissedMessage(raw);
       result.recovered += 1;
       countMetric("retried");
+      recordCollection(accountId, raw.chatId, "recovered");
     } catch (err) {
       result.failed += 1;
       console.error(`[reconcile] failed to recover message ${raw.whatsappMessageId}`, err);

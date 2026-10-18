@@ -130,6 +130,22 @@ describe("a sweep that could not check everything", () => {
     expect(row.recoveryNote).toContain("One-to-one chats could not be listed");
   });
 
+  it("leaves the checkpoint where it was when the read was incomplete, so the next sweep looks again", async () => {
+    // The catch-up reads from the account's ONE checkpoint forward. Moving it to the newest message
+    // it recovered, after a read that could not check the personal chats, put every personal message
+    // of that gap behind the checkpoint for good — no later sweep would ever read it.
+    await gapThenReconnect(2 * HOUR);
+    const before = (await prisma.processingCheckpoint.findUniqueOrThrow({ where: { accountId: account.id } })).lastProcessedTimestampWa!;
+    const provider = new MockProvider();
+    provider.missedMessages = [personal(`${customerNumber()}@c.us`, new Date(Date.now() - 20 * MINUTE))];
+    provider.probeIncomplete = "One-to-one chats could not be listed (Protocol error), so personal messages in this window were not checked.";
+
+    await catchUpMissedMessages(account.id, provider);
+
+    const after = (await prisma.processingCheckpoint.findUniqueOrThrow({ where: { accountId: account.id } })).lastProcessedTimestampWa!;
+    expect(after.getTime()).toBe(before.getTime());
+  });
+
   it("keeps every reason when more than one applies", async () => {
     await gapThenReconnect(20 * HOUR);
     const provider = new MockProvider();

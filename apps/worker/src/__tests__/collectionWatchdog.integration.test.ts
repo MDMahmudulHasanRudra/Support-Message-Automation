@@ -232,6 +232,20 @@ describe("a connected session that cannot be read", () => {
     expect(findings[0]!.reason).toContain("Target closed");
   });
 
+  it("a read that answered for personal chats but not for groups is still not agreement", async () => {
+    // The probe now reads personal chats even when the group list fails, so it can answer ok with
+    // nothing found. For the groups that is still "could not check", and must strike exactly as an
+    // unreadable session does — not be logged as "WhatsApp agrees".
+    await storeMessage(LONG_AGO());
+    provider.probeUncheckedGroups = "The group list could not be read (chat list timed out after 60s).";
+
+    expect(findingsForAccount(await checkCollectionHealth(registry))).toHaveLength(0);
+    const findings = findingsForAccount(await checkCollectionHealth(registry));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.problem).toBe("UNREADABLE");
+    expect(findings[0]!.reason).toContain("group list could not be read");
+  });
+
   it("forgets its strikes as soon as the session answers again", async () => {
     await storeMessage(LONG_AGO());
     provider.probeFailureReason = "Protocol error: Target closed";

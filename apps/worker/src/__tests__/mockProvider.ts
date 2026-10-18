@@ -89,9 +89,13 @@ export class MockProvider implements WhatsAppProvider {
   /** Set by a test whose read answered but could not check everything (`CollectionProbe.incomplete`). */
   public probeIncomplete: string | null = null;
 
+  /** Set by a test whose read answered for personal chats but could not check the groups. */
+  public probeUncheckedGroups: string | null = null;
+
   async probeCollection(since: Date, limit: number): Promise<CollectionProbe> {
     if (this.probeFailureReason) return { ok: false, reason: this.probeFailureReason };
     const messages = this.missedMessages.filter((m) => m.timestampWa > since).slice(0, limit);
+    if (this.probeUncheckedGroups) return { ok: true, messages, incomplete: this.probeUncheckedGroups, uncheckedKinds: ["GROUP"] };
     return this.probeIncomplete ? { ok: true, messages, incomplete: this.probeIncomplete } : { ok: true, messages };
   }
   async getAccountInfo() {

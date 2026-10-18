@@ -1,5 +1,5 @@
 import "./helpers/requireTestDatabase.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "./helpers/projectFixtures.js";
 import { ProviderRegistry } from "../provider/ProviderRegistry.js";
@@ -74,3 +74,51 @@ describe("the registry wires an account's handlers whatever its first connect do
     expect(provider.updateHandler).not.toBeNull();
   });
 });
+
+/**
+ * A message WhatsApp could not decrypt at first is handed over again once it can be read
+ * (`deliveredLate`). By then it may be old, and the catch-up's rule applies to it exactly as to a
+ * message recovered after a gap: inside the automation window it is answered as usual; older, it is
+ * stored and counted but runs no rules — a reply to a question from an hour ago is worse than none.
+ */
+describe("a message delivered late by the provider", () => {
+  function personal(minutesAgo: number) {
+    const chat = `8801${String(Date.now()).slice(-6)}${Math.floor(Math.random() * 1000).toString().padStart(3, "0")}@c.us`;
+    return {
+      accountId,
+      whatsappMessageId: `false_${chat}_${randomUUID()}`,
+      chatId: chat,
+      whatsappGroupId: null,
+      senderPhone: chat.split("@")[0]!,
+      senderJid: chat,
+      senderName: null,
+      direction: "INCOMING" as const,
+      body: "amar line kaj korche na",
+      timestampWa: new Date(Date.now() - minutesAgo * 60_000),
+      quotedWhatsappMessageId: null,
+      mentionedPhones: [],
+      deliveredLate: true,
+    };
+  }
+
+  it("past the automation window is stored without rules", async () => {
+    const provider = new RecordingProvider();
+    const registry = new ProviderRegistry(() => provider);
+    await registry.connectAccount({ id: accountId, sessionId: "s", sessionDataPath: "/tmp/never-used" });
+
+    const raw = personal(40);
+    provider.messageHandler!(raw);
+
+    const row = await vi.waitFor(
+      async () => {
+        const found = await prisma.message.findFirst({ where: { accountId, whatsappMessageId: raw.whatsappMessageId } });
+        expect(found).not.toBeNull();
+        return found!;
+      },
+      { timeout: 5_000 },
+    );
+    expect(row.processingStatus).toBe("IGNORED");
+    expect(row.groupId).toBeNull();
+  });
+});
+

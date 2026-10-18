@@ -519,6 +519,30 @@ message — a backdated case is instantly overdue and fires its whole alert ladd
 `markHumanReplied` still runs, because that only ever closes one. `CATCHUP_MAX_LOOKBACK_HOURS` (12)
 stops a worker that was off for a week dragging a week back in.
 
+**Personal (1:1) messages are recovered on their own terms** (18 Oct 2026 incident: "many personal
+messages missing, groups fine"). Rules worth not undoing:
+- **`probeCollection` reads personal chats whatever the group list does.** It used to return
+  "unknown" as soon as the group list failed or came back empty, so on a roster too large to list in
+  time, or a number in no groups, no one-to-one message was ever read back. Now only BOTH failing is
+  unknown; a half that could not be checked is named in `uncheckedKinds`. The watchdog treats an
+  unchecked GROUP half with nothing found as "could not read" (a strike), never as agreement.
+- **The message limit is per kind, personal chats first.** One budget, most recent chat first, let a
+  few busy groups use it all. A read that stops at its limit says so (`incomplete`).
+- **The catch-up never moves the account's checkpoint after an incomplete read.** The checkpoint is
+  shared by every chat, so moving it past a gap the read did not cover put those messages behind it
+  for good.
+- **A message that arrives still encrypted (`ciphertext`, "Waiting for this message") is read again**
+  (`OpenWAProvider.awaitDecryption`: 15 s → 1 h, capped, per session) instead of being dropped as an
+  empty body; WhatsApp decrypts it in place and raises no new event. It is handed over
+  `deliveredLate`, and the registry applies the catch-up's 15-minute automation window to it.
+- **Media is recognised by type as well as `isMedia`** — without the getter a voice note read as empty.
+- **`health/collectionByKind.ts`** counts received / stored / dropped / recovered / undecrypted per
+  account per kind (GROUP, PERSONAL) on `/metrics`. Counts and account ids only.
+- **WhatsApp Chat "All" always lists the 100 most recent personal chats** (`PERSONAL_CHATS_ALWAYS_LISTED`)
+  on top of the ranked 300, in their place by recency: on a number in ~1,900 busy groups the 300th
+  group can be minutes old, and a personal chat behind it was stored but not shown.
+- `scripts/diagnose-personal-messages.sh` is the read-only production check (counts only).
+
 **A dropped session now reconnects itself.** `accountRegistrySync` skipped any account already in
 the registry (`has()` was true forever, since the provider outlives the session), so a number whose
 session died sat collecting nothing until a human happened to press Reconnect. `recoverIfDropped()`

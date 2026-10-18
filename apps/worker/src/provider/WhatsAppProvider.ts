@@ -153,7 +153,18 @@ export type CollectionProbe =
    * chat list, or a chat whose history would not load. The watchdog judges on the rest; a gap sweep
    * records PARTIAL rather than RECOVERED, because "nothing more to recover" was not shown.
    */
-  | { ok: true; messages: RawIncomingMessage[]; incomplete?: string }
+  | {
+      ok: true;
+      messages: RawIncomingMessage[];
+      incomplete?: string;
+      /**
+       * A kind of chat the read could not check at all — the group list failed or came back empty,
+       * or the personal list could not be read. The other kind was still read, so a personal message
+       * is recovered even when the group list is too large to read in time. A watchdog that found
+       * nothing must not read an unchecked GROUP half as agreement.
+       */
+      uncheckedKinds?: Array<"GROUP" | "PERSONAL">;
+    }
   | { ok: false; reason: string };
 
 /**
