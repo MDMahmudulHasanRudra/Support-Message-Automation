@@ -79,7 +79,7 @@ export class MockProvider implements WhatsAppProvider {
   /** Set by a test that exercises the catch-up sweep; nothing to replay otherwise. */
   public missedMessages: RawIncomingMessage[] = [];
 
-  subscribeToMessages(): void {}
+  subscribeToMessages(_handler: (message: RawIncomingMessage) => void): void {}
 
   async fetchMessagesSince(since: Date, limit: number): Promise<RawIncomingMessage[]> {
     const probe = await this.probeCollection(since, limit);

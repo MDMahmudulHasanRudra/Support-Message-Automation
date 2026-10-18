@@ -397,16 +397,36 @@ deleted the profile, sending the copy back to 0%. Now:
 - The health check needs 5 unanswered checks, but still only 2 proven failures, before a restart.
 
 Never put a fixed deadline back on the post-scan load. `connectTimeouts.test.ts` fails if one
-appears.
+appears. Whether `<sessionId>.data.json` holds a session is read from its CONTENT
+(`openwa/sessionData.ts`, Rifat's 24 Sep fix): a multi-device session leaves only `{}`, and reading its
+mere existence as "restorable" kept a broken profile from ever being reset and dropped the record of
+an accepted scan.
+
+**An operator's Reconnect restarts a session even when it reads CONNECTED** (`payload.force`, set by
+`requestReconnect` and `saveAccountProxy`). The worker still skips a RECONNECT for a CONNECTED session
+unless it is forced AND newer than the account's `lastConnectedAt` — the stale double-reconnect stays
+blocked, while "connected but dead" (the state the collection alerts tell people to press Reconnect
+for) can finally be restarted from the dashboard. **The registry wires the message, receipt and
+conversion-error handlers BEFORE `connectWithRetry`**: when the automatic connect gave up, the
+provider stayed registered and was later connected by a RECONNECT with no handler at all —
+CONNECTED, sending, and collecting only through the 10-minute reconcile sweep.
 
 ### Replacing the number that serves customers (`accounts.ts`, `GroupSetupTransfer.tsx`)
 
 **A customer reply always goes out on the account that received the message** — `runAiFallback` is
-handed `accountId: raw.accountId` and never calls `resolveWhatsAppAccount()`. Primary and Account
-Routing govern only the *notification* service keys (`NOTIFY_WHATSAPP`, `PRIORITY_SUPPORT`,
-`CONVERSATION_LEARNING`; `TEAMS_RESOLUTION_NOTIFY` is retired); none of them is "reply to a customer", and
-none could be — the send would fail `verifyGroupMembership` from an account that is not in the
-group. Setting an account Primary does not move existing conversations onto it.
+handed `accountId: raw.accountId` and never calls `resolveWhatsAppAccount()`, because a send from an
+account not in the group fails `verifyGroupMembership`. Account Routing governs only the
+*notification* service keys (`NOTIFY_WHATSAPP`, `PRIORITY_SUPPORT`, `CONVERSATION_LEARNING`;
+`TEAMS_RESOLUTION_NOTIFY` is retired). **Primary, though, decides WHETHER a number answers:** once a
+project has a Primary, only messages arriving on it are automated (`processIncomingMessage`, "Only the
+Primary account answers customers"); every other number collects and never replies. With no Primary,
+every connected number answers its own groups. Three rules follow (18 Oct 2026 audit):
+`setPrimaryAccount` refuses a number that is not CONNECTED (a disconnected spare made Primary silenced
+the whole project); a project's first number is Primary when it is added; and the worker's boot
+self-heal (`ensurePrimaryAccountExists`) promotes only a project's ONLY account — it used to make the
+oldest of several Primary on every restart, undoing Remove Primary. Setting an account Primary does
+not move existing conversations onto it. `ensureLegacyAccountExists` likewise creates the original
+account only on a fresh install, so a deleted one does not come back.
 
 **Logout deactivates that account's groups** (the `LOGOUT` command handler). This is the one case
 `syncGroups`' own deactivation sweep can never cover: that sweep compares against a live provider

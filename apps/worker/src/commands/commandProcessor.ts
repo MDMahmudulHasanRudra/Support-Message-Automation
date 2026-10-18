@@ -1502,6 +1502,19 @@ async function executeBuildCommunicationStyleCommand(command: ClaimedCommand): P
   }
 }
 
+/**
+ * Whether a RECONNECT for a session that reads CONNECTED should still restart it: a person asked
+ * (`payload.force`), and asked after the account last connected. A forced command the session has
+ * connected since is answered already — restarting again would be the stale double-reconnect the
+ * skip exists to stop.
+ */
+async function isFreshOperatorRestart(command: ClaimedCommand, accountId: string): Promise<boolean> {
+  const payload = command.payload as { force?: unknown } | null;
+  if (payload?.force !== true) return false;
+  const account = await prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { lastConnectedAt: true } });
+  return !account?.lastConnectedAt || account.lastConnectedAt < command.createdAt;
+}
+
 async function executeClaimedCommand(command: ClaimedCommand, accountId: string, provider: WhatsAppProvider): Promise<void> {
   try {
     switch (command.type) {
@@ -1512,7 +1525,13 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         // not blindly tear down an already-healthy session. This is the exact real incident that
         // motivated this guard (two stale RECONNECT commands fired back-to-back into a session
         // that had just connected, the second one broke the browser into an unresponsive state).
-        if (provider.getConnectionStatus() === "CONNECTED") {
+        //
+        // Except when a person asked for it AFTER the session last connected (`force`, set by the
+        // dashboard's Reconnect and proxy save). "Reads CONNECTED" is exactly the state of a session
+        // whose page has died, and the collection alerts tell operators to press Reconnect for it —
+        // skipping that request made the button, and the advice, do nothing. A forced command older
+        // than the latest connection is still the stale kind above, and is still skipped.
+        if (provider.getConnectionStatus() === "CONNECTED" && !(await isFreshOperatorRestart(command, accountId))) {
           await prisma.workerCommand.update({
             where: { id: command.id },
             data: {

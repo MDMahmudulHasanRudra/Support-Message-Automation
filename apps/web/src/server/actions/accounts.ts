@@ -45,17 +45,27 @@ async function enqueueCommand(
 export async function requestReconnect(accountId: string): Promise<void> {
   await requireAccess("whatsapp.manage", ACCOUNTS_PAGE);
 
-  // Drop the stored code first. A reconnect tears the session down and builds a new one, so
-  // whatever is on screen belongs to the attempt being replaced and cannot be scanned any more —
-  // leaving it there is how "Request a new code" looked like it had done nothing while the worker
-  // was in fact restarting Chromium. `setPairingMethod` has always cleared it for the same reason.
-  // Harmless on a connected account, where it is already null.
-  await prisma.whatsAppAccount.updateMany({
-    where: { id: accountId },
-    data: { qrCode: null, qrUpdatedAt: null },
+  // A reconnect already queued or running answers this press. Its code is the live one, so it is
+  // left on screen: wiping it here started nothing new, and a phone link code (written once per
+  // attempt) then stayed gone for the rest of that attempt's window.
+  const inFlight = await prisma.workerCommand.findFirst({
+    where: { type: "RECONNECT", accountId, status: { in: ["PENDING", "PROCESSING"] } },
+    select: { id: true },
   });
-
-  await enqueueCommand("RECONNECT", accountId);
+  if (!inFlight) {
+    // Drop the stored code first. A reconnect tears the session down and builds a new one, so
+    // whatever is on screen belongs to the attempt being replaced and cannot be scanned any more —
+    // leaving it there is how "Request a new code" looked like it had done nothing while the worker
+    // was in fact restarting Chromium. `setPairingMethod` has always cleared it for the same reason.
+    // Harmless on a connected account, where it is already null.
+    await prisma.whatsAppAccount.updateMany({
+      where: { id: accountId },
+      data: { qrCode: null, qrUpdatedAt: null },
+    });
+    // `force`: a person asked, so the worker restarts the session even if it reads CONNECTED —
+    // which is also what a session whose page has died looks like (commandProcessor's RECONNECT).
+    await enqueueCommand("RECONNECT", accountId, { force: true });
+  }
   revalidatePath(await projectPath("/accounts"));
 }
 
@@ -183,10 +193,12 @@ export interface AddAccountFormState {
 /**
  * Just creates the DB row with a label — the worker owns everything filesystem-related
  * (sessionDataPath/sessionId assignment, actually connecting) via its own account-registry sync
- * poller, since only the worker's environment knows WHATSAPP_SESSION_DIR. Never Primary by
- * default: the very first account on a fresh install is auto-promoted by the worker at startup
- * (ensurePrimaryAccountExists), so by the time an admin can click "Add Account" a Primary already
- * exists.
+ * poller, since only the worker's environment knows WHATSAPP_SESSION_DIR.
+ *
+ * A project's FIRST number is Primary from the start. Only ISP Digital gets an automatic account;
+ * every other project starts with none, and its first number used to wait for the next worker
+ * restart to become Primary — notifications failed with "No Primary" until then. Any later number
+ * is not Primary: which number answers customers is the operator's choice (Set as Primary).
  */
 export async function addWhatsAppAccount(formData: FormData): Promise<AddAccountFormState> {
   const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
@@ -194,10 +206,22 @@ export async function addWhatsAppAccount(formData: FormData): Promise<AddAccount
   const label = String(formData.get("label") ?? "").trim();
   if (!label) return { error: "Label is required." };
 
-  const account = await prisma.whatsAppAccount.create({ data: { label, status: "DISCONNECTED" } });
+  const first = (await prisma.whatsAppAccount.count()) === 0;
+  let account;
+  try {
+    account = await prisma.whatsAppAccount.create({ data: { label, status: "DISCONNECTED", isPrimary: first } });
+  } catch (err) {
+    // Two first numbers added at the same moment: the database allows one Primary per project.
+    if (!first || (err as { code?: string }).code !== "P2002") throw err;
+    account = await prisma.whatsAppAccount.create({ data: { label, status: "DISCONNECTED" } });
+  }
   await logSystemEvent("INFO", "accounts", `WhatsApp account "${label}" added`, { accountId: account.id });
   revalidatePath(await projectPath("/accounts"));
   return {};
+}
+
+export interface PrimaryChangeResult {
+  error?: string;
 }
 
 /**
@@ -205,11 +229,24 @@ export async function addWhatsAppAccount(formData: FormData): Promise<AddAccount
  * not rely on frontend validation alone — the database's own partial unique index on isPrimary
  * (see schema.prisma) is the real backstop; this transaction is defense-in-depth so a
  * half-applied change can never leave two Primaries even momentarily within the app's own logic.
+ *
+ * Primary is not only the default for notifications: ONLY the Primary answers customers
+ * (processIncomingMessage). Every other number keeps collecting and stops replying. So a number
+ * that is not connected is refused — making a disconnected spare Primary silenced every customer
+ * reply in the project, with the connected number still showing green.
  */
-export async function setPrimaryAccount(accountId: string): Promise<void> {
-  const session = await requireAccess("whatsapp.manage", ACCOUNTS_PAGE);
+export async function setPrimaryAccount(accountId: string): Promise<PrimaryChangeResult> {
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
   const target = await prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
-  if (!target || target.isPrimary) return;
+  if (!target) return { error: "This WhatsApp account no longer exists." };
+  if (target.isPrimary) return {};
+  if (target.status !== "CONNECTED") {
+    return {
+      error: `"${target.label}" is not connected. Only the Primary number answers customers, so connect it first — making it Primary now would stop every automatic reply.`,
+    };
+  }
 
   const previousPrimary = await prisma.whatsAppAccount.findFirst({ where: { isPrimary: true } });
 
@@ -225,18 +262,24 @@ export async function setPrimaryAccount(accountId: string): Promise<void> {
     changedBy: session.username,
   });
   revalidatePath(await projectPath("/accounts"));
+  return {};
 }
 
 /**
- * Leaves the account table with zero Primary accounts, on purpose — the spec calls this out as
- * its own distinct action from setPrimaryAccount, not "set some other account Primary instead."
- * Every WhatsApp-dependent service falling back to Primary will clearly error ("No Primary
- * account configured") until an admin sets one — never silently picks a replacement.
+ * Leaves the project with zero Primary accounts, on purpose — the spec calls this out as its own
+ * distinct action from setPrimaryAccount, not "set some other account Primary instead." Every
+ * WhatsApp-dependent service falling back to Primary will clearly error ("No Primary account
+ * configured") until an admin sets one, and with no Primary every connected number answers
+ * customers in its own groups. The worker keeps it that way across restarts unless the project has
+ * only one number (ensurePrimaryAccountExists) — never silently picks a replacement.
  */
-export async function removePrimaryAccount(accountId: string): Promise<void> {
-  const session = await requireAccess("whatsapp.manage", ACCOUNTS_PAGE);
+export async function removePrimaryAccount(accountId: string): Promise<PrimaryChangeResult> {
+  const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
   const target = await prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
-  if (!target || !target.isPrimary) return;
+  if (!target) return { error: "This WhatsApp account no longer exists." };
+  if (!target.isPrimary) return {};
 
   await prisma.whatsAppAccount.update({ where: { id: accountId }, data: { isPrimary: false } });
   await logSystemEvent("WARN", "accounts", `Primary status removed from "${target.label}" — no account is Primary now`, {
@@ -244,6 +287,7 @@ export async function removePrimaryAccount(accountId: string): Promise<void> {
     changedBy: session.username,
   });
   revalidatePath(await projectPath("/accounts"));
+  return {};
 }
 
 export interface DeleteAccountResult {
@@ -270,10 +314,12 @@ export async function getAccountDeletionImpact(accountId: string): Promise<Accou
 export async function deleteWhatsAppAccount(
   accountId: string,
   /**
-   * Set only after the operator has been shown `getAccountDeletionImpact`'s real figures and said
-   * yes to them. Without it an account carrying history is refused rather than silently destroyed.
+   * The figures the operator was shown (`getAccountDeletionImpact`) and said yes to. An account
+   * carrying history is refused without them. It used to be a boolean the dialog always sent as
+   * `true` — including while its text still said "Checking…" or after the read had failed — so this
+   * guard never held. A confirmation that saw no history is not a confirmation to destroy some.
    */
-  confirmDestroyHistory = false,
+  confirmedImpact: AccountHistoryImpact | null = null,
 ): Promise<DeleteAccountResult> {
   const granted = await checkPermission("whatsapp.manage", ACCOUNTS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
@@ -290,7 +336,8 @@ export async function deleteWhatsAppAccount(
   }
 
   const impact = await countAccountHistory(accountId, prisma);
-  if (impact.hasHistory && !confirmDestroyHistory) {
+  const sawHistory = typeof confirmedImpact === "object" && confirmedImpact !== null && confirmedImpact.hasHistory === true;
+  if (impact.hasHistory && !sawHistory) {
     // Not a hard refusal — the operator may genuinely be retiring a number — but it does not
     // happen on one click, and the caller has to have seen the figures to get past this.
     return { error: "This account still holds history. Confirm what would be destroyed first.", impact };
@@ -733,7 +780,8 @@ export async function saveAccountProxy(
       where: { id: accountId },
       data: { proxyAddress: null, proxyProtocol: null, proxyUsername: null, proxyPasswordCiphertext: null },
     });
-    await enqueueCommand("RECONNECT", accountId);
+    // Forced: the setting is read at connect, and a connected session skips an ordinary RECONNECT.
+    await enqueueCommand("RECONNECT", accountId, { force: true });
     revalidatePath(await projectPath("/accounts"));
     return { success: true };
   }
@@ -752,7 +800,7 @@ export async function saveAccountProxy(
       ...(fields.password?.trim() ? { proxyPasswordCiphertext: encryptSecret(fields.password.trim()) } : {}),
     },
   });
-  await enqueueCommand("RECONNECT", accountId);
+  await enqueueCommand("RECONNECT", accountId, { force: true });
   revalidatePath(await projectPath("/accounts"));
   return { success: true };
 }

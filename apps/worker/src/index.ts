@@ -108,7 +108,8 @@ async function main() {
 
   // Backward compatibility, load-bearing: this is the exact account (same sessionDataPath,
   // same sessionId) every pre-multi-account install already has — see ensureLegacyAccountExists's
-  // own doc comment. It also becomes Primary automatically if this is a fresh install.
+  // own doc comment. Created only on a fresh install, where it also becomes Primary; null once the
+  // operator has deleted it while other accounts exist.
   const legacyAccount = await ensureLegacyAccountExists();
   await ensurePrimaryAccountExists();
 
@@ -142,7 +143,7 @@ async function main() {
   console.log(`[worker] ${accountsToConnect.length} account(s) will be connected in the background: ${accountsToConnect.map((a) => a.label).join(", ")}`);
   await logSystemEvent("INFO", "worker", "Worker starting up", {
     accountIds: accountsToConnect.map((a) => a.id),
-    legacyAccountId: legacyAccount.id,
+    legacyAccountId: legacyAccount?.id ?? null,
   });
 
   const intervals: NodeJS.Timeout[] = [

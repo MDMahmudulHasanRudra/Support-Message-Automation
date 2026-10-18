@@ -139,7 +139,7 @@ export function GroupSetupTransfer({ targetLabel, targetPhone, candidates, onAdo
                 confirming.wouldCarry === 1 ? "" : "s"
               } on ${targetLabel} will take that account's monitoring, AI, priority and assignment settings, overwriting what they have now. ${
                 confirming.label
-              } is not changed. If both numbers stay in the same groups with AI on, customers get answered twice.`
+              } is not changed. Only the Primary number answers customers, so make ${targetLabel} Primary for it to start replying.`
             : ""
         }
         confirmLabel="Copy setup"

@@ -165,13 +165,24 @@ describe("a profile that cannot produce a code gets replaced rather than retried
     expect(source).toContain("if (this.codelessFailures < CODELESS_FAILURES_BEFORE_PROFILE_RESET) return false;");
   });
 
-  it("and refuses while session data still exists", () => {
-    // This is what makes it safe rather than merely effective: while `<sessionId>.data.json` is
-    // present a restore is possible and the profile is what would restore it. Deleting it there
-    // turns a recoverable session into a mandatory re-scan, which on an unattended worker means an
-    // account down until somebody notices.
-    expect(source).toContain("`${this.sessionId}.data.json`");
-    expect(source).toMatch(/await access\(sessionDataFile\);[\s\S]{0,200}?return false;/);
+  it("and refuses only while session data it could actually restore from exists", () => {
+    // This is what makes it safe rather than merely effective: while there is a session to restore,
+    // the profile is what would restore it, and deleting it turns a recoverable session into a
+    // mandatory re-scan — on an unattended worker, an account down until somebody notices.
+    //
+    // But the question is what the file CONTAINS, never whether it is there. Asking `access()` kept
+    // a live account down for a day on 24 Sep 2026: the library had written a four-byte `{}`, which
+    // is all a multi-device session leaves here, and the guard read it as a restorable session. The
+    // dead profile was never cleared, so no code was ever produced. See sessionData.test.ts for the
+    // rule itself; this pins the wiring, which is the half that regressed.
+    expect(source).toContain("return !(await hasRestorableSessionData(this.sessionDataPath, this.sessionId));");
+    expect(source).not.toMatch(/await access\(sessionDataFile\)/);
+  });
+
+  it("the resume of an accepted scan reads the session file the same way", () => {
+    // A leftover `{}` read as "the load finished" dropped the scan's record and gave the attempt
+    // back to the library's 120 s race — the restart from 0% the record exists to prevent.
+    expect(source).toContain("const hasSessionData = await hasRestorableSessionData(this.sessionDataPath, this.sessionId);");
   });
 
   it("logout removes the profile whether or not a client existed", () => {

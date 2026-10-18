@@ -158,11 +158,14 @@ export default async function AccountsPage() {
               </HelpSection>
               <HelpSection title="Primary account">
                 <p>
-                  Exactly one account can be Primary at a time — it's the default account used by every
-                  feature (Support Notifications, Priority Support, etc.) that hasn't been explicitly
-                  routed to a specific account on the Account Routing page. The very first account is
-                  made Primary automatically; you never have to set one manually unless you add more
-                  accounts and want to change which one is the default.
+                  Exactly one account can be Primary at a time, and{" "}
+                  <strong>only the Primary number answers customers</strong>: rules and AI reply only to
+                  messages that arrive on it, while your other numbers keep collecting messages without
+                  replying. It is also the default account for every notification (Support
+                  Notifications, Priority Support, etc.) that hasn't been routed to a specific account on
+                  the Account Routing page. A project's first number is made Primary automatically. Only
+                  a connected number can be made Primary. With no Primary at all, every connected number
+                  answers in its own groups.
                 </p>
               </HelpSection>
               <HelpSection title="Status meanings">
@@ -186,9 +189,9 @@ export default async function AccountsPage() {
                 </p>
                 <p>
                   Adding a second account instead leaves the old one holding every setting while the
-                  new one starts empty — and replies keep going out on whichever account received
-                  the message, which is still the old one. Add Account is for running two numbers at
-                  once, not for changing which number you use.
+                  new one starts empty — and only the Primary number answers customers, so the new
+                  number stays silent until it is made Primary. Add Account is for running two numbers
+                  at once, not for changing which number you use.
                 </p>
                 <p>
                   One step this app cannot do for you: the new phone has to actually be in the

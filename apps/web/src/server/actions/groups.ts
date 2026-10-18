@@ -4,7 +4,7 @@ import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 
-import type { SupportPriority } from "@prisma/client";
+import type { Prisma, SupportPriority } from "@prisma/client";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { buildGroupWhere, isGroupFilterKey, type GroupFilterKey } from "@/lib/groupFilters";
 
@@ -35,25 +35,58 @@ export async function setGroupPriority(
   revalidatePath(await projectPath("/groups"));
 }
 
-export async function toggleGroupMonitoring(id: string): Promise<void> {
-  await requireAccess("whatsapp.manage");
-  const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
-  await prisma.whatsAppGroup.update({ where: { id }, data: { isMonitored: !group.isMonitored } });
+/**
+ * The page these switches belong to (PROJECT_ROLES.md, "Pages"). `whatsapp.manage` is shared by the
+ * four WhatsApp pages, so without naming it a project role with Full on Teams or Team Members and
+ * Read on Groups could change monitoring and test mode by posting from a sibling page.
+ */
+const GROUPS_PAGE = { sections: ["/groups"] };
+
+export interface GroupFlagResult {
+  error?: string;
+  /** False when the group was already in the requested state — nothing was written. */
+  changed?: boolean;
+}
+
+type GroupFlag = "isMonitored" | "aiAutomationEnabled" | "testModeEnabled" | "aiAutomationExcluded";
+
+/**
+ * Sets one of a group's switches to the value the operator chose. Never a flip.
+ *
+ * These were toggles (`!current`), so the outcome depended on what the row held when the request
+ * arrived, not on what the operator saw. The Groups page only refreshes while a sync runs, so a
+ * stale tab or a colleague acting first is the normal case — and then "Start monitoring" stopped
+ * monitoring, and "Exit test mode" switched test mode ON, lifting the rate limits on the number that
+ * serves every customer. A conditional write also makes a double click harmless.
+ */
+async function setGroupFlag(id: string, flag: GroupFlag, value: boolean): Promise<GroupFlagResult> {
+  const granted = await checkPermission("whatsapp.manage", GROUPS_PAGE);
+  if ("denied" in granted) return { error: granted.denied };
+  const where: Prisma.WhatsAppGroupWhereInput = { id, [flag]: !value };
+  const data: Prisma.WhatsAppGroupUpdateManyMutationInput = { [flag]: value };
+  const written = await prisma.whatsAppGroup.updateMany({ where, data });
+  if (written.count === 0) {
+    const exists = await prisma.whatsAppGroup.count({ where: { id } });
+    if (exists === 0) return { error: "This group no longer exists. Refresh the page." };
+    return { changed: false };
+  }
   revalidatePath(await projectPath("/groups"));
+  return { changed: true };
+}
+
+export async function setGroupMonitoring(id: string, monitored: boolean): Promise<GroupFlagResult> {
+  return setGroupFlag(id, "isMonitored", monitored);
 }
 
 /**
  * Hybrid AI Automation's per-group opt-in (see WhatsAppGroup.aiAutomationEnabled and
  * apps/worker/src/aiFallback/eligibility.ts, which also requires isMonitored + the global AI
  * Settings gates before the fallback layer ever runs for this group). Lower-stakes than
- * toggleGroupMonitoring — disabling it only stops the AI fallback stage for this group and fails
- * safe to nothing happening, so unlike monitoring this doesn't need a confirmation step.
+ * monitoring — disabling it only stops the AI fallback stage for this group and fails safe to
+ * nothing happening, so unlike monitoring this doesn't need a confirmation step.
  */
-export async function toggleGroupAiAutomation(id: string): Promise<void> {
-  await requireAccess("whatsapp.manage");
-  const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
-  await prisma.whatsAppGroup.update({ where: { id }, data: { aiAutomationEnabled: !group.aiAutomationEnabled } });
-  revalidatePath(await projectPath("/groups"));
+export async function setGroupAiAutomation(id: string, enabled: boolean): Promise<GroupFlagResult> {
+  return setGroupFlag(id, "aiAutomationEnabled", enabled);
 }
 
 /**
@@ -66,16 +99,13 @@ export async function toggleGroupAiAutomation(id: string): Promise<void> {
  * all stay fully active — that is this project's own written policy for test-group testing, and it
  * is what keeps a test group from becoming a way around the safety layer.
  *
- * Higher stakes than the AI toggle above, which fails safe to nothing happening: this one makes
+ * Higher stakes than the AI switch above, which fails safe to nothing happening: this one makes
  * MORE messages go out, on the same WhatsApp number that serves every real customer. Rate limits
  * are what stop that number being banned, so this belongs only on a group nobody outside the team
  * is in.
  */
-export async function toggleGroupTestMode(id: string): Promise<void> {
-  await requireAccess("whatsapp.manage");
-  const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
-  await prisma.whatsAppGroup.update({ where: { id }, data: { testModeEnabled: !group.testModeEnabled } });
-  revalidatePath(await projectPath("/groups"));
+export async function setGroupTestMode(id: string, enabled: boolean): Promise<GroupFlagResult> {
+  return setGroupFlag(id, "testModeEnabled", enabled);
 }
 
 /**
@@ -84,11 +114,8 @@ export async function toggleGroupTestMode(id: string): Promise<void> {
  * Deliberately separate from aiAutomationEnabled above, which is an opt-IN and therefore
  * meaningless as a way to hold a group back once the scope has opted everything in.
  */
-export async function toggleGroupAiExcluded(id: string): Promise<void> {
-  await requireAccess("whatsapp.manage");
-  const group = await prisma.whatsAppGroup.findUniqueOrThrow({ where: { id } });
-  await prisma.whatsAppGroup.update({ where: { id }, data: { aiAutomationExcluded: !group.aiAutomationExcluded } });
-  revalidatePath(await projectPath("/groups"));
+export async function setGroupAiExcluded(id: string, excluded: boolean): Promise<GroupFlagResult> {
+  return setGroupFlag(id, "aiAutomationExcluded", excluded);
 }
 
 /**
