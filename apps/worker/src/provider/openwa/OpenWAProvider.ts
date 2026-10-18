@@ -41,6 +41,7 @@ import type {
   ProfileUpdateResult,
   SendOptions,
   SendResult,
+  StoreMessageRef,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
 import {
@@ -2685,6 +2686,74 @@ export class OpenWAProvider implements WhatsAppProvider {
     } catch (err) {
       return { ok: false, reason: (err as Error).message };
     }
+  }
+
+  async listStoreMessageRefs(since: Date, limit: number): Promise<StoreMessageRef[] | null> {
+    const client = this.client;
+    if (!client) return null;
+    try {
+      return await withTimeout(
+        client.getPage().evaluate(
+          (sinceSeconds: number, max: number) => {
+            interface PageMsg {
+              id?: { _serialized?: string; remote?: { _serialized?: string; server?: string } | string };
+              t?: unknown;
+            }
+            const msgStore = (globalThis as unknown as { Store?: { Msg?: { getModelsArray?: () => PageMsg[]; models?: PageMsg[] } } }).Store?.Msg;
+            if (!msgStore) return null;
+            const all = typeof msgStore.getModelsArray === "function" ? msgStore.getModelsArray() : (msgStore.models ?? []);
+            const refs: { id: string; chatId: string; t: number }[] = [];
+            for (const msg of all) {
+              const t = msg?.t;
+              if (typeof t !== "number" || t <= sinceSeconds) continue;
+              const id = msg.id?._serialized;
+              const remote = msg.id?.remote;
+              const chatId = typeof remote === "string" ? remote : String(remote?._serialized ?? "");
+              // Groups and WhatsApp's individual domains only, as selectCatchUpChats: never status,
+              // channels or broadcast lists.
+              if (typeof id !== "string" || !/@(g\.us|c\.us|lid)$/.test(chatId)) continue;
+              refs.push({ id, chatId, t });
+            }
+            refs.sort((a, b) => b.t - a.t);
+            return refs.slice(0, max);
+          },
+          Math.floor(since.getTime() / 1000),
+          limit,
+        ),
+        PROBE_ENUMERATION_TIMEOUT_MS,
+        "message store read",
+      );
+    } catch (err) {
+      console.warn("[openwa] could not read the message store", err);
+      return null;
+    }
+  }
+
+  async readMessagesById(ids: readonly string[]): Promise<{ messages: RawIncomingMessage[]; unreadable: number; unusableIds: string[] }> {
+    const client = this.client;
+    if (!client) return { messages: [], unreadable: ids.length, unusableIds: [] };
+    const messages: RawIncomingMessage[] = [];
+    const unusableIds: string[] = [];
+    let unreadable = 0;
+    for (const id of ids) {
+      try {
+        const message = await withTimeout(client.getMessageById(id as MessageId), DECRYPT_READ_TIMEOUT_MS, "reading one message");
+        // A message still encrypted has nothing to store yet; the decryption re-read or the next sweep takes it.
+        if (!message || isStillEncrypted(message)) {
+          unreadable += 1;
+          continue;
+        }
+        try {
+          messages.push(toRawIncomingMessage(this.accountId, message));
+        } catch {
+          // Read, and a shape this code cannot turn into a message: reading it again will not change that.
+          unusableIds.push(id);
+        }
+      } catch {
+        unreadable += 1;
+      }
+    }
+    return { messages, unreadable, unusableIds };
   }
 
   async sendPoll(chatId: string, poll: PollContent): Promise<SendResult> {

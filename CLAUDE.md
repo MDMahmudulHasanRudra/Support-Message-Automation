@@ -550,6 +550,18 @@ messages missing, groups fine"). Rules worth not undoing:
   a write run checkpoints per chat beside the session and resumes. Never claims complete recovery:
   PARTIAL chats and unreadable messages are counted.
 
+**The store sweep reads WhatsApp Web's MESSAGE store, not its chat list** (`sweepMessageStore` in
+`pipeline/reconcileRecentMessages.ts`, every 60 s, 30-minute look-back, 18 Oct 2026: personal messages
+from unknown foreign numbers on the phone and in no database row). The live listener, the catch-up,
+the reconcile pass and the personal backfill all find a message through its chat's activity time, so
+a chat that never shows as active hides its message from all four at once. The sweep reads ids and
+times from `Store.Msg` (`listStoreMessageRefs`), checks which are stored, and reads in full only the
+missing ones (`readMessagesById`, ≤100 per pass), skipping anything under 20 s old (the live path's
+turn). Same recovery rule as the reconcile (`recoverMissing`): inside the 15-minute window through the
+pipeline, older stored without rules. An encrypted message is retried next pass; one with nothing to
+store is remembered and not re-read. `MESSAGE_STORE_SWEEP_INTERVAL_SECONDS=0` turns it off. It cannot
+recover a message WhatsApp never delivered to the linked device.
+
 **A dropped session now reconnects itself.** `accountRegistrySync` skipped any account already in
 the registry (`has()` was true forever, since the provider outlives the session), so a number whose
 session died sat collecting nothing until a human happened to press Reconnect. `recoverIfDropped()`
