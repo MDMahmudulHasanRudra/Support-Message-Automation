@@ -13,8 +13,10 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
-- **Personal (1:1) messages: collection and visibility fixes** (18 Oct incident: many personal messages
-  missing, groups fine). Built on `rudra`; not deployed.
+- **Personal (1:1) messages: collection and visibility hotfix** (18 Oct incident: many personal
+  messages missing, groups fine). Merged to `main` in PR #19 (branch `hotfix/personal-messages`); not deployed.
+  - **Live listener**: a number whose first automatic connect gave up, and was then connected from
+    the dashboard, now receives messages live instead of only through the 10-minute re-check.
   - **Recovery** reads personal chats even when the group list fails or the number is in no groups,
     with its own message budget, and never moves the account's checkpoint past a read that was
     incomplete.
@@ -27,6 +29,7 @@ module, field, and behavior in the app.
 - **WhatsApp Accounts and Groups: seven fixes from the 18 Oct audit.** Built on `rudra`; not deployed.
   - **Collecting.** A number whose first automatic connect gave up, and was then connected from
     the dashboard, now receives messages live. Before, they arrived only through the 10-minute re-check.
+    (Also shipped on its own in the hotfix above.)
   - **Broken profiles.** An empty `{}` session file no longer counts as a session (Rifat's 24 Sep
     fix). It had blocked the profile reset and the resume of an accepted scan.
   - **Primary.** Only a connected number can be made Primary, because only the Primary answers

@@ -44,6 +44,7 @@ import type {
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
 import {
+  type ChatHistoryRead,
   chooseSendRoute,
   GroupListNotReadyError,
   REPLY_WITH_MENTIONS_REFUSAL,
@@ -2630,6 +2631,57 @@ export class OpenWAProvider implements WhatsAppProvider {
         }
       }
       return { ok: true, messages, reachedStart: !page || page.length === 0 };
+    } catch (err) {
+      return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  async listPersonalChatsSince(since: Date): Promise<ChatActivity[]> {
+    return withTimeout(this.listActivePersonalChats(Math.floor(since.getTime() / 1000)), PROBE_ENUMERATION_TIMEOUT_MS, "personal chat list");
+  }
+
+  /**
+   * For the personal backfill. Reads what this session already holds for the chat and, only when that
+   * does not reach back to `since`, asks the phone for at most `earlierPages` more pages — each one a
+   * bounded call, so one chat can never hold the browser for long. Messages still encrypted are
+   * counted, not converted: there is nothing in them to store.
+   */
+  async readChatHistory(chatId: string, since: Date, options: { earlierPages: number }): Promise<ChatHistoryRead> {
+    const client = this.client;
+    if (!client) return { ok: false, reason: "This WhatsApp account is not connected." };
+    if (!isGroupChatId(chatId) && !isPersonalChatId(chatId)) return { ok: false, reason: "Only a group or a personal chat has history to read." };
+    const sinceMs = since.getTime();
+    try {
+      const readHeld = () => withTimeout(client.getAllMessagesInChat(chatId as ChatId, true, false), HISTORY_LOAD_TIMEOUT_MS, "reading the chat's messages");
+      let held = (await readHeld()) ?? [];
+      const oldestMs = () =>
+        held.reduce((oldest, m) => (typeof m.timestamp === "number" ? Math.min(oldest, m.timestamp * 1000) : oldest), Number.POSITIVE_INFINITY);
+      let pages = 0;
+      let reachedStart = false;
+      while (oldestMs() > sinceMs && pages < options.earlierPages) {
+        const page = await withTimeout(client.loadEarlierMessages(chatId as ContactId), HISTORY_LOAD_TIMEOUT_MS, "loading earlier messages");
+        pages += 1;
+        if (!page || page.length === 0) {
+          reachedStart = true;
+          break;
+        }
+        held = (await readHeld()) ?? [];
+      }
+      let undecrypted = 0;
+      const messages: RawIncomingMessage[] = [];
+      for (const message of held) {
+        if (typeof message.timestamp !== "number" || message.timestamp * 1000 < sinceMs) continue;
+        if (isStillEncrypted(message)) {
+          undecrypted += 1;
+          continue;
+        }
+        try {
+          messages.push(toRawIncomingMessage(this.accountId, message));
+        } catch {
+          undecrypted += 1; // a shape this code cannot read is as unrecoverable as an encrypted one
+        }
+      }
+      return { ok: true, messages, undecrypted, reachedSince: reachedStart || oldestMs() <= sinceMs, earlierPagesLoaded: pages };
     } catch (err) {
       return { ok: false, reason: (err as Error).message };
     }

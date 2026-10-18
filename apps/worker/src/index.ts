@@ -2,6 +2,7 @@ import { checkDatabaseConnection } from "@support-automation/db";
 import { platformPrisma } from "./db.js";
 import type { Prisma } from "@prisma/client";
 import { startHealthServer, type WorkerHealthState } from "./health/server.js";
+import { registerPersonalBackfillRoutes } from "./health/backfillRoutes.js";
 import { ProviderRegistry } from "./provider/ProviderRegistry.js";
 import { ensureLegacyAccountExists, ensurePrimaryAccountExists, findConnectableAccounts } from "./provider/accountProvisioning.js";
 import { startAccountRegistrySync } from "./provider/accountRegistrySync.js";
@@ -120,6 +121,8 @@ async function main() {
   await ensureForgeSettings();
 
   const registry = new ProviderRegistry();
+  // The personal backfill's controls (loopback-only, PERSONAL_MESSAGES_RUNBOOK.md). Inert until called.
+  registerPersonalBackfillRoutes(registry);
 
   // Connecting accounts is NOT on the startup path, and that is the whole point.
   //
