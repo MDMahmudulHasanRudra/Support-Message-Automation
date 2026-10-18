@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { checkDatabaseConnection } from "@support-automation/db";
 import { readMetrics } from "./metrics.js";
+import { readCollectionByKind } from "./collectionByKind.js";
 import { readLoops, stalestLoop } from "./loopLiveness.js";
 
 export interface WorkerHealthState {
@@ -23,7 +24,7 @@ export interface WorkerHealthState {
 export function startHealthServer(state: WorkerHealthState, port: number) {
   const server = createServer((req, res) => {
     if (req.url === "/metrics") {
-      respond(res, 200, { uptimeMs: Date.now() - state.startedAt, ...readMetrics(), loops: readLoops() });
+      respond(res, 200, { uptimeMs: Date.now() - state.startedAt, ...readMetrics(), loops: readLoops(), collectionByKind: readCollectionByKind() });
       return;
     }
 

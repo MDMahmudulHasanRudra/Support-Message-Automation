@@ -53,7 +53,7 @@ export async function processWithRetry(
 
 function giveUp(raw: RawIncomingMessage, err: unknown, attempts: number): void {
   // The same record the failure always left; it is only written once every chance has been used.
-  countDroppedMessage(raw.accountId, "PIPELINE_ERROR");
+  countDroppedMessage(raw.accountId, "PIPELINE_ERROR", raw.chatId);
   void logSystemEvent("ERROR", "pipeline", "Error processing incoming message", {
     error: (err as Error)?.message ?? String(err),
     accountId: raw.accountId,

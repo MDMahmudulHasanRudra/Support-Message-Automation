@@ -62,6 +62,7 @@ import {
 import { serializeMessageId } from "./messageId.js";
 import { withTimeout } from "../../util/withTimeout.js";
 import { killBrowsersUsingProfile } from "./orphanBrowsers.js";
+import { recordCollection } from "../../health/collectionByKind.js";
 import {
   clearLinkMarker,
   growthBytes,
@@ -96,6 +97,35 @@ const LOGOUT_TIMEOUT_MS = 30_000;
  * a bad one costs one tick rather than three minutes.
  */
 const PROBE_ENUMERATION_TIMEOUT_MS = Number(process.env.COLLECTION_PROBE_TIMEOUT_SECONDS || 90) * 1_000;
+
+/**
+ * A message WhatsApp Web has not decrypted yet ("Waiting for this message. This may take a while.")
+ * arrives as type `ciphertext` with no body. Common on a linked device in one-to-one chats — after a
+ * link, or when the sender's phone changed — and it used to be read as an empty message and dropped.
+ * WhatsApp decrypts it in place moments or minutes later, which raises no new "message" event, so the
+ * id is kept and the message read again on this schedule until it can be read (18 Oct 2026 incident).
+ * About 80 minutes in all; past that the reconcile sweep (30-minute window) cannot reach it either,
+ * and it is counted as given up rather than retried forever.
+ */
+const DEFAULT_DECRYPT_RETRY_DELAYS_MS = [15_000, 60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+function decryptRetryDelays(): number[] {
+  const raw = process.env.WHATSAPP_DECRYPT_RETRY_DELAYS_MS;
+  if (!raw) return DEFAULT_DECRYPT_RETRY_DELAYS_MS;
+  const parsed = raw
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return parsed.length > 0 ? parsed : DEFAULT_DECRYPT_RETRY_DELAYS_MS;
+}
+/** Messages waiting to be readable, per account. A cap, because each is a timer and a later read. */
+const MAX_PENDING_DECRYPTION = 2_000;
+/** A re-read is one call into the page; it must not hold anything for long. */
+const DECRYPT_READ_TIMEOUT_MS = 30_000;
+
+/** WhatsApp Web's type for a message it has received but not yet been able to decrypt. */
+function isStillEncrypted(message: unknown): boolean {
+  return String((message as { type?: unknown } | null)?.type ?? "") === "ciphertext";
+}
 
 /** Post-connection state transitions (STATE enum) mapped onto our fine-grained lifecycle. */
 function mapLibraryState(state: STATE): OpenWAConnectionState {
@@ -170,7 +200,10 @@ function resolveMessageBody(message: WaMessage): string {
     const name = readPollName(message);
     return name ? `[Poll] ${name}` : "[Poll]";
   }
-  if (!message.isMedia) {
+  // By TYPE as well as by `isMedia`: WhatsApp Web has removed getters before (`isGroupMsg`), and
+  // without `isMedia` a voice note read as an empty message and was dropped everywhere, while an
+  // image stored its base64 preview as "text".
+  if (!message.isMedia && !MEDIA_TYPES.has(type)) {
     return message.body ?? message.text ?? "";
   }
 
@@ -197,6 +230,9 @@ function resolveMessageBody(message: WaMessage): string {
       return caption ? `[Media] ${caption}` : "[Media]";
   }
 }
+
+/** The message types that carry a file, whatever WhatsApp Web's `isMedia` getter says. */
+const MEDIA_TYPES = new Set<string>(["image", "video", "audio", "ptt", "document", "sticker"]);
 
 /** WhatsApp Web names a poll message "poll_creation" (older builds: "poll"). */
 function isPollType(type: string): boolean {
@@ -580,6 +616,8 @@ export class OpenWAProvider implements WhatsAppProvider {
   // THIS client wired up", so a re-attach after a reconnect happens and a second attach to the
   // same client (which would process every message twice) cannot.
   private listenerClient: Client | null = null;
+  /** Encrypted-on-arrival messages being read again until they can be (`awaitDecryption`). */
+  private readonly pendingDecryption = new Map<string, { attempt: number; chatId: string | null }>();
   // Receipts and deletions (CHAT_RICH_MESSAGING.md), held on the instance for the same reason as the
   // message handler above, and attached to each new client exactly once.
   private updateHandler: ((update: MessageUpdateEvent) => void) | null = null;
@@ -1981,6 +2019,14 @@ export class OpenWAProvider implements WhatsAppProvider {
     if (this.listenerClient === client) return; // already wired — a second onAnyMessage would double-process every message
     this.listenerClient = client;
     client.onAnyMessage((message) => {
+      // Not decrypted yet: nothing to store now, and no second event will say when there is.
+      if (isStillEncrypted(message)) {
+        this.awaitDecryption(client, message);
+        return;
+      }
+      // The readable version reached us as an ordinary event after all — the pending re-read stops.
+      const messageId = String((message as { id?: unknown })?.id ?? "");
+      if (messageId) this.pendingDecryption.delete(messageId);
       // Converted inside its own try/catch: a message shape this code cannot read must not throw
       // into the library's event emitter, where nothing counts it and nothing says it existed. It is
       // reported through `onMessageConversionError` (the registry counts and logs it) and the next
@@ -2000,6 +2046,78 @@ export class OpenWAProvider implements WhatsAppProvider {
       }
       handler(raw);
     });
+  }
+
+  /**
+   * Keeps an encrypted-on-arrival message and reads it again until WhatsApp has decrypted it, then
+   * hands it to the pipeline marked `deliveredLate` (the registry applies the catch-up's automation
+   * window to it). Bounded: a fixed schedule, a cap on how many wait at once, and nothing survives a
+   * new session — the reconcile sweep reads that session's history instead.
+   */
+  private awaitDecryption(client: Client, message: unknown): void {
+    const id = String((message as { id?: unknown })?.id ?? "");
+    const chatId = String((message as { chatId?: unknown })?.chatId ?? "") || null;
+    if (!id || this.pendingDecryption.has(id)) return;
+    recordCollection(this.accountId, chatId, "undecrypted");
+    if (this.pendingDecryption.size >= MAX_PENDING_DECRYPTION) {
+      recordCollection(this.accountId, chatId, "undecryptedGaveUp");
+      return;
+    }
+    this.pendingDecryption.set(id, { attempt: 0, chatId });
+    this.scheduleDecryptionRead(client, id);
+  }
+
+  private scheduleDecryptionRead(client: Client, id: string): void {
+    const entry = this.pendingDecryption.get(id);
+    if (!entry) return;
+    const delay = decryptRetryDelays()[entry.attempt];
+    if (delay === undefined) {
+      this.pendingDecryption.delete(id);
+      recordCollection(this.accountId, entry.chatId, "undecryptedGaveUp");
+      console.warn(`[openwa] ${this.sessionId}: a message was still encrypted after ${entry.attempt} re-reads — not stored by the live path`);
+      return;
+    }
+    const timer = setTimeout(() => void this.readDecrypted(client, id), delay);
+    timer.unref?.();
+  }
+
+  private async readDecrypted(client: Client, id: string): Promise<void> {
+    const entry = this.pendingDecryption.get(id);
+    if (!entry) return; // delivered by an ordinary event meanwhile
+    if (this.client !== client) {
+      // A new session: its own history is read by the reconcile sweep and the catch-up.
+      this.pendingDecryption.delete(id);
+      return;
+    }
+    entry.attempt += 1;
+    let again: unknown = null;
+    try {
+      again = await withTimeout(client.getMessageById(id as MessageId), DECRYPT_READ_TIMEOUT_MS, "reading a message again");
+    } catch (err) {
+      console.warn(`[openwa] ${this.sessionId}: could not read a pending message again`, err);
+    }
+    if (!this.pendingDecryption.has(id)) return;
+    if (again && !isStillEncrypted(again)) {
+      let raw: RawIncomingMessage;
+      try {
+        raw = toRawIncomingMessage(this.accountId, again as WaMessage);
+      } catch (err) {
+        this.pendingDecryption.delete(id);
+        try {
+          this.onMessageConversionError?.(err);
+        } catch {
+          // never let a reporting failure escape a timer
+        }
+        return;
+      }
+      if (raw.revoked || raw.body.trim().length > 0) {
+        this.pendingDecryption.delete(id);
+        recordCollection(this.accountId, raw.chatId, "decryptedLater");
+        this.messageHandler?.({ ...raw, deliveredLate: true });
+        return;
+      }
+    }
+    this.scheduleDecryptionRead(client, id);
   }
 
   /**
@@ -2053,9 +2171,11 @@ export class OpenWAProvider implements WhatsAppProvider {
       return { ok: false, reason: "No live WhatsApp session in this process — nothing to ask." };
     }
     const sinceMs = since.getTime();
-    const collected: RawIncomingMessage[] = [];
+    const gaps: string[] = [];
+    const uncheckedKinds: Array<"GROUP" | "PERSONAL"> = [];
 
-    let chats: LeanGroupChat[];
+    let groups: LeanGroupChat[] = [];
+    let groupFailure: string | null = null;
     try {
       // Bounded by us, not by Puppeteer. `getAllGroups()` is the single most expensive call this
       // provider makes — on a roster of ~1,848 groups it has been observed exceeding the 150s
@@ -2063,7 +2183,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       // 2026) — and without a bound of its own it runs until Puppeteer's 180s `protocolTimeout`
       // gives up. That is three minutes of a watchdog tick held open for a question that was
       // supposed to be cheap.
-      chats = await withTimeout(this.listGroupChats(), PROBE_ENUMERATION_TIMEOUT_MS, "chat list");
+      groups = await withTimeout(this.listGroupChats(), PROBE_ENUMERATION_TIMEOUT_MS, "chat list");
     } catch (err) {
       const message = (err as Error).message || "unknown error";
       // Worded apart from a hard failure on purpose. "The session is dead" and "the chat list is
@@ -2071,58 +2191,93 @@ export class OpenWAProvider implements WhatsAppProvider {
       // first is an outage, the second is this account's normal shape. An alert that confuses them
       // sends somebody to restart a worker that is fine.
       const timedOut = message.includes("timed out");
-      console.warn("[openwa] could not enumerate chats — the session cannot be read", err);
-      return {
-        ok: false,
-        reason: timedOut
-          ? `The chat list took longer than ${Math.round(PROBE_ENUMERATION_TIMEOUT_MS / 1000)}s to read, so what WhatsApp is holding could not be checked. On a very large roster this can be normal; if it is constant, the group sync is likely timing out too.`
-          : `Could not enumerate chats: ${message}`,
-      };
+      console.warn("[openwa] could not enumerate group chats", err);
+      groupFailure = timedOut
+        ? `The chat list took longer than ${Math.round(PROBE_ENUMERATION_TIMEOUT_MS / 1000)}s to read, so what WhatsApp is holding could not be checked. On a very large roster this can be normal; if it is constant, the group sync is likely timing out too.`
+        : `Could not enumerate chats: ${message}`;
     }
 
-    if (chats.length === 0) {
-      return { ok: false, reason: "WhatsApp returned no chats at all, which an account in groups cannot truly be." };
-    }
-
-    // Personal chats too (Phase 2): the live path stores one-to-one messages, so one that arrived
-    // while the worker was down was lost for good when only groups were read back. Read separately
-    // and AFTER the group list, which stays the proof that the session can be read at all: a failure
-    // here leaves the probe's answer standing and says what it could not check.
-    const gaps: string[] = [];
+    // Personal chats are read WHATEVER the group list did (18 Oct 2026 incident). They used to be
+    // read only after a successful, non-empty group list, so a roster too large to list in time — or
+    // a number in no groups at all — meant no one-to-one message was ever read back by the reconcile
+    // sweep or the catch-up, while group messages kept being recovered.
     let personal: ChatActivity[] = [];
+    let personalFailure: string | null = null;
     try {
       personal = await withTimeout(this.listActivePersonalChats(Math.floor(sinceMs / 1000)), PROBE_ENUMERATION_TIMEOUT_MS, "personal chat list");
     } catch (err) {
-      const message = (err as Error).message || "unknown error";
+      personalFailure = (err as Error).message || "unknown error";
       console.warn("[openwa] could not list personal chats for the gap probe", err);
-      gaps.push(`One-to-one chats could not be listed (${message}), so personal messages in this window were not checked.`);
+    }
+
+    // Only when NEITHER could be read is the answer "unknown". An empty group list with no personal
+    // read either is a fact about the page, not the account (see the watchdog), as it always was.
+    if (groupFailure && personalFailure) return { ok: false, reason: groupFailure };
+    if (!groupFailure && groups.length === 0 && personalFailure) {
+      return { ok: false, reason: "WhatsApp returned no chats at all, which an account in groups cannot truly be." };
+    }
+    if (groupFailure) {
+      gaps.push(`The group list could not be read (${groupFailure}), so group messages in this window were not checked.`);
+      uncheckedKinds.push("GROUP");
+    } else if (groups.length === 0) {
+      gaps.push("WhatsApp listed no group chats, so group messages in this window were not checked.");
+      uncheckedKinds.push("GROUP");
+    }
+    if (personalFailure) {
+      gaps.push(`One-to-one chats could not be listed (${personalFailure}), so personal messages in this window were not checked.`);
+      uncheckedKinds.push("PERSONAL");
     }
 
     // `t` is seconds since the epoch of the chat's last interaction. A chat that has not been
     // touched since the gap began cannot be hiding a message from inside it (selectCatchUpChats).
-    const active = selectCatchUpChats([...chats, ...personal], sinceMs);
+    const active = selectCatchUpChats([...groups, ...personal], sinceMs);
 
+    // `limit` is per KIND, personal chats first. One shared budget, most recently active chat first,
+    // let a few busy groups use it all before a quieter personal chat was reached.
+    const collected: RawIncomingMessage[] = [];
     let unreadable = 0;
-    for (const chat of active) {
-      if (collected.length >= limit) break;
-      try {
-        // includeMe: our own replies are half of every conversation and the chat inbox reads
-        // them. includeNotifications: false — "X joined the group" is not a customer message.
-        const messages = await this.client.getAllMessagesInChat(chat.id as ChatId, true, false);
-        for (const message of messages) {
-          if (typeof message.timestamp !== "number" || message.timestamp * 1000 <= sinceMs) continue;
-          collected.push(toRawIncomingMessage(this.accountId, message));
-          if (collected.length >= limit) break;
+    for (const kind of ["PERSONAL", "GROUP"] as const) {
+      const chats = active.filter((chat) => chat.kind === kind);
+      let taken = 0;
+      let stoppedAt: number | null = null;
+      for (let index = 0; index < chats.length; index++) {
+        if (taken >= limit) {
+          stoppedAt = index;
+          break;
         }
-      } catch (err) {
-        unreadable += 1;
-        console.warn(`[openwa] could not read history for chat ${chat.id} — skipping it`, err);
+        const chat = chats[index]!;
+        try {
+          // includeMe: our own replies are half of every conversation and the chat inbox reads
+          // them. includeNotifications: false — "X joined the group" is not a customer message.
+          const messages = await this.client.getAllMessagesInChat(chat.id as ChatId, true, false);
+          for (const message of messages) {
+            if (typeof message.timestamp !== "number" || message.timestamp * 1000 <= sinceMs) continue;
+            if (taken >= limit) {
+              stoppedAt = index;
+              break;
+            }
+            collected.push(toRawIncomingMessage(this.accountId, message));
+            taken += 1;
+          }
+        } catch (err) {
+          unreadable += 1;
+          console.warn(`[openwa] could not read history for chat ${chat.id} — skipping it`, err);
+        }
+        if (stoppedAt !== null) break;
+      }
+      if (stoppedAt !== null) {
+        gaps.push(
+          `The ${kind === "GROUP" ? "group" : "one-to-one"} read stopped at its limit of ${limit} messages; ${chats.length - stoppedAt} chat(s) were not fully read.`,
+        );
       }
     }
     if (unreadable > 0) gaps.push(`The history of ${unreadable} chat(s) could not be read.`);
 
     const messages = collected.sort((a, b) => a.timestampWa.getTime() - b.timestampWa.getTime());
-    return gaps.length > 0 ? { ok: true, messages, incomplete: gaps.join(" ") } : { ok: true, messages };
+    if (gaps.length === 0) return { ok: true, messages };
+    return uncheckedKinds.length > 0
+      ? { ok: true, messages, incomplete: gaps.join(" "), uncheckedKinds }
+      : { ok: true, messages, incomplete: gaps.join(" ") };
   }
 
   /**

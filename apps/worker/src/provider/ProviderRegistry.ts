@@ -2,6 +2,10 @@ import { countMetric } from "../health/metrics.js";
 import { OpenWAProvider } from "./openwa/OpenWAProvider.js";
 import type { WhatsAppProvider } from "./WhatsAppProvider.js";
 import { processWithRetry } from "../pipeline/retryFailedMessage.js";
+import { processIncomingMessage, storeMissedMessage } from "../pipeline/processIncomingMessage.js";
+import { shouldAutomateRecoveredMessage } from "../pipeline/catchUpMissedMessages.js";
+import { recordCollection } from "../health/collectionByKind.js";
+import type { RawIncomingMessage } from "../pipeline/types.js";
 import { resyncAndCatchUpAfterConnect } from "../commands/commandProcessor.js";
 import { catchUpMissedMessages } from "../pipeline/catchUpMissedMessages.js";
 import { countDroppedMessage } from "../pipeline/dropCounter.js";
@@ -11,6 +15,17 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 // re-exported here so existing callers and tests are unaffected by where it lives.
 import { connectWithRetry } from "./connectWithRetry.js";
 export { connectWithRetry };
+
+/**
+ * A message the provider hands over after its arrival (`deliveredLate`: WhatsApp decrypted it late)
+ * follows the catch-up's rule, not the live one: inside the automation window it is processed as
+ * usual; older, it is stored and counted but runs no rules — a reply to a question from an hour ago
+ * is worse than none, exactly as for a message recovered after a gap.
+ */
+async function processLateMessage(raw: RawIncomingMessage): Promise<void> {
+  if (shouldAutomateRecoveredMessage(raw.timestampWa, Date.now())) await processIncomingMessage(raw);
+  else await storeMissedMessage(raw);
+}
 
 /** What the registry needs to know to bring one account's session up. */
 export interface AccountSession {
@@ -79,8 +94,10 @@ export class ProviderRegistry {
     provider.subscribeToMessages((message) => {
       // Counted here rather than after storing: the question this answers is whether the provider
       // is still handing anything over at all, and a message dropped by a later filter still
-      // proves it was.
+      // proves it was. A message handed over late (decrypted after it arrived) was counted when it
+      // arrived, as `undecrypted`, so it is not counted again here.
       countMetric("received");
+      if (!message.deliveredLate) recordCollection(accountId, message.chatId, "received");
       // PHASE 6.1: the exact OpenWA -> worker event handoff point — logged here, not inside the
       // provider, since this is the provider-agnostic boundary any future provider implementation
       // would call through identically.
@@ -95,7 +112,7 @@ export class ProviderRegistry {
       );
       // A failure is retried a few times before it is counted as a drop (retryFailedMessage.ts); the
       // count and the System Logs entry it always produced are written when every chance is used.
-      void processWithRetry(message);
+      void processWithRetry(message, message.deliveredLate ? processLateMessage : undefined);
     });
 
     // Receipts and deletions on messages already seen (CHAT_RICH_MESSAGING.md). Facts only: each sets

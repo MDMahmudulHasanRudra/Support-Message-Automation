@@ -198,6 +198,87 @@ describe("one-to-one chats are read back too (Phase 2)", () => {
   });
 });
 
+/**
+ * Personal messages were recoverable only behind the group list (18 Oct 2026 incident: personal
+ * messages missing while groups were complete). The probe read the group list first and returned
+ * "unknown" the moment it failed or came back empty — so on a roster too large to list in time, or
+ * on a number in no groups at all, no one-to-one message was ever read back by the reconcile sweep
+ * or the catch-up. And one budget served both kinds, most recently active chat first, so a few busy
+ * groups used it up before a quieter personal chat was reached.
+ */
+describe("personal chats are read back whatever the group list does", () => {
+  const personalChat = "8801700000009@c.us";
+  function personalMessage(id: string, offsetSeconds: number) {
+    return { ...message(id, offsetSeconds), from: personalChat, author: undefined, chatId: personalChat, isGroupMsg: false };
+  }
+
+  it("a group list that fails does not hide the personal messages — and says the groups went unchecked", async () => {
+    withClient({
+      getAllGroups: async () => {
+        throw new Error("chat list timed out after 60s");
+      },
+      getAllChats: async () => [{ id: personalChat, t: afterSince(120) }],
+      getAllMessagesInChat: async (chatId: string) => (chatId === personalChat ? [personalMessage("p-1", 100)] : []),
+    });
+
+    const result = await provider.probeCollection(SINCE, 10);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.messages.map((m) => m.whatsappMessageId)).toEqual(["p-1"]);
+    expect(result.uncheckedKinds).toEqual(["GROUP"]);
+    expect(result.incomplete).toMatch(/group/i);
+  });
+
+  it("a number in no groups at all still has its personal messages read", async () => {
+    withClient({
+      getAllGroups: async () => [],
+      getAllChats: async () => [{ id: personalChat, t: afterSince(120) }],
+      getAllMessagesInChat: async () => [personalMessage("p-1", 100)],
+    });
+
+    const result = await provider.probeCollection(SINCE, 10);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.messages.map((m) => m.whatsappMessageId)).toEqual(["p-1"]);
+  });
+
+  it("busy groups cannot use up the budget before a quieter personal chat is read", async () => {
+    // Three groups more recently active than the personal chat, each holding more than the whole cap.
+    const groups = ["a@g.us", "b@g.us", "c@g.us"];
+    withClient({
+      getAllGroups: async () => groups.map((id) => ({ id, t: afterSince(600) })),
+      getAllChats: async () => [{ id: personalChat, t: afterSince(120) }],
+      getAllMessagesInChat: async (chatId: string) =>
+        chatId === personalChat
+          ? [personalMessage("p-1", 100)]
+          : Array.from({ length: 12 }, (_, i) => ({ ...message(`${chatId}-${i}`, 200 + i), chatId })),
+    });
+
+    const result = await provider.probeCollection(SINCE, 10);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.messages.some((m) => m.whatsappMessageId === "p-1")).toBe(true);
+    // The groups it could not finish are named as unchecked, never passed off as complete.
+    expect(result.incomplete).toMatch(/limit/i);
+  });
+
+  it("is still 'unknown' when neither list can be read", async () => {
+    withClient({
+      getAllGroups: async () => {
+        throw new Error("Protocol error: Target closed");
+      },
+      getAllChats: async () => {
+        throw new Error("Protocol error: Target closed");
+      },
+    });
+
+    const result = await provider.probeCollection(SINCE, 10);
+    expect(result.ok).toBe(false);
+  });
+});
+
 describe("fetchMessagesSince keeps its forgiving contract", () => {
   it("returns an empty array rather than throwing when the probe cannot see", async () => {
     // Catch-up runs immediately after a session comes up. A failure to fill a gap must never take

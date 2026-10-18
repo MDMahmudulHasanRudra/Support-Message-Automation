@@ -47,7 +47,7 @@ import {
  * 1,856-group account literally unfindable.
  */
 export { CONVERSATION_LIST_LIMIT } from "@/lib/chatInboxLimits";
-import { CONVERSATION_LIST_LIMIT } from "@/lib/chatInboxLimits";
+import { CONVERSATION_LIST_LIMIT, PERSONAL_CHATS_ALWAYS_LISTED } from "@/lib/chatInboxLimits";
 
 /** Statuses meaning "written, but not yet confirmed on WhatsApp". */
 const UNSETTLED_OUTBOUND: Prisma.OutboundMessageWhereInput["status"] = {
@@ -400,16 +400,26 @@ async function rankInbox(
         (count(*) FILTER (WHERE b."kind" = 'PERSONAL' AND ${SEEN_UNANSWERED_SQL}))::int AS "pSeen"
       FROM base b
     ),
-    ranked AS (
+    ordered AS (
       SELECT
         b."id", b."kind", b."chatId", b."name", b."unanswered", ${AWAITING_SQL} AS "awaiting",
         row_number() OVER (
           ORDER BY (b."chatPinnedAt" IS NOT NULL) DESC, b."chatPinnedAt" DESC NULLS LAST, b."lastAt" DESC NULLS LAST, b."name" ASC
-        ) AS "rank"
+        ) AS "rank",
+        row_number() OVER (
+          PARTITION BY b."kind"
+          ORDER BY (b."chatPinnedAt" IS NOT NULL) DESC, b."chatPinnedAt" DESC NULLS LAST, b."lastAt" DESC NULLS LAST, b."name" ASC
+        ) AS "kindRank"
       FROM base b
       WHERE true ${viewSql(view)} ${typeSql(type)}
-      ORDER BY "rank"
-      LIMIT ${CONVERSATION_LIST_LIMIT}
+    ),
+    -- The ranked 300, plus the most recent personal chats wherever they rank: on a number in hundreds
+    -- of busy groups the 300th group can be minutes old, and a personal chat behind it was simply
+    -- not listed (PERSONAL_CHATS_ALWAYS_LISTED). They keep their place by recency.
+    ranked AS (
+      SELECT * FROM ordered o
+      WHERE o."rank" <= ${CONVERSATION_LIST_LIMIT}
+         OR (o."kind" = 'PERSONAL' AND o."kindRank" <= ${PERSONAL_CHATS_ALWAYS_LISTED})
     )
     SELECT r."id", r."kind", r."chatId", r."name", r."unanswered", r."awaiting", c.*
     FROM counts c

@@ -23,6 +23,7 @@ import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
 import { recordTeamAttendance } from "../teamManagement/attendance.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { countDroppedMessage } from "./dropCounter.js";
+import { recordCollection } from "../health/collectionByKind.js";
 import { initialMessageColumns, recordMessageRevoked } from "./messageUpdates.js";
 import { registerMessageMedia } from "../media/registerMessageMedia.js";
 import { trackSupportResponse } from "../supportResponse/tracker.js";
@@ -80,7 +81,7 @@ async function processIncomingMessageInProject(raw: RawIncomingMessage, aiClient
     // ordinary — stickers, images without captions, system events; a SPIKE is WhatsApp having
     // changed the shape of something this code reads as empty, which is a real and invisible way
     // to lose customer messages. Fire-and-forget: see countDroppedMessage.
-    countDroppedMessage(raw.accountId, "EMPTY_BODY");
+    countDroppedMessage(raw.accountId, "EMPTY_BODY", raw.chatId);
     return; // unsupported/empty message type — nothing to automate
   }
 
@@ -599,6 +600,7 @@ async function persistIncomingMessage(
     throw err;
   }
 
+  recordCollection(raw.accountId, raw.chatId, "stored");
   if (traceId) {
     traceStage(traceId, "MESSAGE_PERSISTED", { messageId: message.id });
     traceStage(traceId, "DUPLICATE_CHECK", { isDuplicate: false, result: "unique — proceeding" });
@@ -921,6 +923,7 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
         ...initialMessageColumns(raw),
       },
     });
+    recordCollection(raw.accountId, raw.chatId, "stored");
     // A photo an executive sent from the business phone is part of the conversation too.
     if (raw.media) {
       await registerMessageMedia({ messageId: message.id, accountId: raw.accountId, groupId: group?.id ?? null, media: raw.media });
