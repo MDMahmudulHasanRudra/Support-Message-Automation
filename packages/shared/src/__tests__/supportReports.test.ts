@@ -55,6 +55,7 @@ const wait = (status: ReportWait["status"], waitMinutes: number | null, extra: P
   waitSeconds: waitMinutes === null ? null : waitMinutes * 60,
   thresholdSeconds: 1800,
   status,
+  chargedTo: null,
   ...extra,
 });
 

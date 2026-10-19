@@ -191,7 +191,10 @@ export async function setMemberDefaultShift(
   if (!member) return { error: "That team member no longer exists." };
   if (member.defaultShiftTemplateId === shiftTemplateId) return { unchanged: 1 };
 
-  await prisma.internalTeamMember.update({ where: { id: teamMemberId }, data: { defaultShiftTemplateId: shiftTemplateId } });
+  await prisma.internalTeamMember.update({
+    where: { id: teamMemberId },
+    data: { defaultShiftTemplateId: shiftTemplateId, defaultShiftChangedAt: new Date() },
+  });
   await revalidateModule();
   return { updated: 1 };
 }

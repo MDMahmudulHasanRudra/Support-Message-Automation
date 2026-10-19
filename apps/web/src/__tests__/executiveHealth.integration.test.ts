@@ -150,7 +150,7 @@ describe("attention required", () => {
   it("each group once, under its most urgent issue, most urgent first — a healthy group never appears", async () => {
     const r = await run(isp);
     expect(attention(r).rows.map((x) => x.cells[0])).toEqual([name("old"), name("wait"), name("late"), name("silent"), name("decline")]);
-    expect(row(r, "old")).toMatchObject({ Issue: "Prolonged unanswered", Assigned: `EX Rina ${tag}`, Team: `EX Team ${tag}` });
+    expect(row(r, "old")).toMatchObject({ Issue: "Prolonged unanswered", "Assigned now": `EX Rina ${tag}`, Team: `EX Team ${tag}` });
     expect(row(r, "wait")).toMatchObject({ Issue: "Unanswered", Waiting: "1h 0m" });
     expect(row(r, "late")).toMatchObject({ Issue: "SLA breach", Waiting: "0h 48m", Detail: "1 answer after the SLA, worst 0h 48m" });
     expect(row(r, "silent")).toMatchObject({ Issue: "No communication", Waiting: "—" });

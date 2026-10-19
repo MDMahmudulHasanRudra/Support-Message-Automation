@@ -65,7 +65,8 @@ async function operatorNames(intel: IntelligenceData): Promise<Map<string, strin
 
 function answeredBy(intel: IntelligenceData, w: HumanWait, operators: Map<string, string>): string {
   if (!w.repliedBy) return "—";
-  if (w.repliedBy.actor === "MEMBER") return name(intel, w.repliedBy.memberId);
+  // A dashboard reply credited to the member linked to that login is theirs, as in the Team Report.
+  if (w.repliedBy.actor === "MEMBER" || (w.repliedBy.actor === "OPERATOR" && w.repliedBy.memberId)) return name(intel, w.repliedBy.memberId);
   if (w.repliedBy.actor === "OPERATOR") return `${operators.get(w.repliedBy.operatorUserId ?? "") ?? "Dashboard operator"} (dashboard)`;
   return INTEL_ACTOR_LABELS[w.repliedBy.actor];
 }

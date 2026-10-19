@@ -6,7 +6,7 @@ import { ArrowLeft, MessageCircleMore } from "lucide-react";
 import { Badge, ButtonLink, Card, EmptyState, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
 import { requireAccess } from "@/server/authorize";
 import { formatDurationShort } from "@/lib/duration";
-import { loadTeamReport, memberLabel, parseTeamReportFilters, teamReportQuery } from "@/server/teamReport";
+import { loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, teamReportQuery } from "@/server/teamReport";
 
 export const metadata = { title: "Team Report · Group" };
 
@@ -54,7 +54,7 @@ export default async function TeamReportGroupPage({
   });
   if (!group) notFound();
 
-  const now = new Date();
+  const now = reportNow(query);
   const { filters, range, result, memberNames, rules, teamName } = await loadTeamReport(
     parseTeamReportFilters(query, now),
     now,

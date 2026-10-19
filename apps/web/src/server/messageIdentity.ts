@@ -82,7 +82,10 @@ export function outboundByKeyJoin(projectId: string, from: Date, to: Date, alias
       LEFT JOIN (
         SELECT DISTINCT ON (ob."chatId", ${obKey})
           ob."chatId" AS "obChat", ${obKey} AS "obKey", true AS "obMatched",
-          ob."actionType", ob."ruleId", ob."createdById"
+          ob."actionType", ob."ruleId",
+          -- A template test send (🧪 TEST, Notification Templates) is the business's message, never a
+          -- person's reply: who pressed the button is not credited.
+          CASE WHEN ob."idempotencyKey" LIKE 'template-test:%' THEN NULL ELSE ob."createdById" END AS "createdById"
         FROM "OutboundMessage" ob
         WHERE ob."projectId" = ${projectId} AND ob."providerMessageId" IS NOT NULL
           AND ob."sentAt" >= ${new Date(from.getTime() - slack)} AND ob."sentAt" < ${new Date(to.getTime() + slack)}
@@ -96,7 +99,28 @@ export function outboundByKeyJoin(projectId: string, from: Date, to: Date, alias
  * group message under — usually our number's LID. A copy one of our numbers stored as INCOMING
  * before the worker recognised our own posts is the business's message, never a customer's.
  */
+const OWN_IDS_CACHE_MS = 60_000;
+const ownIdsCache = new Map<string, { at: number; ids: Promise<Set<string>> }>();
+
+/**
+ * Cached per project for a minute (the worker keeps the same set for five): it reads every outgoing
+ * group message the project ever stored, and every report, export and drill-down needs it.
+ */
 export async function loadOwnSenderIds(projectId: string): Promise<Set<string>> {
+  const hit = ownIdsCache.get(projectId);
+  if (hit && Date.now() - hit.at < OWN_IDS_CACHE_MS) return hit.ids;
+  const ids = readOwnSenderIds(projectId);
+  ownIdsCache.set(projectId, { at: Date.now(), ids });
+  ids.catch(() => ownIdsCache.delete(projectId));
+  return ids;
+}
+
+/** Test-only: forget the cached ids. */
+export function resetOwnSenderIdsCacheForTests(): void {
+  ownIdsCache.clear();
+}
+
+async function readOwnSenderIds(projectId: string): Promise<Set<string>> {
   const [accounts, sent] = await Promise.all([
     prisma.whatsAppAccount.findMany({ select: { phoneNumber: true } }),
     prisma.$queryRaw<Array<{ sender: string }>>`
@@ -151,8 +175,16 @@ export interface ReportIdentity {
 export function createReportClassifier(
   resolver: SenderResolver,
   ownIds: ReadonlySet<string>,
-  memberByUserId: ReadonlyMap<string, string>,
+  memberByUserId: ReadonlyMap<string, string | { id: string; attributeFrom?: Date | number | null }>,
 ): ReportIdentity {
+  const linked = (userId: string, at: number): string | null => {
+    const entry = memberByUserId.get(userId);
+    if (!entry) return null;
+    if (typeof entry === "string") return entry;
+    // The member's "count their messages from" date applies to replies from their login too.
+    const from = entry.attributeFrom instanceof Date ? entry.attributeFrom.getTime() : entry.attributeFrom;
+    return typeof from === "number" && at < from ? null : entry.id;
+  };
   return {
     resolver,
     classify(row, at) {
@@ -166,7 +198,7 @@ export function createReportClassifier(
         copies.some((copy) => isOwnSender(ownIds, copy.senderPhone, copy.senderJid));
       if (ours) {
         const actor: IntelActor = row.obMatched || row.direction === "OUTGOING" ? outgoingActorFor(row.actionType, row.ruleId) : "BUSINESS_PHONE";
-        const operatorMember = actor === "OPERATOR" && row.createdById ? (memberByUserId.get(row.createdById) ?? null) : null;
+        const operatorMember = actor === "OPERATOR" && row.createdById ? linked(row.createdById, at) : null;
         return operatorMember
           ? { kind: "MEMBER", memberId: operatorMember, actor, status: null }
           : { kind: "BUSINESS", memberId: null, actor, status: null };
@@ -201,6 +233,8 @@ export async function loadReportIdentity(projectId: string): Promise<ReportIdent
     prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true, attributeFrom: true, userId: true } }),
     loadOwnSenderIds(projectId),
   ]);
-  const memberByUserId = new Map(members.filter((m) => m.userId).map((m) => [m.userId!, m.id]));
+  // The login → member link as it stands now (a link is not dated; re-linking a login moves its past
+  // dashboard replies to the new member — the change is in System Logs).
+  const memberByUserId = new Map(members.filter((m) => m.userId).map((m) => [m.userId!, { id: m.id, attributeFrom: m.attributeFrom }]));
   return createReportClassifier(createSenderResolver(members), ownIds, memberByUserId);
 }

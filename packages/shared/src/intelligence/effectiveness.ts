@@ -126,7 +126,8 @@ export interface EffectivenessInput {
   appreciation: readonly AppreciationSignal[];
   preferences: readonly CustomerPreference[];
   dutyWindows: ReadonlyMap<string, readonly DutyWindow[]>;
-  assignedMemberFor: (groupKey: string) => string | null;
+  /** The group's assignee when the customer asked (`at`) — the Team Report's charging rule. */
+  assignedMemberFor: (groupKey: string, at?: number) => string | null;
   rangeStart: number;
   rangeEnd: number;
   /** Days (Dhaka keys) whose data is not verified — before verified-from, or touched by an incomplete gap. */
@@ -161,7 +162,7 @@ export function employeeMetrics(input: EffectivenessInput): EmployeeMetrics[] {
       waitsOnTime: waits.filter((w) => w.status === "ON_TIME").length,
       waitsLate: waits.filter((w) => w.status === "LATE").length,
       medianResponseSeconds: median(waits.map((w) => w.waitSeconds ?? 0)),
-      missedCharged: input.waits.filter((w) => w.status === "MISSED" && input.assignedMemberFor(w.groupKey) === memberId).length,
+      missedCharged: input.waits.filter((w) => w.status === "MISSED" && input.assignedMemberFor(w.groupKey, w.askedAt) === memberId).length,
       casesParticipated: input.cases.filter((c) => c.memberIds.includes(memberId)).length,
       casesOwned: owned.length,
       resolvedOwned: resolved.length,

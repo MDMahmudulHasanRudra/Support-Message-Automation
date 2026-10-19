@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import type { Prisma, SupportPriority } from "@prisma/client";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { buildGroupWhere, isGroupFilterKey, type GroupFilterKey } from "@/lib/groupFilters";
+import { mergedGroupResponsibility, recordResponsibilityChange } from "@/server/groupResponsibility";
 
 const PRIORITIES: SupportPriority[] = ["P1", "P2", "P3"];
 
@@ -26,25 +27,17 @@ export async function setGroupPriority(
   const priority = isPriority(priorityRaw) ? priorityRaw : null;
 
   await prisma.$transaction(async (tx) => {
-    const before = await tx.whatsAppGroup.findUnique({ where: { id: groupId }, select: { whatsappGroupId: true, priority: true, assignedTeamMemberId: true } });
+    const row = await tx.whatsAppGroup.findUnique({ where: { id: groupId }, select: { whatsappGroupId: true } });
+    if (!row) return;
+    // History of the group as the Team Report reads it (all our numbers' copies merged), so a Missed
+    // wait stays charged to whoever the group was assigned to when the customer asked.
+    const before = await mergedGroupResponsibility(tx, row.whatsappGroupId);
     await tx.whatsAppGroup.update({
       where: { id: groupId },
       data: { priority, assignedTeamMemberId, escalationMonitoringEnabled },
     });
-    // History, so the Team Report charges a Missed wait to whoever the group was assigned to when the
-    // customer asked — reassigning a group must not move last month's misses to the new person.
-    if (before && (before.priority !== priority || before.assignedTeamMemberId !== assignedTeamMemberId)) {
-      await tx.groupResponsibilityChange.create({
-        data: {
-          whatsappGroupId: before.whatsappGroupId,
-          previousAssignedTeamMemberId: before.assignedTeamMemberId,
-          previousPriority: before.priority,
-          assignedTeamMemberId,
-          priority,
-          changedByUserId: session.userId,
-        },
-      });
-    }
+    const after = await mergedGroupResponsibility(tx, row.whatsappGroupId);
+    await recordResponsibilityChange(tx, row.whatsappGroupId, before, after, session.userId);
   });
   revalidatePath(await projectPath("/groups"));
 }

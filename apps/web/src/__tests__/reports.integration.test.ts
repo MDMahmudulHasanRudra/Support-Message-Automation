@@ -416,7 +416,12 @@ describe("filters", () => {
 
   it("member: Bipul's missed support covers his assigned group and the groups he answered in", async () => {
     const r = await run(isp, "missed", { groups: fixtureGroups(), member: ids.m2, status: "all" });
-    expect(table(r, "waits").rows).toHaveLength(5); // every wait but the second number's
+    // Every wait but the second number's — less the late or unanswered one charged to somebody else:
+    // in a member view a Missed wait belongs to whoever the group was assigned to when the customer
+    // asked (the Team Report's rule), not to everybody who also answered in that group.
+    expect(table(r, "waits").rows).toHaveLength(4);
+    // Every late or unanswered one listed is charged to Bipul himself.
+    expect(table(r, "waits").rows.every((row) => ["—", `Bipul ${tag}`].includes(String(row.cells[8])))).toBe(true);
   });
 
   it("groups: one group chosen means only its waits", async () => {

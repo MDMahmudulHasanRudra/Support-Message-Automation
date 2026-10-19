@@ -9,6 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { normalizePhoneNumber } from "@support-automation/shared";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { mergedGroupResponsibility, recordResponsibilityChange } from "@/server/groupResponsibility";
 
 /**
  * The page these actions belong to (PROJECT_ROLES.md, "Pages"). A member whose project role selects
@@ -506,6 +507,9 @@ export async function adoptGroupSetupFromAccount(
   let notShared = 0;
 
   for (const group of configured) {
+    // The Team Report's own reading of the group before and after, so copying setup onto a new number
+    // that becomes the one it reads is recorded like any reassignment (GroupResponsibilityChange).
+    const before = await mergedGroupResponsibility(prisma, group.whatsappGroupId);
     // updateMany rather than update: it matches nothing and moves on when the target account is
     // not in this group, which is the ordinary case rather than an error.
     const { count } = await prisma.whatsAppGroup.updateMany({
@@ -520,8 +524,10 @@ export async function adoptGroupSetupFromAccount(
         assignedTeamMemberId: group.assignedTeamMemberId,
       },
     });
-    if (count > 0) updated += count;
-    else notShared += 1;
+    if (count > 0) {
+      updated += count;
+      await recordResponsibilityChange(prisma, group.whatsappGroupId, before, await mergedGroupResponsibility(prisma, group.whatsappGroupId), session.userId);
+    } else notShared += 1;
   }
 
   await logSystemEvent("WARN", "accounts", `Group setup copied from "${source.label}" to "${target.label}"`, {

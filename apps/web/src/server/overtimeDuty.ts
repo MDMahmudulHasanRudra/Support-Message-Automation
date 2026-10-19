@@ -43,7 +43,7 @@ export async function loadDutyResolver(range: { start: Date; end: Date }): Promi
     }),
     prisma.internalTeamMember.findMany({
       where: { defaultShiftTemplateId: { not: null } },
-      select: { id: true, updatedAt: true, defaultShiftTemplate: { select: { startMinute: true, endMinute: true, updatedAt: true } } },
+      select: { id: true, updatedAt: true, defaultShiftChangedAt: true, defaultShiftTemplate: { select: { startMinute: true, endMinute: true, updatedAt: true } } },
     }),
   ]);
 
@@ -78,7 +78,8 @@ export async function loadDutyResolver(range: { start: Date; end: Date }): Promi
     const member = defaultByMember.get(memberId);
     const template = member?.defaultShiftTemplate;
     const defaultShift =
-      member && template && member.updatedAt.getTime() < end && template.updatedAt.getTime() < end
+      // From when the default shift was set — never the member's last edit of anything else.
+      member && template && (member.defaultShiftChangedAt ?? member.updatedAt).getTime() < end && template.updatedAt.getTime() < end
         ? { startMinute: template.startMinute, endMinute: template.endMinute }
         : null;
     const resolved = resolveRegularDuty({

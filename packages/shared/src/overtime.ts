@@ -153,7 +153,15 @@ export function computeOvertimeDays(
   stretches: ReadonlyMap<string, readonly Stretch[]>,
   dutyFor: (memberId: string, day: string) => ResolvedDuty,
 ): OvertimeDay[] {
-  const out: OvertimeDay[] = [];
+  return computeOvertimeWork(stretches, dutyFor).map(({ workedSeconds: _worked, ...day }) => day);
+}
+
+/** `computeOvertimeDays` with each day's worked support seconds — what a scoped report shares overtime by. */
+export function computeOvertimeWork(
+  stretches: ReadonlyMap<string, readonly Stretch[]>,
+  dutyFor: (memberId: string, day: string) => ResolvedDuty,
+): Array<OvertimeDay & { workedSeconds: number }> {
+  const out: Array<OvertimeDay & { workedSeconds: number }> = [];
   for (const [memberId, list] of stretches) {
     if (list.length === 0) continue;
     // Every day a stretch touches, and the day before each (its shift may run past midnight).
@@ -195,7 +203,7 @@ export function computeOvertimeDays(
 
     for (const [day, seconds] of worked) {
       const duty = duties.get(day) ?? dutyFor(memberId, day);
-      out.push({ memberId, day, overtimeSeconds: Math.max(0, seconds - duty.regularSeconds), source: duty.source });
+      out.push({ memberId, day, overtimeSeconds: Math.max(0, seconds - duty.regularSeconds), workedSeconds: seconds, source: duty.source });
     }
   }
   out.sort((a, b) => a.memberId.localeCompare(b.memberId) || a.day.localeCompare(b.day));

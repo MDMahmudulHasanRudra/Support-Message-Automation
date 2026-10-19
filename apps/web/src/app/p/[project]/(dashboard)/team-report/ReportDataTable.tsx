@@ -147,6 +147,11 @@ export function ReportDataTable({
         return;
       }
       if (!response.ok) throw new Error(await response.text());
+      // A refused or expired session is redirected to a page, which fetch follows: never save that HTML
+      // as a spreadsheet and call it ready.
+      if (response.redirected || (response.headers.get("content-type") ?? "").includes("text/html")) {
+        throw new Error("The export was refused — your session may have ended. Reload the page and try again.");
+      }
       const blob = await response.blob();
       const disposition = response.headers.get("Content-Disposition") ?? "";
       const encoded = /filename\*=UTF-8''([^;]+)/.exec(disposition)?.[1];
@@ -389,8 +394,18 @@ function ExportMenu({
     const onPointer = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
+    // A menu is walked with the arrow keys: focus starts on the first item that can be used.
+    const items = () => [...(rootRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])];
+    items()[0]?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const list = items();
+      if (list.length === 0) return;
+      event.preventDefault();
+      const at = list.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === "ArrowDown" ? (at + 1) % list.length : (at - 1 + list.length) % list.length;
+      list[next]?.focus();
     };
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);

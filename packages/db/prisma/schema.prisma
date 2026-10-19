@@ -1416,6 +1416,9 @@ model InternalTeamMember {
   /// same person, holding one field, would be a second identity concept for no benefit.
   defaultShiftTemplateId String?
   defaultShiftTemplate   ShiftTemplate? @relation(fields: [defaultShiftTemplateId], references: [id], onDelete: SetNull)
+  /// When the default shift was last set or cleared. Support Overtime applies it only to days after this
+  /// moment; `updatedAt` moved on every unrelated edit and silently changed past overtime.
+  defaultShiftChangedAt  DateTime?
 
   weeklySchedule        WeeklyScheduleEntry[]
   dutyAssignments       DutyAssignment[]

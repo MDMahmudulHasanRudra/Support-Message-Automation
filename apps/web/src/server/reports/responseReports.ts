@@ -19,7 +19,6 @@ import type { BuiltReport, ReportTable } from "./types";
 
 /** Response & SLA reports: Response SLA and Missed Support. */
 
-const assignedOf = (ctx: ReportContext, groupKey: string) => ctx.data.groups.get(groupKey)?.assignedMemberId ?? null;
 
 /** The waits a group report looks at: every wait in the groups in scope (REPORTS.md §3). */
 /**
@@ -205,7 +204,9 @@ const MAX_BODIES = 2000;
 
 export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltReport> {
   const status = ctx.params.status && (ctx.params.status === "all" || Object.prototype.hasOwnProperty.call(SUPPORT_OUTCOME_LABELS, ctx.params.status)) ? ctx.params.status : "attention";
-  const waits = waitsInScope(ctx);
+  // In a Team or member view a late or unanswered wait is listed when it was charged to someone in
+  // scope (its assignee when the customer asked) — the Team Report's Missed rule.
+  const waits = waitsInScope(ctx).filter(ctx.missedInScope);
   const shown = waits
     .filter((w) => {
       const outcome = outcomeOf(w);
@@ -259,7 +260,8 @@ export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltRepor
     ],
     rows: shown.map((w, index) => {
       const outcome = outcomeOf(w);
-      const assigned = assignedOf(ctx, w.groupKey);
+      // The assignee when the customer asked — never the group's assignee today.
+      const assigned = w.chargedTo;
       const waited = w.waitSeconds ?? Math.max(0, Math.round((nowMs - w.askedAt) / 1000));
       const body = bodies.get(`${w.groupKey}|${w.askedAt}`);
       return {

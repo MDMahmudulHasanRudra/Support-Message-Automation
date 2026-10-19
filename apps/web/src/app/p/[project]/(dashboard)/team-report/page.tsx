@@ -232,12 +232,16 @@ export default async function TeamReportPage({
       ) : null}
 
       {summary.waits === 0 && summary.memberReplies === 0 && summary.customerMessages === 0 ? (
-        <EmptyState>No WhatsApp group messages were stored for {scopedName ?? teamName ?? "the team"} in {range.label}.</EmptyState>
+        <EmptyState>
+          {scopedName || teamName
+            ? `Nothing in ${range.label} for ${scopedName ?? teamName}: no replies of theirs, and no wait in a group they were answerable for.`
+            : `No WhatsApp group messages were stored in ${range.label}.`}
+        </EmptyState>
       ) : (
         <>
           <section className="mb-5 grid grid-cols-1 gap-3.5 lg:grid-cols-3">
-            <ChartCard className="lg:col-span-2" title="Support activity" description={`Team replies per ${filters.granularity}.`}>
-              <ColumnChart data={activitySeries} ariaLabel="Team replies over the period" labelEvery={labelEvery} />
+            <ChartCard className="lg:col-span-2" title="Support activity" description={`Replies per ${filters.granularity}: team members and the business number.`}>
+              <ColumnChart data={activitySeries} ariaLabel="Replies over the period" labelEvery={labelEvery} />
             </ChartCard>
             <ChartCard title="Missed and recall" description="Of the customer waits that went past their threshold.">
               <StackedBar
@@ -268,8 +272,8 @@ export default async function TeamReportPage({
                 title={teamName ? `${teamName} members` : "Team members"}
                 description={
                   teamName
-                    ? "Only their work while in this team. Missed belongs to the group's assigned member; Recall to whoever answered late. Select a name for that person's report."
-                    : "Missed belongs to the group's assigned member; Recall to whoever answered late. Select a name for that person's report."
+                    ? "Only their work while in this team. Missed belongs to whoever the group was assigned to when the customer asked; Recall to whoever answered late. Select a name for that person's report."
+                    : "Missed belongs to whoever the group was assigned to when the customer asked; Recall to whoever answered late. Select a name for that person's report."
                 }
               />
             </Card>

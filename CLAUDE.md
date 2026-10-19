@@ -1270,7 +1270,22 @@ Missed and unrecovered; still inside it = neither. Missed is charged to the grou
 threshold then — `GroupResponsibilityChange` (written by `setGroupPriority`) records each change with
 its before/after values, so reassigning a group never moves earlier misses; Recall to whoever sent the
 late reply. A Team/member report covers the groups it replied in AND the groups it was assigned when a
-customer asked, so Missed never exceeds Waits. Business-number
+customer asked, so Missed never exceeds Waits.
+
+**Team Report audit (19 Oct 2026), rules worth not undoing:** every `ReportWait` carries `chargedTo` (the
+assignee when the customer asked) and its at-the-time `thresholdSeconds`; every report, export and the
+human-response measure read those — never `groups.get(..).assignedMemberId` or today's priority
+(`TeamReportData.responsibilityAt` / `missedAfterMs` for anything else). History is recorded on the
+group's MERGED reading (`server/groupResponsibility.ts`, Primary copy first), also when setup is copied
+to a new number. In a Team/member view Missed is the waits charged in scope and Recall the late answers
+given in scope (independent); group rows use the same predicates; `ctx.groupInScope` is the Team Report's
+scoped group rows for groups with messages; `ctx.missedInScope` filters late/never waits by `chargedTo`.
+Overtime is the whole member-day's, shared to a scope by the part of the day worked in it. With one
+account chosen, identity is still decided over every account's copies (inner query, account filter
+outside). Exports carry `asof` and read only rows stored by then (`exportStoredBy`); the drill-down link
+carries it too. Default-shift history is `InternalTeamMember.defaultShiftChangedAt`, never `updatedAt`.
+A template test send (`template-test:` key) is never a member's reply; a dashboard reply respects the
+member's "count from" date. Business-number
 replies count as replies but carry no person and no duration. Replies are looked for up to 24 h
 past the period end, and only waits starting inside the period count.
 

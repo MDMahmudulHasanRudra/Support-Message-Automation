@@ -944,3 +944,18 @@ Different metrics keep their own names:
 - **Exports carry the page's moment** (`asof`), so an open period's file matches the page.
 - **Personal (one-to-one) chats are not in these reports.** They count groups only; a personal
   conversation is in WhatsApp Chat and the WhatsApp Chat User Activity report.
+
+## Team Report audit (19 Oct 2026)
+
+- Every wait records who it is charged to when the customer asked (`chargedTo`) and the threshold then.
+  The Team Report, Missed Support, Group Coverage, Employee Effectiveness, Human Response SLA and the
+  Excel "Missed & Recall" sheet all read those, so reassigning a group or changing its priority never
+  rewrites the past. "Assigned now" columns are labelled as today's assignee.
+- In a Team/member view, Missed counts the waits charged to someone in scope and Recall the late
+  answers given by someone in scope; group rows add up to the headline; other reports use the same
+  scope rule.
+- Support Overtime in a Team view is the share of each whole day's overtime worked in that Team.
+- With one account chosen, the report lists that account's messages but recognises senders from every
+  account's copies.
+- Exports and drill-downs carry the page's moment (`asof`); the Excel Summary carries data health and the
+  unidentified-staff count; the CSV is UTF-8 with a BOM and always has a header.

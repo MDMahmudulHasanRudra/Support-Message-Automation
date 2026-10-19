@@ -89,6 +89,11 @@ export function TeamReportFilters({
         ? `All ${teams.find((team) => team.id === chosenTeam)?.name ?? "team"} members`
         : "All team members";
   const submit = () => formRef.current?.requestSubmit();
+  // A date typed by keyboard passes through years like 0002 on its way to 2026; only a year a report
+  // can mean reloads the page, so typing is not interrupted mid-entry.
+  const submitDate = (event: { currentTarget: HTMLInputElement }) => {
+    if (/^2\d{3}-\d{2}-\d{2}$/.test(event.currentTarget.value)) submit();
+  };
 
   return (
     <div>
@@ -132,15 +137,15 @@ export function TeamReportFilters({
       {chosenPeriod === "custom" ? (
         <>
           <Field label="From">
-            <Input type="date" name="from" defaultValue={from} className="w-40" onChange={submit} />
+            <Input type="date" name="from" defaultValue={from} className="w-40" onChange={submitDate} />
           </Field>
           <Field label="To">
-            <Input type="date" name="to" defaultValue={to} className="w-40" onChange={submit} />
+            <Input type="date" name="to" defaultValue={to} className="w-40" onChange={submitDate} />
           </Field>
         </>
       ) : (
         <Field label={chosenPeriod === "day" ? "Day" : chosenPeriod === "week" ? "Any day in the week" : "Any day in the month"}>
-          <Input type="date" name="date" defaultValue={date} className="w-44" onChange={submit} />
+          <Input type="date" name="date" defaultValue={date} className="w-44" onChange={submitDate} />
         </Field>
       )}
 

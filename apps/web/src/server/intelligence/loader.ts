@@ -75,6 +75,7 @@ interface Row {
   wgid: string;
   wamid: string;
   ts: Date;
+  storedAt: Date;
   direction: string;
   fromTeam: boolean;
   sender: string;
@@ -105,10 +106,10 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
   const groupFilter = groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty;
   const accountFilter = accountId ? Prisma.sql`AND m."accountId" = ${accountId}` : Prisma.empty;
 
-  const [rows, members, identity, escalations, completions, duties] = await Promise.all([
+  const [rows, earlier, members, identity, escalations, completions, duties] = await Promise.all([
     prisma.$queryRaw<Row[]>`
       SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
-        g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts,
+        g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."createdAt" AS "storedAt",
         m."direction"::text AS direction, m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender,
         m."senderJid" AS "senderJid",
         m."senderName" AS "senderName", m."mentionedPhones" AS mentions,
@@ -127,6 +128,38 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
         ${groupFilter}
         ${accountFilter}
       ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
+    // Each group's last message before that window, as the Team Report reads it: a customer still
+    // waiting from earlier is continuing that wait, not starting a new one at the window's edge.
+    prisma.$queryRaw<Row[]>`
+      SELECT DISTINCT ON (gg."whatsappGroupId")
+        gg."whatsappGroupId" AS wgid, p."whatsappMessageId" AS wamid, p."timestampWa" AS ts, p."createdAt" AS "storedAt",
+        p."direction"::text AS direction, p."isFromTeamMember" AS "fromTeam", p."senderPhone" AS sender,
+        p."senderJid" AS "senderJid", p."senderName" AS "senderName", p."mentionedPhones" AS mentions,
+        CASE WHEN length(p."body") BETWEEN 1 AND 24 OR p."body" ~* ${INTELLIGENCE_SQL_PREFILTER} THEN left(p."body", 400) END AS body,
+        NULL::text AS "quotedKey", NULL::text AS "quotedSender", NULL::text AS "quotedSenderJid",
+        NULL::text AS "quotedDirection", NULL::timestamp AS "quotedAt", NULL::text[] AS copies,
+        o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
+      FROM (
+        SELECT DISTINCT m."groupId"
+        FROM "Message" m
+        JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
+        WHERE m."projectId" = ${projectId}
+          AND m."timestampWa" >= ${new Date(ctx.rangeStart)} AND m."timestampWa" < ${to}
+          ${groupFilter}
+          ${accountFilter}
+      ) r
+      JOIN "WhatsAppGroup" gg ON gg."id" = r."groupId" AND gg."projectId" = ${projectId}
+      CROSS JOIN LATERAL (
+        SELECT x.*
+        FROM "Message" x
+        WHERE x."groupId" = r."groupId" AND x."projectId" = ${projectId}
+          AND x."timestampWa" < ${from} AND x."direction" <> 'SYSTEM'
+          ${accountId ? Prisma.sql`AND x."accountId" = ${accountId}` : Prisma.empty}
+        ORDER BY x."timestampWa" DESC
+        LIMIT 1
+      ) p
+      ${outboundByKeyJoin(projectId, new Date(from.getTime() - 30 * 86_400_000), to, "p")}
+      ORDER BY gg."whatsappGroupId", p."timestampWa" DESC, ${preferSenderCopySql("p")}, p."id"`,
     prisma.internalTeamMember.findMany({
       select: { id: true, name: true, team: { select: { name: true } } },
     }),
@@ -164,7 +197,10 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
   const inScopeGroup = (groupKey: string) => ctx.groupInScope(groupKey, ctx.data.groups.get(groupKey)?.assignedMemberId ?? null);
 
   const messages: IntelMessage[] = [];
-  for (const row of rows) {
+  // Oldest first, and messages in the same second in the order they were stored — the Team Report's
+  // own order, so a reply and its question pair the same way in both.
+  const ordered = [...earlier, ...rows].sort((a, b) => a.ts.getTime() - b.ts.getTime() || a.storedAt.getTime() - b.storedAt.getTime());
+  for (const row of ordered) {
     if (!inScopeGroup(row.wgid)) continue;
     // The one rule every report shares (messageIdentity.ts): our own posts, every stored copy, and
     // the member's attribute-from date at the message's time.
@@ -190,16 +226,12 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
     });
   }
 
-  const rules = ctx.data.rules;
   const settings: IntelSettings = {
     caseGapMs: DEFAULT_CASE_GAP_MS,
     reopenWindowMs: DEFAULT_REOPEN_WINDOW_MS,
     sessionGapMs: ctx.idleGapMs,
-    thresholdMs: (groupKey) => {
-      const priority = ctx.data.groups.get(groupKey)?.priority;
-      const minutes = priority && rules.policyMinutes[priority] ? rules.policyMinutes[priority]! : rules.missedAfterMinutes;
-      return minutes * 60_000;
-    },
+    // The Team Report's own threshold, as it stood when the customer asked (GroupResponsibilityChange).
+    thresholdMs: (groupKey, at) => ctx.data.missedAfterMs(groupKey, at),
   };
   const facts: CaseFacts = {
     escalations: escalations.map((e) => ({
@@ -271,7 +303,7 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
       appreciation,
       preferences,
       dutyWindows,
-      assignedMemberFor: (groupKey) => ctx.data.groups.get(groupKey)?.assignedMemberId ?? null,
+      assignedMemberFor: (groupKey, at) => ctx.data.responsibilityAt(groupKey, at).assigned,
       rangeStart: ctx.rangeStart,
       rangeEnd: ctx.rangeEnd,
       unverifiedDays,

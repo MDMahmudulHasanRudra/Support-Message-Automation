@@ -120,7 +120,7 @@ export function buildBucketsTable(data: TeamReportData): ReportTableData {
     columns: [
       { label: bucketColumnLabel(filters.granularity) },
       { label: "Groups", numeric: true },
-      { label: "Team replies", numeric: true },
+      { label: "Replies (incl. business)", numeric: true, hint: "Team members' replies plus the business number's" },
       { label: "Customer msgs", numeric: true },
       { label: "Missed", numeric: true },
       { label: "Recall", numeric: true },
@@ -150,7 +150,7 @@ export function buildGroupsTable(data: TeamReportData): ReportTableData {
     id: "groups",
     columns: [
       { label: "Group" },
-      { label: "Assigned" },
+      { label: "Assigned now" },
       { label: "Messages", numeric: true },
       { label: "Customer", numeric: true },
       { label: "Replies", numeric: true },
@@ -190,7 +190,8 @@ export function buildGroupsTable(data: TeamReportData): ReportTableData {
           row.firstActivityAt ?? 0,
           row.activeSeconds,
         ],
-        href: meta ? `/team-report/group/${meta.id}?${query}` : null,
+        // The page's own moment travels with the link, so the group opens with the figures it was listed with.
+        href: meta ? `/team-report/group/${meta.id}?${query}&asof=${data.computedAt}` : null,
         sub: [row.groupKey, null, null, null, row.businessReplies > 0 ? `+${row.businessReplies.toLocaleString("en-US")} business` : null],
       };
     }),
