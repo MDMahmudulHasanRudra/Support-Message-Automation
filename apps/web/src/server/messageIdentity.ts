@@ -32,7 +32,11 @@ import {
  * (OUTGOING) record rather than another account's echo of it.
  */
 export function messageKeySql(alias = "m"): Prisma.Sql {
-  const col = `${alias}."whatsappMessageId"`;
+  return keyOfIdSql(`${alias}."whatsappMessageId"`);
+}
+
+/** The logical key of a stored WhatsApp id column (`messageKeySql`'s rule, for any column). */
+function keyOfIdSql(col: string): Prisma.Sql {
   return Prisma.raw(`(CASE WHEN ${col} ~ '^(true|false)_[^_]*@[^_]*_[^_]+' THEN split_part(${col}, '_', 3) ELSE ${col} END)`);
 }
 
@@ -73,15 +77,16 @@ export function storedCopiesSql(groupKey: Prisma.Sql, alias = "m"): Prisma.Sql {
  */
 export function outboundByKeyJoin(projectId: string, from: Date, to: Date, alias = "m"): Prisma.Sql {
   const slack = 2 * 86_400_000;
+  const obKey = keyOfIdSql(`ob."providerMessageId"`);
   return Prisma.sql`
       LEFT JOIN (
-        SELECT DISTINCT ON (ob."chatId", split_part(ob."providerMessageId", '_', 3))
-          ob."chatId" AS "obChat", split_part(ob."providerMessageId", '_', 3) AS "obKey", true AS "obMatched",
+        SELECT DISTINCT ON (ob."chatId", ${obKey})
+          ob."chatId" AS "obChat", ${obKey} AS "obKey", true AS "obMatched",
           ob."actionType", ob."ruleId", ob."createdById"
         FROM "OutboundMessage" ob
-        WHERE ob."projectId" = ${projectId} AND ob."providerMessageId" ~ '^(true|false)_[^_]*@[^_]*_[^_]+'
+        WHERE ob."projectId" = ${projectId} AND ob."providerMessageId" IS NOT NULL
           AND ob."sentAt" >= ${new Date(from.getTime() - slack)} AND ob."sentAt" < ${new Date(to.getTime() + slack)}
-        ORDER BY ob."chatId", split_part(ob."providerMessageId", '_', 3), ob."createdAt" DESC
+        ORDER BY ob."chatId", ${obKey}, ob."createdAt" DESC
       ) o ON o."obChat" = ${Prisma.raw(`${alias}."chatId"`)} AND o."obKey" = ${messageKeySql(alias)}`;
 }
 
