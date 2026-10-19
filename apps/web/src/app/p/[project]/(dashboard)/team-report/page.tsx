@@ -75,7 +75,8 @@ export default async function TeamReportPage({
   const scope = scopeLabel(teamName, scopedName);
   const teamOnly = Boolean(filters.teamId && !filters.memberId);
   const PERIOD_NAMES: Record<string, string> = { day: "Daily", week: "Weekly", month: "Monthly", custom: "Custom range" };
-  const query = teamReportQuery(filters);
+  // The page's own moment travels with every export, so the file says what the screen said.
+  const query = `${teamReportQuery(filters)}&asof=${now.getTime()}`;
 
   const activitySeries = result.buckets.map((b) => ({
     label: bucketLabel(b.key, filters.granularity),
@@ -184,7 +185,7 @@ export default async function TeamReportPage({
         <StatTile
           label="Customer messages"
           value={count(summary.customerMessages)}
-          hint={filters.memberId ? "in the groups they supported" : teamOnly ? "in the groups the team supported" : "from customers, all groups"}
+          hint={filters.memberId ? "in the groups they supported or were assigned" : teamOnly ? "in the groups the team supported or was assigned" : "from customers, all groups"}
         />
         <StatTile
           label="Team replies"
@@ -194,7 +195,11 @@ export default async function TeamReportPage({
               ? "messages they sent"
               : teamOnly
                 ? "messages the team's members sent"
-                : `+ ${count(summary.businessReplies)} from the business number`
+                : `+ ${count(summary.businessReplies)} from the business number${
+                    summary.unattributedStaffReplies > 0
+                      ? ` · ${count(summary.unattributedStaffReplies)} by a team member not identified (see Team Members)`
+                      : ""
+                  }`
           }
         />
         <StatTile
@@ -294,7 +299,7 @@ export default async function TeamReportPage({
               title={`Groups (${count(result.groups.length)})`}
               description={
                 filters.memberId || filters.teamId
-                  ? `Groups ${scopedName ?? teamName} replied in. Replies, time and first/last are theirs; Missed and Recall are the group's own. Select a group to see every wait behind its numbers.`
+                  ? `Groups ${scopedName ?? teamName} replied in, or was the assignee of when a customer asked. Replies, time and first/last are theirs; Missed and Recall are the group's own. Select a group to see every wait behind its numbers.`
                   : "Every group with a message in the period, busiest first. Select a group to see every wait behind its numbers."
               }
             />

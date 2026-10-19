@@ -1,11 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { ACK_LEVEL, applyAck, isGroupChatId, isPersonalChatId, recordableAckLevel } from "@support-automation/shared";
 import { prisma } from "../db.js";
-import { withAccountProject } from "../project/context.js";
+import { currentProjectId, withAccountProject } from "../project/context.js";
 import { registerMessageMedia } from "../media/registerMessageMedia.js";
 import { recordTeamAttendance } from "../teamManagement/attendance.js";
 import { isActiveTeamMember } from "./teamFilter.js";
-import { isOwnAccountMessage } from "./ownAccounts.js";
+import { isOwnAccountMessage, rememberOwnSender } from "./ownAccounts.js";
 import { resolveGroup } from "./processIncomingMessage.js";
 import type { RawIncomingMessage } from "./types.js";
 
@@ -191,6 +191,8 @@ async function storeOneHistoryMessage(raw: RawIncomingMessage, now: Date): Promi
     throw err;
   }
   if (raw.media) await registerMessageMedia({ messageId, accountId: raw.accountId, groupId: group?.id ?? null, media: raw.media });
+  // This account's own post: the id it sends from is learned now, as the live path learns it.
+  if (raw.direction === "OUTGOING") rememberOwnSender(currentProjectId(), raw);
   if (isFromTeamMember) {
     try {
       await recordTeamAttendance({ groupId: group?.id ?? null, isFromTeamMember, senderPhone: raw.senderPhone, senderJid: raw.senderJid ?? null, timestampWa: raw.timestampWa });

@@ -668,10 +668,23 @@ async function storeMissedMessageInProject(raw: RawIncomingMessage): Promise<boo
     await recordMessageRevoked(raw.accountId, raw.whatsappMessageId);
     return false;
   }
-  if (!raw.body || raw.body.trim().length === 0) return false;
+  if (!raw.body || raw.body.trim().length === 0) {
+    // Counted exactly as the live path counts it: a recovered message dropped here used to leave
+    // no trace at all.
+    countDroppedMessage(raw.accountId, "EMPTY_BODY", raw.chatId);
+    return false;
+  }
 
   if (raw.direction !== "INCOMING") {
     await storeNonAutomatedMessage(raw);
+    return true;
+  }
+
+  // The live path's guard, applied to a message recovered late as well: another of OUR numbers'
+  // post, stored as INCOMING, was a "customer" message — it opened a wait (Unanswered Groups,
+  // Response Time) and could open a Support Assignment case against our own reply.
+  if (await isOwnAccountMessage(raw)) {
+    await storeNonAutomatedMessage({ ...raw, direction: "OUTGOING" });
     return true;
   }
 

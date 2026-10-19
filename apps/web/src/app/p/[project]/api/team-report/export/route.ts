@@ -11,7 +11,7 @@ import {
 } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
-import { bucketLabel, loadTeamReport, memberLabel, parseTeamReportFilters, scopeLabel } from "@/server/teamReport";
+import { bucketLabel, loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, scopeLabel } from "@/server/teamReport";
 import { loadDataHealth } from "@/server/dataHealth";
 
 /**
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
   await requireAccess("support_activity.view");
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
   const format = params.format === "xlsx" ? "xlsx" : "csv";
-  const now = new Date();
+  const now = reportNow(params);
   const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts } = await loadTeamReport(
     parseTeamReportFilters(params, now),
     now,

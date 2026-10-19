@@ -7,7 +7,16 @@ import { redirect } from "next/navigation";
 import { type Prisma } from "@support-automation/db";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { checkPermission, requireAccess } from "@/server/authorize";
-import { createSenderResolver, DHAKA_OFFSET_MS, normalizePhoneNumber, parseWhatsAppId, whatsappIdKey } from "@support-automation/shared";
+import {
+  createSenderResolver,
+  DHAKA_OFFSET_MS,
+  isLocalBangladeshMobile,
+  normalizePhoneNumber,
+  parseWhatsAppId,
+  whatsappIdKey,
+  type WhatsAppIdKind,
+} from "@support-automation/shared";
+import { rosterEntryFromGroup } from "@/lib/teamMemberIdentity";
 import { loginsForProject } from "@/server/projectLogins";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -46,7 +55,11 @@ interface TeamMemberInput {
  */
 function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: string } {
   const name = String(formData.get("name") ?? "").trim();
-  const phoneNumber = String(formData.get("phoneNumber") ?? "").trim();
+  const typedPhone = String(formData.get("phoneNumber") ?? "").trim();
+  // A local Bangladeshi number ("01…") is stored with its country code, the form WhatsApp delivers
+  // and the form a direct message needs; anything else is kept exactly as typed.
+  const typedDigits = typedPhone.replace(/\D/g, "");
+  const phoneNumber = isLocalBangladeshMobile(typedDigits) ? `+88${typedDigits}` : typedPhone;
   const role = String(formData.get("role") ?? "").trim();
   // The id as the worker stores a sender: no "@lid" / "@c.us" suffix, which is stripped before
   // comparing, so pasting either form works. A multi-device sender ("176742417301720:26") carries
@@ -142,7 +155,7 @@ async function findPhoneConflict(phoneNumber: string, excludeId?: string) {
     members.find(
       (m) =>
         m.id !== excludeId &&
-        (normalizePhoneNumber(m.phoneNumber) === digits || (m.whatsappId && normalizePhoneNumber(m.whatsappId) === digits)),
+        (normalizePhoneNumber(m.phoneNumber) === digits || (m.whatsappId && normalizePhoneNumber(whatsappIdKey(m.whatsappId) ?? "") === digits)),
     ) ?? null
   );
 }
@@ -160,7 +173,8 @@ async function findWhatsAppIdConflict(whatsappId: string | null, excludeId?: str
     members.find(
       (m) =>
         m.id !== excludeId &&
-        (m.whatsappId === whatsappId || normalizePhoneNumber(m.phoneNumber) === normalizePhoneNumber(whatsappId)),
+        // On the comparison key, not the stored text: an older row can hold "…@lid" or "…:12".
+        (whatsappIdKey(m.whatsappId) === whatsappIdKey(whatsappId) || normalizePhoneNumber(m.phoneNumber) === normalizePhoneNumber(whatsappId)),
     ) ?? null
   );
 }
@@ -238,6 +252,12 @@ async function logIdentityChange(
 
 export interface GroupParticipantCandidate {
   phoneNumber: string;
+  /**
+   * What the identifier is, from the domain WhatsApp gave it: a PHONE number, a LID, or null when
+   * nothing recorded the domain. Decides whether adding the person stores it as their WhatsApp ID
+   * (a LID, which only identifies) or as a number messages can be sent to.
+   */
+  idKind: WhatsAppIdKind | null;
   /** The push name WhatsApp supplied, if this person has ever set one. */
   suggestedName: string | null;
   messageCount: number;
@@ -294,11 +314,20 @@ export async function getGroupParticipantCandidates(groupId: string): Promise<Gr
     take: 1000,
   });
   const nameByPhone = new Map(named.map((m) => [m.senderPhone, m.senderName]));
+  // The domain each sender arrived with, which says whether it is a phone number or a LID.
+  const withJid = await prisma.message.findMany({
+    where: { groupId, senderPhone: { in: candidatePhones }, senderJid: { not: null } },
+    distinct: ["senderPhone"],
+    select: { senderPhone: true, senderJid: true },
+    take: 1000,
+  });
+  const kindByPhone = new Map(withJid.map((m) => [m.senderPhone, parseWhatsAppId(m.senderJid)?.kind ?? null]));
 
   return senders
     .filter((s) => !isOnRoster(s.senderPhone))
     .map((s) => ({
       phoneNumber: s.senderPhone,
+      idKind: kindByPhone.get(s.senderPhone) ?? null,
       suggestedName: nameByPhone.get(s.senderPhone) ?? null,
       messageCount: s._count.senderPhone,
       lastSeenAt: s._max.timestampWa ?? new Date(0),
@@ -385,6 +414,7 @@ export async function readGroupParticipants(groupId: string): Promise<RosterFetc
     .filter((p) => p?.phoneNumber && !p.isSelf)
     .map((p) => ({
       phoneNumber: String(p.phoneNumber),
+      idKind: parseWhatsAppId(rawIdOf.get(String(p.phoneNumber)) ?? null)?.kind ?? null,
       suggestedName: p.name ?? null,
       messageCount: 0,
       lastSeenAt: new Date(0),
@@ -424,12 +454,16 @@ export async function addTeamMembersFromGroup(
 
   const parsed = selections
     .map((value) => {
-      // "<phone>|<name>" — the name travels with the checkbox so the server does not have to
-      // re-derive it, and an empty name falls back to the number itself.
+      // "[lid:|pn:]<phone>|<name>" — the name travels with the checkbox so the server does not have
+      // to re-derive it, and an empty name falls back to the number itself. The prefix is the kind
+      // of identifier WhatsApp delivered (absent from an older tab: decided below).
       const separator = value.indexOf("|");
-      const phoneNumber = (separator === -1 ? value : value.slice(0, separator)).trim();
+      let identifier = (separator === -1 ? value : value.slice(0, separator)).trim();
+      let kind: "LID" | "PHONE" | null = null;
+      if (identifier.startsWith("lid:")) [kind, identifier] = ["LID", identifier.slice(4)];
+      else if (identifier.startsWith("pn:")) [kind, identifier] = ["PHONE", identifier.slice(3)];
       const name = (separator === -1 ? "" : value.slice(separator + 1)).trim();
-      return { phoneNumber, name: name || phoneNumber };
+      return { phoneNumber: identifier, kind, name: name || identifier };
     })
     .filter((entry) => entry.phoneNumber.length > 0);
 
@@ -443,19 +477,17 @@ export async function addTeamMembersFromGroup(
   const seen = new Set(
     existing.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((d): d is string => d !== null),
   );
-  const seenWhatsAppIds = new Set(existing.map((m) => m.whatsappId).filter((id): id is string => Boolean(id)));
+  const seenWhatsAppIds = new Set(existing.map((m) => whatsappIdKey(m.whatsappId)).filter((id): id is string => Boolean(id)));
 
-  const toCreate: Array<{ name: string; phoneNumber: string; whatsappId: string }> = [];
+  const toCreate: Array<{ name: string; phoneNumber: string; whatsappId: string | null }> = [];
   for (const entry of parsed) {
-    if (seenWhatsAppIds.has(entry.phoneNumber)) continue;
-    const digits = normalizePhoneNumber(entry.phoneNumber);
+    const key = whatsappIdKey(entry.phoneNumber);
+    if (!key || seenWhatsAppIds.has(key)) continue;
+    const digits = normalizePhoneNumber(key);
     if (digits === null || seen.has(digits)) continue;
     seen.add(digits);
-    seenWhatsAppIds.add(entry.phoneNumber);
-    // Whatever this identifier is — a phone number or a LID — it is exactly what arrives on this
-    // person's messages, so it is recorded as such. That is what makes the match survive an admin
-    // later correcting `phoneNumber` to the person's real, human-readable number.
-    toCreate.push({ name: entry.name, phoneNumber: entry.phoneNumber, whatsappId: entry.phoneNumber });
+    seenWhatsAppIds.add(key);
+    toCreate.push(rosterEntryFromGroup(entry.name, key, entry.kind));
   }
 
   if (toCreate.length === 0) {
@@ -575,8 +607,13 @@ export async function linkWhatsAppSender(senderId: string, _prev: LinkSenderStat
     select: { id: true, name: true, phoneNumber: true, whatsappId: true },
   });
   if (!member) return { error: "That team member no longer exists." };
-  if (member.whatsappId === key) return { linked: member.name };
-  if (member.whatsappId) {
+  if (whatsappIdKey(member.whatsappId) === key) return { linked: member.name };
+  // A stored "WhatsApp ID" that is only the member's own phone number (added from a group before
+  // the kind was recorded) is not an identity anybody chose, so linking their real WhatsApp ID
+  // replaces it. A genuinely different id still belongs on the edit page.
+  const placeholderId =
+    Boolean(member.whatsappId) && normalizePhoneNumber(whatsappIdKey(member.whatsappId) ?? "") === normalizePhoneNumber(member.phoneNumber);
+  if (member.whatsappId && !placeholderId) {
     return { error: `${member.name} already has WhatsApp ID ${member.whatsappId}. Change it on their edit page if this is really them.` };
   }
   const idConflict = await findWhatsAppIdConflict(key, member.id);
@@ -592,7 +629,7 @@ export async function linkWhatsAppSender(senderId: string, _prev: LinkSenderStat
     granted.session.userId,
     member.id,
     member.name,
-    { phoneNumber: member.phoneNumber, whatsappId: null },
+    { phoneNumber: member.phoneNumber, whatsappId: member.whatsappId },
     { phoneNumber: member.phoneNumber, whatsappId: key },
     "chat-link",
   );
@@ -639,8 +676,23 @@ export async function deleteTeamMember(id: string): Promise<DeleteTeamMemberResu
     const member = await prisma.internalTeamMember.findUnique({ where: { id }, select: { id: true } });
     if (!member) return { deactivated: false, error: "That team member no longer exists. Refresh the page." };
 
-    const activityCount = await prisma.supportActivity.count({ where: { teamMemberId: id } });
-    if (activityCount > 0) {
+    // History is any message of theirs as well, not only Support Activity rows (which are off by
+    // default). Reports resolve a sender at read time, so deleting somebody who has written in a
+    // group moved every one of their messages to "customer" — opening waits and Missed against the
+    // group for what was in fact staff work — while each message's stored team-member stamp said
+    // the opposite.
+    const resolver = createSenderResolver(
+      await prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } }),
+    );
+    const identifiers = resolver.identifiersFor(id);
+    const [activityCount, attendanceDays, ownMessage] = await Promise.all([
+      prisma.supportActivity.count({ where: { teamMemberId: id } }),
+      prisma.teamAttendanceDay.count({ where: { teamMemberId: id } }),
+      identifiers.length
+        ? prisma.message.findFirst({ where: { direction: "INCOMING", senderPhone: { in: identifiers } }, select: { id: true } })
+        : null,
+    ]);
+    if (activityCount > 0 || attendanceDays > 0 || ownMessage) {
       await prisma.internalTeamMember.update({ where: { id }, data: { status: "INACTIVE" } });
       revalidatePath(await projectPath("/team-members"));
       revalidatePath(await projectPath("/support-activity"));

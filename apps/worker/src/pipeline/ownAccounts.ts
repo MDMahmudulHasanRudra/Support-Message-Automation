@@ -79,7 +79,9 @@ export async function isOwnAccountMessage(raw: RawIncomingMessage): Promise<bool
     where: {
       chatId: raw.chatId,
       accountId: { not: raw.accountId },
-      createdAt: { gte: new Date(Date.now() - RECENT_SEND_MS) },
+      // From the message's own time: a message recovered after a restart is older than the window
+      // measured from now, and the send it echoes was made around when it was written.
+      createdAt: { gte: new Date(Math.min(Date.now(), raw.timestampWa.getTime()) - RECENT_SEND_MS) },
       providerMessageId: { startsWith: `true_${raw.chatId}_${key.keyId}` },
     },
     select: { id: true },

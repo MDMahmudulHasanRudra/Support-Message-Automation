@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { sanitizeExcelCell } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
-import { loadTeamReport, memberLabel, parseTeamReportFilters } from "@/server/teamReport";
+import { loadTeamReport, memberLabel, parseTeamReportFilters, reportNow } from "@/server/teamReport";
 import { buildReportTable, type TeamReportTableId } from "@/server/teamReportTables";
 
 /**
@@ -56,8 +56,8 @@ export async function POST(request: NextRequest) {
   const keys = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").slice(0, MAX_KEYS) : [];
   if (keys.length === 0) return new NextResponse("No rows were chosen to export.", { status: 400 });
 
-  const now = new Date();
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
+  const now = reportNow(params);
   const data = await loadTeamReport(parseTeamReportFilters(params, now), now);
   const table = buildReportTable(tableId, data);
 

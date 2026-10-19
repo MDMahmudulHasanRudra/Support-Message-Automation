@@ -21,6 +21,7 @@ import {
   type AddFromGroupState,
   type GroupParticipantCandidate,
 } from "@/server/actions/teamMembers";
+import { addFromGroupValue } from "@/lib/teamMemberIdentity";
 import { MemberSuggestionLists, TeamSelect, type MemberFormOptions } from "./MemberFormFields";
 
 const INITIAL: AddFromGroupState = {};
@@ -274,7 +275,7 @@ export function AddFromGroupDialog({ groups, options }: { groups: GroupOption[];
                 </div>
               <div className="max-h-72 overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)]">
                 {candidates.map((candidate) => {
-                  const value = `${candidate.phoneNumber}|${candidate.suggestedName ?? ""}`;
+                  const value = addFromGroupValue(candidate);
                   return (
                     <label
                       key={candidate.phoneNumber}

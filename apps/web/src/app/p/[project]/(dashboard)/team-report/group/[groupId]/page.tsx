@@ -141,7 +141,7 @@ export default async function TeamReportGroupPage({
                       <Td className="tabular">{when(wait.repliedAt)}</Td>
                       <Td className="tabular">{wait.waitSeconds === null ? "—" : duration(wait.waitSeconds)}</Td>
                       <Td className="tabular">{duration(wait.thresholdSeconds)}</Td>
-                      <Td>{wait.repliedBy ? memberLabel(wait.repliedBy, memberNames) : "—"}</Td>
+                      <Td>{wait.repliedBy ? memberLabel(wait.repliedBy, memberNames) : wait.repliedAt !== null ? "A team member (not identified)" : "—"}</Td>
                       <Td>
                         <Badge color={STATUS[wait.status]!.color} dot>
                           {STATUS[wait.status]!.label}

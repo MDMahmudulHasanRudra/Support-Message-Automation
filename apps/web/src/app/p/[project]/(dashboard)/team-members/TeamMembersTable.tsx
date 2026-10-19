@@ -39,7 +39,7 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
         const result = await deleteTeamMember(member.id);
         if (result.error) setNotice({ tone: "error", text: result.error });
         else if (result.deactivated) {
-          setNotice({ tone: "info", text: `${member.name} has recorded support activity, so they were disabled instead of deleted to keep that history. Their reports are unchanged.` });
+          setNotice({ tone: "info", text: `${member.name} has messages or activity on record, so they were disabled instead of deleted to keep that history. Their reports are unchanged. If they were added by mistake and their messages are a customer's, set "Count their messages from" on their edit page instead.` });
         } else setNotice({ tone: "info", text: `${member.name} was deleted.` });
       }
       if (kind === "toggle") await toggleTeamMemberStatus(member.id);

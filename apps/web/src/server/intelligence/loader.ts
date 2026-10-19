@@ -11,10 +11,8 @@ import {
   formatDhakaDateKey,
   gapIsIncomplete,
   humanWaits,
-  createSenderResolver,
   INTELLIGENCE_SQL_PREFILTER,
   logicalMessageKey,
-  outgoingActorFor,
   preferenceSignals,
   SCHEDULED_DUTY_STATUSES,
   shiftWindow,
@@ -34,7 +32,7 @@ import {
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
-import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
+import { loadReportIdentity, messageKeySql, outboundByKeyJoin, preferSenderCopySql, storedCopiesSql } from "@/server/messageIdentity";
 import { measuredTo as measuredToOf, type ReportContext } from "@/server/reports/context";
 
 /**
@@ -88,6 +86,9 @@ interface Row {
   quotedSender: string | null;
   quotedSenderJid: string | null;
   quotedDirection: string | null;
+  quotedAt: Date | null;
+  copies: string[] | null;
+  obMatched: boolean | null;
   actionType: string | null;
   ruleId: string | null;
   createdById: string | null;
@@ -95,8 +96,6 @@ interface Row {
 
 const LOOKAHEAD_MS = 24 * 3_600_000;
 
-/** Who sent an outgoing message — the one rule the Team Report shares (`outgoingActorFor`). */
-const outgoingActor = (row: Pick<Row, "actionType" | "ruleId">): IntelActor => outgoingActorFor(row.actionType, row.ruleId);
 
 export async function loadIntelligence(ctx: ReportContext): Promise<IntelligenceData> {
   const projectId = await activeProjectId();
@@ -106,7 +105,7 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
   const groupFilter = groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty;
   const accountFilter = accountId ? Prisma.sql`AND m."accountId" = ${accountId}` : Prisma.empty;
 
-  const [rows, members, escalations, completions, duties] = await Promise.all([
+  const [rows, members, identity, escalations, completions, duties] = await Promise.all([
     prisma.$queryRaw<Row[]>`
       SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
         g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts,
@@ -115,18 +114,13 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
         m."senderName" AS "senderName", m."mentionedPhones" AS mentions,
         CASE WHEN length(m."body") BETWEEN 1 AND 24 OR m."body" ~* ${INTELLIGENCE_SQL_PREFILTER} THEN left(m."body", 400) END AS body,
         q."whatsappMessageId" AS "quotedKey", q."senderPhone" AS "quotedSender", q."senderJid" AS "quotedSenderJid",
-        q."direction"::text AS "quotedDirection",
-        o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
+        q."direction"::text AS "quotedDirection", q."timestampWa" AS "quotedAt",
+        ${storedCopiesSql(Prisma.sql`g."whatsappGroupId"`)} AS copies,
+        o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
       FROM "Message" m
       JOIN "WhatsAppGroup" g ON g."id" = m."groupId" AND g."projectId" = ${projectId}
       LEFT JOIN "Message" q ON q."id" = m."quotedMessageId" AND q."projectId" = ${projectId}
-      LEFT JOIN LATERAL (
-        SELECT ob."actionType", ob."ruleId", ob."createdById"
-        FROM "OutboundMessage" ob
-        WHERE m."direction" = 'OUTGOING' AND ob."providerMessageId" = m."whatsappMessageId" AND ob."projectId" = ${projectId}
-        ORDER BY ob."createdAt" DESC
-        LIMIT 1
-      ) o ON true
+      ${outboundByKeyJoin(projectId, from, to)}
       WHERE m."projectId" = ${projectId}
         AND m."timestampWa" >= ${from} AND m."timestampWa" < ${to}
         AND m."direction" <> 'SYSTEM'
@@ -134,8 +128,9 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
         ${accountFilter}
       ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
     prisma.internalTeamMember.findMany({
-      select: { id: true, name: true, phoneNumber: true, whatsappId: true, attributeFrom: true, team: { select: { name: true } } },
+      select: { id: true, name: true, team: { select: { name: true } } },
     }),
+    loadReportIdentity(projectId),
     prisma.supportEscalationCase.findMany({
       where: { createdAt: { gte: from, lt: to } },
       select: { createdAt: true, status: true, humanRepliedAt: true, resolvedAt: true, resolvedById: true, updatedAt: true, group: { select: { whatsappGroupId: true } } },
@@ -157,8 +152,11 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
   ]);
 
   // ---- Roster: the one identity rule the Team Report and the live pipeline use (WHATSAPP_IDENTITY.md).
-  const resolver = createSenderResolver(members);
-  const memberFor = (raw: string | null, jid: string | null = null) => (raw ? resolver.resolve(raw, jid).memberId : null);
+  const resolver = identity.resolver;
+  // At the time of the message it is read for: a quote of a line written before somebody's "count
+  // their messages from" date is a quote of a customer, not of the member they later became.
+  const memberFor = (raw: string | null, jid: string | null = null, at: number | null = null) =>
+    raw ? resolver.resolve(raw, jid, at).memberId : null;
   const memberNames = new Map(members.map((m) => [m.id, m.name]));
   const memberTeams = new Map(members.map((m) => [m.id, m.team?.name ?? null]));
 
@@ -168,15 +166,11 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
   const messages: IntelMessage[] = [];
   for (const row of rows) {
     if (!inScopeGroup(row.wgid)) continue;
-    let actor: IntelActor;
-    let memberId: string | null = null;
-    if (row.direction === "OUTGOING") actor = outgoingActor(row);
-    else {
-      // At the message's time: before a member's attribute-from date their number is a customer's.
-      const sender = resolver.resolve(row.sender, row.senderJid, row.ts.getTime());
-      memberId = sender.memberId;
-      actor = memberId ? "MEMBER" : sender.isRosterMember || row.fromTeam ? "MEMBER_UNMAPPED" : "CUSTOMER";
-    }
+    // The one rule every report shares (messageIdentity.ts): our own posts, every stored copy, and
+    // the member's attribute-from date at the message's time.
+    const decided = identity.classify(row, row.ts.getTime());
+    const actor: IntelActor = decided.actor;
+    const memberId: string | null = decided.memberId;
     messages.push({
       // The LOGICAL key, so a quote resolves to the message whichever account's copy was kept.
       key: logicalMessageKey(row.wgid, row.wamid),
@@ -189,8 +183,10 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
       senderName: row.senderName,
       text: row.body,
       quotedKey: row.quotedKey ? logicalMessageKey(row.wgid, row.quotedKey) : null,
-      quotedMemberId: row.quotedDirection === "INCOMING" ? memberFor(row.quotedSender, row.quotedSenderJid) : null,
-      mentionedMemberIds: [...new Set((row.mentions ?? []).map((m) => memberFor(m)).filter((id): id is string => Boolean(id)))],
+      quotedMemberId: row.quotedDirection === "INCOMING" ? memberFor(row.quotedSender, row.quotedSenderJid, row.quotedAt?.getTime() ?? null) : null,
+      mentionedMemberIds: [
+        ...new Set((row.mentions ?? []).map((m) => memberFor(m, null, row.ts.getTime())).filter((id): id is string => Boolean(id))),
+      ],
     });
   }
 

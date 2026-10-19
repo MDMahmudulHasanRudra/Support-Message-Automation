@@ -22,8 +22,17 @@ import type { BuiltReport, ReportTable } from "./types";
 const assignedOf = (ctx: ReportContext, groupKey: string) => ctx.data.groups.get(groupKey)?.assignedMemberId ?? null;
 
 /** The waits a group report looks at: every wait in the groups in scope (REPORTS.md §3). */
-export const waitsInScope = (ctx: ReportContext) =>
-  ctx.data.result.waits.filter((w) => ctx.groupInScope(w.groupKey, assignedOf(ctx, w.groupKey)));
+/**
+ * The waits a report counts: every wait, or — with a Team or member chosen — the waits in the groups
+ * the Team Report is answerable for in that scope (its scoped group rows: groups an in-scope member
+ * replied in, or whose assignee was in scope when the customer asked). The same set as the Team
+ * Report's own Waits figure, so a scoped list and the Team Report never disagree.
+ */
+export const waitsInScope = (ctx: ReportContext) => {
+  if (!ctx.scoped) return ctx.data.result.waits;
+  const groups = new Set(ctx.data.result.groups.map((g) => g.groupKey));
+  return ctx.data.result.waits.filter((w) => groups.has(w.groupKey));
+};
 
 const STAT_COLUMNS = [
   { label: "Waits", numeric: true },
@@ -220,11 +229,11 @@ export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltRepor
           AND m."timestampWa" >= ${new Date(Math.min(...wanted.map((w) => w.askedAt)))}
           AND m."timestampWa" <= ${new Date(Math.max(...wanted.map((w) => w.askedAt)))}
           AND m."direction" = 'INCOMING'
-          AND m."isFromTeamMember" = false
           AND g."whatsappGroupId" IN (${Prisma.join([...new Set(wanted.map((w) => w.groupKey))])})
           AND round(extract(epoch from m."timestampWa") * 1000)::bigint IN (${Prisma.join([...new Set(wanted.map((w) => w.askedAt))])})
           ${ctx.filters.accountId ? Prisma.sql`AND m."accountId" = ${ctx.filters.accountId}` : Prisma.empty}
-        ORDER BY g."whatsappGroupId", m."timestampWa", m."id"`
+        -- Of two lines in the same second, the one not stamped as staff: the wait was started by a customer.
+        ORDER BY g."whatsappGroupId", m."timestampWa", m."isFromTeamMember" ASC, m."createdAt", m."id"`
     : [];
   const bodies = new Map(bodyRows.map((r) => [`${r.wgid}|${Number(r.ms)}`, r.body]));
   const nowMs = ctx.now.getTime();
@@ -262,7 +271,7 @@ export async function buildMissedSupport(ctx: ReportContext): Promise<BuiltRepor
           body ?? (index < MAX_BODIES ? "—" : "(not loaded)"),
           w.waitSeconds === null ? `${duration(waited)} so far` : duration(waited),
           duration(w.thresholdSeconds),
-          w.repliedBy ? ctx.memberName(w.repliedBy) : "—",
+          w.repliedBy ? ctx.memberName(w.repliedBy) : w.repliedAt !== null ? "A team member (not identified)" : "—",
           when(w.repliedAt),
           // Recall is credited to the late replier; the miss itself to the group's assignee.
           outcome === "ANSWERED" || outcome === "WAITING" ? "—" : ctx.memberName(assigned),

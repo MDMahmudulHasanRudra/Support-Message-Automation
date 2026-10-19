@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireAccess } from "@/server/authorize";
 import { buildReport, reportDefinition } from "@/server/reports";
+import { reportNow } from "@/server/teamReport";
 import { contentDisposition, reportFileName, reportWorkbook, tableHeader, tableRows, toCsv } from "@/server/reports/exportFile";
 
 /**
@@ -16,7 +17,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   await requireAccess(definition.permission);
 
   const query = Object.fromEntries(request.nextUrl.searchParams.entries());
-  const { report, ctx } = await buildReport(id, query, new Date());
+  const { report, ctx } = await buildReport(id, query, reportNow(query));
   const name = reportFileName(report, ctx);
 
   if (query.format !== "xlsx") {

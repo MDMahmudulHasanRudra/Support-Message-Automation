@@ -348,3 +348,98 @@ export function describeSenderId(senderPhone: string | null | undefined, senderJ
     id: parsed.user,
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// One logical message, several stored copies
+// ---------------------------------------------------------------------------------------------
+
+/** What one stored copy of a message says about who sent it. */
+export interface StoredCopyIdentity {
+  senderPhone: string | null;
+  senderJid: string | null;
+  /** `Message.isFromTeamMember` as that copy was stamped when it arrived. */
+  fromTeam: boolean;
+}
+
+/** Who sent a logical message, decided over every copy of it we stored. */
+export interface CopiesAttribution {
+  /** The member credited, or null. Only ever set when every copy that names a member names this one. */
+  memberId: string | null;
+  /** Certainly a colleague (credited or not): the safety reading every report keeps. */
+  isStaff: boolean;
+  /** How it was decided, for the reliability counts: the strongest copy's match, or CONFLICT. */
+  status: SenderMatchStatus;
+}
+
+const STATUS_STRENGTH: Record<SenderMatchStatus, number> = {
+  WHATSAPP_ID_AND_PHONE_MATCH: 3,
+  WHATSAPP_ID_MATCH: 2,
+  PHONE_MATCH: 1,
+  CONFLICT: 0,
+  AMBIGUOUS: 0,
+  UNRESOLVED: 0,
+  NOT_A_PERSON: 0,
+};
+
+/**
+ * Who sent a message that two or more of our numbers each stored a copy of.
+ *
+ * WhatsApp can show one author as a LID to one of our accounts and as a phone number to another, so
+ * a member on file with only one of the two matches only one copy. Reports keep ONE copy per logical
+ * message, and which one was effectively arbitrary — so whether a colleague's reply was theirs or a
+ * "customer" message (opening a wait, and a Missed charged to the group's assignee) depended on row
+ * order. Every copy is a witness now:
+ *
+ *  - copies naming exactly one member, and no copy naming a different one → that member;
+ *  - copies naming two different members → staff, credited to nobody (CONFLICT);
+ *  - no member named, but a copy is a roster CONFLICT/AMBIGUOUS → staff, credited to nobody;
+ *  - otherwise the stored team-member stamp, but only for a sender the roster no longer knows at all
+ *    (a deleted member: their history stays staff). A sender the roster still knows, and excludes
+ *    only by the member's "count their messages from" date, is a customer at that moment — the stamp
+ *    was taken without the date, so it must not override it.
+ */
+export function attributeAcrossCopies(
+  resolver: SenderResolver,
+  copies: readonly StoredCopyIdentity[],
+  at?: number | null,
+): CopiesAttribution {
+  const resolved = copies.map((copy) => ({ copy, r: resolver.resolve(copy.senderPhone, copy.senderJid, at) }));
+  const memberIds = [...new Set(resolved.map(({ r }) => r.memberId).filter((id): id is string => id !== null))];
+  if (memberIds.length === 1) {
+    const best = resolved
+      .filter(({ r }) => r.memberId === memberIds[0])
+      .reduce((a, b) => (STATUS_STRENGTH[b.r.status] > STATUS_STRENGTH[a.r.status] ? b : a));
+    return { memberId: memberIds[0]!, isStaff: true, status: best.r.status };
+  }
+  if (memberIds.length > 1) return { memberId: null, isStaff: true, status: "CONFLICT" };
+  const roster = resolved.find(({ r }) => r.isRosterMember);
+  if (roster) return { memberId: null, isStaff: true, status: roster.r.status };
+  const stamped = resolved.some(({ copy }) => copy.fromTeam);
+  const knownWithoutDate = typeof at === "number" && resolved.some(({ copy }) => resolver.resolve(copy.senderPhone, copy.senderJid).isRosterMember);
+  return { memberId: null, isStaff: stamped && !knownWithoutDate, status: resolved[0]?.r.status ?? "UNRESOLVED" };
+}
+
+/** Separator between a stored copy's fields in the SQL `copies` column (`storedCopiesSql`). */
+export const COPY_FIELD_SEPARATOR = "\u001f";
+
+/** Reads the `copies` column the report loaders select: one "phone␟jid␟0|1" string per incoming copy. */
+export function parseStoredCopies(values: readonly string[] | null | undefined): StoredCopyIdentity[] {
+  return (values ?? []).map((value) => {
+    const [phone, jid, flag] = value.split(COPY_FIELD_SEPARATOR);
+    return { senderPhone: phone || null, senderJid: jid || null, fromTeam: flag === "1" };
+  });
+}
+
+/**
+ * Whether a sender is one of OUR numbers: its id is in `ownIds` (the project's account phone digits
+ * and the ids our accounts are seen sending from in groups — the worker's `ownAccounts.ts` evidence).
+ * A copy one of our numbers stored as INCOMING before that check existed is the business's message,
+ * never a customer's.
+ */
+export function isOwnSender(ownIds: ReadonlySet<string>, senderPhone: string | null, senderJid: string | null): boolean {
+  const parsed = parseWhatsAppId(senderJid) ?? parseWhatsAppId(senderPhone);
+  if (!parsed || !isPersonKind(parsed.kind)) return false;
+  if (ownIds.has(parsed.user)) return true;
+  const digits = normalizePhoneNumber(parsed.user);
+  return digits !== null && ownIds.has(digits);
+}

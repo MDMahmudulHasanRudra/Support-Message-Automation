@@ -73,9 +73,15 @@ import {
  *   group's assigned member was in scope when the customer asked; a Recall counts when whoever
  *   answered late was in scope when they answered. Business-number replies belong to no person and
  *   are left out of every scoped report. Groups supported are the groups an in-scope member replied
- *   in, and customer messages and waits are those groups' — counted once per group, so two
- *   colleagues in one group do not double it. The unscoped (whole-team) report is unchanged by any
- *   of this.
+ *   in. Customer messages, waits and the group rows cover those groups AND the groups whose assigned
+ *   member was in scope when a customer asked there — the groups the scope is answerable for — so a
+ *   member assigned to a group they never replied in sees that group and its waits beside the Missed
+ *   charged to them, never "12 missed of 5 waits". Counted once per group, so two colleagues in one
+ *   group do not double it. The unscoped (whole-team) report is unchanged by any of this.
+ *
+ * Staff replies credited to nobody (a colleague whose WhatsApp id and number point at two members, or
+ *   a former member no longer on the roster) are counted in `unattributedStaffReplies`, so member rows
+ *   adding up to less than the team total is explained rather than silent.
  */
 
 export type ReportMessageKind = "CUSTOMER" | "MEMBER" | "BUSINESS";
@@ -201,6 +207,11 @@ export interface TeamReportSummary {
   unscheduledMemberDays: number;
   activeMembers: number;
   lastActivityAt: number | null;
+  /**
+   * Team-member replies in the period credited to no member (identifiers that conflict, or a sender
+   * stamped staff who is no longer on the roster). Included in `memberReplies`; 0 in a scoped report.
+   */
+  unattributedStaffReplies: number;
 }
 
 export interface TeamReportResult {
@@ -477,6 +488,11 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     const owner = opts.assignedMemberFor(w.groupKey);
     return owner !== null && inScope(owner, w.askedAt);
   };
+  // The groups a scoped report is answerable for: where its members replied, plus where its member
+  // was the assignee when a customer asked. Waits, customer messages and the group rows use these.
+  const responsibleGroups = scopeGroups
+    ? new Set([...scopeGroups, ...waits.filter(waitInScopeForMissed).map((w) => w.groupKey)])
+    : null;
   const waitInScopeForRecall = (w: ReportWait) =>
     !inScope ||
     (w.repliedBy !== null && w.repliedBy !== "BUSINESS" && w.repliedAt !== null && inScope(w.repliedBy, w.repliedAt));
@@ -536,7 +552,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   }
   const groupRows: GroupReportRow[] = [];
   for (const [groupKey, list] of byGroup) {
-    if (scopeGroups && !scopeGroups.has(groupKey)) continue;
+    if (responsibleGroups && !responsibleGroups.has(groupKey)) continue;
     const ranged = list.filter((m) => inRange(m.ts));
     if (ranged.length === 0) continue;
     const memberMsgs = ranged.filter((m) => m.kind === "MEMBER" && (!scoped || memberInScope(m)));
@@ -583,7 +599,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     const b = bucket(message.ts);
     if (!b) continue;
     if (message.kind === "CUSTOMER") {
-      if (!scopeGroups || scopeGroups.has(message.groupKey)) b.customerMessages += 1;
+      if (!responsibleGroups || responsibleGroups.has(message.groupKey)) b.customerMessages += 1;
     } else if (message.kind === "MEMBER") {
       if (!scoped || memberInScope(message)) {
         b.memberMessages += 1;
@@ -647,8 +663,8 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
 
   // ---- Summary ----
   const scopedMemberRows = [...scopedRows.values()];
-  // A scoped report's "waits" are the waits in the groups its members supported.
-  const inScopeWaits = scopeGroups ? waits.filter((w) => scopeGroups.has(w.groupKey)) : waits;
+  // A scoped report's "waits" are the waits in the groups it is answerable for.
+  const inScopeWaits = responsibleGroups ? waits.filter((w) => responsibleGroups.has(w.groupKey)) : waits;
   const latest = (rows: readonly MemberReportRow[]) =>
     rows
       .filter((r) => r.memberId !== UNASSIGNED)
@@ -657,10 +673,10 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     messages.filter((m) => inRange(m.ts) && isReply(m)).map((m) => m.groupKey),
   );
 
-  const summary: TeamReportSummary = scopeGroups
+  const summary: TeamReportSummary = scopeGroups && responsibleGroups
     ? {
         groupsSupported: scopeGroups.size,
-        customerMessages: [...scopeGroups].reduce((sum, g) => sum + (customerInRangeByGroup.get(g) ?? 0), 0),
+        customerMessages: [...responsibleGroups].reduce((sum, g) => sum + (customerInRangeByGroup.get(g) ?? 0), 0),
         memberReplies: [...scopedAcc.values()].reduce((sum, a) => sum + a.ts.length, 0),
         businessReplies: 0,
         waits: inScopeWaits.length,
@@ -672,6 +688,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         unscheduledMemberDays: unscheduledTotal,
         activeMembers: scopedAcc.size,
         lastActivityAt: latest(scopedMemberRows),
+        unattributedStaffReplies: 0,
       }
     : {
         groupsSupported: allReplyGroups.size,
@@ -687,6 +704,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         unscheduledMemberDays: unscheduledTotal,
         activeMembers: memberAcc.size,
         lastActivityAt: latest([...memberRows.values()]),
+        unattributedStaffReplies: messages.filter((m) => m.kind === "MEMBER" && m.memberId === null && inRange(m.ts)).length,
       };
 
   const members = (scoped ? scopedMemberRows : [...memberRows.values()]).sort(

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { requireAccess } from "@/server/authorize";
 import { buildReport, reportDefinition } from "@/server/reports";
+import { reportNow } from "@/server/teamReport";
 import { contentDisposition, reportFileName, tableHeader, tableRows, toCsv } from "@/server/reports/exportFile";
 
 /**
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (keys.length === 0) return new NextResponse("No rows were chosen to export.", { status: 400 });
 
   const query = Object.fromEntries(request.nextUrl.searchParams.entries());
-  const { report, ctx } = await buildReport(id, query, new Date());
+  const { report, ctx } = await buildReport(id, query, reportNow(query));
   const table = report.tables.find((t) => t.id === body.table);
   if (!table) return new NextResponse("Unknown table.", { status: 400 });
 
