@@ -28,7 +28,7 @@ let group: WhatsAppGroup;
 const rinaPhone = phone();
 const karimPhone = phone();
 const leftPhone = phone();
-const ids = { rina: "", karim: "", left: "" };
+const ids = { rina: "", karim: "", left: "", nadia: "" };
 
 async function stored(key: string, sender: string, when: Date, fromTeam: boolean) {
   return prisma.message.create({
@@ -107,5 +107,31 @@ describe("the stamp means 'a colleague when they wrote it'", () => {
     await prisma.identityReattribution.create({ data: { reason: `Left ${RUN} deactivated`, identifiers: [leftPhone], memberIds: [ids.left] } });
     await inIsp(() => processNextReattribution());
     expect(await stamps(leftPhone)).toEqual([true]);
+  });
+});
+
+describe("a colleague who was already supporting customers before they were added", () => {
+  it("gets their earlier work into the Activity Feed, and the request reports what was found", async () => {
+    const settings = await prisma.supportActivitySettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
+    const wasEnabled = settings.enabled;
+    await prisma.supportActivitySettings.update({ where: { id: "global" }, data: { enabled: true } });
+    const rule = await prisma.supportRule.create({ data: { name: `Any message ${RUN}`, triggerType: "ANY_MESSAGE" } });
+    try {
+      const nadiaPhone = phone();
+      await stored("N1", nadiaPhone, at(0), false);
+      await stored("N2", nadiaPhone, at(30), false);
+      const nadia = (await prisma.internalTeamMember.create({ data: { name: `Nadia ${RUN}`, phoneNumber: `+${nadiaPhone}`, role: "Support" } })).id;
+      ids.nadia = nadia;
+      await prisma.identityReattribution.create({ data: { reason: `Nadia ${RUN} added`, identifiers: [nadiaPhone], memberIds: [nadia] } });
+      await inIsp(() => processNextReattribution());
+
+      expect(await prisma.supportActivity.count({ where: { teamMemberId: nadia } })).toBe(2);
+      const request = await prisma.identityReattribution.findFirstOrThrow({ where: { reason: `Nadia ${RUN} added` } });
+      expect((request.result as { members: Record<string, { messages: number; groups: number }> }).members[nadia]).toMatchObject({ messages: 2, groups: 1 });
+    } finally {
+      await prisma.supportActivity.deleteMany({ where: { ruleId: rule.id } });
+      await prisma.supportRule.delete({ where: { id: rule.id } });
+      await prisma.supportActivitySettings.update({ where: { id: "global" }, data: { enabled: wasEnabled } });
+    }
   });
 });

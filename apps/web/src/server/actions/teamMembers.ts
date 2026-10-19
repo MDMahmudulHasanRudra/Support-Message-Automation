@@ -776,3 +776,47 @@ export async function linkTeamMemberLogin(memberId: string, _prev: LoginLinkStat
   revalidatePath(await projectPath(`/team-members/${memberId}/edit`));
   return { saved: true };
 }
+
+export interface AddSenderState {
+  error?: string;
+  added?: string;
+}
+
+/**
+ * Adds a sender the Identity check found writing in several groups — very likely a colleague who was
+ * already supporting customers before anybody put them on the roster (report accuracy audit, 19 Oct
+ * 2026). The identifier is the one WhatsApp delivered on their messages, so the match is exact; the
+ * kind (phone number or private WhatsApp ID) is read from a stored message, never from the browser.
+ * Their earlier history is then collected into every report (queueReattribution).
+ */
+export async function addTeamMemberFromSender(senderId: string, _prev: AddSenderState, formData: FormData): Promise<AddSenderState> {
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const name = String(formData.get("name") ?? "").trim();
+  const role = String(formData.get("role") ?? "").trim() || "Support";
+  if (!name) return { error: "Enter their name." };
+  const key = whatsappIdKey(senderId);
+  if (!key || !/^\d{6,}$/.test(key)) return { error: "That sender cannot be added. Nothing was changed." };
+
+  const seen = await prisma.message.findFirst({
+    where: { senderPhone: key, direction: "INCOMING", senderJid: { not: null } },
+    orderBy: { timestampWa: "desc" },
+    select: { senderJid: true },
+  });
+  const kind = parseWhatsAppId(seen?.senderJid)?.kind;
+  const entry = rosterEntryFromGroup(name, key, kind === "LID" ? "LID" : kind === "PHONE" ? "PHONE" : null);
+  const conflict = (await findPhoneConflict(entry.phoneNumber)) ?? (await findWhatsAppIdConflict(entry.whatsappId));
+  if (conflict) return { error: `${conflict.name} already has that number or WhatsApp ID.` };
+
+  let createdId: string;
+  try {
+    createdId = (await prisma.internalTeamMember.create({ data: { ...entry, role, status: "ACTIVE" }, select: { id: true } })).id;
+  } catch (err) {
+    if (isUniqueViolation(err)) return { error: "Someone already has that number." };
+    throw err;
+  }
+  await logIdentityChange(granted.session.userId, createdId, name, null, { phoneNumber: entry.phoneNumber, whatsappId: entry.whatsappId }, "form");
+  await queueReattribution({ reason: `Team member ${name} added from the identity check`, memberIds: [createdId], identifiers: memberIdentifiers(entry), userId: granted.session.userId });
+  revalidatePath(await projectPath("/team-members"));
+  return { added: name };
+}

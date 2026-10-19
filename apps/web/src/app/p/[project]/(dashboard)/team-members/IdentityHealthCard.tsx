@@ -1,13 +1,14 @@
 import Link from "@/components/ProjectLink";
 import { Card, SectionHeader, Table, Td, Th } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
+import { AddSenderButton } from "./AddSenderButton";
 import { IDENTITY_HEALTH_WINDOW_DAYS, LIKELY_STAFF_MIN_GROUPS, type RosterIdentityHealth } from "@/server/rosterIdentityHealth";
 
 /**
  * Team Members → Identity check: the roster problems that make reports wrong without an error
  * (rosterIdentityHealth.ts). Renders nothing when there is nothing to fix.
  */
-export function IdentityHealthCard({ health }: { health: RosterIdentityHealth }) {
+export function IdentityHealthCard({ health, canManage }: { health: RosterIdentityHealth; canManage: boolean }) {
   const { ownNumberMembers, quietMembers, unknownFrequentSenders, pendingReattributions } = health;
   if (!ownNumberMembers.length && !quietMembers.length && !unknownFrequentSenders.length && !pendingReattributions) return null;
 
@@ -53,7 +54,8 @@ export function IdentityHealthCard({ health }: { health: RosterIdentityHealth })
             <p className="mb-2 text-[color:var(--color-muted-foreground)]">
               Senders nobody on the roster matches, who wrote in {LIKELY_STAFF_MIN_GROUPS} or more groups in the last{" "}
               {IDENTITY_HEALTH_WINDOW_DAYS} days. If one is a colleague, every message they sent is being counted as a
-              customer&apos;s. Add them from a group, or link their WhatsApp ID from WhatsApp Chat.
+              customer&apos;s. &ldquo;Add to team&rdquo; puts them on the roster and collects every message they already sent into
+              the Team Report, Team Performance, Duty History and the Activity Feed.
             </p>
             <Table>
               <thead>
@@ -63,6 +65,7 @@ export function IdentityHealthCard({ health }: { health: RosterIdentityHealth })
                   <Th>Groups</Th>
                   <Th>Messages</Th>
                   <Th>Last message</Th>
+                  {canManage ? <Th>{""}</Th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -73,6 +76,11 @@ export function IdentityHealthCard({ health }: { health: RosterIdentityHealth })
                     <Td className="tabular text-right">{s.groups}</Td>
                     <Td className="tabular text-right">{s.messages}</Td>
                     <Td>{formatDateTime(s.lastAt)}</Td>
+                    {canManage ? (
+                      <Td>
+                        <AddSenderButton senderId={s.sender} suggestedName={s.name} />
+                      </Td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>

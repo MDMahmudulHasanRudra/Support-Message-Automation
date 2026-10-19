@@ -3,6 +3,9 @@ import { prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { currentProjectId, forEachProject } from "../project/context.js";
 import { recomputeAttendanceDay } from "./attendance.js";
+import { detectSupportActivity } from "../supportActivity/detector.js";
+import { getSupportActivitySettings } from "../supportActivity/settings.js";
+import { projectHasFeature } from "../project/features.js";
 
 /**
  * Bringing stored attribution up to date after a team member's identifiers change (report accuracy
@@ -21,8 +24,12 @@ import { recomputeAttendanceDay } from "./attendance.js";
  * The stamp is re-decided with EVERY member on the roster, active or not, honouring each member's
  * "count their messages from" date at the message's own time — "was this a colleague when they
  * wrote it", which is what the stamp has always meant. Deactivating somebody therefore never turns
- * their history into a customer's. Duty History is recomputed for the last ATTENDANCE_LOOKBACK_DAYS:
+ * their history into a customer's. Duty History and the Activity Feed are filled in for the last ATTENDANCE_LOOKBACK_DAYS (a year):
  * a timesheet older than that is history somebody has already signed off.
+ *
+ * Messages WhatsApp never delivered to us cannot be counted: only what was stored. The result
+ * records, per member, how many messages, in how many groups, from when to when, were found — the
+ * Team Members page shows it as their history being synced.
  *
  * Response Time episodes are NOT rewritten: an episode is the decision Support made as the wait
  * happened, and replaying a month of waits is not the same thing. The Team Report's Response SLA
@@ -30,7 +37,9 @@ import { recomputeAttendanceDay } from "./attendance.js";
  */
 
 const LOOP_NAME = "identity-reattribution";
-export const ATTENDANCE_LOOKBACK_DAYS = 120;
+export const ATTENDANCE_LOOKBACK_DAYS = 365;
+/** At most this many earlier messages get a Support Activity row per request (the Activity Feed). */
+export const ACTIVITY_BACKFILL_LIMIT = 5000;
 /** A RUNNING request older than this was interrupted (a restart) and is picked up again. */
 const STUCK_MS = 30 * 60_000;
 const MAX_ATTEMPTS = 3;
@@ -50,10 +59,22 @@ export function startIdentityReattributionProcessor(intervalMs = 30_000): NodeJS
   }, intervalMs);
 }
 
+export interface MemberHistory {
+  /** Their group messages now stored and counted, each once. */
+  messages: number;
+  groups: number;
+  firstAt: string | null;
+  lastAt: string | null;
+}
+
 export interface ReattributionResult {
   restampedMessages: number;
   supportActivities: number;
+  /** Support Activity rows recorded for earlier messages that the rules match (Activity Feed). */
+  activitiesAdded: number;
   attendanceDays: number;
+  /** What was found for each member involved — shown on Team Members as "history synced". */
+  members: Record<string, MemberHistory>;
 }
 
 /** Claims and works the oldest pending request of the current project. False when there was none. */
@@ -74,7 +95,7 @@ export async function processNextReattribution(now: Date = new Date()): Promise<
     const result = await reattribute(next.identifiers, next.memberIds, now);
     await prisma.identityReattribution.update({
       where: { id: next.id },
-      data: { status: "DONE", finishedAt: new Date(), result: { ...result }, error: null },
+      data: { status: "DONE", finishedAt: new Date(), result: JSON.parse(JSON.stringify(result)), error: null },
     });
   } catch (err) {
     const message = (err as Error)?.message ?? String(err);
@@ -108,7 +129,9 @@ function senderForms(identifiers: readonly string[]): string[] {
 export async function reattribute(identifiers: readonly string[], memberIds: readonly string[], now: Date = new Date()): Promise<ReattributionResult> {
   const projectId = currentProjectId();
   const forms = senderForms(identifiers);
-  const result: ReattributionResult = { restampedMessages: 0, supportActivities: 0, attendanceDays: 0 };
+  const result: ReattributionResult = { restampedMessages: 0, supportActivities: 0, activitiesAdded: 0, attendanceDays: 0, members: {} };
+  /** The stored sender ids now credited to each member. */
+  const sendersOf = new Map<string, string[]>();
   const roster = await prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true, attributeFrom: true, status: true } });
   const resolver = createSenderResolver(roster);
   const attributeFromOf = new Map(roster.map((m) => [m.id, m.attributeFrom]));
@@ -122,6 +145,7 @@ export async function reattribute(identifiers: readonly string[], memberIds: rea
     for (const sender of senders) {
       const decided = resolver.resolve(sender.senderPhone, sender.senderJid);
       const jidMatch = sender.senderJid;
+      if (decided.memberId) sendersOf.set(decided.memberId, [...(sendersOf.get(decided.memberId) ?? []), sender.senderPhone]);
       // Staff from when: never (a customer), always, or from the earliest "count from" date among the
       // members this sender could be.
       let staffFrom: Date | null | "NEVER" = "NEVER";
@@ -145,10 +169,66 @@ export async function reattribute(identifiers: readonly string[], memberIds: rea
     }
   }
 
+  // The Activity Feed: earlier messages of a colleague the roster did not know then get the Support
+  // Activity row a rule would have recorded live (detectSupportActivity is insert-and-catch, so a
+  // message that already has one is skipped). A no-op while Support Activity tracking is off.
+  // Sessions are not replayed: they model a conversation handled live.
+  const since = new Date(now.getTime() - ATTENDANCE_LOOKBACK_DAYS * 86_400_000);
+  const credited = [...new Set([...sendersOf.values()].flat())];
+  const tracking = (await getSupportActivitySettings()).enabled && (await projectHasFeature("SUPPORT_ACTIVITY"));
+  if (tracking && credited.length > 0) {
+    const pending = await prisma.$queryRaw<
+      Array<{ id: string; accountId: string; groupId: string; senderPhone: string; senderJid: string | null; body: string; timestampWa: Date; mentionedPhones: string[]; quotedSender: string | null; quotedFromTeam: boolean | null }>
+    >`
+      SELECT m."id", m."accountId", m."groupId", m."senderPhone", m."senderJid", m."body", m."timestampWa", m."mentionedPhones",
+             q."senderPhone" AS "quotedSender", q."isFromTeamMember" AS "quotedFromTeam"
+      FROM "Message" m
+      LEFT JOIN "Message" q ON q."id" = m."quotedMessageId" AND q."projectId" = ${projectId}
+      WHERE m."projectId" = ${projectId} AND m."direction" = 'INCOMING' AND m."groupId" IS NOT NULL
+        AND m."isFromTeamMember" = true AND m."senderPhone" = ANY(${credited}) AND m."timestampWa" >= ${since}
+        AND NOT EXISTS (SELECT 1 FROM "SupportActivity" a WHERE a."messageId" = m."id")
+      ORDER BY m."timestampWa" ASC
+      LIMIT ${ACTIVITY_BACKFILL_LIMIT}`;
+    for (const message of pending) {
+      const recorded = await detectSupportActivity({
+        accountId: message.accountId,
+        groupId: message.groupId,
+        isFromTeamMember: true,
+        senderPhone: message.senderPhone,
+        senderJid: message.senderJid,
+        messageId: message.id,
+        body: message.body,
+        timestampWa: message.timestampWa,
+        quotedMessage: message.quotedSender !== null ? { senderPhone: message.quotedSender, isFromTeamMember: Boolean(message.quotedFromTeam) } : null,
+        mentionedPhones: message.mentionedPhones ?? [],
+      });
+      if (recorded) result.activitiesAdded += 1;
+    }
+  }
+
+  // What each member's history now holds (each message once, however many of our numbers stored it).
+  for (const [memberId, phones] of sendersOf) {
+    const from = attributeFromOf.get(memberId) ?? null;
+    const [row] = await prisma.$queryRaw<Array<{ messages: number; groups: number; firstAt: Date | null; lastAt: Date | null }>>`
+      SELECT COUNT(DISTINCT (g."whatsappGroupId", CASE WHEN m."whatsappMessageId" ~ '^(true|false)_[^_]*@[^_]*_[^_]+'
+                                     THEN split_part(m."whatsappMessageId", '_', 3) ELSE m."whatsappMessageId" END))::int AS messages,
+             COUNT(DISTINCT g."whatsappGroupId")::int AS groups, MIN(m."timestampWa") AS "firstAt", MAX(m."timestampWa") AS "lastAt"
+      FROM "Message" m
+      JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
+      WHERE m."projectId" = ${projectId} AND m."direction" = 'INCOMING' AND m."senderPhone" = ANY(${phones})
+        AND m."timestampWa" >= ${from ?? new Date(0)}`;
+    result.members[memberId] = {
+      messages: row?.messages ?? 0,
+      groups: row?.groups ?? 0,
+      firstAt: row?.firstAt?.toISOString() ?? null,
+      lastAt: row?.lastAt?.toISOString() ?? null,
+    };
+  }
+  for (const id of memberIds) result.members[id] ??= { messages: 0, groups: 0, firstAt: null, lastAt: null };
+
   // Duty History: the days these senders wrote on, and the days the members involved already have,
   // recomputed for every member involved — so a message moved from one person to another leaves the
   // first one's day and joins the second's.
-  const since = new Date(now.getTime() - ATTENDANCE_LOOKBACK_DAYS * 86_400_000);
   const dayKeys = new Set<string>();
   if (forms.length > 0) {
     const days = await prisma.$queryRaw<Array<{ day: string }>>`

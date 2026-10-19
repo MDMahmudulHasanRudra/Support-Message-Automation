@@ -1030,7 +1030,10 @@ write another identifier→member map. Rules worth not undoing:
     chat link may replace a placeholder ID equal to the phone; Delete deactivates anybody with any
     message or attendance. Identity changes queue an `IdentityReattribution` (`server/reattribution.ts`).
     Team Members → Identity check (`rosterIdentityHealth.ts`) lists members on our own numbers, quiet
-    members and frequent unknown senders.
+    members and frequent unknown senders, with "Add to team" (`addTeamMemberFromSender`). The
+    re-attribution also backfills Support Activity rows for a newly added colleague's earlier messages
+    (rules permitting, last 365 days) and records per-member what it found; Team Members shows
+    "Syncing history…" then "History synced: N messages in G groups" (`getMemberHistorySync`).
 
 ### Support response tracking — Messages → Unanswered Groups / Response Time (`apps/worker/src/supportResponse/`, `SUPPORT_RESPONSE.md`)
 

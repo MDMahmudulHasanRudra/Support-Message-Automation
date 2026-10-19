@@ -91,3 +91,35 @@ export async function getRosterIdentityHealth(now: Date = new Date()): Promise<R
   const quietMembers = members.filter((m) => m.status === "ACTIVE" && !seen.has(m.id)).map((m) => ({ id: m.id, name: m.name }));
   return { ownNumberMembers, quietMembers, unknownFrequentSenders: unknownFrequentSenders.slice(0, 20), pendingReattributions };
 }
+
+/** Where a member's earlier history stands after they were added or their identifiers changed. */
+export interface MemberHistorySync {
+  state: "SYNCING" | "DONE" | "FAILED";
+  /** Their group messages found and now counted (DONE only). */
+  messages: number | null;
+  groups: number | null;
+  firstAt: string | null;
+}
+
+/**
+ * The newest re-attribution naming each member (reattribution.ts in the worker): "syncing" while it
+ * runs, then what it found — so whoever added a colleague who was already answering customers sees
+ * that their earlier work was collected into the reports.
+ */
+export async function getMemberHistorySync(): Promise<Map<string, MemberHistorySync>> {
+  const rows = await prisma.identityReattribution.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 300,
+    select: { memberIds: true, status: true, result: true },
+  });
+  const out = new Map<string, MemberHistorySync>();
+  for (const row of rows) {
+    const found = (row.result as { members?: Record<string, { messages: number; groups: number; firstAt: string | null }> } | null)?.members ?? {};
+    for (const id of row.memberIds) {
+      if (out.has(id)) continue;
+      const state = row.status === "DONE" ? "DONE" : row.status === "FAILED" ? "FAILED" : "SYNCING";
+      out.set(id, { state, messages: found[id]?.messages ?? null, groups: found[id]?.groups ?? null, firstAt: found[id]?.firstAt ?? null });
+    }
+  }
+  return out;
+}

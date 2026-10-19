@@ -8,12 +8,12 @@ import { TeamMembersTable, type TeamMemberRow } from "./TeamMembersTable";
 import { AddFromGroupDialog } from "./AddFromGroupDialog";
 import { loadMemberFormOptions } from "./memberFormOptions";
 import { createSenderResolver } from "@support-automation/shared";
-import { getRosterIdentityHealth } from "@/server/rosterIdentityHealth";
+import { getMemberHistorySync, getRosterIdentityHealth } from "@/server/rosterIdentityHealth";
 import { IdentityHealthCard } from "./IdentityHealthCard";
 
 export default async function TeamMembersPage() {
   const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
-  const [members, groups, options, identityHealth] = await Promise.all([
+  const [members, groups, options, identityHealth, historySync] = await Promise.all([
     prisma.internalTeamMember.findMany({
       orderBy: { createdAt: "desc" },
       include: { team: { select: { id: true, name: true, status: true } } },
@@ -26,6 +26,7 @@ export default async function TeamMembersPage() {
     loadMemberFormOptions(),
     // Roster problems that make reports credit messages to the wrong person, or to nobody.
     getRosterIdentityHealth(),
+    getMemberHistorySync(),
   ]);
 
   // Members sharing an identifier, through the same rule that attributes their messages
@@ -41,7 +42,9 @@ export default async function TeamMembersPage() {
         for (const id of res.candidateIds) if (id !== m.id) others.add(nameOf.get(id) ?? "another member");
       }
     }
-    return others.size ? { ...m, identityClash: [...others] } : m;
+    const sync = historySync.get(m.id);
+    const row: TeamMemberRow = sync ? { ...m, historySync: sync } : m;
+    return others.size ? { ...row, identityClash: [...others] } : row;
   });
 
   return (
@@ -127,7 +130,7 @@ export default async function TeamMembersPage() {
 
       {canManage ? null : <ViewOnlyNotice />}
 
-      <IdentityHealthCard health={identityHealth} />
+      <IdentityHealthCard health={identityHealth} canManage={canManage} />
 
       {canManage ? (
         <Card className="mb-6">

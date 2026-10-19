@@ -35,8 +35,8 @@ vi.mock("@/server/projectPaths", () => ({ projectPath: async (p: string) => p, i
 const { runWithProject } = await import("@/server/projectContext");
 const { loadTeamReport, parseTeamReportFilters } = await import("@/server/teamReport");
 const { setGroupPriority } = await import("@/server/actions/groups");
-const { createTeamMember } = await import("@/server/actions/teamMembers");
-const { getRosterIdentityHealth } = await import("@/server/rosterIdentityHealth");
+const { createTeamMember, addTeamMemberFromSender } = await import("@/server/actions/teamMembers");
+const { getRosterIdentityHealth, getMemberHistorySync } = await import("@/server/rosterIdentityHealth");
 
 const ids = { role: "", user: "", project: "", slug: "", account: "", groups: [] as string[], rakib: "", bipul: "", onOurNumber: "" };
 const project = () => ({ id: ids.project, slug: ids.slug, name: `Acc3 ${tag}`, status: "ACTIVE" as const });
@@ -135,5 +135,26 @@ describe("Team Members → Identity check", () => {
     expect(health.ownNumberMembers.map((m) => m.id)).toEqual([ids.onOurNumber]);
     expect(health.quietMembers.map((m) => m.id)).toEqual(expect.arrayContaining([ids.rakib, ids.bipul]));
     expect(health.unknownFrequentSenders).toEqual([expect.objectContaining({ sender: stranger, groups: 3, phone: `+${stranger}` })]);
+  });
+});
+
+describe("adding a colleague who was already supporting customers", () => {
+  it("adds the frequent unknown sender by the number WhatsApp delivered, and queues collecting their history", async () => {
+    const form = new FormData();
+    form.set("name", `Found ${tag}`);
+    expect(await inProject(() => addTeamMemberFromSender(stranger, {}, form))).toEqual({ added: `Found ${tag}` });
+    const member = await rawPrisma.internalTeamMember.findFirstOrThrow({ where: { projectId: ids.project, name: `Found ${tag}` } });
+    expect(member).toMatchObject({ phoneNumber: `+${stranger}`, whatsappId: null, status: "ACTIVE" });
+    // They are no longer an unknown sender, and every report credits their earlier messages at once.
+    expect((await inProject(() => getRosterIdentityHealth())).unknownFrequentSenders).toEqual([]);
+    const pending = await inProject(() => getMemberHistorySync());
+    expect(pending.get(member.id)?.state).toBe("SYNCING");
+
+    // When the worker has collected it, the page says what was found.
+    await rawPrisma.identityReattribution.updateMany({
+      where: { projectId: ids.project, memberIds: { has: member.id } },
+      data: { status: "DONE", result: { members: { [member.id]: { messages: 3, groups: 3, firstAt: null, lastAt: null } } } },
+    });
+    expect((await inProject(() => getMemberHistorySync())).get(member.id)).toMatchObject({ state: "DONE", messages: 3, groups: 3 });
   });
 });

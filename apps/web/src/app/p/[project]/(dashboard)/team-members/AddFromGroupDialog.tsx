@@ -136,7 +136,9 @@ export function AddFromGroupDialog({ groups, options }: { groups: GroupOption[];
       tone: "success",
       title: `${state.addedCount} member${state.addedCount === 1 ? "" : "s"} added`,
       description:
-        state.addedCount === 0 ? "Everyone selected was already on the roster." : undefined,
+        state.addedCount === 0
+          ? "Everyone selected was already on the roster."
+          : "Every message they already sent in your groups is being collected into their reports.",
     });
     // Deferred via a microtask (fires before the next paint, so no visible delay) rather than
     // called directly in the effect body — the convention already used in DashboardShell and

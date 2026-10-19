@@ -348,3 +348,11 @@ at read time:
    episodes are not replayed: they record what Support decided as the wait happened.
 7. **Team Members → Identity check** lists members on our own numbers, members with no matched message
    in 30 days, and unknown senders active in 3+ groups (likely colleagues missing from the roster).
+8. **Adding a colleague who was already supporting customers.** Every report counts their stored
+   history the moment they are on the roster (identity is read at read time). The re-attribution
+   then also fills in what was recorded on arrival — the stamp, Duty History and the Activity Feed
+   (Support Activity rows for earlier messages the active rules match, while tracking is on) for the
+   last year — and records what it found. Team Members shows "Syncing history…", then "History
+   synced: N messages in G groups since <date>". The Identity check's "Add to team" adds a frequent
+   unknown sender by the exact identifier WhatsApp delivered. Only stored messages can be counted:
+   anything WhatsApp never delivered to our numbers is not recoverable here.
