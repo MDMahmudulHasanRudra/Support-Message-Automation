@@ -928,3 +928,19 @@ Different metrics keep their own names:
 - Team Performance's "Time engaged";
 - Support Intelligence's "Observed Support Session Time";
 - Call Activity's "Duration".
+
+## Report accuracy audit (19 Oct 2026)
+
+- **Who sent it** is decided by one classifier for every report (WHATSAPP_IDENTITY.md §10): every
+  stored copy is a witness, our own numbers' posts are the business's, dashboard replies are credited
+  to the member linked to the login, and the member's "count their messages from" date wins over the
+  stored team-member stamp.
+- **Team Performance, availability, first response, "waiting for a reply" and the Overview charts**
+  read the same classified messages (`server/attributedMessages.ts`) with the Team Report's own wait
+  and support-time rules, so they agree with the Team Report about every person and day.
+- **Missed is charged to the assignee when the customer asked**, judged by the threshold then
+  (`GroupResponsibilityChange`). A Team/member report includes the groups it was assigned when a
+  customer asked, so Missed never exceeds Waits. Staff replies credited to nobody are counted and shown.
+- **Exports carry the page's moment** (`asof`), so an open period's file matches the page.
+- **Personal (one-to-one) chats are not in these reports.** They count groups only; a personal
+  conversation is in WhatsApp Chat and the WhatsApp Chat User Activity report.

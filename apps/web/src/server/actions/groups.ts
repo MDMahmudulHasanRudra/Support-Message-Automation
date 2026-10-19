@@ -19,18 +19,32 @@ export async function setGroupPriority(
   groupId: string,
   formData: FormData,
 ): Promise<void> {
-  await requireAccess("whatsapp.manage");
+  const session = await requireAccess("whatsapp.manage");
   const priorityRaw = String(formData.get("priority") ?? "");
   const assignedTeamMemberId = String(formData.get("assignedTeamMemberId") ?? "").trim() || null;
   const escalationMonitoringEnabled = formData.get("escalationMonitoringEnabled") === "on";
+  const priority = isPriority(priorityRaw) ? priorityRaw : null;
 
-  await prisma.whatsAppGroup.update({
-    where: { id: groupId },
-    data: {
-      priority: isPriority(priorityRaw) ? priorityRaw : null,
-      assignedTeamMemberId,
-      escalationMonitoringEnabled,
-    },
+  await prisma.$transaction(async (tx) => {
+    const before = await tx.whatsAppGroup.findUnique({ where: { id: groupId }, select: { whatsappGroupId: true, priority: true, assignedTeamMemberId: true } });
+    await tx.whatsAppGroup.update({
+      where: { id: groupId },
+      data: { priority, assignedTeamMemberId, escalationMonitoringEnabled },
+    });
+    // History, so the Team Report charges a Missed wait to whoever the group was assigned to when the
+    // customer asked — reassigning a group must not move last month's misses to the new person.
+    if (before && (before.priority !== priority || before.assignedTeamMemberId !== assignedTeamMemberId)) {
+      await tx.groupResponsibilityChange.create({
+        data: {
+          whatsappGroupId: before.whatsappGroupId,
+          previousAssignedTeamMemberId: before.assignedTeamMemberId,
+          previousPriority: before.priority,
+          assignedTeamMemberId,
+          priority,
+          changedByUserId: session.userId,
+        },
+      });
+    }
   });
   revalidatePath(await projectPath("/groups"));
 }

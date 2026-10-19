@@ -17,6 +17,7 @@ import {
   type WhatsAppIdKind,
 } from "@support-automation/shared";
 import { rosterEntryFromGroup } from "@/lib/teamMemberIdentity";
+import { memberIdentifiers, queueReattribution } from "@/server/reattribution";
 import { loginsForProject } from "@/server/projectLogins";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
@@ -204,6 +205,9 @@ export async function createTeamMember(_prev: TeamMemberFormState, formData: For
     throw err;
   }
   await logIdentityChange(granted.session.userId, createdId, input.name, null, { phoneNumber: input.phoneNumber, whatsappId: input.whatsappId }, "form");
+  // Their messages from before today were stored as a customer's: bring the stored stamps and Duty
+  // History in line (reports already read identity at read time).
+  await queueReattribution({ reason: `Team member ${input.name} added`, memberIds: [createdId], identifiers: memberIdentifiers(input), userId: granted.session.userId });
   revalidatePath(await projectPath("/team-members"));
   return { success: true };
 }
@@ -521,6 +525,13 @@ export async function addTeamMembersFromGroup(
     return created;
   });
 
+  const added = await prisma.internalTeamMember.findMany({ where: { phoneNumber: { in: toCreate.map((entry) => entry.phoneNumber) } }, select: { id: true } });
+  await queueReattribution({
+    reason: `${result.count} team member(s) added from a group`,
+    memberIds: added.map((m) => m.id),
+    identifiers: toCreate.flatMap((entry) => memberIdentifiers(entry)),
+    userId: granted.session.userId,
+  });
   revalidatePath(await projectPath("/team-members"));
   return { addedCount: result.count };
 }
@@ -568,6 +579,18 @@ export async function updateTeamMember(
     },
     "form",
   );
+  const identityChanged =
+    current.phoneNumber !== input.phoneNumber ||
+    current.whatsappId !== input.whatsappId ||
+    (input.attributeFrom !== undefined && (current.attributeFrom?.getTime() ?? null) !== (input.attributeFrom?.getTime() ?? null));
+  if (identityChanged) {
+    await queueReattribution({
+      reason: `Identifiers of team member ${input.name} changed`,
+      memberIds: [id],
+      identifiers: [...memberIdentifiers(current), ...memberIdentifiers(input)],
+      userId: granted.session.userId,
+    });
+  }
   revalidatePath(await projectPath("/team-members"));
   redirect(await projectPath("/team-members"));
 }
@@ -633,6 +656,12 @@ export async function linkWhatsAppSender(senderId: string, _prev: LinkSenderStat
     { phoneNumber: member.phoneNumber, whatsappId: key },
     "chat-link",
   );
+  await queueReattribution({
+    reason: `WhatsApp ID linked to team member ${member.name}`,
+    memberIds: [member.id],
+    identifiers: [key, member.whatsappId, member.phoneNumber],
+    userId: granted.session.userId,
+  });
   revalidatePath(await projectPath("/team-members"));
   revalidatePath(await projectPath("/chat"), "layout");
   return { linked: member.name };

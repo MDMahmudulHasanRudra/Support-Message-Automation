@@ -7,7 +7,8 @@ import { describe, expect, it, vi } from "vitest";
  *  - a WhatsApp system entry (someone added, an edit's protocol message, a call log) is not
  *    something anybody said, even when it carries a body — the store sweep reads every one;
  *  - a contact card's raw vCard (which carries a phone number) is never stored as text;
- *  - a message whose id arrives as WhatsApp's key object, or with no timestamp, is still stored.
+ *  - a message whose id arrives as WhatsApp's key object is still stored, and one whose time arrives
+ *    only under WhatsApp Web's own name (`t`) keeps it.
  */
 
 vi.mock("@open-wa/wa-automate", () => ({
@@ -79,11 +80,8 @@ describe("a message is never lost to its own shape", () => {
     expect(raw.whatsappMessageId).toBe(`false_${GROUP}_ABC123_8801711000001@c.us`);
   });
 
-  it("uses WhatsApp's `t` when `timestamp` is missing, and the read time when both are", async () => {
+  it("uses WhatsApp's `t` when `timestamp` is missing, and never invents a send time when both are", async () => {
     expect((await convert({ timestamp: undefined, t: 1_700_000_100 })).timestampWa.getTime()).toBe(1_700_000_100_000);
-    const before = Date.now();
-    const raw = await convert({ timestamp: undefined });
-    expect(Number.isNaN(raw.timestampWa.getTime())).toBe(false);
-    expect(raw.timestampWa.getTime()).toBeGreaterThanOrEqual(before);
+    expect(Number.isNaN((await convert({ timestamp: undefined })).timestampWa.getTime())).toBe(true);
   });
 });

@@ -8,10 +8,12 @@ import { TeamMembersTable, type TeamMemberRow } from "./TeamMembersTable";
 import { AddFromGroupDialog } from "./AddFromGroupDialog";
 import { loadMemberFormOptions } from "./memberFormOptions";
 import { createSenderResolver } from "@support-automation/shared";
+import { getRosterIdentityHealth } from "@/server/rosterIdentityHealth";
+import { IdentityHealthCard } from "./IdentityHealthCard";
 
 export default async function TeamMembersPage() {
   const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
-  const [members, groups, options] = await Promise.all([
+  const [members, groups, options, identityHealth] = await Promise.all([
     prisma.internalTeamMember.findMany({
       orderBy: { createdAt: "desc" },
       include: { team: { select: { id: true, name: true, status: true } } },
@@ -22,6 +24,8 @@ export default async function TeamMembersPage() {
       orderBy: { name: "asc" },
     }),
     loadMemberFormOptions(),
+    // Roster problems that make reports credit messages to the wrong person, or to nobody.
+    getRosterIdentityHealth(),
   ]);
 
   // Members sharing an identifier, through the same rule that attributes their messages
@@ -122,6 +126,8 @@ export default async function TeamMembersPage() {
       />
 
       {canManage ? null : <ViewOnlyNotice />}
+
+      <IdentityHealthCard health={identityHealth} />
 
       {canManage ? (
         <Card className="mb-6">

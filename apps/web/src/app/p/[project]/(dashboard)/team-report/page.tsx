@@ -330,7 +330,13 @@ function CalculationHelp({
           Every figure is counted from the WhatsApp group messages the system stored. A message is a customer message, a
           team member&apos;s message (matched by their WhatsApp id or phone number on Internal Team Members), or a
           business-number message (sent from our own number — an operator, a rule or the AI). A message stored by two of
-          our numbers in the same group is counted once. Days, weeks (Sunday start) and months are Asia/Dhaka.
+          our numbers in the same group is counted once, and every stored copy is used to recognise who sent it. A reply
+          typed in WhatsApp Chat counts for the team member linked to that login on Team Members. Days, weeks (Sunday
+          start) and months are Asia/Dhaka.
+        </p>
+        <p className="mt-2">
+          One-to-one (personal) chats are not counted here: this report is about support in groups. Personal
+          conversations are in WhatsApp Chat and the WhatsApp Chat User Activity report.
         </p>
       </HelpSection>
       <HelpSection title="Customer waits">
@@ -364,8 +370,9 @@ function CalculationHelp({
           Settings → Support Activity Setup.
         </p>
         <p className="mt-2">
-          A Missed wait is charged to the group&apos;s assigned team member (&quot;Unassigned&quot; when it has none). A
-          Recall is credited to whoever sent the late reply.
+          A Missed wait is charged to the team member the group was assigned to when the customer asked
+          (&quot;Unassigned&quot; when it had none) — reassigning a group later does not move it. A Recall is credited to
+          whoever sent the late reply.
         </p>
       </HelpSection>
       <HelpSection title="Support Overtime">

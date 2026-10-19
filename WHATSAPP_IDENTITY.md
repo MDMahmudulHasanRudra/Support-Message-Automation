@@ -317,11 +317,34 @@ Every reader runs through the project-scoped client. Every raw query names `"pro
 - **Edited and deleted messages are not captured.** `onAnyMessage` only delivers new messages; an
   edit or a revoke changes an existing one. A deleted customer message keeps its original body here.
 - **Catch-up covers groups only.** Personal chats missed while the worker was down are not recovered.
-- **`isFromTeamMember` is not backfilled.** It records what the pipeline decided at the time, and
-  reports do not depend on it except as a fallback. The figures stand in `reconcile:messages`.
-- **Overview's response-time chart and Team Performance's first-response figures still read the
-  stamped `isFromTeamMember`**, not the identity rule, to decide what is a reply. Their waits are
-  now counted once per WhatsApp group (§5), so the figures can drop where two of our numbers share
-  groups: that is the double count going away, not a change in the team's speed.
+- **`isFromTeamMember` is re-decided only after a roster change** (§10): the Team Members actions
+  queue an `IdentityReattribution`, and the worker re-stamps that member's identifiers' messages.
+  Nothing re-stamps the whole table, and no report depends on the stamp (§10).
 - **An invalid WhatsApp timestamp still drops the message.** Storing receive time in its place would
   invent a send time.
+
+## 10. Report accuracy audit (19 Oct 2026)
+
+Every report — the Team Report, `/reports/<id>`, Support Intelligence, Team Performance, availability,
+first response, "waiting for a reply", the Overview charts — decides who sent a message the same way,
+at read time:
+
+1. **One classifier.** `createReportClassifier` (`apps/web/src/server/messageIdentity.ts`). A kept
+   message is the business's when its copy is OUTGOING, when it echoes one of our sends (matched on the
+   LOGICAL key by `outboundByKeyJoin`, so another number's `false_` copy still finds it), or when a
+   copy's sender is one of our own numbers (`loadOwnSenderIds`: account phones + the ids our accounts
+   send from in groups). A reply typed in WhatsApp Chat (MANUAL_REPLY) is credited to the team member
+   linked to that login.
+2. **Every copy is a witness.** `storedCopiesSql` hands the classifier every INCOMING copy of the
+   logical message; `attributeAcrossCopies` credits the member any copy identifies (one account can
+   see the author's LID, another their phone), nobody when copies name two members.
+3. **The stamp is a fallback only.** A sender stamped staff and no longer on the roster at all (a
+   deleted member) stays staff; a sender the roster knows but excludes by its "count their messages
+   from" date is a customer at that time.
+4. **Local numbers.** `normalizePhoneNumber` gives "01" + 9 digits its country code everywhere.
+5. **Copies kept.** `preferSenderCopySql`: OUTGOING, then `true_`, then staff-stamped.
+6. **After a roster change** the worker re-stamps `isFromTeamMember`, re-credits `SupportActivity` and
+   recomputes Duty History (`teamManagement/reattribution.ts`, `IdentityReattribution`). Response Time
+   episodes are not replayed: they record what Support decided as the wait happened.
+7. **Team Members → Identity check** lists members on our own numbers, members with no matched message
+   in 30 days, and unknown senders active in 3+ groups (likely colleagues missing from the roster).

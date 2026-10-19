@@ -423,13 +423,13 @@ function toMediaDescriptor(message: WaMessage): RawMediaDescriptor | null {
 
 /**
  * WhatsApp's own send time. `timestamp` is always set on a real message; `t` is the same value under
- * WhatsApp Web's own name. A message with neither used to become `Invalid Date` and fail its insert
- * on every path, losing it; it is now stamped when it was read, which keeps it (a slightly late time
- * in a report beats a message no report can see).
+ * WhatsApp Web's own name, read when `timestamp` is missing. With neither, the time stays invalid and
+ * the message is not stored — deliberately (WHATSAPP_IDENTITY.md §9): a receive time in its place
+ * would invent a send time, and every report would put the message on the wrong day.
  */
 function messageTime(message: WaMessage): Date {
   const seconds = Number(message.timestamp ?? (message as { t?: unknown }).t);
-  return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : new Date();
+  return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : new Date(Number.NaN);
 }
 
 /** Exported for its unit test (messageConversion.test.ts); the provider is its only production caller. */

@@ -478,6 +478,31 @@ export async function loadTeamReport(
     groups.set(row.whatsappGroupId, merged);
   }
 
+  // Who each group was assigned to, and its priority, over time (GroupResponsibilityChange): a Missed
+  // wait is charged to the assignee when the customer asked, and judged by the threshold then. Before
+  // the first recorded change, that change's "before" values; after the last, the group as it is now.
+  const changes = groupKeys.length
+    ? await prisma.groupResponsibilityChange.findMany({
+        where: { whatsappGroupId: { in: groupKeys }, changedAt: { gt: contextStart } },
+        orderBy: { changedAt: "asc" },
+        select: { whatsappGroupId: true, changedAt: true, previousAssignedTeamMemberId: true, previousPriority: true },
+      })
+    : [];
+  const changesByGroup = new Map<string, typeof changes>();
+  for (const change of changes) {
+    const list = changesByGroup.get(change.whatsappGroupId) ?? [];
+    list.push(change);
+    changesByGroup.set(change.whatsappGroupId, list);
+  }
+  const responsibilityAt = (groupKey: string, at: number | undefined) => {
+    const current = groups.get(groupKey);
+    if (at === undefined) return { assigned: current?.assignedMemberId ?? null, priority: current?.priority ?? null };
+    const next = changesByGroup.get(groupKey)?.find((c) => c.changedAt.getTime() > at);
+    return next
+      ? { assigned: next.previousAssignedTeamMemberId, priority: next.previousPriority as string | null }
+      : { assigned: current?.assignedMemberId ?? null, priority: current?.priority ?? null };
+  };
+
   const idleGapMinutes = Math.min(24 * 60, Math.max(5, settings?.offlineAfterMinutes ?? 120));
   const missedAfterMinutes = Math.min(24 * 60, Math.max(1, settings?.missedReplyAfterMinutes ?? 30));
   const policyMinutes: Record<string, number> = {};
@@ -512,8 +537,8 @@ export async function loadTeamReport(
     ? (id: string, ts: number) => (memberId === null || id === memberId) && inTeamAt(intervals, id, teamId, ts)
     : null;
 
-  const missedAfterMs = (groupKey: string) => {
-    const priority = groups.get(groupKey)?.priority;
+  const missedAfterMs = (groupKey: string, at?: number) => {
+    const priority = responsibilityAt(groupKey, at).priority;
     const minutes = priority && policyMinutes[priority] ? policyMinutes[priority]! : missedAfterMinutes;
     return minutes * 60_000;
   };
@@ -524,7 +549,7 @@ export async function loadTeamReport(
     now: now.getTime(),
     idleGapMs: idleGapMinutes * 60_000,
     missedAfterMs,
-    assignedMemberFor: (groupKey) => groups.get(groupKey)?.assignedMemberId ?? null,
+    assignedMemberFor: (groupKey, at) => responsibilityAt(groupKey, at).assigned,
     memberId,
     scope,
     granularity: filters.granularity,

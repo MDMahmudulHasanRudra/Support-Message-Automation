@@ -50,6 +50,7 @@ import { startGoogleExternalActivityProcessor } from "./googleSheets/externalAct
 import { startChannelInboundProcessor } from "./channels/inboundProcessor.js";
 import { startChannelOutboundProcessor } from "./channels/outboundProcessor.js";
 import { startEmailOutboxProcessor } from "./email/outboxProcessor.js";
+import { startIdentityReattributionProcessor } from "./teamManagement/reattribution.js";
 import { startChannelAiProcessor } from "./channels/aiReply.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
@@ -199,6 +200,9 @@ async function main() {
     // Email (CLIENT_CENTER_PLAN.md §3.1): the SMTP send queue. A no-op for a project without the Client
     // Management feature or without a configured, enabled Email setup; nothing is queued by default.
     startEmailOutboxProcessor(),
+    // Report accuracy: brings the stored team-member stamps, Support Activity members and Duty History
+    // in line after a roster identity change (teamManagement/reattribution.ts). Database only.
+    startIdentityReattributionProcessor(),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

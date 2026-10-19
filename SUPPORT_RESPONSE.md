@@ -198,3 +198,16 @@ covered:
 - Read Only having no Clear;
 - the settings card;
 - 390 px phone width.
+
+## One wait, one row (report accuracy audit, 19 Oct 2026)
+
+With two of our numbers in one WhatsApp group, each number's group row gets its own episode, so one
+customer wait was two rows and Response Time counted one answer twice. `SupportResponseEpisode.isTwin`
+(migration `20261019100000_report_accuracy_episode_twins`, which also backfills existing rows — the
+Primary account's copy, then the oldest, is kept) marks every later copy of the same wait: same
+WhatsApp group, same first customer message time. The tracker decides it under a per-WhatsApp-group
+advisory lock taken after the row's own lock.
+
+- Unanswered Groups and Response Time hide twins unless one account is chosen.
+- A Support reply answers every copy of the wait, even on a number whose session missed the reply.
+- Clear clears every copy of the waits it clears.

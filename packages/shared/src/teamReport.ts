@@ -45,8 +45,9 @@ import {
  * Attribution to a person:
  *   Replies, groups supported and duration belong to the member who sent the messages.
  *   A Recall belongs to the member whose reply closed the wait (the business number, if it was that).
- *   A Missed wait belongs to the group's ASSIGNED team member — the only record of whose group it
- *   is — and to "Unassigned" when the group has none. So member totals of Missed only add up to the
+ *   A Missed wait belongs to the group's ASSIGNED team member AT THE MOMENT THE CUSTOMER ASKED — the
+ *   only record of whose group it was — and to "Unassigned" when the group had none. Reassigning a
+ *   group never moves misses that happened before (the threshold works the same way for a priority). So member totals of Missed only add up to the
  *   team total once the Unassigned row is included.
  *
  * Support Overtime (overtime.ts, TEAM_OVERTIME.md):
@@ -124,8 +125,10 @@ export interface TeamReportOptions {
   rangeEnd: number;
   now: number;
   idleGapMs: number;
-  missedAfterMs: (groupKey: string) => number;
-  assignedMemberFor: (groupKey: string) => string | null;
+  /** The group's "missed" threshold when the customer asked (`at`); a priority set later does not reach back. */
+  missedAfterMs: (groupKey: string, at?: number) => number;
+  /** The group's assignee when the customer asked (`at`) — who a Missed wait is charged to. */
+  assignedMemberFor: (groupKey: string, at?: number) => string | null;
   /** Null for the whole team; a member id for one person's report. */
   memberId: string | null;
   /**
@@ -349,7 +352,6 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   // ---- Waits ----
   const waits: ReportWait[] = [];
   for (const [groupKey, list] of byGroup) {
-    const thresholdMs = opts.missedAfterMs(groupKey);
     // Next reply index for every position, from a single backward pass.
     const nextReply: number[] = new Array(list.length).fill(-1);
     let seen = -1;
@@ -364,6 +366,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
       if (previous && previous.kind === "CUSTOMER") continue; // continues a wait already open
       const replyIndex = nextReply[i]!;
       const reply = replyIndex >= 0 ? list[replyIndex]! : null;
+      const thresholdMs = opts.missedAfterMs(groupKey, message.ts);
       const waitMs = reply ? reply.ts - message.ts : null;
       const status: WaitStatus = reply
         ? waitMs! <= thresholdMs
@@ -419,7 +422,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   }
 
   const isMissed = (w: ReportWait) => w.status === "RECALLED" || w.status === "MISSED";
-  const missOwner = (w: ReportWait) => opts.assignedMemberFor(w.groupKey) ?? UNASSIGNED;
+  const missOwner = (w: ReportWait) => opts.assignedMemberFor(w.groupKey, w.askedAt) ?? UNASSIGNED;
 
   const memberRows = new Map<string, MemberReportRow>();
   const rowFor = (memberId: string): MemberReportRow => {
@@ -485,7 +488,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   const scopeGroups = scoped ? new Set([...scopedAcc.values()].flatMap((a) => [...a.groups])) : null;
   const waitInScopeForMissed = (w: ReportWait) => {
     if (!inScope) return true;
-    const owner = opts.assignedMemberFor(w.groupKey);
+    const owner = opts.assignedMemberFor(w.groupKey, w.askedAt);
     return owner !== null && inScope(owner, w.askedAt);
   };
   // The groups a scoped report is answerable for: where its members replied, plus where its member
@@ -535,7 +538,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     }
     for (const wait of waits) {
       if (isMissed(wait) && waitInScopeForMissed(wait)) {
-        const owner = scopedRowFor(opts.assignedMemberFor(wait.groupKey)!);
+        const owner = scopedRowFor(opts.assignedMemberFor(wait.groupKey, wait.askedAt)!);
         owner.missed += 1;
         if (wait.status === "MISSED") owner.unrecovered += 1;
       }

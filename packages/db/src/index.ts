@@ -147,6 +147,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "ChannelConnection", "ChannelConversation", "ChannelMessage", "ChannelInboundEvent",
   "Client", "ClientChannel", "ClientNote", "ClientActivity", "ClientImportJob", "ClientDue", "ClientDueEvent", "ClientBillingCurrency", "ClientWhatsAppChatLink", "ClientSubscription", "ClientPhoto", "ClientPayment", "ClientPaymentAllocation", "ClientWhatsAppGroupLink", "ClientModuleSettings", "ListViewPreference", "EmailSettings", "EmailOutbox", "ProjectRole", "ProjectMemberRole",
   "TeamAttendanceGroup",
+  "GroupResponsibilityChange", "IdentityReattribution",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
