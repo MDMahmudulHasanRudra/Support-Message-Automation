@@ -2243,6 +2243,13 @@ model SupportResponseEpisode {
   /// The Support Assignment case(s) built on this wait, if the module was on (SUPPORT_ASSIGNMENT.md).
   assignments SupportAssignment[]
 
+  /// Another of our numbers holds the same wait (same WhatsApp group, same first customer message
+  /// time) and that copy is the one shown: with two of our numbers in a group the tracker keeps an
+  /// episode per group ROW, so one wait was two rows and Response Time counted one answer twice.
+  /// Twins are shown only when one account is chosen (report accuracy audit, 19 Oct 2026).
+  isTwin Boolean @default(false)
+
+  @@index([projectId, isTwin, status])
   /// Unanswered Groups: one project's open episodes, longest waiting first.
   @@index([projectId, status, firstIncomingAt])
   /// Response Time: one project's answered episodes, newest reply first.

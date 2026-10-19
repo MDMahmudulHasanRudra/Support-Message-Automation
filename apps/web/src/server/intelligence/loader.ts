@@ -208,9 +208,18 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
       closedAt: (e.humanRepliedAt ?? e.resolvedAt ?? (["HUMAN_REPLIED", "RESOLVED", "CANCELLED"].includes(e.status) ? e.updatedAt : null))?.getTime() ?? null,
       resolvedByAdminAt: e.status === "RESOLVED" && e.resolvedById && e.resolvedAt ? e.resolvedAt.getTime() : null,
     })),
-    keywordCompletions: completions
-      .filter((c) => c.completedAt)
-      .map((c) => ({ groupKey: c.group.whatsappGroupId, at: c.completedAt!.getTime(), memberId: c.completedByTeamMemberId })),
+    // One completion per WhatsApp group per moment: a session is kept per group ROW, so one completing
+    // reply in a group two of our numbers share closed two sessions and read as two completions.
+    keywordCompletions: [
+      ...new Map(
+        completions
+          .filter((c) => c.completedAt)
+          .map((c) => {
+            const completion = { groupKey: c.group.whatsappGroupId, at: c.completedAt!.getTime(), memberId: c.completedByTeamMemberId };
+            return [`${completion.groupKey}|${Math.floor(completion.at / 60_000)}|${completion.memberId ?? ""}`, completion] as const;
+          }),
+      ).values(),
+    ],
   };
 
   const measuredTo = measuredToOf(ctx);

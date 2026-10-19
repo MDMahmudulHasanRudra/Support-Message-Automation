@@ -35,15 +35,28 @@ async function clearWhere(ids: string[] | null, query: Record<string, string>, r
   const base = unansweredWhere(filters, new Date());
   const targets = await prisma.supportResponseEpisode.findMany({
     where: ids ? { AND: [base, { id: { in: ids } }] } : base,
-    select: { id: true },
+    select: { id: true, firstIncomingAt: true, group: { select: { whatsappGroupId: true } } },
     take: SUPPORT_RESPONSE_MAX_SELECTION,
   });
   const targetIds = targets.map((t) => t.id);
+  const cleared = { status: "CLEARED" as const, clearedAt: new Date(), clearedByUserId: userId, clearReason: reason?.trim().slice(0, 300) || null };
   // Guarded on the status: a Support reply that lands at the same moment wins, and the row stays ANSWERED.
   const { count } = await prisma.supportResponseEpisode.updateMany({
     where: { id: { in: targetIds }, status: "UNANSWERED" },
-    data: { status: "CLEARED", clearedAt: new Date(), clearedByUserId: userId, clearReason: reason?.trim().slice(0, 300) || null },
+    data: cleared,
   });
+  // The same wait as another of our numbers holds it (its twin): one wait, cleared once for all of
+  // them, so it does not reappear under the other account.
+  if (targets.length > 0) {
+    await prisma.supportResponseEpisode.updateMany({
+      where: {
+        status: "UNANSWERED",
+        id: { notIn: targetIds },
+        OR: targets.map((t) => ({ firstIncomingAt: t.firstIncomingAt, group: { whatsappGroupId: t.group.whatsappGroupId } })),
+      },
+      data: cleared,
+    });
+  }
   await logSystemEvent(
     "INFO",
     "support-response",

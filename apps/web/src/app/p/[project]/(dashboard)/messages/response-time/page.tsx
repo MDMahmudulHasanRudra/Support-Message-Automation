@@ -1,3 +1,6 @@
+import { parseDhakaDayFromInput } from "@support-automation/shared";
+import { loadDataHealth } from "@/server/dataHealth";
+import { DataHealthStrip } from "@/components/reports/DataHealthStrip";
 import { formatResponseDuration } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { AutoRefresh } from "@/components/AutoRefresh";
@@ -29,10 +32,18 @@ export default async function ResponseTimePage({ searchParams }: { searchParams:
   const requested = Number(params.pageSize ?? DEFAULT_PAGE_SIZE);
   const pageSize = (SUPPORT_RESPONSE_PAGE_SIZES as readonly number[]).includes(requested) ? requested : DEFAULT_PAGE_SIZE;
 
-  const [{ rows, total, averageSeconds, slowestSeconds }, setup, options] = await Promise.all([
+  // The period the figures cover: the chosen dates, or the last 30 days when none are chosen — said
+  // beside them when messages may be missing from it.
+  const now = new Date();
+  const fromDay = parseDhakaDayFromInput(filters.dateFrom);
+  const toDay = parseDhakaDayFromInput(filters.dateTo);
+  const healthStart = fromDay?.start.getTime() ?? now.getTime() - 30 * 86_400_000;
+  const healthEnd = toDay?.end.getTime() ?? now.getTime();
+  const [{ rows, total, averageSeconds, slowestSeconds }, setup, options, dataHealth] = await Promise.all([
     listResponses(filters, page, pageSize),
     getSupportResponseSetup(),
     getSupportResponseFilterOptions(),
+    loadDataHealth({ periodStart: healthStart, periodEnd: Math.max(healthEnd, healthStart + 1), now, accountId: filters.accountId || null }),
   ]);
 
   const query: Record<string, string> = {};
@@ -80,6 +91,8 @@ export default async function ResponseTimePage({ searchParams }: { searchParams:
           </HelpButton>
         }
       />
+
+      <DataHealthStrip health={dataHealth} />
 
       {setup.teams.length === 0 ? (
         <div className="mb-4">

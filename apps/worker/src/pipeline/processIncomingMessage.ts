@@ -20,7 +20,7 @@ import { detectSupportActivity } from "../supportActivity/detector.js";
 import { updateSupportSessionForActivity } from "../supportActivity/sessionTracker.js";
 import { runAiFallback } from "../aiFallback/runAiFallback.js";
 import { recordHumanTakeover } from "../aiFallback/humanTakeover.js";
-import { recordTeamAttendance } from "../teamManagement/attendance.js";
+import { recordOperatorAttendance, recordTeamAttendance } from "../teamManagement/attendance.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { countDroppedMessage } from "./dropCounter.js";
 import { recordCollection } from "../health/collectionByKind.js";
@@ -948,6 +948,10 @@ async function storeNonAutomatedMessage(raw: RawIncomingMessage): Promise<void> 
   }
 
   if (!stored || raw.direction !== "OUTGOING") return;
+
+  // A reply typed in WhatsApp Chat is the linked team member's work on Duty History (attendance.ts).
+  // Fire-and-forget like every other side effect here; it never throws.
+  if (group) void recordOperatorAttendance({ providerMessageId: raw.whatsappMessageId, timestampWa: raw.timestampWa });
 
   /**
    * An outgoing message means this customer HAS been answered, so any open escalation case for

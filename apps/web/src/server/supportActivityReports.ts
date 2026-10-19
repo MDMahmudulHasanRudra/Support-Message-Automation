@@ -1,8 +1,9 @@
 
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
-import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
-import type { SupportActivityActor } from "@prisma/client";
+import { Prisma, type SupportActivityActor } from "@prisma/client";
+import { loadReportIdentity, messageKeySql } from "@/server/messageIdentity";
+import { computeFirstResponseWaits, computeMemberWorkloads, loadAttributedMessages, median } from "@/server/attributedMessages";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 
 // Server-component-only read helpers for Support Activity Tracking's dashboard pages — no
@@ -24,24 +25,34 @@ export interface DateRange {
  */
 export type ActorFilter = SupportActivityActor | undefined;
 
-function actorWhere(actor: ActorFilter) {
-  return actor ? { actor } : {};
+/**
+ * Support Activity rows in a period, ONE per logical message and per WhatsApp group (report accuracy
+ * audit, 19 Oct 2026). Each of our numbers in a group stores its own copy of a message and the
+ * detector records an activity on each, so with two numbers in a group every activity counted twice
+ * and every group was "two groups". Grouped on the WhatsApp group id and the logical message key —
+ * the Team Report's rule — keeping the copy that names a member when one does.
+ */
+async function distinctActivities(range: DateRange, actor?: ActorFilter) {
+  return prisma.$queryRaw<Array<{ wgid: string; actor: string; memberId: string | null }>>`
+    SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
+      g."whatsappGroupId" AS wgid, a."actor"::text AS actor, a."teamMemberId" AS "memberId"
+    FROM "SupportActivity" a
+    JOIN "Message" m ON m."id" = a."messageId"
+    JOIN "WhatsAppGroup" g ON g."id" = a."groupId"
+    WHERE a."projectId" = ${await activeProjectId()}
+      AND a."occurredAt" >= ${range.start} AND a."occurredAt" < ${range.end}
+      ${actor ? Prisma.sql`AND a."actor" = ${actor}::"SupportActivityActor"` : Prisma.empty}
+    ORDER BY g."whatsappGroupId", ${messageKeySql()}, (a."teamMemberId" IS NULL) ASC, a."id"`;
 }
 
-/** EVERY_ACTIVITY: count every valid activity in the period. */
+/** EVERY_ACTIVITY: count every valid activity in the period — each message once, however many of our numbers stored it. */
 export async function getEveryActivityCount(range: DateRange, actor?: ActorFilter): Promise<number> {
-  return prisma.supportActivity.count({
-    where: { occurredAt: { gte: range.start, lt: range.end }, ...actorWhere(actor) },
-  });
+  return (await distinctActivities(range, actor)).length;
 }
 
-/** UNIQUE_GROUP: each group counted once per period regardless of how many activities it had. */
+/** UNIQUE_GROUP: each WhatsApp group counted once per period regardless of how many activities (or of our numbers) it had. */
 export async function getUniqueGroupCount(range: DateRange, actor?: ActorFilter): Promise<number> {
-  const groups = await prisma.supportActivity.groupBy({
-    by: ["groupId"],
-    where: { occurredAt: { gte: range.start, lt: range.end }, ...actorWhere(actor) },
-  });
-  return groups.length;
+  return new Set((await distinctActivities(range, actor)).map((row) => row.wgid)).size;
 }
 
 export interface ActorBreakdown {
@@ -61,22 +72,17 @@ export interface ActorBreakdown {
  * unattended. The report states the fact; which of the two it is depends on the group.
  */
 export async function getActorBreakdown(range: DateRange): Promise<ActorBreakdown> {
-  const window = { occurredAt: { gte: range.start, lt: range.end } };
-  const [teamMemberCount, aiCount, humanGroups, aiGroups] = await Promise.all([
-    prisma.supportActivity.count({ where: { ...window, actor: "TEAM_MEMBER" } }),
-    prisma.supportActivity.count({ where: { ...window, actor: "AI" } }),
-    prisma.supportActivity.groupBy({ by: ["groupId"], where: { ...window, actor: "TEAM_MEMBER" } }),
-    prisma.supportActivity.groupBy({ by: ["groupId"], where: { ...window, actor: "AI" } }),
-  ]);
-
-  const humanGroupIds = new Set(humanGroups.map((g) => g.groupId));
-  const aiGroupIds = aiGroups.map((g) => g.groupId);
+  const rows = await distinctActivities(range);
+  const human = rows.filter((row) => row.actor === "TEAM_MEMBER");
+  const ai = rows.filter((row) => row.actor === "AI");
+  const humanGroupIds = new Set(human.map((row) => row.wgid));
+  const aiGroupIds = new Set(ai.map((row) => row.wgid));
 
   return {
-    teamMemberCount,
-    aiCount,
+    teamMemberCount: human.length,
+    aiCount: ai.length,
     uniqueGroups: new Set([...humanGroupIds, ...aiGroupIds]).size,
-    aiOnlyGroups: aiGroupIds.filter((id) => !humanGroupIds.has(id)).length,
+    aiOnlyGroups: [...aiGroupIds].filter((id) => !humanGroupIds.has(id)).length,
   };
 }
 
@@ -93,27 +99,26 @@ export interface TeamMemberBreakdownRow {
  * member."
  */
 export async function getPerTeamMemberBreakdown(range: DateRange): Promise<TeamMemberBreakdownRow[]> {
-  const grouped = await prisma.supportActivity.groupBy({
-    by: ["teamMemberId"],
-    // Explicitly TEAM_MEMBER, not merely "has a teamMemberId". AI rows carry a null member so
-    // they are already excluded, but stating the intent means this cannot start counting AI
-    // work against a person if AI attribution ever changes.
-    where: { occurredAt: { gte: range.start, lt: range.end }, teamMemberId: { not: null }, actor: "TEAM_MEMBER" },
-    _count: { teamMemberId: true },
-  });
-  if (grouped.length === 0) return [];
+  // Explicitly TEAM_MEMBER, not merely "has a teamMemberId". AI rows carry a null member so they are
+  // already excluded, but stating the intent means this cannot start counting AI work against a
+  // person if AI attribution ever changes. Once per logical message (distinctActivities).
+  const counts = new Map<string, number>();
+  for (const row of await distinctActivities(range, "TEAM_MEMBER")) {
+    if (row.memberId) counts.set(row.memberId, (counts.get(row.memberId) ?? 0) + 1);
+  }
+  if (counts.size === 0) return [];
 
   const members = await prisma.internalTeamMember.findMany({
-    where: { id: { in: grouped.map((g) => g.teamMemberId as string) } },
+    where: { id: { in: [...counts.keys()] } },
     select: { id: true, name: true },
   });
   const nameById = new Map(members.map((m) => [m.id, m.name]));
 
-  return grouped
-    .map((g) => ({
-      teamMemberId: g.teamMemberId as string,
-      name: nameById.get(g.teamMemberId as string) ?? "(removed team member)",
-      activityCount: g._count.teamMemberId,
+  return [...counts]
+    .map(([teamMemberId, activityCount]) => ({
+      teamMemberId,
+      name: nameById.get(teamMemberId) ?? "(removed team member)",
+      activityCount,
     }))
     .sort((a, b) => b.activityCount - a.activityCount);
 }
@@ -326,114 +331,53 @@ export interface ExecutiveWorkloadRow {
  * What each executive handled in a period: how many groups, how many messages, how many separate
  * stretches of work, and how long they were actually on support.
  *
- * Reads the activity rows directly, and must keep doing so. The obvious alternative — summing
- * SupportSession.durationSeconds — is a trap: that column is written only when a session
- * COMPLETES, which requires a rule whose keyword carries marksCompletion. A deployment running the
- * "any team member message counts" rule, which is the configuration this module is most often used
- * in, has no such keyword, so its sessions never complete and any report built on them is
- * permanently empty while looking perfectly healthy. A `getDailyHoursWorked` doing exactly that
- * was deleted rather than left available to be picked up by mistake.
+ * Reads `Message` through the Team Report's own identity rule (attributedMessages.ts), and measures
+ * support time with the Team Report's own rule — so this page and the Team Report can no longer
+ * disagree about the same person on the same day (report accuracy audit, 19 Oct 2026). It used to
+ * read `SupportActivity`, which only exists while Support Activity tracking is on, only for the
+ * messages a rule matched, once per account copy (two of our numbers in a group doubled everyone),
+ * and attributed against the roster at the moment the message arrived (adding a colleague or their
+ * WhatsApp ID later never reached it).
+ *
+ * Never SupportSession.durationSeconds: that is written only when a session COMPLETES, which needs a
+ * completion keyword, so it is permanently empty on the "any message counts" setup.
  */
-export async function getExecutiveWorkload(
-  range: DateRange,
+export async function getExecutiveWorkload(range: DateRange, now: Date = new Date()): Promise<ExecutiveWorkloadRow[]> {
+  return (await getExecutiveWorkloads({ range }, now)).range;
+}
+
+/** Several periods from ONE read of the widest one (Team Performance shows today, the week and the month). */
+export async function getExecutiveWorkloads<K extends string>(
+  ranges: Record<K, DateRange>,
   now: Date = new Date(),
-): Promise<ExecutiveWorkloadRow[]> {
+): Promise<Record<K, ExecutiveWorkloadRow[]>> {
+  const keys = Object.keys(ranges) as K[];
   const timeoutSeconds = await getPresenceTimeoutSeconds();
-
-  const rows = await prisma.$queryRaw<
-    Array<{
-      teamMemberId: string;
-      name: string;
-      groupsHandled: bigint;
-      messageCount: bigint;
-      activeSeconds: number | null;
-      sessionCount: bigint;
-      firstAt: Date;
-      lastAt: Date;
-    }>
-  >`
-    WITH events AS (
-      SELECT
-        a."teamMemberId" AS member_id,
-        a."occurredAt"   AS ts,
-        a."groupId"      AS group_id
-      FROM "SupportActivity" a
-      WHERE a."actor" = 'TEAM_MEMBER'
-        AND a."projectId" = ${await activeProjectId()}
-        AND a."teamMemberId" IS NOT NULL
-        AND a."occurredAt" >= ${range.start}
-        AND a."occurredAt" < ${range.end}
-    ),
-    gapped AS (
-      SELECT
-        member_id,
-        ts,
-        group_id,
-        -- A new stretch starts at the first message, and after any silence longer than the
-        -- offline threshold. Everything else continues the current one.
-        CASE
-          WHEN LAG(ts) OVER (PARTITION BY member_id ORDER BY ts) IS NULL
-            OR EXTRACT(EPOCH FROM (ts - LAG(ts) OVER (PARTITION BY member_id ORDER BY ts)))
-               > ${timeoutSeconds}
-          THEN 1 ELSE 0
-        END AS starts_stretch
-      FROM events
-    ),
-    numbered AS (
-      SELECT
-        member_id,
-        ts,
-        group_id,
-        SUM(starts_stretch) OVER (PARTITION BY member_id ORDER BY ts ROWS UNBOUNDED PRECEDING)
-          AS stretch_no
-      FROM gapped
-    ),
-    stretches AS (
-      SELECT
-        member_id,
-        stretch_no,
-        MIN(ts)  AS started,
-        MAX(ts)  AS ended,
-        COUNT(*) AS messages
-      FROM numbered
-      GROUP BY member_id, stretch_no
-    ),
-    groups_per_member AS (
-      SELECT member_id, COUNT(DISTINCT group_id) AS groups_handled
-      FROM numbered
-      GROUP BY member_id
-    )
-    SELECT
-      s.member_id                                        AS "teamMemberId",
-      t."name"                                           AS "name",
-      g.groups_handled                                   AS "groupsHandled",
-      SUM(s.messages)                                    AS "messageCount",
-      SUM(EXTRACT(EPOCH FROM (s.ended - s.started)))::int AS "activeSeconds",
-      COUNT(*)                                           AS "sessionCount",
-      MIN(s.started)                                     AS "firstAt",
-      MAX(s.ended)                                       AS "lastAt"
-    FROM stretches s
-    JOIN "InternalTeamMember" t ON t."id" = s.member_id
-    JOIN groups_per_member g ON g.member_id = s.member_id
-    GROUP BY s.member_id, t."name", g.groups_handled
-    ORDER BY "messageCount" DESC
-  `;
-
+  const start = new Date(Math.min(...keys.map((k) => ranges[k].start.getTime())));
+  const end = new Date(Math.max(...keys.map((k) => ranges[k].end.getTime())));
+  const [messages, members] = await Promise.all([
+    loadAttributedMessages({ start, end }),
+    prisma.internalTeamMember.findMany({ select: { id: true, name: true } }),
+  ]);
+  const nameById = new Map(members.map((m) => [m.id, m.name]));
   const onlineCutoffMs = now.getTime() - timeoutSeconds * 1000;
-
-  return rows.map((row) => ({
-    teamMemberId: row.teamMemberId,
-    name: row.name,
-    groupsHandled: Number(row.groupsHandled),
-    messageCount: Number(row.messageCount),
-    activeSeconds: row.activeSeconds ?? 0,
-    sessionCount: Number(row.sessionCount),
-    firstAt: row.firstAt,
-    lastAt: row.lastAt,
-    // Only meaningful when the range reaches the present — a report on last month says nothing
-    // about who is at their desk, and the comparison comes out false there anyway.
-    isOnline: row.lastAt.getTime() >= onlineCutoffMs,
-  }));
+  const out = {} as Record<K, ExecutiveWorkloadRow[]>;
+  for (const key of keys) {
+    out[key] = computeMemberWorkloads(messages, ranges[key].start.getTime(), ranges[key].end.getTime(), timeoutSeconds * 1000).map((row) => ({
+      teamMemberId: row.memberId,
+      name: nameById.get(row.memberId) ?? "(removed team member)",
+      groupsHandled: row.groupsHandled,
+      messageCount: row.messageCount,
+      activeSeconds: row.activeSeconds,
+      sessionCount: row.sessionCount,
+      firstAt: new Date(row.firstAt),
+      lastAt: new Date(row.lastAt),
+      // Only meaningful when the range reaches the present — a report on last month says nothing
+      // about who is at their desk, and the comparison comes out false there anyway.
+      isOnline: row.lastAt >= onlineCutoffMs,
+    }));
+  }
+  return out;
 }
 
 
@@ -460,26 +404,22 @@ export async function getTeamAvailability(now: Date = new Date()): Promise<TeamA
   if (members.length === 0) return [];
 
   const todayRange = getDhakaDayRange(now);
-  const availableCutoff = new Date(now.getTime() - (await getPresenceTimeoutSeconds()) * 1000);
+  const availableCutoff = now.getTime() - (await getPresenceTimeoutSeconds()) * 1000;
 
-  const [workingTodayRows, availableNowRows] = await Promise.all([
-    // Availability is about people; an AI row must never make someone look like they were
-    // working or reachable.
-    prisma.supportActivity.groupBy({
-      by: ["teamMemberId"],
-      where: {
-        teamMemberId: { not: null },
-        actor: "TEAM_MEMBER",
-        occurredAt: { gte: todayRange.start, lt: todayRange.end },
-      },
-    }),
-    prisma.supportActivity.groupBy({
-      by: ["teamMemberId"],
-      where: { teamMemberId: { not: null }, actor: "TEAM_MEMBER", occurredAt: { gte: availableCutoff } },
-    }),
-  ]);
-  const workingToday = new Set(workingTodayRows.map((r) => r.teamMemberId));
-  const availableNow = new Set(availableNowRows.map((r) => r.teamMemberId));
+  // From messages, through the one identity rule (attributedMessages.ts) — never Support Activity
+  // rows, which exist only while that tracking is on. Availability is about people: the business
+  // number, the AI and a colleague nobody could identify never make someone look present.
+  const messages = await loadAttributedMessages({
+    start: new Date(Math.min(todayRange.start.getTime(), availableCutoff)),
+    end: new Date(Math.max(todayRange.end.getTime(), now.getTime() + 1)),
+  });
+  const workingToday = new Set<string>();
+  const availableNow = new Set<string>();
+  for (const message of messages) {
+    if (message.kind !== "MEMBER" || !message.memberId) continue;
+    if (message.ts >= todayRange.start.getTime() && message.ts < todayRange.end.getTime()) workingToday.add(message.memberId);
+    if (message.ts >= availableCutoff) availableNow.add(message.memberId);
+  }
 
   return members.map((m) => ({
     teamMemberId: m.id,
@@ -688,80 +628,96 @@ export interface AwaitingReplyRow {
  * produces the latter, and both mean the customer has been answered.
  */
 export async function getGroupsAwaitingReply(now: Date = new Date()): Promise<AwaitingReplyRow[]> {
-  const rows = await prisma.$queryRaw<
-    Array<{
-      groupId: string;
-      groupName: string;
-      customerName: string | null;
-      senderPhone: string;
-      lastMessage: string;
-      waitingSince: Date;
-      assignedTo: string | null;
-      priority: string | null;
-    }>
-  >`
-    SELECT
-      g."id"                  AS "groupId",
-      g."name"                AS "groupName",
-      l.sender_name           AS "customerName",
-      l.sender_phone          AS "senderPhone",
-      l.body                  AS "lastMessage",
-      l.ts                    AS "waitingSince",
-      t."name"                AS "assignedTo",
-      g."priority"::text      AS "priority"
-    -- Driven from the GROUPS, not from every message ever stored.
-    --
-    -- This was a DISTINCT ON over the whole "Message" table — no time bound, no account bound —
-    -- which Postgres answers by sorting every message in the database to pick one row per group,
-    -- and only THEN discarding the groups that are not monitored. It runs on Overview and on Team
-    -- Performance, and it was the heaviest query on the landing page: heavier than
-    -- getResponseTimeSeries, which is at least bounded to fourteen days.
-    --
-    -- The LATERAL asks the same question the other way round: for each of the ~1,848 monitored
-    -- groups, one backward index probe on [groupId, timestampWa] for its newest row. Same rows
-    -- out, and the cost now scales with the roster rather than with the message history.
-    --
-    -- Ties (two messages in the same group sharing a second — WhatsApp timestamps are
-    -- second-resolution, so this is not hypothetical) are resolved arbitrarily here, exactly as
-    -- DISTINCT ON resolved them before. Which of two simultaneous messages is "newest" is not a
-    -- question this report has an opinion about; what matters is that both forms agree on the
-    -- direction and sender, which for two messages one second apart they do.
-    FROM "WhatsAppGroup" g
-    LEFT JOIN "InternalTeamMember" t ON t."id" = g."assignedTeamMemberId"
-    CROSS JOIN LATERAL (
+  const projectId = await activeProjectId();
+  const [rows, identity] = await Promise.all([
+    prisma.$queryRaw<
+      Array<{
+        groupId: string;
+        wgid: string;
+        isPrimary: boolean;
+        groupName: string;
+        customerName: string | null;
+        senderPhone: string;
+        senderJid: string | null;
+        fromTeam: boolean;
+        direction: string;
+        lastMessage: string;
+        waitingSince: Date;
+        assignedTo: string | null;
+        priority: string | null;
+      }>
+    >`
       SELECT
-        m."timestampWa"      AS ts,
-        m."direction"        AS direction,
-        m."isFromTeamMember" AS from_team,
-        m."body"             AS body,
-        m."senderName"       AS sender_name,
-        m."senderPhone"      AS sender_phone
-      FROM "Message" m
-      WHERE m."groupId" = g."id"
-      ORDER BY m."timestampWa" DESC
-      LIMIT 1
-    ) l
-    WHERE g."isMonitored" = true
-      AND g."isActive" = true
-      AND g."projectId" = ${await activeProjectId()}
-      -- The newest message being an inbound non-team one IS the definition of unanswered: any
-      -- reply would be newer and would have taken this row instead.
-      AND l.direction = 'INCOMING'
-      AND l.from_team = false
-    ORDER BY l.ts ASC
-    LIMIT 100
-  `;
+        g."id"                  AS "groupId",
+        g."whatsappGroupId"     AS wgid,
+        a."isPrimary"           AS "isPrimary",
+        g."name"                AS "groupName",
+        l.sender_name           AS "customerName",
+        l.sender_phone          AS "senderPhone",
+        l.sender_jid            AS "senderJid",
+        l.from_team             AS "fromTeam",
+        l.direction::text       AS direction,
+        l.body                  AS "lastMessage",
+        l.ts                    AS "waitingSince",
+        t."name"                AS "assignedTo",
+        g."priority"::text      AS "priority"
+      -- Driven from the GROUPS, not from every message ever stored: one backward index probe on
+      -- [groupId, timestampWa] per monitored group row. SYSTEM rows (joins, subject changes) are
+      -- nobody speaking and never hide a waiting customer.
+      FROM "WhatsAppGroup" g
+      JOIN "WhatsAppAccount" a ON a."id" = g."accountId"
+      LEFT JOIN "InternalTeamMember" t ON t."id" = g."assignedTeamMemberId"
+      CROSS JOIN LATERAL (
+        SELECT
+          m."timestampWa"      AS ts,
+          m."direction"        AS direction,
+          m."isFromTeamMember" AS from_team,
+          m."body"             AS body,
+          m."senderName"       AS sender_name,
+          m."senderPhone"      AS sender_phone,
+          m."senderJid"        AS sender_jid
+        FROM "Message" m
+        WHERE m."groupId" = g."id" AND m."direction" <> 'SYSTEM'
+        ORDER BY m."timestampWa" DESC
+        LIMIT 1
+      ) l
+      WHERE g."isMonitored" = true
+        AND g."isActive" = true
+        AND g."projectId" = ${projectId}`,
+    loadReportIdentity(projectId),
+  ]);
 
-  return rows.map((row) => ({
-    groupId: row.groupId,
-    groupName: row.groupName,
-    customerName: row.customerName?.trim() || row.senderPhone,
-    lastMessage: row.lastMessage,
-    waitingSince: row.waitingSince,
-    waitingSeconds: Math.max(0, Math.round((now.getTime() - row.waitingSince.getTime()) / 1000)),
-    assignedTo: row.assignedTo,
-    priority: row.priority,
-  }));
+  // One WhatsApp group, however many of our numbers are in it: the newest message any copy holds
+  // decides, so a reply only our other number stored still counts as the answer. Who sent it is
+  // decided at read time by the one identity rule — a colleague added or linked since is not a
+  // customer, and our own number's post is the business's.
+  const newest = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    const seen = newest.get(row.wgid);
+    const later = !seen || row.waitingSince.getTime() > seen.waitingSince.getTime() || (row.waitingSince.getTime() === seen.waitingSince.getTime() && row.isPrimary && !seen.isPrimary);
+    if (later) newest.set(row.wgid, row);
+  }
+  const waiting = [...newest.values()].filter(
+    (row) =>
+      identity.classify(
+        { direction: row.direction, sender: row.senderPhone, senderJid: row.senderJid, fromTeam: row.fromTeam, actionType: null, ruleId: null, createdById: null },
+        row.waitingSince.getTime(),
+      ).kind === "CUSTOMER",
+  );
+
+  return waiting
+    .sort((a, b) => a.waitingSince.getTime() - b.waitingSince.getTime())
+    .slice(0, 100)
+    .map((row) => ({
+      groupId: row.groupId,
+      groupName: row.groupName,
+      customerName: row.customerName?.trim() || row.senderPhone,
+      lastMessage: row.lastMessage,
+      waitingSince: row.waitingSince,
+      waitingSeconds: Math.max(0, Math.round((now.getTime() - row.waitingSince.getTime()) / 1000)),
+      assignedTo: row.assignedTo,
+      priority: row.priority,
+    }));
 }
 
 export interface FirstResponseStats {
@@ -792,65 +748,23 @@ export interface FirstResponseStats {
  * experienced. The average and the worst case are returned beside it rather than instead of it,
  * because the worst case is usually the one being complained about.
  */
-export async function getFirstResponseStats(range: DateRange): Promise<FirstResponseStats> {
-  const [row] = await prisma.$queryRaw<
-    Array<{ answered: bigint; median: number | null; average: number | null; slowest: number | null }>
-  >`
-    -- One row per WhatsApp message per WhatsApp GROUP (WHATSAPP_IDENTITY.md §5): each of our accounts
-    -- in a group stores its own copy, and partitioning by account copy measured one conversation
-    -- once per number, while our own post seen by our other number read as a customer starting a
-    -- wait. The sending account's copy is the one kept. System messages are nobody speaking.
-    WITH ordered AS (
-      SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
-        g."whatsappGroupId" AS group_id,
-        m."timestampWa" AS ts,
-        (m."direction" = 'OUTGOING' OR m."isFromTeamMember" = true) AS is_reply
-      FROM "Message" m
-      JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
-      WHERE m."groupId" IS NOT NULL
-        AND m."projectId" = ${await activeProjectId()}
-        AND g."isMonitored" = true
-        AND m."direction" <> 'SYSTEM'
-        AND m."timestampWa" >= ${range.start}
-        AND m."timestampWa" < ${range.end}
-      ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."id"
-    ),
-    marked AS (
-      SELECT
-        ts,
-        is_reply,
-        LAG(is_reply) OVER (PARTITION BY group_id ORDER BY ts) AS prev_is_reply,
-        -- The next reply after this message, if any. Bounded to rows after the current one so a
-        -- message never answers itself.
-        MIN(ts) FILTER (WHERE is_reply) OVER (
-          PARTITION BY group_id ORDER BY ts
-          ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING
-        ) AS next_reply_ts
-      FROM ordered
-    ),
-    waits AS (
-      SELECT EXTRACT(EPOCH FROM (next_reply_ts - ts)) AS wait_seconds
-      FROM marked
-      WHERE is_reply = false
-        -- Starts a wait: the previous message was a reply, or there was nothing before it.
-        AND (prev_is_reply IS TRUE OR prev_is_reply IS NULL)
-        AND next_reply_ts IS NOT NULL
-    )
-    SELECT
-      COUNT(*)                                                        AS answered,
-      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY wait_seconds)::float AS median,
-      AVG(wait_seconds)::float                                        AS average,
-      MAX(wait_seconds)::float                                        AS slowest
-    FROM waits
-  `;
-
-  const answered = Number(row?.answered ?? 0);
-  if (answered === 0) return { answered: 0, medianSeconds: null, averageSeconds: null, slowestSeconds: null };
-
+export async function getFirstResponseStats(range: DateRange, now: Date = new Date()): Promise<FirstResponseStats> {
+  // The Team Report's wait, over monitored groups: the four hours before the period are context (a
+  // customer line continuing a wait begun before it is not a new wait) and replies are looked for up
+  // to a day past it — never past now.
+  const messages = await loadAttributedMessages({
+    start: new Date(range.start.getTime() - 4 * 3_600_000),
+    end: new Date(Math.min(range.end.getTime() + 86_400_000, Math.max(range.end.getTime(), now.getTime() + 1))),
+    monitoredOnly: true,
+  });
+  const seconds = computeFirstResponseWaits(messages, range.start.getTime(), range.end.getTime())
+    .filter((w) => w.repliedAt !== null)
+    .map((w) => (w.repliedAt! - w.askedAt) / 1000);
+  if (seconds.length === 0) return { answered: 0, medianSeconds: null, averageSeconds: null, slowestSeconds: null };
   return {
-    answered,
-    medianSeconds: row?.median != null ? Math.round(row.median) : null,
-    averageSeconds: row?.average != null ? Math.round(row.average) : null,
-    slowestSeconds: row?.slowest != null ? Math.round(row.slowest) : null,
+    answered: seconds.length,
+    medianSeconds: Math.round(median(seconds)!),
+    averageSeconds: Math.round(seconds.reduce((a, b) => a + b, 0) / seconds.length),
+    slowestSeconds: Math.round(Math.max(...seconds)),
   };
 }

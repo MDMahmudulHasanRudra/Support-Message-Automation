@@ -6,8 +6,10 @@ import { Download } from "lucide-react";
 import { requireAccess } from "@/server/authorize";
 import { getDhakaDayRange, getDhakaMonthRange, getDhakaWeekRange } from "@/lib/supportActivityPeriod";
 import { formatDurationShort } from "@/lib/duration";
+import { loadDataHealth } from "@/server/dataHealth";
+import { DataHealthStrip } from "@/components/reports/DataHealthStrip";
 import {
-  getExecutiveWorkload,
+  getExecutiveWorkloads,
   getFirstResponseStats,
   getGroupsAwaitingReply,
   getTeamAvailability,
@@ -36,10 +38,10 @@ import {
  * setting happens to be on. Comparing today against the month is the point of the page; making
  * that a settings change was making the reader do the work.
  *
- * Time is measured from each person's first message to their last, within one group on one day.
- * It replaces the old hours-worked figure, which summed SupportSession.durationSeconds and was
- * therefore permanently empty on any deployment whose rules do not carry a completion keyword —
- * including the common "every team member message counts" setup.
+ * Every figure reads the messages themselves through the Team Report's identity and support-time
+ * rules (attributedMessages.ts), so this page and the Team Report agree about every person on every
+ * day — it no longer depends on Support Activity tracking being on, on a rule matching, or on how
+ * many of our numbers are in a group (report accuracy audit, 19 Oct 2026).
  */
 
 const PERIODS = ["today", "week", "month"] as const;
@@ -72,20 +74,19 @@ export default async function SupportActivityTeamPage({
   } as const;
   const range = ranges[period];
 
-  // All three periods at once. Each is a single grouped query, so the comparison costs three
-  // round trips rather than the per-member fan-out the previous page did.
-  const [todayRows, weekRows, monthRows, availability, activeMembers, awaiting, response] =
+  // All three periods from one read of the widest (a week can start in the previous month).
+  const [workloads, availability, activeMembers, awaiting, response, dataHealth] =
     await Promise.all([
-      getExecutiveWorkload(ranges.today),
-      getExecutiveWorkload(ranges.week),
-      getExecutiveWorkload(ranges.month),
+      getExecutiveWorkloads(ranges, now),
       getTeamAvailability(now),
       prisma.internalTeamMember.count({ where: { status: "ACTIVE" } }),
       // Not scoped to the selected period, deliberately: somebody waiting since Friday is still
       // waiting on Monday, and hiding them because the view says "today" is exactly the failure
       // this is here to fix.
       getGroupsAwaitingReply(now),
-      getFirstResponseStats(ranges[period]),
+      getFirstResponseStats(ranges[period], now),
+      // How far this period can be trusted: a collection gap is "no messages stored", never "no work".
+      loadDataHealth({ periodStart: range.start.getTime(), periodEnd: range.end.getTime(), now }),
     ]);
 
   // Named on screen rather than left implicit: "green means online" is useless without knowing
@@ -96,8 +97,7 @@ export default async function SupportActivityTeamPage({
       select: { offlineAfterMinutes: true },
     }))?.offlineAfterMinutes ?? 120;
 
-  const rowsFor: Record<PeriodKey, typeof todayRows> = { today: todayRows, week: weekRows, month: monthRows };
-  const rows = rowsFor[period];
+  const rows = workloads[period];
 
   const onlineNow = availability.filter((member) => member.availableNow).length;
   const totalGroups = rows.reduce((sum, row) => sum + row.groupsHandled, 0);
@@ -120,10 +120,10 @@ export default async function SupportActivityTeamPage({
             <HelpButton moduleTitle="Team Performance">
               <HelpSection title="How time is measured">
                 <p>
-                  From each person's first message to their last, within one group on one day,
-                  added up across every such span. Per group and per day on purpose: one span
-                  across a week would count the nights in between, and one span across every group
-                  at once would count the time they were busy elsewhere.
+                  One timeline per person across every group: a stretch starts at their first
+                  message and ends at their last before they went quiet for longer than the
+                  "offline after" setting, or at midnight. Answering two groups at once is one hour
+                  of work, not two. This is exactly how the Team Report measures support time.
                 </p>
               </HelpSection>
               <HelpSection title="Why a day can show zero minutes">
@@ -135,15 +135,19 @@ export default async function SupportActivityTeamPage({
               </HelpSection>
               <HelpSection title="What counts as support">
                 <p>
-                  Any message a team member sends in a group, if you are running the "every message
-                  counts" rule. Nothing here includes AI replies — those are tracked separately and
-                  can never be attributed to a person.
+                  Every message a team member sends in a group — recognised by their WhatsApp ID or
+                  their number, as the Team Report recognises them — plus replies they send from
+                  WhatsApp Chat when their login is linked to them on Team Members. A message two of
+                  our numbers both stored counts once. Nothing here includes AI replies, and nothing
+                  typed on the shared business phone is credited to a person.
                 </p>
               </HelpSection>
             </HelpButton>
           </div>
         }
       />
+
+      <DataHealthStrip health={dataHealth} />
 
       <div className="mb-5 flex flex-wrap gap-1.5">
         {PERIODS.map((key) => (
@@ -280,9 +284,9 @@ export default async function SupportActivityTeamPage({
             </thead>
             <tbody>
               {rows.map((row) => {
-                const inToday = todayRows.find((r) => r.teamMemberId === row.teamMemberId);
-                const inWeek = weekRows.find((r) => r.teamMemberId === row.teamMemberId);
-                const inMonth = monthRows.find((r) => r.teamMemberId === row.teamMemberId);
+                const inToday = workloads.today.find((r) => r.teamMemberId === row.teamMemberId);
+                const inWeek = workloads.week.find((r) => r.teamMemberId === row.teamMemberId);
+                const inMonth = workloads.month.find((r) => r.teamMemberId === row.teamMemberId);
                 // From the row, not the availability list: both now use the same configured
                 // threshold, and reading one number in two places is how they drift apart.
                 const online = row.isOnline;
