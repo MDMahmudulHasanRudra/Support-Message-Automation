@@ -71,7 +71,8 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
 
   // Demand and response — the Team Report's own figures and waits, Response SLA's SLA.
   const { summary } = ctx.data.result;
-  const waits = waitsInScope(ctx);
+  // Missed as the Team Report counts it in a Team/member view: charged to someone in scope.
+  const waits = waitsInScope(ctx).filter(ctx.missedInScope);
   const stats = responseStats(waits);
   const unanswered = stats.never + stats.pending;
   const missed = stats.late + stats.never;
@@ -103,7 +104,7 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
       { label: "Also" },
       { label: "Last activity", muted: true },
       { label: "Waiting" },
-      { label: "Assigned" },
+      { label: "Assigned now" },
       { label: "Team" },
     ],
     rows: items.map((item) => {
@@ -140,7 +141,9 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
   // How the work sat across the Teams: distribution, not a ranking of people.
   const teams = new Map<string, { members: number; replies: number; seconds: number; missed: number }>();
   for (const m of ctx.data.result.members) {
-    if (m.memberId === "UNASSIGNED" || (m.messages === 0 && m.activeSeconds === 0)) continue;
+    // Somebody charged a Missed wait counts here even if they sent nothing, or the Missed column would
+    // add up to less than the Team Report's.
+    if (m.memberId === "UNASSIGNED" || (m.messages === 0 && m.activeSeconds === 0 && m.missed === 0)) continue;
     const team = roster.teamOf.get(m.memberId) ?? "No team";
     const row = teams.get(team) ?? { members: 0, replies: 0, seconds: 0, missed: 0 };
     row.members += 1;

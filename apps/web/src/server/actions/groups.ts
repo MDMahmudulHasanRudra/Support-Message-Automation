@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import type { Prisma, SupportPriority } from "@prisma/client";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { buildGroupWhere, isGroupFilterKey, type GroupFilterKey } from "@/lib/groupFilters";
+import { mergedGroupResponsibility, recordResponsibilityChange } from "@/server/groupResponsibility";
 
 const PRIORITIES: SupportPriority[] = ["P1", "P2", "P3"];
 
@@ -19,18 +20,24 @@ export async function setGroupPriority(
   groupId: string,
   formData: FormData,
 ): Promise<void> {
-  await requireAccess("whatsapp.manage");
+  const session = await requireAccess("whatsapp.manage");
   const priorityRaw = String(formData.get("priority") ?? "");
   const assignedTeamMemberId = String(formData.get("assignedTeamMemberId") ?? "").trim() || null;
   const escalationMonitoringEnabled = formData.get("escalationMonitoringEnabled") === "on";
+  const priority = isPriority(priorityRaw) ? priorityRaw : null;
 
-  await prisma.whatsAppGroup.update({
-    where: { id: groupId },
-    data: {
-      priority: isPriority(priorityRaw) ? priorityRaw : null,
-      assignedTeamMemberId,
-      escalationMonitoringEnabled,
-    },
+  await prisma.$transaction(async (tx) => {
+    const row = await tx.whatsAppGroup.findUnique({ where: { id: groupId }, select: { whatsappGroupId: true } });
+    if (!row) return;
+    // History of the group as the Team Report reads it (all our numbers' copies merged), so a Missed
+    // wait stays charged to whoever the group was assigned to when the customer asked.
+    const before = await mergedGroupResponsibility(tx, row.whatsappGroupId);
+    await tx.whatsAppGroup.update({
+      where: { id: groupId },
+      data: { priority, assignedTeamMemberId, escalationMonitoringEnabled },
+    });
+    const after = await mergedGroupResponsibility(tx, row.whatsappGroupId);
+    await recordResponsibilityChange(tx, row.whatsappGroupId, before, after, session.userId);
   });
   revalidatePath(await projectPath("/groups"));
 }

@@ -66,6 +66,9 @@ export function parseUnansweredFilters(params: Params): UnansweredFilters {
 
 export function unansweredWhere(f: UnansweredFilters, now: Date): Prisma.SupportResponseEpisodeWhereInput {
   const where: Prisma.SupportResponseEpisodeWhereInput = { status: f.status };
+  // One wait is one row: another of our numbers' copy of it (a twin) is shown only when that account
+  // is chosen (report accuracy audit, 19 Oct 2026).
+  if (!f.accountId) where.isTwin = false;
   // An open wait in a group this account has left cannot be answered from here; it is not shown as
   // something to act on. Cleared ones are history and are shown regardless.
   const group: Prisma.WhatsAppGroupWhereInput = f.status === "UNANSWERED" ? { isActive: true } : {};
@@ -213,6 +216,10 @@ export function parseResponseFilters(params: Params): ResponseFilters {
 
 export function responseWhere(f: ResponseFilters): Prisma.SupportResponseEpisodeWhereInput {
   const where: Prisma.SupportResponseEpisodeWhereInput = { status: "ANSWERED" };
+  // One wait, one answer: another of our numbers' copy of it is counted only when that account is
+  // chosen — it used to count every answer twice, and average over the duplicate, in any group two
+  // of our numbers share.
+  if (!f.accountId) where.isTwin = false;
   if (f.accountId) where.accountId = f.accountId;
   if (f.group) where.group = { name: { contains: f.group, mode: "insensitive" } };
   if (f.memberId) where.supportMemberId = f.memberId;

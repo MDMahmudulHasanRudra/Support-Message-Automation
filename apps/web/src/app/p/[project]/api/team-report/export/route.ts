@@ -11,7 +11,7 @@ import {
 } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
-import { bucketLabel, loadTeamReport, memberLabel, parseTeamReportFilters, scopeLabel } from "@/server/teamReport";
+import { bucketLabel, exportStoredBy, loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, scopeLabel } from "@/server/teamReport";
 import { loadDataHealth } from "@/server/dataHealth";
 
 /**
@@ -53,24 +53,46 @@ function contentDisposition(filename: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
-function toCsv(rows: Array<Record<string, unknown>>): string {
-  if (rows.length === 0) return "";
-  const headers = Object.keys(rows[0]!);
+/**
+ * CSV Excel opens as UTF-8 (the byte-order mark — without it Bangla names come out garbled), with a
+ * header row even when there are no rows, and every cell holding a quote, comma or line break quoted.
+ */
+function toCsv(rows: Array<Record<string, unknown>>, headers: string[]): string {
   const escapeCell = (value: unknown) => {
     const str = value === null || value === undefined ? "" : String(value);
-    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+    return /[",\r\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
   };
-  return [headers.join(","), ...rows.map((row) => headers.map((h) => escapeCell(row[h])).join(","))].join("\n");
+  return "\uFEFF" + [headers.map(escapeCell).join(","), ...rows.map((row) => headers.map((h) => escapeCell(row[h])).join(","))].join("\r\n");
 }
+
+const GROUP_COLUMNS = [
+  "Group",
+  "Group ID",
+  "Assigned now",
+  "Team members",
+  "Messages",
+  "Customer messages",
+  "Team member replies",
+  "Business number replies",
+  "Customer waits",
+  "Missed",
+  "Recall",
+  "Never answered",
+  "First support",
+  "Last support",
+  "Support time (hours)",
+];
 
 export async function GET(request: NextRequest) {
   await requireAccess("support_activity.view");
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
   const format = params.format === "xlsx" ? "xlsx" : "csv";
-  const now = new Date();
+  const now = reportNow(params);
   const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts } = await loadTeamReport(
     parseTeamReportFilters(params, now),
     now,
+    undefined,
+    exportStoredBy(params, now),
   );
   const memberName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
   const scope = scopeLabel(teamName, memberName);
@@ -80,7 +102,9 @@ export async function GET(request: NextRequest) {
     sanitizeExcelRow({
       Group: groupName(row.groupKey),
       "Group ID": row.groupKey,
-      "Assigned to": groups.get(row.groupKey)?.assignedMemberId
+      // Today's assignee, for finding the group; each Missed wait is charged to the assignee when the
+      // customer asked (the "Missed & Recall" sheet's "Charged to").
+      "Assigned now": groups.get(row.groupKey)?.assignedMemberId
         ? memberLabel(groups.get(row.groupKey)!.assignedMemberId, memberNames)
         : "",
       "Team members": row.memberIds.map((id) => memberLabel(id, memberNames)).join(", "),
@@ -105,7 +129,7 @@ export async function GET(request: NextRequest) {
   const slug = [teamName, memberName, range.label].filter(Boolean).map((part) => safe(part!)).join(" - ");
 
   if (format === "csv") {
-    return new NextResponse(toCsv(groupRows), {
+    return new NextResponse(toCsv(groupRows, GROUP_COLUMNS), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
         "Content-Disposition": contentDisposition(`Team Report groups - ${slug}.csv`),
@@ -114,6 +138,7 @@ export async function GET(request: NextRequest) {
   }
 
   const { summary } = result;
+  const health = await loadDataHealth({ periodStart: range.start.getTime(), periodEnd: range.end.getTime(), now, accountId: filters.accountId });
   const summaryRows = [
     { Metric: "Report", Value: `${scope} · ${range.label}` },
     { Metric: "Team", Value: teamName ?? "All teams" },
@@ -131,9 +156,20 @@ export async function GET(request: NextRequest) {
       : []),
     { Metric: "Period start (Asia/Dhaka)", Value: iso(range.start.getTime()) },
     { Metric: "Period end (Asia/Dhaka, exclusive)", Value: iso(range.end.getTime()) },
+    { Metric: "Computed as of", Value: iso(now.getTime()) },
+    // How far the figures can be trusted — the same reading the page shows above them.
+    { Metric: "Data health", Value: health.label },
+    { Metric: "Data health detail", Value: health.headline },
+    { Metric: "Verified from (Asia/Dhaka)", Value: health.verifiedFrom ? iso(health.verifiedFrom) : "Not set" },
+    ...health.warnings.map((w) => ({ Metric: "Data caveat", Value: w })),
     { Metric: "Groups supported", Value: summary.groupsSupported },
     { Metric: "Customer messages", Value: summary.customerMessages },
     { Metric: "Team member replies", Value: summary.memberReplies },
+    // Staff the roster cannot name (an identity clash, or a member since removed): in the total above,
+    // in no person's row — so the Team Members sheet adding up to less is explained.
+    ...(summary.unattributedStaffReplies > 0
+      ? [{ Metric: "  of which by a team member not identified", Value: summary.unattributedStaffReplies }]
+      : []),
     { Metric: "Business number replies", Value: summary.businessReplies },
     { Metric: "Customer waits", Value: summary.waits },
     { Metric: "Missed", Value: summary.missed },
@@ -202,8 +238,9 @@ export async function GET(request: NextRequest) {
         Answered: iso(w.repliedAt),
         "Wait (minutes)": w.waitSeconds === null ? "" : Math.round(w.waitSeconds / 60),
         "Threshold (minutes)": Math.round(w.thresholdSeconds / 60),
-        "Answered by": w.repliedBy ? memberLabel(w.repliedBy, memberNames) : "",
-        "Charged to": memberLabel(groups.get(w.groupKey)?.assignedMemberId ?? null, memberNames),
+        "Answered by": w.repliedBy ? memberLabel(w.repliedBy, memberNames) : w.repliedAt !== null ? "A team member (not identified)" : "",
+        // The assignee when the customer asked — the Team Members sheet's own rule, so the two agree.
+        "Charged to": memberLabel(w.chargedTo, memberNames),
         Result: WAIT_RESULT[w.status] ?? w.status,
         // Who sent the reply that ended the wait, from the send it echoes (teamReportReliability.ts).
         "Reply came from": w.repliedByActor ? REPLY_CATEGORY_LABELS[replyCategoryOf(w.repliedByActor)] : "",
@@ -211,7 +248,6 @@ export async function GET(request: NextRequest) {
     );
 
   // The page's "How customers were answered" and "Reporting reliability" sections, line for line.
-  const health = await loadDataHealth({ periodStart: range.start.getTime(), periodEnd: range.end.getTime(), now, accountId: filters.accountId });
   const reliability = computeReportingReliability(reliabilityCounts, health, { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() });
   const qualityRows = [...responseLines(response), ...reliabilityLines(reliability)].map((line) =>
     sanitizeExcelRow({ Section: line.section, Measure: line.label, Value: line.value, Note: line.note }),

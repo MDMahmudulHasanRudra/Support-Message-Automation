@@ -2,12 +2,11 @@
 import { Prisma } from "@prisma/client";
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
-import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
+import { loadReportIdentity, messageKeySql, outboundByKeyJoin, preferSenderCopySql, storedCopiesSql } from "@/server/messageIdentity";
 import { loadDutyResolver } from "@/server/overtimeDuty";
 import {
   computeResponseMetrics,
   computeTeamReport,
-  createSenderResolver,
   DEFAULT_CASE_GAP_MS,
   DHAKA_OFFSET_MS,
   emptyActorCounts,
@@ -21,7 +20,6 @@ import {
   logicalMessageKey,
   membersOfTeamDuring,
   NO_TEAM,
-  outgoingActorFor,
   type IntelActor,
   type IntelMessage,
   type ReliabilityCounts,
@@ -93,6 +91,8 @@ export interface TeamReportFilters {
   groupKeys?: string[];
   /** One WhatsApp account's stored copies only; null or absent = every account. */
   accountId?: string | null;
+  /** Set when the URL named more than MAX_FILTER_GROUPS groups and the rest were left out. */
+  groupsTruncated?: boolean;
 }
 
 /** At most this many groups in a filter — a URL, not a database dump. */
@@ -134,11 +134,15 @@ function dhakaMidnight(dateKey: string): Date | null {
 export function parseTeamReportFilters(params: Record<string, string | undefined>, now: Date): TeamReportFilters {
   const today = formatDhakaDateKey(now);
   const period = PERIODS.includes(params.period as ReportPeriod) ? (params.period as ReportPeriod) : "month";
-  const granularity = GRANULARITIES.includes(params.by as ReportGranularity)
-    ? (params.by as ReportGranularity)
-    : period === "month" || period === "custom" || period === "week"
-      ? "day"
-      : "day";
+  const granularity = GRANULARITIES.includes(params.by as ReportGranularity) ? (params.by as ReportGranularity) : "day";
+  const requestedGroups = [
+    ...new Set(
+      (params.groups ?? "")
+        .split(",")
+        .map((key) => key.trim())
+        .filter((key) => key.length > 0 && key.length <= 200),
+    ),
+  ];
   return {
     period,
     date: isReportDateKey(params.date) ? params.date : today,
@@ -147,15 +151,9 @@ export function parseTeamReportFilters(params: Record<string, string | undefined
     memberId: params.member?.trim() || null,
     teamId: params.team?.trim() || null,
     granularity,
-    groupKeys: [
-      ...new Set(
-        (params.groups ?? "")
-          .split(",")
-          .map((key) => key.trim())
-          .filter((key) => key.length > 0 && key.length <= 200),
-      ),
-    ].slice(0, MAX_FILTER_GROUPS),
+    groupKeys: requestedGroups.slice(0, MAX_FILTER_GROUPS),
     accountId: params.account?.trim() || null,
+    ...(requestedGroups.length > MAX_FILTER_GROUPS ? { groupsTruncated: true } : {}),
   };
 }
 
@@ -249,17 +247,31 @@ export interface TeamReportData {
   response: ResponseMetrics;
   /** What was read for the period: stored copies, logical messages, senders and attribution strength. */
   reliabilityCounts: ReliabilityCounts;
+  /**
+   * A group's assignee and priority at a moment (GroupResponsibilityChange), and its "missed"
+   * threshold then — the values the Team Report charges and judges every wait by. Every report cut
+   * from this dataset reads them from here rather than from the group as it is today.
+   */
+  responsibilityAt: (groupKey: string, at?: number) => { assigned: string | null; priority: string | null };
+  /** The moment this was computed as of (epoch ms) — carried by links and exports as `asof`. */
+  computedAt: number;
+  missedAfterMs: (groupKey: string, at?: number) => number;
 }
 
 interface LoadedRow {
   wgid: string;
   wamid: string;
   ts: Date;
+  /** When this copy was stored: the order two messages in the same second arrived in. */
+  storedAt: Date;
   direction: string;
   fromTeam: boolean;
   sender: string;
   senderJid: string | null;
+  /** Every incoming copy of this logical message (`storedCopiesSql`). */
+  copies: string[] | null;
   body: string | null;
+  obMatched: boolean | null;
   actionType: string | null;
   ruleId: string | null;
   createdById: string | null;
@@ -273,6 +285,13 @@ export async function loadTeamReport(
   filters: TeamReportFilters,
   now: Date,
   onlyWhatsappGroupId?: string,
+  options: {
+    /**
+     * Read only rows stored by this moment. Exports pass the page's moment (`asof`), so a reply that
+     * arrived after the page was opened is not in the file either; the page itself reads everything.
+     */
+    storedBy?: Date;
+  } = {},
 ): Promise<TeamReportData> {
   const range = resolveTeamReportRange(filters, now);
   const lookaheadEnd = new Date(range.end.getTime() + LOOKAHEAD_MS);
@@ -285,30 +304,30 @@ export async function loadTeamReport(
       ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(filters.groupKeys)})`
       : Prisma.empty;
   const accountFilter = filters.accountId ? Prisma.sql`AND m."accountId" = ${filters.accountId}` : Prisma.empty;
-  // The send an outgoing message echoes — the latest OutboundMessage with its WhatsApp id, the rule
-  // Support Intelligence reads per row. Joined ONCE as a hash rather than probed per message: on a
-  // month of 172,000 stored rows the per-row probe alone cost ~3 s (PHASE2.md Stage 9).
-  const outboundOf = (alias: string) => Prisma.sql`
-      LEFT JOIN (
-        SELECT DISTINCT ON (ob."providerMessageId") ob."providerMessageId", ob."actionType", ob."ruleId", ob."createdById"
-        FROM "OutboundMessage" ob
-        WHERE ob."projectId" = ${projectId} AND ob."providerMessageId" IS NOT NULL
-        ORDER BY ob."providerMessageId", ob."createdAt" DESC
-      ) o ON ${Prisma.raw(`${alias}."direction"`)} = 'OUTGOING' AND o."providerMessageId" = ${Prisma.raw(`${alias}."whatsappMessageId"`)}`;
+  // With an export's `asof`: only rows stored by then, with a few seconds' grace for the database clock
+  // running ahead of this server's. Otherwise no bound (the far future).
+  const storedBy = options.storedBy ? new Date(options.storedBy.getTime() + 5_000) : new Date("9999-12-31T00:00:00Z");
+  // The send a message echoes — matched on the LOGICAL key, so the copy another of our numbers stored
+  // of our own post still finds it (messageIdentity.ts). Joined once as a hash, bounded by `sentAt`.
+  const outboundOf = (alias: string) => outboundByKeyJoin(projectId, contextStart, lookaheadEnd, alias);
   // A message's text only where the human-only wait can read it: a line that may be a customer's
-  // (incoming, not stamped as staff) and short or possibly a closing remark — Support Intelligence's
-  // own pre-filter, so the two decide a closing remark identically.
+  // (incoming) and short or possibly a closing remark — Support Intelligence's own pre-filter, so the
+  // two decide a closing remark identically. Not narrowed by the stored team-member stamp: who is
+  // staff is decided at read time, and a stamp taken before somebody joined or left is not that.
   const bodyOf = (alias: string) => {
     const col = (name: string) => Prisma.raw(`${alias}."${name}"`);
-    return Prisma.sql`CASE WHEN ${col("direction")} = 'INCOMING' AND NOT ${col("isFromTeamMember")}
+    return Prisma.sql`CASE WHEN ${col("direction")} = 'INCOMING'
       AND (length(${col("body")}) BETWEEN 1 AND 24 OR ${col("body")} ~* ${INTELLIGENCE_SQL_PREFILTER}) THEN left(${col("body")}, 400) END`;
   };
 
-  const [members, settings, policies, teams, membershipRows, rows, earlier, copies] = await Promise.all([
+  const [members, identity, settings, policies, teams, membershipRows, rows, earlier, copies] = await Promise.all([
     prisma.internalTeamMember.findMany({
-      select: { id: true, name: true, phoneNumber: true, whatsappId: true, attributeFrom: true, status: true },
+      select: { id: true, name: true, status: true },
       orderBy: { name: "asc" },
     }),
+    // Who sent each message: the one identity rule (WHATSAPP_IDENTITY.md), over every member, every
+    // stored copy, and our own numbers (messageIdentity.ts).
+    loadReportIdentity(projectId),
     prisma.supportActivitySettings.findUnique({
       where: { id: "global" },
       select: { offlineAfterMinutes: true, missedReplyAfterMinutes: true },
@@ -321,35 +340,56 @@ export async function loadTeamReport(
     // not the stored id, which differs between the sending account's copy and every other's
     // (WHATSAPP_IDENTITY.md); the sending account's own copy is the one kept. Bounded by the
     // timestamp index; nothing unbounded is scanned. From CONTEXT_MS before the period.
+    //
+    // With one account chosen, the report reads the messages THAT account stored — but who sent each
+    // one is still decided from every account's copies (the inner query has no account predicate):
+    // identity is a fact about the message, and one account may have seen only a colleague's private
+    // WhatsApp ID while another saw their number.
     prisma.$queryRaw<LoadedRow[]>`
-      SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
-        g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."direction"::text AS direction,
-        m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid",
-        ${bodyOf("m")} AS body,
-        o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
-      FROM "Message" m
-      JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
-      ${outboundOf("m")}
-      WHERE m."timestampWa" >= ${contextStart} AND m."timestampWa" < ${lookaheadEnd}
-        AND m."projectId" = ${projectId}
-        ${groupFilter}
-        ${accountFilter}
-      ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
+      SELECT DISTINCT ON (c.wgid, c.k)
+        c.wgid, c.wamid, c.ts, c."storedAt", c.direction, c."fromTeam", c.sender, c."senderJid", c.copies, c.body,
+        c."obMatched", c."actionType", c."ruleId", c."createdById"
+      FROM (
+        SELECT
+          g."whatsappGroupId" AS wgid, ${messageKeySql()} AS k, m."id" AS mid,
+          m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."createdAt" AS "storedAt",
+          m."direction"::text AS direction,
+          m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid",
+          ${storedCopiesSql(Prisma.sql`g."whatsappGroupId"`)} AS copies,
+          ${filters.accountId ? Prisma.sql`bool_or(m."accountId" = ${filters.accountId}) OVER (PARTITION BY g."whatsappGroupId", ${messageKeySql()})` : Prisma.sql`true`} AS "onAccount",
+          ${filters.accountId ? Prisma.sql`(m."accountId" = ${filters.accountId})` : Prisma.sql`true`} AS "ownCopy",
+          (m."direction" = 'OUTGOING') AS p1, (left(m."whatsappMessageId", 5) = 'true_') AS p2, m."isFromTeamMember" AS p3,
+          ${bodyOf("m")} AS body,
+          o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
+        FROM "Message" m
+        JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
+        ${outboundOf("m")}
+        WHERE m."timestampWa" >= ${contextStart} AND m."timestampWa" < ${lookaheadEnd}
+          AND m."projectId" = ${projectId}
+          AND m."createdAt" <= ${storedBy}
+          ${groupFilter}
+      ) c
+      WHERE c."onAccount"
+      -- preferSenderCopySql's order (OUTGOING, true_, staff-stamped); with an account chosen, its own copy first.
+      ORDER BY c.wgid, c.k, c."ownCopy" DESC, c.p1 DESC, c.p2 DESC, c.p3 DESC, c.ts, c.mid`,
     // Each group's last message before the context window: one index probe per group with activity
     // in the period. Only ever the message BEFORE the first one read, so a wait already open then is
     // continued rather than counted again.
     prisma.$queryRaw<LoadedRow[]>`
       SELECT DISTINCT ON (gg."whatsappGroupId")
-        gg."whatsappGroupId" AS wgid, p."whatsappMessageId" AS wamid, p."timestampWa" AS ts, p."direction"::text AS direction,
+        gg."whatsappGroupId" AS wgid, p."whatsappMessageId" AS wamid, p."timestampWa" AS ts, p."createdAt" AS "storedAt",
+        p."direction"::text AS direction,
         p."isFromTeamMember" AS "fromTeam", p."senderPhone" AS sender, p."senderJid" AS "senderJid",
+        NULL::text[] AS copies,
         ${bodyOf("p")} AS body,
-        o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
+        o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
       FROM (
         SELECT DISTINCT m."groupId"
         FROM "Message" m
         JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
         WHERE m."projectId" = ${projectId}
           AND m."timestampWa" >= ${range.start} AND m."timestampWa" < ${lookaheadEnd}
+          AND m."createdAt" <= ${storedBy}
           ${groupFilter}
           ${accountFilter}
       ) r
@@ -359,11 +399,13 @@ export async function loadTeamReport(
         FROM "Message" x
         WHERE x."groupId" = r."groupId" AND x."projectId" = ${projectId}
           AND x."timestampWa" < ${contextStart} AND x."direction" <> 'SYSTEM'
+          ${filters.accountId ? Prisma.sql`AND x."accountId" = ${filters.accountId}` : Prisma.empty}
         ORDER BY x."timestampWa" DESC
         LIMIT 1
       ) p
       ${outboundOf("p")}
-      ORDER BY gg."whatsappGroupId", p."timestampWa" DESC`,
+      -- Two of our numbers' newest earlier rows of one group: the sender's own copy decides.
+      ORDER BY gg."whatsappGroupId", p."timestampWa" DESC, ${preferSenderCopySql("p")}, p."id"`,
     // Every stored copy in the period, for the reliability section: copies minus logical messages is
     // how much the dedup collapsed.
     prisma.$queryRaw<Array<{ n: number }>>`
@@ -373,12 +415,11 @@ export async function loadTeamReport(
       WHERE m."projectId" = ${projectId}
         AND m."timestampWa" >= ${range.start} AND m."timestampWa" < ${range.end}
         AND m."direction" <> 'SYSTEM'
+        AND m."createdAt" <= ${storedBy}
         ${groupFilter}
         ${accountFilter}`,
   ]);
 
-  // Who sent each message: the one identity rule (WHATSAPP_IDENTITY.md), over every member.
-  const resolver = createSenderResolver(members);
   const rangeStart = range.start.getTime();
   const rangeEnd = range.end.getTime();
 
@@ -395,34 +436,27 @@ export async function loadTeamReport(
     unattributedSenders: 0,
   };
   const unattributed = new Set<string>();
-  for (const row of [...earlier, ...rows]) {
+  // Oldest first, and two messages in the same second in the order they were stored: the rows arrive
+  // sorted by group and key, and a reply sorted ahead of the question it answers closed the wait
+  // with a later reply instead (a false Recall or Missed).
+  const ordered = [...earlier, ...rows].sort((a, b) => a.ts.getTime() - b.ts.getTime() || a.storedAt.getTime() - b.storedAt.getTime());
+  for (const row of ordered) {
     if (row.direction === "SYSTEM") continue; // joins, leaves, subject changes — nobody said anything
     const ts = row.ts.getTime();
     const inPeriod = ts >= rangeStart && ts < rangeEnd;
-    let kind: ReportMessage["kind"];
-    let memberId: string | null = null;
-    let actor: IntelActor;
-    if (row.direction === "OUTGOING") {
-      kind = "BUSINESS";
-      // From the send it echoes, never from the direction alone (outgoingActorFor).
-      actor = outgoingActorFor(row.actionType, row.ruleId);
-    } else {
-      // At the message's time: before a member's attribute-from date their number is a customer's
-      // (WHATSAPP_IDENTITY.md; Workstream F §10.3).
-      const sender = resolver.resolve(row.sender, row.senderJid, ts);
-      memberId = sender.memberId;
-      // Counted as a reply but attributed to nobody: a sender stamped as a team member at the time
-      // and no longer on the roster, and a colleague whose WhatsApp id and phone name two different
-      // members (or who shares an identifier with another) — certainly staff, never a guess at who.
-      kind = memberId || sender.isRosterMember || row.fromTeam ? "MEMBER" : "CUSTOMER";
-      actor = memberId ? "MEMBER" : kind === "MEMBER" ? "MEMBER_UNMAPPED" : "CUSTOMER";
-      if (inPeriod) {
-        if (sender.status === "WHATSAPP_ID_AND_PHONE_MATCH") counts.attribution.idAndPhone += 1;
-        else if (sender.status === "WHATSAPP_ID_MATCH") counts.attribution.idOnly += 1;
-        else if (sender.status === "PHONE_MATCH") counts.attribution.phoneOnly += 1;
-        else if (sender.status === "CONFLICT" || sender.status === "AMBIGUOUS") counts.conflicting += 1;
-        if (actor === "MEMBER_UNMAPPED") unattributed.add(row.senderJid ?? row.sender);
-      }
+    // At the message's time: before a member's attribute-from date their number is a customer's
+    // (WHATSAPP_IDENTITY.md). A copy of our own post is the business's; a dashboard reply is the
+    // linked team member's; a colleague whose identifiers conflict is staff credited to nobody.
+    const decided = identity.classify(row, ts);
+    const kind: ReportMessage["kind"] = decided.kind;
+    const memberId = decided.memberId;
+    const actor: IntelActor = decided.actor;
+    if (inPeriod && decided.status) {
+      if (decided.status === "WHATSAPP_ID_AND_PHONE_MATCH") counts.attribution.idAndPhone += 1;
+      else if (decided.status === "WHATSAPP_ID_MATCH") counts.attribution.idOnly += 1;
+      else if (decided.status === "PHONE_MATCH") counts.attribution.phoneOnly += 1;
+      else if (decided.status === "CONFLICT" || decided.status === "AMBIGUOUS") counts.conflicting += 1;
+      if (actor === "MEMBER_UNMAPPED") unattributed.add(row.senderJid ?? row.sender);
     }
     all.push({ groupKey: row.wgid, ts, kind, memberId, actor });
     intel.push({
@@ -482,6 +516,31 @@ export async function loadTeamReport(
     groups.set(row.whatsappGroupId, merged);
   }
 
+  // Who each group was assigned to, and its priority, over time (GroupResponsibilityChange): a Missed
+  // wait is charged to the assignee when the customer asked, and judged by the threshold then. Before
+  // the first recorded change, that change's "before" values; after the last, the group as it is now.
+  const changes = groupKeys.length
+    ? await prisma.groupResponsibilityChange.findMany({
+        where: { whatsappGroupId: { in: groupKeys }, changedAt: { gt: contextStart } },
+        orderBy: { changedAt: "asc" },
+        select: { whatsappGroupId: true, changedAt: true, previousAssignedTeamMemberId: true, previousPriority: true },
+      })
+    : [];
+  const changesByGroup = new Map<string, typeof changes>();
+  for (const change of changes) {
+    const list = changesByGroup.get(change.whatsappGroupId) ?? [];
+    list.push(change);
+    changesByGroup.set(change.whatsappGroupId, list);
+  }
+  const responsibilityAt = (groupKey: string, at: number | undefined) => {
+    const current = groups.get(groupKey);
+    if (at === undefined) return { assigned: current?.assignedMemberId ?? null, priority: current?.priority ?? null };
+    const next = changesByGroup.get(groupKey)?.find((c) => c.changedAt.getTime() > at);
+    return next
+      ? { assigned: next.previousAssignedTeamMemberId, priority: next.previousPriority as string | null }
+      : { assigned: current?.assignedMemberId ?? null, priority: current?.priority ?? null };
+  };
+
   const idleGapMinutes = Math.min(24 * 60, Math.max(5, settings?.offlineAfterMinutes ?? 120));
   const missedAfterMinutes = Math.min(24 * 60, Math.max(1, settings?.missedReplyAfterMinutes ?? 30));
   const policyMinutes: Record<string, number> = {};
@@ -511,13 +570,16 @@ export async function loadTeamReport(
     filterNote = `${memberNames.get(memberId) ?? "That team member"} was not in ${teamName} during ${range.label}, so this shows all of ${teamName}.`;
     memberId = null;
   }
+  if (filters.groupsTruncated) {
+    filterNote = `${filterNote ? `${filterNote} ` : ""}Only the first ${MAX_FILTER_GROUPS} of the chosen groups are included.`;
+  }
   const applied: TeamReportFilters = { ...filters, teamId, memberId };
   const scope = teamId
     ? (id: string, ts: number) => (memberId === null || id === memberId) && inTeamAt(intervals, id, teamId, ts)
     : null;
 
-  const missedAfterMs = (groupKey: string) => {
-    const priority = groups.get(groupKey)?.priority;
+  const missedAfterMs = (groupKey: string, at?: number) => {
+    const priority = responsibilityAt(groupKey, at).priority;
     const minutes = priority && policyMinutes[priority] ? policyMinutes[priority]! : missedAfterMinutes;
     return minutes * 60_000;
   };
@@ -528,7 +590,7 @@ export async function loadTeamReport(
     now: now.getTime(),
     idleGapMs: idleGapMinutes * 60_000,
     missedAfterMs,
-    assignedMemberFor: (groupKey) => groups.get(groupKey)?.assignedMemberId ?? null,
+    assignedMemberFor: (groupKey, at) => responsibilityAt(groupKey, at).assigned,
     memberId,
     scope,
     granularity: filters.granularity,
@@ -541,7 +603,9 @@ export async function loadTeamReport(
   const reportGroups = new Set(result.groups.map((g) => g.groupKey));
   const response = computeResponseMetrics({
     waits: result.waits,
-    humanWaits: humanWaits(intel, { rangeStart, rangeEnd, measuredTo: Math.min(rangeEnd, now.getTime()), thresholdMs: missedAfterMs }),
+    // Measured up to the same moment the first observed waits are: now, or the end of the look-ahead
+    // for a past period — so a past day's unanswered line is MISSED in both, never PENDING in one.
+    humanWaits: humanWaits(intel, { rangeStart, rangeEnd, measuredTo: Math.min(now.getTime(), rangeEnd + LOOKAHEAD_MS), thresholdMs: missedAfterMs }),
     inScope: (groupKey) => reportGroups.has(groupKey),
   });
 
@@ -564,7 +628,27 @@ export async function loadTeamReport(
     rules: { idleGapMinutes, missedAfterMinutes, policyMinutes },
     response,
     reliabilityCounts: counts,
+    responsibilityAt,
+    missedAfterMs,
+    computedAt: now.getTime(),
   };
+}
+
+/**
+ * The moment a report is computed as of. An export carries the page's own moment (`asof`, epoch ms)
+ * so a file downloaded from an open period says what the page said: computed a minute later, a wait
+ * could turn from "still waiting" into Missed between the screen and the file. Only a moment in the
+ * last 24 hours and not in the future is accepted; anything else is now.
+ */
+export function reportNow(params: Record<string, string | undefined>, real: Date = new Date()): Date {
+  const asOf = Number(params.asof);
+  if (!Number.isFinite(asOf) || asOf > real.getTime() || asOf < real.getTime() - DAY_MS) return real;
+  return new Date(asOf);
+}
+
+/** The stored-by bound an export applies: the page's moment, only when the request carries one. */
+export function exportStoredBy(params: Record<string, string | undefined>, now: Date): { storedBy?: Date } {
+  return params.asof ? { storedBy: now } : {};
 }
 
 /** The URL for a report with some filters changed — shared by the page, its links and the exports. */

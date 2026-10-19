@@ -21,6 +21,34 @@ export interface TeamMemberRow {
    * from that identifier are credited to nobody until the clash is fixed.
    */
   identityClash?: string[];
+  /** Their earlier history after being added or re-identified: being collected, or what was found. */
+  historySync?: { state: "SYNCING" | "DONE" | "FAILED"; messages: number | null; groups: number | null; firstAt: string | null };
+}
+
+function HistorySyncNote({ sync }: { sync: NonNullable<TeamMemberRow["historySync"]> }) {
+  if (sync.state === "SYNCING") {
+    return (
+      <Tooltip content="Their earlier messages in groups are being collected into Team Performance, Duty History and the Activity Feed. The Team Report and every other report already count them.">
+        <span className="ml-2 align-middle">
+          <Badge color="blue">Syncing history…</Badge>
+        </span>
+      </Tooltip>
+    );
+  }
+  if (sync.state === "FAILED") {
+    return (
+      <span className="ml-2 align-middle">
+        <Badge color="red">History sync failed</Badge>
+      </span>
+    );
+  }
+  if (!sync.messages) return null;
+  const since = sync.firstAt ? new Date(sync.firstAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Dhaka" }) : null;
+  return (
+    <span className="mt-0.5 block text-[11px] text-[color:var(--color-muted-foreground)]">
+      History synced: {sync.messages.toLocaleString("en-US")} message(s) in {sync.groups ?? 0} group(s){since ? ` since ${since}` : ""}
+    </span>
+  );
 }
 
 type DialogState = { kind: "delete" | "toggle"; member: TeamMemberRow } | null;
@@ -39,7 +67,7 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
         const result = await deleteTeamMember(member.id);
         if (result.error) setNotice({ tone: "error", text: result.error });
         else if (result.deactivated) {
-          setNotice({ tone: "info", text: `${member.name} has recorded support activity, so they were disabled instead of deleted to keep that history. Their reports are unchanged.` });
+          setNotice({ tone: "info", text: `${member.name} has messages or activity on record, so they were disabled instead of deleted to keep that history. Their reports are unchanged. If they were added by mistake and their messages are a customer's, set "Count their messages from" on their edit page instead.` });
         } else setNotice({ tone: "info", text: `${member.name} was deleted.` });
       }
       if (kind === "toggle") await toggleTeamMemberStatus(member.id);
@@ -77,7 +105,10 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
         <tbody>
           {members.map((m) => (
             <tr key={m.id}>
-              <Td>{m.name}</Td>
+              <Td>
+                {m.name}
+                {m.historySync ? <HistorySyncNote sync={m.historySync} /> : null}
+              </Td>
               <Td className="font-[family-name:var(--font-mono)] text-xs">
                 {m.phoneNumber}
                 {/* Mapped from message history, so this is a WhatsApp id rather than a number.

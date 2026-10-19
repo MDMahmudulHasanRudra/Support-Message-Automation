@@ -641,6 +641,8 @@ model Project {
   clientGroupLinks                     ClientWhatsAppGroupLink[]
   clientModuleSettings                 ClientModuleSettings?
   listViewPreferences                  ListViewPreference[]
+  groupResponsibilityChanges           GroupResponsibilityChange[]
+  identityReattributions               IdentityReattribution[]
   emailSettings                        EmailSettings?
   emailOutbox                          EmailOutbox[]
   channelInboundEvents                 ChannelInboundEvent[]
@@ -1414,6 +1416,9 @@ model InternalTeamMember {
   /// same person, holding one field, would be a second identity concept for no benefit.
   defaultShiftTemplateId String?
   defaultShiftTemplate   ShiftTemplate? @relation(fields: [defaultShiftTemplateId], references: [id], onDelete: SetNull)
+  /// When the default shift was last set or cleared. Support Overtime applies it only to days after this
+  /// moment; `updatedAt` moved on every unrelated edit and silently changed past overtime.
+  defaultShiftChangedAt  DateTime?
 
   weeklySchedule        WeeklyScheduleEntry[]
   dutyAssignments       DutyAssignment[]
@@ -2243,6 +2248,13 @@ model SupportResponseEpisode {
   /// The Support Assignment case(s) built on this wait, if the module was on (SUPPORT_ASSIGNMENT.md).
   assignments SupportAssignment[]
 
+  /// Another of our numbers holds the same wait (same WhatsApp group, same first customer message
+  /// time) and that copy is the one shown: with two of our numbers in a group the tracker keeps an
+  /// episode per group ROW, so one wait was two rows and Response Time counted one answer twice.
+  /// Twins are shown only when one account is chosen (report accuracy audit, 19 Oct 2026).
+  isTwin Boolean @default(false)
+
+  @@index([projectId, isTwin, status])
   /// Unanswered Groups: one project's open episodes, longest waiting first.
   @@index([projectId, status, firstIncomingAt])
   /// Response Time: one project's answered episodes, newest reply first.
@@ -6944,6 +6956,49 @@ model ClientModuleSettings {
   updatedBy                 User?    @relation("ClientModuleSettingsUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
+}
+
+/// Who a WhatsApp group was assigned to, and its priority, over time (report accuracy audit, 19 Oct
+/// 2026). The Team Report charges a Missed wait to the assignee, and judges it by the threshold, as
+/// they were when the customer asked: one row per change with the values before and after, and a
+/// moment before the first row reads that row's "before". Member ids are plain values, not a relation,
+/// so history keeps a removed member's id.
+model GroupResponsibilityChange {
+  id                           String           @id @default(cuid())
+  projectId                    String           @default(dbgenerated("project_id_required()"))
+  project                      Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  whatsappGroupId              String
+  previousAssignedTeamMemberId String?
+  previousPriority             SupportPriority?
+  assignedTeamMemberId         String?
+  priority                     SupportPriority?
+  changedAt                    DateTime         @default(now())
+  changedByUserId              String?
+
+  @@index([projectId, whatsappGroupId, changedAt])
+}
+
+/// A request to bring stored attribution in line with the roster after a team member's identifiers
+/// change: the team-member stamp on their messages, the member on Support Activity rows, and their
+/// Duty History days. Written by the Team Members actions, worked by the worker
+/// (teamManagement/reattribution.ts). Status: PENDING, RUNNING, DONE or FAILED.
+model IdentityReattribution {
+  id                String    @id @default(cuid())
+  projectId         String    @default(dbgenerated("project_id_required()"))
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  status            String    @default("PENDING")
+  reason            String
+  memberIds         String[]  @default([])
+  identifiers       String[]  @default([])
+  requestedByUserId String?
+  attempts          Int       @default(0)
+  result            Json?
+  error             String?
+  createdAt         DateTime  @default(now())
+  startedAt         DateTime?
+  finishedAt        DateTime?
+
+  @@index([projectId, status, createdAt])
 }
 
 /// Which columns one person shows, in which order, on one list in one project ("clients", "billing").

@@ -3,7 +3,6 @@ import {
   activityHeatmap,
   CALL_KIND_LABELS,
   CALL_SQL_PREFILTER,
-  createSenderResolver,
   detectCallMention,
   HEATMAP_METRICS,
   type CallKind,
@@ -11,7 +10,7 @@ import {
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
-import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
+import { loadReportIdentity, messageKeySql, outboundByKeyJoin, preferSenderCopySql, storedCopiesSql } from "@/server/messageIdentity";
 import type { ReportContext } from "./context";
 import { count, duration, hourLabel, when, WEEKDAYS } from "./format";
 import { waitsInScope } from "./responseReports";
@@ -96,37 +95,54 @@ const MAX_CALL_ROWS = 5000;
 
 export async function buildCalls(ctx: ReportContext): Promise<BuiltReport> {
   const { groupKeys, accountId } = ctx.filters;
-  const [candidates, members] = await Promise.all([
+  const projectId = await activeProjectId();
+  const [candidates, identity] = await Promise.all([
     // Only messages whose text could mention a call cross to this process; detectCallMention decides.
     // DISTINCT ON collapses the copies two of our numbers store of one message, as the Team Report does.
     prisma.$queryRaw<
-      Array<{ wgid: string; wamid: string; ts: Date; direction: string; fromTeam: boolean; sender: string; senderJid: string | null; body: string }>
+      Array<{
+        wgid: string;
+        wamid: string;
+        ts: Date;
+        direction: string;
+        fromTeam: boolean;
+        sender: string;
+        senderJid: string | null;
+        copies: string[] | null;
+        obMatched: boolean | null;
+        actionType: string | null;
+        ruleId: string | null;
+        createdById: string | null;
+        body: string;
+      }>
     >`
       SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
         g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."direction"::text AS direction,
-        m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid", left(m."body", 400) AS body
+        m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid", left(m."body", 400) AS body,
+        ${storedCopiesSql(Prisma.sql`g."whatsappGroupId"`)} AS copies,
+        o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
       FROM "Message" m
       JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
-      WHERE m."projectId" = ${await activeProjectId()}
+      ${outboundByKeyJoin(projectId, new Date(ctx.rangeStart), new Date(ctx.rangeEnd))}
+      WHERE m."projectId" = ${projectId}
         AND m."timestampWa" >= ${new Date(ctx.rangeStart)} AND m."timestampWa" < ${new Date(ctx.rangeEnd)}
         AND m."direction" <> 'SYSTEM'
         AND m."body" ~* ${CALL_SQL_PREFILTER}
         ${groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty}
         ${accountId ? Prisma.sql`AND m."accountId" = ${accountId}` : Prisma.empty}
       ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
-    prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true, attributeFrom: true } }),
+    // The one identity rule (WHATSAPP_IDENTITY.md), so a sender here is who the Team Report says.
+    loadReportIdentity(projectId),
   ]);
-  // The one identity rule (WHATSAPP_IDENTITY.md), so a sender here is who the Team Report says.
-  const resolver = createSenderResolver(members);
 
   const scope = ctx.data.scope;
   const found = candidates
     .map((row) => {
       const mention = detectCallMention(row.body);
       if (!mention) return null;
-      const sender = row.direction === "OUTGOING" ? null : resolver.resolve(row.sender, row.senderJid, row.ts.getTime());
-      const memberId = sender?.memberId ?? null;
-      const who = row.direction === "OUTGOING" ? "BUSINESS" : memberId || sender?.isRosterMember || row.fromTeam ? "MEMBER" : "CUSTOMER";
+      const decided = identity.classify(row, row.ts.getTime());
+      const memberId = decided.memberId;
+      const who = decided.kind;
       return { ...row, ms: row.ts.getTime(), mention, memberId, who };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)

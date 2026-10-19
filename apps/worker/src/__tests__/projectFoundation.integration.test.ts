@@ -92,7 +92,7 @@ describe("the constraints later phases depend on", () => {
     // + the seven Clients v3 tables (ClientModuleSettings, ClientPayment, ClientPaymentAllocation,
     //   ClientPhoto, ClientSubscription, ClientWhatsAppGroupLink, ListViewPreference — migration
     //   20261017100000_clients_v3).
-    expect(refusing).toHaveLength(119);
+    expect(refusing).toHaveLength(121);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -120,7 +120,7 @@ describe("the constraints later phases depend on", () => {
     // + the nine Google Sheets tables + the four Messaging Channels tables + the five Client Management
     // tables + the three client billing tables + the chat-link table + the two email tables + ProjectRole
     // + ProjectMemberRole + the seven Clients v3 tables) + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(122);
+    expect(rows).toHaveLength(124);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

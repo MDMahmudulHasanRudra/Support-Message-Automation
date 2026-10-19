@@ -1,7 +1,7 @@
 import { formatDhakaDateKey, getDhakaWeekRange } from "./dhakaDay.js";
 import type { IntelActor } from "./intelligence/model.js";
 import {
-  computeOvertimeDays,
+  computeOvertimeWork,
   DEFAULT_OVERTIME_FALLBACK_DUTY_MINUTES,
   resolveRegularDuty,
   type OvertimeDay,
@@ -44,9 +44,14 @@ import {
  *
  * Attribution to a person:
  *   Replies, groups supported and duration belong to the member who sent the messages.
- *   A Recall belongs to the member whose reply closed the wait (the business number, if it was that).
- *   A Missed wait belongs to the group's ASSIGNED team member — the only record of whose group it
- *   is — and to "Unassigned" when the group has none. So member totals of Missed only add up to the
+ *   A Recall belongs to the member whose reply closed the wait. A late reply from the business number
+ *   or from a colleague the roster cannot name is counted in the total but belongs to no member row.
+ *   In a Team or member report the two are independent: Missed counts the waits charged to someone
+ *   in scope, Recall the late answers given by someone in scope — so Recall is not always a part of
+ *   that report's Missed, though it always is in the whole-team report.
+ *   A Missed wait belongs to the group's ASSIGNED team member AT THE MOMENT THE CUSTOMER ASKED — the
+ *   only record of whose group it was — and to "Unassigned" when the group had none. Reassigning a
+ *   group never moves misses that happened before (the threshold works the same way for a priority). So member totals of Missed only add up to the
  *   team total once the Unassigned row is included.
  *
  * Support Overtime (overtime.ts, TEAM_OVERTIME.md):
@@ -73,9 +78,15 @@ import {
  *   group's assigned member was in scope when the customer asked; a Recall counts when whoever
  *   answered late was in scope when they answered. Business-number replies belong to no person and
  *   are left out of every scoped report. Groups supported are the groups an in-scope member replied
- *   in, and customer messages and waits are those groups' — counted once per group, so two
- *   colleagues in one group do not double it. The unscoped (whole-team) report is unchanged by any
- *   of this.
+ *   in. Customer messages, waits and the group rows cover those groups AND the groups whose assigned
+ *   member was in scope when a customer asked there — the groups the scope is answerable for — so a
+ *   member assigned to a group they never replied in sees that group and its waits beside the Missed
+ *   charged to them, never "12 missed of 5 waits". Counted once per group, so two colleagues in one
+ *   group do not double it. The unscoped (whole-team) report is unchanged by any of this.
+ *
+ * Staff replies credited to nobody (a colleague whose WhatsApp id and number point at two members, or
+ *   a former member no longer on the roster) are counted in `unattributedStaffReplies`, so member rows
+ *   adding up to less than the team total is explained rather than silent.
  */
 
 export type ReportMessageKind = "CUSTOMER" | "MEMBER" | "BUSINESS";
@@ -111,6 +122,12 @@ export interface ReportWait {
   waitSeconds: number | null;
   thresholdSeconds: number;
   status: WaitStatus;
+  /**
+   * Who a Missed wait is charged to: the group's assignee when the customer asked (null = nobody was
+   * assigned). Every report and export that names the owner of a wait reads it from here, so a group
+   * reassigned later never moves it.
+   */
+  chargedTo: string | null;
 }
 
 export interface TeamReportOptions {
@@ -118,8 +135,10 @@ export interface TeamReportOptions {
   rangeEnd: number;
   now: number;
   idleGapMs: number;
-  missedAfterMs: (groupKey: string) => number;
-  assignedMemberFor: (groupKey: string) => string | null;
+  /** The group's "missed" threshold when the customer asked (`at`); a priority set later does not reach back. */
+  missedAfterMs: (groupKey: string, at?: number) => number;
+  /** The group's assignee when the customer asked (`at`) — who a Missed wait is charged to. */
+  assignedMemberFor: (groupKey: string, at?: number) => string | null;
   /** Null for the whole team; a member id for one person's report. */
   memberId: string | null;
   /**
@@ -201,6 +220,11 @@ export interface TeamReportSummary {
   unscheduledMemberDays: number;
   activeMembers: number;
   lastActivityAt: number | null;
+  /**
+   * Team-member replies in the period credited to no member (identifiers that conflict, or a sender
+   * stamped staff who is no longer on the roster). Included in `memberReplies`; 0 in a scoped report.
+   */
+  unattributedStaffReplies: number;
 }
 
 export interface TeamReportResult {
@@ -338,7 +362,6 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   // ---- Waits ----
   const waits: ReportWait[] = [];
   for (const [groupKey, list] of byGroup) {
-    const thresholdMs = opts.missedAfterMs(groupKey);
     // Next reply index for every position, from a single backward pass.
     const nextReply: number[] = new Array(list.length).fill(-1);
     let seen = -1;
@@ -353,6 +376,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
       if (previous && previous.kind === "CUSTOMER") continue; // continues a wait already open
       const replyIndex = nextReply[i]!;
       const reply = replyIndex >= 0 ? list[replyIndex]! : null;
+      const thresholdMs = opts.missedAfterMs(groupKey, message.ts);
       const waitMs = reply ? reply.ts - message.ts : null;
       const status: WaitStatus = reply
         ? waitMs! <= thresholdMs
@@ -370,6 +394,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         waitSeconds: waitMs === null ? null : Math.round(waitMs / 1000),
         thresholdSeconds: Math.round(thresholdMs / 1000),
         status,
+        chargedTo: opts.assignedMemberFor(groupKey, message.ts),
       });
     }
   }
@@ -408,7 +433,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   }
 
   const isMissed = (w: ReportWait) => w.status === "RECALLED" || w.status === "MISSED";
-  const missOwner = (w: ReportWait) => opts.assignedMemberFor(w.groupKey) ?? UNASSIGNED;
+  const missOwner = (w: ReportWait) => w.chargedTo ?? UNASSIGNED;
 
   const memberRows = new Map<string, MemberReportRow>();
   const rowFor = (memberId: string): MemberReportRow => {
@@ -474,12 +499,21 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   const scopeGroups = scoped ? new Set([...scopedAcc.values()].flatMap((a) => [...a.groups])) : null;
   const waitInScopeForMissed = (w: ReportWait) => {
     if (!inScope) return true;
-    const owner = opts.assignedMemberFor(w.groupKey);
-    return owner !== null && inScope(owner, w.askedAt);
+    return w.chargedTo !== null && inScope(w.chargedTo, w.askedAt);
   };
   const waitInScopeForRecall = (w: ReportWait) =>
     !inScope ||
     (w.repliedBy !== null && w.repliedBy !== "BUSINESS" && w.repliedAt !== null && inScope(w.repliedBy, w.repliedAt));
+  // The groups a scoped report is answerable for: where its members replied, where its member was the
+  // assignee when a customer asked, and where its member gave a late answer (a Recall it is credited
+  // with, even if that reply fell in the look-ahead). Waits, customer messages and group rows use these.
+  const responsibleGroups = scopeGroups
+    ? new Set([
+        ...scopeGroups,
+        ...waits.filter(waitInScopeForMissed).map((w) => w.groupKey),
+        ...waits.filter((w) => w.status === "RECALLED" && waitInScopeForRecall(w)).map((w) => w.groupKey),
+      ])
+    : null;
 
   // Member rows as the scope sees them: in-scope activity, misses charged while in scope.
   const scopedRows = new Map<string, MemberReportRow>();
@@ -506,12 +540,21 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     return row;
   };
   if (scoped) {
+    // The groups each member is answerable for in scope: replied in, or charged a wait in.
+    const chargedGroups = new Map<string, Set<string>>();
+    for (const wait of waits) {
+      if (!wait.chargedTo || !waitInScopeForMissed(wait)) continue;
+      const set = chargedGroups.get(wait.chargedTo) ?? new Set<string>();
+      set.add(wait.groupKey);
+      chargedGroups.set(wait.chargedTo, set);
+    }
     for (const [memberId, acc] of scopedAcc) {
       const row = scopedRowFor(memberId);
       const stretches = splitIntoStretches(acc.ts, opts.idleGapMs);
       row.messages = acc.ts.length;
       row.groups = acc.groups.size;
-      row.customerMessages = [...acc.groups].reduce((sum, g) => sum + (customerInRangeByGroup.get(g) ?? 0), 0);
+      const answerable = new Set([...acc.groups, ...(chargedGroups.get(memberId) ?? [])]);
+      row.customerMessages = [...answerable].reduce((sum, g) => sum + (customerInRangeByGroup.get(g) ?? 0), 0);
       row.activeSeconds = stretchSeconds(stretches);
       row.stretches = stretches.length;
       row.firstAt = acc.ts[0] ?? null;
@@ -519,7 +562,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     }
     for (const wait of waits) {
       if (isMissed(wait) && waitInScopeForMissed(wait)) {
-        const owner = scopedRowFor(opts.assignedMemberFor(wait.groupKey)!);
+        const owner = scopedRowFor(wait.chargedTo!);
         owner.missed += 1;
         if (wait.status === "MISSED") owner.unrecovered += 1;
       }
@@ -536,7 +579,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   }
   const groupRows: GroupReportRow[] = [];
   for (const [groupKey, list] of byGroup) {
-    if (scopeGroups && !scopeGroups.has(groupKey)) continue;
+    if (responsibleGroups && !responsibleGroups.has(groupKey)) continue;
     const ranged = list.filter((m) => inRange(m.ts));
     if (ranged.length === 0) continue;
     const memberMsgs = ranged.filter((m) => m.kind === "MEMBER" && (!scoped || memberInScope(m)));
@@ -544,15 +587,18 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     const activityTs = (scoped ? memberMsgs : ranged.filter(isReply)).map((m) => m.ts);
     groupRows.push({
       groupKey,
-      memberIds: [...new Set(ranged.filter((m) => m.kind === "MEMBER" && m.memberId).map((m) => m.memberId!))],
+      // In a scoped report, only the people in scope (the others' replies are not this report's).
+      memberIds: [...new Set((scoped ? memberMsgs : ranged.filter((m) => m.kind === "MEMBER")).filter((m) => m.memberId).map((m) => m.memberId!))],
       totalMessages: ranged.length,
       customerMessages: ranged.filter((m) => m.kind === "CUSTOMER").length,
       memberReplies: memberMsgs.length,
       businessReplies: scoped ? 0 : ranged.filter((m) => m.kind === "BUSINESS").length,
       waits: groupWaits.length,
-      missed: groupWaits.filter(isMissed).length,
-      recalled: groupWaits.filter((w) => w.status === "RECALLED").length,
-      unrecovered: groupWaits.filter((w) => w.status === "MISSED").length,
+      // The same predicates as the summary, so a scoped report's group rows add up to its headline:
+      // Missed charged to whoever owned the group then, Recall credited to whoever answered late.
+      missed: groupWaits.filter((w) => isMissed(w) && waitInScopeForMissed(w)).length,
+      recalled: groupWaits.filter((w) => w.status === "RECALLED" && waitInScopeForRecall(w)).length,
+      unrecovered: groupWaits.filter((w) => w.status === "MISSED" && waitInScopeForMissed(w)).length,
       activeSeconds: stretchSeconds(splitIntoStretches(memberMsgs.map((m) => m.ts), opts.idleGapMs)),
       firstActivityAt: activityTs[0] ?? null,
       lastActivityAt: activityTs[activityTs.length - 1] ?? null,
@@ -583,7 +629,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     const b = bucket(message.ts);
     if (!b) continue;
     if (message.kind === "CUSTOMER") {
-      if (!scopeGroups || scopeGroups.has(message.groupKey)) b.customerMessages += 1;
+      if (!responsibleGroups || responsibleGroups.has(message.groupKey)) b.customerMessages += 1;
     } else if (message.kind === "MEMBER") {
       if (!scoped || memberInScope(message)) {
         b.memberMessages += 1;
@@ -619,12 +665,47 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
   const dutyFor = opts.dutyFor ?? (() => fallbackDuty);
   const firstDay = formatDhakaDateKey(new Date(opts.rangeStart));
   const lastDay = formatDhakaDateKey(new Date(opts.rangeEnd - 1));
-  const overtimeDays = computeOvertimeDays(
-    new Map([...timelines].map(([memberId, acc]) => [memberId, splitIntoStretches(acc.ts, opts.idleGapMs)])),
-    dutyFor,
-    // Only the period's own days: work after midnight inside a shift that began the day before the
-    // period belongs to that earlier day, which this report does not cover.
-  ).filter((d) => d.day >= firstDay && d.day <= lastDay);
+  // Overtime is a fact about a member's WHOLE day: their day's work beyond their day's duty. A scoped
+  // report takes its share — the day's overtime times the part of the day's work done in scope — so
+  // somebody who moved Team at 14:00 keeps their overtime, split between the two Teams, instead of
+  // each half being measured against a full day's duty and the overtime disappearing.
+  const stretchesOf = (accs: Map<string, { ts: number[] }>) =>
+    new Map([...accs].map(([memberId, acc]) => [memberId, splitIntoStretches(acc.ts, opts.idleGapMs)]));
+  // Only the period's own days: work after midnight inside a shift that began the day before the
+  // period belongs to that earlier day, which this report does not cover.
+  const inPeriodDays = (d: OvertimeDay) => d.day >= firstDay && d.day <= lastDay;
+  const fullDays = computeOvertimeWork(stretchesOf(memberAcc), dutyFor).filter(inPeriodDays);
+  let overtimeDays: Array<OvertimeDay & { workedSeconds: number }> = fullDays;
+  if (scoped) {
+    // The scope's part of each member-day: every interval between two of their messages inside one
+    // work stretch belongs to whoever they were (in scope or not) at its start, so the parts of one
+    // day over complementary scopes add up to the whole day and the overtime is never lost. (A
+    // one-message stretch is zero seconds, so it carries no overtime either way.)
+    const part = new Map<string, { inScope: number; total: number }>();
+    for (const [memberId, acc] of memberAcc) {
+      for (const stretch of splitIntoStretches(acc.ts, opts.idleGapMs)) {
+        const points = acc.ts.filter((t) => t >= stretch.start && t <= stretch.end);
+        const k = `${memberId}|${formatDhakaDateKey(new Date(stretch.start))}`;
+        const entry = part.get(k) ?? { inScope: 0, total: 0 };
+        for (let i = 0; i + 1 < points.length; i++) {
+          const seconds = (points[i + 1]! - points[i]!) / 1000;
+          entry.total += seconds;
+          if (inScope!(memberId, points[i]!)) entry.inScope += seconds;
+        }
+        part.set(k, entry);
+      }
+    }
+    const scopedWorked = new Map(
+      computeOvertimeWork(stretchesOf(scopedAcc), dutyFor).map((d) => [`${d.memberId}|${d.day}`, d.workedSeconds]),
+    );
+    overtimeDays = fullDays
+      .filter((d) => scopedAcc.has(d.memberId) && (scopedWorked.has(`${d.memberId}|${d.day}`) || (part.get(`${d.memberId}|${d.day}`)?.inScope ?? 0) > 0))
+      .map((d) => {
+        const p = part.get(`${d.memberId}|${d.day}`);
+        const share = p && p.total > 0 ? Math.min(1, p.inScope / p.total) : 0;
+        return { ...d, overtimeSeconds: Math.round(d.overtimeSeconds * share), workedSeconds: scopedWorked.get(`${d.memberId}|${d.day}`) ?? 0 };
+      });
+  }
   const overtimeRows = scoped ? scopedRows : memberRows;
   for (const d of overtimeDays) {
     const row = overtimeRows.get(d.memberId);
@@ -647,8 +728,8 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
 
   // ---- Summary ----
   const scopedMemberRows = [...scopedRows.values()];
-  // A scoped report's "waits" are the waits in the groups its members supported.
-  const inScopeWaits = scopeGroups ? waits.filter((w) => scopeGroups.has(w.groupKey)) : waits;
+  // A scoped report's "waits" are the waits in the groups it is answerable for.
+  const inScopeWaits = responsibleGroups ? waits.filter((w) => responsibleGroups.has(w.groupKey)) : waits;
   const latest = (rows: readonly MemberReportRow[]) =>
     rows
       .filter((r) => r.memberId !== UNASSIGNED)
@@ -657,10 +738,10 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     messages.filter((m) => inRange(m.ts) && isReply(m)).map((m) => m.groupKey),
   );
 
-  const summary: TeamReportSummary = scopeGroups
+  const summary: TeamReportSummary = scopeGroups && responsibleGroups
     ? {
         groupsSupported: scopeGroups.size,
-        customerMessages: [...scopeGroups].reduce((sum, g) => sum + (customerInRangeByGroup.get(g) ?? 0), 0),
+        customerMessages: [...responsibleGroups].reduce((sum, g) => sum + (customerInRangeByGroup.get(g) ?? 0), 0),
         memberReplies: [...scopedAcc.values()].reduce((sum, a) => sum + a.ts.length, 0),
         businessReplies: 0,
         waits: inScopeWaits.length,
@@ -672,6 +753,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         unscheduledMemberDays: unscheduledTotal,
         activeMembers: scopedAcc.size,
         lastActivityAt: latest(scopedMemberRows),
+        unattributedStaffReplies: 0,
       }
     : {
         groupsSupported: allReplyGroups.size,
@@ -687,6 +769,7 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
         unscheduledMemberDays: unscheduledTotal,
         activeMembers: memberAcc.size,
         lastActivityAt: latest([...memberRows.values()]),
+        unattributedStaffReplies: messages.filter((m) => m.kind === "MEMBER" && m.memberId === null && inRange(m.ts)).length,
       };
 
   const members = (scoped ? scopedMemberRows : [...memberRows.values()]).sort(
@@ -700,5 +783,13 @@ export function computeTeamReport(messages: readonly ReportMessage[], opts: Team
     (w) => (isMissed(w) && waitInScopeForMissed(w)) || (w.status === "RECALLED" && waitInScopeForRecall(w)),
   );
 
-  return { summary, members, groups: groupRows, buckets: bucketRows, waits, countedMissedWaits, overtimeDays };
+  return {
+    summary,
+    members,
+    groups: groupRows,
+    buckets: bucketRows,
+    waits,
+    countedMissedWaits,
+    overtimeDays: overtimeDays.map(({ workedSeconds: _worked, ...day }) => day),
+  };
 }

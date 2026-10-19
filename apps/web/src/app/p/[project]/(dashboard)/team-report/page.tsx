@@ -75,7 +75,8 @@ export default async function TeamReportPage({
   const scope = scopeLabel(teamName, scopedName);
   const teamOnly = Boolean(filters.teamId && !filters.memberId);
   const PERIOD_NAMES: Record<string, string> = { day: "Daily", week: "Weekly", month: "Monthly", custom: "Custom range" };
-  const query = teamReportQuery(filters);
+  // The page's own moment travels with every export, so the file says what the screen said.
+  const query = `${teamReportQuery(filters)}&asof=${now.getTime()}`;
 
   const activitySeries = result.buckets.map((b) => ({
     label: bucketLabel(b.key, filters.granularity),
@@ -184,7 +185,7 @@ export default async function TeamReportPage({
         <StatTile
           label="Customer messages"
           value={count(summary.customerMessages)}
-          hint={filters.memberId ? "in the groups they supported" : teamOnly ? "in the groups the team supported" : "from customers, all groups"}
+          hint={filters.memberId ? "in the groups they supported or were assigned" : teamOnly ? "in the groups the team supported or was assigned" : "from customers, all groups"}
         />
         <StatTile
           label="Team replies"
@@ -194,7 +195,11 @@ export default async function TeamReportPage({
               ? "messages they sent"
               : teamOnly
                 ? "messages the team's members sent"
-                : `+ ${count(summary.businessReplies)} from the business number`
+                : `+ ${count(summary.businessReplies)} from the business number${
+                    summary.unattributedStaffReplies > 0
+                      ? ` · ${count(summary.unattributedStaffReplies)} by a team member not identified (see Team Members)`
+                      : ""
+                  }`
           }
         />
         <StatTile
@@ -227,12 +232,16 @@ export default async function TeamReportPage({
       ) : null}
 
       {summary.waits === 0 && summary.memberReplies === 0 && summary.customerMessages === 0 ? (
-        <EmptyState>No WhatsApp group messages were stored for {scopedName ?? teamName ?? "the team"} in {range.label}.</EmptyState>
+        <EmptyState>
+          {scopedName || teamName
+            ? `Nothing in ${range.label} for ${scopedName ?? teamName}: no replies of theirs, and no wait in a group they were answerable for.`
+            : `No WhatsApp group messages were stored in ${range.label}.`}
+        </EmptyState>
       ) : (
         <>
           <section className="mb-5 grid grid-cols-1 gap-3.5 lg:grid-cols-3">
-            <ChartCard className="lg:col-span-2" title="Support activity" description={`Team replies per ${filters.granularity}.`}>
-              <ColumnChart data={activitySeries} ariaLabel="Team replies over the period" labelEvery={labelEvery} />
+            <ChartCard className="lg:col-span-2" title="Support activity" description={`Replies per ${filters.granularity}: team members and the business number.`}>
+              <ColumnChart data={activitySeries} ariaLabel="Replies over the period" labelEvery={labelEvery} />
             </ChartCard>
             <ChartCard title="Missed and recall" description="Of the customer waits that went past their threshold.">
               <StackedBar
@@ -263,8 +272,8 @@ export default async function TeamReportPage({
                 title={teamName ? `${teamName} members` : "Team members"}
                 description={
                   teamName
-                    ? "Only their work while in this team. Missed belongs to the group's assigned member; Recall to whoever answered late. Select a name for that person's report."
-                    : "Missed belongs to the group's assigned member; Recall to whoever answered late. Select a name for that person's report."
+                    ? "Only their work while in this team. Missed belongs to whoever the group was assigned to when the customer asked; Recall to whoever answered late. Select a name for that person's report."
+                    : "Missed belongs to whoever the group was assigned to when the customer asked; Recall to whoever answered late. Select a name for that person's report."
                 }
               />
             </Card>
@@ -294,7 +303,7 @@ export default async function TeamReportPage({
               title={`Groups (${count(result.groups.length)})`}
               description={
                 filters.memberId || filters.teamId
-                  ? `Groups ${scopedName ?? teamName} replied in. Replies, time and first/last are theirs; Missed and Recall are the group's own. Select a group to see every wait behind its numbers.`
+                  ? `Groups ${scopedName ?? teamName} replied in, or was the assignee of when a customer asked. Replies, time and first/last are theirs; Missed and Recall are the group's own. Select a group to see every wait behind its numbers.`
                   : "Every group with a message in the period, busiest first. Select a group to see every wait behind its numbers."
               }
             />
@@ -325,7 +334,13 @@ function CalculationHelp({
           Every figure is counted from the WhatsApp group messages the system stored. A message is a customer message, a
           team member&apos;s message (matched by their WhatsApp id or phone number on Internal Team Members), or a
           business-number message (sent from our own number — an operator, a rule or the AI). A message stored by two of
-          our numbers in the same group is counted once. Days, weeks (Sunday start) and months are Asia/Dhaka.
+          our numbers in the same group is counted once, and every stored copy is used to recognise who sent it. A reply
+          typed in WhatsApp Chat counts for the team member linked to that login on Team Members. Days, weeks (Sunday
+          start) and months are Asia/Dhaka.
+        </p>
+        <p className="mt-2">
+          One-to-one (personal) chats are not counted here: this report is about support in groups. Personal
+          conversations are in WhatsApp Chat and the WhatsApp Chat User Activity report.
         </p>
       </HelpSection>
       <HelpSection title="Customer waits">
@@ -359,8 +374,9 @@ function CalculationHelp({
           Settings → Support Activity Setup.
         </p>
         <p className="mt-2">
-          A Missed wait is charged to the group&apos;s assigned team member (&quot;Unassigned&quot; when it has none). A
-          Recall is credited to whoever sent the late reply.
+          A Missed wait is charged to the team member the group was assigned to when the customer asked
+          (&quot;Unassigned&quot; when it had none) — reassigning a group later does not move it. A Recall is credited to
+          whoever sent the late reply.
         </p>
       </HelpSection>
       <HelpSection title="Support Overtime">

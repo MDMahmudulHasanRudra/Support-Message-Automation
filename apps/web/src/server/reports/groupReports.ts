@@ -33,16 +33,19 @@ export interface MonitoredGroup {
 }
 
 /**
- * Today's monitored, active groups — one per WhatsApp group (the Primary account's copy names it) —
- * within the group and account filters and the group scope rule. "Today's" deliberately: whether a
- * group was monitored last month is not recorded anywhere, and the page says so.
+ * Today's monitored groups that are active, or that had messages in the period (a group the number
+ * left mid-period still belongs in that period's report) — one per WhatsApp group (the Primary
+ * account's copy names it) — within the group and account filters and the group scope rule.
+ * "Today's" monitoring deliberately: whether a group was monitored last month is not recorded
+ * anywhere, and the page says so.
  */
 export async function loadMonitoredGroups(ctx: ReportContext): Promise<MonitoredGroup[]> {
   const { groupKeys, accountId } = ctx.filters;
+  const withMessages = [...ctx.data.groups.keys()];
   const rows = await prisma.whatsAppGroup.findMany({
     where: {
       isMonitored: true,
-      isActive: true,
+      OR: [{ isActive: true }, ...(withMessages.length ? [{ whatsappGroupId: { in: withMessages } }] : [])],
       ...(groupKeys?.length ? { whatsappGroupId: { in: groupKeys } } : {}),
       ...(accountId ? { accountId } : {}),
     },
@@ -430,7 +433,7 @@ export function buildGroupCoverage(ctx: ReportContext): BuiltReport {
     noun: { singular: "group", plural: "groups" },
     columns: [
       { label: "Group" },
-      { label: "Assigned" },
+      { label: "Assigned now" },
       { label: "Waits", numeric: true },
       { label: "Answered", numeric: true },
       { label: "In time", numeric: true },
@@ -529,7 +532,8 @@ export async function buildGroupTrend(ctx: ReportContext): Promise<BuiltReport> 
   const granularity = ctx.filters.granularity;
   const inScope = (groupKey: string) => ctx.groupInScope(groupKey, assignedOf(ctx, groupKey));
   const messages = ctx.data.messages.filter((m) => inScope(m.groupKey));
-  const waits = ctx.data.result.waits.filter((w) => inScope(w.groupKey));
+  // Missed counted as the Team Report counts it in a Team/member view: charged to someone in scope.
+  const waits = ctx.data.result.waits.filter((w) => inScope(w.groupKey) && ctx.missedInScope(w));
   const rows = groupActivityTrend(messages, waits, { rangeStart: ctx.rangeStart, rangeEnd: ctx.rangeEnd, granularity });
   const monitored = await loadMonitoredGroups(ctx);
   const total = rows.reduce(

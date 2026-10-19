@@ -928,3 +928,34 @@ Different metrics keep their own names:
 - Team Performance's "Time engaged";
 - Support Intelligence's "Observed Support Session Time";
 - Call Activity's "Duration".
+
+## Report accuracy audit (19 Oct 2026)
+
+- **Who sent it** is decided by one classifier for every report (WHATSAPP_IDENTITY.md §10): every
+  stored copy is a witness, our own numbers' posts are the business's, dashboard replies are credited
+  to the member linked to the login, and the member's "count their messages from" date wins over the
+  stored team-member stamp.
+- **Team Performance, availability, first response, "waiting for a reply" and the Overview charts**
+  read the same classified messages (`server/attributedMessages.ts`) with the Team Report's own wait
+  and support-time rules, so they agree with the Team Report about every person and day.
+- **Missed is charged to the assignee when the customer asked**, judged by the threshold then
+  (`GroupResponsibilityChange`). A Team/member report includes the groups it was assigned when a
+  customer asked, so Missed never exceeds Waits. Staff replies credited to nobody are counted and shown.
+- **Exports carry the page's moment** (`asof`), so an open period's file matches the page.
+- **Personal (one-to-one) chats are not in these reports.** They count groups only; a personal
+  conversation is in WhatsApp Chat and the WhatsApp Chat User Activity report.
+
+## Team Report audit (19 Oct 2026)
+
+- Every wait records who it is charged to when the customer asked (`chargedTo`) and the threshold then.
+  The Team Report, Missed Support, Group Coverage, Employee Effectiveness, Human Response SLA and the
+  Excel "Missed & Recall" sheet all read those, so reassigning a group or changing its priority never
+  rewrites the past. "Assigned now" columns are labelled as today's assignee.
+- In a Team/member view, Missed counts the waits charged to someone in scope and Recall the late
+  answers given by someone in scope; group rows add up to the headline; other reports use the same
+  scope rule.
+- Support Overtime in a Team view is the share of each whole day's overtime worked in that Team.
+- With one account chosen, the report lists that account's messages but recognises senders from every
+  account's copies.
+- Exports and drill-downs carry the page's moment (`asof`); the Excel Summary carries data health and the
+  unidentified-staff count; the CSV is UTF-8 with a BOM and always has a header.

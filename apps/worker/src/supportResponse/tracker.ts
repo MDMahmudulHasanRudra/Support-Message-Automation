@@ -86,6 +86,11 @@ export async function trackSupportResponse(input: {
       // One group's messages decided one at a time, so two arriving together cannot both open an
       // episode (the partial unique index would refuse the second anyway) or both answer one.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`support-response:${groupId}`})::bigint)`;
+      // And the WhatsApp group across our numbers (always taken second, after the row's own lock, so
+      // two rows of one group can never wait on each other): another number's copy of the same wait
+      // is decided one at a time, so exactly one copy is the one shown.
+      const whatsappGroupId = (await tx.whatsAppGroup.findUnique({ where: { id: groupId }, select: { whatsappGroupId: true } }))?.whatsappGroupId ?? null;
+      if (whatsappGroupId) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`support-response-wa:${whatsappGroupId}`})::bigint)`;
       const open = await tx.supportResponseEpisode.findFirst({ where: { groupId, status: "UNANSWERED" } });
 
       let closedThroughAt: number | null = null;
@@ -118,10 +123,19 @@ export async function trackSupportResponse(input: {
 
       switch (action.kind) {
         case "OPEN": {
+          // The same wait already recorded by another of our numbers (same group, same first customer
+          // message time): this copy is its twin, shown only when this account is chosen.
+          const twinOf = whatsappGroupId
+            ? await tx.supportResponseEpisode.findFirst({
+                where: { groupId: { not: groupId }, firstIncomingAt: at, isTwin: false, group: { whatsappGroupId } },
+                select: { id: true },
+              })
+            : null;
           const created = await tx.supportResponseEpisode.create({
             data: {
               accountId: input.accountId,
               groupId,
+              isTwin: Boolean(twinOf),
               firstIncomingMessageId: input.messageId,
               firstIncomingAt: at,
               latestIncomingMessageId: input.messageId,
@@ -142,19 +156,27 @@ export async function trackSupportResponse(input: {
             },
           });
           return { role, memberId, action: action.kind, episodeId: open!.id };
-        case "ANSWER":
-          await tx.supportResponseEpisode.update({
-            where: { id: open!.id },
-            data: {
-              status: "ANSWERED",
-              supportReplyMessageId: input.messageId,
-              supportRepliedAt: at,
-              supportMemberId: memberId,
-              supportTeamId,
-              responseSeconds: action.responseSeconds,
-            },
-          });
+        case "ANSWER": {
+          const answered = {
+            status: "ANSWERED" as const,
+            supportReplyMessageId: input.messageId,
+            supportRepliedAt: at,
+            supportMemberId: memberId,
+            supportTeamId,
+            responseSeconds: action.responseSeconds,
+          };
+          await tx.supportResponseEpisode.update({ where: { id: open!.id }, data: answered });
+          // The same wait as our other numbers hold it is answered by the same reply, even when one
+          // of them never received it (a dropped session) — otherwise the copy that is shown could
+          // stay "unanswered" for a customer who was answered.
+          if (whatsappGroupId) {
+            await tx.supportResponseEpisode.updateMany({
+              where: { status: "UNANSWERED", groupId: { not: groupId }, firstIncomingAt: open!.firstIncomingAt, group: { whatsappGroupId } },
+              data: answered,
+            });
+          }
           return { role, memberId, action: action.kind, episodeId: open!.id };
+        }
         case "REANSWER":
           // Two members replied moments apart and the later one was processed first: the earlier
           // reply is the real answer, so the record says so.

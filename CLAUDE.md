@@ -340,6 +340,7 @@ since `setInterval` doesn't await its callback)
 | `startChannelOutboundProcessor` | 2s | the channels' send queue (`ChannelMessage` QUEUED → SENT), retries, UNKNOWN on an unknowable outcome |
 | `startChannelAiProcessor` | 3s | AI replies on the channels — the WhatsApp answering logic and gates, 1:1 only, ≤15 min old |
 | `startGroupRecoveryProcessor` | 60s | re-reads (ADD_ONLY, never deactivates) the group list of a CONNECTED account a sync left FAILED/PARTIAL (RETRY, 2 min → 6 h), one connected in the last 24 h whose phone may still be sending chats (FOLLOW, 2 → 30 min, never touches the status — `GROUP_SYNC.md` §10), a COMPLETED one holding inactive groups (VERIFY, bounded, never touches the status), or any other connected account once a day (DAILY, 17 Oct 2026, ADD_ONLY, never touches the status, `WHATSAPP_GROUP_DAILY_CHECK_HOURS=0` turns it off — catches a list shown as 500 of 1,800 after the FOLLOW window); an unavailable or empty read is unknown and writes nothing (`GROUP_SYNC.md` §8) |
+| `startIdentityReattributionProcessor` | 30s | after a Team Members identity change, re-decides the stored `isFromTeamMember` stamp (every member, "count from" date at the message's time), `SupportActivity.teamMemberId`, and Duty History days (last 120) for the identifiers involved — one `IdentityReattribution` request per project per tick (`teamManagement/reattribution.ts`) |
 | heartbeat | 15s | health state + DB connectivity log |
 
 On boot: health server → DB connectivity check (fatal if unreachable) → crash recovery (resets
@@ -904,14 +905,18 @@ replaced.** Hours-worked sums `SupportSession.durationSeconds`, which is only wr
 session COMPLETES, which needs a rule whose keyword carries `marksCompletion` — a deployment
 running the `ANY_MESSAGE` rule (the configuration this module is most often used in, and the one
 running here) has no such keyword, so its sessions never complete and its hours report is
-permanently empty **while looking perfectly healthy**. `getExecutiveWorkload()` instead reads the
-activity rows directly: one raw-SQL query spanning each person's first→last message **per group
-per Dhaka calendar day**, summed. Per group *and* per day deliberately — one span across a week
-would count the nights in between, one span across every group at once would count the time they
-were busy elsewhere. A day with one message is zero seconds, which is honest rather than
-flattering; the message count beside it is what says they were working. `date_trunc('day', … AT
-TIME ZONE 'Asia/Dhaka')` bounds the shift the way the person lived it: UTC midnight falls at 06:00
-local and would split every morning in two.
+permanently empty **while looking perfectly healthy**. Since the report accuracy audit (19 Oct
+2026) `getExecutiveWorkload()` — and availability, first response, "waiting for a reply" and the
+Overview's executive load, people/AI split and wait chart — read `Message` through
+`server/attributedMessages.ts`: the Team Report's own classification (one row per logical message,
+every stored copy a witness, read-time identity, our own numbers' posts as the business's, dashboard
+replies credited through the linked login) and the Team Report's own support-time rule
+(`splitIntoStretches`: one timeline per person across all groups, split at the idle gap and at Dhaka
+midnight). It used to read `SupportActivity`, which exists only while tracking is on, only for rule
+matches, once per account copy, against the roster at arrival — so Team Performance and the Team
+Report disagreed about the same person. `SupportActivity` still feeds the Activity Feed, its counts
+deduplicated per logical message and WhatsApp group (`distinctActivities`). A day with one message
+is zero seconds, which is honest rather than flattering.
 
 **A team member with recorded activity is deactivated, never deleted.** `SupportActivity.teamMemberId`
 is `SetNull`, so hard-deleting someone silently orphaned every activity they ever recorded — this
@@ -1010,6 +1015,25 @@ write another identifier→member map. Rules worth not undoing:
 - **Identifier changes on Team Members are System Log entries.** WhatsApp Chat's contact panel links
   an unresolved sender to a member (`linkWhatsAppSender`, `whatsapp.manage`). Panels are URL state
   (`?contact=` / `?info=group`).
+- **Report accuracy audit (19 Oct 2026) — rules worth not undoing:**
+  - `normalizePhoneNumber` gives a local Bangladeshi number ("01" + 9 digits) its country code: a
+    member typed as "01…" matched nothing WhatsApp delivers ("8801…").
+  - Every report classifies a kept message through ONE function, `createReportClassifier`
+    (`server/messageIdentity.ts`): our own message (kept copy OUTGOING, its echoed send found on the
+    LOGICAL key by `outboundByKeyJoin`, or a copy's sender in `loadOwnSenderIds`) is the business's; a
+    MANUAL_REPLY is credited to the member linked to that login; otherwise `attributeAcrossCopies`
+    hears EVERY stored copy (`storedCopiesSql`), since one number can see the author's LID and another
+    their phone. The stored `isFromTeamMember` stamp only keeps a deleted member's history staff; it
+    never overrides a "count their messages from" date.
+  - `preferSenderCopySql` keeps OUTGOING, then the `true_` copy, then a staff-stamped one.
+  - Team Members: Add from group stores a PHONE as a number (no WhatsApp ID) and a LID as the ID; the
+    chat link may replace a placeholder ID equal to the phone; Delete deactivates anybody with any
+    message or attendance. Identity changes queue an `IdentityReattribution` (`server/reattribution.ts`).
+    Team Members → Identity check (`rosterIdentityHealth.ts`) lists members on our own numbers, quiet
+    members and frequent unknown senders, with "Add to team" (`addTeamMemberFromSender`). The
+    re-attribution also backfills Support Activity rows for a newly added colleague's earlier messages
+    (rules permitting, last 365 days) and records per-member what it found; Team Members shows
+    "Syncing history…" then "History synced: N messages in G groups" (`getMemberHistorySync`).
 
 ### Support response tracking — Messages → Unanswered Groups / Response Time (`apps/worker/src/supportResponse/`, `SUPPORT_RESPONSE.md`)
 
@@ -1030,6 +1054,10 @@ write another identifier→member map. Rules worth not undoing:
   next customer message opens a new wait.
 - **The web reads episodes only.** One `where` builder serves the page, select-all, Clear all and
   export.
+- **One wait, one row (`isTwin`, 19 Oct 2026).** With two of our numbers in a group the tracker keeps an
+  episode per row, so it marks every later copy of the same wait (same WhatsApp group, same first
+  customer time, decided under a per-WhatsApp-group lock) `isTwin`. Readers hide twins unless one account
+  is chosen; a reply answers every copy; Clear clears every copy.
 
 ### Support Assignment (`apps/worker/src/supportAssignment/`, `(dashboard)/support-assignment/`, `SUPPORT_ASSIGNMENT.md`)
 
@@ -1238,7 +1266,26 @@ priority uses its escalation policy's `firstAlertMinutes`; every other group use
 `SupportActivitySettings.missedReplyAfterMinutes` (default 30, on Support Activity Setup). Answered
 after the threshold = Recall (a subset of Missed, never counted twice); never answered past it =
 Missed and unrecovered; still inside it = neither. Missed is charged to the group's
-`assignedTeamMemberId` ("Unassigned" otherwise); Recall to whoever sent the late reply. Business-number
+`assignedTeamMemberId` AT THE MOMENT THE CUSTOMER ASKED ("Unassigned" otherwise) and judged by the
+threshold then — `GroupResponsibilityChange` (written by `setGroupPriority`) records each change with
+its before/after values, so reassigning a group never moves earlier misses; Recall to whoever sent the
+late reply. A Team/member report covers the groups it replied in AND the groups it was assigned when a
+customer asked, so Missed never exceeds Waits.
+
+**Team Report audit (19 Oct 2026), rules worth not undoing:** every `ReportWait` carries `chargedTo` (the
+assignee when the customer asked) and its at-the-time `thresholdSeconds`; every report, export and the
+human-response measure read those — never `groups.get(..).assignedMemberId` or today's priority
+(`TeamReportData.responsibilityAt` / `missedAfterMs` for anything else). History is recorded on the
+group's MERGED reading (`server/groupResponsibility.ts`, Primary copy first), also when setup is copied
+to a new number. In a Team/member view Missed is the waits charged in scope and Recall the late answers
+given in scope (independent); group rows use the same predicates; `ctx.groupInScope` is the Team Report's
+scoped group rows for groups with messages; `ctx.missedInScope` filters late/never waits by `chargedTo`.
+Overtime is the whole member-day's, shared to a scope by the part of the day worked in it. With one
+account chosen, identity is still decided over every account's copies (inner query, account filter
+outside). Exports carry `asof` and read only rows stored by then (`exportStoredBy`); the drill-down link
+carries it too. Default-shift history is `InternalTeamMember.defaultShiftChangedAt`, never `updatedAt`.
+A template test send (`template-test:` key) is never a member's reply; a dashboard reply respects the
+member's "count from" date. Business-number
 replies count as replies but carry no person and no duration. Replies are looked for up to 24 h
 past the period end, and only waits starting inside the period count.
 
@@ -1417,6 +1464,12 @@ an unstaggered `Promise.all` (the ten creates all finish before the first SELECT
 arrivals over fourteen rounds is what works — with the lock deleted, probe rounds returned 10, 8, 9,
 9, 10, 10, 10, 10, 10, 8. Do not simplify that test; each simplification was tried and each passed
 against broken code.
+
+**Since 19 Oct 2026 the recompute counts each logical message and each WhatsApp group once** (copies
+two of our numbers store were doubling both), honours "count their messages from", credits MANUAL_REPLY
+sends through the member's linked login (`recordOperatorAttendance`, hooked on the send and its echo),
+and withdraws a day whose evidence moved away (kept at zero only under a manager's override).
+`recomputeAttendanceDay` is the shared core the re-attribution job also calls.
 
 The recompute is deliberately **not** filtered on `Message.isFromTeamMember`. That column is stamped
 at insert time, so it is false for everything somebody sent before they joined the roster — filtering

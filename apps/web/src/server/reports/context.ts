@@ -36,11 +36,19 @@ export interface ReportContext {
   /** Whether a Team or member filter is in effect. */
   scoped: boolean;
   /**
-   * For group-oriented reports (REPORTS.md §3): with a Team or member chosen, a group is in scope when
-   * its assigned team member is in that scope during the period, or an in-scope member replied in it.
+   * For group-oriented reports (REPORTS.md §3), with a Team or member chosen: a group with messages in
+   * the period is in scope exactly when the Team Report's scoped group rows include it (an in-scope
+   * member replied there, was its assignee when a customer asked, or answered a wait there late); a
+   * group with no message in the period (Inactive Groups) when its assignee today is in scope.
    * Always true without one.
    */
   groupInScope: (groupKey: string, assignedMemberId: string | null) => boolean;
+  /**
+   * Whether a Missed (late or never answered) wait belongs to this report: always without a Team or
+   * member chosen; with one, when the wait's assignee AT THE TIME (`chargedTo`) was in scope — the
+   * Team Report's Missed rule. Answered-in-time and still-waiting waits are not charged to anybody.
+   */
+  missedInScope: (wait: { chargedTo: string | null; askedAt: number; status: string }) => boolean;
   groupName: (groupKey: string) => string;
   memberName: (memberId: string | null) => string;
   options: ReportFilterOptions;
@@ -82,7 +90,8 @@ export async function loadReportContext(params: Record<string, string | undefine
   const requested = parseTeamReportFilters(params, now);
   const requestedRange = resolveTeamReportRange(requested, now);
   const [data, options, dataHealth] = await Promise.all([
-    loadTeamReport(requested, now),
+    // An export carries the page's moment: read only what was stored by then (exportStoredBy).
+    loadTeamReport(requested, now, undefined, params.asof ? { storedBy: now } : {}),
     loadReportFilterOptions(requested.groupKeys),
     loadDataHealth({ periodStart: requestedRange.start.getTime(), periodEnd: requestedRange.end.getTime(), now, accountId: requested.accountId }),
   ]);
@@ -98,9 +107,13 @@ export async function loadReportContext(params: Record<string, string | undefine
     if (filters.teamId) return (teamMemberIds[filters.teamId] ?? []).includes(id);
     return true;
   };
-  const repliedInScope = new Set(scoped ? data.result.groups.map((g) => g.groupKey) : []);
+  const reportGroups = new Set(scoped ? data.result.groups.map((g) => g.groupKey) : []);
   const groupInScope = (groupKey: string, assignedMemberId: string | null) =>
-    !scoped || assigneeInScope(assignedMemberId) || repliedInScope.has(groupKey);
+    !scoped || (data.groups.has(groupKey) ? reportGroups.has(groupKey) : assigneeInScope(assignedMemberId));
+  const missedInScope = (wait: { chargedTo: string | null; askedAt: number; status: string }) =>
+    !scoped ||
+    (wait.status !== "RECALLED" && wait.status !== "MISSED") ||
+    (wait.chargedTo !== null && data.scope !== null && data.scope(wait.chargedTo, wait.askedAt));
 
   const optionName = new Map(options.groups.map((g) => [g.whatsappGroupId, g.name]));
   return {
@@ -114,6 +127,7 @@ export async function loadReportContext(params: Record<string, string | undefine
     scopeText: scopeLabel(teamName, filters.memberId ? memberName(filters.memberId) : null),
     scoped,
     groupInScope,
+    missedInScope,
     groupName: (key) => data.groups.get(key)?.name ?? optionName.get(key) ?? key,
     memberName,
     options,

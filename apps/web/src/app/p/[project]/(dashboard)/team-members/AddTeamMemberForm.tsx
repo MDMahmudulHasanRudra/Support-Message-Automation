@@ -23,7 +23,7 @@ export function AddTeamMemberForm({ options }: { options: MemberFormOptions }) {
     if (!state.success) return;
     // Cleared only on success, so a refused submission keeps what was typed for correcting.
     formRef.current?.reset();
-    showToast({ tone: "success", title: "Team member added" });
+    showToast({ tone: "success", title: "Team member added", description: "Every message they already sent in your groups is being collected into their reports." });
   }, [state, showToast]);
 
   return (

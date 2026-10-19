@@ -206,11 +206,20 @@ function resolveMessageBody(message: WaMessage): string {
   // By TYPE as well as by `isMedia`: WhatsApp Web has removed getters before (`isGroupMsg`), and
   // without `isMedia` a voice note read as an empty message and was dropped everywhere, while an
   // image stored its base64 preview as "text".
+  // A WhatsApp system entry (someone added, the subject changed, a call log, an edit's protocol
+  // message) is not something anybody said. Some carry a body, and the store sweep reads WhatsApp
+  // Web's whole message store, so without this an admin's "added X" could be stored as their reply
+  // and an edited message counted twice. Empty = dropped as an empty body everywhere.
+  if (NON_CONTENT_TYPES.has(type) || (message as { isNotification?: unknown }).isNotification === true) return "";
+  // A contact card's `body` is the raw vCard, which carries the contact's phone number: never text.
+  if (type === MessageTypes.CONTACT_CARD || type === MessageTypes.CONTACT_CARD_MULTI) return "[Contact card]";
   if (!message.isMedia && !MEDIA_TYPES.has(type)) {
     return message.body ?? message.text ?? "";
   }
 
   const caption = message.caption?.trim();
+  // A video note ("ptv") is not in the library's enum, so it is read before the switch.
+  if (type === "ptv") return "[Video note]";
   switch (message.type) {
     case MessageTypes.IMAGE:
       return caption ? `[Image] ${caption}` : "[Image]";
@@ -235,7 +244,23 @@ function resolveMessageBody(message: WaMessage): string {
 }
 
 /** The message types that carry a file, whatever WhatsApp Web's `isMedia` getter says. */
-const MEDIA_TYPES = new Set<string>(["image", "video", "audio", "ptt", "document", "sticker"]);
+const MEDIA_TYPES = new Set<string>(["image", "video", "audio", "ptt", "ptv", "document", "sticker"]);
+
+/**
+ * WhatsApp Web message types that record an event rather than something a person wrote. Never
+ * `ciphertext` (a real message still being decrypted — `awaitDecryption` reads it again) and never
+ * `revoked` (it marks a stored message deleted).
+ */
+const NON_CONTENT_TYPES = new Set<string>([
+  "gp2",
+  "notification",
+  "notification_template",
+  "e2e_notification",
+  "call_log",
+  "protocol",
+  "broadcast_notification",
+  "pinned_message",
+]);
 
 /** WhatsApp Web names a poll message "poll_creation" (older builds: "poll"). */
 function isPollType(type: string): boolean {
@@ -302,8 +327,15 @@ function readAddParticipantError(err: unknown): string {
   return (err as Error)?.message ?? "Failed to add participant.";
 }
 
-function stripJidDomain(jid: string | null | undefined): string {
-  return String(jid ?? "").split("@")[0] ?? "";
+/**
+ * The person part of a JID: domain AND multi-device suffix removed ("8801…:12@s.whatsapp.net" →
+ * "8801…"). Keeping the ":12" made `senderPhone` a different string for every linked device of one
+ * person, so SQL selecting a member's messages by `senderPhone = ANY(...)` (attendance) missed them,
+ * and adding them from a group offered "8801…:12" as a separate person whose digits were a wrong
+ * 15-digit number. `parseWhatsAppId` has always dropped it; this now agrees.
+ */
+export function stripJidDomain(jid: string | null | undefined): string {
+  return (String(jid ?? "").split("@")[0] ?? "").split(":")[0] ?? "";
 }
 
 /**
@@ -389,6 +421,17 @@ function toMediaDescriptor(message: WaMessage): RawMediaDescriptor | null {
   };
 }
 
+/**
+ * WhatsApp's own send time. `timestamp` is always set on a real message; `t` is the same value under
+ * WhatsApp Web's own name, read when `timestamp` is missing. With neither, the time stays invalid and
+ * the message is not stored — deliberately (WHATSAPP_IDENTITY.md §9): a receive time in its place
+ * would invent a send time, and every report would put the message on the wrong day.
+ */
+function messageTime(message: WaMessage): Date {
+  const seconds = Number(message.timestamp ?? (message as { t?: unknown }).t);
+  return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : new Date(Number.NaN);
+}
+
 /** Exported for its unit test (messageConversion.test.ts); the provider is its only production caller. */
 export function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomingMessage {
   const isGroupMsg = Boolean(message.isGroupMsg) || isGroupChatId(message.chatId);
@@ -399,7 +442,9 @@ export function toRawIncomingMessage(accountId: string, message: WaMessage): Raw
   const senderJid = String((isGroupMsg ? message.author || message.sender?.id || message.from : message.from) ?? "") || null;
   return {
     accountId,
-    whatsappMessageId: message.id,
+    // Normalised like the quoted id below: a history read can hand the key over as an object, which
+    // Prisma refuses, losing the message on that path.
+    whatsappMessageId: serializeMessageId(message.id) ?? String(message.id),
     chatId: message.chatId,
     whatsappGroupId: isGroupMsg ? message.chatId : null,
     // Optional chaining because the history API behind catch-up does not always attach `chat`.
@@ -417,7 +462,7 @@ export function toRawIncomingMessage(accountId: string, message: WaMessage): Raw
     senderName: message.sender?.pushname || message.notifyName || message.sender?.formattedName || null,
     direction: message.fromMe ? "OUTGOING" : "INCOMING",
     body: resolveMessageBody(message),
-    timestampWa: new Date(message.timestamp * 1000),
+    timestampWa: messageTime(message),
     // Support Activity Tracking's REPLY_TO_CUSTOMER/MENTION triggers — both ride on this same
     // onAnyMessage payload, no separate subscription needed.
     // Normalised rather than read raw: the history API behind the missed-message catch-up returns
@@ -2239,6 +2284,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     // let a few busy groups use it all before a quieter personal chat was reached.
     const collected: RawIncomingMessage[] = [];
     let unreadable = 0;
+    let unreadableMessages = 0;
     for (const kind of ["PERSONAL", "GROUP"] as const) {
       const chats = active.filter((chat) => chat.kind === kind);
       let taken = 0;
@@ -2259,7 +2305,17 @@ export class OpenWAProvider implements WhatsAppProvider {
               stoppedAt = index;
               break;
             }
-            collected.push(toRawIncomingMessage(this.accountId, message));
+            // One message WhatsApp hands back in a shape that cannot be read costs only itself: it
+            // used to throw out of this loop and abandon the rest of the chat.
+            let raw: RawIncomingMessage;
+            try {
+              raw = toRawIncomingMessage(this.accountId, message);
+            } catch (err) {
+              unreadableMessages += 1;
+              console.warn(`[openwa] could not read one message in chat ${chat.id} — skipping it`, err);
+              continue;
+            }
+            collected.push(raw);
             taken += 1;
           }
         } catch (err) {
@@ -2275,6 +2331,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       }
     }
     if (unreadable > 0) gaps.push(`The history of ${unreadable} chat(s) could not be read.`);
+    if (unreadableMessages > 0) gaps.push(`${unreadableMessages} message(s) could not be read.`);
 
     const messages = collected.sort((a, b) => a.timestampWa.getTime() - b.timestampWa.getTime());
     if (gaps.length === 0) return { ok: true, messages };

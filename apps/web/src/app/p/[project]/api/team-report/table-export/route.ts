@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { sanitizeExcelCell } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
-import { loadTeamReport, memberLabel, parseTeamReportFilters } from "@/server/teamReport";
+import { exportStoredBy, loadTeamReport, memberLabel, parseTeamReportFilters, reportNow } from "@/server/teamReport";
 import { buildReportTable, type TeamReportTableId } from "@/server/teamReportTables";
 
 /**
@@ -56,9 +56,9 @@ export async function POST(request: NextRequest) {
   const keys = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").slice(0, MAX_KEYS) : [];
   if (keys.length === 0) return new NextResponse("No rows were chosen to export.", { status: 400 });
 
-  const now = new Date();
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
-  const data = await loadTeamReport(parseTeamReportFilters(params, now), now);
+  const now = reportNow(params);
+  const data = await loadTeamReport(parseTeamReportFilters(params, now), now, undefined, exportStoredBy(params, now));
   const table = buildReportTable(tableId, data);
 
   // In the order the page showed them; a key the recomputed report no longer has is skipped.
@@ -73,7 +73,9 @@ export async function POST(request: NextRequest) {
 
   const memberName = data.filters.memberId ? memberLabel(data.filters.memberId, data.memberNames) : null;
   const safe = (text: string) => text.replace(/[^\p{L}\p{N} .–_-]+/gu, " ").replace(/\s+/g, " ").trim();
-  const name = ["Team Report", TABLES[tableId], data.teamName, memberName, data.range.label]
+  // The day/week/month table is named after its breakdown, not always "By day".
+  const tableName = tableId === "days" ? `By ${data.filters.granularity}` : TABLES[tableId];
+  const name = ["Team Report", tableName, data.teamName, memberName, data.range.label]
     .filter(Boolean)
     .map((part) => safe(part!))
     .join(" - ");
@@ -95,7 +97,7 @@ export async function POST(request: NextRequest) {
   }));
   sheet["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: sanitized.length, c: header.length - 1 } }) };
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, sheet, TABLES[tableId]);
+  XLSX.utils.book_append_sheet(workbook, sheet, tableName);
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
   return new NextResponse(buffer as unknown as BodyInit, {
     headers: {

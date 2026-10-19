@@ -19,6 +19,7 @@ const wait = (key: string, askedHoursBeforeEnd: number, status: ReportWait["stat
   waitSeconds: waitMinutes === null ? null : waitMinutes * 60,
   thresholdSeconds: 30 * 60,
   status,
+  chargedTo: null,
 });
 const run = (groups: AttentionGroupInput[], waits: ReportWait[] = []) => attentionItems({ groups, waits, measuredTo: END, prolongedSeconds: 2 * 3600 });
 

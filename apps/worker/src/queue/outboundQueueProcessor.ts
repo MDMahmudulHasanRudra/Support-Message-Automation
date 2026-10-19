@@ -18,6 +18,7 @@ import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from ".
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { getAiSettings } from "../ai/settings.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { recordOperatorAttendance } from "../teamManagement/attendance.js";
 import {
   countJobSentLastMinute,
   getGroupBroadcastSettings,
@@ -480,6 +481,11 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
       });
       countMetric("replied");
       if (isBroadcast) await maybeCompleteBroadcastJob(message.broadcastJobId!);
+      // A dashboard reply credits the team member linked to the login that sent it (attendance.ts);
+      // the echo may already be stored, so the day is recomputed from here too. Never throws.
+      if (message.actionType === "MANUAL_REPLY" && message.createdById && result.providerMessageId) {
+        void recordOperatorAttendance({ providerMessageId: result.providerMessageId, timestampWa: new Date() });
+      }
     } else {
       await handleSendFailure(message, result.error ?? "Unknown provider error");
     }

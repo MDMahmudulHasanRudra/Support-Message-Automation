@@ -48,7 +48,8 @@ export default async function ReportPage({
   const now = new Date();
   const { report, ctx } = await buildReport(id, await searchParams, now);
   const { filters, range, members, teams, teamMemberIds, filterNote } = ctx.data;
-  const query = reportQuery(ctx);
+  // The page's own moment travels with every export, so the file says what the screen said.
+  const query = `${reportQuery(ctx)}&asof=${now.getTime()}`;
   const exportBase = `/api/reports/${id}`;
   const tables = report.tables.map((table) => ({ ...table, rows: table.rows.slice(0, DISPLAY_LIMIT), total: table.rows.length }));
   const truncated = tables.filter((t) => t.total > DISPLAY_LIMIT);
