@@ -42,6 +42,11 @@ export interface ReportTableRow {
    * of the cell's presentation, not a column, so it is not exported as one.
    */
   sub?: Array<string | null>;
+  /**
+   * A subtle highlight per cell (the ranking's top and behind, a comparison's better and worse). Presentation
+   * only, like `sub`: never exported, and no figure depends on it.
+   */
+  tones?: Array<"good" | "bad" | null>;
 }
 
 export interface ReportTableData {

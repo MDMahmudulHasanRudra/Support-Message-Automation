@@ -102,6 +102,11 @@ export interface TeamReportFilters {
   groupsTruncated?: boolean;
   /** Unified reporting: which conversations the report covers. Absent = "group" (every older URL). */
   scope?: ReportScope;
+  /**
+   * Unified reporting WP10: also load the previous period of equal length and show it beside this one.
+   * Opt-in (`compare=1`) so the default cost is one load; only honoured with UNIFIED_REPORTING on.
+   */
+  compare?: boolean;
 }
 
 /** At most this many groups in a filter — a URL, not a database dump. */
@@ -165,6 +170,7 @@ export function parseTeamReportFilters(params: Record<string, string | undefined
     accountId: params.account?.trim() || null,
     ...(requestedGroups.length > MAX_FILTER_GROUPS ? { groupsTruncated: true } : {}),
     ...(scope !== "group" ? { scope } : {}),
+    ...(params.compare === "1" ? { compare: true } : {}),
   };
 }
 
@@ -767,6 +773,7 @@ export function teamReportQuery(filters: TeamReportFilters, overrides: Partial<T
   if (merged.groupKeys?.length) qs.set("groups", merged.groupKeys.join(","));
   if (merged.accountId) qs.set("account", merged.accountId);
   if (merged.scope && merged.scope !== "group") qs.set("scope", merged.scope);
+  if (merged.compare) qs.set("compare", "1");
   if (overrides.page && overrides.page > 1) qs.set("page", String(overrides.page));
   return qs.toString();
 }

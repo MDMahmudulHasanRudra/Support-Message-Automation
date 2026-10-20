@@ -56,6 +56,7 @@ export function TeamReportFilters({
   showMemberFilters = true,
   selects = [],
   scopeChoice,
+  compareChoice,
 }: {
   period: string;
   date: string;
@@ -80,6 +81,8 @@ export function TeamReportFilters({
   selects?: ExtraSelect[];
   /** Unified reporting: offer the Groups / Personal chats / Both control. Omitted = no scope in the form. */
   scopeChoice?: ReportScope;
+  /** Unified reporting: offer "Compare with the previous period". Omitted = no checkbox, and nothing added to the URL. */
+  compareChoice?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [chosenPeriod, setChosenPeriod] = useState(period);
@@ -251,6 +254,13 @@ export function TeamReportFilters({
           </Select>
         </Field>
       ))}
+
+      {compareChoice !== undefined ? (
+        <label className="flex h-9.5 items-center gap-2 text-[13px] text-[color:var(--color-foreground)]">
+          <input type="checkbox" name="compare" value="1" defaultChecked={compareChoice} onChange={submit} className="size-4" />
+          Compare with the previous period
+        </label>
+      ) : null}
 
       {/* Needed for Custom (two dates, one submit) and as the keyboard path for everything else. */}
       <button

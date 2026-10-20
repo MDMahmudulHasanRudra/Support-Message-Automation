@@ -51,6 +51,8 @@ import { ReliabilitySection } from "./ReliabilitySection";
 import { RunInformation } from "./RunInformation";
 import { PersonalReportSections } from "./PersonalReportSections";
 import { CombinedSummaryTable } from "./CombinedSummaryTable";
+import { EmployeePerformance } from "./EmployeePerformance";
+import { analyticsOf, buildComparisonTable, buildRankingTable, loadPreviousPeriod } from "@/server/employeePerformance";
 
 export const metadata = { title: "Team Report" };
 
@@ -81,6 +83,8 @@ export default async function TeamReportPage({
   // combined need `messages.view` on top; without it (or with the feature off) the scope is group.
   const { scope: pageScope, note: scopeNote, enabled: unified, canViewPersonal } = await resolvePageScope(params, session);
   const requested = withReportScope(parseTeamReportFilters(params, now), pageScope);
+  // `compare=1` is a unified-reporting option: with the feature off it is dropped here, so every link and export is the old one.
+  if (!unified) delete requested.compare;
   const requestedRange = resolveTeamReportRange(requested, now);
   // A conversation links to WhatsApp Chat only where the viewer may open it (the feature on, `messages.view`).
   const linkToChat = canViewPersonal && !(await activeDisabledFeatures()).has("WHATSAPP_CHAT");
@@ -109,6 +113,16 @@ export default async function TeamReportPage({
   });
 
   const attribution = unified ? customerSpecificReplies(report) : null;
+  // Ranking, daily engagement and (opt-in) the previous period: derived from this same report. Off, nothing is read or drawn.
+  const employee = unified ? analyticsOf(report) : null;
+  const previousLoaded = unified && filters.compare ? await loadPreviousPeriod(report, now) : null;
+  const comparison = previousLoaded
+    ? {
+        table: previousLoaded.previous && employee ? buildComparisonTable(employee, previousLoaded.previous.analytics, memberNames, filters) : null,
+        label: previousLoaded.previous ? previousLoaded.previous.report.range.label : "",
+        note: previousLoaded.note,
+      }
+    : null;
   const reliabilityWindow = { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() };
   const personalReliability = personal ? computeReportingReliability(personal.reliabilityCounts, dataHealth, reliabilityWindow) : null;
   const scopedName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
@@ -203,6 +217,7 @@ export default async function TeamReportPage({
           accounts={filterOptions.accounts}
           accountId={filters.accountId}
           scopeChoice={unified && canViewPersonal ? pageScope : undefined}
+          compareChoice={unified ? Boolean(filters.compare) : undefined}
         />
       </Card>
 
@@ -364,6 +379,16 @@ export default async function TeamReportPage({
                 }
               />
             </Card>
+          ) : null}
+
+          {employee ? (
+            <EmployeePerformance
+              report={report}
+              analytics={employee}
+              query={query}
+              ranking={filters.memberId ? null : buildRankingTable(report, employee)}
+              comparison={comparison}
+            />
           ) : null}
 
           <Card className="mb-5">
@@ -692,6 +717,26 @@ function UnifiedHelp({ missedAfterMinutes }: { missedAfterMinutes: number }) {
           since. A reply none of those places is shown as not linked; that is not evidence the customer was ignored. A
           customer is the same person whether seen as a phone number or a hidden id. Nothing here is guessed or
           AI-suggested, and nothing changes a figure above.
+        </p>
+      </HelpSection>
+      <HelpSection title="Ranking, daily engagement and comparison">
+        <p>
+          <strong>Ranking by measure</strong> ranks every member on each measure on its own: groups engaged (distinct groups
+          with their messages in the period), replies, active days (Dhaka days with any message), average groups per active
+          day, support time, Missed charged to them (fewer is better) and the median response time on the waits their reply
+          closed (shorter is better). There is no overall score. A person with fewer than 3 active days (fewer when the
+          period is shorter), or fewer than 5 closed waits for the response time, shows &quot;Not enough data&quot; and is
+          not ranked last. Ties share a rank. The top 3 and the 3 furthest behind are tinted.
+        </p>
+        <p className="mt-2">
+          <strong>Daily engagement</strong> is the distinct groups each person engaged on each day. The row total is the
+          distinct groups over the period; the sum of days is shown beside it, because a group worked on three days counts
+          three times there and once in the distinct total. Both come from the same messages as the Team members table, so
+          for a one-day period the two agree.
+        </p>
+        <p className="mt-2">
+          <strong>Compare with the previous period</strong> loads the period of equal length just before this one with the
+          same filters and shows groups engaged, replies, active days, support time and Missed, before and now.
         </p>
       </HelpSection>
       <HelpSection title="Run information">

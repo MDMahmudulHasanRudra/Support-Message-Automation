@@ -22,6 +22,7 @@ import { isUnifiedReportingEnabled, loadDataQualityCounts, loadPendingReattribut
 import { loadPersonalReport, type PersonalReportData } from "@/server/personalReport";
 import { combinedLines } from "@/server/combinedReport";
 import { customerSpecificReplies } from "@/server/replyAttribution";
+import { analyticsOf, buildComparisonTable, buildDailyEngagementSheetTable, buildRankingTable, loadPreviousPeriod } from "@/server/employeePerformance";
 import { accountLabelOf, combinedTable, customerSpecificSheet, mergeReliabilityCounts, personalExport, personalQualityRows, personalSheets, SCOPE_FILE_SUFFIX, tableToCsv, tableToSheet } from "@/server/scopedExport";
 
 /**
@@ -345,6 +346,23 @@ export async function GET(request: NextRequest) {
   addSheet("Overtime by day", overtimeDayRows, "No team member work was recorded in this period.");
   addSheet("Data quality", qualityRows, "");
   if (quality) addSheet("Run information", runRows, "");
+  if (unified) {
+    // WP10, after every existing sheet: the ranking (not for one chosen member), the daily grid, and the
+    // previous-period comparison only when asked for. The same derivations the page draws.
+    const analytics = analyticsOf(groupReport);
+    if (!filters.memberId) XLSX.utils.book_append_sheet(workbook, tableToSheet(buildRankingTable(groupReport, analytics), "No team member activity in this period."), "Ranking");
+    XLSX.utils.book_append_sheet(workbook, tableToSheet(buildDailyEngagementSheetTable(analytics, memberNames), "No team member activity in this period."), "Daily engagement");
+    if (filters.compare) {
+      const { previous, note } = await loadPreviousPeriod(groupReport, now, exportStoredBy(params, now));
+      XLSX.utils.book_append_sheet(
+        workbook,
+        previous
+          ? tableToSheet(buildComparisonTable(analytics, previous.analytics, memberNames, filters), "No team member activity in either period.")
+          : XLSX.utils.aoa_to_sheet([["Note"], [note ?? "There is nothing to compare."]]),
+        "Comparison",
+      );
+    }
+  }
   if (attribution) {
     XLSX.utils.book_append_sheet(
       workbook,
