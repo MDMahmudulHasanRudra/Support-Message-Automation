@@ -11,7 +11,8 @@ of it is behind the `UNIFIED_REPORTING` project feature (off by default). No per
 | `scope=personal` and `scope=combined`, on the page and both exports | the feature on **and** `messages.view` (`resolvePageScope`, one function for the page and the export routes) |
 | Personal table exports (`/api/team-report/table-export`) | the same gate; a viewer without it gets 403, never a spreadsheet |
 | Run information, Collection detail lines, Customer-specific replies | the feature on; they add counts beside figures and change none |
-| Identity preview (`previewTeamMemberIdentityChange`) | `whatsapp.manage` (the key of the actions it previews), then the feature on, then the project |
+| Identity preview (`previewTeamMemberIdentityChange`) | `whatsapp.manage` (the key of the actions it previews), then the feature on, then the project; its Team Report estimate (waits, missed, recall, overtime) only with `support_activity.view` as well |
+| The customer column of the drill-down's "Customer requests" | the customer's number only with `messages.view`; otherwise the last four digits ("Customer ···1234") |
 | Preview button on the add form, edit form, and WhatsApp Chat link panel | rendered only when the feature is on and the viewer may manage team members (for the link panel, may link) |
 
 A request for `scope=personal` from a viewer without `messages.view` is not an error: it renders the group

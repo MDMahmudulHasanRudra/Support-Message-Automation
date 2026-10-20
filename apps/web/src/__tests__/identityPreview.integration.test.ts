@@ -52,7 +52,7 @@ interface Proj {
   status: "ACTIVE";
 }
 const projects: { isp: Proj; other: Proj } = { isp: { id: "", slug: "", name: "", status: "ACTIVE" }, other: { id: "", slug: "", name: "", status: "ACTIVE" } };
-const users = { full: null as unknown as Session, noPersonal: null as unknown as Session, noManage: null as unknown as Session };
+const users = { full: null as unknown as Session, noPersonal: null as unknown as Session, noManage: null as unknown as Session, noReports: null as unknown as Session };
 const moduleIds: string[] = [];
 const userIds: string[] = [];
 const inIsp = <T,>(fn: () => Promise<T>) => runWithProject(projects.isp, fn);
@@ -110,8 +110,9 @@ beforeAll(async () => {
     const created = await createProjectWithDefaults({ name: `IP ${key} ${tag}`, slug: `ip-${key}-${tag}`, status: "ACTIVE", creatorUserId: creator.id }, rawPrisma);
     projects[key] = { id: created.id, slug: created.slug, name: `IP ${key} ${tag}`, status: "ACTIVE" };
   }
-  users.full = await seedPermissionUser("full", ["whatsapp.manage", "messages.view"]);
-  users.noPersonal = await seedPermissionUser("nopersonal", ["whatsapp.manage"]);
+  users.full = await seedPermissionUser("full", ["whatsapp.manage", "messages.view", "support_activity.view"]);
+  users.noPersonal = await seedPermissionUser("nopersonal", ["whatsapp.manage", "support_activity.view"]);
+  users.noReports = await seedPermissionUser("noreports", ["whatsapp.manage", "messages.view"]);
   users.noManage = await seedPermissionUser("nomanage", ["messages.view"]);
   current = users.full;
 
@@ -279,6 +280,16 @@ describe("identity change preview", () => {
     expect(res.preview.examined).toEqual({ logicalMessages: 2, storedMessages: 3 });
     expect(res.preview.samples.every((s) => s.conversationKind === "GROUP")).toBe(true);
     expect(res.kpi?.personal ?? null).toBeNull();
+    current = users.full;
+  });
+
+  it("gives no Team Report estimate to a viewer without support_activity.view (review fix)", async () => {
+    current = users.noReports;
+    const res = await preview();
+    if (!res.ok) throw new Error(res.error);
+    // The counts are the member manager's; the waits, missed, recall and overtime figures are the report's.
+    expect(res.preview.affected.logicalMessages).toBeGreaterThan(0);
+    expect(res.kpi).toBeNull();
     current = users.full;
   });
 

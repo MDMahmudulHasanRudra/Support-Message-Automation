@@ -8,7 +8,8 @@ import { requireAccess } from "@/server/authorize";
 import { formatDurationShort } from "@/lib/duration";
 import { loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, teamReportQuery } from "@/server/teamReport";
 import { isUnifiedReportingEnabled } from "@/server/unifiedReporting";
-import { customerSpecificReplies } from "@/server/replyAttribution";
+import { customerLabelFor, customerSpecificReplies } from "@/server/replyAttribution";
+import { hasPermission } from "@/server/permissions";
 import { REPLY_CATEGORY_LABELS, REPLY_TIER_LABELS, replyCategoryOf } from "@support-automation/shared";
 
 export const metadata = { title: "Team Report · Group" };
@@ -49,7 +50,7 @@ export default async function TeamReportGroupPage({
   params: Promise<{ groupId: string }>;
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireAccess("support_activity.view");
+  const session = await requireAccess("support_activity.view");
   const [{ groupId }, query] = await Promise.all([params, searchParams]);
   const group = await prisma.whatsAppGroup.findUnique({
     where: { id: groupId },
@@ -63,6 +64,8 @@ export default async function TeamReportGroupPage({
   const report = await loadTeamReport(parseTeamReportFilters(query, now), now, group.whatsappGroupId, unified ? { withReplyEvidence: true } : {});
   const { filters, range, result, memberNames, rules, teamName } = report;
   const attribution = unified ? customerSpecificReplies(report, { detailGroupKey: group.whatsappGroupId }) : null;
+  // A customer's number is message content: shown only to a viewer who may read the messages themselves.
+  const canSeeNumbers = attribution ? await hasPermission(session, "messages.view") : false;
   const asksDetail = attribution?.asksDetail?.slice(0, MAX_WAIT_ROWS) ?? [];
   const row = result.groups.find((g) => g.groupKey === group.whatsappGroupId) ?? null;
   const backHref = `/team-report?${teamReportQuery(filters)}`;
@@ -186,8 +189,8 @@ export default async function TeamReportGroupPage({
                     {asksDetail.map((ask) => (
                       <tr key={`${ask.customerKey}-${ask.askedAt}`}>
                         <Td className="tabular">{when(ask.askedAt)}</Td>
-                        {/* A phone number, or "Hidden number ···1234" for a LID — never a LID shown as a number. */}
-                        <Td>{report.customerLabels?.get(ask.customerKey) ?? `Hidden number ···${ask.customerKey.slice(-4)}`}</Td>
+                        {/* A phone number (messages.view only), or a masked tail — never a LID shown as a number. */}
+                        <Td>{customerLabelFor(report.customerLabels, ask.customerKey, canSeeNumbers)}</Td>
                         <Td className="tabular">{when(ask.answeredAt)}</Td>
                         <Td>{ask.tier ? REPLY_TIER_LABELS[ask.tier] : "No reply could be linked"}</Td>
                         <Td>

@@ -20,3 +20,15 @@ export function customerSpecificReplies(report: TeamReportData, opts: { detailGr
     ...(opts.detailGroupKey ? { detailGroupKey: opts.detailGroupKey } : {}),
   });
 }
+
+/**
+ * How the drill-down names the customer behind a request. The report itself is gated on
+ * `support_activity.view` only, so a customer's phone number is printed only for a viewer who may also read
+ * the messages (`messages.view`, the WhatsApp Chat key); everyone else sees the last four digits, which is
+ * enough to tell two customers apart and is never a number to dial. A LID is "Hidden number" either way.
+ */
+export function customerLabelFor(labels: Map<string, string> | undefined, customerKey: string, canSeeNumbers: boolean): string {
+  const tail = customerKey.slice(-4);
+  if (!canSeeNumbers) return `Customer ···${tail}`;
+  return labels?.get(customerKey) ?? `Hidden number ···${tail}`;
+}

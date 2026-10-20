@@ -97,7 +97,10 @@ export async function previewTeamMemberIdentityChange(req: IdentityPreviewReques
     window: { from: window.from.getTime(), to: window.to.getTime() },
     truncated: loaded.truncated,
   });
-  const kpi = await estimateIdentityKpiDeltas({ preview, rosterBefore: roster, rosterAfter, now, showPersonal });
+  // The estimate is Team Report figures (waits, missed, recall, overtime): only for a viewer who may open that
+  // report. Without support_activity.view the panel shows the counts above and no estimate.
+  const canViewReport = await hasPermission(granted.session, "support_activity.view");
+  const kpi = canViewReport ? await estimateIdentityKpiDeltas({ preview, rosterBefore: roster, rosterAfter, now, showPersonal }) : null;
   const { kpiScope: _scope, ...rest } = preview;
   void _scope;
   // A personal conversation's key holds the customer's chat id (a number or a LID): the browser gets a
