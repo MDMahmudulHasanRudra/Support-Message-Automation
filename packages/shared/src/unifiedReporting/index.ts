@@ -3,3 +3,5 @@ export * from "./versions.js";
 export * from "./readModel.js";
 export * from "./attributionOutcome.js";
 export * from "./runMetadata.js";
+export * from "./personalReport.js";
+export * from "./combinedReport.js";
