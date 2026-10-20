@@ -261,7 +261,7 @@ describe("the Customer-specific replies sheet", () => {
     expect(off.SheetNames).not.toContain("Customer-specific replies");
     await setFlag(true);
     const on = await workbook();
-    expect(on.SheetNames).toEqual([...off.SheetNames, "Run information", "Customer-specific replies"]);
+    expect(on.SheetNames).toEqual([...off.SheetNames, "Run information", "Ranking", "Daily engagement", "Customer-specific replies"]);
     const rows = cells(on, "Customer-specific replies");
     expect(rows[0]!.slice(0, 4)).toEqual(["Section", "Measure", "Value", "Note"]);
     const value = (measure: string) => rows.find((r) => r[1] === measure)?.[2];

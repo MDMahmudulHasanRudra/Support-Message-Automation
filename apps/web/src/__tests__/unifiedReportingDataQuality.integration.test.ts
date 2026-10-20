@@ -283,8 +283,8 @@ describe("Team Report export with the flag", () => {
 
     await setFlag(true);
     const on = await sheets("xlsx");
-    // WP7 adds the Customer-specific replies sheet after it (its own test file checks the contents).
-    expect(on.names).toEqual([...off.names, "Run information", "Customer-specific replies"]);
+    // WP10 adds Ranking and Daily engagement, WP7 the Customer-specific replies sheet after them (its own test file checks the contents).
+    expect(on.names).toEqual([...off.names, "Run information", "Ranking", "Daily engagement", "Customer-specific replies"]);
     // Every existing sheet is byte-for-byte what it was, except "Data quality", which only gained rows.
     for (const name of off.names.filter((n) => n !== "Data quality")) expect(on.out[name], name).toEqual(off.out[name]);
     const quality = on.out["Data quality"]!;
