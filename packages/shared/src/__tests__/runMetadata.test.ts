@@ -95,8 +95,12 @@ describe("run metadata", () => {
 
 describe("countOperatorReplies", () => {
   it("splits dashboard replies into linked and unlinked, inside the period only", () => {
+    const start = 5;
     const end = 1_000;
     const messages = [
+      // Before the period (the personal report's context window and each chat's last earlier message): never part of it.
+      { ts: 4, actor: "OPERATOR", memberId: "m1" },
+      { ts: -86_400_000, actor: "OPERATOR", memberId: null },
       { ts: 10, actor: "OPERATOR", memberId: "m1" },
       { ts: 20, actor: "OPERATOR", memberId: "m2" },
       { ts: 30, actor: "OPERATOR", memberId: null },
@@ -108,7 +112,8 @@ describe("countOperatorReplies", () => {
       { ts: 50, actor: "AI", memberId: null },
       { ts: 60, memberId: null },
     ];
-    expect(countOperatorReplies(messages, end)).toEqual({ linked: 2, unlinked: 1 });
-    expect(countOperatorReplies([], end)).toEqual({ linked: 0, unlinked: 0 });
+    expect(countOperatorReplies(messages, end, start)).toEqual({ linked: 2, unlinked: 1 });
+    expect(countOperatorReplies([{ ts: start, actor: "OPERATOR", memberId: "m1" }], end, start)).toEqual({ linked: 1, unlinked: 0 });
+    expect(countOperatorReplies([], end, start)).toEqual({ linked: 0, unlinked: 0 });
   });
 });

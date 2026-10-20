@@ -281,8 +281,16 @@ export function compareEmployeePeriods(now: EmployeeAnalytics, then: EmployeeAna
   return rows.sort((x, y) => y.figures.groupsEngaged.now - x.figures.groupsEngaged.now || x.memberId.localeCompare(y.memberId));
 }
 
-/** The previous period of equal length: [start - length, start). Dhaka has no DST, so whole days stay whole days. */
-export function previousPeriod(rangeStart: number, rangeEnd: number): { start: number; end: number; days: number } {
-  const length = rangeEnd - rangeStart;
-  return { start: rangeStart - length, end: rangeStart, days: Math.round(length / DAY_MS) };
+/**
+ * The previous period of equal length: [start - length, start). Dhaka has no DST, so whole days stay whole days.
+ *
+ * A period still running at `now` (this month on the 20th) holds only the days so far, so it is compared with
+ * that many whole days just before it (20 days with 20 days), never with a full period: comparing 20 days of
+ * work with 31 would show nearly everybody "worse". `partial` says so.
+ */
+export function previousPeriod(rangeStart: number, rangeEnd: number, now?: number): { start: number; end: number; days: number; partial: boolean } {
+  let length = rangeEnd - rangeStart;
+  const partial = now !== undefined && now > rangeStart && now < rangeEnd;
+  if (partial) length = Math.min(length, Math.ceil((now - rangeStart) / DAY_MS) * DAY_MS);
+  return { start: rangeStart - length, end: rangeStart, days: Math.round(length / DAY_MS), partial };
 }

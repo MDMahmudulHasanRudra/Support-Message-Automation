@@ -121,6 +121,7 @@ export default async function TeamReportPage({
         table: previousLoaded.previous && employee ? buildComparisonTable(employee, previousLoaded.previous.analytics, memberNames, filters) : null,
         label: previousLoaded.previous ? previousLoaded.previous.report.range.label : "",
         note: previousLoaded.note,
+        partial: previousLoaded.partial,
       }
     : null;
   const reliabilityWindow = { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() };
@@ -150,7 +151,7 @@ export default async function TeamReportPage({
           },
           health: dataHealth,
           reliability: personal ? computeReportingReliability(mergeReliabilityCounts(report.reliabilityCounts, personal.reliabilityCounts), dataHealth, reliabilityWindow) : reliability,
-          operatorReplies: countOperatorReplies(personal ? [...report.messages, ...personal.messages] : report.messages, range.end.getTime()),
+          operatorReplies: countOperatorReplies(personal ? [...report.messages, ...personal.messages] : report.messages, range.end.getTime(), range.start.getTime()),
           pendingReattributions,
           replyAttributionVersion: attribution ? REPLY_ATTRIBUTION_VERSION : null,
         })
@@ -595,7 +596,7 @@ async function PersonalPage({
     filters: { team: teamName, member: scopedName, groupCount: 0, account: accountLabel, granularity: filters.granularity },
     health: dataHealth,
     reliability,
-    operatorReplies: countOperatorReplies(data.messages, range.end.getTime()),
+    operatorReplies: countOperatorReplies(data.messages, range.end.getTime(), range.start.getTime()),
     pendingReattributions,
   });
   const query = `${teamReportQuery(filters)}&asof=${now.getTime()}`;

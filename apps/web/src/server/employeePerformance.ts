@@ -46,8 +46,8 @@ export async function loadPreviousPeriod(
   report: TeamReportData,
   now: Date,
   options: { storedBy?: Date } = {},
-): Promise<{ previous: PreviousPeriodReport | null; note: string | null }> {
-  const prev = previousPeriod(report.range.start.getTime(), report.range.end.getTime());
+): Promise<{ previous: PreviousPeriodReport | null; note: string | null; partial: boolean }> {
+  const prev = previousPeriod(report.range.start.getTime(), report.range.end.getTime(), now.getTime());
   const { compare: _compare, ...filters } = report.filters;
   void _compare;
   const data = await loadTeamReport(
@@ -63,9 +63,9 @@ export async function loadPreviousPeriod(
   );
   // A Team the member was not in during the earlier period would silently widen to the whole Team: not the same report.
   if (data.filters.memberId !== report.filters.memberId || data.filters.teamId !== report.filters.teamId) {
-    return { previous: null, note: data.filterNote ?? "The same Team and member filter does not apply to the previous period, so there is nothing to compare." };
+    return { previous: null, note: data.filterNote ?? "The same Team and member filter does not apply to the previous period, so there is nothing to compare.", partial: prev.partial };
   }
-  return { previous: { report: data, analytics: analyticsOf(data) }, note: null };
+  return { previous: { report: data, analytics: analyticsOf(data) }, note: null, partial: prev.partial };
 }
 
 const NOT_ENOUGH = "Not enough data";

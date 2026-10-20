@@ -328,7 +328,7 @@ export async function GET(request: NextRequest) {
           },
           health,
           reliability: personal ? computeReportingReliability(mergeReliabilityCounts(reliabilityCounts, personal.reliabilityCounts), health, { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() }) : reliability,
-          operatorReplies: countOperatorReplies(personal ? [...messages, ...personal.messages] : messages, range.end.getTime()),
+          operatorReplies: countOperatorReplies(personal ? [...messages, ...personal.messages] : messages, range.end.getTime(), range.start.getTime()),
           pendingReattributions,
           replyAttributionVersion: attribution ? REPLY_ATTRIBUTION_VERSION : null,
         }),

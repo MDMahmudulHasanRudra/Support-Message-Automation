@@ -1,5 +1,5 @@
 import { Alert, Card } from "@/components/ui";
-import { MIN_ACTIVE_DAYS_FOR_RANK, MIN_CLOSED_WAITS_FOR_MEDIAN, type EmployeeAnalytics } from "@support-automation/shared";
+import { MIN_CLOSED_WAITS_FOR_MEDIAN, type EmployeeAnalytics } from "@support-automation/shared";
 import { bucketLabel, memberLabel, teamReportQuery, type TeamReportData } from "@/server/teamReport";
 import type { ReportTableData } from "@/server/teamReportTables";
 import Link from "@/components/ProjectLink";
@@ -25,7 +25,7 @@ export function EmployeePerformance({
   query: string;
   /** Null when one member is chosen: a ranking of one person says nothing. */
   ranking: ReportTableData | null;
-  comparison: { table: ReportTableData | null; label: string; note: string | null } | null;
+  comparison: { table: ReportTableData | null; label: string; note: string | null; partial: boolean } | null;
 }) {
   return (
     <>
@@ -53,7 +53,7 @@ export function EmployeePerformance({
               query={query}
               noun={{ singular: "team member", plural: "team members" }}
               title="Compared with the previous period"
-              description={`Before: ${comparison.label} (the period of equal length just before this one). Same filters, same rules. Tinted change = better (fewer for Missed) or worse. A person with no activity in a period has 0 in it.`}
+              description={`Before: ${comparison.label} (${comparison.partial ? "this period is still running, so the same number of days just before it" : "the period of equal length just before this one"}). Same filters, same rules. Tinted change = better (fewer for Missed) or worse. A person with no activity in a period has 0 in it.`}
             />
           ) : (
             <Alert tone="info">{comparison.note ?? "There is nothing to compare."}</Alert>
@@ -75,7 +75,7 @@ function DailyEngagementGrid({ report, analytics }: { report: TeamReportData; an
       <p className="mt-1 mb-3 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">
         Distinct groups each person engaged on each Asia/Dhaka day. &ldquo;Distinct groups&rdquo; counts a group once however many
         days it was worked; &ldquo;Sum of days&rdquo; adds the days up, so the same group on three days counts three times. The
-        bottom row is the distinct groups anyone in scope engaged that day. Minimum for the rankings: {MIN_ACTIVE_DAYS_FOR_RANK} active days.
+        bottom row is the distinct groups anyone in scope engaged that day. Minimum for the rankings: {analytics.minActiveDays} active day{analytics.minActiveDays === 1 ? "" : "s"}.
       </p>
       {daily.members.length === 0 ? (
         <p className="text-[13px] text-[color:var(--color-muted-foreground)]">No team member message in this period.</p>

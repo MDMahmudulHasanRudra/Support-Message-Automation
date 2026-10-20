@@ -218,7 +218,18 @@ describe("ranking", () => {
 
 describe("period comparison", () => {
   it("the previous period is the equal-length period just before", () => {
-    expect(previousPeriod(DAY0 + 7 * DAY_MS, DAY0 + 14 * DAY_MS)).toEqual({ start: DAY0, end: DAY0 + 7 * DAY_MS, days: 7 });
+    expect(previousPeriod(DAY0 + 7 * DAY_MS, DAY0 + 14 * DAY_MS)).toEqual({ start: DAY0, end: DAY0 + 7 * DAY_MS, days: 7, partial: false });
+    // A finished period is unchanged by `now`.
+    expect(previousPeriod(DAY0 + 7 * DAY_MS, DAY0 + 14 * DAY_MS, DAY0 + 20 * DAY_MS)).toEqual({ start: DAY0, end: DAY0 + 7 * DAY_MS, days: 7, partial: false });
+  });
+
+  it("a period still running is compared with as many whole days just before it (review fix)", () => {
+    // A 31-day month viewed during its 20th day: 20 days now, the 20 days just before, never 31.
+    const start = DAY0 + 40 * DAY_MS;
+    const prev = previousPeriod(start, start + 31 * DAY_MS, start + 19 * DAY_MS + 3_600_000);
+    expect(prev).toEqual({ start: start - 20 * DAY_MS, end: start, days: 20, partial: true });
+    // The first hour of a day period: one day before it.
+    expect(previousPeriod(start, start + DAY_MS, start + 1)).toEqual({ start: start - DAY_MS, end: start, days: 1, partial: true });
   });
 
   it("shows then, now and the change; a member absent from one period has 0 in it", () => {

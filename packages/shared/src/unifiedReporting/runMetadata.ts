@@ -114,17 +114,19 @@ export interface ReportRunMetadata {
 /**
  * Dashboard replies in the period by a login that is / is not linked to a team member, from the report's
  * own classified messages (`TeamReportData.messages`): an OPERATOR message with a member is credited to
- * that member, one without stays the business number's. Counted only before `rangeEnd` — the messages
- * also carry the reply look-ahead, which is never part of the period.
+ * that member, one without stays the business number's. Counted only inside [rangeStart, rangeEnd): the
+ * messages also carry the reply look-ahead, and the personal report's carry its context window and each chat's
+ * last earlier message, none of which is part of the period.
  */
 export function countOperatorReplies(
   messages: ReadonlyArray<{ ts: number; actor?: string; memberId: string | null }>,
   rangeEnd: number,
+  rangeStart: number,
 ): { linked: number; unlinked: number } {
   let linked = 0;
   let unlinked = 0;
   for (const m of messages) {
-    if (m.actor !== "OPERATOR" || m.ts >= rangeEnd) continue;
+    if (m.actor !== "OPERATOR" || m.ts >= rangeEnd || m.ts < rangeStart) continue;
     if (m.memberId) linked += 1;
     else unlinked += 1;
   }

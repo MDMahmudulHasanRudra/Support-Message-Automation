@@ -195,7 +195,7 @@ export function runInformationRows(input: {
       },
       health: input.health,
       reliability: input.reliability,
-      operatorReplies: countOperatorReplies(input.operatorMessages, range.end.getTime()),
+      operatorReplies: countOperatorReplies(input.operatorMessages, range.end.getTime(), range.start.getTime()),
       pendingReattributions: input.pendingReattributions,
       replyAttributionVersion: input.replyAttributionVersion ?? null,
     }),
