@@ -38,9 +38,11 @@ const SNAPSHOT_PATH = join(dirname(fileURLToPath(import.meta.url)), "fixtures", 
 
 const G0 = "120000000000000001@g.us";
 const G1 = "120000000000000002@g.us";
+const G2 = "120000000000000003@g.us";
 const P = {
   customer: "100000000001",
   customer2: "100000000002",
+  customer3: "100000000003",
   rina: "8801000000101",
   rakib: "8801000000102",
   nadia: "8801000000103",
@@ -83,7 +85,7 @@ async function message(opts: {
   fromMe?: boolean;
   personal?: boolean;
 }) {
-  const group = opts.personal ? null : id(`${opts.chat === G0 ? "g0" : "g1"}-${opts.account}`);
+  const group = opts.personal ? null : id(`${opts.chat === G0 ? "g0" : opts.chat === G2 ? "g2" : "g1"}-${opts.account}`);
   return rawPrisma.message.create({
     data: {
       projectId: ids.project,
@@ -157,6 +159,7 @@ beforeAll(async () => {
   await row("B", G0, "g0");
   await row("A", G1, "g1");
   await row("B", G1, "g1");
+  await row("A", G2, "g2");
 
   // G0, stored by both numbers: asked 09:00, Rina answers at 09:20 (late against the 10-minute P1
   // rule: a recall); asked again at 11:00 and never answered (a miss).
@@ -180,6 +183,18 @@ beforeAll(async () => {
   await message({ account: "A", chat: G1, key: "CF", sender: P.rinaLid, jid: `${P.rinaLid}@lid`, at: t(8, 10, 30) });
   await message({ account: "B", chat: G1, key: "Q4", sender: P.customer2, jid: `${P.customer2}@lid`, at: t(8, 12, 0) });
   await message({ account: "B", chat: G1, key: "N1", sender: P.nadia, jid: `${P.nadia}@c.us`, at: t(8, 12, 5) });
+
+  // G2: a wait opened BEFORE the period, inside the 4-hour context window, and answered inside it.
+  // The customer asks at 23:00 the evening before and the AI answers at 23:30 (both context rows); the
+  // same customer writes again at 00:10 and Nadia answers at 00:30. Read with its context, the
+  // 00:10 line continues the human wait opened at 23:00 (begun before the period, so not counted); with
+  // no context window the AI reply is the newest earlier message, the 00:10 line opens a new human wait
+  // inside the period and Nadia's answer is counted. So this fixture moves if the context window does.
+  await message({ account: "A", chat: G2, key: "K1", sender: P.customer3, jid: `${P.customer3}@lid`, at: t(7, 23, 0) });
+  const ctxAi = await message({ account: "A", chat: G2, key: "KAI", sender: "199900000001", jid: "199900000001@lid", at: t(7, 23, 30), direction: "OUTGOING", fromMe: true });
+  await outbound(G2, ctxAi.whatsappMessageId, "AUTO_REPLY", t(7, 23, 30), null);
+  await message({ account: "A", chat: G2, key: "K2", sender: P.customer3, jid: `${P.customer3}@lid`, at: t(8, 0, 10) });
+  await message({ account: "A", chat: G2, key: "KN", sender: P.nadia, jid: `${P.nadia}@c.us`, at: t(8, 0, 30) });
 
   // One personal chat on the Primary account.
   await message({ account: "A", chat: P.personalChat, key: "PC1", sender: P.customer, jid: P.personalChat, at: t(8, 14, 0), personal: true });

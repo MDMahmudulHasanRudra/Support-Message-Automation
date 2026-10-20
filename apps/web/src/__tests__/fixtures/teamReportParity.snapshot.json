@@ -19,11 +19,11 @@
     },
     "result": {
       "summary": {
-        "groupsSupported": 2,
-        "customerMessages": 5,
-        "memberReplies": 4,
+        "groupsSupported": 3,
+        "customerMessages": 6,
+        "memberReplies": 5,
         "businessReplies": 1,
-        "waits": 4,
+        "waits": 5,
         "missed": 2,
         "recalled": 1,
         "unrecovered": 1,
@@ -35,6 +35,21 @@
         "unattributedStaffReplies": 1
       },
       "members": [
+        {
+          "memberId": "parity-TAG-nadia",
+          "messages": 2,
+          "groups": 2,
+          "customerMessages": 4,
+          "missed": 0,
+          "recalled": 0,
+          "unrecovered": 0,
+          "activeSeconds": 0,
+          "overtimeSeconds": 0,
+          "unscheduledDays": 0,
+          "stretches": 2,
+          "firstAt": 1751913000000,
+          "lastAt": 1751954700000
+        },
         {
           "memberId": "parity-TAG-late",
           "messages": 1,
@@ -49,21 +64,6 @@
           "stretches": 1,
           "firstAt": 1751947500000,
           "lastAt": 1751947500000
-        },
-        {
-          "memberId": "parity-TAG-nadia",
-          "messages": 1,
-          "groups": 1,
-          "customerMessages": 3,
-          "missed": 0,
-          "recalled": 0,
-          "unrecovered": 0,
-          "activeSeconds": 0,
-          "overtimeSeconds": 0,
-          "unscheduledDays": 0,
-          "stretches": 1,
-          "firstAt": 1751954700000,
-          "lastAt": 1751954700000
         },
         {
           "memberId": "parity-TAG-rina",
@@ -131,15 +131,32 @@
           "activeSeconds": 0,
           "firstActivityAt": 1751944800000,
           "lastActivityAt": 1751944800000
+        },
+        {
+          "groupKey": "120000000000000003@g.us",
+          "memberIds": [
+            "parity-TAG-nadia"
+          ],
+          "totalMessages": 2,
+          "customerMessages": 1,
+          "memberReplies": 1,
+          "businessReplies": 0,
+          "waits": 1,
+          "missed": 0,
+          "recalled": 0,
+          "unrecovered": 0,
+          "activeSeconds": 0,
+          "firstActivityAt": 1751913000000,
+          "lastActivityAt": 1751913000000
         }
       ],
       "buckets": [
         {
           "key": "2025-07-08",
-          "groups": 2,
-          "memberMessages": 4,
+          "groups": 3,
+          "memberMessages": 5,
           "businessReplies": 1,
-          "customerMessages": 5,
+          "customerMessages": 6,
           "missed": 2,
           "recalled": 1,
           "activeSeconds": 0,
@@ -148,6 +165,17 @@
         }
       ],
       "waits": [
+        {
+          "groupKey": "120000000000000003@g.us",
+          "askedAt": 1751911800000,
+          "repliedAt": 1751913000000,
+          "repliedBy": "parity-TAG-nadia",
+          "repliedByActor": "MEMBER",
+          "waitSeconds": 1200,
+          "thresholdSeconds": 1800,
+          "status": "ON_TIME",
+          "chargedTo": null
+        },
         {
           "groupKey": "120000000000000001@g.us",
           "askedAt": 1751943600000,
@@ -218,11 +246,11 @@
       "overtimeDays": []
     },
     "summary": {
-      "groupsSupported": 2,
-      "customerMessages": 5,
-      "memberReplies": 4,
+      "groupsSupported": 3,
+      "customerMessages": 6,
+      "memberReplies": 5,
       "businessReplies": 1,
-      "waits": 4,
+      "waits": 5,
       "missed": 2,
       "recalled": 1,
       "unrecovered": 1,
@@ -307,6 +335,16 @@
             "priority": null,
             "assignedMemberId": null
           }
+        ],
+        [
+          "120000000000000003@g.us",
+          {
+            "id": "parity-TAG-g2-A",
+            "whatsappGroupId": "120000000000000003@g.us",
+            "name": "Parity group g2",
+            "priority": null,
+            "assignedMemberId": null
+          }
         ]
       ]
     },
@@ -319,23 +357,23 @@
     },
     "response": {
       "firstResponse": {
-        "waits": 4,
-        "within": 2,
+        "waits": 5,
+        "within": 3,
         "late": 1,
         "never": 1,
         "pending": 0,
-        "answered": 3,
-        "slaRatio": 0.5,
-        "coverageRatio": 0.75,
-        "medianSeconds": 300,
-        "averageSeconds": 600,
+        "answered": 4,
+        "slaRatio": 0.6,
+        "coverageRatio": 0.8,
+        "medianSeconds": 750,
+        "averageSeconds": 750,
         "p90Seconds": 1200,
         "maxSeconds": 1200,
         "unansweredGroups": 1,
         "pendingGroups": 0
       },
       "firstReplyBy": {
-        "HUMAN_TEAM_MEMBER": 3,
+        "HUMAN_TEAM_MEMBER": 4,
         "AUTOMATED_AI": 0,
         "AUTOMATED_RULE": 0,
         "OTHER_BUSINESS_REPLY": 0,
@@ -361,11 +399,11 @@
       }
     },
     "reliabilityCounts": {
-      "storedCopies": 12,
-      "logicalMessages": 10,
+      "storedCopies": 14,
+      "logicalMessages": 12,
       "byActor": {
-        "CUSTOMER": 5,
-        "MEMBER": 2,
+        "CUSTOMER": 6,
+        "MEMBER": 3,
         "MEMBER_UNMAPPED": 1,
         "OPERATOR": 1,
         "AI": 1,
@@ -376,7 +414,7 @@
       "attribution": {
         "idAndPhone": 0,
         "idOnly": 0,
-        "phoneOnly": 2
+        "phoneOnly": 3
       },
       "conflicting": 1,
       "unattributedSenders": 1
@@ -454,6 +492,31 @@
         ],
         "rows": [
           {
+            "key": "parity-TAG-nadia",
+            "cells": [
+              "Nadia",
+              2,
+              2,
+              4,
+              0,
+              0,
+              "0h 0m",
+              "8 Jul, 00:30 – 8 Jul, 12:05"
+            ],
+            "sort": [
+              "nadia",
+              2,
+              2,
+              4,
+              0,
+              0,
+              0,
+              1751913000000
+            ],
+            "href": "/team-report?period=day&date=2025-07-08&member=parity-TAG-nadia&by=day",
+            "muted": false
+          },
+          {
             "key": "parity-TAG-late",
             "cells": [
               "Late",
@@ -476,31 +539,6 @@
               1751947500000
             ],
             "href": "/team-report?period=day&date=2025-07-08&member=parity-TAG-late&by=day",
-            "muted": false
-          },
-          {
-            "key": "parity-TAG-nadia",
-            "cells": [
-              "Nadia",
-              1,
-              1,
-              3,
-              0,
-              0,
-              "0h 0m",
-              "8 Jul, 12:05 – 8 Jul, 12:05"
-            ],
-            "sort": [
-              "nadia",
-              1,
-              1,
-              3,
-              0,
-              0,
-              0,
-              1751954700000
-            ],
-            "href": "/team-report?period=day&date=2025-07-08&member=parity-TAG-nadia&by=day",
             "muted": false
           },
           {
@@ -592,18 +630,18 @@
             "key": "2025-07-08",
             "cells": [
               "8 Jul",
-              2,
-              5,
-              5,
+              3,
+              6,
+              6,
               2,
               1,
               "0h 0m"
             ],
             "sort": [
               "2025-07-08",
-              2,
-              5,
-              5,
+              3,
+              6,
+              6,
               2,
               1,
               0
@@ -715,6 +753,39 @@
               null,
               null
             ]
+          },
+          {
+            "key": "120000000000000003@g.us",
+            "cells": [
+              "Parity group g2",
+              "—",
+              2,
+              1,
+              1,
+              0,
+              0,
+              "8 Jul, 00:30 – 8 Jul, 00:30",
+              "0h 0m"
+            ],
+            "sort": [
+              "parity group g2",
+              "~",
+              2,
+              1,
+              1,
+              0,
+              0,
+              1751913000000,
+              0
+            ],
+            "href": "/team-report/group/parity-TAG-g2-A?period=day&date=2025-07-08&by=day&asof=1752062400000",
+            "sub": [
+              "120000000000000003@g.us",
+              null,
+              null,
+              null,
+              null
+            ]
           }
         ]
       }
@@ -740,11 +811,11 @@
     },
     "result": {
       "summary": {
-        "groupsSupported": 2,
-        "customerMessages": 6,
-        "memberReplies": 4,
-        "businessReplies": 1,
-        "waits": 5,
+        "groupsSupported": 3,
+        "customerMessages": 8,
+        "memberReplies": 5,
+        "businessReplies": 2,
+        "waits": 7,
         "missed": 3,
         "recalled": 2,
         "unrecovered": 1,
@@ -756,6 +827,21 @@
         "unattributedStaffReplies": 1
       },
       "members": [
+        {
+          "memberId": "parity-TAG-nadia",
+          "messages": 2,
+          "groups": 2,
+          "customerMessages": 6,
+          "missed": 0,
+          "recalled": 0,
+          "unrecovered": 0,
+          "activeSeconds": 0,
+          "overtimeSeconds": 0,
+          "unscheduledDays": 0,
+          "stretches": 2,
+          "firstAt": 1751913000000,
+          "lastAt": 1751954700000
+        },
         {
           "memberId": "parity-TAG-late",
           "messages": 1,
@@ -770,21 +856,6 @@
           "stretches": 1,
           "firstAt": 1751947500000,
           "lastAt": 1751947500000
-        },
-        {
-          "memberId": "parity-TAG-nadia",
-          "messages": 1,
-          "groups": 1,
-          "customerMessages": 4,
-          "missed": 0,
-          "recalled": 0,
-          "unrecovered": 0,
-          "activeSeconds": 0,
-          "overtimeSeconds": 0,
-          "unscheduledDays": 0,
-          "stretches": 1,
-          "firstAt": 1751954700000,
-          "lastAt": 1751954700000
         },
         {
           "memberId": "parity-TAG-rina",
@@ -852,6 +923,23 @@
           "lastActivityAt": 1751954700000
         },
         {
+          "groupKey": "120000000000000003@g.us",
+          "memberIds": [
+            "parity-TAG-nadia"
+          ],
+          "totalMessages": 4,
+          "customerMessages": 2,
+          "memberReplies": 1,
+          "businessReplies": 1,
+          "waits": 2,
+          "missed": 0,
+          "recalled": 0,
+          "unrecovered": 0,
+          "activeSeconds": 0,
+          "firstActivityAt": 1751909400000,
+          "lastActivityAt": 1751913000000
+        },
+        {
           "groupKey": "120000000000000001@g.us",
           "memberIds": [
             "parity-TAG-rina"
@@ -884,10 +972,10 @@
         },
         {
           "key": "2025-07-06",
-          "groups": 2,
-          "memberMessages": 4,
-          "businessReplies": 1,
-          "customerMessages": 6,
+          "groups": 3,
+          "memberMessages": 5,
+          "businessReplies": 2,
+          "customerMessages": 8,
           "missed": 3,
           "recalled": 2,
           "activeSeconds": 0,
@@ -933,6 +1021,17 @@
       ],
       "waits": [
         {
+          "groupKey": "120000000000000003@g.us",
+          "askedAt": 1751907600000,
+          "repliedAt": 1751909400000,
+          "repliedBy": "BUSINESS",
+          "repliedByActor": "AI",
+          "waitSeconds": 1800,
+          "thresholdSeconds": 1800,
+          "status": "ON_TIME",
+          "chargedTo": null
+        },
+        {
           "groupKey": "120000000000000002@g.us",
           "askedAt": 1751909400000,
           "repliedAt": 1751912400000,
@@ -941,6 +1040,17 @@
           "waitSeconds": 3000,
           "thresholdSeconds": 1800,
           "status": "RECALLED",
+          "chargedTo": null
+        },
+        {
+          "groupKey": "120000000000000003@g.us",
+          "askedAt": 1751911800000,
+          "repliedAt": 1751913000000,
+          "repliedBy": "parity-TAG-nadia",
+          "repliedByActor": "MEMBER",
+          "waitSeconds": 1200,
+          "thresholdSeconds": 1800,
+          "status": "ON_TIME",
           "chargedTo": null
         },
         {
@@ -1024,11 +1134,11 @@
       "overtimeDays": []
     },
     "summary": {
-      "groupsSupported": 2,
-      "customerMessages": 6,
-      "memberReplies": 4,
-      "businessReplies": 1,
-      "waits": 5,
+      "groupsSupported": 3,
+      "customerMessages": 8,
+      "memberReplies": 5,
+      "businessReplies": 2,
+      "waits": 7,
       "missed": 3,
       "recalled": 2,
       "unrecovered": 1,
@@ -1113,6 +1223,16 @@
             "priority": null,
             "assignedMemberId": null
           }
+        ],
+        [
+          "120000000000000003@g.us",
+          {
+            "id": "parity-TAG-g2-A",
+            "whatsappGroupId": "120000000000000003@g.us",
+            "name": "Parity group g2",
+            "priority": null,
+            "assignedMemberId": null
+          }
         ]
       ]
     },
@@ -1125,56 +1245,56 @@
     },
     "response": {
       "firstResponse": {
-        "waits": 5,
-        "within": 2,
+        "waits": 7,
+        "within": 4,
         "late": 2,
         "never": 1,
         "pending": 0,
-        "answered": 4,
-        "slaRatio": 0.4,
-        "coverageRatio": 0.8,
-        "medianSeconds": 750,
-        "averageSeconds": 1200,
+        "answered": 6,
+        "slaRatio": 0.5714285714285714,
+        "coverageRatio": 0.8571428571428571,
+        "medianSeconds": 1200,
+        "averageSeconds": 1300,
         "p90Seconds": 3000,
         "maxSeconds": 3000,
         "unansweredGroups": 1,
         "pendingGroups": 0
       },
       "firstReplyBy": {
-        "HUMAN_TEAM_MEMBER": 3,
-        "AUTOMATED_AI": 1,
+        "HUMAN_TEAM_MEMBER": 4,
+        "AUTOMATED_AI": 2,
         "AUTOMATED_RULE": 0,
         "OTHER_BUSINESS_REPLY": 0,
         "UNKNOWN_OR_UNATTRIBUTED": 0,
         "UNCLASSIFIED": 0
       },
       "automated": {
-        "waits": 1,
-        "medianSeconds": 3000,
+        "waits": 2,
+        "medianSeconds": 2400,
         "p90Seconds": 3000
       },
       "human": {
-        "waits": 4,
-        "answeredVerified": 3,
+        "waits": 5,
+        "answeredVerified": 4,
         "answeredUnverified": 0,
         "onTime": 1,
-        "late": 2,
+        "late": 3,
         "missed": 1,
         "pending": 0,
-        "medianSeconds": 1200,
+        "medianSeconds": 3300,
         "p90Seconds": 38100,
-        "afterAutomation": 1
+        "afterAutomation": 2
       }
     },
     "reliabilityCounts": {
-      "storedCopies": 13,
-      "logicalMessages": 11,
+      "storedCopies": 17,
+      "logicalMessages": 15,
       "byActor": {
-        "CUSTOMER": 6,
-        "MEMBER": 2,
+        "CUSTOMER": 8,
+        "MEMBER": 3,
         "MEMBER_UNMAPPED": 1,
         "OPERATOR": 1,
-        "AI": 1,
+        "AI": 2,
         "RULE": 0,
         "BROADCAST": 0,
         "BUSINESS_PHONE": 0
@@ -1182,7 +1302,7 @@
       "attribution": {
         "idAndPhone": 0,
         "idOnly": 0,
-        "phoneOnly": 2
+        "phoneOnly": 3
       },
       "conflicting": 1,
       "unattributedSenders": 1
@@ -1260,6 +1380,31 @@
         ],
         "rows": [
           {
+            "key": "parity-TAG-nadia",
+            "cells": [
+              "Nadia",
+              2,
+              2,
+              6,
+              0,
+              0,
+              "0h 0m",
+              "8 Jul, 00:30 – 8 Jul, 12:05"
+            ],
+            "sort": [
+              "nadia",
+              2,
+              2,
+              6,
+              0,
+              0,
+              0,
+              1751913000000
+            ],
+            "href": "/team-report?period=month&date=2025-07-08&member=parity-TAG-nadia&by=week",
+            "muted": false
+          },
+          {
             "key": "parity-TAG-late",
             "cells": [
               "Late",
@@ -1282,31 +1427,6 @@
               1751947500000
             ],
             "href": "/team-report?period=month&date=2025-07-08&member=parity-TAG-late&by=week",
-            "muted": false
-          },
-          {
-            "key": "parity-TAG-nadia",
-            "cells": [
-              "Nadia",
-              1,
-              1,
-              4,
-              0,
-              0,
-              "0h 0m",
-              "8 Jul, 12:05 – 8 Jul, 12:05"
-            ],
-            "sort": [
-              "nadia",
-              1,
-              1,
-              4,
-              0,
-              0,
-              0,
-              1751954700000
-            ],
-            "href": "/team-report?period=month&date=2025-07-08&member=parity-TAG-nadia&by=week",
             "muted": false
           },
           {
@@ -1444,18 +1564,18 @@
             "key": "2025-07-06",
             "cells": [
               "Week of 6 Jul",
-              2,
-              5,
-              6,
+              3,
+              7,
+              8,
               3,
               2,
               "0h 0m"
             ],
             "sort": [
               "2025-07-06",
-              2,
-              5,
-              6,
+              3,
+              7,
+              8,
               3,
               2,
               0
@@ -1592,6 +1712,39 @@
             "href": "/team-report/group/parity-TAG-g1-A?period=month&date=2025-07-08&by=week&asof=1752062400000",
             "sub": [
               "120000000000000002@g.us",
+              null,
+              null,
+              null,
+              "+1 business"
+            ]
+          },
+          {
+            "key": "120000000000000003@g.us",
+            "cells": [
+              "Parity group g2",
+              "—",
+              4,
+              2,
+              1,
+              0,
+              0,
+              "7 Jul, 23:30 – 8 Jul, 00:30",
+              "0h 0m"
+            ],
+            "sort": [
+              "parity group g2",
+              "~",
+              4,
+              2,
+              1,
+              0,
+              0,
+              1751909400000,
+              0
+            ],
+            "href": "/team-report/group/parity-TAG-g2-A?period=month&date=2025-07-08&by=week&asof=1752062400000",
+            "sub": [
+              "120000000000000003@g.us",
               null,
               null,
               null,
@@ -2125,7 +2278,7 @@
   },
   "csv": {
     "type": "text/csv; charset=utf-8",
-    "body": "Group,Group ID,Assigned now,Team members,Messages,Customer messages,Team member replies,Business number replies,Customer waits,Missed,Recall,Never answered,First support,Last support,Support time (hours)\r\nParity group g1,120000000000000002@g.us,,\"Late, Nadia\",7,3,3,1,2,0,0,0,2025-07-08 00:20:00,2025-07-08 12:05:00,2\r\nParity group g0,120000000000000001@g.us,Rakib,Rina,3,2,1,0,2,2,1,1,2025-07-08 09:20:00,2025-07-08 09:20:00,0"
+    "body": "Group,Group ID,Assigned now,Team members,Messages,Customer messages,Team member replies,Business number replies,Customer waits,Missed,Recall,Never answered,First support,Last support,Support time (hours)\r\nParity group g1,120000000000000002@g.us,,\"Late, Nadia\",7,3,3,1,2,0,0,0,2025-07-08 00:20:00,2025-07-08 12:05:00,2\r\nParity group g0,120000000000000001@g.us,Rakib,Rina,3,2,1,0,2,2,1,1,2025-07-08 09:20:00,2025-07-08 09:20:00,0\r\nParity group g2,120000000000000003@g.us,,Nadia,2,1,1,0,1,0,0,0,2025-07-08 00:30:00,2025-07-08 00:30:00,0"
   },
   "xlsx": {
     "sheetNames": [
@@ -2185,15 +2338,15 @@
         ],
         [
           "Groups supported",
-          2
+          3
         ],
         [
           "Customer messages",
-          5
+          6
         ],
         [
           "Team member replies",
-          4
+          5
         ],
         [
           "  of which by a team member not identified",
@@ -2205,7 +2358,7 @@
         ],
         [
           "Customer waits",
-          4
+          5
         ],
         [
           "Missed",
@@ -2264,6 +2417,20 @@
           "Last activity"
         ],
         [
+          "Nadia",
+          2,
+          2,
+          4,
+          0,
+          0,
+          0,
+          0,
+          0,
+          2,
+          "2025-07-08 00:30:00",
+          "2025-07-08 12:05:00"
+        ],
+        [
           "Late",
           1,
           1,
@@ -2276,20 +2443,6 @@
           1,
           "2025-07-08 10:05:00",
           "2025-07-08 10:05:00"
-        ],
-        [
-          "Nadia",
-          1,
-          1,
-          3,
-          0,
-          0,
-          0,
-          0,
-          0,
-          1,
-          "2025-07-08 12:05:00",
-          "2025-07-08 12:05:00"
         ],
         [
           "Rina",
@@ -2371,6 +2524,23 @@
           "2025-07-08 09:20:00",
           "2025-07-08 09:20:00",
           0
+        ],
+        [
+          "Parity group g2",
+          "120000000000000003@g.us",
+          "",
+          "Nadia",
+          2,
+          1,
+          1,
+          0,
+          1,
+          0,
+          0,
+          0,
+          "2025-07-08 00:30:00",
+          "2025-07-08 00:30:00",
+          0
         ]
       ],
       "Daily": [
@@ -2388,10 +2558,10 @@
         [
           "8 Jul",
           "2025-07-08",
-          2,
-          4,
-          1,
+          3,
           5,
+          1,
+          6,
           2,
           1,
           0
@@ -2453,13 +2623,13 @@
         [
           "First observed response",
           "Customer waits",
-          4,
+          5,
           "Any reply ends a wait — a person's, the AI's, a rule's or the business number's. The figures above use this."
         ],
         [
           "First observed response",
           "Answered within the threshold",
-          2,
+          3,
           ""
         ],
         [
@@ -2483,13 +2653,13 @@
         [
           "First observed response",
           "Median wait",
-          "0h 5m",
+          "0h 12m",
           "90th percentile 0h 20m."
         ],
         [
           "First reply came from",
           "Verified person (team member, or a dashboard user)",
-          3,
+          4,
           ""
         ],
         [
@@ -2573,13 +2743,13 @@
         [
           "Messages",
           "Stored message records",
-          12,
+          14,
           "Every account's copy of every group message in the period (joins and leaves excluded)."
         ],
         [
           "Messages",
           "Logical messages",
-          10,
+          12,
           "After collapsing copies — what every figure on this report counts."
         ],
         [
@@ -2591,13 +2761,13 @@
         [
           "Who sent them",
           "Customer",
-          5,
+          6,
           ""
         ],
         [
           "Who sent them",
           "Verified person (team member, or a dashboard user)",
-          3,
+          4,
           ""
         ],
         [
@@ -2639,7 +2809,7 @@
         [
           "Attribution",
           "Matched on phone number only",
-          2,
+          3,
           ""
         ],
         [
