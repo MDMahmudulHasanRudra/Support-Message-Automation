@@ -58,6 +58,8 @@ export function IdentityImpactPanel({
   const [at, setAt] = useState<number | null>(null);
   const [changed, setChanged] = useState(false);
   const [old, setOld] = useState(false);
+  // The member the link form had chosen when the preview ran: the line "Linking adds N messages ... to X" names them.
+  const [previewedMemberId, setPreviewedMemberId] = useState<string | null>(null);
 
   const formOf = () => root.current?.closest("form") ?? null;
 
@@ -90,6 +92,7 @@ export function IdentityImpactPanel({
         setError("Choose a team member first.");
         return null;
       }
+      setPreviewedMemberId(chosen);
       return { memberId: chosen, proposed: null, linkSenderId };
     }
     return {
@@ -142,6 +145,18 @@ export function IdentityImpactPanel({
           {old && !changed ? <Alert tone="warning">This preview is older than 10 minutes. Preview again.</Alert> : null}
           {result.preview.truncated ? (
             <Alert tone="warning">There are more matching messages than the preview reads, so these are the most recent ones only.</Alert>
+          ) : null}
+          {linkSenderId !== undefined && previewedMemberId ? (
+            <p data-testid="link-impact-summary">
+              {(() => {
+                const name = result.memberNames[previewedMemberId] ?? "this member";
+                const gained = result.preview.byMember.find((m) => m.memberId === previewedMemberId)?.gained ?? 0;
+                if (gained === 0) return `Linking adds no stored message to ${name}'s reports in this period.`;
+                const groups = result.preview.affected.groups;
+                const personal = result.showPersonal ? result.preview.affected.personalConversations : 0;
+                return `Linking adds ${gained.toLocaleString("en-US")} message${gained === 1 ? "" : "s"} in ${groups.toLocaleString("en-US")} group${groups === 1 ? "" : "s"}${personal > 0 ? ` and ${personal.toLocaleString("en-US")} personal chat${personal === 1 ? "" : "s"}` : ""} to ${name}'s reports.`;
+              })()}
+            </p>
           ) : null}
           {result.preview.affected.logicalMessages === 0 ? (
             <p>

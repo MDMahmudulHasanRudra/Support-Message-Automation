@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import Link from "@/components/ProjectLink";
 import { Badge, Button, ConfirmDialog, EmptyState, Table, Td, Th, Tooltip } from "@/components/ui";
 import { deleteTeamMember, toggleTeamMemberStatus } from "@/server/actions/teamMembers";
+import { whatsappIdBadge } from "@support-automation/shared";
 
 export interface TeamMemberRow {
   id: string;
@@ -53,7 +54,7 @@ function HistorySyncNote({ sync }: { sync: NonNullable<TeamMemberRow["historySyn
 
 type DialogState = { kind: "delete" | "toggle"; member: TeamMemberRow } | null;
 
-export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
+export function TeamMembersTable({ members, unified = false }: { members: TeamMemberRow[]; unified?: boolean }) {
   const router = useRouter();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [isPending, startTransition] = useTransition();
@@ -113,7 +114,15 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
                 {m.phoneNumber}
                 {/* Mapped from message history, so this is a WhatsApp id rather than a number.
                     It recognises them fine; it cannot receive an escalation. */}
-                {m.whatsappId && m.whatsappId.trim() === m.phoneNumber.trim() ? (
+                {unified && whatsappIdBadge(m) === "UNLINKED_BD_MOBILE" ? (
+                  // UNIFIED_REPORTING: the number typed is a real mobile number, so what is missing is the private
+                  // WhatsApp ID. Display only: sending rules are unchanged.
+                  <Tooltip content="This phone number is on file, but WhatsApp shows this person in groups by a private WhatsApp ID that has not been linked, so some of their messages may not be credited to them. Use Link to member in the Identity check below, or This person is… in WhatsApp Chat.">
+                    <span className="ml-2 align-middle">
+                      <Badge color="yellow">WhatsApp ID not linked</Badge>
+                    </span>
+                  </Tooltip>
+                ) : m.whatsappId && m.whatsappId.trim() === m.phoneNumber.trim() ? (
                   <Tooltip content="This is a WhatsApp id, not a phone number. They will be recognised in groups, but a support escalation cannot reach them directly until you enter their real number.">
                     <span className="ml-2 align-middle">
                       <Badge color="yellow">Needs phone number</Badge>

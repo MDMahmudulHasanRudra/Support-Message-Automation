@@ -9,3 +9,5 @@ export * from "./replyAttribution.js";
 export * from "./enrichment.js";
 export * from "./identityPreview.js";
 export * from "./employeeRanking.js";
+export * from "./memberNameSuggestion.js";
+export * from "./whatsappIdLinkState.js";

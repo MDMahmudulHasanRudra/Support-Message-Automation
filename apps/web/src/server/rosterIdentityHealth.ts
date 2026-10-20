@@ -1,7 +1,15 @@
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
 import { loadOwnSenderIds } from "@/server/messageIdentity";
-import { createSenderResolver, describeSenderId, isOwnSender, normalizePhoneNumber } from "@support-automation/shared";
+import {
+  createSenderResolver,
+  describeSenderId,
+  hasNoRealWhatsAppId,
+  isOwnSender,
+  normalizePhoneNumber,
+  suggestMemberForSender,
+  type SuggestableMember,
+} from "@support-automation/shared";
 
 /**
  * Team Members → Identity check (report accuracy audit, 19 Oct 2026): the roster problems that make
@@ -22,6 +30,22 @@ export const IDENTITY_HEALTH_WINDOW_DAYS = 30;
 /** Writing in this many different groups is what makes an unknown sender look like staff. */
 export const LIKELY_STAFF_MIN_GROUPS = 3;
 
+/**
+ * "Probably <member>" beside an unknown sender (WP11): a SUGGESTION from the two names, display only. `linkable`
+ * is whether Link would be accepted (an active member with no real WhatsApp ID of their own); otherwise the
+ * page points at their edit page instead.
+ */
+export interface SenderSuggestion {
+  kind: "ONE" | "SEVERAL";
+  members: Array<{ id: string; name: string; linkable: boolean }>;
+}
+
+export interface LinkableMember {
+  id: string;
+  name: string;
+  designation: string;
+}
+
 export interface UnknownFrequentSender {
   /** The sender id as stored. */
   sender: string;
@@ -32,6 +56,8 @@ export interface UnknownFrequentSender {
   groups: number;
   messages: number;
   lastAt: Date;
+  /** From the sender's WhatsApp name and the roster's names; null = no single member or several (see `suggestion.kind`). */
+  suggestion: SenderSuggestion | null;
 }
 
 export interface RosterIdentityHealth {
@@ -39,13 +65,15 @@ export interface RosterIdentityHealth {
   quietMembers: Array<{ id: string; name: string }>;
   unknownFrequentSenders: UnknownFrequentSender[];
   pendingReattributions: number;
+  /** Active members Link may name: no real WhatsApp ID of their own (the rule `linkWhatsAppSender` enforces). */
+  linkableMembers: LinkableMember[];
 }
 
 export async function getRosterIdentityHealth(now: Date = new Date()): Promise<RosterIdentityHealth> {
   const projectId = await activeProjectId();
   const since = new Date(now.getTime() - IDENTITY_HEALTH_WINDOW_DAYS * 86_400_000);
   const [members, accounts, ownIds, senders, pendingReattributions] = await Promise.all([
-    prisma.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true, status: true } }),
+    prisma.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true, status: true, role: true } }),
     prisma.whatsAppAccount.findMany({ select: { phoneNumber: true } }),
     loadOwnSenderIds(projectId),
     prisma.$queryRaw<Array<{ sender: string; jid: string | null; name: string | null; groups: number; messages: number; lastAt: Date }>>`
@@ -69,11 +97,26 @@ export async function getRosterIdentityHealth(now: Date = new Date()): Promise<R
 
   const seen = new Set<string>();
   const unknownFrequentSenders: UnknownFrequentSender[] = [];
+  // Every sender is resolved first, so "matched a message in the window" is known for every member before any
+  // suggestion is made.
+  const unknownRows: typeof senders = [];
   for (const row of senders) {
     const decided = resolver.resolve(row.sender, row.jid);
     if (decided.memberId) seen.add(decided.memberId);
     for (const id of decided.candidateIds) seen.add(id);
-    if (decided.isRosterMember || decided.status === "NOT_A_PERSON") continue;
+    if (!(decided.isRosterMember || decided.status === "NOT_A_PERSON")) unknownRows.push(row);
+  }
+  const activeMembers = members.filter((m) => m.status === "ACTIVE");
+  const suggestable: SuggestableMember[] = activeMembers.map((m) => ({
+    id: m.id,
+    name: m.name,
+    phoneNumber: m.phoneNumber,
+    whatsappId: m.whatsappId,
+    matchedRecently: seen.has(m.id),
+  }));
+  const linkable = new Set(activeMembers.filter(hasNoRealWhatsAppId).map((m) => m.id));
+  const nameOf = new Map(members.map((m) => [m.id, m.name]));
+  for (const row of unknownRows) {
     if (row.groups < LIKELY_STAFF_MIN_GROUPS || isOwnSender(ownIds, row.sender, row.jid)) continue;
     const described = describeSenderId(row.sender, row.jid);
     unknownFrequentSenders.push({
@@ -84,12 +127,24 @@ export async function getRosterIdentityHealth(now: Date = new Date()): Promise<R
       groups: row.groups,
       messages: row.messages,
       lastAt: row.lastAt,
+      suggestion: suggestionFor(suggestMemberForSender(row.name, suggestable), nameOf, linkable),
     });
   }
   unknownFrequentSenders.sort((a, b) => b.groups - a.groups || b.messages - a.messages);
 
   const quietMembers = members.filter((m) => m.status === "ACTIVE" && !seen.has(m.id)).map((m) => ({ id: m.id, name: m.name }));
-  return { ownNumberMembers, quietMembers, unknownFrequentSenders: unknownFrequentSenders.slice(0, 20), pendingReattributions };
+  const linkableMembers = activeMembers.filter((m) => linkable.has(m.id)).map((m) => ({ id: m.id, name: m.name, designation: m.role }));
+  return { ownNumberMembers, quietMembers, unknownFrequentSenders: unknownFrequentSenders.slice(0, 20), pendingReattributions, linkableMembers };
+}
+
+function suggestionFor(
+  found: ReturnType<typeof suggestMemberForSender>,
+  names: Map<string, string>,
+  linkable: Set<string>,
+): SenderSuggestion | null {
+  if (found.kind === "NONE") return null;
+  const ids = found.kind === "ONE" ? [found.memberId] : found.memberIds;
+  return { kind: found.kind, members: ids.map((id) => ({ id, name: names.get(id) ?? "A team member", linkable: linkable.has(id) })) };
 }
 
 /** Where a member's earlier history stands after they were added or their identifiers changed. */
