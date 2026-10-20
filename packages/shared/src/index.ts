@@ -66,3 +66,4 @@ export * from "./clientModuleSettings.js";
 export * from "./clientPhoto.js";
 export * from "./clientGroupLinks.js";
 export * from "./clientImportExtras.js";
+export * from "./unifiedReporting/index.js";

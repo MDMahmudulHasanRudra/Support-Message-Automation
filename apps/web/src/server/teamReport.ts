@@ -20,9 +20,11 @@ import {
   logicalMessageKey,
   membersOfTeamDuring,
   NO_TEAM,
+  parseReportScope,
   type IntelActor,
   type IntelMessage,
   type ReliabilityCounts,
+  type ReportScope,
   type ReportGranularity,
   type ReportMessage,
   type ResponseMetrics,
@@ -93,6 +95,8 @@ export interface TeamReportFilters {
   accountId?: string | null;
   /** Set when the URL named more than MAX_FILTER_GROUPS groups and the rest were left out. */
   groupsTruncated?: boolean;
+  /** Unified reporting: which conversations the report covers. Absent = "group" (every older URL). */
+  scope?: ReportScope;
 }
 
 /** At most this many groups in a filter — a URL, not a database dump. */
@@ -143,6 +147,7 @@ export function parseTeamReportFilters(params: Record<string, string | undefined
         .filter((key) => key.length > 0 && key.length <= 200),
     ),
   ];
+  const scope = parseReportScope(params.scope);
   return {
     period,
     date: isReportDateKey(params.date) ? params.date : today,
@@ -154,6 +159,7 @@ export function parseTeamReportFilters(params: Record<string, string | undefined
     groupKeys: requestedGroups.slice(0, MAX_FILTER_GROUPS),
     accountId: params.account?.trim() || null,
     ...(requestedGroups.length > MAX_FILTER_GROUPS ? { groupsTruncated: true } : {}),
+    ...(scope !== "group" ? { scope } : {}),
   };
 }
 
@@ -667,6 +673,7 @@ export function teamReportQuery(filters: TeamReportFilters, overrides: Partial<T
   qs.set("by", merged.granularity);
   if (merged.groupKeys?.length) qs.set("groups", merged.groupKeys.join(","));
   if (merged.accountId) qs.set("account", merged.accountId);
+  if (merged.scope && merged.scope !== "group") qs.set("scope", merged.scope);
   if (overrides.page && overrides.page > 1) qs.set("page", String(overrides.page));
   return qs.toString();
 }
