@@ -3,7 +3,9 @@ import * as XLSX from "xlsx";
 import { sanitizeExcelCell } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { exportStoredBy, loadTeamReport, memberLabel, parseTeamReportFilters, reportNow } from "@/server/teamReport";
-import { buildReportTable, type TeamReportTableId } from "@/server/teamReportTables";
+import { buildPersonalReportTable, buildReportTable, isPersonalTableId, type PersonalTableId, type ReportTableData, type TeamReportTableId } from "@/server/teamReportTables";
+import { loadPersonalReport } from "@/server/personalReport";
+import { resolvePageScope, withReportScope } from "@/server/unifiedReporting";
 
 /**
  * Exports ONE Team Report table — Team members, By day or Groups — exactly as it appears on the page.
@@ -18,6 +20,7 @@ import { buildReportTable, type TeamReportTableId } from "@/server/teamReportTab
  */
 
 const TABLES: Record<TeamReportTableId, string> = { members: "Team members", days: "By day", groups: "Groups" };
+const PERSONAL_TABLES: Record<PersonalTableId, string> = { "personal-conversations": "Personal conversations", "personal-days": "Personal by day", "personal-members": "Personal members" };
 const MAX_KEYS = 5000;
 
 function contentDisposition(filename: string): string {
@@ -35,16 +38,17 @@ function toCsv(header: string[], rows: Array<Array<string | number>>): string {
 }
 
 export async function POST(request: NextRequest) {
-  await requireAccess("support_activity.view");
+  const session = await requireAccess("support_activity.view");
   let body: { table?: unknown; format?: unknown; keys?: unknown };
   try {
     body = await request.json();
   } catch {
     return new NextResponse("The export request was not readable.", { status: 400 });
   }
+  const personalId = isPersonalTableId(body.table) ? body.table : null;
   const tableId =
     typeof body.table === "string" && Object.prototype.hasOwnProperty.call(TABLES, body.table) ? (body.table as TeamReportTableId) : null;
-  if (!tableId) return new NextResponse("Unknown table.", { status: 400 });
+  if (!tableId && !personalId) return new NextResponse("Unknown table.", { status: 400 });
   const format = body.format === "csv" ? "csv" : "xlsx";
   if (Array.isArray(body.keys) && body.keys.length > MAX_KEYS) {
     // Refused out loud rather than cut short: a file that silently stops at row 5,000 reads as complete.
@@ -58,8 +62,24 @@ export async function POST(request: NextRequest) {
 
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
   const now = reportNow(params);
-  const data = await loadTeamReport(parseTeamReportFilters(params, now), now, undefined, exportStoredBy(params, now));
-  const table = buildReportTable(tableId, data);
+  // A personal table is personal content: the feature must be on and the viewer needs `messages.view`, the
+  // same gate as the page. It is refused out loud, never answered with a group table instead.
+  const { scope: resolvedScope } = await resolvePageScope(params, session);
+  if (personalId && resolvedScope === "group") {
+    return new NextResponse("Personal chat reporting needs the View Messages permission.", { status: 403 });
+  }
+  const filters = withReportScope(parseTeamReportFilters(params, now), resolvedScope);
+  let table: ReportTableData;
+  let data: { filters: typeof filters; teamName: string | null; memberNames: Map<string, string>; range: { label: string } };
+  if (personalId) {
+    const personal = await loadPersonalReport(filters, now, exportStoredBy(params, now));
+    table = buildPersonalReportTable(personalId, personal, { linkToChat: false });
+    data = personal;
+  } else {
+    const group = await loadTeamReport(filters, now, undefined, exportStoredBy(params, now));
+    table = buildReportTable(tableId!, group);
+    data = group;
+  }
 
   // In the order the page showed them; a key the recomputed report no longer has is skipped.
   const byKey = new Map(table.rows.map((row) => [row.key, row]));
@@ -74,7 +94,7 @@ export async function POST(request: NextRequest) {
   const memberName = data.filters.memberId ? memberLabel(data.filters.memberId, data.memberNames) : null;
   const safe = (text: string) => text.replace(/[^\p{L}\p{N} .–_-]+/gu, " ").replace(/\s+/g, " ").trim();
   // The day/week/month table is named after its breakdown, not always "By day".
-  const tableName = tableId === "days" ? `By ${data.filters.granularity}` : TABLES[tableId];
+  const tableName = personalId ? PERSONAL_TABLES[personalId] : tableId === "days" ? `By ${data.filters.granularity}` : TABLES[tableId!];
   const name = ["Team Report", tableName, data.teamName, memberName, data.range.label]
     .filter(Boolean)
     .map((part) => safe(part!))

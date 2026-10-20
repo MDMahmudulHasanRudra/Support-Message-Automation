@@ -12,6 +12,7 @@ import { PERSONAL_CHAT_SQL } from "@/server/chatInbox";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { hasPermission } from "@/server/permissions";
 import type { Session } from "@/server/auth";
+import type { TeamReportFilters } from "@/server/teamReport";
 
 /** Unified messaging reports (UNIFIED_REPORTING): off = the Team Report exactly as before. */
 export async function isUnifiedReportingEnabled(): Promise<boolean> {
@@ -104,4 +105,15 @@ export async function loadDataQualityCounts(input: {
 /** Roster changes whose effect on stored history (the staff stamp, Activity Feed, Duty History) is still queued or running. */
 export async function loadPendingReattributions(): Promise<number> {
   return prisma.identityReattribution.count({ where: { status: { in: ["PENDING", "RUNNING"] } } });
+}
+
+/**
+ * The filters with the scope that was actually applied (`resolvePageScope`): a request for personal
+ * with the feature off, or without the permission, becomes group and carries no `scope` key at all, so
+ * every link and export built from it is the one the group report always produced.
+ */
+export function withReportScope(filters: TeamReportFilters, scope: ReportScope): TeamReportFilters {
+  const next: TeamReportFilters = { ...filters, scope };
+  if (scope === "group") delete next.scope;
+  return next;
 }

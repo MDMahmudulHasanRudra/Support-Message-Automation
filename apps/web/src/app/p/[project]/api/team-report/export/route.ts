@@ -17,7 +17,10 @@ import { requireAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
 import { bucketLabel, CONTEXT_MS, exportStoredBy, LOOKAHEAD_MS, loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, scopeLabel } from "@/server/teamReport";
 import { loadDataHealth } from "@/server/dataHealth";
-import { isUnifiedReportingEnabled, loadDataQualityCounts, loadPendingReattributions } from "@/server/unifiedReporting";
+import { isUnifiedReportingEnabled, loadDataQualityCounts, loadPendingReattributions, resolvePageScope, withReportScope } from "@/server/unifiedReporting";
+import { loadPersonalReport, type PersonalReportData } from "@/server/personalReport";
+import { combinedLines } from "@/server/combinedReport";
+import { accountLabelOf, combinedTable, mergeReliabilityCounts, personalExport, personalQualityRows, personalSheets, SCOPE_FILE_SUFFIX, tableToCsv, tableToSheet } from "@/server/scopedExport";
 
 /**
  * Team Report export. A Route Handler because a file download cannot come from a Server Action —
@@ -89,16 +92,28 @@ const GROUP_COLUMNS = [
 ];
 
 export async function GET(request: NextRequest) {
-  await requireAccess("support_activity.view");
+  const session = await requireAccess("support_activity.view");
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
   const format = params.format === "xlsx" ? "xlsx" : "csv";
   const now = reportNow(params);
-  const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts, messages } = await loadTeamReport(
-    parseTeamReportFilters(params, now),
+  // Unified reporting: personal and combined need `messages.view` on top of the report's own key, and the
+  // feature on. Anything else resolves to the group report exactly as the page does, so the file matches
+  // the screen — and with the feature off nothing below differs from what this route always did.
+  const { scope: reportScope } = await resolvePageScope(params, session);
+  const requestedFilters = withReportScope(parseTeamReportFilters(params, now), reportScope);
+  if (reportScope === "personal") {
+    const data = await loadPersonalReport(requestedFilters, now, exportStoredBy(params, now));
+    return personalExport({ data, format, now, storedBy: exportStoredBy(params, now).storedBy });
+  }
+  const groupReport = await loadTeamReport(
+    requestedFilters,
     now,
     undefined,
-    exportStoredBy(params, now),
+    reportScope === "combined" ? { ...exportStoredBy(params, now), keepHumanWaits: true } : exportStoredBy(params, now),
   );
+  const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts, messages } = groupReport;
+  // Combined: the personal half is loaded beside the group one, never instead of it.
+  const personal: PersonalReportData | null = reportScope === "combined" ? await loadPersonalReport(requestedFilters, now, exportStoredBy(params, now)) : null;
   const memberName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
   const scope = scopeLabel(teamName, memberName);
   const groupName = (key: string) => groups.get(key)?.name ?? key;
@@ -134,6 +149,16 @@ export async function GET(request: NextRequest) {
   const slug = [teamName, memberName, range.label].filter(Boolean).map((part) => safe(part!)).join(" - ");
 
   if (format === "csv") {
+    // Combined: the side-by-side table (Figure, Groups, Personal, Combined, How combined, Note).
+    if (personal) {
+      const lines = combinedLines(groupReport, personal);
+      return new NextResponse(tableToCsv(combinedTable(lines)), {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": contentDisposition(`Team Report groups - ${slug}${SCOPE_FILE_SUFFIX.combined}.csv`),
+        },
+      });
+    }
     return new NextResponse(toCsv(groupRows, GROUP_COLUMNS), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
@@ -272,7 +297,7 @@ export async function GET(request: NextRequest) {
   const runRows = quality
     ? runMetadataLines(
         buildReportRunMetadata({
-          scope: "group",
+          scope: reportScope,
           generatedAt: now.getTime(),
           storedBy: stored?.getTime() ?? null,
           period: {
@@ -293,8 +318,8 @@ export async function GET(request: NextRequest) {
             granularity: filters.granularity,
           },
           health,
-          reliability,
-          operatorReplies: countOperatorReplies(messages, range.end.getTime()),
+          reliability: personal ? computeReportingReliability(mergeReliabilityCounts(reliabilityCounts, personal.reliabilityCounts), health, { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() }) : reliability,
+          operatorReplies: countOperatorReplies(personal ? [...messages, ...personal.messages] : messages, range.end.getTime()),
           pendingReattributions,
         }),
       ).map((line) => sanitizeExcelRow({ Item: line.label, Value: line.value, Note: line.note }))
@@ -311,12 +336,19 @@ export async function GET(request: NextRequest) {
   addSheet("Overtime by day", overtimeDayRows, "No team member work was recorded in this period.");
   addSheet("Data quality", qualityRows, "");
   if (quality) addSheet("Run information", runRows, "");
+  if (personal) {
+    // Combined: the personal sheets and the side-by-side table follow the group workbook, which is untouched.
+    const accountLabel = await accountLabelOf(filters.accountId);
+    for (const { name, sheet } of personalSheets(personal, { health, scopeText: scope, accountLabel, now })) XLSX.utils.book_append_sheet(workbook, sheet, name);
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet((await personalQualityRows(personal, health, now, pendingReattributions)).rows), "Personal data quality");
+    XLSX.utils.book_append_sheet(workbook, tableToSheet(combinedTable(combinedLines(groupReport, personal))), "Combined");
+  }
 
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
   return new NextResponse(buffer as unknown as BodyInit, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": contentDisposition(`Team Report - ${slug}.xlsx`),
+      "Content-Disposition": contentDisposition(`Team Report - ${slug}${personal ? SCOPE_FILE_SUFFIX.combined : ""}.xlsx`),
     },
   });
 }

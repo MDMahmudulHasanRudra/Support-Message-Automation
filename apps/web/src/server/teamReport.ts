@@ -15,6 +15,7 @@ import {
   getDhakaMonthRange,
   getDhakaWeekRange,
   humanWaits,
+  type HumanWait,
   inTeamAt,
   logicalMessageKey,
   membersOfTeamDuring,
@@ -258,6 +259,11 @@ export interface TeamReportData {
    * from this dataset reads them from here rather than from the group as it is today.
    */
   responsibilityAt: (groupKey: string, at?: number) => { assigned: string | null; priority: string | null };
+  /**
+   * The human-only waits behind `response.human`, over the same groups. Present only when the caller
+   * asked (`keepHumanWaits`): the combined report recomputes its median over the union of two lists.
+   */
+  humanWaitList?: HumanWait[];
   /** The moment this was computed as of (epoch ms) — carried by links and exports as `asof`. */
   computedAt: number;
   missedAfterMs: (groupKey: string, at?: number) => number;
@@ -347,6 +353,8 @@ export async function loadTeamReport(
      * arrived after the page was opened is not in the file either; the page itself reads everything.
      */
     storedBy?: Date;
+    /** Unified reporting: also return the human waits (`humanWaitList`). Off = the result is exactly as before. */
+    keepHumanWaits?: boolean;
   } = {},
 ): Promise<TeamReportData> {
   const range = resolveTeamReportRange(filters, now);
@@ -624,11 +632,12 @@ export async function loadTeamReport(
   // The human-only wait (Human Response SLA's), over the same groups as this report's waits: every
   // group with activity, or — in a Team/member report — the groups its members supported.
   const reportGroups = new Set(result.groups.map((g) => g.groupKey));
+  // Measured up to the same moment the first observed waits are: now, or the end of the look-ahead
+  // for a past period — so a past day's unanswered line is MISSED in both, never PENDING in one.
+  const humanWaitsAll = humanWaits(intel, { rangeStart, rangeEnd, measuredTo: Math.min(now.getTime(), rangeEnd + LOOKAHEAD_MS), thresholdMs: missedAfterMs });
   const response = computeResponseMetrics({
     waits: result.waits,
-    // Measured up to the same moment the first observed waits are: now, or the end of the look-ahead
-    // for a past period — so a past day's unanswered line is MISSED in both, never PENDING in one.
-    humanWaits: humanWaits(intel, { rangeStart, rangeEnd, measuredTo: Math.min(now.getTime(), rangeEnd + LOOKAHEAD_MS), thresholdMs: missedAfterMs }),
+    humanWaits: humanWaitsAll,
     inScope: (groupKey) => reportGroups.has(groupKey),
   });
 
@@ -654,6 +663,7 @@ export async function loadTeamReport(
     responsibilityAt,
     missedAfterMs,
     computedAt: now.getTime(),
+    ...(options.keepHumanWaits ? { humanWaitList: humanWaitsAll.filter((w) => reportGroups.has(w.groupKey)) } : {}),
   };
 }
 

@@ -1,5 +1,7 @@
 import { formatDurationShort } from "@/lib/duration";
+import { conversationPath } from "@/lib/chatConversationType";
 import { bucketLabel, memberLabel, teamReportQuery, type TeamReportData } from "@/server/teamReport";
+import type { PersonalReportData } from "@/server/personalReport";
 
 /**
  * The Team Report's three selectable tables — Team members, By day and Groups — as plain data: columns plus
@@ -202,4 +204,141 @@ export function buildReportTable(id: TeamReportTableId, data: TeamReportData): R
   if (id === "members") return buildMembersTable(data);
   if (id === "days") return buildBucketsTable(data);
   return buildGroupsTable(data);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Personal chats (UNIFIED_REPORTING, WP6): the same table shape for the three personal tables, built from
+// `PersonalReportData`. Counts only and conversation display names — never a message text.
+// ---------------------------------------------------------------------------------------------
+
+/** What a chat id is, for a column: a phone number WhatsApp shows, or an id that hides it (a LID). */
+export function personalChatTypeLabel(chatId: string): "Phone" | "Hidden number" {
+  return chatId.endsWith("@c.us") ? "Phone" : "Hidden number";
+}
+
+const NO_TIME = "—";
+
+export function buildPersonalConversationsTable(data: PersonalReportData, opts: { linkToChat: boolean }): ReportTableData {
+  return {
+    id: "personal-conversations",
+    columns: [
+      { label: "Conversation" },
+      { label: "Account" },
+      { label: "Chat type" },
+      { label: "Customer msgs", numeric: true },
+      { label: "Business replies", numeric: true },
+      { label: "Verified employee replies", numeric: true, hint: "Dashboard replies by a login linked to a team member. The only personal figure credited to a person." },
+      { label: "Automated replies", numeric: true },
+      { label: "Waits", numeric: true },
+      { label: "Missed", numeric: true },
+      { label: "Recall", numeric: true },
+      { label: "Never answered", numeric: true },
+      { label: "Median first response" },
+      { label: "Waiting now" },
+      { label: "First message", muted: true },
+      { label: "Last message", muted: true },
+    ],
+    rows: data.result.conversations.map((row) => {
+      const name = data.conversationNames.get(row.conversationKey) ?? row.chatId;
+      const account = data.accountLabels.get(row.accountId) ?? "Unknown account";
+      const median = row.firstObservedMedianSeconds === null ? NO_TIME : formatDuration(row.firstObservedMedianSeconds);
+      const type = personalChatTypeLabel(row.chatId);
+      return {
+        key: row.conversationKey,
+        cells: [
+          name,
+          account,
+          type,
+          row.customerMessages,
+          row.businessReplies,
+          row.verifiedEmployeeReplies,
+          row.automatedReplies,
+          row.waits,
+          row.missed,
+          row.recalled,
+          row.unrecovered,
+          median,
+          row.waiting ? "Yes" : "No",
+          formatWhen(row.firstAt),
+          formatWhen(row.lastAt),
+        ],
+        sort: [
+          name.toLowerCase(),
+          account.toLowerCase(),
+          type,
+          row.customerMessages,
+          row.businessReplies,
+          row.verifiedEmployeeReplies,
+          row.automatedReplies,
+          row.waits,
+          row.missed,
+          row.recalled,
+          row.unrecovered,
+          row.firstObservedMedianSeconds ?? -1,
+          row.waiting ? 1 : 0,
+          row.firstAt ?? 0,
+          row.lastAt ?? 0,
+        ],
+        href: opts.linkToChat ? conversationPath(row.accountId, { id: "", kind: "PERSONAL", chatId: row.chatId }) : null,
+      };
+    }),
+  };
+}
+
+export function buildPersonalBucketsTable(data: PersonalReportData): ReportTableData {
+  const { filters, result } = data;
+  return {
+    id: "personal-days",
+    columns: [
+      { label: bucketColumnLabel(filters.granularity) },
+      { label: "Customer msgs", numeric: true },
+      { label: "Business replies", numeric: true },
+      { label: "Verified employee replies", numeric: true },
+      { label: "Waits", numeric: true },
+      { label: "Missed", numeric: true },
+      { label: "Recall", numeric: true },
+    ],
+    rows: result.buckets.map((b) => ({
+      key: b.key,
+      cells: [bucketLabel(b.key, filters.granularity), b.customerMessages, b.businessReplies, b.verifiedEmployeeReplies, b.waits, b.missed, b.recalled],
+      sort: [b.key, b.customerMessages, b.businessReplies, b.verifiedEmployeeReplies, b.waits, b.missed, b.recalled],
+    })),
+  };
+}
+
+export function buildPersonalMembersTable(data: PersonalReportData): ReportTableData {
+  const { filters, result, memberNames } = data;
+  return {
+    id: "personal-members",
+    columns: [
+      { label: "Team member" },
+      { label: "Verified replies", numeric: true },
+      { label: "Conversations", numeric: true },
+      { label: "First human responses", numeric: true, hint: "Waits whose first human reply was this person's dashboard reply." },
+      { label: "Median first human response" },
+    ],
+    rows: result.members.map((row) => {
+      const name = memberLabel(row.memberId, memberNames);
+      return {
+        key: row.memberId,
+        cells: [name, row.verifiedReplies, row.conversations, row.humanWaitsAnswered, row.medianSeconds === null ? NO_TIME : formatDuration(row.medianSeconds)],
+        sort: [name.toLowerCase(), row.verifiedReplies, row.conversations, row.humanWaitsAnswered, row.medianSeconds ?? -1],
+        href: `/team-report?${teamReportQuery(filters, { memberId: row.memberId })}`,
+      };
+    }),
+  };
+}
+
+export const PERSONAL_TABLE_IDS = ["personal-conversations", "personal-days", "personal-members"] as const;
+export type PersonalTableId = (typeof PERSONAL_TABLE_IDS)[number];
+
+export function isPersonalTableId(value: unknown): value is PersonalTableId {
+  return typeof value === "string" && (PERSONAL_TABLE_IDS as readonly string[]).includes(value);
+}
+
+/** The personal tables by id; the three legacy ids stay on `buildReportTable` and its signature. */
+export function buildPersonalReportTable(id: PersonalTableId, data: PersonalReportData, opts: { linkToChat: boolean }): ReportTableData {
+  if (id === "personal-conversations") return buildPersonalConversationsTable(data, opts);
+  if (id === "personal-days") return buildPersonalBucketsTable(data);
+  return buildPersonalMembersTable(data);
 }
