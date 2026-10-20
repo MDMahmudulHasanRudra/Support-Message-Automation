@@ -18,6 +18,7 @@ import { dhakaDayStart, readIdentityFields, rosterEntryFromGroup } from "@/lib/t
 import { memberIdentifiers, queueReattribution } from "@/server/reattribution";
 import { loginsForProject } from "@/server/projectLogins";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { mergedGroupResponsibility, recordResponsibilityChange } from "@/server/groupResponsibility";
 
 export interface TeamMemberFormState {
   error?: string;
@@ -714,10 +715,10 @@ export interface DeleteTeamMemberResult {
  * ever would be its own kind of mess.
  */
 export async function deleteTeamMember(id: string): Promise<DeleteTeamMemberResult> {
-  await requireAccess("whatsapp.manage");
+  const session = await requireAccess("whatsapp.manage");
 
   try {
-    const member = await prisma.internalTeamMember.findUnique({ where: { id }, select: { id: true } });
+    const member = await prisma.internalTeamMember.findUnique({ where: { id }, select: { id: true, userId: true } });
     if (!member) return { deactivated: false, error: "That team member no longer exists. Refresh the page." };
 
     // History is any message of theirs as well, not only Support Activity rows (which are off by
@@ -729,21 +730,37 @@ export async function deleteTeamMember(id: string): Promise<DeleteTeamMemberResu
       await prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } }),
     );
     const identifiers = resolver.identifiersFor(id);
-    const [activityCount, attendanceDays, ownMessage] = await Promise.all([
+    const [activityCount, attendanceDays, ownMessage, dashboardReply] = await Promise.all([
       prisma.supportActivity.count({ where: { teamMemberId: id } }),
       prisma.teamAttendanceDay.count({ where: { teamMemberId: id } }),
       identifiers.length
         ? prisma.message.findFirst({ where: { direction: "INCOMING", senderPhone: { in: identifiers } }, select: { id: true } })
         : null,
+      // A reply typed in the dashboard through the member's linked login is their work too: the reports credit it to
+      // them, and deleting them would turn it back into the business number's.
+      member.userId
+        ? prisma.outboundMessage.findFirst({ where: { createdById: member.userId, actionType: "MANUAL_REPLY" }, select: { id: true } })
+        : null,
     ]);
-    if (activityCount > 0 || attendanceDays > 0 || ownMessage) {
+    if (activityCount > 0 || attendanceDays > 0 || ownMessage || dashboardReply) {
       await prisma.internalTeamMember.update({ where: { id }, data: { status: "INACTIVE" } });
       revalidatePath(await projectPath("/team-members"));
       revalidatePath(await projectPath("/support-activity"));
       return { deactivated: true };
     }
 
-    await prisma.internalTeamMember.delete({ where: { id } });
+    // The groups assigned to them lose their assignee through the foreign key (SetNull). That is a change of who
+    // owns the group, so it is recorded like any reassignment (GroupResponsibilityChange): without the row, every
+    // earlier Missed wait of those groups would be charged to "Unassigned" from then on.
+    await prisma.$transaction(async (tx) => {
+      const assigned = await tx.whatsAppGroup.findMany({ where: { assignedTeamMemberId: id }, select: { whatsappGroupId: true }, distinct: ["whatsappGroupId"] });
+      const before = new Map<string, Awaited<ReturnType<typeof mergedGroupResponsibility>>>();
+      for (const { whatsappGroupId } of assigned) before.set(whatsappGroupId, await mergedGroupResponsibility(tx, whatsappGroupId));
+      await tx.internalTeamMember.delete({ where: { id } });
+      for (const [whatsappGroupId, was] of before) {
+        await recordResponsibilityChange(tx, whatsappGroupId, was, await mergedGroupResponsibility(tx, whatsappGroupId), session.userId);
+      }
+    });
     revalidatePath(await projectPath("/team-members"));
     return { deactivated: false };
   } catch (err) {

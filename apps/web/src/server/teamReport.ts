@@ -610,6 +610,9 @@ export async function loadTeamReport(
           assignedTeamMemberId: true,
           account: { select: { isPrimary: true } },
         },
+        // Primary copy first, then the lowest id: the order `mergedGroupResponsibility` records history in. Without an
+        // order, which of two non-Primary copies' assignees won was whatever order the database returned the rows in.
+        orderBy: [{ account: { isPrimary: "desc" } }, { id: "asc" }],
       })
     : [];
   const groups = new Map<string, GroupMeta>();
