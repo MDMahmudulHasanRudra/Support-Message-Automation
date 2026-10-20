@@ -2,7 +2,7 @@
 import { Prisma } from "@prisma/client";
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
-import { loadReportIdentity, messageKeySql, outboundByKeyJoin, preferSenderCopySql, storedCopiesSql } from "@/server/messageIdentity";
+import { loadReportIdentity, messageKeySql, outboundByKeyJoin, prefilteredBodySql, preferSenderCopySql, storedCopiesSql } from "@/server/messageIdentity";
 import { loadDutyResolver } from "@/server/overtimeDuty";
 import {
   computeResponseMetrics,
@@ -16,7 +16,6 @@ import {
   getDhakaWeekRange,
   humanWaits,
   inTeamAt,
-  INTELLIGENCE_SQL_PREFILTER,
   logicalMessageKey,
   membersOfTeamDuring,
   NO_TEAM,
@@ -284,6 +283,57 @@ interface LoadedRow {
 }
 
 /**
+ * The Team / member filter of one report: which members were in each Team during the period, which
+ * Team and member actually apply (an unknown Team, or a member who was not in the chosen Team, falls
+ * back rather than emptying the report), the note saying so, and the predicate that asks "is this
+ * member in scope at this moment". Extracted from `loadTeamReport` unchanged (unified reporting WP5)
+ * so the personal report applies exactly the same scope.
+ */
+export function resolveTeamScope(
+  filters: TeamReportFilters,
+  members: ReadonlyArray<{ id: string; name: string }>,
+  teams: ReadonlyArray<{ id: string; name: string }>,
+  intervals: readonly TeamMembershipInterval[],
+  range: ResolvedRange,
+): {
+  teamMemberIds: Record<string, string[]>;
+  memberNames: Map<string, string>;
+  teamId: string | null;
+  teamName: string | null;
+  memberId: string | null;
+  filterNote: string | null;
+  applied: TeamReportFilters;
+  scope: ((memberId: string, ts: number) => boolean) | null;
+} {
+  const memberIds = members.map((m) => m.id);
+  const teamMemberIds: Record<string, string[]> = {};
+  for (const teamKey of [...teams.map((t) => t.id), NO_TEAM]) {
+    teamMemberIds[teamKey] = membersOfTeamDuring(intervals, memberIds, teamKey, range.start.getTime(), range.end.getTime());
+  }
+  const memberNames = new Map(members.map((m) => [m.id, m.name]));
+  // An unknown Team (deleted, or a mistyped link) falls back to all Teams rather than an empty report.
+  // An OWN key only: `in` also matched "toString", "constructor" and every other inherited name, so
+  // ?team=toString reached the code below as a function and the page threw (2 Oct audit).
+  const teamId = filters.teamId && Object.prototype.hasOwnProperty.call(teamMemberIds, filters.teamId) ? filters.teamId : null;
+  const teamName = teamId === null ? null : teamId === NO_TEAM ? "No team" : (teams.find((t) => t.id === teamId)?.name ?? null);
+  let memberId = filters.memberId;
+  let filterNote: string | null = null;
+  if (teamId && memberId && !teamMemberIds[teamId]!.includes(memberId)) {
+    filterNote = `${memberNames.get(memberId) ?? "That team member"} was not in ${teamName} during ${range.label}, so this shows all of ${teamName}.`;
+    memberId = null;
+  }
+  if (filters.groupsTruncated) {
+    filterNote = `${filterNote ? `${filterNote} ` : ""}Only the first ${MAX_FILTER_GROUPS} of the chosen groups are included.`;
+  }
+  const applied: TeamReportFilters = { ...filters, teamId, memberId };
+  const scope = teamId
+    ? (id: string, ts: number) => (memberId === null || id === memberId) && inTeamAt(intervals, id, teamId, ts)
+    : null;
+
+  return { teamMemberIds, memberNames, teamId, teamName, memberId, filterNote, applied, scope };
+}
+
+/**
  * @param onlyWhatsappGroupId  restrict to one group — the drill-down page — which also narrows the
  *                             query instead of computing the whole team and discarding most of it.
  */
@@ -316,16 +366,6 @@ export async function loadTeamReport(
   // The send a message echoes — matched on the LOGICAL key, so the copy another of our numbers stored
   // of our own post still finds it (messageIdentity.ts). Joined once as a hash, bounded by `sentAt`.
   const outboundOf = (alias: string) => outboundByKeyJoin(projectId, contextStart, lookaheadEnd, alias);
-  // A message's text only where the human-only wait can read it: a line that may be a customer's
-  // (incoming) and short or possibly a closing remark — Support Intelligence's own pre-filter, so the
-  // two decide a closing remark identically. Not narrowed by the stored team-member stamp: who is
-  // staff is decided at read time, and a stamp taken before somebody joined or left is not that.
-  const bodyOf = (alias: string) => {
-    const col = (name: string) => Prisma.raw(`${alias}."${name}"`);
-    return Prisma.sql`CASE WHEN ${col("direction")} = 'INCOMING'
-      AND (length(${col("body")}) BETWEEN 1 AND 24 OR ${col("body")} ~* ${INTELLIGENCE_SQL_PREFILTER}) THEN left(${col("body")}, 400) END`;
-  };
-
   const [members, identity, settings, policies, teams, membershipRows, rows, earlier, copies] = await Promise.all([
     prisma.internalTeamMember.findMany({
       select: { id: true, name: true, status: true },
@@ -365,7 +405,7 @@ export async function loadTeamReport(
           ${filters.accountId ? Prisma.sql`bool_or(m."accountId" = ${filters.accountId}) OVER (PARTITION BY g."whatsappGroupId", ${messageKeySql()})` : Prisma.sql`true`} AS "onAccount",
           ${filters.accountId ? Prisma.sql`(m."accountId" = ${filters.accountId})` : Prisma.sql`true`} AS "ownCopy",
           (m."direction" = 'OUTGOING') AS p1, (left(m."whatsappMessageId", 5) = 'true_') AS p2, m."isFromTeamMember" AS p3,
-          ${bodyOf("m")} AS body,
+          ${prefilteredBodySql("m")} AS body,
           o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
         FROM "Message" m
         JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
@@ -387,7 +427,7 @@ export async function loadTeamReport(
         p."direction"::text AS direction,
         p."isFromTeamMember" AS "fromTeam", p."senderPhone" AS sender, p."senderJid" AS "senderJid",
         NULL::text[] AS copies,
-        ${bodyOf("p")} AS body,
+        ${prefilteredBodySql("p")} AS body,
         o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
       FROM (
         SELECT DISTINCT m."groupId"
@@ -559,30 +599,7 @@ export async function loadTeamReport(
     startedAt: row.startedAt?.getTime() ?? null,
     endedAt: row.endedAt?.getTime() ?? null,
   }));
-  const memberIds = members.map((m) => m.id);
-  const teamMemberIds: Record<string, string[]> = {};
-  for (const teamKey of [...teams.map((t) => t.id), NO_TEAM]) {
-    teamMemberIds[teamKey] = membersOfTeamDuring(intervals, memberIds, teamKey, range.start.getTime(), range.end.getTime());
-  }
-  const memberNames = new Map(members.map((m) => [m.id, m.name]));
-  // An unknown Team (deleted, or a mistyped link) falls back to all Teams rather than an empty report.
-  // An OWN key only: `in` also matched "toString", "constructor" and every other inherited name, so
-  // ?team=toString reached the code below as a function and the page threw (2 Oct audit).
-  const teamId = filters.teamId && Object.prototype.hasOwnProperty.call(teamMemberIds, filters.teamId) ? filters.teamId : null;
-  const teamName = teamId === null ? null : teamId === NO_TEAM ? "No team" : (teams.find((t) => t.id === teamId)?.name ?? null);
-  let memberId = filters.memberId;
-  let filterNote: string | null = null;
-  if (teamId && memberId && !teamMemberIds[teamId]!.includes(memberId)) {
-    filterNote = `${memberNames.get(memberId) ?? "That team member"} was not in ${teamName} during ${range.label}, so this shows all of ${teamName}.`;
-    memberId = null;
-  }
-  if (filters.groupsTruncated) {
-    filterNote = `${filterNote ? `${filterNote} ` : ""}Only the first ${MAX_FILTER_GROUPS} of the chosen groups are included.`;
-  }
-  const applied: TeamReportFilters = { ...filters, teamId, memberId };
-  const scope = teamId
-    ? (id: string, ts: number) => (memberId === null || id === memberId) && inTeamAt(intervals, id, teamId, ts)
-    : null;
+  const { teamMemberIds, memberNames, teamName, memberId, filterNote, applied, scope } = resolveTeamScope(filters, members, teams, intervals, range);
 
   const missedAfterMs = (groupKey: string, at?: number) => {
     const priority = responsibilityAt(groupKey, at).priority;

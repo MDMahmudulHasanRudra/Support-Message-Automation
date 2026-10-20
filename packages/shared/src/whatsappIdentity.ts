@@ -1,4 +1,5 @@
 import { normalizePhoneNumber } from "./groupParticipantAdd.js";
+import { outgoingActorFor, type IntelActor } from "./intelligence/model.js";
 
 /**
  * WhatsApp identity: which roster member (InternalTeamMember) sent a message, decided ONE way for
@@ -442,4 +443,91 @@ export function isOwnSender(ownIds: ReadonlySet<string>, senderPhone: string | n
   if (ownIds.has(parsed.user)) return true;
   const digits = normalizePhoneNumber(parsed.user);
   return digits !== null && ownIds.has(digits);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The report classifier (moved here from apps/web `server/messageIdentity.ts`, unified reporting WP5,
+// body unchanged apart from the optional `parsedCopies`). It has no Prisma dependency, and the identity
+// preview must run it with two different rosters, so it lives with the rest of the identity rule.
+
+/** What a report loader selects about one kept message, for `ReportIdentity.classify`. */
+export interface ReportSenderRow {
+  direction: string;
+  sender: string;
+  senderJid: string | null;
+  fromTeam: boolean;
+  /** `storedCopiesSql`; null/absent = this row is the only witness. */
+  copies?: string[] | null;
+  /** The same witnesses already parsed; used instead of `copies` when present and not empty. */
+  parsedCopies?: readonly StoredCopyIdentity[] | null;
+  /** From `outboundByKeyJoin`: true when the message echoes one of our sends. */
+  obMatched?: boolean | null;
+  actionType: string | null;
+  ruleId: string | null;
+  createdById: string | null;
+}
+
+export interface ReportSenderDecision {
+  kind: "MEMBER" | "CUSTOMER" | "BUSINESS";
+  memberId: string | null;
+  actor: IntelActor;
+  /** How a person was matched (null for the business's own messages). */
+  status: SenderMatchStatus | null;
+}
+
+export interface ReportIdentity {
+  resolver: SenderResolver;
+  classify(row: ReportSenderRow, at: number): ReportSenderDecision;
+}
+
+/**
+ * Who sent one kept message, the ONE way every report decides it:
+ *  1. Our own message — the kept copy is OUTGOING, it echoes one of our sends, or a copy's sender is
+ *     one of our numbers → the business's. Who: the send it echoes (`outgoingActorFor`). A reply a
+ *     dashboard user typed is credited to the team member linked to that login (Team Members → login
+ *     link), because it is that person's work; unlinked, it stays the business number's.
+ *  2. Otherwise every stored copy is a witness (`attributeAcrossCopies`).
+ */
+export function createReportClassifier(
+  resolver: SenderResolver,
+  ownIds: ReadonlySet<string>,
+  memberByUserId: ReadonlyMap<string, string | { id: string; attributeFrom?: Date | number | null }>,
+): ReportIdentity {
+  const linked = (userId: string, at: number): string | null => {
+    const entry = memberByUserId.get(userId);
+    if (!entry) return null;
+    if (typeof entry === "string") return entry;
+    // The member's "count their messages from" date applies to replies from their login too.
+    const from = entry.attributeFrom instanceof Date ? entry.attributeFrom.getTime() : entry.attributeFrom;
+    return typeof from === "number" && at < from ? null : entry.id;
+  };
+  return {
+    resolver,
+    classify(row, at) {
+      const copies = row.parsedCopies?.length
+        ? row.parsedCopies
+        : row.copies?.length
+          ? parseStoredCopies(row.copies)
+          : [{ senderPhone: row.sender, senderJid: row.senderJid, fromTeam: row.fromTeam }];
+      const ours =
+        row.direction === "OUTGOING" ||
+        Boolean(row.obMatched) ||
+        isOwnSender(ownIds, row.sender, row.senderJid) ||
+        copies.some((copy) => isOwnSender(ownIds, copy.senderPhone, copy.senderJid));
+      if (ours) {
+        const actor: IntelActor = row.obMatched || row.direction === "OUTGOING" ? outgoingActorFor(row.actionType, row.ruleId) : "BUSINESS_PHONE";
+        const operatorMember = actor === "OPERATOR" && row.createdById ? linked(row.createdById, at) : null;
+        return operatorMember
+          ? { kind: "MEMBER", memberId: operatorMember, actor, status: null }
+          : { kind: "BUSINESS", memberId: null, actor, status: null };
+      }
+      const decided = attributeAcrossCopies(resolver, copies, at);
+      return {
+        kind: decided.isStaff ? "MEMBER" : "CUSTOMER",
+        memberId: decided.memberId,
+        actor: decided.memberId ? "MEMBER" : decided.isStaff ? "MEMBER_UNMAPPED" : "CUSTOMER",
+        status: decided.status,
+      };
+    },
+  };
 }
