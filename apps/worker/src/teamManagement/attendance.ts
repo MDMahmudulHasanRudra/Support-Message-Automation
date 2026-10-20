@@ -94,12 +94,18 @@ export async function recomputeAttendanceDay(memberId: string, when: Date): Prom
   // (WHATSAPP_IDENTITY.md), so the recompute looks for the same pile of messages that triggered it.
   // An identifier this member SHARES with another active member is left out: their messages are
   // credited to nobody, so counting them here would credit them to this person.
-  const roster = await prisma.internalTeamMember.findMany({
-    where: { status: "ACTIVE" },
-    select: { id: true, phoneNumber: true, whatsappId: true, attributeFrom: true, userId: true },
-  });
-  const member = roster.find((m) => m.id === memberId);
-  if (!member) return;
+  // The roster is the ACTIVE members plus this one. For an active member that is exactly the roster it always
+  // was. A DEACTIVATED member is recomputed too (an identity re-attribution does it): they keep their history,
+  // and when an identifier is corrected away from them their days must lose the messages, which an
+  // active-only roster could not do, because it returned here and left the same messages on two members.
+  const select = { id: true, phoneNumber: true, whatsappId: true, attributeFrom: true, userId: true } as const;
+  const [active, self] = await Promise.all([
+    prisma.internalTeamMember.findMany({ where: { status: "ACTIVE" }, select }),
+    prisma.internalTeamMember.findUnique({ where: { id: memberId }, select }),
+  ]);
+  if (!self) return;
+  const roster = active.some((m) => m.id === self.id) ? active : [...active, self];
+  const member = self;
   const identifiers = createSenderResolver(roster).identifiersFor(member.id);
 
   const activityDate = toDhakaDateOnly(when);

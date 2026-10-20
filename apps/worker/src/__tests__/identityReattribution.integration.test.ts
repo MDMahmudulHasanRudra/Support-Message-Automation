@@ -5,6 +5,7 @@ import type { WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { toDhakaDateOnly } from "@support-automation/shared";
 import { prisma, inIsp } from "./helpers/projectFixtures.js";
 import { processNextReattribution } from "../teamManagement/reattribution.js";
+import { recomputeAttendanceDay } from "../teamManagement/attendance.js";
 
 /**
  * Report accuracy audit (19 Oct 2026), Phase 3: after a roster identity change, what was decided on
@@ -28,7 +29,7 @@ let group: WhatsAppGroup;
 const rinaPhone = phone();
 const karimPhone = phone();
 const leftPhone = phone();
-const ids = { rina: "", karim: "", left: "", nadia: "" };
+const ids = { rina: "", karim: "", left: "", nadia: "", mover: "", taker: "" };
 
 async function stored(key: string, sender: string, when: Date, fromTeam: boolean) {
   return prisma.message.create({
@@ -133,5 +134,47 @@ describe("a colleague who was already supporting customers before they were adde
       await prisma.supportRule.delete({ where: { id: rule.id } });
       await prisma.supportActivitySettings.update({ where: { id: "global" }, data: { enabled: wasEnabled } });
     }
+  });
+});
+
+describe("B1: a deactivated member's Duty History follows a corrected identifier", () => {
+  it("withdraws the days of a deactivated member whose number was corrected to another person's", async () => {
+    const wrongPhone = phone();
+    const newPhone = phone();
+    const takerPhone = phone();
+    // "mover" held the number the messages were sent from, and was counted for them while active.
+    ids.mover = (await prisma.internalTeamMember.create({ data: { name: `Mover ${RUN}`, phoneNumber: `+${wrongPhone}`, role: "Support" } })).id;
+    ids.taker = (await prisma.internalTeamMember.create({ data: { name: `Taker ${RUN}`, phoneNumber: `+${takerPhone}`, role: "Support" } })).id;
+    await stored("V1", wrongPhone, at(0), true);
+    await stored("V2", wrongPhone, at(5), true);
+    await inIsp(() => recomputeAttendanceDay(ids.mover, at(0)));
+    const key = { teamMemberId_activityDate: { teamMemberId: ids.mover, activityDate: toDhakaDateOnly(at(0)) } };
+    expect((await prisma.teamAttendanceDay.findUnique({ where: key }))?.messageCount).toBe(2);
+
+    // They leave; later an admin finds the number was never theirs: it moves to the person who really had it.
+    await prisma.internalTeamMember.update({ where: { id: ids.mover }, data: { status: "INACTIVE", phoneNumber: `+${newPhone}` } });
+    await prisma.internalTeamMember.update({ where: { id: ids.taker }, data: { phoneNumber: `+${wrongPhone}` } });
+    await prisma.identityReattribution.create({
+      data: { reason: `Number corrected ${RUN}`, identifiers: [wrongPhone, takerPhone], memberIds: [ids.mover, ids.taker] },
+    });
+    expect(await inIsp(() => processNextReattribution())).toBe(true);
+
+    // The same two messages were counted on BOTH members' Duty History before the fix.
+    expect(await prisma.teamAttendanceDay.findUnique({ where: key })).toBeNull();
+    const takerDay = await prisma.teamAttendanceDay.findUnique({
+      where: { teamMemberId_activityDate: { teamMemberId: ids.taker, activityDate: toDhakaDateOnly(at(0)) } },
+    });
+    expect(takerDay?.messageCount).toBe(2);
+  });
+
+  it("recomputing a deactivated member still counts what the roster credits them with", async () => {
+    const goneId = ids.left;
+    expect((await prisma.internalTeamMember.findUniqueOrThrow({ where: { id: goneId } })).status).toBe("INACTIVE");
+    await inIsp(() => recomputeAttendanceDay(goneId, at(0)));
+    const day = await prisma.teamAttendanceDay.findUnique({
+      where: { teamMemberId_activityDate: { teamMemberId: goneId, activityDate: toDhakaDateOnly(at(0)) } },
+    });
+    // Left's one stamped message (L1) is theirs on Duty History, as it is in the Team Report.
+    expect(day?.messageCount).toBe(1);
   });
 });
