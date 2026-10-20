@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { Alert, Button, Field, Input, Select } from "@/components/ui";
 import { updateTeamMember, type TeamMemberFormState } from "@/server/actions/teamMembers";
+import { IdentityImpactPanel } from "@/components/teamMembers/IdentityImpactPanel";
 import { MemberSuggestionLists, TeamSelect, type MemberFormOptions } from "../../MemberFormFields";
 
 /**
@@ -18,8 +19,10 @@ export function EditTeamMemberForm({
   defaults,
   options,
   seenMessages = null,
+  previewEnabled = false,
 }: {
   seenMessages?: number | null;
+  previewEnabled?: boolean;
   memberId: string;
   defaults: {
     name: string;
@@ -85,6 +88,7 @@ export function EditTeamMemberForm({
           <option value="INACTIVE">Disabled</option>
         </Select>
       </Field>
+      {previewEnabled ? <IdentityImpactPanel memberId={memberId} newMemberLabel={defaults.name} /> : null}
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
       <Button type="submit" loading={pending}>
         Save

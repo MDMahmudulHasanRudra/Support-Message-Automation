@@ -4,6 +4,7 @@ import { useActionState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Link2, RefreshCw } from "lucide-react";
 import { Button, Select } from "@/components/ui";
+import { IdentityImpactPanel } from "@/components/teamMembers/IdentityImpactPanel";
 import { linkWhatsAppSender, requestGroupParticipants, type LinkSenderState } from "@/server/actions/teamMembers";
 
 /**
@@ -11,7 +12,7 @@ import { linkWhatsAppSender, requestGroupParticipants, type LinkSenderState } fr
  * (WHATSAPP_IDENTITY.md §4). Only members with no WhatsApp ID yet are offered; replacing one is an
  * edit on their own page.
  */
-export function LinkSenderForm({ senderId, members }: { senderId: string; members: Array<{ id: string; name: string; designation: string }> }) {
+export function LinkSenderForm({ senderId, members, previewEnabled = false }: { senderId: string; members: Array<{ id: string; name: string; designation: string }>; previewEnabled?: boolean }) {
   const [state, action, pending] = useActionState<LinkSenderState, FormData>(linkWhatsAppSender.bind(null, senderId), {});
   if (state.linked) {
     return (
@@ -41,6 +42,7 @@ export function LinkSenderForm({ senderId, members }: { senderId: string; member
           Link
         </Button>
       </div>
+      {previewEnabled ? <IdentityImpactPanel memberId={null} linkSenderId={senderId} /> : null}
       {state.error ? <p className="text-[12px] text-[color:var(--color-danger-fg)]">{state.error}</p> : null}
     </form>
   );

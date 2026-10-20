@@ -28,6 +28,7 @@ import {
   type IntelMessage,
   type ReliabilityCounts,
   type ReplyEvidenceMessage,
+  type ReportIdentity,
   type ReportScope,
   type ReportGranularity,
   type ReportMessage,
@@ -374,6 +375,8 @@ export async function loadTeamReport(
      * was — the evidence columns and the quoted-message join are empty fragments.
      */
     withReplyEvidence?: boolean;
+    /** Unified reporting: classify with this identity instead of the project's roster (the identity preview's estimate only). */
+    identity?: ReportIdentity;
   } = {},
 ): Promise<TeamReportData> {
   const range = resolveTeamReportRange(filters, now);
@@ -406,7 +409,7 @@ export async function loadTeamReport(
     }),
     // Who sent each message: the one identity rule (WHATSAPP_IDENTITY.md), over every member, every
     // stored copy, and our own numbers (messageIdentity.ts).
-    loadReportIdentity(projectId),
+    options.identity ?? loadReportIdentity(projectId),
     prisma.supportActivitySettings.findUnique({
       where: { id: "global" },
       select: { offlineAfterMinutes: true, missedReplyAfterMinutes: true },

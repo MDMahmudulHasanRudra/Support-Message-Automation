@@ -9,14 +9,12 @@ import { isUniqueViolation } from "@/lib/prismaErrors";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import {
   createSenderResolver,
-  DHAKA_OFFSET_MS,
-  isLocalBangladeshMobile,
   normalizePhoneNumber,
   parseWhatsAppId,
   whatsappIdKey,
   type WhatsAppIdKind,
 } from "@support-automation/shared";
-import { rosterEntryFromGroup } from "@/lib/teamMemberIdentity";
+import { dhakaDayStart, readIdentityFields, rosterEntryFromGroup } from "@/lib/teamMemberIdentity";
 import { memberIdentifiers, queueReattribution } from "@/server/reattribution";
 import { loginsForProject } from "@/server/projectLogins";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -57,25 +55,15 @@ interface TeamMemberInput {
 function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: string } {
   const name = String(formData.get("name") ?? "").trim();
   const typedPhone = String(formData.get("phoneNumber") ?? "").trim();
-  // A local Bangladeshi number ("01…") is stored with its country code, the form WhatsApp delivers
-  // and the form a direct message needs; anything else is kept exactly as typed.
-  const typedDigits = typedPhone.replace(/\D/g, "");
-  const phoneNumber = isLocalBangladeshMobile(typedDigits) ? `+88${typedDigits}` : typedPhone;
   const role = String(formData.get("role") ?? "").trim();
-  // The id as the worker stores a sender: no "@lid" / "@c.us" suffix, which is stripped before
-  // comparing, so pasting either form works. A multi-device sender ("176742417301720:26") carries
-  // the device after a colon; the person is the part before it, exactly as the matcher reads it.
-  const whatsappId = whatsappIdKey(String(formData.get("whatsappId") ?? "").replace(/\s+/g, ""));
   const department = String(formData.get("department") ?? "").trim() || null;
   const teamId = String(formData.get("teamId") ?? "").trim() || null;
   const status = formData.get("status") === "INACTIVE" ? "INACTIVE" : "ACTIVE";
-  if (!name || !phoneNumber || !role) return { error: "Name, phone number and designation are all required." };
-  if (!normalizePhoneNumber(phoneNumber)) {
-    return { error: "That does not look like a phone number. Enter it with the country code, e.g. +8801XXXXXXXXX." };
-  }
-  if (whatsappId && !/^\d{6,}$/.test(whatsappId)) {
-    return { error: "The WhatsApp ID is digits only (for example 145938777669643). Leave it empty if you do not have one." };
-  }
+  if (!name || !typedPhone || !role) return { error: "Name, phone number and designation are all required." };
+  // The phone number and WhatsApp id are read by the one function the impact preview also uses.
+  const identity = readIdentityFields({ phoneNumber: typedPhone, whatsappId: String(formData.get("whatsappId") ?? "") });
+  if ("error" in identity) return identity;
+  const { phoneNumber, whatsappId } = identity;
   let attributeFrom: Date | null | undefined;
   if (formData.has("attributeFrom")) {
     const key = String(formData.get("attributeFrom") ?? "").trim();
@@ -83,17 +71,6 @@ function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: stri
     if (attributeFrom === undefined) return { error: "That date could not be read. Pick a day, or leave it empty to count every message." };
   }
   return { name, phoneNumber, whatsappId, role, department, teamId, status, attributeFrom };
-}
-
-/** Dhaka midnight of a YYYY-MM-DD in a year a roster can mean, or undefined for anything else. */
-function dhakaDayStart(key: string): Date | undefined {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
-  if (!match) return undefined;
-  const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  if (y < 2000 || y > 2999) return undefined;
-  const utc = new Date(Date.UTC(y, m - 1, d));
-  if (utc.getUTCFullYear() !== y || utc.getUTCMonth() !== m - 1 || utc.getUTCDate() !== d) return undefined;
-  return new Date(utc.getTime() - DHAKA_OFFSET_MS);
 }
 
 /**
@@ -204,12 +181,46 @@ export async function createTeamMember(_prev: TeamMemberFormState, formData: For
     if (isUniqueViolation(err)) return { error: "Someone already has that number." };
     throw err;
   }
-  await logIdentityChange(granted.session.userId, createdId, input.name, null, { phoneNumber: input.phoneNumber, whatsappId: input.whatsappId }, "form");
+  await logIdentityChange(granted.session.userId, createdId, input.name, null, { phoneNumber: input.phoneNumber, whatsappId: input.whatsappId }, "form", readPreviewRecord(formData));
   // Their messages from before today were stored as a customer's: bring the stored stamps and Duty
   // History in line (reports already read identity at read time).
   await queueReattribution({ reason: `Team member ${input.name} added`, memberIds: [createdId], identifiers: memberIdentifiers(input), userId: granted.session.userId });
   revalidatePath(await projectPath("/team-members"));
   return { success: true };
+}
+
+/**
+ * What the person saw when they pressed "Preview impact" before saving (unified reporting): the digest of
+ * the preview and its headline counts, as the browser carried them. Recorded in the System Log entry only;
+ * nothing is recomputed here and no decision reads it. A form without a valid digest carries none.
+ */
+interface IdentityPreviewRecord {
+  digest: string;
+  affectedLogical: number;
+  affectedGroups: number;
+  affectedPersonal: number;
+  window: { from: string; to: string };
+}
+
+function readPreviewRecord(formData: FormData): IdentityPreviewRecord | undefined {
+  const digest = String(formData.get("previewDigest") ?? "");
+  if (!/^[0-9a-f]{64}$/.test(digest)) return undefined;
+  const count = (key: string): number | null => {
+    const value = Number(formData.get(key));
+    return Number.isInteger(value) && value >= 0 && value <= 10_000_000 ? value : null;
+  };
+  const iso = (key: string): string | null => {
+    const value = String(formData.get(key) ?? "");
+    const date = new Date(value);
+    return value && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
+  };
+  const affectedLogical = count("previewAffected");
+  const affectedGroups = count("previewGroups");
+  const affectedPersonal = count("previewPersonal");
+  const from = iso("previewFrom");
+  const to = iso("previewTo");
+  if (affectedLogical === null || affectedGroups === null || affectedPersonal === null || !from || !to) return undefined;
+  return { digest, affectedLogical, affectedGroups, affectedPersonal, window: { from, to } };
 }
 
 /** The columns attribution follows, as the identity log records them. */
@@ -234,6 +245,7 @@ async function logIdentityChange(
   before: IdentityColumns | null,
   after: IdentityColumns,
   via: "form" | "chat-link",
+  preview?: IdentityPreviewRecord,
 ): Promise<void> {
   if (
     before &&
@@ -249,7 +261,8 @@ async function logIdentityChange(
     before
       ? `Identifiers of team member ${memberName} changed${via === "chat-link" ? " (WhatsApp sender linked from WhatsApp Chat)" : ""}`
       : `Team member ${memberName} added`,
-    { before, after, via },
+    // `preview` is present only when the person pressed Preview impact before saving; without it the entry is exactly what it was.
+    preview ? { before, after, via, preview } : { before, after, via },
     { actorUserId, targetType: "InternalTeamMember", targetId: memberId },
   );
 }
@@ -578,6 +591,7 @@ export async function updateTeamMember(
       attributeFrom: input.attributeFrom === undefined ? (current.attributeFrom?.toISOString() ?? null) : (input.attributeFrom?.toISOString() ?? null),
     },
     "form",
+    readPreviewRecord(formData),
   );
   const identityChanged =
     current.phoneNumber !== input.phoneNumber ||
@@ -655,6 +669,7 @@ export async function linkWhatsAppSender(senderId: string, _prev: LinkSenderStat
     { phoneNumber: member.phoneNumber, whatsappId: member.whatsappId },
     { phoneNumber: member.phoneNumber, whatsappId: key },
     "chat-link",
+    readPreviewRecord(formData),
   );
   await queueReattribution({
     reason: `WhatsApp ID linked to team member ${member.name}`,
