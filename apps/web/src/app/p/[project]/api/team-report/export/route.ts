@@ -1,18 +1,29 @@
 import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import {
+  buildReportRunMetadata,
   computeReportingReliability,
+  countOperatorReplies,
+  dataQualityLines,
   DUTY_SOURCE_LABELS,
   reliabilityLines,
+  REPLY_ATTRIBUTION_VERSION,
   REPLY_CATEGORY_LABELS,
   replyCategoryOf,
   responseLines,
+  runMetadataLines,
   sanitizeExcelRow,
 } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
-import { bucketLabel, exportStoredBy, loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, scopeLabel } from "@/server/teamReport";
+import { bucketLabel, CONTEXT_MS, exportStoredBy, LOOKAHEAD_MS, loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, scopeLabel } from "@/server/teamReport";
 import { loadDataHealth } from "@/server/dataHealth";
+import { isUnifiedReportingEnabled, loadDataQualityCounts, loadPendingReattributions, resolvePageScope, withReportScope } from "@/server/unifiedReporting";
+import { loadPersonalReport, type PersonalReportData } from "@/server/personalReport";
+import { combinedLines } from "@/server/combinedReport";
+import { customerSpecificReplies } from "@/server/replyAttribution";
+import { analyticsOf, buildComparisonTable, buildDailyEngagementSheetTable, buildRankingTable, loadPreviousPeriod } from "@/server/employeePerformance";
+import { accountLabelOf, combinedTable, customerSpecificSheet, mergeReliabilityCounts, personalExport, personalQualityRows, personalSheets, SCOPE_FILE_SUFFIX, tableToCsv, tableToSheet } from "@/server/scopedExport";
 
 /**
  * Team Report export. A Route Handler because a file download cannot come from a Server Action —
@@ -84,16 +95,34 @@ const GROUP_COLUMNS = [
 ];
 
 export async function GET(request: NextRequest) {
-  await requireAccess("support_activity.view");
+  const session = await requireAccess("support_activity.view");
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
   const format = params.format === "xlsx" ? "xlsx" : "csv";
   const now = reportNow(params);
-  const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts } = await loadTeamReport(
-    parseTeamReportFilters(params, now),
+  // Unified reporting: personal and combined need `messages.view` on top of the report's own key, and the
+  // feature on. Anything else resolves to the group report exactly as the page does, so the file matches
+  // the screen — and with the feature off nothing below differs from what this route always did.
+  const { scope: reportScope, enabled: unifiedOn } = await resolvePageScope(params, session);
+  const requestedFilters = withReportScope(parseTeamReportFilters(params, now), reportScope);
+  if (reportScope === "personal") {
+    const data = await loadPersonalReport(requestedFilters, now, exportStoredBy(params, now));
+    return personalExport({ data, format, now, storedBy: exportStoredBy(params, now).storedBy });
+  }
+  const groupReport = await loadTeamReport(
+    requestedFilters,
     now,
     undefined,
-    exportStoredBy(params, now),
+    {
+      ...exportStoredBy(params, now),
+      ...(reportScope === "combined" ? { keepHumanWaits: true } : {}),
+      // The evidence behind the "Customer-specific replies" sheet; off, nothing differs from the old query.
+      ...(unifiedOn ? { withReplyEvidence: true } : {}),
+    },
   );
+  const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts, messages } = groupReport;
+  const attribution = unifiedOn ? customerSpecificReplies(groupReport) : null;
+  // Combined: the personal half is loaded beside the group one, never instead of it.
+  const personal: PersonalReportData | null = reportScope === "combined" ? await loadPersonalReport(requestedFilters, now, exportStoredBy(params, now)) : null;
   const memberName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
   const scope = scopeLabel(teamName, memberName);
   const groupName = (key: string) => groups.get(key)?.name ?? key;
@@ -129,6 +158,16 @@ export async function GET(request: NextRequest) {
   const slug = [teamName, memberName, range.label].filter(Boolean).map((part) => safe(part!)).join(" - ");
 
   if (format === "csv") {
+    // Combined: the side-by-side table (Figure, Groups, Personal, Combined, How combined, Note).
+    if (personal) {
+      const lines = combinedLines(groupReport, personal);
+      return new NextResponse(tableToCsv(combinedTable(lines)), {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": contentDisposition(`Team Report groups - ${slug}${SCOPE_FILE_SUFFIX.combined}.csv`),
+        },
+      });
+    }
     return new NextResponse(toCsv(groupRows, GROUP_COLUMNS), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
@@ -249,9 +288,52 @@ export async function GET(request: NextRequest) {
 
   // The page's "How customers were answered" and "Reporting reliability" sections, line for line.
   const reliability = computeReportingReliability(reliabilityCounts, health, { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() });
-  const qualityRows = [...responseLines(response), ...reliabilityLines(reliability)].map((line) =>
-    sanitizeExcelRow({ Section: line.section, Measure: line.label, Value: line.value, Note: line.note }),
-  );
+  // Unified messaging reports (UNIFIED_REPORTING) only: the page's "Collection detail" lines in the same
+  // sheet, and a "Run information" sheet after the existing ones. Off, the workbook is what it always was.
+  const unified = await isUnifiedReportingEnabled();
+  const stored = exportStoredBy(params, now).storedBy;
+  const [quality, pendingReattributions] = unified
+    ? await Promise.all([
+        loadDataQualityCounts({ kind: "GROUP", start: range.start, end: range.end, storedBy: stored, accountId: filters.accountId, groupKeys: filters.groupKeys }),
+        loadPendingReattributions(),
+      ])
+    : [null, 0];
+  const qualityRows = [
+    ...responseLines(response),
+    ...reliabilityLines(reliability),
+    ...(quality ? dataQualityLines(quality, "GROUP", pendingReattributions) : []),
+  ].map((line) => sanitizeExcelRow({ Section: line.section, Measure: line.label, Value: line.value, Note: line.note }));
+  const runRows = quality
+    ? runMetadataLines(
+        buildReportRunMetadata({
+          scope: reportScope,
+          generatedAt: now.getTime(),
+          storedBy: stored?.getTime() ?? null,
+          period: {
+            start: range.start.getTime(),
+            end: range.end.getTime(),
+            label: range.label,
+            contextMs: CONTEXT_MS,
+            lookaheadMs: LOOKAHEAD_MS,
+            name: { day: "Daily", week: "Weekly", month: "Monthly", custom: "Custom range" }[filters.period],
+          },
+          filters: {
+            team: teamName,
+            member: memberName,
+            groupCount: filters.groupKeys?.length ?? 0,
+            account: filters.accountId
+              ? ((await prisma.whatsAppAccount.findFirst({ where: { id: filters.accountId }, select: { label: true } }))?.label ?? filters.accountId)
+              : null,
+            granularity: filters.granularity,
+          },
+          health,
+          reliability: personal ? computeReportingReliability(mergeReliabilityCounts(reliabilityCounts, personal.reliabilityCounts), health, { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() }) : reliability,
+          operatorReplies: countOperatorReplies(personal ? [...messages, ...personal.messages] : messages, range.end.getTime(), range.start.getTime()),
+          pendingReattributions,
+          replyAttributionVersion: attribution ? REPLY_ATTRIBUTION_VERSION : null,
+        }),
+      ).map((line) => sanitizeExcelRow({ Item: line.label, Value: line.value, Note: line.note }))
+    : [];
 
   const workbook = XLSX.utils.book_new();
   const addSheet = (name: string, rows: Array<Record<string, unknown>>, emptyNote: string) =>
@@ -263,12 +345,44 @@ export async function GET(request: NextRequest) {
   addSheet("Missed & Recall", missedRows, "Nothing was missed in this period.");
   addSheet("Overtime by day", overtimeDayRows, "No team member work was recorded in this period.");
   addSheet("Data quality", qualityRows, "");
+  if (quality) addSheet("Run information", runRows, "");
+  if (unified) {
+    // WP10, after every existing sheet: the ranking (not for one chosen member), the daily grid, and the
+    // previous-period comparison only when asked for. The same derivations the page draws.
+    const analytics = analyticsOf(groupReport);
+    if (!filters.memberId) XLSX.utils.book_append_sheet(workbook, tableToSheet(buildRankingTable(groupReport, analytics), "No team member activity in this period."), "Ranking");
+    XLSX.utils.book_append_sheet(workbook, tableToSheet(buildDailyEngagementSheetTable(analytics, memberNames), "No team member activity in this period."), "Daily engagement");
+    if (filters.compare) {
+      const { previous, note } = await loadPreviousPeriod(groupReport, now, exportStoredBy(params, now));
+      XLSX.utils.book_append_sheet(
+        workbook,
+        previous
+          ? tableToSheet(buildComparisonTable(analytics, previous.analytics, memberNames, filters), "No team member activity in either period.")
+          : XLSX.utils.aoa_to_sheet([["Note"], [note ?? "There is nothing to compare."]]),
+        "Comparison",
+      );
+    }
+  }
+  if (attribution) {
+    XLSX.utils.book_append_sheet(
+      workbook,
+      customerSpecificSheet(attribution, { group: groupName, member: (id) => memberLabel(id, memberNames) }),
+      "Customer-specific replies",
+    );
+  }
+  if (personal) {
+    // Combined: the personal sheets and the side-by-side table follow the group workbook, which is untouched.
+    const accountLabel = await accountLabelOf(filters.accountId);
+    for (const { name, sheet } of personalSheets(personal, { health, scopeText: scope, accountLabel, now })) XLSX.utils.book_append_sheet(workbook, sheet, name);
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet((await personalQualityRows(personal, health, now, pendingReattributions)).rows), "Personal data quality");
+    XLSX.utils.book_append_sheet(workbook, tableToSheet(combinedTable(combinedLines(groupReport, personal))), "Combined");
+  }
 
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
   return new NextResponse(buffer as unknown as BodyInit, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": contentDisposition(`Team Report - ${slug}.xlsx`),
+      "Content-Disposition": contentDisposition(`Team Report - ${slug}${personal ? SCOPE_FILE_SUFFIX.combined : ""}.xlsx`),
     },
   });
 }

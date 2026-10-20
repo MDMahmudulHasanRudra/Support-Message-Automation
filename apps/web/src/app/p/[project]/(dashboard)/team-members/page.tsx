@@ -10,10 +10,11 @@ import { loadMemberFormOptions } from "./memberFormOptions";
 import { createSenderResolver } from "@support-automation/shared";
 import { getMemberHistorySync, getRosterIdentityHealth } from "@/server/rosterIdentityHealth";
 import { IdentityHealthCard } from "./IdentityHealthCard";
+import { isUnifiedReportingEnabled } from "@/server/unifiedReporting";
 
 export default async function TeamMembersPage() {
   const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
-  const [members, groups, options, identityHealth, historySync] = await Promise.all([
+  const [members, groups, options, identityHealth, historySync, unifiedOn] = await Promise.all([
     prisma.internalTeamMember.findMany({
       orderBy: { createdAt: "desc" },
       include: { team: { select: { id: true, name: true, status: true } } },
@@ -27,7 +28,9 @@ export default async function TeamMembersPage() {
     // Roster problems that make reports credit messages to the wrong person, or to nobody.
     getRosterIdentityHealth(),
     getMemberHistorySync(),
+    isUnifiedReportingEnabled(),
   ]);
+  const previewEnabled = canManage && unifiedOn;
 
   // Members sharing an identifier, through the same rule that attributes their messages
   // (WHATSAPP_IDENTITY.md §3): each such identifier is credited to nobody, so the clash is shown here.
@@ -130,16 +133,16 @@ export default async function TeamMembersPage() {
 
       {canManage ? null : <ViewOnlyNotice />}
 
-      <IdentityHealthCard health={identityHealth} canManage={canManage} />
+      <IdentityHealthCard health={identityHealth} canManage={canManage} unified={previewEnabled} />
 
       {canManage ? (
         <Card className="mb-6">
           <SectionHeader title="Add Team Member" />
-          <AddTeamMemberForm options={options} />
+          <AddTeamMemberForm options={options} previewEnabled={previewEnabled} />
         </Card>
       ) : null}
 
-      <TeamMembersTable members={rows} />
+      <TeamMembersTable members={rows} unified={unifiedOn} />
     </div>
   );
 }

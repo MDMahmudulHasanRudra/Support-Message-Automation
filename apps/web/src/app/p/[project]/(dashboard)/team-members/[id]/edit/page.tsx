@@ -10,6 +10,7 @@ import { loadMemberFormOptions } from "../../memberFormOptions";
 import { updateMemberNotificationPreferences } from "@/server/actions/notificationEvents";
 import { loginsForProject } from "@/server/projectLogins";
 import { LoginLinkForm } from "./LoginLinkForm";
+import { isUnifiedReportingEnabled } from "@/server/unifiedReporting";
 
 const EVENT_LABELS: Record<string, string> = {
   SUPPORT_ESCALATION: "Support escalation — a priority case is overdue",
@@ -25,9 +26,10 @@ const EVENT_LABELS: Record<string, string> = {
 export default async function EditTeamMemberPage({ params }: { params: Promise<{ id: string }> }) {
   await requireAccess("whatsapp.manage");
   const { id } = await params;
-  const [member, options] = await Promise.all([
+  const [member, options, previewEnabled] = await Promise.all([
     prisma.internalTeamMember.findUnique({ where: { id } }),
     loadMemberFormOptions(),
+    isUnifiedReportingEnabled(),
   ]);
   if (!member) notFound();
 
@@ -53,6 +55,7 @@ export default async function EditTeamMemberPage({ params }: { params: Promise<{
           memberId={member.id}
           options={options}
           seenMessages={seenMessages}
+          previewEnabled={previewEnabled}
           defaults={{
             name: member.name,
             phoneNumber: member.phoneNumber,

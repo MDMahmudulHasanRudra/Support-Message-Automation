@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
 import { hasPermission } from "@/server/permissions";
+import { isUnifiedReportingEnabled } from "@/server/unifiedReporting";
 import type { Session } from "@/server/auth";
 import { messageKeySql } from "@/server/messageIdentity";
 import {
@@ -65,6 +66,8 @@ export interface ContactProfile {
   personalChatId: string | null;
   canViewRoster: boolean;
   canLink: boolean;
+  /** The identity-change impact preview is offered beside the link form (UNIFIED_REPORTING on, and the viewer may link). */
+  canPreviewImpact: boolean;
   /** Active members with no WhatsApp ID recorded — who this sender could be linked to. */
   linkableMembers: Array<{ id: string; name: string; designation: string }>;
 }
@@ -195,6 +198,7 @@ export async function getContactProfile(session: Session, accountId: string, sen
   });
 
   const canLink = roster.canLink && resolution.status === "UNRESOLVED";
+  const canPreviewImpact = canLink ? await isUnifiedReportingEnabled() : false;
   return {
     senderId: jid ?? user,
     kind: described.kind,
@@ -210,6 +214,7 @@ export async function getContactProfile(session: Session, accountId: string, sen
     personalChatId: personal?.chatId ?? null,
     canViewRoster: roster.canViewRoster,
     canLink,
+    canPreviewImpact,
     linkableMembers: canLink
       ? roster.members.filter((m) => m.status === "ACTIVE" && !m.whatsappId).map((m) => ({ id: m.id, name: m.name, designation: m.role }))
       : [],

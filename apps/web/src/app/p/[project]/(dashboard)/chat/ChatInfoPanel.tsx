@@ -156,7 +156,7 @@ export function ContactPanel({ profile, accountId, closeHref }: { profile: Conta
             </div>
           </div>
         ) : null}
-        {profile.canLink && profile.linkableMembers.length ? <LinkSenderForm senderId={profile.senderId} members={profile.linkableMembers} /> : null}
+        {profile.canLink && profile.linkableMembers.length ? <LinkSenderForm senderId={profile.senderId} members={profile.linkableMembers} previewEnabled={profile.canPreviewImpact} /> : null}
         {profile.canLink && !profile.linkableMembers.length && !profile.isOurNumber ? (
           <p className="text-[11px] text-[color:var(--color-muted-foreground)]">
             Every active team member already has a WhatsApp ID. Add this person on Team Members instead.

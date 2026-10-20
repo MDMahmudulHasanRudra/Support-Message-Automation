@@ -7,6 +7,7 @@ import { createProjectWithDefaults, prisma as rawPrisma } from "@support-automat
 import { runWithProject, type ActiveProject } from "@/server/projectContext";
 import { messageKeySql, preferSenderCopySql } from "@/server/messageIdentity";
 import { loadTeamReport, parseTeamReportFilters } from "@/server/teamReport";
+import { loadPersonalReport } from "@/server/personalReport";
 import {
   computeTeamReport,
   createSenderResolver,
@@ -97,6 +98,19 @@ beforeAll(async () => {
       }
       if (messages.length >= 5000) await flush();
     }
+  }
+  // Personal chats (unified reporting WP6): 2,000 one-to-one chats on the first number over the same month, a
+  // customer line and, for most, a reply from the phone — about 8,000 rows beside the 150,000 group ones.
+  for (let c = 0; c < 2000; c++) {
+    const chat = `88018${String(10_000_000 + c)}@c.us`;
+    let at = START + Math.floor(rand() * DAY_MS * 0.9 * DAYS);
+    for (let l = 0; l < 4; l++) {
+      const key = `P${n++}`;
+      const fromMe = l % 2 === 1 && rand() < 0.8;
+      messages.push({ projectId: pid, accountId: a.id, groupId: null, chatId: chat, whatsappMessageId: `${fromMe ? "true" : "false"}_${chat}_${key}`, senderPhone: fromMe ? "8801500000001" : chat.split("@")[0]!, senderJid: fromMe ? "8801500000001@c.us" : chat, direction: fromMe ? "OUTGOING" : "INCOMING", body: "ok", normalizedBody: "ok", timestampWa: new Date(at), processingStatus: "PROCESSED" });
+      at += 60_000 + Math.floor(rand() * 3_600_000);
+    }
+    if (messages.length >= 5000) await flush();
   }
   await flush();
   await rawPrisma.$executeRawUnsafe(`ANALYZE "Message"`);
@@ -269,6 +283,30 @@ describe.skipIf(!RUN)("Team Report at production scale", () => {
     expect(outboundPlan.map((row) => row["QUERY PLAN"]).join("\n")).toMatch(/OutboundMessage_providerMessageId_idx/);
     results.contextPlan = text.split("\n").filter((line) => /Index|Execution Time|Planning Time/.test(line)).map((line) => line.trim());
   }, 120_000);
+
+  it("the personal report over 31 days, and the plan of its earlier-message probe", async () => {
+    const now = new Date(START + 40 * DAY_MS);
+    const personal = await timed(() => runWithProject(project, () => loadPersonalReport(parseTeamReportFilters({ period: "month", date: "2025-09-15", scope: "personal" }, now), now)));
+    expect(personal.value.result.summary.conversations).toBeGreaterThan(0);
+    const start = new Date(START + 10 * DAY_MS);
+    const plan = await rawPrisma.$queryRawUnsafe<Array<{ "QUERY PLAN": string }>>(
+      `EXPLAIN (ANALYZE, BUFFERS) SELECT p."timestampWa" FROM (SELECT DISTINCT m."accountId" AS aid, m."chatId" AS chat FROM "Message" m WHERE m."projectId" = $1 AND m."groupId" IS NULL AND (m."chatId" LIKE '%@c.us' OR m."chatId" LIKE '%@lid') AND m."timestampWa" >= $2 AND m."timestampWa" < $3) r
+       CROSS JOIN LATERAL (SELECT x."timestampWa" FROM "Message" x WHERE x."projectId" = $1 AND x."accountId" = r.aid AND x."groupId" IS NULL AND x."chatId" = r.chat AND x."timestampWa" < $2 AND x."direction" <> 'SYSTEM' ORDER BY x."timestampWa" DESC LIMIT 1) p`,
+      project.id,
+      start,
+      new Date(start.getTime() + DAY_MS),
+    );
+    const text = plan.map((row) => row["QUERY PLAN"]).join("\n");
+    // Generous: this guards against a scan that grows with the whole table, not against a slow laptop.
+    expect(personal.ms).toBeLessThan(60_000);
+    results.personal = {
+      monthMs: personal.ms,
+      conversations: personal.value.result.summary.conversations,
+      customerMessages: personal.value.result.summary.customerMessages,
+      storedCopies: personal.value.reliabilityCounts.storedCopies,
+      earlierProbePlan: text.split("\n").filter((line) => /Index|Seq Scan|Execution Time|Planning Time/.test(line)).map((line) => line.trim()),
+    };
+  }, 600_000);
 
   it("the whole loader: a day, a week, a month, and five months at once", async () => {
     const day = await timed(() => report({ period: "day", date: "2025-09-15" }));

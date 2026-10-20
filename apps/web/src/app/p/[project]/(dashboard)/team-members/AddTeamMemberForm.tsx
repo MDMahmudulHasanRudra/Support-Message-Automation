@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef } from "react";
 import { Plus } from "lucide-react";
 import { Alert, Button, Field, Input, Select, useToast } from "@/components/ui";
 import { createTeamMember, type TeamMemberFormState } from "@/server/actions/teamMembers";
+import { IdentityImpactPanel } from "@/components/teamMembers/IdentityImpactPanel";
 import { MemberSuggestionLists, TeamSelect, type MemberFormOptions } from "./MemberFormFields";
 
 /**
@@ -14,7 +15,7 @@ import { MemberSuggestionLists, TeamSelect, type MemberFormOptions } from "./Mem
  * error boundary. Adding a number somebody already had therefore looked like the app breaking,
  * rather than being told who has it.
  */
-export function AddTeamMemberForm({ options }: { options: MemberFormOptions }) {
+export function AddTeamMemberForm({ options, previewEnabled = false }: { options: MemberFormOptions; previewEnabled?: boolean }) {
   const [state, formAction, pending] = useActionState<TeamMemberFormState, FormData>(createTeamMember, {});
   const formRef = useRef<HTMLFormElement>(null);
   const { showToast } = useToast();
@@ -60,6 +61,11 @@ export function AddTeamMemberForm({ options }: { options: MemberFormOptions }) {
             Add
           </Button>
         </div>
+        {previewEnabled ? (
+          <div className="sm:col-span-2 lg:col-span-4">
+            <IdentityImpactPanel memberId={null} />
+          </div>
+        ) : null}
       </form>
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
     </div>

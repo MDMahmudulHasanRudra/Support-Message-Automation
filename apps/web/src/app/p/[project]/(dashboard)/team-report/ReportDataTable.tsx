@@ -292,6 +292,12 @@ export function ReportDataTable({
                         <td
                           key={index}
                           className={`border-b border-[var(--color-border)] px-4 py-3 align-middle whitespace-nowrap ${
+                            row.tones?.[index] === "good"
+                              ? "bg-[var(--color-success-bg)] "
+                              : row.tones?.[index] === "bad"
+                                ? "bg-[var(--color-warning-bg)] "
+                                : ""
+                          }${
                             index === 0
                               ? row.muted
                                 ? "text-[color:var(--color-muted-foreground)]"

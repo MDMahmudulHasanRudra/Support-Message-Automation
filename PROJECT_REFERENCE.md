@@ -577,6 +577,35 @@ Unchanged figures. New on the page:
 
 Both new filters are empty by default, and the exports carry them.
 
+**Unified reporting (20 Oct 2026, `UNIFIED_REPORTING`, off by default).** With the feature off, or
+`scope=group`, the page and every export are exactly what they were. With it on, the page gains the
+following, in this order. Specs and as-built notes: `docs/unified-reporting/`.
+- **Scope** (`scope=group|personal|combined`): a selector in the filters, shown only to a viewer who also holds
+  `messages.view`. Personal chats are one-to-one chats reported on their own (conversations, by day, members who
+  answered by dashboard reply); Combined sets the group and personal reports side by side with a "how combined"
+  label per line.
+- **Run information:** a collapsed panel under the header (calculation versions, the moment and the data cutoff,
+  the period and its context, how senders are identified, collection and identity counts). The Excel file has the
+  same lines on "Run information"; the Data quality sheet gains "Collection detail" lines.
+- **Customer-specific replies:** below the group tables, which customer each reply answered, from evidence only (a
+  quote, one mention, or the only waiting customer inside 4 hours). Unresolved replies are counted, never guessed.
+- **Ranking by measure (WP10):** each member ranked on each measure on its own: groups engaged, replies, active
+  days, average groups per active day, support time, Missed charged to them (fewer is better) and the median
+  response time on the waits they closed (shorter is better). There is no overall score. Ties share a rank; the top
+  3 and the 3 furthest behind are tinted; a person with fewer than 3 active days (fewer when the period is
+  shorter), or fewer than 5 closed waits for the response time, shows "Not enough data" and is not ranked last.
+  Active days is the sample itself, so it is ranked for anybody who worked. Hidden when one member is chosen.
+- **Daily engagement (WP10):** one row per member, one column per Dhaka day (at most 92), the distinct groups they
+  engaged that day, in its own horizontally scrolling box. Row totals: **Distinct groups** over the period and
+  **Sum of days** (a group worked on three days counts once and three times), active days and average per active
+  day. The bottom row is the distinct groups anyone in scope engaged that day.
+- **Compare with the previous period (WP10):** a checkbox in the filters (`compare=1`). It loads the period of
+  equal length just before this one with the same filters and shows, per member, groups engaged, replies, active
+  days, support time and Missed, before, now and the change. Not loaded when it is off.
+- **Excel:** the "Ranking" and "Daily engagement" sheets (and "Comparison" with compare on) follow the existing
+  sheets; "Ranking" and "Comparison" also export from their tables' Export menus. Everything is derived from the
+  same dataset as the Team members table, so for a one-day period a member's groups engaged is that table's Groups.
+
 **Support Overtime (12 Oct 2026, `TEAM_OVERTIME.md`).**
 - **The figure.** The tile, Team members and By day tables, chart and exports show support time
   beyond each member's regular duty, worked out per Dhaka day and added up. Only overtime is shown,
@@ -862,6 +891,31 @@ identifier) and useless for messaging them: a direct message to such an id goes 
 carry a **"Needs phone number"** badge, and their direct-notification checkboxes are disabled with
 the reason. Escalations, direct alerts and AI handover mentions all skip them with a log rather than
 enqueueing into nothing.
+
+**Identity check and fixing an identity (19-20 Oct 2026).** Above the table, the Identity check lists the roster
+problems that make reports credit messages to the wrong person or to nobody: members on one of our own numbers,
+members with no matched message in 30 days, and unknown senders active in 3 or more groups. With
+`UNIFIED_REPORTING` on, each unknown sender also has:
+- **Link to member…** (`whatsapp.manage`): a searchable picker of active members with no real WhatsApp ID of their
+  own, and a Link button. It is the same action as WhatsApp Chat's "This person is…": it stores the sender's
+  WhatsApp ID on that member and nothing else (the typed phone number is never touched, and no number is ever
+  made from a private ID), refuses an ID another member already holds, writes the System Log entry and queues the
+  re-attribution of history. Nothing is linked until Link is pressed.
+- **Probably <member> — Link:** shown when the sender's WhatsApp name matches one roster member's name (case,
+  spacing, punctuation and Latin accents folded; the same words in any order, or one name's words all inside the
+  other's with at least two words, so "Rina Akter SoftifyBD" matches "Rina Akter" but "Rina" does not). Only a
+  member who matched no message in 30 days, or whose stored WhatsApp ID is empty or just their phone, is offered.
+  Two or more matches show "Several possible members". It is a hint: it opens the picker with that member chosen.
+- **Preview impact:** read-only, says "Linking adds N messages in G groups to <member>'s reports" before Link is
+  pressed (see WHATSAPP_IDENTITY.md sections 11-12).
+
+The add form, the edit form and WhatsApp Chat's link panel also have **Preview impact** (WP8): what a phone number or
+WhatsApp ID change would attribute differently (counts by transition, member and month, and a labelled estimate for
+the latest month), read-only, with the digest recorded in the System Log entry when the change is then saved.
+
+With the feature on, a roster row whose stored WhatsApp ID is only a Bangladeshi mobile number (`8801[3-9]` and 8
+digits) shows **"WhatsApp ID not linked"** instead of "Needs phone number", pointing at Link; any other ID equal to
+the phone keeps "Needs phone number". Display only: sending rules are unchanged.
 
 ### Teams — `/teams` (+ `/[id]`, `/[id]/edit`)
 

@@ -7,6 +7,10 @@ import { Badge, ButtonLink, Card, EmptyState, PageHeader, SectionHeader, StatTil
 import { requireAccess } from "@/server/authorize";
 import { formatDurationShort } from "@/lib/duration";
 import { loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, teamReportQuery } from "@/server/teamReport";
+import { isUnifiedReportingEnabled } from "@/server/unifiedReporting";
+import { customerLabelFor, customerSpecificReplies } from "@/server/replyAttribution";
+import { hasPermission } from "@/server/permissions";
+import { REPLY_CATEGORY_LABELS, REPLY_TIER_LABELS, replyCategoryOf } from "@support-automation/shared";
 
 export const metadata = { title: "Team Report · Group" };
 
@@ -46,7 +50,7 @@ export default async function TeamReportGroupPage({
   params: Promise<{ groupId: string }>;
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireAccess("support_activity.view");
+  const session = await requireAccess("support_activity.view");
   const [{ groupId }, query] = await Promise.all([params, searchParams]);
   const group = await prisma.whatsAppGroup.findUnique({
     where: { id: groupId },
@@ -55,11 +59,14 @@ export default async function TeamReportGroupPage({
   if (!group) notFound();
 
   const now = reportNow(query);
-  const { filters, range, result, memberNames, rules, teamName } = await loadTeamReport(
-    parseTeamReportFilters(query, now),
-    now,
-    group.whatsappGroupId,
-  );
+  // Unified reporting: also read what each reply quotes and mentions, for the per-request list below the waits.
+  const unified = await isUnifiedReportingEnabled();
+  const report = await loadTeamReport(parseTeamReportFilters(query, now), now, group.whatsappGroupId, unified ? { withReplyEvidence: true } : {});
+  const { filters, range, result, memberNames, rules, teamName } = report;
+  const attribution = unified ? customerSpecificReplies(report, { detailGroupKey: group.whatsappGroupId }) : null;
+  // A customer's number is message content: shown only to a viewer who may read the messages themselves.
+  const canSeeNumbers = attribution ? await hasPermission(session, "messages.view") : false;
+  const asksDetail = attribution?.asksDetail?.slice(0, MAX_WAIT_ROWS) ?? [];
   const row = result.groups.find((g) => g.groupKey === group.whatsappGroupId) ?? null;
   const backHref = `/team-report?${teamReportQuery(filters)}`;
   // One member, or a Team: whose replies and time the figures below are.
@@ -158,6 +165,53 @@ export default async function TeamReportGroupPage({
               </p>
             ) : null}
           </Card>
+
+          {attribution ? (
+            <Card className="mt-5">
+              <SectionHeader
+                title={`Customer requests (${count(attribution.asks.total)})`}
+                description="Which reply answered each customer's request, and how it was linked: the reply quoted the customer's message, mentioned the customer, or the customer was the only one waiting. A request no reply could be linked to is not evidence it was ignored."
+              />
+              {asksDetail.length === 0 ? (
+                <p className="text-[13px] text-[color:var(--color-muted-foreground)]">No customer request started in this group in this period.</p>
+              ) : (
+                <Table>
+                  <thead>
+                    <tr>
+                      <Th>Customer asked</Th>
+                      <Th>Customer</Th>
+                      <Th>Answered</Th>
+                      <Th>Linked by</Th>
+                      <Th>Answered by</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {asksDetail.map((ask) => (
+                      <tr key={`${ask.customerKey}-${ask.askedAt}`}>
+                        <Td className="tabular">{when(ask.askedAt)}</Td>
+                        {/* A phone number (messages.view only), or a masked tail — never a LID shown as a number. */}
+                        <Td>{customerLabelFor(report.customerLabels, ask.customerKey, canSeeNumbers)}</Td>
+                        <Td className="tabular">{when(ask.answeredAt)}</Td>
+                        <Td>{ask.tier ? REPLY_TIER_LABELS[ask.tier] : "No reply could be linked"}</Td>
+                        <Td>
+                          {ask.answeredBy
+                            ? ask.answeredBy.memberId
+                              ? memberLabel(ask.answeredBy.memberId, memberNames)
+                              : REPLY_CATEGORY_LABELS[replyCategoryOf(ask.answeredBy.actor)]
+                            : "—"}
+                        </Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              )}
+              {attribution.asks.total > asksDetail.length ? (
+                <p className="mt-3 text-[12px] text-[color:var(--color-muted-foreground)]">
+                  Showing the first {MAX_WAIT_ROWS} of {count(attribution.asks.total)} requests.
+                </p>
+              ) : null}
+            </Card>
+          ) : null}
         </>
       )}
     </div>

@@ -2,7 +2,7 @@
 import { Prisma } from "@prisma/client";
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
-import { loadReportIdentity, messageKeySql, outboundByKeyJoin, preferSenderCopySql, storedCopiesSql } from "@/server/messageIdentity";
+import { loadReportIdentity, messageKeySql, outboundByKeyJoin, prefilteredBodySql, preferSenderCopySql, storedCopiesSql } from "@/server/messageIdentity";
 import { loadDutyResolver } from "@/server/overtimeDuty";
 import {
   computeResponseMetrics,
@@ -15,14 +15,21 @@ import {
   getDhakaMonthRange,
   getDhakaWeekRange,
   humanWaits,
+  type HumanWait,
   inTeamAt,
-  INTELLIGENCE_SQL_PREFILTER,
+  describeSenderId,
   logicalMessageKey,
   membersOfTeamDuring,
   NO_TEAM,
+  parseReportScope,
+  parseStoredCopies,
+  parseWhatsAppId,
   type IntelActor,
   type IntelMessage,
   type ReliabilityCounts,
+  type ReplyEvidenceMessage,
+  type ReportIdentity,
+  type ReportScope,
   type ReportGranularity,
   type ReportMessage,
   type ResponseMetrics,
@@ -64,7 +71,7 @@ export const MAX_CUSTOM_DAYS = 92;
  * day and was answered at 00:10 was answered — without this they would read as unanswered. A wait
  * still open a day after the period ends is reported as unanswered, which it was.
  */
-const LOOKAHEAD_MS = DAY_MS;
+export const LOOKAHEAD_MS = DAY_MS;
 /**
  * How far before the period messages are read as CONTEXT, never counted (Phase 2, PHASE2.md Stage 7):
  * Support Intelligence's own look-back, so the human-only wait is measured exactly as Human Response
@@ -72,7 +79,7 @@ const LOOKAHEAD_MS = DAY_MS;
  * midnight that continues a wait begun the evening before is never counted as a second wait — a
  * month's waits are the sum of its days'.
  */
-const CONTEXT_MS = DEFAULT_CASE_GAP_MS;
+export const CONTEXT_MS = DEFAULT_CASE_GAP_MS;
 
 export interface TeamReportFilters {
   period: ReportPeriod;
@@ -93,6 +100,13 @@ export interface TeamReportFilters {
   accountId?: string | null;
   /** Set when the URL named more than MAX_FILTER_GROUPS groups and the rest were left out. */
   groupsTruncated?: boolean;
+  /** Unified reporting: which conversations the report covers. Absent = "group" (every older URL). */
+  scope?: ReportScope;
+  /**
+   * Unified reporting WP10: also load the previous period of equal length and show it beside this one.
+   * Opt-in (`compare=1`) so the default cost is one load; only honoured with UNIFIED_REPORTING on.
+   */
+  compare?: boolean;
 }
 
 /** At most this many groups in a filter — a URL, not a database dump. */
@@ -143,6 +157,7 @@ export function parseTeamReportFilters(params: Record<string, string | undefined
         .filter((key) => key.length > 0 && key.length <= 200),
     ),
   ];
+  const scope = parseReportScope(params.scope);
   return {
     period,
     date: isReportDateKey(params.date) ? params.date : today,
@@ -154,6 +169,8 @@ export function parseTeamReportFilters(params: Record<string, string | undefined
     groupKeys: requestedGroups.slice(0, MAX_FILTER_GROUPS),
     accountId: params.account?.trim() || null,
     ...(requestedGroups.length > MAX_FILTER_GROUPS ? { groupsTruncated: true } : {}),
+    ...(scope !== "group" ? { scope } : {}),
+    ...(params.compare === "1" ? { compare: true } : {}),
   };
 }
 
@@ -253,6 +270,18 @@ export interface TeamReportData {
    * from this dataset reads them from here rather than from the group as it is today.
    */
   responsibilityAt: (groupKey: string, at?: number) => { assigned: string | null; priority: string | null };
+  /**
+   * The human-only waits behind `response.human`, over the same groups. Present only when the caller
+   * asked (`keepHumanWaits`): the combined report recomputes its median over the union of two lists.
+   */
+  humanWaitList?: HumanWait[];
+  /**
+   * Quote and mention evidence per message (context included, in the report's own order). Present only when the
+   * caller asked (`withReplyEvidence`): the customer-specific replies section reads it.
+   */
+  replyEvidence?: ReplyEvidenceMessage[];
+  /** How to show each customer id in `replyEvidence` (a phone, or "Hidden number ···1234" for a LID — never a LID as a number). */
+  customerLabels?: Map<string, string>;
   /** The moment this was computed as of (epoch ms) — carried by links and exports as `asof`. */
   computedAt: number;
   missedAfterMs: (groupKey: string, at?: number) => number;
@@ -275,6 +304,60 @@ interface LoadedRow {
   actionType: string | null;
   ruleId: string | null;
   createdById: string | null;
+  /** Only with `withReplyEvidence`: the WhatsApp id of the message this one quotes (same account), and its @-mentions. */
+  quotedWamid?: string | null;
+  mentions?: string[] | null;
+}
+
+/**
+ * The Team / member filter of one report: which members were in each Team during the period, which
+ * Team and member actually apply (an unknown Team, or a member who was not in the chosen Team, falls
+ * back rather than emptying the report), the note saying so, and the predicate that asks "is this
+ * member in scope at this moment". Extracted from `loadTeamReport` unchanged (unified reporting WP5)
+ * so the personal report applies exactly the same scope.
+ */
+export function resolveTeamScope(
+  filters: TeamReportFilters,
+  members: ReadonlyArray<{ id: string; name: string }>,
+  teams: ReadonlyArray<{ id: string; name: string }>,
+  intervals: readonly TeamMembershipInterval[],
+  range: ResolvedRange,
+): {
+  teamMemberIds: Record<string, string[]>;
+  memberNames: Map<string, string>;
+  teamId: string | null;
+  teamName: string | null;
+  memberId: string | null;
+  filterNote: string | null;
+  applied: TeamReportFilters;
+  scope: ((memberId: string, ts: number) => boolean) | null;
+} {
+  const memberIds = members.map((m) => m.id);
+  const teamMemberIds: Record<string, string[]> = {};
+  for (const teamKey of [...teams.map((t) => t.id), NO_TEAM]) {
+    teamMemberIds[teamKey] = membersOfTeamDuring(intervals, memberIds, teamKey, range.start.getTime(), range.end.getTime());
+  }
+  const memberNames = new Map(members.map((m) => [m.id, m.name]));
+  // An unknown Team (deleted, or a mistyped link) falls back to all Teams rather than an empty report.
+  // An OWN key only: `in` also matched "toString", "constructor" and every other inherited name, so
+  // ?team=toString reached the code below as a function and the page threw (2 Oct audit).
+  const teamId = filters.teamId && Object.prototype.hasOwnProperty.call(teamMemberIds, filters.teamId) ? filters.teamId : null;
+  const teamName = teamId === null ? null : teamId === NO_TEAM ? "No team" : (teams.find((t) => t.id === teamId)?.name ?? null);
+  let memberId = filters.memberId;
+  let filterNote: string | null = null;
+  if (teamId && memberId && !teamMemberIds[teamId]!.includes(memberId)) {
+    filterNote = `${memberNames.get(memberId) ?? "That team member"} was not in ${teamName} during ${range.label}, so this shows all of ${teamName}.`;
+    memberId = null;
+  }
+  if (filters.groupsTruncated) {
+    filterNote = `${filterNote ? `${filterNote} ` : ""}Only the first ${MAX_FILTER_GROUPS} of the chosen groups are included.`;
+  }
+  const applied: TeamReportFilters = { ...filters, teamId, memberId };
+  const scope = teamId
+    ? (id: string, ts: number) => (memberId === null || id === memberId) && inTeamAt(intervals, id, teamId, ts)
+    : null;
+
+  return { teamMemberIds, memberNames, teamId, teamName, memberId, filterNote, applied, scope };
 }
 
 /**
@@ -291,6 +374,15 @@ export async function loadTeamReport(
      * arrived after the page was opened is not in the file either; the page itself reads everything.
      */
     storedBy?: Date;
+    /** Unified reporting: also return the human waits (`humanWaitList`). Off = the result is exactly as before. */
+    keepHumanWaits?: boolean;
+    /**
+     * Unified reporting: also read what a reply quotes and mentions (`replyEvidence`). Off, the SQL is the SQL it always
+     * was — the evidence columns and the quoted-message join are empty fragments.
+     */
+    withReplyEvidence?: boolean;
+    /** Unified reporting: classify with this identity instead of the project's roster (the identity preview's estimate only). */
+    identity?: ReportIdentity;
   } = {},
 ): Promise<TeamReportData> {
   const range = resolveTeamReportRange(filters, now);
@@ -310,16 +402,12 @@ export async function loadTeamReport(
   // The send a message echoes — matched on the LOGICAL key, so the copy another of our numbers stored
   // of our own post still finds it (messageIdentity.ts). Joined once as a hash, bounded by `sentAt`.
   const outboundOf = (alias: string) => outboundByKeyJoin(projectId, contextStart, lookaheadEnd, alias);
-  // A message's text only where the human-only wait can read it: a line that may be a customer's
-  // (incoming) and short or possibly a closing remark — Support Intelligence's own pre-filter, so the
-  // two decide a closing remark identically. Not narrowed by the stored team-member stamp: who is
-  // staff is decided at read time, and a stamp taken before somebody joined or left is not that.
-  const bodyOf = (alias: string) => {
-    const col = (name: string) => Prisma.raw(`${alias}."${name}"`);
-    return Prisma.sql`CASE WHEN ${col("direction")} = 'INCOMING'
-      AND (length(${col("body")}) BETWEEN 1 AND 24 OR ${col("body")} ~* ${INTELLIGENCE_SQL_PREFILTER}) THEN left(${col("body")}, 400) END`;
-  };
-
+  const withEvidence = options.withReplyEvidence === true;
+  const evidenceColumns = withEvidence ? Prisma.sql`q."whatsappMessageId" AS "quotedWamid", m."mentionedPhones" AS mentions,` : Prisma.empty;
+  const evidenceOuter = withEvidence ? Prisma.sql`, c."quotedWamid", c.mentions` : Prisma.empty;
+  // The quoted row is on the same account (the pipeline resolves a quote there only) and in this project.
+  const evidenceJoin = withEvidence ? Prisma.sql`LEFT JOIN "Message" q ON q."id" = m."quotedMessageId" AND q."projectId" = ${projectId}` : Prisma.empty;
+  const evidenceEarlier = withEvidence ? Prisma.sql`NULL::text AS "quotedWamid", NULL::text[] AS mentions,` : Prisma.empty;
   const [members, identity, settings, policies, teams, membershipRows, rows, earlier, copies] = await Promise.all([
     prisma.internalTeamMember.findMany({
       select: { id: true, name: true, status: true },
@@ -327,7 +415,7 @@ export async function loadTeamReport(
     }),
     // Who sent each message: the one identity rule (WHATSAPP_IDENTITY.md), over every member, every
     // stored copy, and our own numbers (messageIdentity.ts).
-    loadReportIdentity(projectId),
+    options.identity ?? loadReportIdentity(projectId),
     prisma.supportActivitySettings.findUnique({
       where: { id: "global" },
       select: { offlineAfterMinutes: true, missedReplyAfterMinutes: true },
@@ -348,7 +436,7 @@ export async function loadTeamReport(
     prisma.$queryRaw<LoadedRow[]>`
       SELECT DISTINCT ON (c.wgid, c.k)
         c.wgid, c.wamid, c.ts, c."storedAt", c.direction, c."fromTeam", c.sender, c."senderJid", c.copies, c.body,
-        c."obMatched", c."actionType", c."ruleId", c."createdById"
+        c."obMatched", c."actionType", c."ruleId", c."createdById"${evidenceOuter}
       FROM (
         SELECT
           g."whatsappGroupId" AS wgid, ${messageKeySql()} AS k, m."id" AS mid,
@@ -359,11 +447,13 @@ export async function loadTeamReport(
           ${filters.accountId ? Prisma.sql`bool_or(m."accountId" = ${filters.accountId}) OVER (PARTITION BY g."whatsappGroupId", ${messageKeySql()})` : Prisma.sql`true`} AS "onAccount",
           ${filters.accountId ? Prisma.sql`(m."accountId" = ${filters.accountId})` : Prisma.sql`true`} AS "ownCopy",
           (m."direction" = 'OUTGOING') AS p1, (left(m."whatsappMessageId", 5) = 'true_') AS p2, m."isFromTeamMember" AS p3,
-          ${bodyOf("m")} AS body,
+          ${prefilteredBodySql("m")} AS body,
+          ${evidenceColumns}
           o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
         FROM "Message" m
         JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
         ${outboundOf("m")}
+        ${evidenceJoin}
         WHERE m."timestampWa" >= ${contextStart} AND m."timestampWa" < ${lookaheadEnd}
           AND m."projectId" = ${projectId}
           AND m."createdAt" <= ${storedBy}
@@ -381,7 +471,8 @@ export async function loadTeamReport(
         p."direction"::text AS direction,
         p."isFromTeamMember" AS "fromTeam", p."senderPhone" AS sender, p."senderJid" AS "senderJid",
         NULL::text[] AS copies,
-        ${bodyOf("p")} AS body,
+        ${prefilteredBodySql("p")} AS body,
+        ${evidenceEarlier}
         o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
       FROM (
         SELECT DISTINCT m."groupId"
@@ -436,6 +527,9 @@ export async function loadTeamReport(
     unattributedSenders: 0,
   };
   const unattributed = new Set<string>();
+  // Customer-specific replies (UNIFIED_REPORTING): what each message quotes and mentions, and who the customer is.
+  const evidence: ReplyEvidenceMessage[] = [];
+  const customerLabels = new Map<string, string>();
   // Oldest first, and two messages in the same second in the order they were stored: the rows arrive
   // sorted by group and key, and a reply sorted ahead of the question it answers closed the wait
   // with a later reply instead (a false Recall or Missed).
@@ -459,6 +553,34 @@ export async function loadTeamReport(
       if (actor === "MEMBER_UNMAPPED") unattributed.add(row.senderJid ?? row.sender);
     }
     all.push({ groupKey: row.wgid, ts, kind, memberId, actor });
+    if (withEvidence) {
+      // Every stored copy names the customer: one number may have seen a LID and another their phone, and one
+      // message names ONE person, so every id of it belongs to the same cluster.
+      const witnesses = kind === "CUSTOMER" ? (row.copies?.length ? parseStoredCopies(row.copies) : [{ senderPhone: row.sender, senderJid: row.senderJid }]) : [];
+      const customerIds = new Set<string>();
+      for (const copy of witnesses) {
+        const user = parseWhatsAppId(copy.senderJid ?? copy.senderPhone)?.user;
+        if (!user) continue;
+        customerIds.add(user);
+        if (!customerLabels.has(user) || describeSenderId(copy.senderPhone, copy.senderJid).phone) {
+          const described = describeSenderId(copy.senderPhone, copy.senderJid);
+          // Only a PHONE id is shown as a number; anything else is a hidden number, never dialled.
+          customerLabels.set(user, described.phone ?? `Hidden number ···${user.slice(-4)}`);
+        }
+      }
+      evidence.push({
+        key: logicalMessageKey(row.wgid, row.wamid),
+        groupKey: row.wgid,
+        ts,
+        kind,
+        actor,
+        memberId,
+        customerIds: [...customerIds].sort(),
+        quotedKey: row.quotedWamid ? logicalMessageKey(row.wgid, row.quotedWamid) : null,
+        mentionedIds: [...new Set((row.mentions ?? []).map((id) => parseWhatsAppId(id)?.user ?? id.trim()).filter(Boolean))].sort(),
+        inPeriod,
+      });
+    }
     intel.push({
       key: logicalMessageKey(row.wgid, row.wamid),
       groupKey: row.wgid,
@@ -494,6 +616,9 @@ export async function loadTeamReport(
           assignedTeamMemberId: true,
           account: { select: { isPrimary: true } },
         },
+        // Primary copy first, then the lowest id: the order `mergedGroupResponsibility` records history in. Without an
+        // order, which of two non-Primary copies' assignees won was whatever order the database returned the rows in.
+        orderBy: [{ account: { isPrimary: "desc" } }, { id: "asc" }],
       })
     : [];
   const groups = new Map<string, GroupMeta>();
@@ -553,30 +678,7 @@ export async function loadTeamReport(
     startedAt: row.startedAt?.getTime() ?? null,
     endedAt: row.endedAt?.getTime() ?? null,
   }));
-  const memberIds = members.map((m) => m.id);
-  const teamMemberIds: Record<string, string[]> = {};
-  for (const teamKey of [...teams.map((t) => t.id), NO_TEAM]) {
-    teamMemberIds[teamKey] = membersOfTeamDuring(intervals, memberIds, teamKey, range.start.getTime(), range.end.getTime());
-  }
-  const memberNames = new Map(members.map((m) => [m.id, m.name]));
-  // An unknown Team (deleted, or a mistyped link) falls back to all Teams rather than an empty report.
-  // An OWN key only: `in` also matched "toString", "constructor" and every other inherited name, so
-  // ?team=toString reached the code below as a function and the page threw (2 Oct audit).
-  const teamId = filters.teamId && Object.prototype.hasOwnProperty.call(teamMemberIds, filters.teamId) ? filters.teamId : null;
-  const teamName = teamId === null ? null : teamId === NO_TEAM ? "No team" : (teams.find((t) => t.id === teamId)?.name ?? null);
-  let memberId = filters.memberId;
-  let filterNote: string | null = null;
-  if (teamId && memberId && !teamMemberIds[teamId]!.includes(memberId)) {
-    filterNote = `${memberNames.get(memberId) ?? "That team member"} was not in ${teamName} during ${range.label}, so this shows all of ${teamName}.`;
-    memberId = null;
-  }
-  if (filters.groupsTruncated) {
-    filterNote = `${filterNote ? `${filterNote} ` : ""}Only the first ${MAX_FILTER_GROUPS} of the chosen groups are included.`;
-  }
-  const applied: TeamReportFilters = { ...filters, teamId, memberId };
-  const scope = teamId
-    ? (id: string, ts: number) => (memberId === null || id === memberId) && inTeamAt(intervals, id, teamId, ts)
-    : null;
+  const { teamMemberIds, memberNames, teamName, memberId, filterNote, applied, scope } = resolveTeamScope(filters, members, teams, intervals, range);
 
   const missedAfterMs = (groupKey: string, at?: number) => {
     const priority = responsibilityAt(groupKey, at).priority;
@@ -601,11 +703,12 @@ export async function loadTeamReport(
   // The human-only wait (Human Response SLA's), over the same groups as this report's waits: every
   // group with activity, or — in a Team/member report — the groups its members supported.
   const reportGroups = new Set(result.groups.map((g) => g.groupKey));
+  // Measured up to the same moment the first observed waits are: now, or the end of the look-ahead
+  // for a past period — so a past day's unanswered line is MISSED in both, never PENDING in one.
+  const humanWaitsAll = humanWaits(intel, { rangeStart, rangeEnd, measuredTo: Math.min(now.getTime(), rangeEnd + LOOKAHEAD_MS), thresholdMs: missedAfterMs });
   const response = computeResponseMetrics({
     waits: result.waits,
-    // Measured up to the same moment the first observed waits are: now, or the end of the look-ahead
-    // for a past period — so a past day's unanswered line is MISSED in both, never PENDING in one.
-    humanWaits: humanWaits(intel, { rangeStart, rangeEnd, measuredTo: Math.min(now.getTime(), rangeEnd + LOOKAHEAD_MS), thresholdMs: missedAfterMs }),
+    humanWaits: humanWaitsAll,
     inScope: (groupKey) => reportGroups.has(groupKey),
   });
 
@@ -631,6 +734,8 @@ export async function loadTeamReport(
     responsibilityAt,
     missedAfterMs,
     computedAt: now.getTime(),
+    ...(options.keepHumanWaits ? { humanWaitList: humanWaitsAll.filter((w) => reportGroups.has(w.groupKey)) } : {}),
+    ...(withEvidence ? { replyEvidence: evidence, customerLabels } : {}),
   };
 }
 
@@ -667,6 +772,8 @@ export function teamReportQuery(filters: TeamReportFilters, overrides: Partial<T
   qs.set("by", merged.granularity);
   if (merged.groupKeys?.length) qs.set("groups", merged.groupKeys.join(","));
   if (merged.accountId) qs.set("account", merged.accountId);
+  if (merged.scope && merged.scope !== "group") qs.set("scope", merged.scope);
+  if (merged.compare) qs.set("compare", "1");
   if (overrides.page && overrides.page > 1) qs.set("page", String(overrides.page));
   return qs.toString();
 }

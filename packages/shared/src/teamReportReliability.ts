@@ -270,7 +270,7 @@ export function computeReportingReliability(
 
 /** One line of the reliability section — the page and the Excel sheet render the same lines. */
 export interface ReliabilityLine {
-  section: "First observed response" | "First reply came from" | "Automated response" | "First human response" | "Messages" | "Who sent them" | "Attribution" | "Collection";
+  section: "First observed response" | "First reply came from" | "Automated response" | "First human response" | "Messages" | "Who sent them" | "Attribution" | "Collection" | "Collection detail";
   label: string;
   value: number | string;
   note: string;

@@ -2,14 +2,15 @@ import Link from "@/components/ProjectLink";
 import { Card, SectionHeader, Table, Td, Th } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { AddSenderButton } from "./AddSenderButton";
+import { LinkSenderToMember } from "./LinkSenderToMember";
 import { IDENTITY_HEALTH_WINDOW_DAYS, LIKELY_STAFF_MIN_GROUPS, type RosterIdentityHealth } from "@/server/rosterIdentityHealth";
 
 /**
  * Team Members → Identity check: the roster problems that make reports wrong without an error
  * (rosterIdentityHealth.ts). Renders nothing when there is nothing to fix.
  */
-export function IdentityHealthCard({ health, canManage }: { health: RosterIdentityHealth; canManage: boolean }) {
-  const { ownNumberMembers, quietMembers, unknownFrequentSenders, pendingReattributions } = health;
+export function IdentityHealthCard({ health, canManage, unified = false }: { health: RosterIdentityHealth; canManage: boolean; unified?: boolean }) {
+  const { ownNumberMembers, quietMembers, unknownFrequentSenders, pendingReattributions, linkableMembers } = health;
   if (!ownNumberMembers.length && !quietMembers.length && !unknownFrequentSenders.length && !pendingReattributions) return null;
 
   return (
@@ -56,6 +57,9 @@ export function IdentityHealthCard({ health, canManage }: { health: RosterIdenti
               {IDENTITY_HEALTH_WINDOW_DAYS} days. If one is a colleague, every message they sent is being counted as a
               customer&apos;s. &ldquo;Add to team&rdquo; puts them on the roster and collects every message they already sent into
               the Team Report, Team Performance, Duty History and the Activity Feed.
+              {unified
+                ? " If they are already on the roster under their phone number, use “Link to member…” instead: it stores this WhatsApp ID on that member, so their messages are credited to them. A name suggestion is only a hint; nothing is linked until you press Link."
+                : ""}
             </p>
             <Table>
               <thead>
@@ -78,7 +82,12 @@ export function IdentityHealthCard({ health, canManage }: { health: RosterIdenti
                     <Td>{formatDateTime(s.lastAt)}</Td>
                     {canManage ? (
                       <Td>
-                        <AddSenderButton senderId={s.sender} suggestedName={s.name} />
+                        <div className="space-y-2">
+                          {unified ? (
+                            <LinkSenderToMember senderId={s.sender} members={linkableMembers} suggestion={s.suggestion} previewEnabled />
+                          ) : null}
+                          <AddSenderButton senderId={s.sender} suggestedName={s.name} />
+                        </div>
                       </Td>
                     ) : null}
                   </tr>

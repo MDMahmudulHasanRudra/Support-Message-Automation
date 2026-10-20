@@ -1,14 +1,13 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import {
-  attributeAcrossCopies,
+  createReportClassifier,
   createSenderResolver,
-  isOwnSender,
+  INTELLIGENCE_SQL_PREFILTER,
   normalizePhoneNumber,
-  outgoingActorFor,
-  parseStoredCopies,
-  type IntelActor,
-  type SenderMatchStatus,
+  type ReportIdentity,
+  type ReportSenderDecision,
+  type ReportSenderRow,
   type SenderResolver,
 } from "@support-automation/shared";
 
@@ -94,6 +93,19 @@ export function outboundByKeyJoin(projectId: string, from: Date, to: Date, alias
 }
 
 /**
+ * A message's text only where the human-only wait can read it: a line that may be a customer's
+ * (incoming) and short or possibly a closing remark — Support Intelligence's own pre-filter, so the
+ * two decide a closing remark identically. Not narrowed by the stored team-member stamp: who is
+ * staff is decided at read time, and a stamp taken before somebody joined or left is not that.
+ * (Moved here from `loadTeamReport`, unified reporting WP5; the SQL is unchanged.)
+ */
+export function prefilteredBodySql(alias: string): Prisma.Sql {
+  const col = (name: string) => Prisma.raw(`${alias}."${name}"`);
+  return Prisma.sql`CASE WHEN ${col("direction")} = 'INCOMING'
+      AND (length(${col("body")}) BETWEEN 1 AND 24 OR ${col("body")} ~* ${INTELLIGENCE_SQL_PREFILTER}) THEN left(${col("body")}, 400) END`;
+}
+
+/**
  * The ids our own numbers send from (the worker's `ownAccounts.ts` evidence, read here at report
  * time): every account's phone digits, and every sender id one of our accounts stored an OUTGOING
  * group message under — usually our number's LID. A copy one of our numbers stored as INCOMING
@@ -136,83 +148,10 @@ async function readOwnSenderIds(projectId: string): Promise<Set<string>> {
   return ids;
 }
 
-/** What a report loader selects about one kept message, for `ReportIdentity.classify`. */
-export interface ReportSenderRow {
-  direction: string;
-  sender: string;
-  senderJid: string | null;
-  fromTeam: boolean;
-  /** `storedCopiesSql`; null/absent = this row is the only witness. */
-  copies?: string[] | null;
-  /** From `outboundByKeyJoin`: true when the message echoes one of our sends. */
-  obMatched?: boolean | null;
-  actionType: string | null;
-  ruleId: string | null;
-  createdById: string | null;
-}
-
-export interface ReportSenderDecision {
-  kind: "MEMBER" | "CUSTOMER" | "BUSINESS";
-  memberId: string | null;
-  actor: IntelActor;
-  /** How a person was matched (null for the business's own messages). */
-  status: SenderMatchStatus | null;
-}
-
-export interface ReportIdentity {
-  resolver: SenderResolver;
-  classify(row: ReportSenderRow, at: number): ReportSenderDecision;
-}
-
-/**
- * Who sent one kept message, the ONE way every report decides it:
- *  1. Our own message — the kept copy is OUTGOING, it echoes one of our sends, or a copy's sender is
- *     one of our numbers → the business's. Who: the send it echoes (`outgoingActorFor`). A reply a
- *     dashboard user typed is credited to the team member linked to that login (Team Members → login
- *     link), because it is that person's work; unlinked, it stays the business number's.
- *  2. Otherwise every stored copy is a witness (`attributeAcrossCopies`).
- */
-export function createReportClassifier(
-  resolver: SenderResolver,
-  ownIds: ReadonlySet<string>,
-  memberByUserId: ReadonlyMap<string, string | { id: string; attributeFrom?: Date | number | null }>,
-): ReportIdentity {
-  const linked = (userId: string, at: number): string | null => {
-    const entry = memberByUserId.get(userId);
-    if (!entry) return null;
-    if (typeof entry === "string") return entry;
-    // The member's "count their messages from" date applies to replies from their login too.
-    const from = entry.attributeFrom instanceof Date ? entry.attributeFrom.getTime() : entry.attributeFrom;
-    return typeof from === "number" && at < from ? null : entry.id;
-  };
-  return {
-    resolver,
-    classify(row, at) {
-      const copies = row.copies?.length
-        ? parseStoredCopies(row.copies)
-        : [{ senderPhone: row.sender, senderJid: row.senderJid, fromTeam: row.fromTeam }];
-      const ours =
-        row.direction === "OUTGOING" ||
-        Boolean(row.obMatched) ||
-        isOwnSender(ownIds, row.sender, row.senderJid) ||
-        copies.some((copy) => isOwnSender(ownIds, copy.senderPhone, copy.senderJid));
-      if (ours) {
-        const actor: IntelActor = row.obMatched || row.direction === "OUTGOING" ? outgoingActorFor(row.actionType, row.ruleId) : "BUSINESS_PHONE";
-        const operatorMember = actor === "OPERATOR" && row.createdById ? linked(row.createdById, at) : null;
-        return operatorMember
-          ? { kind: "MEMBER", memberId: operatorMember, actor, status: null }
-          : { kind: "BUSINESS", memberId: null, actor, status: null };
-      }
-      const decided = attributeAcrossCopies(resolver, copies, at);
-      return {
-        kind: decided.isStaff ? "MEMBER" : "CUSTOMER",
-        memberId: decided.memberId,
-        actor: decided.memberId ? "MEMBER" : decided.isStaff ? "MEMBER_UNMAPPED" : "CUSTOMER",
-        status: decided.status,
-      };
-    },
-  };
-}
+// The classifier and its row/decision types moved to packages/shared (unified reporting WP5) so the
+// identity preview can run it against two rosters; every existing import of them from here still works.
+export { createReportClassifier };
+export type { ReportIdentity, ReportSenderDecision, ReportSenderRow };
 
 /**
  * The project's roster as a sender resolver — every member, deactivated ones included, because a

@@ -10,7 +10,7 @@ import {
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
-import { loadReportIdentity, messageKeySql, outboundByKeyJoin, preferSenderCopySql, storedCopiesSql } from "@/server/messageIdentity";
+import { loadReportIdentity, messageKeySql, outboundByKeyJoin, storedCopiesSql } from "@/server/messageIdentity";
 import type { ReportContext } from "./context";
 import { count, duration, hourLabel, when, WEEKDAYS } from "./format";
 import { waitsInScope } from "./responseReports";
@@ -116,21 +116,32 @@ export async function buildCalls(ctx: ReportContext): Promise<BuiltReport> {
         body: string;
       }>
     >`
-      SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
-        g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."direction"::text AS direction,
-        m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid", left(m."body", 400) AS body,
-        ${storedCopiesSql(Prisma.sql`g."whatsappGroupId"`)} AS copies,
-        o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
-      FROM "Message" m
-      JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
-      ${outboundByKeyJoin(projectId, new Date(ctx.rangeStart), new Date(ctx.rangeEnd))}
-      WHERE m."projectId" = ${projectId}
-        AND m."timestampWa" >= ${new Date(ctx.rangeStart)} AND m."timestampWa" < ${new Date(ctx.rangeEnd)}
-        AND m."direction" <> 'SYSTEM'
-        AND m."body" ~* ${CALL_SQL_PREFILTER}
-        ${groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty}
-        ${accountId ? Prisma.sql`AND m."accountId" = ${accountId}` : Prisma.empty}
-      ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
+      SELECT DISTINCT ON (c.wgid, c.k)
+        c.wgid, c.wamid, c.ts, c.direction, c."fromTeam", c.sender, c."senderJid", c.body, c.copies,
+        c."obMatched", c."actionType", c."ruleId", c."createdById"
+      FROM (
+        SELECT
+          g."whatsappGroupId" AS wgid, ${messageKeySql()} AS k, m."id" AS mid,
+          m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."direction"::text AS direction,
+          m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid", left(m."body", 400) AS body,
+          ${storedCopiesSql(Prisma.sql`g."whatsappGroupId"`)} AS copies,
+          -- With an account chosen the report reads that account's messages, but WHO sent one is decided from every
+          -- account's copies (the Team Report's rule): the window sees them all, the outer onAccount test narrows.
+          ${accountId ? Prisma.sql`bool_or(m."accountId" = ${accountId}) OVER (PARTITION BY g."whatsappGroupId", ${messageKeySql()})` : Prisma.sql`true`} AS "onAccount",
+          ${accountId ? Prisma.sql`(m."accountId" = ${accountId})` : Prisma.sql`true`} AS "ownCopy",
+          (m."direction" = 'OUTGOING') AS p1, (left(m."whatsappMessageId", 5) = 'true_') AS p2, m."isFromTeamMember" AS p3,
+          o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
+        FROM "Message" m
+        JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
+        ${outboundByKeyJoin(projectId, new Date(ctx.rangeStart), new Date(ctx.rangeEnd))}
+        WHERE m."projectId" = ${projectId}
+          AND m."timestampWa" >= ${new Date(ctx.rangeStart)} AND m."timestampWa" < ${new Date(ctx.rangeEnd)}
+          AND m."direction" <> 'SYSTEM'
+          AND m."body" ~* ${CALL_SQL_PREFILTER}
+          ${groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty}
+      ) c
+      WHERE c."onAccount"
+      ORDER BY c.wgid, c.k, c."ownCopy" DESC, c.p1 DESC, c.p2 DESC, c.p3 DESC, c.ts, c.mid`,
     // The one identity rule (WHATSAPP_IDENTITY.md), so a sender here is who the Team Report says.
     loadReportIdentity(projectId),
   ]);

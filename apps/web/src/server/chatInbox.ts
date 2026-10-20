@@ -234,7 +234,7 @@ async function groupBaseSql(projectId: string, accountId: string, search: string
  * holds the two together. `"groupId" IS NULL` is also what lets the planner use the partial index
  * `Message_personal_chat_idx`, which holds exactly the account's non-group messages.
  */
-const PERSONAL_CHAT_SQL = Prisma.sql`m."groupId" IS NULL AND (m."chatId" LIKE '%@c.us' OR m."chatId" LIKE '%@lid')`;
+export const PERSONAL_CHAT_SQL = Prisma.sql`m."groupId" IS NULL AND (m."chatId" LIKE '%@c.us' OR m."chatId" LIKE '%@lid')`;
 
 /**
  * One row per personal (1:1) chat of ONE account, in the same shape as `groupBaseSql`.

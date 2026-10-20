@@ -356,3 +356,54 @@ at read time:
    synced: N messages in G groups since <date>". The Identity check's "Add to team" adds a frequent
    unknown sender by the exact identifier WhatsApp delivered. Only stored messages can be counted:
    anything WhatsApp never delivered to our numbers is not recoverable here.
+
+## 11. Identity-change impact preview (20 Oct 2026, `UNIFIED_REPORTING`)
+
+Before saving a change that moves messages between people, a member manager can press **Preview impact** (add
+form, edit form, WhatsApp Chat link panel). Nothing is applied: approval is the ordinary Save.
+
+1. **Same classifier, twice.** `previewIdentityChange` (packages/shared) runs `createReportClassifier` once with
+   the roster as it is and once with the roster as it would be, over every logical message a changed identifier
+   touches (every stored copy a witness). A message is "changed" when its label differs: CUSTOMER, STAFF
+   unidentified, BUSINESS or MEMBER:<id>. There is no second identity rule.
+2. **What it reads.** The identifiers in every stored form (typed, digits, the id's comparison key), the last 92
+   days by default (at most 365), at most 20,000 logical messages (then it says so). Two raw queries, both
+   naming `"projectId"`, no body.
+3. **What it shows.** Counts of messages, groups and personal chats, the transitions (for example Customer to
+   Rina), gained and lost per member, months affected, and a labelled estimate of the month's figures for the
+   most-changed groups (the Team Report and personal report re-run with each roster). A personal conversation's
+   id is never sent to the browser, and without `messages.view` no personal message is read into any count.
+4. **Save.** The form carries a digest and the headline counts; the existing save records them in the System Log
+   entry. Without a preview the entry is exactly as before. Reports change the moment the save commits; stored
+   stamps, Activity Feed and Duty History follow through the usual `IdentityReattribution`.
+5. **Validation is shared.** `readIdentityFields` (apps/web `lib/teamMemberIdentity.ts`) reads the phone number and
+   WhatsApp id for Save and for the preview. Whether another member already holds the number stays a Save check.
+
+**Fixes in the same release.** `recomputeAttendanceDay` recomputes a deactivated member (the re-attribution used
+to leave their Duty History untouched when an identifier was corrected away from them). With one account chosen,
+Support Intelligence and Calls hear every account's copies. Deleting a member who never worked records the groups
+they leave unassigned, and a member whose only work is linked-login dashboard replies is deactivated instead.
+
+## 12. Fixing an identity from the Identity check (20 Oct 2026, `UNIFIED_REPORTING`)
+
+Team Members -> Identity check lists unknown senders active in 3 or more groups. With the feature on, each row can be
+fixed in place. Nothing here is a second identity rule.
+
+1. **Link to member.** The row's Link button runs `linkWhatsAppSender`, the action WhatsApp Chat's "This person is..."
+   runs: `whatsapp.manage`, the sender must be a person's id (digits, not a group), the member must have no real
+   WhatsApp ID of their own (empty, or only their phone), an id another member already holds is refused naming that
+   member, the change is a System Log entry and an `IdentityReattribution` is queued. It writes `whatsappId` only: the
+   typed phone number is never touched and a number is never made from a private ID (LID). Never written without the
+   person pressing Link.
+2. **Name suggestion** (`suggestMemberForSender`, packages/shared). A display-only hint comparing the sender's
+   WhatsApp name with active members' names: case, whitespace, punctuation and Latin accents (U+0300-U+036F only,
+   so Bengali vowel signs stay) folded, then the same set of words, or one name's words all inside the other's with at
+   least two words ("Rina Akter SoftifyBD" ~ "Rina Akter"; "Rina" is not inside "Rina Akter"). Only a member who matched
+   no message in the 30 days, or whose stored WhatsApp ID is empty or just their phone, is offered. Two or more matches
+   are "several possible members", never the first. A suggestion for a member who already has a different ID points to
+   their edit page, because Link would refuse them. It links nothing and attributes nothing.
+3. **Impact before linking.** Preview impact (WP8, read-only) with the chosen member says "Linking adds N messages in G
+   groups to <member>'s reports", from the same preview that backs section 11. No write happens during the preview.
+4. **Roster badge** (`whatsappIdBadge`). A stored WhatsApp ID equal to the phone is "WhatsApp ID not linked" when the
+   value is a Bangladeshi mobile number (`8801[3-9]` + 8 digits), otherwise "Needs phone number" as before. Display only:
+   `hasReachablePhoneNumber` and every sending rule are untouched.

@@ -1,13 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
+  attributeAcrossCopies,
+  COPY_FIELD_SEPARATOR,
+  createReportClassifier,
   createSenderResolver,
   describeSenderId,
+  isOwnSender,
   logicalMessageKey,
   parseMessageKey,
+  parseStoredCopies,
   parseWhatsAppId,
   recoverSenderJid,
+  type ReportSenderDecision,
+  type ReportSenderRow,
   type RosterIdentity,
+  type SenderResolver,
 } from "../whatsappIdentity.js";
+import { outgoingActorFor, type IntelActor } from "../intelligence/model.js";
 
 /**
  * One rule decides which roster member sent a message (WHATSAPP_IDENTITY.md). These pin it,
@@ -222,5 +231,150 @@ describe("describeSenderId", () => {
     expect(describeSenderId("8801711000001", "8801711000001@c.us")).toEqual({ kind: "PHONE", phone: "+8801711000001", id: "8801711000001" });
     expect(describeSenderId("161679983804516", "161679983804516@lid")).toEqual({ kind: "LID", phone: null, id: "161679983804516" });
     expect(describeSenderId("8801711000001", null).phone).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// createReportClassifier moved from apps/web (unified reporting WP5). The reference below is the
+// HEAD body copied verbatim and frozen: the shared export must decide every row exactly as it did.
+
+const referenceClassifier = (
+  resolver: SenderResolver,
+  ownIds: ReadonlySet<string>,
+  memberByUserId: ReadonlyMap<string, string | { id: string; attributeFrom?: Date | number | null }>,
+) => {
+  const linked = (userId: string, at: number): string | null => {
+    const entry = memberByUserId.get(userId);
+    if (!entry) return null;
+    if (typeof entry === "string") return entry;
+    const from = entry.attributeFrom instanceof Date ? entry.attributeFrom.getTime() : entry.attributeFrom;
+    return typeof from === "number" && at < from ? null : entry.id;
+  };
+  return (row: ReportSenderRow, at: number): ReportSenderDecision => {
+    const copies = row.copies?.length ? parseStoredCopies(row.copies) : [{ senderPhone: row.sender, senderJid: row.senderJid, fromTeam: row.fromTeam }];
+    const ours =
+      row.direction === "OUTGOING" ||
+      Boolean(row.obMatched) ||
+      isOwnSender(ownIds, row.sender, row.senderJid) ||
+      copies.some((copy) => isOwnSender(ownIds, copy.senderPhone, copy.senderJid));
+    if (ours) {
+      const actor: IntelActor = row.obMatched || row.direction === "OUTGOING" ? outgoingActorFor(row.actionType, row.ruleId) : "BUSINESS_PHONE";
+      const operatorMember = actor === "OPERATOR" && row.createdById ? linked(row.createdById, at) : null;
+      return operatorMember ? { kind: "MEMBER", memberId: operatorMember, actor, status: null } : { kind: "BUSINESS", memberId: null, actor, status: null };
+    }
+    const decided = attributeAcrossCopies(resolver, copies, at);
+    return {
+      kind: decided.isStaff ? "MEMBER" : "CUSTOMER",
+      memberId: decided.memberId,
+      actor: decided.memberId ? "MEMBER" : decided.isStaff ? "MEMBER_UNMAPPED" : "CUSTOMER",
+      status: decided.status,
+    };
+  };
+};
+
+describe("createReportClassifier", () => {
+  const SEP = COPY_FIELD_SEPARATOR;
+  const copy = (phone: string, jid: string | null, team = false) => [phone, jid ?? "", team ? "1" : "0"].join(SEP);
+  const roster: RosterIdentity[] = [
+    { id: "rina", phoneNumber: "+8801000000101", whatsappId: "200000000101@lid" },
+    { id: "omar", phoneNumber: "+200000000101", whatsappId: null },
+    { id: "nadia", phoneNumber: "+8801000000103", whatsappId: null, attributeFrom: Date.UTC(2026, 9, 10) },
+  ];
+  const own = new Set(["8801000000900", "199900000001"]);
+  const logins = new Map<string, string | { id: string; attributeFrom?: Date | number | null }>([
+    ["user-linked", "rina"],
+    ["user-dated", { id: "nadia", attributeFrom: Date.UTC(2026, 9, 10) }],
+  ]);
+  const resolver = createSenderResolver(roster);
+  const shared = createReportClassifier(resolver, own, logins);
+  const reference = referenceClassifier(resolver, own, logins);
+  const AFTER = Date.UTC(2026, 9, 15);
+  const BEFORE = Date.UTC(2026, 9, 5);
+
+  const row = (over: Partial<ReportSenderRow>): ReportSenderRow => ({
+    direction: "INCOMING",
+    sender: "100000000001",
+    senderJid: "100000000001@lid",
+    fromTeam: false,
+    actionType: null,
+    ruleId: null,
+    createdById: null,
+    ...over,
+  });
+
+  it("decides the documented cases", () => {
+    expect(shared.classify(row({}), AFTER)).toEqual({ kind: "CUSTOMER", memberId: null, actor: "CUSTOMER", status: "UNRESOLVED" });
+    expect(shared.classify(row({ sender: "8801000000101", senderJid: "8801000000101@c.us" }), AFTER)).toMatchObject({ kind: "MEMBER", memberId: "rina", actor: "MEMBER" });
+    // Rina's WhatsApp id is also Omar's number: staff, credited to nobody.
+    expect(shared.classify(row({ sender: "200000000101", senderJid: "200000000101@lid" }), AFTER)).toEqual({ kind: "MEMBER", memberId: null, actor: "MEMBER_UNMAPPED", status: "CONFLICT" });
+    // Our own post stored as INCOMING by another of our numbers is the business's.
+    expect(shared.classify(row({ sender: "8801000000900", senderJid: "8801000000900@c.us" }), AFTER)).toEqual({ kind: "BUSINESS", memberId: null, actor: "BUSINESS_PHONE", status: null });
+    expect(shared.classify(row({ direction: "OUTGOING", obMatched: true, actionType: "AUTO_REPLY" }), AFTER).actor).toBe("AI");
+    expect(shared.classify(row({ direction: "OUTGOING", obMatched: true, actionType: "AUTO_REPLY", ruleId: "r1" }), AFTER).actor).toBe("RULE");
+    expect(shared.classify(row({ direction: "OUTGOING", obMatched: true, actionType: "GROUP_BROADCAST" }), AFTER).actor).toBe("BROADCAST");
+    // A dashboard reply is the linked member's work; an unlinked login's stays the business's; a dated link honours attributeFrom.
+    expect(shared.classify(row({ direction: "OUTGOING", obMatched: true, actionType: "MANUAL_REPLY", createdById: "user-linked" }), AFTER)).toEqual({ kind: "MEMBER", memberId: "rina", actor: "OPERATOR", status: null });
+    expect(shared.classify(row({ direction: "OUTGOING", obMatched: true, actionType: "MANUAL_REPLY", createdById: "nobody" }), AFTER)).toEqual({ kind: "BUSINESS", memberId: null, actor: "OPERATOR", status: null });
+    expect(shared.classify(row({ direction: "OUTGOING", obMatched: true, actionType: "MANUAL_REPLY", createdById: "user-dated" }), BEFORE).memberId).toBeNull();
+    expect(shared.classify(row({ direction: "OUTGOING", obMatched: true, actionType: "MANUAL_REPLY", createdById: "user-dated" }), AFTER).memberId).toBe("nadia");
+    // A copy another of our numbers stored names one of our own numbers: the business's, whatever the kept row says.
+    expect(
+      shared.classify(row({ copies: [copy("100000000001", "100000000001@lid"), copy("8801000000900", "8801000000900@c.us")] }), AFTER),
+    ).toEqual({ kind: "BUSINESS", memberId: null, actor: "BUSINESS_PHONE", status: null });
+    // An OUTGOING row that echoes no send is somebody on the business phone.
+    expect(shared.classify(row({ direction: "OUTGOING" }), AFTER).actor).toBe("BUSINESS_PHONE");
+  });
+
+  it("hears every stored copy; parsedCopies is the same witnesses already parsed", () => {
+    // One account saw only the colleague's private WhatsApp id, another saw their number.
+    const copies = [copy("8801000000101", "8801000000101@c.us"), copy("999000000001", "999000000001@lid")];
+    expect(shared.classify(row({ sender: "999000000001", senderJid: "999000000001@lid", copies }), AFTER)).toMatchObject({ memberId: "rina", actor: "MEMBER" });
+    expect(shared.classify(row({ sender: "999000000001", senderJid: "999000000001@lid" }), AFTER).memberId).toBeNull();
+    const parsed = parseStoredCopies(copies);
+    expect(shared.classify(row({ sender: "999000000001", senderJid: "999000000001@lid", parsedCopies: parsed }), AFTER)).toEqual(
+      shared.classify(row({ sender: "999000000001", senderJid: "999000000001@lid", copies }), AFTER),
+    );
+  });
+
+  it("createReportClassifier moved without change", () => {
+    const senders: Array<[string, string | null]> = [
+      ["100000000001", "100000000001@lid"],
+      ["8801000000101", "8801000000101@c.us"],
+      ["200000000101", "200000000101@lid"],
+      ["8801000000103", "8801000000103@c.us"],
+      ["8801000000900", "8801000000900@c.us"],
+      ["199900000001", "199900000001@lid"],
+      ["120000000000000001", "120000000000000001@g.us"],
+    ];
+    const copySets: Array<string[] | null> = [
+      null,
+      [],
+      [copy("8801000000101", null), copy("100000000001", "100000000001@lid")],
+      [copy("8801000000103", "8801000000103@c.us", true)],
+      [copy("777", null, true)],
+      // The kept row looks like a customer, but another of our numbers stored the same message as its own post.
+      [copy("100000000001", "100000000001@lid"), copy("8801000000900", "8801000000900@c.us")],
+    ];
+    let compared = 0;
+    for (const direction of ["INCOMING", "OUTGOING"]) {
+      for (const [sender, senderJid] of senders) {
+        for (const copies of copySets) {
+          for (const obMatched of [false, true, null]) {
+            for (const [actionType, ruleId] of [[null, null], ["AUTO_REPLY", null], ["AUTO_REPLY", "r1"], ["MANUAL_REPLY", null], ["GROUP_BROADCAST", null]] as const) {
+              for (const createdById of [null, "user-linked", "user-dated", "unknown"]) {
+                for (const fromTeam of [false, true]) {
+                  for (const at of [BEFORE, AFTER]) {
+                    const input = row({ direction, sender, senderJid, copies, obMatched, actionType, ruleId, createdById, fromTeam });
+                    expect(shared.classify(input, at)).toEqual(reference(input, at));
+                    compared += 1;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(5000);
   });
 });
