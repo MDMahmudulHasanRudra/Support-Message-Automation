@@ -301,6 +301,20 @@ describe("legacy Team Report parity (flag off)", () => {
     check("xlsx", await captureXlsx());
   });
 
+  it("withReplyEvidence=false SQL path returns identical rows (and on, only the evidence is added)", async () => {
+    // WP7: the evidence columns and the quoted-message join are empty fragments when off. Compared, not
+    // snapshotted: the committed snapshot is the baseline and is never regenerated for this.
+    for (const params of [{}, { groups: G1, account: id("acct-A") }]) {
+      const filters = parseTeamReportFilters({ period: "day", date: D, ...params }, NOW);
+      const off = await inProject(() => loadTeamReport(filters, NOW));
+      const on = await inProject(() => loadTeamReport(filters, NOW, undefined, { withReplyEvidence: true }));
+      const legacy = (d: typeof off) => normalise({ result: d.result, messages: d.messages, response: d.response, reliabilityCounts: d.reliabilityCounts, groups: d.groups, filters: d.filters });
+      expect(legacy(on)).toEqual(legacy(off));
+      expect(off.replyEvidence).toBeUndefined();
+      expect(on.replyEvidence?.length).toBeGreaterThan(0);
+    }
+  });
+
   it("personal messages never change group figures", async () => {
     const before = await capture({});
     const beforeXlsx = await captureXlsx();

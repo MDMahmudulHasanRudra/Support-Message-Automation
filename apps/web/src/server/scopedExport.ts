@@ -9,12 +9,15 @@ import {
   emptyActorCounts,
   formatHoursMinutes,
   reliabilityLines,
+  REPLY_TIER_LABELS,
   responseLines,
   runMetadataLines,
   sanitizeExcelCell,
   sanitizeExcelRow,
+  UNRESOLVED_REASON_LABELS,
   type CombinedLine,
   type ReliabilityCounts,
+  type ReplyAttributionResult,
   type ReportScope,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
@@ -269,3 +272,37 @@ export async function personalExport(input: {
 /** The file-name suffix of a non-group scope, so a downloaded personal or combined report cannot be mistaken for the group one. */
 export const SCOPE_FILE_SUFFIX: Record<ReportScope, string> = { group: "", personal: " - personal", combined: " - groups and personal" };
 
+
+/**
+ * The "Customer-specific replies" sheet (UNIFIED_REPORTING, WP7): the evidence-based reply attribution as the page
+ * shows it — summary lines, then one row per group and one per team member. Counts and durations only; a customer
+ * is never named here and no message text is written. Every text cell is formula-safe.
+ */
+export function customerSpecificSheet(attribution: ReplyAttributionResult, names: { group: (groupKey: string) => string; member: (memberId: string) => string }): XLSX.WorkSheet {
+  const { asks, replies, customerSpecificWait: wait } = attribution;
+  const text = (value: string | number) => (typeof value === "string" ? sanitizeExcelCell(value) : value);
+  const summary: Array<[string, string | number, string]> = [
+    ["Calculation version", attribution.version, "Changes only when a figure's meaning changes."],
+    ["Customer requests", asks.total, "A customer's run of lines in a group, started in the period."],
+    ["Answered, linked by a quote", asks.answeredTier1, REPLY_TIER_LABELS.TIER1_QUOTE],
+    ["Answered, linked by a mention", asks.answeredTier2Mention, REPLY_TIER_LABELS.TIER2_MENTION],
+    ["Answered, the only customer waiting", asks.answeredTier2Sequence, REPLY_TIER_LABELS.TIER2_SEQUENCE],
+    ["No linked reply, past its time", asks.unanswered, "No reply could be linked to this customer by quote, mention or sequence."],
+    ["No linked reply, still inside its time", asks.pending, ""],
+    ["Customer lines with no sender id (left out)", asks.noCustomerId, ""],
+    ["Replies counted", replies.total, "Replies in the period, and replies after it that answered one of its requests."],
+    ...(["TIER1_QUOTE", "TIER2_MENTION", "TIER2_SEQUENCE", "TIER4_UNRESOLVED"] as const).map((tier): [string, string | number, string] => [`Replies: ${REPLY_TIER_LABELS[tier]}`, replies.byTier[tier], ""]),
+    ...Object.entries(replies.unresolvedReasons)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([reason, n]): [string, string | number, string] => [`Could not be linked: ${UNRESOLVED_REASON_LABELS[reason] ?? reason}`, n, ""]),
+    ["Broadcast messages (answer nobody)", replies.notAReply, ""],
+    ["Median customer-specific wait", wait.medianSeconds === null ? "" : formatHoursMinutes(wait.medianSeconds), `Over ${wait.samples} linked request(s).`],
+    ["90th percentile customer-specific wait", wait.p90Seconds === null ? "" : formatHoursMinutes(wait.p90Seconds), ""],
+  ];
+  const rows: Array<Array<string | number>> = [["Section", "Measure", "Value", "Note"], ...summary.map(([measure, value, note]) => ["Summary", measure, value, note].map(text))];
+  rows.push([], ["Group", "Group ID", "Customer requests", "Answered and linked", "No linked reply", "Replies that could not be linked"]);
+  for (const g of attribution.byGroup) rows.push([text(names.group(g.groupKey)), text(g.groupKey), g.asks, g.answeredVerified, g.unanswered, g.repliesUnresolved]);
+  rows.push([], ["Team member", "Requests answered (linked)", "Median wait"]);
+  for (const m of attribution.byMember) rows.push([text(names.member(m.memberId)), m.asksAnswered, m.medianSeconds === null ? "" : formatHoursMinutes(m.medianSeconds)]);
+  return XLSX.utils.aoa_to_sheet(rows);
+}

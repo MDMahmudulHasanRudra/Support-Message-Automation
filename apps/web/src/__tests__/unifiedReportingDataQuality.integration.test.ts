@@ -283,7 +283,8 @@ describe("Team Report export with the flag", () => {
 
     await setFlag(true);
     const on = await sheets("xlsx");
-    expect(on.names).toEqual([...off.names, "Run information"]);
+    // WP7 adds the Customer-specific replies sheet after it (its own test file checks the contents).
+    expect(on.names).toEqual([...off.names, "Run information", "Customer-specific replies"]);
     // Every existing sheet is byte-for-byte what it was, except "Data quality", which only gained rows.
     for (const name of off.names.filter((n) => n !== "Data quality")) expect(on.out[name], name).toEqual(off.out[name]);
     const quality = on.out["Data quality"]!;
@@ -304,7 +305,8 @@ describe("Team Report export with the flag", () => {
     const rows = out["Run information"]!;
     expect(rows[0]).toEqual(["Item", "Value", "Note"]);
     const value = (item: string) => rows.find((row) => row[0] === item)?.[1];
-    expect(value("Calculation version")).toBe("group-2026.10.19");
+    // With the flag on the section ran, so its version is named beside the group's (06 §5.2).
+    expect(value("Calculation version")).toBe("group-2026.10.19, reply-attribution-1");
     expect(value("Time zone")).toBe("Asia/Dhaka");
     expect(value("Scope")).toBe("Groups");
     expect(String(value("Period"))).toContain("8 July 2025");

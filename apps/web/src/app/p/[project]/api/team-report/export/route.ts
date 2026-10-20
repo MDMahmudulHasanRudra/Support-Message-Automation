@@ -7,6 +7,7 @@ import {
   dataQualityLines,
   DUTY_SOURCE_LABELS,
   reliabilityLines,
+  REPLY_ATTRIBUTION_VERSION,
   REPLY_CATEGORY_LABELS,
   replyCategoryOf,
   responseLines,
@@ -20,7 +21,8 @@ import { loadDataHealth } from "@/server/dataHealth";
 import { isUnifiedReportingEnabled, loadDataQualityCounts, loadPendingReattributions, resolvePageScope, withReportScope } from "@/server/unifiedReporting";
 import { loadPersonalReport, type PersonalReportData } from "@/server/personalReport";
 import { combinedLines } from "@/server/combinedReport";
-import { accountLabelOf, combinedTable, mergeReliabilityCounts, personalExport, personalQualityRows, personalSheets, SCOPE_FILE_SUFFIX, tableToCsv, tableToSheet } from "@/server/scopedExport";
+import { customerSpecificReplies } from "@/server/replyAttribution";
+import { accountLabelOf, combinedTable, customerSpecificSheet, mergeReliabilityCounts, personalExport, personalQualityRows, personalSheets, SCOPE_FILE_SUFFIX, tableToCsv, tableToSheet } from "@/server/scopedExport";
 
 /**
  * Team Report export. A Route Handler because a file download cannot come from a Server Action —
@@ -99,7 +101,7 @@ export async function GET(request: NextRequest) {
   // Unified reporting: personal and combined need `messages.view` on top of the report's own key, and the
   // feature on. Anything else resolves to the group report exactly as the page does, so the file matches
   // the screen — and with the feature off nothing below differs from what this route always did.
-  const { scope: reportScope } = await resolvePageScope(params, session);
+  const { scope: reportScope, enabled: unifiedOn } = await resolvePageScope(params, session);
   const requestedFilters = withReportScope(parseTeamReportFilters(params, now), reportScope);
   if (reportScope === "personal") {
     const data = await loadPersonalReport(requestedFilters, now, exportStoredBy(params, now));
@@ -109,9 +111,15 @@ export async function GET(request: NextRequest) {
     requestedFilters,
     now,
     undefined,
-    reportScope === "combined" ? { ...exportStoredBy(params, now), keepHumanWaits: true } : exportStoredBy(params, now),
+    {
+      ...exportStoredBy(params, now),
+      ...(reportScope === "combined" ? { keepHumanWaits: true } : {}),
+      // The evidence behind the "Customer-specific replies" sheet; off, nothing differs from the old query.
+      ...(unifiedOn ? { withReplyEvidence: true } : {}),
+    },
   );
   const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts, messages } = groupReport;
+  const attribution = unifiedOn ? customerSpecificReplies(groupReport) : null;
   // Combined: the personal half is loaded beside the group one, never instead of it.
   const personal: PersonalReportData | null = reportScope === "combined" ? await loadPersonalReport(requestedFilters, now, exportStoredBy(params, now)) : null;
   const memberName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
@@ -321,6 +329,7 @@ export async function GET(request: NextRequest) {
           reliability: personal ? computeReportingReliability(mergeReliabilityCounts(reliabilityCounts, personal.reliabilityCounts), health, { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() }) : reliability,
           operatorReplies: countOperatorReplies(personal ? [...messages, ...personal.messages] : messages, range.end.getTime()),
           pendingReattributions,
+          replyAttributionVersion: attribution ? REPLY_ATTRIBUTION_VERSION : null,
         }),
       ).map((line) => sanitizeExcelRow({ Item: line.label, Value: line.value, Note: line.note }))
     : [];
@@ -336,6 +345,13 @@ export async function GET(request: NextRequest) {
   addSheet("Overtime by day", overtimeDayRows, "No team member work was recorded in this period.");
   addSheet("Data quality", qualityRows, "");
   if (quality) addSheet("Run information", runRows, "");
+  if (attribution) {
+    XLSX.utils.book_append_sheet(
+      workbook,
+      customerSpecificSheet(attribution, { group: groupName, member: (id) => memberLabel(id, memberNames) }),
+      "Customer-specific replies",
+    );
+  }
   if (personal) {
     // Combined: the personal sheets and the side-by-side table follow the group workbook, which is untouched.
     const accountLabel = await accountLabelOf(filters.accountId);

@@ -5,3 +5,5 @@ export * from "./attributionOutcome.js";
 export * from "./runMetadata.js";
 export * from "./personalReport.js";
 export * from "./combinedReport.js";
+export * from "./replyAttribution.js";
+export * from "./enrichment.js";

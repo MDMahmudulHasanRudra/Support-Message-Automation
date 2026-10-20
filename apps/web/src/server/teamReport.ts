@@ -17,13 +17,17 @@ import {
   humanWaits,
   type HumanWait,
   inTeamAt,
+  describeSenderId,
   logicalMessageKey,
   membersOfTeamDuring,
   NO_TEAM,
   parseReportScope,
+  parseStoredCopies,
+  parseWhatsAppId,
   type IntelActor,
   type IntelMessage,
   type ReliabilityCounts,
+  type ReplyEvidenceMessage,
   type ReportScope,
   type ReportGranularity,
   type ReportMessage,
@@ -264,6 +268,13 @@ export interface TeamReportData {
    * asked (`keepHumanWaits`): the combined report recomputes its median over the union of two lists.
    */
   humanWaitList?: HumanWait[];
+  /**
+   * Quote and mention evidence per message (context included, in the report's own order). Present only when the
+   * caller asked (`withReplyEvidence`): the customer-specific replies section reads it.
+   */
+  replyEvidence?: ReplyEvidenceMessage[];
+  /** How to show each customer id in `replyEvidence` (a phone, or "Hidden number ···1234" for a LID — never a LID as a number). */
+  customerLabels?: Map<string, string>;
   /** The moment this was computed as of (epoch ms) — carried by links and exports as `asof`. */
   computedAt: number;
   missedAfterMs: (groupKey: string, at?: number) => number;
@@ -286,6 +297,9 @@ interface LoadedRow {
   actionType: string | null;
   ruleId: string | null;
   createdById: string | null;
+  /** Only with `withReplyEvidence`: the WhatsApp id of the message this one quotes (same account), and its @-mentions. */
+  quotedWamid?: string | null;
+  mentions?: string[] | null;
 }
 
 /**
@@ -355,6 +369,11 @@ export async function loadTeamReport(
     storedBy?: Date;
     /** Unified reporting: also return the human waits (`humanWaitList`). Off = the result is exactly as before. */
     keepHumanWaits?: boolean;
+    /**
+     * Unified reporting: also read what a reply quotes and mentions (`replyEvidence`). Off, the SQL is the SQL it always
+     * was — the evidence columns and the quoted-message join are empty fragments.
+     */
+    withReplyEvidence?: boolean;
   } = {},
 ): Promise<TeamReportData> {
   const range = resolveTeamReportRange(filters, now);
@@ -374,6 +393,12 @@ export async function loadTeamReport(
   // The send a message echoes — matched on the LOGICAL key, so the copy another of our numbers stored
   // of our own post still finds it (messageIdentity.ts). Joined once as a hash, bounded by `sentAt`.
   const outboundOf = (alias: string) => outboundByKeyJoin(projectId, contextStart, lookaheadEnd, alias);
+  const withEvidence = options.withReplyEvidence === true;
+  const evidenceColumns = withEvidence ? Prisma.sql`q."whatsappMessageId" AS "quotedWamid", m."mentionedPhones" AS mentions,` : Prisma.empty;
+  const evidenceOuter = withEvidence ? Prisma.sql`, c."quotedWamid", c.mentions` : Prisma.empty;
+  // The quoted row is on the same account (the pipeline resolves a quote there only) and in this project.
+  const evidenceJoin = withEvidence ? Prisma.sql`LEFT JOIN "Message" q ON q."id" = m."quotedMessageId" AND q."projectId" = ${projectId}` : Prisma.empty;
+  const evidenceEarlier = withEvidence ? Prisma.sql`NULL::text AS "quotedWamid", NULL::text[] AS mentions,` : Prisma.empty;
   const [members, identity, settings, policies, teams, membershipRows, rows, earlier, copies] = await Promise.all([
     prisma.internalTeamMember.findMany({
       select: { id: true, name: true, status: true },
@@ -402,7 +427,7 @@ export async function loadTeamReport(
     prisma.$queryRaw<LoadedRow[]>`
       SELECT DISTINCT ON (c.wgid, c.k)
         c.wgid, c.wamid, c.ts, c."storedAt", c.direction, c."fromTeam", c.sender, c."senderJid", c.copies, c.body,
-        c."obMatched", c."actionType", c."ruleId", c."createdById"
+        c."obMatched", c."actionType", c."ruleId", c."createdById"${evidenceOuter}
       FROM (
         SELECT
           g."whatsappGroupId" AS wgid, ${messageKeySql()} AS k, m."id" AS mid,
@@ -414,10 +439,12 @@ export async function loadTeamReport(
           ${filters.accountId ? Prisma.sql`(m."accountId" = ${filters.accountId})` : Prisma.sql`true`} AS "ownCopy",
           (m."direction" = 'OUTGOING') AS p1, (left(m."whatsappMessageId", 5) = 'true_') AS p2, m."isFromTeamMember" AS p3,
           ${prefilteredBodySql("m")} AS body,
+          ${evidenceColumns}
           o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
         FROM "Message" m
         JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
         ${outboundOf("m")}
+        ${evidenceJoin}
         WHERE m."timestampWa" >= ${contextStart} AND m."timestampWa" < ${lookaheadEnd}
           AND m."projectId" = ${projectId}
           AND m."createdAt" <= ${storedBy}
@@ -436,6 +463,7 @@ export async function loadTeamReport(
         p."isFromTeamMember" AS "fromTeam", p."senderPhone" AS sender, p."senderJid" AS "senderJid",
         NULL::text[] AS copies,
         ${prefilteredBodySql("p")} AS body,
+        ${evidenceEarlier}
         o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
       FROM (
         SELECT DISTINCT m."groupId"
@@ -490,6 +518,9 @@ export async function loadTeamReport(
     unattributedSenders: 0,
   };
   const unattributed = new Set<string>();
+  // Customer-specific replies (UNIFIED_REPORTING): what each message quotes and mentions, and who the customer is.
+  const evidence: ReplyEvidenceMessage[] = [];
+  const customerLabels = new Map<string, string>();
   // Oldest first, and two messages in the same second in the order they were stored: the rows arrive
   // sorted by group and key, and a reply sorted ahead of the question it answers closed the wait
   // with a later reply instead (a false Recall or Missed).
@@ -513,6 +544,34 @@ export async function loadTeamReport(
       if (actor === "MEMBER_UNMAPPED") unattributed.add(row.senderJid ?? row.sender);
     }
     all.push({ groupKey: row.wgid, ts, kind, memberId, actor });
+    if (withEvidence) {
+      // Every stored copy names the customer: one number may have seen a LID and another their phone, and one
+      // message names ONE person, so every id of it belongs to the same cluster.
+      const witnesses = kind === "CUSTOMER" ? (row.copies?.length ? parseStoredCopies(row.copies) : [{ senderPhone: row.sender, senderJid: row.senderJid }]) : [];
+      const customerIds = new Set<string>();
+      for (const copy of witnesses) {
+        const user = parseWhatsAppId(copy.senderJid ?? copy.senderPhone)?.user;
+        if (!user) continue;
+        customerIds.add(user);
+        if (!customerLabels.has(user) || describeSenderId(copy.senderPhone, copy.senderJid).phone) {
+          const described = describeSenderId(copy.senderPhone, copy.senderJid);
+          // Only a PHONE id is shown as a number; anything else is a hidden number, never dialled.
+          customerLabels.set(user, described.phone ?? `Hidden number ···${user.slice(-4)}`);
+        }
+      }
+      evidence.push({
+        key: logicalMessageKey(row.wgid, row.wamid),
+        groupKey: row.wgid,
+        ts,
+        kind,
+        actor,
+        memberId,
+        customerIds: [...customerIds].sort(),
+        quotedKey: row.quotedWamid ? logicalMessageKey(row.wgid, row.quotedWamid) : null,
+        mentionedIds: [...new Set((row.mentions ?? []).map((id) => parseWhatsAppId(id)?.user ?? id.trim()).filter(Boolean))].sort(),
+        inPeriod,
+      });
+    }
     intel.push({
       key: logicalMessageKey(row.wgid, row.wamid),
       groupKey: row.wgid,
@@ -664,6 +723,7 @@ export async function loadTeamReport(
     missedAfterMs,
     computedAt: now.getTime(),
     ...(options.keepHumanWaits ? { humanWaitList: humanWaitsAll.filter((w) => reportGroups.has(w.groupKey)) } : {}),
+    ...(withEvidence ? { replyEvidence: evidence, customerLabels } : {}),
   };
 }
 

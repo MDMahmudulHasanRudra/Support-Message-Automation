@@ -37,12 +37,15 @@ import {
   computeReportingReliability,
   countOperatorReplies,
   dataQualityLines,
+  REPLY_ATTRIBUTION_VERSION,
   type DataQualityCounts,
 } from "@support-automation/shared";
 import { loadDataQualityCounts, loadPendingReattributions, resolvePageScope, withReportScope } from "@/server/unifiedReporting";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { loadPersonalReport } from "@/server/personalReport";
 import { combinedLines } from "@/server/combinedReport";
+import { customerSpecificReplies } from "@/server/replyAttribution";
+import { CustomerSpecificReplies } from "./CustomerSpecificReplies";
 import { mergeReliabilityCounts } from "@/server/scopedExport";
 import { ReliabilitySection } from "./ReliabilitySection";
 import { RunInformation } from "./RunInformation";
@@ -83,7 +86,11 @@ export default async function TeamReportPage({
   const linkToChat = canViewPersonal && !(await activeDisabledFeatures()).has("WHATSAPP_CHAT");
   if (pageScope === "personal") return PersonalPage({ requested, now, scopeNote, linkToChat, canViewPersonal });
   const [report, filterOptions, dataHealth, quality, pendingReattributions, personal] = await Promise.all([
-    loadTeamReport(requested, now, undefined, pageScope === "combined" ? { keepHumanWaits: true } : {}),
+    loadTeamReport(requested, now, undefined, {
+      ...(pageScope === "combined" ? { keepHumanWaits: true } : {}),
+      // The quote and mention evidence behind "Customer-specific replies"; off, the query is the old one.
+      ...(unified ? { withReplyEvidence: true } : {}),
+    }),
     loadReportFilterOptions(requested.groupKeys),
     loadDataHealth({ periodStart: requestedRange.start.getTime(), periodEnd: requestedRange.end.getTime(), now, accountId: requested.accountId }),
     unified
@@ -101,6 +108,7 @@ export default async function TeamReportPage({
     now: now.getTime(),
   });
 
+  const attribution = unified ? customerSpecificReplies(report) : null;
   const reliabilityWindow = { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() };
   const personalReliability = personal ? computeReportingReliability(personal.reliabilityCounts, dataHealth, reliabilityWindow) : null;
   const scopedName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
@@ -130,6 +138,7 @@ export default async function TeamReportPage({
           reliability: personal ? computeReportingReliability(mergeReliabilityCounts(report.reliabilityCounts, personal.reliabilityCounts), dataHealth, reliabilityWindow) : reliability,
           operatorReplies: countOperatorReplies(personal ? [...report.messages, ...personal.messages] : report.messages, range.end.getTime()),
           pendingReattributions,
+          replyAttributionVersion: attribution ? REPLY_ATTRIBUTION_VERSION : null,
         })
       : null;
   const teamOnly = Boolean(filters.teamId && !filters.memberId);
@@ -388,6 +397,8 @@ export default async function TeamReportPage({
           </Card>
         </>
       )}
+
+      {attribution ? <CustomerSpecificReplies attribution={attribution} /> : null}
 
       <ReliabilitySection
         response={report.response}
@@ -671,6 +682,16 @@ function UnifiedHelp({ missedAfterMinutes }: { missedAfterMinutes: number }) {
           is recalculated over every wait in both, never averaged; support time and overtime are group figures only; a
           distinct-customer count is not offered, because the same person can be a phone number in one chat and a hidden
           id in the other.
+        </p>
+      </HelpSection>
+      <HelpSection title="Customer-specific replies">
+        <p>
+          In a group, the wait above is the group&apos;s: somebody replied. The section below the groups asks, beside it,
+          which customer each reply answered — and only counts it when the conversation says so: the reply quotes the
+          customer&apos;s message, @-mentions the customer, or that customer was the only one waiting and nobody else wrote
+          since. A reply none of those places is shown as not linked; that is not evidence the customer was ignored. A
+          customer is the same person whether seen as a phone number or a hidden id. Nothing here is guessed or
+          AI-suggested, and nothing changes a figure above.
         </p>
       </HelpSection>
       <HelpSection title="Run information">
