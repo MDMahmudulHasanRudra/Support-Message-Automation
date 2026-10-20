@@ -356,3 +356,30 @@ at read time:
    synced: N messages in G groups since <date>". The Identity check's "Add to team" adds a frequent
    unknown sender by the exact identifier WhatsApp delivered. Only stored messages can be counted:
    anything WhatsApp never delivered to our numbers is not recoverable here.
+
+## 11. Identity-change impact preview (20 Oct 2026, `UNIFIED_REPORTING`)
+
+Before saving a change that moves messages between people, a member manager can press **Preview impact** (add
+form, edit form, WhatsApp Chat link panel). Nothing is applied: approval is the ordinary Save.
+
+1. **Same classifier, twice.** `previewIdentityChange` (packages/shared) runs `createReportClassifier` once with
+   the roster as it is and once with the roster as it would be, over every logical message a changed identifier
+   touches (every stored copy a witness). A message is "changed" when its label differs: CUSTOMER, STAFF
+   unidentified, BUSINESS or MEMBER:<id>. There is no second identity rule.
+2. **What it reads.** The identifiers in every stored form (typed, digits, the id's comparison key), the last 92
+   days by default (at most 365), at most 20,000 logical messages (then it says so). Two raw queries, both
+   naming `"projectId"`, no body.
+3. **What it shows.** Counts of messages, groups and personal chats, the transitions (for example Customer to
+   Rina), gained and lost per member, months affected, and a labelled estimate of the month's figures for the
+   most-changed groups (the Team Report and personal report re-run with each roster). A personal conversation's
+   id is never sent to the browser, and without `messages.view` no personal message is read into any count.
+4. **Save.** The form carries a digest and the headline counts; the existing save records them in the System Log
+   entry. Without a preview the entry is exactly as before. Reports change the moment the save commits; stored
+   stamps, Activity Feed and Duty History follow through the usual `IdentityReattribution`.
+5. **Validation is shared.** `readIdentityFields` (apps/web `lib/teamMemberIdentity.ts`) reads the phone number and
+   WhatsApp id for Save and for the preview. Whether another member already holds the number stays a Save check.
+
+**Fixes in the same release.** `recomputeAttendanceDay` recomputes a deactivated member (the re-attribution used
+to leave their Duty History untouched when an identifier was corrected away from them). With one account chosen,
+Support Intelligence and Calls hear every account's copies. Deleting a member who never worked records the groups
+they leave unassigned, and a member whose only work is linked-login dashboard replies is deactivated instead.

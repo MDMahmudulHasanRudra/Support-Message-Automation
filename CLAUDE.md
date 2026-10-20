@@ -1392,6 +1392,41 @@ one.**
   runs the validation script against real groups and compares with WhatsApp, the reports say so.
   Do not remove that caveat on the strength of the tests.
 
+**Unified messaging reporting (20 Oct 2026, `UNIFIED_REPORTING`, off by default, no migration, no worker
+change, no new key; `docs/unified-reporting/` is the reference, 00-07 are the specs, 08-12 describe what was
+built).** The Team Report gains personal and combined scopes, run information, customer-specific reply
+attribution and an identity-change preview. Rules worth not undoing:
+- **Flag off, or `scope=group`, is byte-identical.** `teamReportParity.integration.test.ts` compares the
+  loader, the three tables, the CSV and the XLSX with a committed snapshot; never regenerate it to make a
+  change pass. `teamReportQuery` writes `scope` only when it is not `group`.
+- **Personal and combined need `messages.view` on top of `support_activity.view`**, decided in ONE place
+  (`resolvePageScope`) for the page and both exports; a viewer without it gets the group report and a note.
+  Personal rows are `PERSONAL_CHAT_SQL` only (`@c.us`/`@lid`, no group), one conversation per
+  account + chat, own-number and colleague chats excluded and counted, never status/newsletter/orphaned ids.
+- **No second counting rule.** `computePersonalReport` calls `computeTeamReport` and `humanWaits` unchanged
+  with the conversation as the "group"; combined is two reports set side by side (additive lines add, medians
+  are recomputed over the union, distinct customers and overtime are never combined). Only a dashboard reply
+  from a login linked to a member is a verified employee reply in a personal chat.
+- **Who sent it is still the one classifier** (`createReportClassifier`, now in packages/shared); the
+  preview, the personal loader and the group loader all take an `identity` they can be handed.
+- **Customer-specific replies are evidence only** (`replyAttribution.ts`): a quote of the customer's line
+  (Tier 1), one mention or the only waiting customer inside 4 h (Tier 2), everything else unresolved and closes
+  nothing. `TIER3_PROBABLE` is never produced; ids are compared exactly and a LID is never shown as a number.
+  It sits beside the group figures and changes none.
+- **The identity preview is strictly read-only** (`previewTeamMemberIdentityChange`: `whatsapp.manage`, the
+  flag, the project). It writes nothing, queues no `IdentityReattribution`, selects no body, masks a personal
+  chat's id, and without `messages.view` reads no personal message into any count. Save is the existing action;
+  it only records the digest the browser carried (`previewDigest`) in the System Log entry, and a save without
+  one logs exactly as before. Field validation is `readIdentityFields`, shared with Save.
+- **Run information and Collection detail are counts and plain notes, never a percentage or a score**;
+  "no stored message" is never "no communication". Every raw query names `"projectId"`.
+- **Audit fixes B1-B4 (same release):** a deactivated member's Duty History follows a corrected identifier
+  (`recomputeAttendanceDay` roster = ACTIVE plus that member); Support Intelligence and Calls decide who sent a
+  message from every account's copies when one account is chosen (copies window outside, `onAccount` test
+  outside); a hard delete records `GroupResponsibilityChange` for the groups it unassigns, and a member whose only
+  work is linked-login dashboard replies is deactivated; the Team Report orders a group's copies Primary first,
+  lowest id. B5 and B6 were not fixed (`12-deferred-work-and-known-limits.md`).
+
 **Report durations are shown ONE way: total hours and minutes** (`formatHoursMinutes`,
 `packages/shared/src/duration.ts`, 5 Oct 2026).
 - Examples: "35h 0m", never "1d 11h"; "0h 45m", never "45m" or "38s"; zero is "0h 0m".

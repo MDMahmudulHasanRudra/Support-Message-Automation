@@ -959,3 +959,40 @@ Different metrics keep their own names:
   account's copies.
 - Exports and drill-downs carry the page's moment (`asof`); the Excel Summary carries data health and the
   unidentified-staff count; the CSV is UTF-8 with a BOM and always has a header.
+
+## Unified messaging reporting (20 Oct 2026)
+
+Behind the `UNIFIED_REPORTING` project feature (off by default; no migration, no worker change, no new
+permission key). Specs and the as-built notes are in `docs/unified-reporting/` (00-07 specs, 08-12 as built).
+With the feature off, or `scope=group`, the Team Report, its tables, CSV and Excel are exactly what they were
+(`teamReportParity.integration.test.ts`).
+
+- **Scopes** (`?scope=group|personal|combined`, the scope selector appears only for a viewer who may see
+  personal chats). Personal and combined need `messages.view` as well as `support_activity.view`; without it the
+  group report renders with a one-line note. Anything unrecognised is `group`.
+- **Personal report.** One conversation is one account + one chat (`@c.us` or `@lid`, no group): the same
+  customer on two of our numbers is two conversations. Our own numbers' chats and chats with a team member are
+  excluded and counted; status, newsletter and orphaned group ids are never conversations. Waits, missed and
+  recall are the Team Report's own (`computeTeamReport` is called unchanged), "missed" uses
+  `missedReplyAfterMinutes`, and nobody is charged. A **verified employee reply** is a dashboard reply typed
+  through a login linked to a team member; a reply from the business phone is the business's.
+- **Combined.** The group report and the personal report side by side with a "how combined" label per line:
+  additive lines add, medians are recomputed over the union of waits, distinct customers are not offered, support
+  time and overtime stay group only. The group half is byte-for-byte `scope=group`.
+- **Run information** (collapsed panel, and an Excel sheet): calculation versions (`group-2026.10.19`,
+  `personal-1`, `combined-1`, `reply-attribution-1`), the period, the data cutoff, the identity statement
+  ("Senders are identified with the team roster as it is now; Team membership and group assignment are taken as
+  they were at the time of each message"), pending re-attributions. **Collection detail** lines (also in the
+  Excel "Data quality" sheet): stored later than sent (more than 15 minutes), loaded from history, deleted for
+  everyone, excluded rows. Counts only, never a percentage.
+- **Customer-specific replies** (group and combined, beside the figures): which customer each reply answered,
+  from evidence only (a quote, a single mention, or the only waiting customer inside 4 hours); unresolved replies
+  are counted with the reason and close nothing. Excel sheet "Customer-specific replies"; the group drill-down
+  lists the per-request detail. It changes no group figure.
+- **Identity-change preview** on Team Members (add, edit) and the WhatsApp Chat link panel: what would be
+  attributed differently, by member, by month, with a labelled estimate for the latest month. Read-only (see
+  WHATSAPP_IDENTITY.md section 11).
+- **Bug fixes in this release:** Support Intelligence and Calls no longer decide a sender from the chosen
+  account's copy alone (they hear every account's copies, like this report); a hard-deleted member's group
+  assignments are recorded; Duty History follows an identifier corrected away from a deactivated member; a
+  group's assignee is read Primary first, then lowest id.
