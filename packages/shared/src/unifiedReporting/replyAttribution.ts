@@ -167,12 +167,15 @@ export function computeReplyAttribution(messages: readonly ReplyEvidenceMessage[
   }
   const customerKey = (ids: readonly string[]) => find(ids[0]!);
   // Every id of each cluster, in comparable form, for mention matching.
-  const clusterIds = new Map<string, Set<string>>();
+  // Indexed by the comparable id, so a mention is looked up rather than scanned against every customer of the
+  // report (a reply-by-customer scan cost seconds on a month of a large roster). One comparable id can belong to
+  // several clusters only if two ids compare equal, so each maps to the set of roots it names.
+  const rootsOfId = new Map<string, Set<string>>();
   for (const id of [...parent.keys()].sort()) {
-    const root = find(id);
-    const set = clusterIds.get(root) ?? new Set<string>();
-    set.add(comparable(id));
-    clusterIds.set(root, set);
+    const key = comparable(id);
+    const roots = rootsOfId.get(key) ?? new Set<string>();
+    roots.add(find(id));
+    rootsOfId.set(key, roots);
   }
 
   // ---- Step 1: walk each group in order ----
@@ -249,8 +252,9 @@ export function computeReplyAttribution(messages: readonly ReplyEvidenceMessage[
         closes = open.get(quoted.customerKey) === quoted;
       } else {
         // Open asks whose customer the reply @-mentions.
-        const mentioned = new Set(m.mentionedIds.map(comparable));
-        const mentionedClusters = [...clusterIds].filter(([root, ids]) => customersHere.has(root) && [...mentioned].some((id) => ids.has(id))).map(([root]) => root);
+        const mentionedRoots = new Set<string>();
+        for (const id of m.mentionedIds) for (const root of rootsOfId.get(comparable(id)) ?? []) if (customersHere.has(root)) mentionedRoots.add(root);
+        const mentionedClusters = [...mentionedRoots].sort();
         const mentionedOpen = mentionedClusters.filter((root) => open.has(root));
         if (mentionedOpen.length === 1) {
           tier = "TIER2_MENTION";

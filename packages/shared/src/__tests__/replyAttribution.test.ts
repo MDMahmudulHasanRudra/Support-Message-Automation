@@ -301,3 +301,25 @@ describe("computeReplyAttribution", () => {
     expect(detail([customer(0, [A], { groupKey: "other@g.us" })]).asksDetail).toEqual([]);
   });
 });
+
+describe("scale (review fix)", () => {
+  it("a mention is looked up, not scanned against every customer of the report", () => {
+    // 4,000 groups, each with one customer and three replies: 12,000 replies over 4,000 customers. Scanning every
+    // customer per reply (the old shape) took several seconds; an index lookup is milliseconds.
+    const messages: ReplyEvidenceMessage[] = [];
+    for (let g = 0; g < 4_000; g++) {
+      const groupKey = `1200000000${String(g).padStart(8, "0")}@g.us`;
+      const id = `88010${String(g).padStart(8, "0")}`;
+      messages.push(customer(0, [id], { groupKey }));
+      messages.push(reply(1, { groupKey }));
+      messages.push(reply(2, { groupKey, mentionedIds: [id] }));
+      messages.push(reply(3, { groupKey }));
+    }
+    const started = performance.now();
+    const result = computeReplyAttribution(messages, OPTS);
+    const elapsed = performance.now() - started;
+    expect(result.asks.total).toBe(4_000);
+    expect(result.asks.answeredTier2Sequence).toBe(4_000);
+    expect(elapsed).toBeLessThan(1_500);
+  });
+});
