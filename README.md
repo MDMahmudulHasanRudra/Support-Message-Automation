@@ -13,6 +13,15 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Unified messaging reporting** (`UNIFIED_REPORTING`, off by default; no migration, no worker change). Built on `rudra`; not deployed.
+  - **Team Report**: personal and combined scopes, run information, customer-specific replies, and per employee: a ranking
+    on each measure (no blended score, small samples shown as not enough data), daily engagement by group, and a
+    comparison with the previous period.
+  - **Team Members**: an identity-change preview, and in the Identity check "Link to member", a name suggestion and a
+    "WhatsApp ID not linked" badge, so a colleague WhatsApp shows by a private ID is credited their messages.
+  - Fixes B1-B4 from the audit (Duty History after an identifier change, account-filtered reports, deleted members, group order).
+  - Reference: `docs/unified-reporting/`, `REPORTS.md`, `WHATSAPP_IDENTITY.md`.
+
 - **Personal (1:1) messages: collection and visibility hotfix** (18 Oct incident: many personal
   messages missing, groups fine). Merged to `main` in PR #19 (branch `hotfix/personal-messages`); not deployed.
   - **Live listener**: a number whose first automatic connect gave up, and was then connected from

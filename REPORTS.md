@@ -992,6 +992,25 @@ With the feature off, or `scope=group`, the Team Report, its tables, CSV and Exc
 - **Identity-change preview** on Team Members (add, edit) and the WhatsApp Chat link panel: what would be
   attributed differently, by member, by month, with a labelled estimate for the latest month. Read-only (see
   WHATSAPP_IDENTITY.md section 11).
+- **Employee ranking, daily engagement and period comparison (WP10)**, group scope, beside the existing tables:
+  - **No second counting rule.** `computeEmployeeAnalytics` (packages/shared `unifiedReporting/employeeRanking.ts`)
+    reads the report's own classified messages and `computeTeamReport` result. A member's groups engaged is the
+    members table's `groups` (distinct groups with their in-scope messages): for a one-day period the two are equal,
+    and a test pins it for a day, a week, a month and a custom range.
+  - **Ranking by measure.** Each measure is ranked alone (groups engaged, replies, active days, average groups per
+    active day, support time, Missed charged to them, median response on the waits they closed); no blended score.
+    Ties share a rank (1, 2, 2, 4). Fewer than 3 active days (or fewer than the period has), or fewer than 5 closed
+    waits for the median: "Not enough data", never last. Active days is the sample itself and is ranked for anybody
+    who worked. The top 3 and the 3 furthest behind are tinted; with fewer than 4 ranked, or all equal, nobody is.
+  - **Daily engagement.** Per member per Dhaka day, distinct groups. Row total = distinct groups over the period,
+    shown beside the sum of days; the bottom row = distinct groups anyone in scope engaged that day.
+  - **Comparison** (`compare=1`): the previous period of equal length, loaded through `loadTeamReport` once more
+    with the same filters; absent, it is not loaded. If the Team or member filter would not apply to the earlier
+    period it says so instead of widening to the whole Team. A member absent from a period has 0 in it.
+  - **Excel:** "Ranking", "Daily engagement" and (with compare) "Comparison" after the existing sheets, only with the
+    feature on; the parity snapshot is unchanged. Ranking and Comparison also export from their table menus.
+- **Identity check fixes (WP11):** link an unknown sender to an existing member, a name suggestion and the impact
+  line (WHATSAPP_IDENTITY.md section 12).
 - **Bug fixes in this release:** Support Intelligence and Calls no longer decide a sender from the chosen
   account's copy alone (they hear every account's copies, like this report); a hard-deleted member's group
   assignments are recorded; Duty History follows an identifier corrected away from a deactivated member; a

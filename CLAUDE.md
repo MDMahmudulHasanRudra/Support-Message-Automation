@@ -1420,6 +1420,22 @@ attribution and an identity-change preview. Rules worth not undoing:
   one logs exactly as before. Field validation is `readIdentityFields`, shared with Save.
 - **Run information and Collection detail are counts and plain notes, never a percentage or a score**;
   "no stored message" is never "no communication". Every raw query names `"projectId"`.
+- **Employee ranking, daily engagement and comparison (WP10) are derivations, not a second report.**
+  `computeEmployeeAnalytics` (`unifiedReporting/employeeRanking.ts`) reads the loader's `messages`, `scope` and
+  `computeTeamReport` result; a member's groups engaged is the members table's `groups` rule (a test pins the
+  equality for day, week, month and custom). Each measure is ranked alone, never blended; ties share a rank; a
+  small sample (fewer than 3 active days, or fewer than 5 closed waits for the median) is "Not enough data" and
+  never last (Active days itself is ranked for anybody who worked). The daily grid's row total is DISTINCT groups,
+  shown beside the sum of days; do not "fix" the two to agree. `compare=1` is honoured only with the flag on and
+  loads the previous equal-length period once, through `loadTeamReport`; off, nothing extra is read. New sheets
+  ("Ranking", "Daily engagement", "Comparison") come after the existing ones and only with the flag on.
+- **Fixing an identity from the Identity check (WP11) reuses `linkWhatsAppSender`**, never a second link path: its
+  permission, duplicate-holder refusal, System Log entry and `IdentityReattribution` come with it. It stores a
+  WhatsApp ID only, never a phone number made from a LID. The name suggestion (`suggestMemberForSender`) is display
+  only: several matches are "several possible members", a one-word containment is not a match, and only a member who
+  matched no message in 30 days or has no real WhatsApp ID is offered. The "WhatsApp ID not linked" badge
+  (`whatsappIdBadge`, Bangladeshi mobile `8801[3-9]` + 8 digits) is display only; `hasReachablePhoneNumber` is
+  unchanged. All of it needs the flag; off, the roster and the Identity check are what they were.
 - **Audit fixes B1-B4 (same release):** a deactivated member's Duty History follows a corrected identifier
   (`recomputeAttendanceDay` roster = ACTIVE plus that member); Support Intelligence and Calls decide who sent a
   message from every account's copies when one account is chosen (copies window outside, `onAccount` test
