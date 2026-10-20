@@ -105,29 +105,46 @@ export async function loadIntelligence(ctx: ReportContext): Promise<Intelligence
   const { groupKeys, accountId } = ctx.filters;
   const groupFilter = groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty;
   const accountFilter = accountId ? Prisma.sql`AND m."accountId" = ${accountId}` : Prisma.empty;
+  // With an account chosen, the report reads the messages THAT account stored, but who sent each one is
+  // still decided from every account's copies (as the Team Report does): the copies window below sees all
+  // of them and only the outer `onAccount` test narrows to the chosen account.
+  const onAccount = accountId
+    ? Prisma.sql`bool_or(m."accountId" = ${accountId}) OVER (PARTITION BY g."whatsappGroupId", ${messageKeySql()})`
+    : Prisma.sql`true`;
+  const ownCopy = accountId ? Prisma.sql`(m."accountId" = ${accountId})` : Prisma.sql`true`;
 
   const [rows, earlier, members, identity, escalations, completions, duties] = await Promise.all([
     prisma.$queryRaw<Row[]>`
-      SELECT DISTINCT ON (g."whatsappGroupId", ${messageKeySql()})
-        g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."createdAt" AS "storedAt",
-        m."direction"::text AS direction, m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender,
-        m."senderJid" AS "senderJid",
-        m."senderName" AS "senderName", m."mentionedPhones" AS mentions,
-        CASE WHEN length(m."body") BETWEEN 1 AND 24 OR m."body" ~* ${INTELLIGENCE_SQL_PREFILTER} THEN left(m."body", 400) END AS body,
-        q."whatsappMessageId" AS "quotedKey", q."senderPhone" AS "quotedSender", q."senderJid" AS "quotedSenderJid",
-        q."direction"::text AS "quotedDirection", q."timestampWa" AS "quotedAt",
-        ${storedCopiesSql(Prisma.sql`g."whatsappGroupId"`)} AS copies,
-        o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
-      FROM "Message" m
-      JOIN "WhatsAppGroup" g ON g."id" = m."groupId" AND g."projectId" = ${projectId}
-      LEFT JOIN "Message" q ON q."id" = m."quotedMessageId" AND q."projectId" = ${projectId}
-      ${outboundByKeyJoin(projectId, from, to)}
-      WHERE m."projectId" = ${projectId}
-        AND m."timestampWa" >= ${from} AND m."timestampWa" < ${to}
-        AND m."direction" <> 'SYSTEM'
-        ${groupFilter}
-        ${accountFilter}
-      ORDER BY g."whatsappGroupId", ${messageKeySql()}, ${preferSenderCopySql()}, m."timestampWa", m."id"`,
+      SELECT DISTINCT ON (c.wgid, c.k)
+        c.wgid, c.wamid, c.ts, c."storedAt", c.direction, c."fromTeam", c.sender, c."senderJid", c."senderName", c.mentions, c.body,
+        c."quotedKey", c."quotedSender", c."quotedSenderJid", c."quotedDirection", c."quotedAt", c.copies,
+        c."obMatched", c."actionType", c."ruleId", c."createdById"
+      FROM (
+        SELECT
+          g."whatsappGroupId" AS wgid, ${messageKeySql()} AS k, m."id" AS mid,
+          m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."createdAt" AS "storedAt",
+          m."direction"::text AS direction, m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender,
+          m."senderJid" AS "senderJid",
+          m."senderName" AS "senderName", m."mentionedPhones" AS mentions,
+          CASE WHEN length(m."body") BETWEEN 1 AND 24 OR m."body" ~* ${INTELLIGENCE_SQL_PREFILTER} THEN left(m."body", 400) END AS body,
+          q."whatsappMessageId" AS "quotedKey", q."senderPhone" AS "quotedSender", q."senderJid" AS "quotedSenderJid",
+          q."direction"::text AS "quotedDirection", q."timestampWa" AS "quotedAt",
+          ${storedCopiesSql(Prisma.sql`g."whatsappGroupId"`)} AS copies,
+          ${onAccount} AS "onAccount", ${ownCopy} AS "ownCopy",
+          (m."direction" = 'OUTGOING') AS p1, (left(m."whatsappMessageId", 5) = 'true_') AS p2, m."isFromTeamMember" AS p3,
+          o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
+        FROM "Message" m
+        JOIN "WhatsAppGroup" g ON g."id" = m."groupId" AND g."projectId" = ${projectId}
+        LEFT JOIN "Message" q ON q."id" = m."quotedMessageId" AND q."projectId" = ${projectId}
+        ${outboundByKeyJoin(projectId, from, to)}
+        WHERE m."projectId" = ${projectId}
+          AND m."timestampWa" >= ${from} AND m."timestampWa" < ${to}
+          AND m."direction" <> 'SYSTEM'
+          ${groupFilter}
+      ) c
+      WHERE c."onAccount"
+      -- preferSenderCopySql's order (OUTGOING, true_, staff-stamped); with an account chosen, its own copy first.
+      ORDER BY c.wgid, c.k, c."ownCopy" DESC, c.p1 DESC, c.p2 DESC, c.p3 DESC, c.ts, c.mid`,
     // Each group's last message before that window, as the Team Report reads it: a customer still
     // waiting from earlier is continuing that wait, not starting a new one at the window's edge.
     prisma.$queryRaw<Row[]>`
