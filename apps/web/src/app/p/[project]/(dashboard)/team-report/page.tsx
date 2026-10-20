@@ -14,6 +14,8 @@ import { requireAccess } from "@/server/authorize";
 import { formatDurationShort } from "@/lib/duration";
 import {
   bucketLabel,
+  CONTEXT_MS,
+  LOOKAHEAD_MS,
   loadTeamReport,
   memberLabel,
   parseTeamReportFilters,
@@ -28,8 +30,16 @@ import { loadReportFilterOptions } from "@/server/reports/context";
 import { presetLinks } from "@/server/reports/presets";
 import { loadDataHealth } from "@/server/dataHealth";
 import { DataHealthStrip } from "@/components/reports/DataHealthStrip";
-import { computeReportingReliability } from "@support-automation/shared";
+import {
+  buildReportRunMetadata,
+  computeReportingReliability,
+  countOperatorReplies,
+  dataQualityLines,
+  type DataQualityCounts,
+} from "@support-automation/shared";
+import { isUnifiedReportingEnabled, loadDataQualityCounts, loadPendingReattributions } from "@/server/unifiedReporting";
 import { ReliabilitySection } from "./ReliabilitySection";
+import { RunInformation } from "./RunInformation";
 
 export const metadata = { title: "Team Report" };
 
@@ -58,10 +68,16 @@ export default async function TeamReportPage({
   const now = new Date();
   const requested = parseTeamReportFilters(params, now);
   const requestedRange = resolveTeamReportRange(requested, now);
-  const [report, filterOptions, dataHealth] = await Promise.all([
+  // Unified messaging reports (UNIFIED_REPORTING): off, the page is exactly what it always was.
+  const unified = await isUnifiedReportingEnabled();
+  const [report, filterOptions, dataHealth, quality, pendingReattributions] = await Promise.all([
     loadTeamReport(requested, now),
     loadReportFilterOptions(requested.groupKeys),
     loadDataHealth({ periodStart: requestedRange.start.getTime(), periodEnd: requestedRange.end.getTime(), now, accountId: requested.accountId }),
+    unified
+      ? loadDataQualityCounts({ kind: "GROUP", start: requestedRange.start, end: requestedRange.end, accountId: requested.accountId, groupKeys: requested.groupKeys })
+      : Promise.resolve<DataQualityCounts | null>(null),
+    unified ? loadPendingReattributions() : Promise.resolve(0),
   ]);
   const { filters, range, result, memberNames, members, rules, teams, teamMemberIds, teamName, filterNote } = report;
   const { summary } = result;
@@ -73,8 +89,34 @@ export default async function TeamReportPage({
 
   const scopedName = filters.memberId ? memberLabel(filters.memberId, memberNames) : null;
   const scope = scopeLabel(teamName, scopedName);
-  const teamOnly = Boolean(filters.teamId && !filters.memberId);
   const PERIOD_NAMES: Record<string, string> = { day: "Daily", week: "Weekly", month: "Monthly", custom: "Custom range" };
+  const runMeta =
+    unified && quality
+      ? buildReportRunMetadata({
+          scope: "group",
+          generatedAt: now.getTime(),
+          period: {
+            start: range.start.getTime(),
+            end: range.end.getTime(),
+            label: range.label,
+            contextMs: CONTEXT_MS,
+            lookaheadMs: LOOKAHEAD_MS,
+            name: PERIOD_NAMES[filters.period] ?? filters.period,
+          },
+          filters: {
+            team: teamName,
+            member: scopedName,
+            groupCount: filters.groupKeys?.length ?? 0,
+            account: filters.accountId ? (filterOptions.accounts.find((a) => a.id === filters.accountId)?.label ?? "Unknown account") : null,
+            granularity: filters.granularity,
+          },
+          health: dataHealth,
+          reliability,
+          operatorReplies: countOperatorReplies(report.messages, range.end.getTime()),
+          pendingReattributions,
+        })
+      : null;
+  const teamOnly = Boolean(filters.teamId && !filters.memberId);
   // The page's own moment travels with every export, so the file says what the screen said.
   const query = `${teamReportQuery(filters)}&asof=${now.getTime()}`;
 
@@ -163,6 +205,8 @@ export default async function TeamReportPage({
       </p>
 
       <DataHealthStrip health={dataHealth} />
+
+      {runMeta ? <RunInformation meta={runMeta} /> : null}
 
       {filterNote ? (
         <div className="mb-5">
@@ -311,7 +355,11 @@ export default async function TeamReportPage({
         </>
       )}
 
-      <ReliabilitySection response={report.response} reliability={reliability} />
+      <ReliabilitySection
+        response={report.response}
+        reliability={reliability}
+        extraLines={unified && quality ? dataQualityLines(quality, "GROUP", pendingReattributions) : undefined}
+      />
     </div>
   );
 }

@@ -54,7 +54,16 @@ function LineGroups({ lines }: { lines: ReliabilityLine[] }) {
  * report and changes none of its figures: the waits above end at any reply, AI's included; the human
  * measure here is Human Response SLA's.
  */
-export function ReliabilitySection({ response, reliability }: { response: ResponseMetrics; reliability: ReportingReliability }) {
+export function ReliabilitySection({
+  response,
+  reliability,
+  extraLines,
+}: {
+  response: ResponseMetrics;
+  reliability: ReportingReliability;
+  /** Unified reporting only: the "Collection detail" lines, appended after the reliability lines. */
+  extraLines?: ReliabilityLine[];
+}) {
   const answered = REPLY_CATEGORIES_OF_REPLIES.reduce((sum, c) => sum + response.firstReplyBy[c], 0) + response.firstReplyBy.UNCLASSIFIED;
   return (
     <section className="mt-5 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
@@ -78,7 +87,7 @@ export function ReliabilitySection({ response, reliability }: { response: Respon
           What this period&apos;s figures were built from, as counts. No accuracy score is given: any weighting of these
           would be a judgement, not a measurement.
         </p>
-        <LineGroups lines={reliabilityLines(reliability)} />
+        <LineGroups lines={extraLines?.length ? [...reliabilityLines(reliability), ...extraLines] : reliabilityLines(reliability)} />
       </Card>
     </section>
   );

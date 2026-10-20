@@ -65,7 +65,7 @@ export const MAX_CUSTOM_DAYS = 92;
  * day and was answered at 00:10 was answered — without this they would read as unanswered. A wait
  * still open a day after the period ends is reported as unanswered, which it was.
  */
-const LOOKAHEAD_MS = DAY_MS;
+export const LOOKAHEAD_MS = DAY_MS;
 /**
  * How far before the period messages are read as CONTEXT, never counted (Phase 2, PHASE2.md Stage 7):
  * Support Intelligence's own look-back, so the human-only wait is measured exactly as Human Response
@@ -73,7 +73,7 @@ const LOOKAHEAD_MS = DAY_MS;
  * midnight that continues a wait begun the evening before is never counted as a second wait — a
  * month's waits are the sum of its days'.
  */
-const CONTEXT_MS = DEFAULT_CASE_GAP_MS;
+export const CONTEXT_MS = DEFAULT_CASE_GAP_MS;
 
 export interface TeamReportFilters {
   period: ReportPeriod;

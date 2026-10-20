@@ -1,18 +1,23 @@
 import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import {
+  buildReportRunMetadata,
   computeReportingReliability,
+  countOperatorReplies,
+  dataQualityLines,
   DUTY_SOURCE_LABELS,
   reliabilityLines,
   REPLY_CATEGORY_LABELS,
   replyCategoryOf,
   responseLines,
+  runMetadataLines,
   sanitizeExcelRow,
 } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
-import { bucketLabel, exportStoredBy, loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, scopeLabel } from "@/server/teamReport";
+import { bucketLabel, CONTEXT_MS, exportStoredBy, LOOKAHEAD_MS, loadTeamReport, memberLabel, parseTeamReportFilters, reportNow, scopeLabel } from "@/server/teamReport";
 import { loadDataHealth } from "@/server/dataHealth";
+import { isUnifiedReportingEnabled, loadDataQualityCounts, loadPendingReattributions } from "@/server/unifiedReporting";
 
 /**
  * Team Report export. A Route Handler because a file download cannot come from a Server Action —
@@ -88,7 +93,7 @@ export async function GET(request: NextRequest) {
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
   const format = params.format === "xlsx" ? "xlsx" : "csv";
   const now = reportNow(params);
-  const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts } = await loadTeamReport(
+  const { filters, range, result, memberNames, groups, rules, teamName, response, reliabilityCounts, messages } = await loadTeamReport(
     parseTeamReportFilters(params, now),
     now,
     undefined,
@@ -249,9 +254,51 @@ export async function GET(request: NextRequest) {
 
   // The page's "How customers were answered" and "Reporting reliability" sections, line for line.
   const reliability = computeReportingReliability(reliabilityCounts, health, { start: range.start.getTime(), end: range.end.getTime(), now: now.getTime() });
-  const qualityRows = [...responseLines(response), ...reliabilityLines(reliability)].map((line) =>
-    sanitizeExcelRow({ Section: line.section, Measure: line.label, Value: line.value, Note: line.note }),
-  );
+  // Unified messaging reports (UNIFIED_REPORTING) only: the page's "Collection detail" lines in the same
+  // sheet, and a "Run information" sheet after the existing ones. Off, the workbook is what it always was.
+  const unified = await isUnifiedReportingEnabled();
+  const stored = exportStoredBy(params, now).storedBy;
+  const [quality, pendingReattributions] = unified
+    ? await Promise.all([
+        loadDataQualityCounts({ kind: "GROUP", start: range.start, end: range.end, storedBy: stored, accountId: filters.accountId, groupKeys: filters.groupKeys }),
+        loadPendingReattributions(),
+      ])
+    : [null, 0];
+  const qualityRows = [
+    ...responseLines(response),
+    ...reliabilityLines(reliability),
+    ...(quality ? dataQualityLines(quality, "GROUP", pendingReattributions) : []),
+  ].map((line) => sanitizeExcelRow({ Section: line.section, Measure: line.label, Value: line.value, Note: line.note }));
+  const runRows = quality
+    ? runMetadataLines(
+        buildReportRunMetadata({
+          scope: "group",
+          generatedAt: now.getTime(),
+          storedBy: stored?.getTime() ?? null,
+          period: {
+            start: range.start.getTime(),
+            end: range.end.getTime(),
+            label: range.label,
+            contextMs: CONTEXT_MS,
+            lookaheadMs: LOOKAHEAD_MS,
+            name: { day: "Daily", week: "Weekly", month: "Monthly", custom: "Custom range" }[filters.period],
+          },
+          filters: {
+            team: teamName,
+            member: memberName,
+            groupCount: filters.groupKeys?.length ?? 0,
+            account: filters.accountId
+              ? ((await prisma.whatsAppAccount.findFirst({ where: { id: filters.accountId }, select: { label: true } }))?.label ?? filters.accountId)
+              : null,
+            granularity: filters.granularity,
+          },
+          health,
+          reliability,
+          operatorReplies: countOperatorReplies(messages, range.end.getTime()),
+          pendingReattributions,
+        }),
+      ).map((line) => sanitizeExcelRow({ Item: line.label, Value: line.value, Note: line.note }))
+    : [];
 
   const workbook = XLSX.utils.book_new();
   const addSheet = (name: string, rows: Array<Record<string, unknown>>, emptyNote: string) =>
@@ -263,6 +310,7 @@ export async function GET(request: NextRequest) {
   addSheet("Missed & Recall", missedRows, "Nothing was missed in this period.");
   addSheet("Overtime by day", overtimeDayRows, "No team member work was recorded in this period.");
   addSheet("Data quality", qualityRows, "");
+  if (quality) addSheet("Run information", runRows, "");
 
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
   return new NextResponse(buffer as unknown as BodyInit, {
