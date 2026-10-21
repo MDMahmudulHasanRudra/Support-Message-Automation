@@ -131,6 +131,14 @@ async function connect(project: Project = isp) {
   return { start, target, finish: () => callback(`code-${tag}`, start.cookies.get(oauth.STATE_COOKIE)!.value, target.searchParams.get("state")!) };
 }
 
+// These tests are written around the original installation as it exists in production ("ISP
+// Digital", /p/isp-digital). A database created after 21 Oct 2026 names that project "Nexora Project
+// 1" instead (20261021090000_nexora_white_label_defaults), so give it the existing install's name and
+// address first. Test database only.
+beforeAll(async () => {
+  await rawPrisma.project.update({ where: { id: ORIGINAL_PROJECT_ID }, data: { name: "ISP Digital", slug: "isp-digital" } });
+});
+
 beforeAll(async () => {
   // No environment client: everything here is the projects' own.
   vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "");

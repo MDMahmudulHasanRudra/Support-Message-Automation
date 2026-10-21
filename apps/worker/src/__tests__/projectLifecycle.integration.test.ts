@@ -130,8 +130,10 @@ describe("creating a project", () => {
 
   it("is all or nothing: a clashing slug leaves no half-created project behind", async () => {
     const before = await rawPrisma.automationSettings.count();
+    // The original project's slug, whichever name this database started with.
+    const { slug: takenSlug } = await rawPrisma.project.findUniqueOrThrow({ where: { id: "proj_isp_digital" }, select: { slug: true } });
     await expect(
-      createProjectWithDefaults({ name: "Clash", slug: "isp-digital", status: "SETUP", creatorUserId: creatorId }, rawPrisma),
+      createProjectWithDefaults({ name: "Clash", slug: takenSlug, status: "SETUP", creatorUserId: creatorId }, rawPrisma),
     ).rejects.toThrow();
     expect(await rawPrisma.automationSettings.count()).toBe(before);
   });

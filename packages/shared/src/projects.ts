@@ -114,12 +114,29 @@ export function validateProjectSlug(slug: string): string | null {
     return `A slug is 2 to ${PROJECT_SLUG_MAX} characters.`;
   }
   if (!SLUG_PATTERN.test(slug)) {
-    return "Use lower-case letters, digits and single hyphens between them — for example isp-digital.";
+    return "Use lower-case letters, digits and single hyphens between them — for example nexora-project-2.";
   }
   return null;
 }
 
-/** "Bizify Ltd." → "bizify-ltd": the slug the form offers for a name, which the admin can change. */
+/** The built-in name new projects are offered (BRANDING.md §Defaults): "Nexora Project 1", 2, 3… */
+export const DEFAULT_PROJECT_NAME_PREFIX = "Nexora Project";
+
+/**
+ * The name the Create project form starts with: the first "Nexora Project N" whose name and slug no
+ * project already uses. Only a suggestion: the admin can type anything, and the action still checks
+ * uniqueness itself.
+ */
+export function nextDefaultProjectName(existing: ReadonlyArray<{ name: string; slug: string }>): string {
+  const names = new Set(existing.map((p) => p.name.trim().toLowerCase()));
+  const slugs = new Set(existing.map((p) => p.slug));
+  for (let n = 1; ; n++) {
+    const name = `${DEFAULT_PROJECT_NAME_PREFIX} ${n}`;
+    if (!names.has(name.toLowerCase()) && !slugs.has(suggestProjectSlug(name))) return name;
+  }
+}
+
+/** "Nexora Project 2" → "nexora-project-2": the slug the form offers for a name, which the admin can change. */
 export function suggestProjectSlug(name: string): string {
   return name
     .normalize("NFKD")

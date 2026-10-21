@@ -1461,7 +1461,7 @@ async function closeRetiredTeamsCommand(command: ClaimedCommand): Promise<void> 
     data: {
       status: "FAILED",
       processedAt: new Date(),
-      result: { error: "Microsoft Teams Integration has been removed from Softify Assist." },
+      result: { error: "Microsoft Teams Integration has been removed." },
     },
   });
 }

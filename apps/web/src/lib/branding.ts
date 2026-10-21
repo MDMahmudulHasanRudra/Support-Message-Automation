@@ -3,13 +3,14 @@
  * Admin may save. Shared by the server (reading and saving) and the browser (the Branding form's
  * own checks and preview), so the two cannot disagree.
  *
- * A NULL stored value means "use the default below", the same shape as Notification Templates: a
- * fresh install looks exactly as it always has, and Reset is forgetting the edit rather than
- * copying today's default into the database.
+ * A NULL stored value means "use the default below", the same shape as Notification Templates, and
+ * Reset is forgetting the edit rather than copying today's default into the database. The default
+ * is "Nexora" (21 Oct 2026). An install that existed before then had "Softify Assist" stored for it
+ * by the 20261021090000_nexora_white_label_defaults migration, so only a NEW install shows Nexora.
  */
 
 export const DEFAULT_BRANDING = {
-  productName: "Softify Assist",
+  productName: "Nexora",
   loginHeadline: "WhatsApp support that answers before anyone has to.",
   loginSubheading:
     "Deterministic rules decide what gets an instant reply, what waits for a human, and what escalates — with the whole decision trace recorded for every message.",

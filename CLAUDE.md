@@ -292,7 +292,9 @@ the same. Kill switch for the page side only: `PROJECT_ROLE_PAGES_DISABLED=true`
 
 **White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
 `projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the
-built-in default (`lib/branding.ts`), so a fresh install is unchanged. Never hard-code the product
+built-in default (`lib/branding.ts`: **Nexora** since 21 Oct 2026; existing installs had their old name stored by
+migration `20261021090000_nexora_white_label_defaults`, so they look unchanged — BRANDING.md §Defaults). A fresh
+install's first project is "Nexora Project 1", and new projects are offered "Nexora Project N". Never hard-code the product
 name again: server code reads `getBranding()`, client code `useBranding()` (root-layout provider),
 and the mark is `BrandMark`, which follows the uploaded icon. Saving needs `projects.manage`. The
 colour moves only the accent tokens, never the ink primary. Images are sniffed from their bytes,

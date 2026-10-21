@@ -18,9 +18,9 @@ import { createProject, type ProjectFormState } from "@/server/actions/projects"
  * The same validators run here and in the action — this copy is a convenience; the action's is the
  * one that counts.
  */
-export function CreateProjectForm() {
+export function CreateProjectForm({ defaultName = "" }: { defaultName?: string }) {
   const [state, formAction, pending] = useActionState<ProjectFormState, FormData>(createProject, {});
-  const [name, setName] = useState("");
+  const [name, setName] = useState(defaultName);
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
   const [status, setStatus] = useState<"SETUP" | "ACTIVE">("SETUP");
@@ -37,7 +37,7 @@ export function CreateProjectForm() {
           name="name"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="e.g. Bizify"
+          placeholder="e.g. Nexora Project 2"
           maxLength={PROJECT_NAME_MAX}
           required
           autoComplete="off"
@@ -59,7 +59,7 @@ export function CreateProjectForm() {
             setSlugEdited(true);
             setSlug(event.target.value);
           }}
-          placeholder="e.g. bizify"
+          placeholder="e.g. nexora-project-2"
           maxLength={PROJECT_SLUG_MAX}
           required
           autoComplete="off"

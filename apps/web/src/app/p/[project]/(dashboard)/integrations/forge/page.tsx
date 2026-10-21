@@ -59,7 +59,7 @@ export default async function ForgeIntegrationPage() {
   return (
     <div>
       <PageHeader
-        title="Product Knowledge (Softify Forge)"
+        title="Product Knowledge (Forge)"
         description="Teaches this support system about ISPDIGITAL by reading its own documentation and code, so the assistant can answer customer questions about the product."
         actions={
           <HelpButton moduleTitle="Product Knowledge">

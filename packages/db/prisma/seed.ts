@@ -43,15 +43,17 @@ async function main() {
   });
   console.log(`Seeded admin user: ${admin.username}`);
 
-  // Multi-project (MULTI_PROJECT_PLAN.md): the original installation is the project ISP Digital,
-  // created by the 20260928150000_projects_foundation migration. On a fresh install the seeded
+  // Multi-project (MULTI_PROJECT_PLAN.md): the original installation's project (id
+  // proj_isp_digital) is created by the 20260928150000_projects_foundation migration, and a fresh
+  // install names it "Nexora Project 1" (20261021090000_nexora_white_label_defaults); an existing
+  // install keeps its name (ISP Digital on the original one). On a fresh install the seeded
   // admin is created AFTER that migration ran, so it would have no project access — give it access
   // to ISP Digital. Access only: what the admin may do is still its existing role, set below.
   // Idempotent, and never removes anyone's access.
   await prisma.project.upsert({
     where: { id: ISP_DIGITAL },
     update: {},
-    create: { id: ISP_DIGITAL, name: "ISP Digital", slug: "isp-digital", status: "ACTIVE" },
+    create: { id: ISP_DIGITAL, name: "Nexora Project 1", slug: "nexora-project-1", status: "ACTIVE" },
   });
   await prisma.projectAccess.upsert({
     where: { projectId_userId: { projectId: "proj_isp_digital", userId: admin.id } },
