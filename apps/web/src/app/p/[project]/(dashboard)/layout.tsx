@@ -1,3 +1,4 @@
+import { requireAdminPortalHost } from "@/server/hostScope";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/server/db";
 import { requireSession } from "@/server/auth";
@@ -23,6 +24,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const workspace = await inWorkspace();
   let workspaceTabs = null;
   if (workspace) {
+    // The Workspace is part of the portal: never on a customer's or an unknown address (SaaS §3.3).
+    await requireAdminPortalHost();
     const granted = new Set(await getGrantedPermissionKeys(session));
     if (!granted.has("projects.view")) notFound();
     workspaceTabs = await workspaceProjects(session);

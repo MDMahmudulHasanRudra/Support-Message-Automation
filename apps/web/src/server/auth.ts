@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
 import { redirect } from "next/navigation";
 import { prisma } from "@support-automation/db";
+import { requestHostname } from "@/server/hostScope";
 
 const SESSION_COOKIE = "support_automation_session";
 // A DB row's lastUsedAt is only refreshed at most this often per session — every page load
@@ -61,6 +62,8 @@ export async function createSession(
       userId,
       secretHash,
       expiresAt,
+      // The address it was made on: refused on any other (SAAS_PLATFORM_PLAN.md §3.3).
+      hostname: await requestHostname(),
       ipAddress: meta?.ipAddress ?? null,
       userAgent: meta?.userAgent ?? null,
     },
@@ -105,6 +108,13 @@ export async function getSession(): Promise<Session | null> {
   if (record.revokedAt) return null;
   if (record.expiresAt <= new Date()) return null;
   if (!record.user.isActive) return null;
+  // A session belongs to the address it was created on. Cookies are host-only already; this also
+  // refuses a cookie copied to another customer's address by hand. Older sessions (no hostname) and
+  // requests the proxy did not see (background work) are not affected.
+  if (record.hostname) {
+    const host = await requestHostname();
+    if (host && host !== record.hostname) return null;
+  }
 
   if (Date.now() - record.lastUsedAt.getTime() > LAST_USED_THROTTLE_MS) {
     void prisma.userSession.update({ where: { id: record.id }, data: { lastUsedAt: new Date() } }).catch(() => {});

@@ -301,6 +301,19 @@ colour moves only the accent tokens, never the ink primary. Images are sniffed f
 capped at 512 KB, stored in the database and served by `/api/brand/<logo|icon>` with a sandbox CSP.
 A project's NAME is editable on its Main Admin page; its slug never is.
 
+**SaaS customers and hostnames (`SAAS_PLATFORM_PLAN.md` §7, Phase 2, 21 Oct 2026).** A `Customer` owns one
+project (`Project.customerId`, unique); `CustomerDomain` rows are its addresses (PENDING → VERIFIED → ACTIVE,
+DISABLED). Hostname routing is OFF by default (`PlatformDomainSettings.hostRoutingEnabled`): off = every
+hostname behaves as before (`classifyHost` → OPEN). On: a customer's address opens ONLY that customer's
+project — for a Main Admin too — the portal and Workspace only on admin addresses, an unknown address
+nothing. Enforced in `decideAccess`/`accessibleProjects`, `requireMainAdminPage`, sign-in
+(`mayUseThisAddress`), sessions (`UserSession.hostname`) and `keysOnHost` (platform keys do not exist on a
+customer's address, so admin Server Actions are refused there). The proxy forwards `Host` as
+`x-nexora-host`; never read the hostname anywhere else. Caddy gets certificates on demand only for what
+`/api/platform/tls-allowed` approves. Recovery (§8): the form refuses a lock-out, localhost/IP hosts are always open, and
+`SAAS_HOST_ROUTING_DISABLED=true` forces routing off (app env only). A new place that resolves a project by slug must go through
+`decideAccess`; `saasHostRouting.integration.test.ts` pins every rule.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.

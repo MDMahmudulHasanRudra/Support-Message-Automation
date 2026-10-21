@@ -558,6 +558,10 @@ model Project {
   status      ProjectStatus @default(SETUP)
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+  /// The SaaS customer this project belongs to (SAAS_PLATFORM_PLAN.md). Null for a project no
+  /// customer has adopted yet. One project per customer for now (unique).
+  customerId  String?       @unique
+  customer    Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   access             ProjectAccess[]
   projectRoles       ProjectRole[]
@@ -943,6 +947,9 @@ model UserSession {
   revokedAt     DateTime?
   revokedReason String? // "USER_LOGOUT" | "ADMIN_REVOKED" | "ADMIN_REVOKED_ALL" |
   // "PASSWORD_CHANGED" — plain string, internal bookkeeping only, never a user-facing status enum
+  /// The hostname the session was created on (SAAS_PLATFORM_PLAN.md §3.3). A session is refused on
+  /// any other hostname. Null for sessions created before this column existed (accepted anywhere).
+  hostname      String?
 
   @@index([userId])
   @@index([expiresAt])
@@ -7014,4 +7021,65 @@ model ListViewPreference {
   updatedAt DateTime @updatedAt
 
   @@unique([projectId, userId, listKey])
+}
+
+// ---------------------------------------------------------------------------------------------
+// SaaS platform (SAAS_PLATFORM_PLAN.md, Phase 2): customers and the hostnames that open them.
+// Platform data: no projectId, never reachable through a project-scoped client.
+// ---------------------------------------------------------------------------------------------
+
+/// One customer (tenant) of the platform: a company with its own project and its own address.
+model Customer {
+  id                String           @id @default(cuid())
+  name              String
+  contactName       String?
+  contactEmail      String?
+  contactPhone      String?
+  notes             String?
+  createdByUsername String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  project           Project?
+  domains           CustomerDomain[]
+}
+
+/// A hostname that opens one customer's workspace. Status flow (packages/shared/src/saasDomains.ts):
+/// PENDING → VERIFIED (DNS + reachability checked) → ACTIVE (HTTPS checked); DISABLED at any time.
+model CustomerDomain {
+  id                String    @id @default(cuid())
+  customerId        String
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// Lower-case, no port, no trailing dot. Unique across the whole platform.
+  hostname          String    @unique
+  status            String    @default("PENDING")
+  /// Served back at /api/platform/domain-check to prove the hostname reaches THIS deployment.
+  verificationToken String
+  /// The last check, step by step, for the admin page (no secrets).
+  lastCheck         Json?
+  lastCheckedAt     DateTime?
+  verifiedAt        DateTime?
+  activatedAt       DateTime?
+  disabledAt        DateTime?
+  createdByUsername String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([customerId])
+}
+
+/// Platform-wide domain settings, one row (id "default"). Hostname routing is OFF until a Main Admin
+/// switches it on: with it off, every hostname behaves exactly as before this table existed.
+model PlatformDomainSettings {
+  id                 String   @id @default("default")
+  hostRoutingEnabled Boolean  @default(false)
+  /// The domain customer subdomains live under, e.g. "udboy.com".
+  rootDomain         String?
+  /// Hostnames that serve the Main Admin Portal, e.g. ["admin.udboy.com"].
+  adminHostnames     String[] @default([])
+  /// The server's public IP addresses that a customer's DNS record must point to.
+  publicIps          String[] @default([])
+  /// Subdomain labels no customer may claim (in addition to the built-in list).
+  reservedLabels     String[] @default([])
+  updatedByUsername  String?
+  updatedAt          DateTime @updatedAt
 }

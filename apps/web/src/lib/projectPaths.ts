@@ -27,6 +27,13 @@ export const PROJECT_PATH_HEADER = "x-softify-project-path";
  */
 export const WORKSPACE_HEADER = "x-softify-workspace";
 
+/**
+ * The hostname the request was made to, as the proxy read it from `Host` (SAAS_PLATFORM_PLAN.md
+ * §3.3). Always overwritten by the proxy, never taken from a client. Trusted because the app port is
+ * reachable only through the reverse proxy, which passes the browser's hostname on.
+ */
+export const HOST_HEADER = "x-nexora-host";
+
 /** Remembers the last project opened, ONLY so `/open` can continue there. Never decides reads or writes. */
 export const LAST_PROJECT_COOKIE = "softify-last-project";
 

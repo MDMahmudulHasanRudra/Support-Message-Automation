@@ -3,7 +3,8 @@ import { headers } from "next/headers";
 import { prisma as platformPrisma, ProjectScopeError } from "@support-automation/db";
 import { PROJECT_HEADER } from "@/lib/projectPaths";
 import { getSession } from "@/server/auth";
-import { isReadOnlyProjectStatus, type ProjectAccessLevelValue, type ProjectStatusValue } from "@support-automation/shared";
+import { hostAllowsProject, isReadOnlyProjectStatus, type HostScope, type ProjectAccessLevelValue, type ProjectStatusValue } from "@support-automation/shared";
+import { currentHostScope, hostScopeKey } from "@/server/hostScope";
 
 /**
  * The active project for this request, and whether the signed-in user may be in it.
@@ -16,6 +17,10 @@ import { isReadOnlyProjectStatus, type ProjectAccessLevelValue, type ProjectStat
  * This answers ONE question, "may this user enter this project?" (`ProjectAccess`). What they may
  * do inside it is the existing permission system, checked afterwards and unchanged
  * (`server/authorize.ts`). The two are deliberately separate.
+ *
+ * SaaS (SAAS_PLATFORM_PLAN.md §3.3): the hostname narrows it further. On a customer's address only
+ * that customer's project opens, for everybody; on an unknown address nothing does. With hostname
+ * routing off (the default) the hostname changes nothing (`hostAllowsProject` → true).
  */
 
 export interface ActiveProject {
@@ -81,6 +86,7 @@ export function forgetProjectAccessDecisions(): void {
 }
 
 const PROJECT_SELECT = { id: true, slug: true, name: true, status: true } as const;
+const PROJECT_WITH_CUSTOMER = { ...PROJECT_SELECT, customerId: true } as const;
 
 /**
  * Whether this user is a Main Admin: their EXISTING role holds `projects.manage` (§7). Read from the
@@ -98,14 +104,19 @@ export async function isMainAdmin(userId: string): Promise<boolean> {
   return Boolean(user?.isActive && user.permissionModule && user.permissionModule.permissions.length > 0);
 }
 
-async function decideAccess(userId: string, slug: string): Promise<{ project: ActiveProject | null; reason?: ProjectAccessFailure }> {
-  const key = `${userId} ${slug}`;
+async function decideAccess(userId: string, slug: string, scope: HostScope): Promise<{ project: ActiveProject | null; reason?: ProjectAccessFailure }> {
+  const key = `${userId} ${slug} ${hostScopeKey(scope)}`;
   const cached = accessCache.get(key);
   if (cached && Date.now() - cached.at < ACCESS_TTL_MS) return cached;
 
-  const project = await platformPrisma.project.findUnique({ where: { slug }, select: PROJECT_SELECT });
+  const row = await platformPrisma.project.findUnique({ where: { slug }, select: PROJECT_WITH_CUSTOMER });
+  const project = row ? { id: row.id, slug: row.slug, name: row.name, status: row.status } : null;
   let decision: { project: ActiveProject | null; reason?: ProjectAccessFailure };
-  if (!project) {
+  // Another customer's project on this hostname is "unknown", not "forbidden": its existence is not
+  // something this address should confirm.
+  if (row && scope.kind !== "OPEN" && !hostAllowsProject(scope, row.customerId, await isMainAdmin(userId))) {
+    decision = { project: null, reason: "UNKNOWN_PROJECT" };
+  } else if (!project) {
     decision = { project: null, reason: "UNKNOWN_PROJECT" };
   } else {
     const access = await platformPrisma.projectAccess.findUnique({
@@ -133,7 +144,7 @@ export async function requireActiveProject(): Promise<ActiveProject> {
   if (!slug) throw new ProjectAccessError("NO_PROJECT_IN_URL");
   const session = await getSession();
   if (!session) throw new ProjectAccessError("NO_SESSION");
-  const { project, reason } = await decideAccess(session.userId, slug);
+  const { project, reason } = await decideAccess(session.userId, slug, await currentHostScope());
   if (!project) throw new ProjectAccessError(reason ?? "NO_ACCESS");
   return project;
 }
@@ -154,12 +165,16 @@ export async function activeProjectId(): Promise<string> {
  */
 export async function accessibleProjects(userId: string): Promise<ActiveProject[]> {
   const mainAdmin = await isMainAdmin(userId);
+  const scope = await currentHostScope();
   const rows = await platformPrisma.project.findMany({
     where: { status: { not: "ARCHIVED" }, ...(mainAdmin ? {} : { access: { some: { userId } } }) },
-    select: { ...PROJECT_SELECT, createdAt: true },
+    select: { ...PROJECT_WITH_CUSTOMER, createdAt: true },
     orderBy: { createdAt: "asc" },
   });
-  return rows.map(({ id, slug, name, status }) => ({ id, slug, name, status }));
+  // On a customer's address the switcher and /open offer only that customer's project.
+  return rows
+    .filter((row) => hostAllowsProject(scope, row.customerId, mainAdmin))
+    .map(({ id, slug, name, status }) => ({ id, slug, name, status }));
 }
 
 /** Whether the active project refuses writes (SUSPENDED / ARCHIVED). */

@@ -205,3 +205,80 @@ projects are offered "Nexora Project 2, 3…". Migration `20261021090000_nexora_
 stores the old name for any existing install, so live installs look exactly as before (verified on
 throwaway databases: existing install → "Softify Assist" kept; install with its own name → kept;
 fresh install → "Nexora" / "Nexora Project 1").
+
+---
+
+## 7. Phase 2 — as built (21 Oct 2026, on `rudra`, not deployed)
+
+Decisions: root domain **udboy.com**; **one project per customer**; Customer #1 = the zoventio
+installation (`zoventio.udboy.com`); admin address **admin.udboy.com** (a setting, not hard-coded).
+
+| Piece | Where |
+|---|---|
+| Tables `Customer`, `CustomerDomain`, `PlatformDomainSettings`; `Project.customerId` (unique, nullable); `UserSession.hostname` | migration `20261021120000_saas_customers_domains` (additive; removed Teams tables deliberately not dropped) |
+| The rules: hostname format, reserved names, what a hostname opens, status flow, platform-only keys | `packages/shared/src/saasDomains.ts` (pure, unit-tested) |
+| Hostname → scope, cached 10 s | `apps/web/src/server/hostScope.ts`; the proxy forwards `Host` as `x-nexora-host` (client copies discarded) |
+| Project access by hostname | `decideAccess` / `accessibleProjects` in `server/projectContext.ts` |
+| Portal and Workspace only on admin addresses | `requireMainAdminPage` (`server/mainAdmin.ts`), dashboard layout in workspace mode |
+| Platform keys (Main Admin, Users & Permissions, release notes) removed on customer addresses | `keysOnHost` in `server/permissions.ts` — so admin Server Actions are refused there too |
+| Sign-in by address | `mayUseThisAddress` in `app/(auth)/login/actions.ts` (same message as a wrong password) |
+| Session bound to its address | `createSession` / `getSession` in `server/auth.ts` (older sessions, NULL, keep working) |
+| Caddy's certificate question / proof a hostname reaches this app | `app/api/platform/tls-allowed`, `app/api/platform/domain-check` |
+| DNS / reach / HTTPS checks with plain-language results | `server/domainVerification.ts` (network injectable for tests) |
+| Actions (all need `projects.manage`, all logged to System Logs) | `server/actions/saas.ts` |
+| Pages | Main Admin → **Customers** (list, add — new workspace or adopt an existing project —, customer page with addresses) and **Domains** (platform settings, routing switch, every address, the one-time Caddy setup) |
+
+Tests: `packages/shared/src/__tests__/saasDomains.test.ts` (15) and
+`apps/web/src/__tests__/saasHostRouting.integration.test.ts` (14, real sign-in/session/access
+checks). Each of the five protections was removed in turn and the suite went red every time
+(project access 3 failures, sign-in 4, session binding 1, platform keys 1, TLS question 2).
+
+### Rollout runbook for zoventio (each step needs Rudra's go-ahead)
+
+Nothing changes for anyone until step 6. Steps 1–5 can be done on any day; step 6 is the switch.
+
+1. **Deploy** as usual (backup → pull → build app + worker + migrate → `run --rm migrate` → recreate).
+   Hostname routing ships OFF: every address behaves exactly as today.
+2. **Main Admin → Domains → Platform settings**: root domain `udboy.com`; admin addresses
+   `admin.udboy.com` and `zoventio.udboy.com` (the second keeps today's habit and bookmarks working);
+   server IP `201.18.218.251`. Leave routing OFF. Save.
+3. **Main Admin → Customers → Add customer**: name it, choose **Use an existing project** → ISP Digital,
+   address `zoventio.udboy.com`. Nothing in the project changes; only the link is added.
+4. On the customer page press **Check now** for `zoventio.udboy.com` → expect *Live*.
+5. **Caddy, one time** (needs sudo; the exact file is on the Domains page): back up
+   `/etc/caddy/Caddyfile`, add the global `on_demand_tls { ask … }` block and the `https://` and
+   `http://` catch-all sites, keep the existing `zoventio.udboy.com` block unchanged,
+   `caddy validate`, `systemctl reload caddy`. Create the DNS A record `admin.udboy.com → 201.18.218.251`
+   and open `https://admin.udboy.com` once (it gets its certificate on that first visit).
+6. **Switch routing ON** from `admin.udboy.com` or `zoventio.udboy.com` (the form refuses any other
+   address). From then on `zoventio.udboy.com` opens Customer #1 and the portal; a new customer's
+   address opens only that customer.
+
+**Rollback:** switch routing OFF on the Domains page (immediate, no restart); Caddy:
+`cp Caddyfile.bak Caddyfile && systemctl reload caddy`. The migration is additive and needs no
+rollback. WhatsApp sessions are not touched by any step except the deploy's normal worker restart.
+
+### Known limits of Phase 2 (deliberate; later phases)
+
+- No plans, subscriptions, payments, suspension by billing, owner invitations or limits yet (Phase 3).
+- Absolute URLs the app builds for outside services (Google OAuth callback, Meta/Telegram webhooks)
+  still use `NEXTAUTH_URL` (the platform address); those integrations keep working through it.
+- Users stay platform-wide: a username is unique across all customers.
+
+## 8. Recovery — the platform admin cannot be locked out
+
+Three independent ways back in, from the gentlest:
+
+1. **The form refuses the mistake.** Saving domain settings with routing ON is refused unless the
+   address you are using is in the admin list — whether you are switching routing on or changing the
+   admin addresses while it is on. Disabling the address you are using is refused too.
+2. **The server's own address is always open.** `localhost` and IP addresses are never subject to
+   routing. With SSH access: `ssh -L 8668:127.0.0.1:8668 rudra@201.18.218.251`, then open
+   `http://localhost:8668/admin/domains` and fix the settings.
+3. **Emergency switch, no database change.** Add `SAAS_HOST_ROUTING_DISABLED=true` to the server's
+   `.env`, then `docker compose up -d --no-deps --force-recreate app` (the app only — WhatsApp
+   sessions live in the worker and are not touched). Every address then behaves as before routing
+   existed, and the Domains page says the switch is on. Remove it and recreate the app when fixed.
+   (Last resort, needs approval: `UPDATE "PlatformDomainSettings" SET "hostRoutingEnabled" = false;`.)
+
+All three are covered by `saasHostRouting.integration.test.ts` ("recovery" block).

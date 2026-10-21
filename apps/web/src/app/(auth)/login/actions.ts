@@ -1,11 +1,14 @@
 "use server";
 
-import { prisma } from "@/server/db";
+import { platformPrisma, prisma } from "@/server/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { createSession, verifyPassword } from "@/server/auth";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { currentHostScope, requestHostname } from "@/server/hostScope";
+import { isMainAdmin } from "@/server/projectContext";
+import type { HostScope } from "@support-automation/shared";
 
 export interface LoginState {
   error?: string;
@@ -18,6 +21,24 @@ async function readRequestMeta(): Promise<{ ipAddress: string | null; userAgent:
   const forwardedFor = store.get("x-forwarded-for");
   const ipAddress = forwardedFor ? forwardedFor.split(",")[0]?.trim() ?? null : null;
   return { ipAddress, userAgent: store.get("user-agent") };
+}
+
+/**
+ * Whether this user may sign in on this address (SAAS_PLATFORM_PLAN.md §3.3). With hostname routing
+ * off every address is OPEN: unchanged. A customer's address takes that customer's people (anyone
+ * with access to its project) and Main Admins; the admin address takes Main Admins, plus the
+ * customer's people when it is also that customer's address (the legacy host); an unknown address
+ * takes nobody. Refused with the SAME message as a wrong password: an address must not reveal who
+ * has an account elsewhere on the platform.
+ */
+async function mayUseThisAddress(userId: string, scope: HostScope): Promise<boolean> {
+  if (scope.kind === "OPEN") return true;
+  if (scope.kind === "UNKNOWN") return false;
+  if (await isMainAdmin(userId)) return true;
+  const customerId = scope.customerId;
+  if (!customerId) return false;
+  const access = await platformPrisma.projectAccess.findFirst({ where: { userId, project: { customerId } }, select: { id: true } });
+  return access !== null;
 }
 
 export async function login(_prevState: LoginState, formData: FormData): Promise<LoginState> {
@@ -68,6 +89,12 @@ export async function login(_prevState: LoginState, formData: FormData): Promise
     // Deliberately the same generic message — an inactive account must not be distinguishable
     // from a wrong password to an unauthenticated caller.
     await logSystemEvent("WARN", "auth", "LOGIN_BLOCKED_INACTIVE", { username });
+    return { error: GENERIC_ERROR };
+  }
+
+  const scope = await currentHostScope();
+  if (!(await mayUseThisAddress(user.id, scope))) {
+    await logSystemEvent("WARN", "auth", "LOGIN_BLOCKED_WRONG_ADDRESS", { username, host: await requestHostname(), scope: scope.kind });
     return { error: GENERIC_ERROR };
   }
 

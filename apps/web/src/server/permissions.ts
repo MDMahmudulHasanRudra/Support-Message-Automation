@@ -1,3 +1,4 @@
+import { currentHostScope } from "@/server/hostScope";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { headers } from "next/headers";
@@ -7,6 +8,7 @@ import {
   isPermissionKey,
   isProjectAssignableKey,
   levelAllows,
+  keysOnHost,
   resolveRoleKeys,
   type PermissionKey,
   type ProjectAccessLevelValue,
@@ -174,9 +176,12 @@ async function accessForRequest(session: Session): Promise<{ keys: Set<string>; 
   });
   if (!user || !user.isActive) return null;
   const globalKeys = user.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
-  if (projectRolesDisabled()) return { keys: new Set(globalKeys), pages: null };
+  // Platform keys exist only on an address that may serve the Main Admin Portal (SaaS §3.3). With
+  // hostname routing off every address is OPEN and nothing is removed.
+  const scope = await currentHostScope();
+  if (projectRolesDisabled()) return { keys: keysOnHost(new Set(globalKeys), scope), pages: null };
   const membership = await membershipInThisProject(session.userId);
-  const keys = resolveRoleKeys(globalKeys, membership);
+  const keys = keysOnHost(resolveRoleKeys(globalKeys, membership), scope);
   const pagesApply =
     membership !== null &&
     !membership.isLead &&
