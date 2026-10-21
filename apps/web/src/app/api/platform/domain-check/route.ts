@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma as platformPrisma } from "@support-automation/db";
 import { normalizeHostname } from "@support-automation/shared";
 import { domainCheckAnswer } from "@/server/domainVerification";
+import { visitedHost } from "@/lib/projectPaths";
 
 /**
  * Proof that a hostname reaches THIS deployment (SAAS_PLATFORM_PLAN.md §3.5, step "reaches the
@@ -13,7 +14,7 @@ import { domainCheckAnswer } from "@/server/domainVerification";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const host = normalizeHostname(request.headers.get("host") ?? "");
+  const host = normalizeHostname(visitedHost(request.headers));
   if (!host) return new NextResponse("unknown", { status: 404 });
   const domain = await platformPrisma.customerDomain.findUnique({ where: { hostname: host }, select: { verificationToken: true, status: true } });
   if (!domain || domain.status === "DISABLED") return new NextResponse("unknown", { status: 404 });

@@ -9,7 +9,7 @@ export const metadata = { title: "Plans" };
 export default async function PlansPage() {
   const { canManage } = await requireMainAdminPage();
   const [plans, settings] = await Promise.all([listPlans(), getBillingSettings()]);
-  const features = PROJECT_FEATURES.map((f) => ({ key: f.key, label: f.label }));
+  const features = PROJECT_FEATURES.map((f) => ({ key: f.key, label: f.label, defaultEnabled: f.defaultEnabled }));
   return (
     <div className="max-w-4xl space-y-6">
       <PageHeader

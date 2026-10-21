@@ -2912,6 +2912,10 @@ Main Admin → Customers / Domains / Plans. Rules worth not undoing:
   a user or a WhatsApp number must call it.
 - Billing email goes only through the worker's platform SMTP (`PLATFORM_SMTP_*`); nothing is emailed
   without it.
+- **The hostname is `visitedHost()` (x-forwarded-host first), never the raw `Host` header.** Next renders a
+  Server Action's redirect target through a request from the server to itself (`Host: localhost`); reading
+  `Host` made every sign-in on a named address bounce to /login, because a session is bound to its
+  address. Found only end to end (SAAS_PLATFORM_PLAN.md §11): tests that mock `redirect()` cannot see it.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

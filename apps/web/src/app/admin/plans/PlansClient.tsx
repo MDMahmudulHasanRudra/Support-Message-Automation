@@ -8,7 +8,7 @@ import { Alert, Badge, Button, Field, Input, Select, Textarea, useToast } from "
 import { saveBillingSettings, savePlan, setPlanActive, type BillingActionResult } from "@/server/actions/saasBilling";
 import type { BillingSettingsData, PlanView } from "@/server/saasBilling";
 
-type Feature = { key: string; label: string };
+type Feature = { key: string; label: string; defaultEnabled: boolean };
 
 function useSaved(state: BillingActionResult, title: string, after?: () => void) {
   const router = useRouter();
@@ -31,7 +31,9 @@ function PlanForm({ plan, features, onDone }: { plan: PlanView | null; features:
   const [state, formAction, pending] = useActionState<BillingActionResult, FormData>(savePlan.bind(null, plan?.id ?? null), {});
   useSaved(state, plan ? "Plan saved" : "Plan created", onDone);
   const e = state.fieldErrors ?? {};
-  const chosen = new Set(plan ? plan.features : features.map((f) => f.key));
+  // A new plan starts with the modules a new project gets anyway; the opt-in ones (off by default
+  // for every project) are ticked only on purpose.
+  const chosen = new Set(plan ? plan.features : features.filter((f) => f.defaultEnabled).map((f) => f.key));
   return (
     <form action={formAction} className="space-y-4 rounded-[var(--radius-lg)] border border-[var(--color-border)] p-4">
       <div className="grid gap-4 sm:grid-cols-2">

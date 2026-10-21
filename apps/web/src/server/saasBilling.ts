@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { platformPrisma } from "@/server/db";
+import { hostRoutingForcedOff } from "@/server/hostScope";
 import {
   billingNotice,
   DEFAULT_GRACE_DAYS,
   DEFAULT_REMINDER_DAYS,
-  isDomainStatus,
   subscriptionState,
   type BillingNotice,
   type SubscriptionReading,
@@ -305,10 +305,28 @@ export function hashInvitationToken(token: string): string {
  * Where an invitation link should point: the customer's live address when it has one, otherwise
  * the platform address. The token is single-use and works on either.
  */
-export async function invitationBaseUrl(customerId: string): Promise<string> {
-  const domain = await platformPrisma.customerDomain.findFirst({ where: { customerId, status: "ACTIVE" }, orderBy: { activatedAt: "asc" }, select: { hostname: true, status: true } });
-  if (domain && isDomainStatus(domain.status)) return `https://${domain.hostname}`;
-  return (process.env.NEXTAUTH_URL ?? "").replace(/\/+$/, "");
+/**
+ * Where the owner's invitation link points: the customer's OWN address, since an invitation is
+ * refused on an admin address and on another customer's address once routing is on. ACTIVE first,
+ * then VERIFIED (it routes, and the proxy issues its certificate on the first visit). The scheme
+ * follows the platform address (https in production). With no routable address the platform
+ * address works only while routing is off; with routing on, no link is made rather than one that fails.
+ */
+export async function invitationBaseUrl(customerId: string): Promise<{ url: string } | { error: string }> {
+  const platform = (process.env.NEXTAUTH_URL ?? "").replace(/\/+$/, "");
+  const scheme = platform.startsWith("http://") ? "http" : "https";
+  const domains = await platformPrisma.customerDomain.findMany({
+    where: { customerId, status: { in: ["ACTIVE", "VERIFIED"] } },
+    orderBy: [{ activatedAt: "asc" }, { verifiedAt: "asc" }],
+    select: { hostname: true, status: true },
+  });
+  const own = domains.find((d) => d.status === "ACTIVE") ?? domains[0];
+  if (own) return { url: `${scheme}://${own.hostname}` };
+  const settings = await platformPrisma.platformDomainSettings.findUnique({ where: { id: "default" }, select: { hostRoutingEnabled: true } });
+  if (settings?.hostRoutingEnabled && !hostRoutingForcedOff()) {
+    return { error: "This customer has no verified address yet, and with hostname routing on an invitation opened anywhere else is refused. Add the customer's address, press Check now, then invite again." };
+  }
+  return { url: platform };
 }
 
 /** Each customer's current subscription, as the Customers list shows it. */

@@ -454,3 +454,100 @@ Same as any deploy, migrate first (DEPLOY.md). Nothing changes for Customer #1 o
 optionally: create plans, set payment instructions, add `PLATFORM_SMTP_*` to `.env` and recreate the
 worker (that is a WhatsApp-session restart — choose a quiet moment). Assigning Customer #1 a plan is a
 separate decision; leave "Suspend automatically" unticked until you mean it.
+
+---
+
+## 11. Phase 4 — second customer readiness (21 Oct 2026, isolated environment, not deployed)
+
+**How it was tested.** The production web build (`next start`) on port 80 against a throwaway database
+made to look like this installation: project "ISP Digital" (`isp-digital`), the old product name stored,
+2 WhatsApp accounts, 30 groups, 610 messages, 3 team members, 2 rules, a staff login with its own role.
+Hostnames under `lvh.me` (public DNS that answers 127.0.0.1) stood in for the real ones:
+`admin.lvh.me` = admin.udboy.com, `isp.lvh.me` = zoventio.udboy.com, `bizify.lvh.me` = Customer #2.
+A headless Chromium drove real sign-ins in separate profiles; every Main Admin step went through the UI.
+No worker process ran (there is no phone); the worker's hold, queue and reminder rules are covered by its
+suites, and the billing loop ran one real tick inside the walkthrough.
+
+**Result: 74 checks, all passing** after the fixes below: 69 in one clean end-to-end run, 5 in follow-ups
+(the limit message the owner reads, the emergency switch, and routing enforced again after removing it).
+Covered:
+- **Customer #1 preserved.** A fingerprint of every project-owned table (125 tables: row counts, hashes of
+  messages, groups, rules, features, access, users, accounts, branding) was identical before and after.
+  The only new rows were three default settings rows the Overview creates on first view (all off), which
+  production already has. Customer #1 adopted its existing project, has no subscription, is never limited
+  or held, and kept working through every stage, including Customer #2's suspension.
+- **Customer #2 entirely from the UI:** new workspace, its own address, plan, first payment (bKash),
+  invoice, owner invitation; the owner accepts on their own address and lands in their workspace as Lead.
+- **Isolation (routing on):** each customer's people sign in only on their own address and see only their
+  workspace; the owner cannot reach Customer #1, the portal, the customer list or platform users; a session
+  cookie copied to another address is refused; a Main Admin on a customer address gets that customer only
+  and no portal; nobody signs in on an unknown address; the invitation is refused on another address and
+  works once.
+- **Plan limits** as the owner meets them: a second WhatsApp number and a fourth login are refused with the
+  plan's wording.
+- **Suspension and recovery of service:** manual suspend: the owner reads (workspace, invoices) but every
+  write is refused with the renewal notice, WhatsApp account rows untouched, Customer #1 unaffected;
+  Unlock releases. A lapse past grace (time simulated) is held by the billing loop, never Customer #1; a
+  renewal payment releases at once and continues the billing cycle.
+- **Domains, admin access, recovery:** DNS and "reaches this app" verified for both addresses (HTTPS needs
+  the real Caddy); switching routing on is refused from a customer address and works from the admin
+  address; the portal stays reachable on localhost with routing on; `SAAS_HOST_ROUTING_DISABLED=true`
+  reopens every address and the Domains page says so; removing it restores routing.
+
+**Blockers found and fixed**
+1. **Every sign-in on a named address bounced back to /login** (Phase 2 regression, never deployed). Next
+   renders a Server Action's redirect target through a request from the server to itself (`Host:
+   localhost`); the proxy took the hostname from `Host`, so that render saw a session bound to the real
+   address as signed out. The same applied to any action that redirects. Fix: `visitedHost()`
+   (`lib/projectPaths.ts`) takes `x-forwarded-host` first (Next sets it from `Host` on every request; Caddy
+   sets it to the visitor's address; the self-request carries the original). `visitedHost.test.ts` fails
+   without it. The Phase 2 integration tests mocked `redirect()`, which is why they could not see this.
+2. **The owner's invitation link pointed at the platform address** (NEXTAUTH_URL) until the customer's
+   address was ACTIVE; with routing on, an invitation opened there is refused. Now the customer's own
+   ACTIVE, then VERIFIED, address (scheme from NEXTAUTH_URL); with routing on and no verified address the
+   admin is told to verify it first instead of being given a link that fails.
+3. **Change plan reset a paying customer to unpaid and switched automatic suspension off** (empty
+   "paid through", unticked box). The form now starts from the current subscription: paid-through and
+   enforcement carried, no new trial.
+4. **A new plan included every module**, so applying it switched on modules that are deliberately off for
+   every project (Chat v2, Omnichannel, Google Sheets, Client Management, Unified Reporting). New plans
+   now default to the modules a new project gets; the others are ticked on purpose.
+5. The routing refusal told the admin to add the customer's address to the admin list, which exclusivity
+   forbids; it now says to open the page from the admin address.
+
+**Remaining risks (not blockers)**
+- **Port 8668 is published on all interfaces** (`docker-compose.yml`). Unless the firewall blocks it, the app
+  is reachable at `http://<IP>:8668` in plain HTTP, bypassing Caddy. An IP is an always-open recovery
+  address, so hostname isolation does not apply there (logins and project access still do). On zoventio,
+  block 8668 from outside (or publish it on 127.0.0.1 through an override); the default is left alone
+  because the other VPS is used directly on :8668.
+- **HTTPS / on-demand certificates were not exercised locally** (no Caddy). The first live test of the Caddy
+  `ask` flow is rollout steps 5 and 6, with the admin address checked first.
+- **Billing email was not tested against a real mail server** (only a fake sender). Leave `PLATFORM_SMTP_*`
+  empty until a test message has been sent to yourself.
+- **A new workspace has no project roles**, so an owner creates one before adding team members (one extra
+  onboarding step; the page allows it).
+- **A plan with no trial and no "paid through" reads Payment due from the first day** and, with automatic
+  suspension on, is held after the grace period. Record the first payment when assigning the plan.
+- Users are platform-wide: usernames are unique across all customers.
+
+### Deployment checklist (each step needs Rudra's go-ahead)
+
+Before: back up the database (`pg_dump`) and the WhatsApp session volume; note the commit running now.
+1. `git pull` the approved branch, `docker compose build app worker`.
+2. **`docker compose run --rm migrate`**: the SaaS migrations are additive
+   (`20261021090000_nexora_white_label_defaults`, `20261021120000_saas_customers_domains`,
+   `20261021150000_saas_billing`), plus anything else pending (check `_prisma_migrations` first).
+3. `docker compose up -d --no-deps app worker`; confirm both healthy, the worker heartbeat on Accounts,
+   WhatsApp accounts reconnected, messages arriving (the usual post-deploy checks).
+4. Check: the product still shows "Softify Assist", sign-in works on zoventio.udboy.com, nothing else
+   changed (routing is OFF; no customer, plan or subscription exists yet).
+5. Firewall: confirm port 8668 is not reachable from outside.
+6. Then the §7 rollout runbook: platform settings with admin.udboy.com only, adopt Customer #1 with
+   zoventio.udboy.com, Check now, the one-time Caddy change, DNS for admin.udboy.com, switch routing on
+   from https://admin.udboy.com. Leave Customer #1 without a subscription until you decide otherwise.
+7. Onboarding Customer #2: plan, Add customer (new workspace + address), DNS record, Check now (Live),
+   Assign plan, Record payment, Invite owner (link on their address), they accept.
+
+**Rollback:** routing off on the Domains page (or `SAAS_HOST_ROUTING_DISABLED=true` and recreate the app),
+restore the Caddy file, previous image tag for app and worker. Migrations are additive and need no rollback.

@@ -25,7 +25,7 @@ import {
   voidInvoice,
   type BillingActionResult,
 } from "@/server/actions/saasBilling";
-import type { CustomerBillingData, PlanView } from "@/server/saasBilling";
+import type { CustomerBillingData, PlanView, SubscriptionView } from "@/server/saasBilling";
 
 const day = (iso: string | null) => (iso ? new Date(iso).toISOString().slice(0, 10) : "—");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -54,7 +54,12 @@ function Errors({ state }: { state: BillingActionResult }) {
   return messages.length ? <Alert tone="danger">{messages.join(" ")}</Alert> : null;
 }
 
-function AssignPlanForm({ customerId, plans, defaultGraceDays, current, onDone }: { customerId: string; plans: PlanView[]; defaultGraceDays: number; current: boolean; onDone?: () => void }) {
+/**
+ * Assign a plan, or change it. A change starts from the current terms — the paid-through date and
+ * automatic suspension carry over unless edited — so changing plan never makes a paying customer
+ * unpaid, nor silently switches enforcement off.
+ */
+function AssignPlanForm({ customerId, plans, defaultGraceDays, current, onDone }: { customerId: string; plans: PlanView[]; defaultGraceDays: number; current: SubscriptionView | null; onDone?: () => void }) {
   const [state, action, pending] = useActionState<BillingActionResult, FormData>(assignPlan.bind(null, customerId), {});
   useResult(state, onDone);
   const active = plans.filter((p) => p.isActive);
@@ -63,7 +68,7 @@ function AssignPlanForm({ customerId, plans, defaultGraceDays, current, onDone }
     <form action={action} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Plan" htmlFor="ap-plan" required>
-          <Select id="ap-plan" name="planId" defaultValue={active[0]!.id}>
+          <Select id="ap-plan" name="planId" defaultValue={current?.planId && active.some((p) => p.id === current.planId) ? current.planId : active[0]!.id}>
             {active.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} — {formatMoneyMinor(p.priceMinor, p.currency)} / {isBillingInterval(p.interval) ? BILLING_INTERVAL_LABELS[p.interval].toLowerCase() : p.interval}
@@ -74,18 +79,18 @@ function AssignPlanForm({ customerId, plans, defaultGraceDays, current, onDone }
         <Field label="Starts" htmlFor="ap-start">
           <Input id="ap-start" name="startsAt" type="date" defaultValue={today()} />
         </Field>
-        <Field label="Trial days" htmlFor="ap-trial" hint="Empty = the plan's own trial.">
-          <Input id="ap-trial" name="trialDays" type="number" min={0} max={365} />
+        <Field label="Trial days" htmlFor="ap-trial" hint={current ? "A plan change starts no new trial unless you set one." : "Empty = the plan's own trial."}>
+          <Input id="ap-trial" name="trialDays" type="number" min={0} max={365} defaultValue={current ? 0 : undefined} />
         </Field>
-        <Field label="Already paid through (optional)" htmlFor="ap-paid" hint="If they have paid for a period already.">
-          <Input id="ap-paid" name="paidThrough" type="date" />
+        <Field label="Already paid through (optional)" htmlFor="ap-paid" hint={current ? "Kept from the current subscription unless you change it." : "If they have paid for a period already."}>
+          <Input id="ap-paid" name="paidThrough" type="date" defaultValue={current?.paidThrough?.slice(0, 10) ?? ""} />
         </Field>
         <Field label="Grace days" htmlFor="ap-grace">
           <Input id="ap-grace" name="graceDays" type="number" min={0} max={90} defaultValue={defaultGraceDays} />
         </Field>
       </div>
       <label className="flex items-start gap-2 text-sm">
-        <input type="checkbox" name="autoEnforce" className="mt-1" />
+        <input type="checkbox" name="autoEnforce" defaultChecked={current?.autoEnforce ?? false} className="mt-1" />
         <span>
           <span className="font-medium">Suspend automatically when unpaid</span>
           <span className="block text-xs text-[color:var(--color-muted-foreground)]">
@@ -233,7 +238,7 @@ export function BillingPanel({
         <Alert tone="info" title="No subscription">
           This customer is not billed here, has no limits and can never be suspended by billing. Assign a plan when you are ready.
         </Alert>
-        {canManage ? <AssignPlanForm customerId={customerId} plans={plans} defaultGraceDays={defaultGraceDays} current={false} /> : null}
+        {canManage ? <AssignPlanForm customerId={customerId} plans={plans} defaultGraceDays={defaultGraceDays} current={null} /> : null}
       </div>
     );
   }
@@ -294,7 +299,7 @@ export function BillingPanel({
       </div>
 
       {open === "payment" ? <RecordPaymentForm customerId={customerId} openInvoices={openInvoices} onDone={close} /> : null}
-      {open === "plan" ? <AssignPlanForm customerId={customerId} plans={plans} defaultGraceDays={sub.graceDays} current onDone={close} /> : null}
+      {open === "plan" ? <AssignPlanForm customerId={customerId} plans={plans} defaultGraceDays={sub.graceDays} current={sub} onDone={close} /> : null}
       {open === "extend" ? (
         <SimpleForm
           action={extendSubscription.bind(null, customerId)}

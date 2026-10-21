@@ -539,8 +539,10 @@ export async function inviteOwner(customerId: string, _prev: BillingActionResult
   const email = String(formData.get("email") ?? "").trim().toLowerCase().slice(0, 200) || null;
   if (!name) return { fieldErrors: { name: "Enter the owner's name." } };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { fieldErrors: { email: "Enter a valid email address, or leave it empty and copy the link." } };
+  const base = await invitationBaseUrl(customerId);
+  if ("error" in base) return { error: base.error };
   const { token, tokenHash } = newInvitationToken();
-  const link = `${await invitationBaseUrl(customerId)}/invite/${token}`;
+  const link = `${base.url}/invite/${token}`;
   // Kept encrypted only so the worker can email it; cleared once sent. No key = copy by hand.
   let linkCiphertext: string | null = null;
   if (email) {

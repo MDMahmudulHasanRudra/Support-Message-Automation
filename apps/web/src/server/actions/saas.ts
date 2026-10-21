@@ -104,7 +104,7 @@ export async function saveDomainSettings(_prev: DomainSettingsState, formData: F
     // doing it out of the portal on the next request.
     const here = await requestHostname();
     if (here && !adminHostnames.includes(here) && !/^(localhost|\d{1,3}(\.\d{1,3}){3})$/.test(here)) {
-      fieldErrors.hostRoutingEnabled = `You are using ${here}. Add it to the admin hostnames first, or you would lose access to this portal the moment routing is on.`;
+      fieldErrors.hostRoutingEnabled = `You are using ${here}. Open this page from an admin address${adminHostnames[0] ? ` (${adminHostnames[0]})` : ""} to switch routing on — from here you would lose access to this portal the moment routing is on.`;
     }
     if (!rootDomain) fieldErrors.rootDomain = fieldErrors.rootDomain ?? "Set the root domain before switching routing on.";
     if (adminHostnames.length === 0) fieldErrors.adminHostnames = fieldErrors.adminHostnames ?? "Add at least one admin hostname before switching routing on.";
