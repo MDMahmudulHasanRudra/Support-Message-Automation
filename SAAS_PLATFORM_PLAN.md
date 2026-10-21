@@ -213,6 +213,12 @@ fresh install → "Nexora" / "Nexora Project 1").
 Decisions: root domain **udboy.com**; **one project per customer**; Customer #1 = the zoventio
 installation (`zoventio.udboy.com`); admin address **admin.udboy.com** (a setting, not hard-coded).
 
+**Exclusivity (Rudra's correction, 21 Oct 2026):** `admin.udboy.com` belongs to the Main Admin only and
+`zoventio.udboy.com` to Customer #1 only. An address is EITHER an admin address OR a customer address —
+`classifyHost` checks the admin list first and `validateCustomerHostname` / the settings form refuse a
+hostname on both lists. A customer address never opens the portal or another customer, not even for a
+Main Admin; the portal is reached only through `admin.udboy.com` (or localhost / the IP, §8).
+
 | Piece | Where |
 |---|---|
 | Tables `Customer`, `CustomerDomain`, `PlatformDomainSettings`; `Project.customerId` (unique, nullable); `UserSession.hostname` | migration `20261021120000_saas_customers_domains` (additive; removed Teams tables deliberately not dropped) |
@@ -239,9 +245,9 @@ Nothing changes for anyone until step 6. Steps 1–5 can be done on any day; ste
 
 1. **Deploy** as usual (backup → pull → build app + worker + migrate → `run --rm migrate` → recreate).
    Hostname routing ships OFF: every address behaves exactly as today.
-2. **Main Admin → Domains → Platform settings**: root domain `udboy.com`; admin addresses
-   `admin.udboy.com` and `zoventio.udboy.com` (the second keeps today's habit and bookmarks working);
-   server IP `201.18.218.251`. Leave routing OFF. Save.
+2. **Main Admin → Domains → Platform settings**: root domain `udboy.com`; admin address
+   `admin.udboy.com` ONLY (never `zoventio.udboy.com` — that is Customer #1's address, and the form
+   refuses it); server IP `201.18.218.251`. Leave routing OFF. Save.
 3. **Main Admin → Customers → Add customer**: name it, choose **Use an existing project** → ISP Digital,
    address `zoventio.udboy.com`. Nothing in the project changes; only the link is added.
 4. On the customer page press **Check now** for `zoventio.udboy.com` → expect *Live*.
@@ -250,9 +256,11 @@ Nothing changes for anyone until step 6. Steps 1–5 can be done on any day; ste
    `http://` catch-all sites, keep the existing `zoventio.udboy.com` block unchanged,
    `caddy validate`, `systemctl reload caddy`. Create the DNS A record `admin.udboy.com → 201.18.218.251`
    and open `https://admin.udboy.com` once (it gets its certificate on that first visit).
-6. **Switch routing ON** from `admin.udboy.com` or `zoventio.udboy.com` (the form refuses any other
-   address). From then on `zoventio.udboy.com` opens Customer #1 and the portal; a new customer's
-   address opens only that customer.
+6. **Switch routing ON** from `https://admin.udboy.com` (the form refuses any other address). From then
+   on `zoventio.udboy.com` opens Customer #1's workspace only (their staff keep their bookmarks and
+   sign-ins; a Main Admin there sees only that workspace, no portal), `admin.udboy.com` opens the portal,
+   and a new customer's address opens only that customer. Bare `udboy.com` / the IP are untouched by
+   routing until they are added somewhere, so existing access keeps working during the transition.
 
 **Rollback:** switch routing OFF on the Domains page (immediate, no restart); Caddy:
 `cp Caddyfile.bak Caddyfile && systemctl reload caddy`. The migration is additive and needs no
@@ -260,7 +268,7 @@ rollback. WhatsApp sessions are not touched by any step except the deploy's norm
 
 ### Known limits of Phase 2 (deliberate; later phases)
 
-- No plans, subscriptions, payments, suspension by billing, owner invitations or limits yet (Phase 3).
+- Plans, subscriptions, payments, suspension by billing, owner invitations and limits: built in Phase 3 (§10).
 - Absolute URLs the app builds for outside services (Google OAuth callback, Meta/Telegram webhooks)
   still use `NEXTAUTH_URL` (the platform address); those integrations keep working through it.
 - Users stay platform-wide: a username is unique across all customers.
@@ -285,7 +293,7 @@ All three are covered by `saasHostRouting.integration.test.ts` ("recovery" block
 
 ---
 
-## 9. Phase 3 — design (prepared 21 Oct 2026; NOT started, waiting for approval)
+## 9. Phase 3 — design (prepared 21 Oct 2026; built — see §10 for what was decided and shipped)
 
 Scope: **Plans, Subscriptions, Payments, Customer limits, Suspend / Unlock**, plus the customer
 owner's login (create or invite), which the onboarding needs. SaaS billing stays completely separate
@@ -375,3 +383,74 @@ never held. Nothing is enforced against Customer #1 unless you choose to.
 4. **Payment methods** to list (suggestion: Cash, Bank transfer, bKash, Nagad, Card, Other)?
 5. Should the **customer owner** see their subscription and payment history (recommended), and
    receive **expiry reminder emails** (needs SMTP set up in Settings → Email)?
+
+---
+
+## 10. Phase 3 — as built (21 Oct 2026, on `rudra`, not deployed)
+
+Rudra's decisions: **BDT only** (the currency list is one constant, `SUPPORTED_CURRENCIES`, so adding one
+is a code change, never a data migration); **grace 7 days**, configurable (Main Admin → Plans → Billing
+settings, per subscription too); **suspended = read-only workspace + renewal notice**, data, WhatsApp
+sessions and incoming collection kept, outbound / automation / writes stopped; **payments recorded by
+hand** — bKash, Nagad, Bank transfer, Cash, Card, Other — no gateway, no card data ever stored; **the
+owner** sees plan, expiry, invoices, payments and renewal status, with in-app notices and email
+reminders when platform email is configured.
+
+### 10.1 Customer #1 cannot be suspended by this phase
+
+Three independent reasons, each tested:
+1. **No subscription = never held, never limited.** The billing loop reads only customers WITH a current
+   subscription; `lockAndCheckCustomerLimit` returns "no limit" without one. Customer #1 has none until
+   an admin assigns one.
+2. **Automatic suspension is OFF unless ticked**, per subscription (`Subscription.autoEnforce`, default
+   false). With it off a lapsed subscription reads PAST_DUE and is never held, however late.
+3. **The migration sets nothing.** It adds tables and the nullable `Project.billingHoldAt`; no row is
+   written for any existing project or customer.
+
+A held workspace is released at once by recording a payment, extending, Unlock, or turning automatic
+suspension off.
+
+### 10.2 What was built
+
+| Piece | Where |
+|---|---|
+| Tables `PlatformBillingSettings`, `Plan`, `Subscription` (plan snapshot, one current per customer by partial unique index), `SubscriptionInvoice` (`INV-000001` from `subscription_invoice_seq`), `SubscriptionPayment` (append-only by trigger: never edited or deleted; reversed with a reason, once), `SubscriptionEvent` (history; `dedupKey` makes each reminder once), `UserInvitation` (token stored as a hash; link kept encrypted only until emailed); `Project.billingHoldAt` | migration `20261021150000_saas_billing` (additive) |
+| The rules: state (`subscriptionState`), notices, which reminder is due, limits wording, money in minor units, plan input, email wording | `packages/shared/src/saasBilling.ts` (pure, unit-tested) |
+| The ONE writer of the hold | `recomputeCustomerBilling` (`packages/db`) — conditional updates, each change recorded |
+| Enforcement = the existing SUSPENDED rules | worker: `OPERATING_PROJECT_FILTER` / `effectiveProjectStatus` (`project/context.ts`) on every queue claim, scanner and command; web: `effectiveProject` in `decideAccess` (read-only, renewal wording from `projectReadOnlyError`) |
+| Limits (WhatsApp numbers, users) under an advisory lock | `server/customerLimits.ts`, called inside the creating transaction (add account, create user, grant access, make Lead, accept invitation) |
+| Admin actions (all `projects.manage`, all in the customer's history AND System Logs) | `server/actions/saasBilling.ts` |
+| Billing loop (5 min): recompute holds, reminders, invitation emails | `apps/worker/src/billing/billingProcessor.ts` |
+| Pages | Main Admin → **Plans** (plans + billing settings); customer page → **Subscription** (assign / change plan, record payment, issue / void invoice, extend, suspend / unlock, cancel, terms, history) and **Owner and people** (invite or create the owner); the workspace's own **Subscription** page (owner / Lead, read-only) and the renewal banner on every page |
+| Owner sign-up | `/invite/<token>` — single use, 72 h, only on the customer's own address (or an open one) |
+
+The owner is the project's **Lead with no global role**: they run their own members and roles inside
+the workspace (PROJECT_ROLES.md) and can never hold a platform key.
+
+A payment covers the next period in the cycle; when the customer is more than a period behind, the new
+period starts on the day of payment, so a customer who pays is never left suspended by a period that
+already ended. Reversing a payment puts the paid-through date back when that payment was what moved it.
+
+### 10.3 Email
+
+Only the worker sends, only when `PLATFORM_SMTP_HOST` and `PLATFORM_SMTP_FROM_ADDRESS` are set
+(`.env`; see `.env.example`). This is the PLATFORM's mail account, separate from any project's
+Settings → Email. Without it nothing is emailed: the reminder is still recorded and the in-app notice
+still shows, and an invitation link is copied by hand. Reminders go to the customer's contact email and
+its Leads, at most once per reminder day per period (7 / 3 / 1 by default), then once when payment is
+due and once when suspended automatically (never for a manual suspension).
+
+### 10.4 Tests
+
+`packages/shared/src/__tests__/saasBilling.test.ts` (unit), `apps/web/src/__tests__/saasBilling.integration.test.ts`
+(real sign-in, actions and access checks), `apps/worker/src/__tests__/saasBillingProcessor.integration.test.ts`
+and the billing-hold block of `projectLifecycle.integration.test.ts`. Each protection was removed in turn
+and its tests went red: the worker ignoring the hold, the web ignoring the hold, enforcement without
+`autoEnforce`, the limit without its lock, reminders without dedup, the invitation email without its claim.
+
+### 10.5 Deploying Phase 3 (needs Rudra's go-ahead)
+
+Same as any deploy, migrate first (DEPLOY.md). Nothing changes for Customer #1 on deploy. Afterwards,
+optionally: create plans, set payment instructions, add `PLATFORM_SMTP_*` to `.env` and recreate the
+worker (that is a WhatsApp-session restart — choose a quiet moment). Assigning Customer #1 a plan is a
+separate decision; leave "Suspend automatically" unticked until you mean it.

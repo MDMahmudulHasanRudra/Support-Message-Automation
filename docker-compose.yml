@@ -158,6 +158,14 @@ services:
       # dashboard. Never overwrites a provider an admin already configured.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      # SaaS billing emails (reminders, owner invitations). Empty = nothing is emailed; the in-app notice still shows.
+      PLATFORM_SMTP_HOST: ${PLATFORM_SMTP_HOST:-}
+      PLATFORM_SMTP_PORT: ${PLATFORM_SMTP_PORT:-587}
+      PLATFORM_SMTP_TLS: ${PLATFORM_SMTP_TLS:-}
+      PLATFORM_SMTP_USER: ${PLATFORM_SMTP_USER:-}
+      PLATFORM_SMTP_PASSWORD: ${PLATFORM_SMTP_PASSWORD:-}
+      PLATFORM_SMTP_FROM_ADDRESS: ${PLATFORM_SMTP_FROM_ADDRESS:-}
+      PLATFORM_SMTP_FROM_NAME: ${PLATFORM_SMTP_FROM_NAME:-}
       # WhatsApp media files (MEDIA_STORAGE.md): downloaded here in the background, kept on the
       # whatsapp_media volume shared with the dashboard. Below MEDIA_MIN_FREE_DISK_MB of free space
       # nothing new is written — this disk is shared with Postgres, and a full disk stops it too.

@@ -85,7 +85,6 @@ export function DomainManager({
                     {d.hostname}
                   </a>
                   <DomainStatusBadge status={d.status} />
-                  {d.isAdminHostname ? <span className="text-xs text-[color:var(--color-muted-foreground)]">also the admin address</span> : null}
                 </div>
                 {showCustomer ? <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">{d.customerName}</p> : null}
                 <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">{DOMAIN_STATUS_DESCRIPTIONS[d.status]}</p>

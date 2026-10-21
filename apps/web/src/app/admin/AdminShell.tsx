@@ -2,7 +2,7 @@
 
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { Briefcase, Building2, ChevronRight, FolderKanban, Globe, LayoutDashboard, LogOut, Palette, ShieldCheck } from "lucide-react";
+import { Briefcase, Building2, ChevronRight, CreditCard, FolderKanban, Globe, LayoutDashboard, LogOut, Palette, ShieldCheck } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
@@ -44,6 +44,7 @@ function buildSections(granted: ReadonlySet<string>): Array<{ title: string; ite
         // SaaS (SAAS_PLATFORM_PLAN.md): customers and the addresses that open their workspaces.
         { href: "/admin/customers", label: "Customers", icon: Briefcase, exact: false },
         { href: "/admin/domains", label: "Domains", icon: Globe, exact: false },
+        { href: "/admin/plans", label: "Plans", icon: CreditCard, exact: false },
         ...(granted.has("configuration.view") ? [{ href: "/admin/configuration", label: "Configuration", icon: Building2, exact: false }] : []),
         // Users & Permissions: the overview, then App Users and Permission Modules (the same in every
         // project, opened without project tabs) — one place for every login and every role.

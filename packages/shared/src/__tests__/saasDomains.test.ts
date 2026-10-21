@@ -14,7 +14,7 @@ import {
 const settings: DomainSettingsView = {
   hostRoutingEnabled: true,
   rootDomain: "udboy.com",
-  adminHostnames: ["admin.udboy.com", "zoventio.udboy.com"],
+  adminHostnames: ["admin.udboy.com"],
   reservedLabels: ["sales"],
 };
 const domains = [
@@ -39,8 +39,9 @@ describe("normalizeHostname", () => {
 });
 
 describe("validateCustomerHostname", () => {
-  it("accepts the legacy host even though it is also an admin address (Customer #1 keeps its address)", () => {
+  it("Customer #1's address is an ordinary customer address; an admin address is never a customer's", () => {
     expect(validateCustomerHostname("zoventio.udboy.com", settings)).toEqual({ hostname: "zoventio.udboy.com" });
+    expect(validateCustomerHostname("panel.other.com", { ...settings, adminHostnames: ["panel.other.com"] })).toHaveProperty("error");
   });
   it("accepts one label under the root domain, and another domain the customer owns", () => {
     expect(validateCustomerHostname("Customer2.udboy.com", settings)).toEqual({ hostname: "customer2.udboy.com" });
@@ -76,9 +77,11 @@ describe("classifyHost", () => {
     expect(classifyHost("127.0.0.1:8668", settings, domains)).toEqual({ kind: "OPEN" });
     expect(classifyHost("localhost:3000", settings, domains)).toEqual({ kind: "OPEN" });
   });
-  it("an admin hostname is ADMIN, keeping its customer when it is also one (the legacy host)", () => {
-    expect(classifyHost("admin.udboy.com", settings, domains)).toEqual({ kind: "ADMIN", customerId: null });
-    expect(classifyHost("ZOVENTIO.udboy.com", settings, domains)).toEqual({ kind: "ADMIN", customerId: "c1" });
+  it("an admin hostname is ADMIN only; Customer #1's address is that customer's only", () => {
+    expect(classifyHost("admin.udboy.com", settings, domains)).toEqual({ kind: "ADMIN" });
+    expect(classifyHost("ZOVENTIO.udboy.com", settings, domains)).toEqual({ kind: "CUSTOMER", customerId: "c1" });
+    // A stray overlap (impossible through the forms) resolves to admin, never to customer data.
+    expect(classifyHost("admin.udboy.com", settings, [...domains, { hostname: "admin.udboy.com", customerId: "c9", status: "ACTIVE" }])).toEqual({ kind: "ADMIN" });
   });
   it("an ACTIVE or VERIFIED customer domain opens that customer; PENDING, DISABLED and unknown open nothing", () => {
     expect(classifyHost("customer2.udboy.com", settings, domains)).toEqual({ kind: "CUSTOMER", customerId: "c2" });
@@ -93,7 +96,7 @@ describe("classifyHost", () => {
 describe("what a hostname may serve", () => {
   it("the admin portal: open and admin hosts only", () => {
     expect(hostAllowsAdminPortal({ kind: "OPEN" })).toBe(true);
-    expect(hostAllowsAdminPortal({ kind: "ADMIN", customerId: null })).toBe(true);
+    expect(hostAllowsAdminPortal({ kind: "ADMIN" })).toBe(true);
     expect(hostAllowsAdminPortal({ kind: "CUSTOMER", customerId: "c2" })).toBe(false);
     expect(hostAllowsAdminPortal({ kind: "UNKNOWN" })).toBe(false);
   });
@@ -104,11 +107,10 @@ describe("what a hostname may serve", () => {
     expect(hostAllowsProject(c2, "c1", true)).toBe(false);
     expect(hostAllowsProject(c2, null, true)).toBe(false);
   });
-  it("the admin host opens every project for a Main Admin, and its own customer's for that customer's people", () => {
-    expect(hostAllowsProject({ kind: "ADMIN", customerId: null }, "c2", true)).toBe(true);
-    expect(hostAllowsProject({ kind: "ADMIN", customerId: null }, "c2", false)).toBe(false);
-    expect(hostAllowsProject({ kind: "ADMIN", customerId: "c1" }, "c1", false)).toBe(true);
-    expect(hostAllowsProject({ kind: "ADMIN", customerId: "c1" }, "c2", false)).toBe(false);
+  it("the admin host opens every project for a Main Admin and none for anybody else", () => {
+    expect(hostAllowsProject({ kind: "ADMIN" }, "c2", true)).toBe(true);
+    expect(hostAllowsProject({ kind: "ADMIN" }, "c2", false)).toBe(false);
+    expect(hostAllowsProject({ kind: "ADMIN" }, null, false)).toBe(false);
   });
   it("an unknown host opens nothing; an open host everything", () => {
     expect(hostAllowsProject({ kind: "UNKNOWN" }, "c1", true)).toBe(false);

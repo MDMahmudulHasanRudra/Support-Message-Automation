@@ -27,8 +27,14 @@ export interface ActiveProject {
   id: string;
   slug: string;
   name: string;
-  /** SUSPENDED and ARCHIVED projects are read-only (server/db.ts refuses their writes). */
+  /**
+   * SUSPENDED and ARCHIVED projects are read-only (server/db.ts refuses their writes). A project held
+   * by its SaaS subscription (Project.billingHoldAt) reads as SUSPENDED here, so every existing
+   * read-only rule applies to it unchanged (SAAS_PLATFORM_PLAN.md section 10).
+   */
   status: ProjectStatusValue;
+  /** True when the read-only status comes from the customer's subscription, not from an admin. */
+  billingHold?: boolean;
   /**
    * How much of their role this user may use here (ProjectAccess.level; MAIN_ADMIN_WORKSPACE.md §4).
    * Absent means FULL — a Main Admin with no access row, and every row written before levels existed.
@@ -86,7 +92,13 @@ export function forgetProjectAccessDecisions(): void {
 }
 
 const PROJECT_SELECT = { id: true, slug: true, name: true, status: true } as const;
-const PROJECT_WITH_CUSTOMER = { ...PROJECT_SELECT, customerId: true } as const;
+const PROJECT_WITH_CUSTOMER = { ...PROJECT_SELECT, customerId: true, billingHoldAt: true } as const;
+
+/** The status the app enforces: the project's own, or SUSPENDED while its subscription holds it. */
+function effectiveProject(row: { id: string; slug: string; name: string; status: string; billingHoldAt: Date | null }): ActiveProject {
+  const held = row.billingHoldAt !== null && (row.status === "SETUP" || row.status === "ACTIVE");
+  return { id: row.id, slug: row.slug, name: row.name, status: (held ? "SUSPENDED" : row.status) as ProjectStatusValue, ...(held ? { billingHold: true } : {}) };
+}
 
 /**
  * Whether this user is a Main Admin: their EXISTING role holds `projects.manage` (§7). Read from the
@@ -110,7 +122,7 @@ async function decideAccess(userId: string, slug: string, scope: HostScope): Pro
   if (cached && Date.now() - cached.at < ACCESS_TTL_MS) return cached;
 
   const row = await platformPrisma.project.findUnique({ where: { slug }, select: PROJECT_WITH_CUSTOMER });
-  const project = row ? { id: row.id, slug: row.slug, name: row.name, status: row.status } : null;
+  const project = row ? effectiveProject(row) : null;
   let decision: { project: ActiveProject | null; reason?: ProjectAccessFailure };
   // Another customer's project on this hostname is "unknown", not "forbidden": its existence is not
   // something this address should confirm.
@@ -128,7 +140,7 @@ async function decideAccess(userId: string, slug: string, scope: HostScope): Pro
     // own access row still applies to them: FULL is never a bypass, and the narrower rule wins.
     const allowed = Boolean(access) || (await isMainAdmin(userId));
     decision = allowed
-      ? { project: { ...project, status: project.status as ProjectStatusValue, accessLevel: access?.level ?? "FULL" } }
+      ? { project: { ...project, accessLevel: access?.level ?? "FULL" } }
       : { project: null, reason: "NO_ACCESS" };
   }
   if (accessCache.size > 5_000) accessCache.clear();
@@ -174,7 +186,7 @@ export async function accessibleProjects(userId: string): Promise<ActiveProject[
   // On a customer's address the switcher and /open offer only that customer's project.
   return rows
     .filter((row) => hostAllowsProject(scope, row.customerId, mainAdmin))
-    .map(({ id, slug, name, status }) => ({ id, slug, name, status }));
+    .map((row) => effectiveProject(row));
 }
 
 /** Whether the active project refuses writes (SUSPENDED / ARCHIVED). */

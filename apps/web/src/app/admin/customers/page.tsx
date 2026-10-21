@@ -3,13 +3,16 @@ import { Plus } from "lucide-react";
 import { ButtonLink, EmptyState, PageHeader, Table, Td, Th } from "@/components/ui";
 import { requireMainAdminPage } from "@/server/mainAdmin";
 import { listCustomers } from "@/server/saasAdmin";
+import { listCustomerSubscriptions } from "@/server/saasBilling";
+import { SAAS_SUBSCRIPTION_STATE_LABELS } from "@support-automation/shared";
+import { Badge } from "@/components/ui";
 import { DomainStatusBadge } from "../DomainStatusBadge";
 
 export const metadata = { title: "Customers" };
 
 export default async function CustomersPage() {
   const { canManage } = await requireMainAdminPage();
-  const customers = await listCustomers();
+  const [customers, subscriptions] = await Promise.all([listCustomers(), listCustomerSubscriptions()]);
   return (
     <div>
       <PageHeader
@@ -35,6 +38,7 @@ export default async function CustomersPage() {
             <tr>
               <Th>Customer</Th>
               <Th>Workspace</Th>
+              <Th>Subscription</Th>
               <Th>Addresses</Th>
               <Th>Contact</Th>
             </tr>
@@ -48,6 +52,24 @@ export default async function CustomersPage() {
                   </NextLink>
                 </Td>
                 <Td>{c.project ? <span>{c.project.name} <span className="font-mono text-xs text-[color:var(--color-muted-foreground)]">/p/{c.project.slug}</span></span> : "—"}</Td>
+                <Td>
+                  {(() => {
+                    const s = subscriptions.get(c.id);
+                    if (!s) return <span className="text-[color:var(--color-muted-foreground)]">None</span>;
+                    const color = s.state === "ACTIVE" ? "green" : s.state === "TRIALING" ? "blue" : s.state === "PAST_DUE" ? "yellow" : s.state === "SUSPENDED" ? "red" : "gray";
+                    return (
+                      <span className="flex flex-col gap-1">
+                        <span>{s.planName}</span>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <Badge color={color} dot>
+                            {SAAS_SUBSCRIPTION_STATE_LABELS[s.state]}
+                          </Badge>
+                          {s.accessUntil ? <span className="text-xs text-[color:var(--color-muted-foreground)]">until {s.accessUntil.slice(0, 10)}</span> : null}
+                        </span>
+                      </span>
+                    );
+                  })()}
+                </Td>
                 <Td>
                   {c.domains.length === 0 ? (
                     <span className="text-[color:var(--color-muted-foreground)]">None yet</span>

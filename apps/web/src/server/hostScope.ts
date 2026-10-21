@@ -72,7 +72,7 @@ export async function currentHostScope(): Promise<HostScope> {
 
 /** A stable string for caches keyed on the host's meaning. */
 export function hostScopeKey(scope: HostScope): string {
-  return scope.kind === "ADMIN" ? `ADMIN:${scope.customerId ?? ""}` : scope.kind === "CUSTOMER" ? `CUSTOMER:${scope.customerId}` : scope.kind;
+  return scope.kind === "CUSTOMER" ? `CUSTOMER:${scope.customerId}` : scope.kind;
 }
 
 /** For the Main Admin Portal: on a customer's or an unknown hostname the portal does not exist. */

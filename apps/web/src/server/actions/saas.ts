@@ -91,6 +91,13 @@ export async function saveDomainSettings(_prev: DomainSettingsState, formData: F
     else if (!reservedLabels.includes(label)) reservedLabels.push(label);
   }
   const hostRoutingEnabled = formData.get("hostRoutingEnabled") === "on";
+  // An address belongs to the Main Admin or to one customer, never both.
+  if (adminHostnames.length > 0) {
+    const taken = await platformPrisma.customerDomain.findMany({ where: { hostname: { in: adminHostnames } }, select: { hostname: true } });
+    if (taken.length > 0) {
+      fieldErrors.adminHostnames = `${taken.map((t) => t.hostname).join(", ")} belongs to a customer. Use a separate admin address such as admin.${rootDomain ?? "example.com"}.`;
+    }
+  }
 
   if (hostRoutingEnabled) {
     // Switching routing on from an address that is not an admin address would lock the person

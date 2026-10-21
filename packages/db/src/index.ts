@@ -10,11 +10,12 @@ import {
   knowledgeContentHash,
   normalizePhoneNumber,
   PROJECT_FEATURES,
+  subscriptionState,
   SUPPORT_ASSIGNMENT_TEMPLATE_KEYS,
   supportAssignmentDedupKey,
   supportAssignmentNoticeVars,
 } from "@support-automation/shared";
-import type { RuleAction } from "@support-automation/shared";
+import type { RuleAction, SubscriptionReading } from "@support-automation/shared";
 
 // Standard Next.js/Node singleton pattern: avoids exhausting Postgres
 // connections from hot-reload creating a new PrismaClient per request in dev.
@@ -1628,4 +1629,57 @@ export async function buildSupportAssignmentNotices(
       recipient: { kind: "GROUP" as const, whatsappGroupId },
     })),
   ];
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// SaaS billing (SAAS_PLATFORM_PLAN.md section 10)
+// ---------------------------------------------------------------------------------------------
+
+export interface CustomerBillingResult {
+  /** The current subscription's reading, or null when the customer has none (never held). */
+  reading: SubscriptionReading | null;
+  /** Whether the hold on the customer's project changed in this call. */
+  holdChanged: boolean;
+}
+
+/**
+ * Brings a customer's stored billing state in line with the rule (`subscriptionState`): the
+ * current subscription's `status`, and `Project.billingHoldAt` on its project. The ONE writer of
+ * `billingHoldAt` — called by every subscription action in the web app and by the worker's billing
+ * loop, so a hold can never be set or lifted any other way. A customer with no current subscription
+ * is never held. A status change is recorded as an event. Idempotent: calling it twice changes
+ * nothing the second time.
+ */
+export async function recomputeCustomerBilling(db: PrismaClient, customerId: string, now = new Date(), actorUsername: string | null = null): Promise<CustomerBillingResult> {
+  const [subscription, project] = await Promise.all([
+    db.subscription.findFirst({ where: { customerId, endedAt: null } }),
+    db.project.findUnique({ where: { customerId }, select: { id: true, billingHoldAt: true } }),
+  ]);
+  const reading = subscription ? subscriptionState(subscription, now) : null;
+  const held = Boolean(reading?.held);
+
+  if (subscription && reading && reading.state !== subscription.status) {
+    const changed = await db.subscription.updateMany({ where: { id: subscription.id, status: subscription.status }, data: { status: reading.state } });
+    if (changed.count === 1) {
+      await db.subscriptionEvent.create({
+        data: { customerId, kind: "STATUS_CHANGED", detail: { from: subscription.status, to: reading.state }, actorUsername },
+      });
+    }
+  }
+
+  let holdChanged = false;
+  if (project && held !== (project.billingHoldAt !== null)) {
+    const updated = await db.project.updateMany({
+      where: { id: project.id, billingHoldAt: held ? null : { not: null } },
+      data: { billingHoldAt: held ? now : null },
+    });
+    holdChanged = updated.count === 1;
+    if (holdChanged) {
+      await db.subscriptionEvent.create({
+        data: { customerId, kind: held ? "WORKSPACE_HELD" : "WORKSPACE_RELEASED", detail: { projectId: project.id, state: reading?.state ?? null }, actorUsername },
+      });
+    }
+  }
+  return { reading, holdChanged };
 }

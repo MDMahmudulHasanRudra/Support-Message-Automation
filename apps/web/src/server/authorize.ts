@@ -125,6 +125,7 @@ function isReadKey(key: string): boolean {
 }
 
 export function projectReadOnlyError(project: ActiveProject): string {
+  if (project.billingHold) return `${project.name} is read-only because its subscription is suspended, so nothing was changed. Renew the subscription to continue.`;
   return project.status === "ARCHIVED"
     ? `${project.name} is archived and read-only, so nothing was changed.`
     : `${project.name} is suspended and read-only until a Main Admin makes it active again, so nothing was changed.`;

@@ -12,7 +12,7 @@ import {
 } from "@support-automation/shared";
 import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
-import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
+import { accountInCurrentProject, OPERATING_PROJECT_FILTER, withProject } from "../project/context.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
@@ -258,7 +258,7 @@ async function processItem(itemId: string, providers: ProviderSource): Promise<v
  * do. Exported for the integration tests, which drive it directly.
  */
 export async function processOneAdminPromotion(providers: ProviderSource): Promise<boolean> {
-  const operating = { status: { in: [...OPERATING_PROJECT_STATUSES] } };
+  const operating = OPERATING_PROJECT_FILTER;
   // Across projects, oldest first; the work then runs inside the row's own project.
   const checking = await platformPrisma.groupAdminPromotionJob.findFirst({
     where: { status: "CHECKING", project: operating },

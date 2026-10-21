@@ -551,17 +551,22 @@ enum ProjectStatus {
 /// `proj_isp_digital`) and any created later. Everything project-scoped carries its `projectId`.
 /// See MULTI_PROJECT_PLAN.md. A status change never deletes data.
 model Project {
-  id          String        @id @default(cuid())
-  name        String
-  slug        String        @unique
-  description String?
-  status      ProjectStatus @default(SETUP)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id            String        @id @default(cuid())
+  name          String
+  slug          String        @unique
+  description   String?
+  status        ProjectStatus @default(SETUP)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
   /// The SaaS customer this project belongs to (SAAS_PLATFORM_PLAN.md). Null for a project no
   /// customer has adopted yet. One project per customer for now (unique).
-  customerId  String?       @unique
-  customer    Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId    String?       @unique
+  customer      Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  /// Set while the customer's SaaS subscription holds this project (suspended or cancelled -
+  /// SAAS_PLATFORM_PLAN.md section 10). Held = treated exactly like a SUSPENDED project: read-only,
+  /// no automation or outbound, incoming messages still stored. Never set for a project with no
+  /// subscription, and never by anything but recomputeCustomerBilling (packages/db).
+  billingHoldAt DateTime?
 
   access             ProjectAccess[]
   projectRoles       ProjectRole[]
@@ -7030,17 +7035,22 @@ model ListViewPreference {
 
 /// One customer (tenant) of the platform: a company with its own project and its own address.
 model Customer {
-  id                String           @id @default(cuid())
+  id                String                @id @default(cuid())
   name              String
   contactName       String?
   contactEmail      String?
   contactPhone      String?
   notes             String?
   createdByUsername String?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
   project           Project?
   domains           CustomerDomain[]
+  subscriptions     Subscription[]
+  invoices          SubscriptionInvoice[]
+  payments          SubscriptionPayment[]
+  events            SubscriptionEvent[]
+  invitations       UserInvitation[]
 }
 
 /// A hostname that opens one customer's workspace. Status flow (packages/shared/src/saasDomains.ts):
@@ -7082,4 +7092,178 @@ model PlatformDomainSettings {
   reservedLabels     String[] @default([])
   updatedByUsername  String?
   updatedAt          DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------------------------
+// SaaS platform, Phase 3 (SAAS_PLATFORM_PLAN.md section 10): plans, subscriptions, invoices,
+// payments, reminders and owner invitations. Platform data, no projectId. Entirely separate from
+// the Clients module's billing (ClientDue / ClientPayment are a customer's OWN clients).
+// Money is BigInt minor units (poisha) with its currency beside it, never a float, never summed
+// across currencies.
+// ---------------------------------------------------------------------------------------------
+
+/// Platform billing settings, one row (id "default"). Absent = the built-in defaults.
+model PlatformBillingSettings {
+  id                  String   @id @default("default")
+  /// Days of grace after a period ends unpaid, before an enforced subscription is suspended.
+  defaultGraceDays    Int      @default(7)
+  /// Days before the end of a period on which the owner is reminded (in the app and by email).
+  reminderDaysBefore  Int[]    @default([7, 3, 1])
+  /// Shown on invoices and reminders: who to pay and how.
+  paymentInstructions String?
+  updatedByUsername   String?
+  updatedAt           DateTime @updatedAt
+}
+
+/// A package a customer can be on. Editing a plan never changes a customer already on it: a
+/// subscription keeps a snapshot of the plan as it was when assigned.
+model Plan {
+  id                  String         @id @default(cuid())
+  name                String         @unique
+  description         String?
+  priceMinor          BigInt
+  currency            String         @default("BDT")
+  /// MONTH or YEAR.
+  interval            String         @default("MONTH")
+  trialDays           Int            @default(0)
+  /// Null = no limit.
+  maxWhatsAppAccounts Int?
+  maxUsers            Int?
+  /// Feature keys (packages/shared/src/projectFeatures.ts) the plan includes.
+  features            String[]       @default([])
+  isActive            Boolean        @default(true)
+  sortOrder           Int            @default(0)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  subscriptions       Subscription[]
+}
+
+/// A customer's subscription. One CURRENT row per customer (endedAt null, partial unique in the
+/// migration); a replaced subscription is kept, ended, as history. The state is derived from these
+/// fields (subscriptionState in packages/shared); status is the last computed value.
+model Subscription {
+  id                  String                @id @default(cuid())
+  customerId          String
+  customer            Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  planId              String?
+  plan                Plan?                 @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planName            String
+  priceMinor          BigInt
+  currency            String                @default("BDT")
+  interval            String                @default("MONTH")
+  maxWhatsAppAccounts Int?
+  maxUsers            Int?
+  features            String[]              @default([])
+  startsAt            DateTime
+  trialEndsAt         DateTime?
+  /// The end of the last paid period. Null = nothing paid yet.
+  paidThrough         DateTime?
+  graceDays           Int                   @default(7)
+  /// Off = never suspended automatically (an admin can still suspend by hand). Customer #1's
+  /// protection: nothing is enforced until an admin turns this on.
+  autoEnforce         Boolean               @default(false)
+  suspendedAt         DateTime?
+  suspendReason       String?
+  cancelledAt         DateTime?
+  status              String                @default("ACTIVE")
+  notes               String?
+  endedAt             DateTime?
+  createdByUsername   String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  invoices            SubscriptionInvoice[]
+  payments            SubscriptionPayment[]
+
+  @@index([customerId])
+  @@index([status])
+}
+
+/// A bill for one period. OPEN until paid or voided; numbered from a sequence (INV-000123).
+model SubscriptionInvoice {
+  id                String                @id @default(cuid())
+  number            String                @unique
+  customerId        String
+  customer          Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscriptionId    String
+  subscription      Subscription          @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  periodStart       DateTime
+  periodEnd         DateTime
+  amountMinor       BigInt
+  currency          String                @default("BDT")
+  /// OPEN, PAID or VOID.
+  status            String                @default("OPEN")
+  dueAt             DateTime
+  issuedAt          DateTime              @default(now())
+  paidAt            DateTime?
+  voidedAt          DateTime?
+  voidReason        String?
+  createdByUsername String?
+  payments          SubscriptionPayment[]
+
+  @@index([customerId, issuedAt])
+}
+
+/// A payment recorded by hand. Never edited: a mistake is reversed (with a reason) and recorded again.
+model SubscriptionPayment {
+  id                 String               @id @default(cuid())
+  customerId         String
+  customer           Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscriptionId     String
+  subscription       Subscription         @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  invoiceId          String?
+  invoice            SubscriptionInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  amountMinor        BigInt
+  currency           String               @default("BDT")
+  /// BKASH, NAGAD, BANK_TRANSFER, CASH, CARD, OTHER. No card number or credential is ever stored.
+  method             String
+  reference          String?
+  receivedAt         DateTime
+  note               String?
+  recordedByUsername String?
+  createdAt          DateTime             @default(now())
+  reversedAt         DateTime?
+  reversedByUsername String?
+  reversalReason     String?
+
+  @@index([customerId, receivedAt])
+}
+
+/// Append-only history of everything that happened to a customer's subscription.
+model SubscriptionEvent {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// e.g. PLAN_ASSIGNED, PAYMENT_RECORDED, STATUS_CHANGED, SUSPENDED, UNLOCKED, REMINDER_SENT.
+  kind          String
+  detail        Json?
+  /// For reminders: one per subscription + kind + period, never repeated.
+  dedupKey      String?  @unique
+  actorUsername String?
+  createdAt     DateTime @default(now())
+
+  @@index([customerId, createdAt])
+}
+
+/// An invitation to become a customer's owner: a single-use link, valid 72 h, stored only as a hash.
+model UserInvitation {
+  id                String    @id @default(cuid())
+  customerId        String
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  projectId         String
+  email             String?
+  name              String
+  tokenHash         String    @unique
+  expiresAt         DateTime
+  acceptedAt        DateTime?
+  acceptedUserId    String?
+  revokedAt         DateTime?
+  /// When the invitation email went out (platform SMTP); null = not sent (copy the link by hand).
+  emailedAt         DateTime?
+  /// The link, encrypted (encryptSecret), kept ONLY until the worker emails it, then cleared. The
+  /// token itself is never stored in the clear; null when there is no email or nothing to send.
+  linkCiphertext    String?
+  createdByUsername String?
+  createdAt         DateTime  @default(now())
+
+  @@index([customerId])
 }

@@ -2897,6 +2897,22 @@ records, CRUD, duplicates, list/details, import/export, timeline, per-channel co
   - **Billing figures are never selected for a viewer without `clients.view_billing`**, and a billing filter from one is
     ignored. Column preferences are re-sanitized on every read. Photos are stripped, bounded thumbnails in `ClientPhoto`.
 
+### SaaS platform — customers, addresses, billing (`SAAS_PLATFORM_PLAN.md`)
+
+Main Admin → Customers / Domains / Plans. Rules worth not undoing:
+- **An address is admin OR customer, never both** (`classifyHost`, `saasDomains.ts`). `admin.udboy.com` is
+  the portal; `zoventio.udboy.com` is Customer #1's alone. Routing ships OFF; recovery is §8 of the plan.
+- **A customer with no subscription is never held or limited, and a subscription suspends by itself only
+  with `autoEnforce` ticked** (default off). This is Customer #1's protection; never default either.
+- **The billing hold IS the SUSPENDED rule** (`Project.billingHoldAt`, written only by
+  `recomputeCustomerBilling`): worker `OPERATING_PROJECT_FILTER` / `effectiveProjectStatus`, web
+  `effectiveProject`. A new queue claim on a project-owned row filters `project: OPERATING_PROJECT_FILTER`.
+- **Payments are append-only** (DB trigger) and reversed, never edited; money is BigInt minor units.
+- **Limits are checked inside the creating transaction** via `lockAndCheckCustomerLimit`; a new way to add
+  a user or a WhatsApp number must call it.
+- Billing email goes only through the worker's platform SMTP (`PLATFORM_SMTP_*`); nothing is emailed
+  without it.
+
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)
 

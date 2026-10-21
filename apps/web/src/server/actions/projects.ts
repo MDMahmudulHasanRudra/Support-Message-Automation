@@ -21,6 +21,7 @@ import { forgetProjectAccessDecisions } from "@/server/projectContext";
 import { forgetProjectFeatureStates } from "@/server/projectFeatures";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
+import { lockAndCheckCustomerLimit } from "@/server/customerLimits";
 
 /**
  * Main Admin Portal actions (MULTI_PROJECT_PLAN.md §7–§8). Every one requires `projects.manage` —
@@ -196,11 +197,17 @@ export async function setProjectAccess(projectId: string, userId: string, grante
   if (!user) return { error: "That user no longer exists." };
 
   if (granted) {
-    await platformPrisma.projectAccess.upsert({
-      where: { projectId_userId: { projectId, userId } },
-      update: {},
-      create: { projectId, userId },
+    // A new grant counts toward the customer's user limit (SAAS_PLATFORM_PLAN.md §10), checked under its lock.
+    const refusal = await platformPrisma.$transaction(async (tx) => {
+      if (await tx.projectAccess.findUnique({ where: { projectId_userId: { projectId, userId } }, select: { userId: true } })) return null;
+      // A Main Admin is not counted, so never refused by the limit either.
+      const mainAdmin = await tx.user.count({ where: { id: userId, permissionModule: { permissions: { some: { permission: { key: "projects.manage" } } } } } });
+      const limit = mainAdmin ? null : await lockAndCheckCustomerLimit(tx, projectId, "USERS");
+      if (limit) return limit;
+      await tx.projectAccess.create({ data: { projectId, userId } });
+      return null;
     });
+    if (refusal) return { error: refusal };
   } else {
     // Their project-level role (PROJECT_ROLES.md) goes with the access, so a later re-grant starts
     // from the global role and never silently revives an old Lead flag.

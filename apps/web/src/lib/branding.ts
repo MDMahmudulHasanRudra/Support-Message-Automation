@@ -9,8 +9,10 @@
  * by the 20261021090000_nexora_white_label_defaults migration, so only a NEW install shows Nexora.
  */
 
+import { DEFAULT_PRODUCT_NAME } from "@support-automation/shared";
+
 export const DEFAULT_BRANDING = {
-  productName: "Nexora",
+  productName: DEFAULT_PRODUCT_NAME,
   loginHeadline: "WhatsApp support that answers before anyone has to.",
   loginSubheading:
     "Deterministic rules decide what gets an instant reply, what waits for a human, and what escalates — with the whole decision trace recorded for every message.",

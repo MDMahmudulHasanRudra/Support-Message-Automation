@@ -62,16 +62,15 @@ export interface DomainSettingsView {
 /**
  * Whether `hostname` may be given to a customer. A subdomain of the root domain must be ONE label
  * deep (`customer2.udboy.com`, not `a.b.udboy.com`) and not reserved (`admin` is); another domain the
- * customer owns is allowed too. Never the root domain itself or an infrastructure host. An address
- * that is ALSO an admin address is allowed on purpose: that is the legacy host (Customer #1's
- * existing address keeps serving the portal while customers move over), and `classifyHost` gives it
- * both meanings.
+ * customer owns is allowed too. Never an admin address (an address belongs to the Main Admin or to
+ * one customer, never both), the root domain itself, or an infrastructure host.
  * Uniqueness is the database's job (CustomerDomain.hostname @unique) and the action's message.
  */
 export function validateCustomerHostname(raw: unknown, settings: DomainSettingsView): { hostname: string } | { error: string } {
   const hostname = normalizeHostname(raw);
   if (!hostname) return { error: "Enter a hostname such as customer2.udboy.com — letters, digits, hyphens and dots only." };
   if (isInfrastructureHost(hostname)) return { error: "Use a full domain name, not an IP address or localhost." };
+  if (settings.adminHostnames.includes(hostname)) return { error: "That hostname is a Main Admin address. An address belongs to the Main Admin or to one customer, never both." };
   const root = settings.rootDomain ? normalizeHostname(settings.rootDomain) : null;
   if (root && hostname === root) return { error: "The root domain itself cannot be given to a customer — use a subdomain of it." };
   if (root && hostname.endsWith(`.${root}`)) {
@@ -94,8 +93,8 @@ export function requiredDnsRecords(hostname: string, rootDomain: string | null, 
 export type HostScope =
   /** Routing is off, or an infrastructure host (localhost, an IP): everything works as before. */
   | { kind: "OPEN" }
-  /** The Main Admin address. `customerId` is set when the same hostname is also a customer's (the legacy host). */
-  | { kind: "ADMIN"; customerId: string | null }
+  /** A Main Admin address: the portal and the Workspace, for Main Admins only. Never also a customer's. */
+  | { kind: "ADMIN" }
   /** A customer's ACTIVE (or VERIFIED, while HTTPS is being set up) address. */
   | { kind: "CUSTOMER"; customerId: string }
   /** Routing is on and nobody has this hostname: nothing is shown. */
@@ -112,17 +111,17 @@ export const ROUTABLE_DOMAIN_STATUSES: readonly DomainStatus[] = ["VERIFIED", "A
 
 /**
  * The single rule for what an incoming hostname opens. With routing off nothing changes for anyone
- * (OPEN). With it on: an admin hostname is ADMIN (and, when it is also a customer's address, keeps
- * that customer's workspace too — the legacy host during the move); a routable customer domain is
- * CUSTOMER; anything else is UNKNOWN. Infrastructure hosts stay OPEN so the server's own health
+ * (OPEN). With it on: an admin hostname is ADMIN and nothing else (the two lists can never overlap —
+ * both forms refuse it — and if a stray row ever did, the admin meaning wins and no customer data is
+ * served there); a routable customer domain is CUSTOMER; anything else is UNKNOWN. Infrastructure hosts stay OPEN so the server's own health
  * checks and the TLS question from Caddy keep working.
  */
 export function classifyHost(rawHost: string | null | undefined, settings: DomainSettingsView | null, domains: readonly DomainRow[]): HostScope {
   if (!settings?.hostRoutingEnabled) return { kind: "OPEN" };
   const host = normalizeHostname(rawHost ?? "");
   if (!host || isInfrastructureHost(host)) return { kind: "OPEN" };
+  if (settings.adminHostnames.includes(host)) return { kind: "ADMIN" };
   const domain = domains.find((d) => d.hostname === host && (ROUTABLE_DOMAIN_STATUSES as readonly string[]).includes(d.status));
-  if (settings.adminHostnames.includes(host)) return { kind: "ADMIN", customerId: domain?.customerId ?? null };
   if (domain) return { kind: "CUSTOMER", customerId: domain.customerId };
   return { kind: "UNKNOWN" };
 }
@@ -134,9 +133,8 @@ export function hostAllowsAdminPortal(scope: HostScope): boolean {
 
 /**
  * Whether a project may be opened on this hostname. A customer's address opens only that
- * customer's project — for everybody, a Main Admin included. The admin address opens every project
- * for a Main Admin (the Workspace) and, when it is also a customer's address, that customer's
- * project for its own people.
+ * customer's project — for everybody, a Main Admin included. An admin address opens every project
+ * for a Main Admin (the Workspace) and none for anybody else.
  */
 export function hostAllowsProject(scope: HostScope, projectCustomerId: string | null, viewerIsMainAdmin: boolean): boolean {
   switch (scope.kind) {
@@ -147,7 +145,7 @@ export function hostAllowsProject(scope: HostScope, projectCustomerId: string | 
     case "CUSTOMER":
       return projectCustomerId === scope.customerId;
     case "ADMIN":
-      return viewerIsMainAdmin || (scope.customerId !== null && projectCustomerId === scope.customerId);
+      return viewerIsMainAdmin;
   }
 }
 

@@ -34,7 +34,7 @@ export function DomainSettingsForm({ canManage, settings, currentHost }: { canMa
           label="Admin addresses"
           htmlFor="ds-admin"
           error={errors.adminHostnames}
-          hint={`One per line. Only these open the Main Admin Portal. While customers move over, keep the address you use today here too${currentHost ? ` (you are on ${currentHost})` : ""}.`}
+          hint={`One per line, e.g. admin.udboy.com. Only these open the Main Admin Portal, and only for Main Admins. An address belongs to the Main Admin or to one customer, never both.${currentHost ? ` You are on ${currentHost}.` : ""}`}
         >
           <Textarea id="ds-admin" name="adminHostnames" rows={2} defaultValue={settings.adminHostnames.join("\n")} placeholder={"admin.udboy.com"} className="font-mono" spellCheck={false} />
         </Field>
@@ -54,8 +54,9 @@ export function DomainSettingsForm({ canManage, settings, currentHost }: { canMa
         {errors.hostRoutingEnabled ? <Alert tone="danger">{errors.hostRoutingEnabled}</Alert> : null}
         {routing && !settings.hostRoutingEnabled ? (
           <Alert tone="warning">
-            Before saving: make sure the address your current customer uses is added to that customer (Customers) and checked, and that the address you are using now is
-            listed as an admin address. Anyone already signed in stays signed in.
+            Before saving: open this page from the admin address (e.g. admin.udboy.com) and make sure every existing customer&apos;s address (for example
+            zoventio.udboy.com) is added to that customer and shows Live. From then on, each customer address opens only its customer&apos;s workspace and the
+            portal opens only on the admin address. Until you switch this on, every address keeps working exactly as today.
           </Alert>
         ) : null}
       </fieldset>

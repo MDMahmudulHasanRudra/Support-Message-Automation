@@ -3,7 +3,7 @@ import type { MediaStorage } from "@support-automation/media-storage";
 import { mediaRetentionCutoff } from "@support-automation/shared";
 import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
-import { forEachProject, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
+import { forEachProject, OPERATING_PROJECT_FILTER, withProject } from "../project/context.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { getMediaStorageSettings } from "./registerMessageMedia.js";
@@ -172,7 +172,7 @@ export async function runCleanupBatch(jobId: string, storage: MediaStorage | nul
 /** One batch of the oldest active job, across projects. Returns whether there was a job. */
 export async function processOneCleanupBatch(storage: MediaStorage | null): Promise<boolean> {
   const job = await platformPrisma.mediaCleanupJob.findFirst({
-    where: { status: { in: [...ACTIVE_CLEANUP_STATUSES] }, project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
+    where: { status: { in: [...ACTIVE_CLEANUP_STATUSES] }, project: OPERATING_PROJECT_FILTER },
     orderBy: { createdAt: "asc" },
     select: { id: true, projectId: true },
   });

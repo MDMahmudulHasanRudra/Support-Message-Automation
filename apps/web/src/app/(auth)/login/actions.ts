@@ -26,18 +26,16 @@ async function readRequestMeta(): Promise<{ ipAddress: string | null; userAgent:
 /**
  * Whether this user may sign in on this address (SAAS_PLATFORM_PLAN.md §3.3). With hostname routing
  * off every address is OPEN: unchanged. A customer's address takes that customer's people (anyone
- * with access to its project) and Main Admins; the admin address takes Main Admins, plus the
- * customer's people when it is also that customer's address (the legacy host); an unknown address
- * takes nobody. Refused with the SAME message as a wrong password: an address must not reveal who
+ * with access to its project) and Main Admins (who are confined to that customer there); an admin
+ * address takes Main Admins only; an unknown address takes nobody. Refused with the SAME message as a wrong password: an address must not reveal who
  * has an account elsewhere on the platform.
  */
 async function mayUseThisAddress(userId: string, scope: HostScope): Promise<boolean> {
   if (scope.kind === "OPEN") return true;
   if (scope.kind === "UNKNOWN") return false;
   if (await isMainAdmin(userId)) return true;
-  const customerId = scope.customerId;
-  if (!customerId) return false;
-  const access = await platformPrisma.projectAccess.findFirst({ where: { userId, project: { customerId } }, select: { id: true } });
+  if (scope.kind !== "CUSTOMER") return false;
+  const access = await platformPrisma.projectAccess.findFirst({ where: { userId, project: { customerId: scope.customerId } }, select: { id: true } });
   return access !== null;
 }
 

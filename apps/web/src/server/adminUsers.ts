@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { isProjectAccessLevel, type ProjectAccessLevelValue, type ProjectStatusValue } from "@support-automation/shared";
 import { hashPassword } from "@/server/auth";
+import { CustomerLimitError, lockAndCheckCustomerLimit } from "@/server/customerLimits";
 import { createEmployee, type EmployeeInput } from "@/server/configuration";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
@@ -95,6 +96,11 @@ export async function createUserWithAccess(db: PrismaClient, input: NewUserInput
         employeeCode = created.employeeCode;
       }
       if (input.access.length > 0) {
+        // The customer's plan may cap its users (SaaS section 10.4); checked under a lock, per project.
+        for (const grant of input.access) {
+          const refusal = await lockAndCheckCustomerLimit(tx, grant.projectId, "USERS");
+          if (refusal) throw new InputError(refusal);
+        }
         await tx.projectAccess.createMany({
           // FULL is stored as null: it is what "no narrowing" has always meant on this table.
           data: input.access.map((a) => ({ projectId: a.projectId, userId: user.id, level: a.isLead || a.level === "FULL" ? null : a.level })),
@@ -149,7 +155,16 @@ export async function setUserProjectAccess(
   const stored = level === "FULL" ? null : level;
   if (!existing) {
     if (project.status === "ARCHIVED") return { ok: false, error: "That project is archived; nobody new can be given access." };
-    await db.projectAccess.create({ data: { projectId, userId, level: stored } });
+    try {
+      await db.$transaction(async (tx) => {
+        const refusal = await lockAndCheckCustomerLimit(tx, projectId, "USERS");
+        if (refusal) throw new CustomerLimitError(refusal);
+        await tx.projectAccess.create({ data: { projectId, userId, level: stored } });
+      });
+    } catch (err) {
+      if (err instanceof CustomerLimitError) return { ok: false, error: err.message };
+      throw err;
+    }
     return { ok: true, changed: "granted" };
   }
   if ((existing.level ?? null) === stored) return { ok: true, changed: "unchanged" };
@@ -179,6 +194,12 @@ export async function setUserProjectLead(
   if (isLead) {
     if (project.status === "ARCHIVED") return { ok: false, error: "That project is archived." };
     if (!user.isActive) return { ok: false, error: "That user is deactivated. Reactivate them first." };
+    // Making someone Lead grants access when they had none: that is one more user on the plan.
+    const hasAccess = await db.projectAccess.findUnique({ where: { projectId_userId: { projectId, userId } }, select: { id: true } });
+    if (!hasAccess) {
+      const refusal = await db.$transaction((tx) => lockAndCheckCustomerLimit(tx, projectId, "USERS"));
+      if (refusal) return { ok: false, error: refusal };
+    }
     await db.$transaction([
       db.projectAccess.upsert({
         where: { projectId_userId: { projectId, userId } },

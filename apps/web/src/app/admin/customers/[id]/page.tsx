@@ -3,6 +3,9 @@ import { notFound } from "next/navigation";
 import { Alert, Card, PageHeader, SectionHeader } from "@/components/ui";
 import { requireMainAdminPage } from "@/server/mainAdmin";
 import { getCustomer, getDomainSettings } from "@/server/saasAdmin";
+import { customerInvitations, customerPeople, getBillingSettings, getCustomerBilling, listPlans } from "@/server/saasBilling";
+import { BillingPanel } from "./BillingPanel";
+import { OwnerPanel } from "./OwnerPanel";
 import { DomainManager } from "../../DomainManager";
 import { CustomerDetailsForm } from "./CustomerDetailsForm";
 
@@ -11,8 +14,16 @@ export const metadata = { title: "Customer" };
 export default async function CustomerPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ created?: string }> }) {
   const { canManage } = await requireMainAdminPage();
   const [{ id }, { created }] = await Promise.all([params, searchParams]);
-  const [customer, settings] = await Promise.all([getCustomer(id), getDomainSettings()]);
+  const [customer, settings, billing, plans, billingSettings, invitations] = await Promise.all([
+    getCustomer(id),
+    getDomainSettings(),
+    getCustomerBilling(id, { events: true }),
+    listPlans(),
+    getBillingSettings(),
+    customerInvitations(id),
+  ]);
   if (!customer) notFound();
+  const people = customer.project ? await customerPeople(customer.project.id) : [];
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -40,6 +51,16 @@ export default async function CustomerPage({ params, searchParams }: { params: P
         ) : (
           <p className="text-sm text-[color:var(--color-muted-foreground)]">No workspace is attached.</p>
         )}
+      </Card>
+
+      <Card>
+        <SectionHeader title="Subscription" description="Plan, renewal, invoices and payments. Nothing here is applied automatically unless you turn automatic suspension on." />
+        <BillingPanel customerId={customer.id} billing={billing} plans={plans} defaultGraceDays={billingSettings.defaultGraceDays} canManage={canManage} />
+      </Card>
+
+      <Card>
+        <SectionHeader title="Owner and people" description="The owner is the workspace's Lead: they manage their own team inside it. They never receive platform permissions." />
+        <OwnerPanel customerId={customer.id} people={people} invitations={invitations} canManage={canManage} />
       </Card>
 
       <Card>

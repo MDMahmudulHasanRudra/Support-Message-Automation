@@ -44,6 +44,7 @@ export const LAST_PROJECT_COOKIE = "softify-last-project";
 const OUTSIDE_PROJECT = [
   /^\/login(\/|$|\?)/,
   /^\/open(\/|$|\?)/,
+  /^\/invite\//,
   /^\/admin(\/|$|\?)/,
   /^\/api\/health(\/|$|\?)/,
   /^\/p\//,
