@@ -282,3 +282,96 @@ Three independent ways back in, from the gentlest:
    (Last resort, needs approval: `UPDATE "PlatformDomainSettings" SET "hostRoutingEnabled" = false;`.)
 
 All three are covered by `saasHostRouting.integration.test.ts` ("recovery" block).
+
+---
+
+## 9. Phase 3 — design (prepared 21 Oct 2026; NOT started, waiting for approval)
+
+Scope: **Plans, Subscriptions, Payments, Customer limits, Suspend / Unlock**, plus the customer
+owner's login (create or invite), which the onboarding needs. SaaS billing stays completely separate
+from the Clients module's billing (`ClientDue`/`ClientPayment` are the customer's OWN clients).
+
+### 9.1 Data model (additive migration; platform tables, no `projectId`)
+
+| Table | Key columns |
+|---|---|
+| `Plan` | name, description, `priceMinor` (BigInt), currency, `interval` MONTH/YEAR, `trialDays`, limits: `maxWhatsAppAccounts`, `maxUsers`, `features` (keys from the existing feature catalogue), `aiEnabled`; `isActive` (archived plans stay on existing subscriptions) |
+| `Subscription` | `customerId`, plan **snapshot** (name, price, interval, limits copied at assignment, so editing a plan never silently changes a paying customer), `status`, `currentPeriodStart/End`, `trialEndsAt`, `graceDays`, `suspendedAt` + reason, `manualOverride` (never auto-suspended), `notes`; one current row per customer (partial unique), old rows kept as history |
+| `SubscriptionPayment` | `customerId`, `subscriptionId`, `amountMinor`, currency, method (cash / bank / bKash / Nagad / card / other), reference, `periodCoveredUntil`, `receivedAt`, `recordedBy`; reversal instead of edit (same rule as Clients payments: money rows are never rewritten) |
+| `SubscriptionEvent` | append-only history: created, plan changed, renewed, extended, payment recorded/reversed, entered grace, suspended (auto/manual), unlocked, cancelled — who, when, why |
+| `Project.billingHoldAt` | set while the customer's subscription holds the project; null otherwise (see 9.3) |
+
+### 9.2 Subscription states (one pure function, `subscriptionState(sub, now)`, unit-tested)
+
+`TRIALING` → `ACTIVE` → (period ends unpaid) `PAST_DUE` for `graceDays` → `SUSPENDED`.
+`SUSPENDED` → (payment / extend / manual unlock) `ACTIVE`. `CANCELLED` at the end of the period if
+the admin cancels. `manualOverride` = never moves to PAST_DUE/SUSPENDED by itself (Customer #1 and
+any customer you bill by hand). A **manual suspend** works in any state, immediately.
+
+### 9.3 Enforcement — reuse the existing SUSPENDED hold, never a second mechanism
+
+- A billing hold sets `Project.billingHoldAt`. The three places that already decide whether a
+  project acts — the worker's `activeProjectIds` / `projectIsOperating` and the web's read-only rule
+  (`isReadOnlyProjectStatus` via `requireActiveProject`) — treat a held project exactly like a
+  SUSPENDED one. Effect, as already built and tested for SUSPENDED: no automation, no AI, no outbound
+  sends, no scanners; **incoming messages still stored**; WhatsApp sessions kept; everything readable.
+- The operational status (`Project.status`) is never touched by billing, so unlocking can never
+  "un-suspend" something an admin suspended for another reason, and vice versa.
+- In the workspace, a held project shows a clear banner ("Your subscription needs renewal — contact
+  …") on every page; the owner sees a read-only **Subscription** page (plan, period, payments).
+- A worker loop (hourly) moves due subscriptions ACTIVE → PAST_DUE → SUSPENDED and records each
+  event; unlocking is immediate (the admin's action clears the hold and the caches).
+
+### 9.4 Limits
+
+- **Features**: the plan's feature list is applied to the project's existing `ProjectFeature`
+  entitlements when a plan is assigned or changed (existing enforcement in nav, pages, actions and
+  the worker; nothing new to forget). AI on/off = the existing AI feature switches.
+- **WhatsApp numbers / users**: checked inside the actions that create them (add account, give
+  project access / create login / accept invitation), under an advisory lock so two clicks cannot
+  pass a limit together. Lowering a plan deletes nothing: existing numbers and people keep working;
+  new ones are refused with the reason.
+
+### 9.5 Customer owner access
+
+The owner is a user whose access is **only** that customer's project, made its **Lead** (existing
+two-level permissions: full control of the project's own members and roles; no platform key can be
+assigned to a project role — already enforced by a database CHECK). Global role: a new built-in
+"Customer user" role with no platform keys. Two ways, both from the customer page:
+**Create login** (temporary password, must be changed at first sign-in) or **Invite** (single-use link,
+72 h, hashed in the database, opens a set-password page on the customer's own address; sent through
+the existing SMTP outbox or copied by hand). Revoke access / reset password from the same page.
+
+### 9.6 Main Admin UI
+
+- **Plans** page: create, edit, archive; shows which customers use each plan.
+- **Customer page** gains: Subscription card (status, period, days left, plan; Assign/Change plan,
+  Renew, Extend by N days, Record payment, Suspend now, Unlock, Cancel), Payments history, Events
+  timeline, Owner card (create login / invite / revoke).
+- **Customers list** gains status and expiry columns and filters (expiring in 7 days, past due,
+  suspended).
+- **Add customer** becomes the guided wizard: company → address → plan and dates → owner → review.
+
+### 9.7 Tests (throwaway database, each confirmed to fail without its protection)
+
+State machine (pure); hold blocks sends/automation in the worker but stores incoming messages;
+web read-only while held; unlock restores at once; manual override never auto-suspends; limits
+refuse the N+1th number/user (including two concurrent attempts); plan change applies features;
+payments never rewritten; owner sees only their project and holds no platform key; invitation is
+single-use and expires.
+
+### 9.8 Rollout safety for Customer #1
+
+The migration adds tables and one nullable column. Customer #1 gets a **manual-override** subscription
+("Manual — no expiry") when you assign one, or none at all — a customer without a subscription is
+never held. Nothing is enforced against Customer #1 unless you choose to.
+
+### 9.9 Decisions needed before building Phase 3
+
+1. **Currency**: BDT only, or several (each plan has one currency)?
+2. **Grace period** default after expiry (suggestion: 7 days)?
+3. **While suspended**: read-only access + renewal banner (recommended — owner can still see data and
+   messages keep being stored), or block sign-in entirely with only a renewal page?
+4. **Payment methods** to list (suggestion: Cash, Bank transfer, bKash, Nagad, Card, Other)?
+5. Should the **customer owner** see their subscription and payment history (recommended), and
+   receive **expiry reminder emails** (needs SMTP set up in Settings → Email)?
