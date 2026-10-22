@@ -61,7 +61,7 @@ async function signIn(
   password: string,
 ): Promise<LoginState> {
   const username = user.username;
-  // A Nexora support identity has no password that works: it is entered only through support access.
+  // A RELQIVO support identity has no password that works: it is entered only through support access.
   if (user.supportOperatorId) {
     await logSystemEvent("WARN", "auth", "LOGIN_BLOCKED_SUPPORT_IDENTITY", { username });
     return { error: GENERIC_ERROR };

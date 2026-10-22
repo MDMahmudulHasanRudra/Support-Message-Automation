@@ -9,7 +9,7 @@ import { isUniqueViolation } from "@/lib/prismaErrors";
 import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
 
 /**
- * The people who run the Nexora platform (SAAS_PLATFORM_PLAN.md §12). Every change needs the acting
+ * The people who run the RELQIVO platform (SAAS_PLATFORM_PLAN.md §12). Every change needs the acting
  * operator's own password, and nobody can lock the platform out: the last active operator cannot be
  * deactivated, and an operator cannot deactivate themselves.
  */

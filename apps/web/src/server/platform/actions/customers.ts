@@ -25,7 +25,7 @@ import { checkDomainBase, checkDomainHttps, domainNetwork } from "@/server/domai
 import { isUniqueViolation } from "@/lib/prismaErrors";
 
 /**
- * Nexora platform layer (SAAS_PLATFORM_PLAN.md §12): customers, their provisioning, their addresses,
+ * RELQIVO platform layer (SAAS_PLATFORM_PLAN.md §12): customers, their provisioning, their addresses,
  * and the platform's domain settings. Every action needs a signed-in platform operator and checks it
  * itself — a Server Action is a public endpoint whatever page shows its button. Platform rows, plus
  * provisioning a NEW customer's software; an existing customer's data is never read or changed here.

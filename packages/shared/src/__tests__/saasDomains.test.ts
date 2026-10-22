@@ -101,7 +101,7 @@ describe("what a hostname may serve (two layers)", () => {
     expect(hostServesCustomerSoftware({ kind: "ADMIN" })).toBe(false);
     expect(hostServesCustomerSoftware({ kind: "UNKNOWN" })).toBe(false);
   });
-  it("the Nexora platform on open and admin hosts only", () => {
+  it("the RELQIVO platform on open and admin hosts only", () => {
     expect(hostServesPlatform({ kind: "OPEN" })).toBe(true);
     expect(hostServesPlatform({ kind: "ADMIN" })).toBe(true);
     expect(hostServesPlatform({ kind: "CUSTOMER", customerId: "c2" })).toBe(false);

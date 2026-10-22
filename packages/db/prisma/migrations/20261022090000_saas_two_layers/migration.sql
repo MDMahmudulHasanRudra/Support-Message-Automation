@@ -5,7 +5,7 @@
 --     so every existing row keeps its meaning and nothing is rewritten;
 --   * role / department / job-title names become unique per customer (partial unique indexes);
 --   * a customer may now own several projects (the one-project-per-customer index is dropped);
---   * the Nexora platform layer gets its own operators and sessions, support access sessions and
+--   * the RELQIVO platform layer gets its own operators and sessions, support access sessions and
 --     platform email settings;
 --   * the "All Access" plan is created and preselected for NEW customers. No existing customer,
 --     subscription, project or user is changed.

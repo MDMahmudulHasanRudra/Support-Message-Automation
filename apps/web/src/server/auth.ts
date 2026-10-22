@@ -37,7 +37,7 @@ export interface Session {
   name: string;
   /** The customer whose copy of the software this person belongs to; null or absent = the original installation (SAAS_PLATFORM_PLAN.md §12). */
   tenant?: string | null;
-  /** Set when this is a Nexora operator's audited support session (§12): visible, time-limited, revocable. */
+  /** Set when this is a RELQIVO operator's audited support session (§12): visible, time-limited, revocable. */
   support?: SupportAccessInfo | null;
 }
 

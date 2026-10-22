@@ -14,7 +14,7 @@ import { customerOfTenant, currentTenant } from "@/server/tenant";
  * and people keep working; only adding a new one is refused, with the reason.
  *
  *   - WHATSAPP_ACCOUNTS: numbers in every workspace of the customer.
- *   - USERS: the customer's people (its owner included; Nexora support identities never counted).
+ *   - USERS: the customer's people (its owner included; RELQIVO support identities never counted).
  *     Checked when a NEW login is created — giving an existing person access to another workspace
  *     adds no user.
  */

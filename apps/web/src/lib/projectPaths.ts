@@ -32,7 +32,7 @@ export const WORKSPACE_HEADER = "x-softify-workspace";
  * §3.3). Always overwritten by the proxy, never taken from a client. Trusted because the app port is
  * reachable only through the reverse proxy, which passes the browser's hostname on.
  */
-export const HOST_HEADER = "x-nexora-host";
+export const HOST_HEADER = "x-relqivo-host";
 
 /**
  * The address the visitor used, for the proxy to forward as HOST_HEADER. `x-forwarded-host` first:
@@ -51,7 +51,7 @@ export function visitedHost(headers: Headers): string {
 export const LAST_PROJECT_COOKIE = "softify-last-project";
 
 /**
- * Paths that are not inside a project: sign-in, the project chooser, the Main Admin Portal, the Nexora
+ * Paths that are not inside a project: sign-in, the project chooser, the Main Admin Portal, the RELQIVO
  * platform, health,
  * framework assets. A link to one of these is never prefixed with the current project.
  */
@@ -60,7 +60,7 @@ const OUTSIDE_PROJECT = [
   /^\/open(\/|$|\?)/,
   /^\/invite\//,
   /^\/admin(\/|$|\?)/,
-  // The Nexora platform (Layer 1) and the support-access handoff (SAAS_PLATFORM_PLAN.md §12).
+  // The RELQIVO platform (Layer 1) and the support-access handoff (SAAS_PLATFORM_PLAN.md §12).
   /^\/platform(\/|$|\?)/,
   /^\/support-access\//,
   /^\/api\/health(\/|$|\?)/,

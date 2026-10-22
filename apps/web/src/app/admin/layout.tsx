@@ -14,7 +14,7 @@ export async function generateMetadata(): Promise<Metadata> {
 /**
  * A customer's own Main Admin Portal (MULTI_PROJECT_PLAN.md §8; SAAS_PLATFORM_PLAN.md §12), at /admin
  * — outside every project, inside one customer's software: its projects, users and roles only. Needs
- * `projects.view`; without it the portal is a 404, like a project the user cannot enter. The Nexora
+ * `projects.view`; without it the portal is a 404, like a project the user cannot enter. The RELQIVO
  * platform is a separate area (/platform) with its own sign-in.
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

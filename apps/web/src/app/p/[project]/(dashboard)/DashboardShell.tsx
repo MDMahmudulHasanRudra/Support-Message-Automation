@@ -147,7 +147,7 @@ export function DashboardShell({
   pageAccess?: SectionAccess | null;
   /** The workspace's subscription notice (SaaS), or null. A "danger" notice means the workspace is held. */
   billingNotice?: { tone: "danger" | "warning" | "info"; title: string; message: string } | null;
-  /** Set during a Nexora support session (SAAS_PLATFORM_PLAN.md §12): a banner on every page. */
+  /** Set during a RELQIVO support session (SAAS_PLATFORM_PLAN.md §12): a banner on every page. */
   supportSession?: SupportSessionBannerInfo | null;
   username: string;
   automationEnabled: boolean;

@@ -2,7 +2,7 @@ import { prisma as globalPrisma } from "@support-automation/db";
 import { subscriptionState, type SaasSubscriptionState } from "@support-automation/shared";
 
 /**
- * Central monitoring for the Nexora platform (SAAS_PLATFORM_PLAN.md §12). Two different questions,
+ * Central monitoring for the RELQIVO platform (SAAS_PLATFORM_PLAN.md §12). Two different questions,
  * kept apart on purpose because every customer shares ONE deployment:
  *   - PLATFORM health: the one worker, its loops, the shared queues and the database. A problem here
  *     affects every customer at once.

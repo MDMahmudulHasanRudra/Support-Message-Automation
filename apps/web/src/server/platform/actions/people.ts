@@ -33,7 +33,7 @@ export async function resetCustomerUserPassword(customerId: string, userId: stri
   ]);
   await logPlatformEvent("WARN", "Customer user's password reset", { customerId, username: user.username, by: access.operator.username }, { type: "Customer", id: customerId });
   await runWithTenant(tenant, () =>
-    logSystemEvent("WARN", "auth", "PASSWORD_RESET_BY_NEXORA_SUPPORT", { username: user.username, operator: access.operator.username }, { targetType: "User", targetId: user.id }),
+    logSystemEvent("WARN", "auth", "PASSWORD_RESET_BY_RELQIVO_SUPPORT", { username: user.username, operator: access.operator.username }, { targetType: "User", targetId: user.id }),
   );
   revalidatePath(`/platform/customers/${customerId}`);
   return { success: `${user.username} has a new password and was signed out everywhere. Share it privately.` };

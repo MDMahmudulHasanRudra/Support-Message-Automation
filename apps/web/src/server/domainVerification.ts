@@ -10,7 +10,7 @@ import { validateCustomerHostname, type DomainCheckStep, type DomainSettingsView
 
 /** What `/api/platform/domain-check` answers for a domain: a hash of its own token, never the token. */
 export function domainCheckAnswer(token: string): string {
-  return createHash("sha256").update(`nexora-domain-check:${token}`).digest("hex");
+  return createHash("sha256").update(`relqivo-domain-check:${token}`).digest("hex");
 }
 
 export interface DomainNetwork {

@@ -892,8 +892,8 @@ model User {
   /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
   customerId              String?
   customer                Customer?                  @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
-  /// Set on the support identity a Nexora operator uses inside this customer's workspace (never a
-  /// person's account; no password works for it; shown as "Nexora Support").
+  /// Set on the support identity a RELQIVO operator uses inside this customer's workspace (never a
+  /// person's account; no password works for it; shown as "RELQIVO Support").
   supportOperatorId       String?
   supportOperator         PlatformOperator?          @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
 
@@ -975,7 +975,7 @@ model UserSession {
   /// The hostname the session was created on (SAAS_PLATFORM_PLAN.md §3.3). A session is refused on
   /// any other hostname. Null for sessions created before this column existed (accepted anywhere).
   hostname               String?
-  /// Set when this is a Nexora operator's support session: it ends with that support session.
+  /// Set when this is a RELQIVO operator's support session: it ends with that support session.
   supportAccessSessionId String?
   supportAccessSession   SupportAccessSession? @relation(fields: [supportAccessSessionId], references: [id], onDelete: Cascade)
 
@@ -7342,7 +7342,7 @@ model UserInvitation {
   @@index([customerId])
 }
 
-/// A person who runs the Nexora platform (SAAS_PLATFORM_PLAN.md §12) — Layer 1. Not a customer user,
+/// A person who runs the RELQIVO platform (SAAS_PLATFORM_PLAN.md §12) — Layer 1. Not a customer user,
 /// holds no customer role, and signs in only to the platform area with its own session cookie.
 model PlatformOperator {
   id                    String                    @id @default(cuid())
@@ -7378,7 +7378,7 @@ model PlatformOperatorSession {
   @@index([operatorId])
 }
 
-/// A Nexora operator's time-limited, audited entry into ONE customer's workspace. Started on the
+/// A RELQIVO operator's time-limited, audited entry into ONE customer's workspace. Started on the
 /// platform with a reason and the operator's password; handed to the customer's own address by a
 /// single-use ticket (stored only as a hash, valid one minute); the browser session it creates
 /// there uses the operator's support identity in that customer and ends with this row.

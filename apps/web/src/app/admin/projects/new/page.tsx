@@ -8,7 +8,7 @@ export const metadata = { title: "Create project" };
 
 export default async function NewProjectPage() {
   await requireMainAdminManagePage();
-  // The form starts with the next free "Nexora Project N" (BRANDING.md §Defaults); the admin can type anything.
+  // The form starts with the next free "RELQIVO Project N" (BRANDING.md §Defaults); the admin can type anything.
   const existing = await platformPrisma.project.findMany({ select: { name: true, slug: true } });
   return (
     <div className="max-w-2xl">

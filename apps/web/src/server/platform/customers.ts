@@ -2,7 +2,7 @@ import { customerProjectWhere, prisma as globalPrisma } from "@support-automatio
 import { isDomainStatus, requiredDnsRecords, type DomainCheckStep, type DomainStatus } from "@support-automation/shared";
 
 /**
- * Read-only loaders for the Nexora platform's customer and domain pages (SAAS_PLATFORM_PLAN.md §12,
+ * Read-only loaders for the RELQIVO platform's customer and domain pages (SAAS_PLATFORM_PLAN.md §12,
  * Layer 1). They read across customers on purpose, with the unscoped client, and only counts and
  * names — never a conversation. The pages that call these are gated by `requireOperatorPage`; these
  * never decide access themselves.
@@ -129,7 +129,7 @@ export interface CustomerDetail {
   createdAt: string;
   isFounding: boolean;
   projects: Array<{ id: string; name: string; slug: string; status: string; whatsappNumbers: number }>;
-  /** People with a login in this customer's software (Nexora support identities not counted). */
+  /** People with a login in this customer's software (RELQIVO support identities not counted). */
   people: number;
   domains: DomainView[];
 }

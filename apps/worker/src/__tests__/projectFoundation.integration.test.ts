@@ -25,11 +25,11 @@ describe("ISP Digital is the original installation", () => {
     const project = await prisma.project.findUniqueOrThrow({ where: { id: ISP_DIGITAL } });
     expect(project.status).toBe("ACTIVE");
     // An install that existed before 21 Oct 2026 keeps "ISP Digital"; a database created after it
-    // starts as "Nexora Project 1" (20261021090000_nexora_white_label_defaults). Either is correct.
+    // starts as "RELQIVO Project 1" (20261021090000_relqivo_white_label_defaults). Either is correct.
     expect([
       { name: project.name, slug: project.slug },
     ]).toContainEqual(
-      project.slug === "isp-digital" ? { name: "ISP Digital", slug: "isp-digital" } : { name: "Nexora Project 1", slug: "nexora-project-1" },
+      project.slug === "isp-digital" ? { name: "ISP Digital", slug: "isp-digital" } : { name: "RELQIVO Project 1", slug: "relqivo-project-1" },
     );
   });
 

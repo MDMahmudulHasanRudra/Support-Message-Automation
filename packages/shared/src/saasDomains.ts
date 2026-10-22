@@ -129,7 +129,7 @@ export function classifyHost(rawHost: string | null | undefined, settings: Domai
  * Two layers, two kinds of address (SAAS_PLATFORM_PLAN.md §12):
  *   - the customer's software — its projects AND its own Main Admin portal — is served on that
  *     customer's address (and on an open address, as before routing);
- *   - the Nexora platform is served on the admin address (and on an open address, for recovery).
+ *   - the RELQIVO platform is served on the admin address (and on an open address, for recovery).
  * An unknown address serves neither.
  */
 export function hostServesCustomerSoftware(scope: HostScope): boolean {

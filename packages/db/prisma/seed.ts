@@ -43,7 +43,7 @@ async function main() {
 
   // Multi-project (MULTI_PROJECT_PLAN.md): the original installation's project (id
   // proj_isp_digital) is created by the 20260928150000_projects_foundation migration, and a fresh
-  // install names it "Nexora Project 1" (20261021090000_nexora_white_label_defaults); an existing
+  // install names it "RELQIVO Project 1" (20261021090000_relqivo_white_label_defaults); an existing
   // install keeps its name (ISP Digital on the original one). On a fresh install the seeded
   // admin is created AFTER that migration ran, so it would have no project access — give it access
   // to ISP Digital. Access only: what the admin may do is still its existing role, set below.
@@ -51,7 +51,7 @@ async function main() {
   await prisma.project.upsert({
     where: { id: ISP_DIGITAL },
     update: {},
-    create: { id: ISP_DIGITAL, name: "Nexora Project 1", slug: "nexora-project-1", status: "ACTIVE" },
+    create: { id: ISP_DIGITAL, name: "RELQIVO Project 1", slug: "relqivo-project-1", status: "ACTIVE" },
   });
   await prisma.projectAccess.upsert({
     where: { projectId_userId: { projectId: "proj_isp_digital", userId: admin.id } },

@@ -8,12 +8,12 @@ import { currentHostScope, requestHostname } from "@/server/hostScope";
 import { hostServesPlatform } from "@support-automation/shared";
 
 /**
- * The Nexora platform's own sign-in (SAAS_PLATFORM_PLAN.md §12, Layer 1). Platform operators are
+ * The RELQIVO platform's own sign-in (SAAS_PLATFORM_PLAN.md §12, Layer 1). Platform operators are
  * not customer users: their accounts, sessions and cookie are separate, the cookie is sent only to
  * /platform, and nothing a customer's role grants opens anything here — or the reverse.
  */
 
-export const PLATFORM_COOKIE = "nexora_platform_session";
+export const PLATFORM_COOKIE = "relqivo_platform_session";
 const LIFETIME_HOURS = 12;
 /** Sensitive actions (support access, operators, platform email) need the password re-entered this recently. */
 export const STEP_UP_MINUTES = 10;
@@ -77,7 +77,7 @@ export async function requireOperatorPage(): Promise<PlatformOperatorSession> {
 
 /** For a platform Server Action (a public endpoint): the operator, or a refusal to show. */
 export async function requireOperatorAction(): Promise<{ operator: PlatformOperatorSession } | { denied: string }> {
-  if (!hostServesPlatform(await currentHostScope())) return { denied: "The Nexora platform is not available on this address." };
+  if (!hostServesPlatform(await currentHostScope())) return { denied: "The RELQIVO platform is not available on this address." };
   const operator = await getOperator();
   return operator ? { operator } : { denied: "Your platform session has ended. Sign in again." };
 }

@@ -246,7 +246,7 @@ export interface CustomerPerson {
   lastLoginAt: string | null;
 }
 
-/** The people with a login in one customer's software. Nexora support identities are not listed. */
+/** The people with a login in one customer's software. RELQIVO support identities are not listed. */
 export async function customerPeople(customerId: string): Promise<CustomerPerson[]> {
   const customer = await globalPrisma.customer.findUnique({ where: { id: customerId }, select: { isFounding: true } });
   if (!customer) return [];
@@ -309,7 +309,7 @@ export function newInvitationToken(): { token: string; tokenHash: string } {
 }
 
 export function hashInvitationToken(token: string): string {
-  return createHash("sha256").update(`nexora-invitation:${token}`).digest("hex");
+  return createHash("sha256").update(`relqivo-invitation:${token}`).digest("hex");
 }
 
 /**

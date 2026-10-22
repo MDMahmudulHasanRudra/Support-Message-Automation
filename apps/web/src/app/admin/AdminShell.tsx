@@ -87,7 +87,7 @@ export function AdminShell({
   projects: SwitcherProject[];
   canCreate: boolean;
   onLogout: () => Promise<void>;
-  /** Set during a Nexora support session (SAAS_PLATFORM_PLAN.md §12): a banner on every page. */
+  /** Set during a RELQIVO support session (SAAS_PLATFORM_PLAN.md §12): a banner on every page. */
   supportSession?: SupportSessionBannerInfo | null;
 }) {
   const pathname = usePathname();
