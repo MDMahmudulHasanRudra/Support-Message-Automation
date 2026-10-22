@@ -99,7 +99,8 @@ describe("the constraints later phases depend on", () => {
     // + the seven Clients v3 tables (ClientModuleSettings, ClientPayment, ClientPaymentAllocation,
     //   ClientPhoto, ClientSubscription, ClientWhatsAppGroupLink, ListViewPreference — migration
     //   20261017100000_clients_v3).
-    expect(refusing).toHaveLength(121);
+    // + WhatsAppPicture (WHATSAPP_AVATARS.md, 20261023090000_whatsapp_pictures).
+    expect(refusing).toHaveLength(122);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -126,8 +127,8 @@ describe("the constraints later phases depend on", () => {
     // + the four Mood Detection tables + the three Support Assignment tables + PersonalChatReview
     // + the nine Google Sheets tables + the four Messaging Channels tables + the five Client Management
     // tables + the three client billing tables + the chat-link table + the two email tables + ProjectRole
-    // + ProjectMemberRole + the seven Clients v3 tables) + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(124);
+    // + ProjectMemberRole + the seven Clients v3 tables + WhatsAppPicture) + SystemLog + ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(125);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

@@ -5,11 +5,14 @@ import { hasPermission } from "@/server/permissions";
 import { isUnifiedReportingEnabled } from "@/server/unifiedReporting";
 import type { Session } from "@/server/auth";
 import { messageKeySql } from "@/server/messageIdentity";
+import { activeDisabledFeatures } from "@/server/projectFeatures";
 import {
   createSenderResolver,
   describeSenderId,
   isPersonKind,
   parseWhatsAppId,
+  resolveContactPhone,
+  type ContactPhone,
   SENDER_MATCH_LABELS,
   type SenderMatchStatus,
   type WhatsAppIdKind,
@@ -50,6 +53,12 @@ export interface ContactProfile {
   kind: WhatsAppIdKind | null;
   /** "+8801…" — only when the id IS a phone number. */
   phone: string | null;
+  /**
+   * The number to show and where it came from (WHATSAPP_AVATARS.md): WhatsApp itself, the Team
+   * Members record (only for a viewer who may see the roster) or the linked client record (only for
+   * one who may see clients). A LID is never read as a number: no evidence = UNAVAILABLE.
+   */
+  phoneInfo: ContactPhone;
   /** The WhatsApp id itself (a LID or the number's digits). */
   whatsappId: string | null;
   /** WhatsApp display names seen on this sender's messages, newest first. */
@@ -199,10 +208,18 @@ export async function getContactProfile(session: Session, accountId: string, sen
 
   const canLink = roster.canLink && resolution.status === "UNRESOLVED";
   const canPreviewImpact = canLink ? await isUnifiedReportingEnabled() : false;
+  const member = roster.canViewRoster && resolution.memberId ? roster.members.find((m) => m.id === resolution.memberId) : undefined;
+  const phoneInfo = resolveContactPhone({
+    senderPhone: user,
+    senderJid: jid,
+    rosterPhone: member ? { phoneNumber: member.phoneNumber, whatsappId: member.whatsappId } : null,
+    clientPhone: personal?.chatId ? await linkedClientPhone(session, accountId, personal.chatId) : null,
+  });
   return {
     senderId: jid ?? user,
     kind: described.kind,
     phone: described.phone,
+    phoneInfo,
     whatsappId: described.id,
     names: names.map((n) => n.name),
     messageCount: Number(row?.messages ?? 0),
@@ -389,4 +406,19 @@ export async function getGroupProfile(session: Session, groupId: string): Promis
     live,
     canRequestLive: roster.canLink,
   };
+}
+
+/**
+ * The phone number on the client record this personal chat is linked to (Clients → link a WhatsApp
+ * chat), for a viewer who may see clients. A trusted mapping somebody made on purpose — never a match
+ * by digits.
+ */
+async function linkedClientPhone(session: Session, accountId: string, chatId: string): Promise<string | null> {
+  if ((await activeDisabledFeatures()).has("CLIENT_CENTER") || !(await hasPermission(session, "clients.view"))) return null;
+  const link = await prisma.clientWhatsAppChatLink.findFirst({
+    where: { accountId, chatId, unlinkedAt: null },
+    select: { client: { select: { channels: { where: { kind: { in: ["PHONE", "WHATSAPP"] } }, select: { value: true, isPrimary: true, kind: true } } } } },
+  });
+  const channels = [...(link?.client.channels ?? [])].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || (a.kind === "WHATSAPP" ? -1 : 1));
+  return channels[0]?.value ?? null;
 }

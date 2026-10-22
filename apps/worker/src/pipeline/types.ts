@@ -1,4 +1,4 @@
-import type { MessageMediaKind, RichContent } from "@support-automation/shared";
+import type { MessageMediaKind, PictureRef, RichContent } from "@support-automation/shared";
 
 /** Provider-agnostic shape of a message event, as delivered by any WhatsAppProvider. */
 export interface RawIncomingMessage {
@@ -42,6 +42,11 @@ export interface RawIncomingMessage {
   ackLevel?: number | null;
   /** A poll or a location, as WhatsApp described it (display only; `body` stays the text). */
   richContent?: RichContent | null;
+  /**
+   * Pictures WhatsApp already attached to this event (WHATSAPP_AVATARS.md): the sender's, and for a
+   * group the group's own icon. Addresses are pre-checked (`pictureRefFromThumb`); absent = none.
+   */
+  pictures?: { sender: PictureRef | null; group: PictureRef | null } | null;
 }
 
 /** A change to a message already sent or received, reported by the provider after the fact. */

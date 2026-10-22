@@ -10,7 +10,8 @@ export default async function PlansPage() {
   await requireOperatorPage();
   const canManage = true;
   const [plans, settings] = await Promise.all([listPlans(), getBillingSettings()]);
-  const features = PROJECT_FEATURES.map((f) => ({ key: f.key, label: f.label, defaultEnabled: f.defaultEnabled }));
+  // A switch that needs its own approval (manualOnly) is never part of a plan, so it is not offered here.
+  const features = PROJECT_FEATURES.filter((f) => !("manualOnly" in f && f.manualOnly)).map((f) => ({ key: f.key, label: f.label, defaultEnabled: f.defaultEnabled }));
   return (
     <div className="max-w-4xl space-y-6">
       <PageHeader

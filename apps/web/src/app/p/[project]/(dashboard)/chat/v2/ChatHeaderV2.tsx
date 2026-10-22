@@ -1,6 +1,7 @@
 import { ArrowLeft, Smartphone, User, Users } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import type { ReactNode } from "react";
+import { AvatarFace } from "../AvatarFace";
 
 /**
  * The v2 conversation header (CHAT_UI_V2.md §13): a large round avatar, the name, which number the
@@ -12,6 +13,7 @@ export function ChatHeaderV2({
   infoHref,
   infoTitle,
   avatar,
+  picturePath,
   isGroup,
   name,
   accountLabel,
@@ -23,6 +25,8 @@ export function ChatHeaderV2({
   infoHref: string;
   infoTitle: string;
   avatar: { background: string; color: string; initials: string };
+  /** A stored WhatsApp picture (WHATSAPP_AVATARS.md); absent = the initials. */
+  picturePath?: string | null;
   isGroup: boolean;
   name: string;
   accountLabel: string;
@@ -50,9 +54,9 @@ export function ChatHeaderV2({
         <span
           aria-hidden
           style={{ background: avatar.background, color: avatar.color }}
-          className="flex size-10 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] sm:size-12"
+          className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full text-[13px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] sm:size-12"
         >
-          {isGroup ? <Users className="size-5 sm:size-6" /> : avatar.initials}
+          <AvatarFace path={picturePath}>{isGroup ? <Users className="size-5 sm:size-6" /> : avatar.initials}</AvatarFace>
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)] group-hover/head:underline sm:text-[16px]">{name}</span>

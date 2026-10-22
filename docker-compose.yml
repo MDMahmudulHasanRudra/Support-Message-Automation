@@ -83,6 +83,8 @@ services:
       # SaaS emergency switch (SAAS_PLATFORM_PLAN.md §8): "true" forces hostname routing OFF whatever
       # the Domains page says — every address behaves as before. Set in .env, then recreate the app.
       SAAS_HOST_ROUTING_DISABLED: ${SAAS_HOST_ROUTING_DISABLED:-}
+      # WhatsApp profile pictures, emergency stop (WHATSAPP_AVATARS.md): "true" serves no picture, whatever any project says.
+      WHATSAPP_AVATARS_DISABLED: ${WHATSAPP_AVATARS_DISABLED:-}
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
       # Softify Forge — product knowledge from the ISPDIGITAL repository. Both apps read these:
       # the worker to do the reading, the dashboard for its settings page. Unset means the
@@ -166,6 +168,8 @@ services:
       PLATFORM_SMTP_PASSWORD: ${PLATFORM_SMTP_PASSWORD:-}
       PLATFORM_SMTP_FROM_ADDRESS: ${PLATFORM_SMTP_FROM_ADDRESS:-}
       PLATFORM_SMTP_FROM_NAME: ${PLATFORM_SMTP_FROM_NAME:-}
+      # WhatsApp profile pictures, emergency stop (WHATSAPP_AVATARS.md): "true" records and fetches nothing.
+      WHATSAPP_AVATARS_DISABLED: ${WHATSAPP_AVATARS_DISABLED:-}
       # WhatsApp media files (MEDIA_STORAGE.md): downloaded here in the background, kept on the
       # whatsapp_media volume shared with the dashboard. Below MEDIA_MIN_FREE_DISK_MB of free space
       # nothing new is written — this disk is shared with Postgres, and a full disk stops it too.

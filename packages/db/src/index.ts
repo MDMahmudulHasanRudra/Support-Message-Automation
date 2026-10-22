@@ -132,7 +132,7 @@ export const ORIGINAL_PROJECT_ID = "proj_isp_digital";
 /** Models whose rows belong to exactly one project (the 70 of MULTI_PROJECT_PLAN.md §3). */
 export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   // roots
-  "WhatsAppAccount", "WhatsAppServiceRoute", "InternalTeamMember", "Team", "TeamMembership", "AutomationRule",
+  "WhatsAppAccount", "WhatsAppPicture", "WhatsAppServiceRoute", "InternalTeamMember", "Team", "TeamMembership", "AutomationRule",
   "AiProvider", "AiModelConfig", "AiKnowledgeItem", "AiKnowledgeVersion", "KnowledgeImport", "SupportPriorityPolicy",
   "SupportKeyword", "SupportRule", "SupportRuleKeyword", "SupportRuleGroup", "SupportRuleTeamMember", "ShiftTemplate",
   "LeaveType", "Holiday", "WeeklyScheduleEntry", "DutyAssignment", "DutyAssignmentChange", "LeaveRequest",
@@ -676,6 +676,8 @@ export async function applyPlanFeatures(
 ): Promise<void> {
   for (const projectId of projectIds) {
     for (const feature of PROJECT_FEATURES) {
+      // A switch that needs its own approval is never turned on or off by a plan.
+      if ("manualOnly" in feature && feature.manualOnly) continue;
       const enabled = plan.allModules || plan.features.includes(feature.key);
       await db.projectFeature.upsert({
         where: { projectId_key: { projectId, key: feature.key } },
