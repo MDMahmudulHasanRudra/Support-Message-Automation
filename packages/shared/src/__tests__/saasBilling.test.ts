@@ -107,8 +107,10 @@ describe("limits and plans", () => {
     form.append("features", "WHATSAPP_CHAT");
     form.append("features", "NOT_A_FEATURE");
     expect(parsePlanInput(form, ["WHATSAPP_CHAT", "AI_REPLY"])).toEqual({
-      plan: { name: "Starter", description: null, priceMinor: 150000n, currency: "BDT", interval: "MONTH", trialDays: 14, maxWhatsAppAccounts: 2, maxUsers: null, features: ["WHATSAPP_CHAT"] },
+      plan: { name: "Starter", description: null, priceMinor: 150000n, currency: "BDT", interval: "MONTH", trialDays: 14, maxWhatsAppAccounts: 2, maxUsers: null, features: ["WHATSAPP_CHAT"], allModules: false },
     });
+    form.set("allModules", "on");
+    expect(parsePlanInput(form, ["WHATSAPP_CHAT"])).toMatchObject({ plan: { allModules: true } });
     form.set("currency", "USD");
     form.set("price", "abc");
     expect(parsePlanInput(form, [])).toMatchObject({ errors: { currency: expect.any(String), priceMinor: expect.any(String) } });

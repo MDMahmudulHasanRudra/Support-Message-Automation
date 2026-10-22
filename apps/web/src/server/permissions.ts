@@ -1,4 +1,3 @@
-import { currentHostScope } from "@/server/hostScope";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { headers } from "next/headers";
@@ -8,11 +7,11 @@ import {
   isPermissionKey,
   isProjectAssignableKey,
   levelAllows,
-  keysOnHost,
   resolveRoleKeys,
   type PermissionKey,
   type ProjectAccessLevelValue,
   type ProjectMembership,
+  VENDOR_PERMISSION_KEYS,
 } from "@support-automation/shared";
 import { activeProjectSlug, requireActiveProject } from "@/server/projectContext";
 import { getSession, type Session } from "@/server/auth";
@@ -175,13 +174,15 @@ async function accessForRequest(session: Session): Promise<{ keys: Set<string>; 
     },
   });
   if (!user || !user.isActive) return null;
-  const globalKeys = user.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
-  // Platform keys exist only on an address that may serve the Main Admin Portal (SaaS §3.3). With
-  // hostname routing off every address is OPEN and nothing is removed.
-  const scope = await currentHostScope();
-  if (projectRolesDisabled()) return { keys: keysOnHost(new Set(globalKeys), scope), pages: null };
+  // A customer's own Main Admin keeps every key on that customer's address (SAAS_PLATFORM_PLAN.md §12);
+  // what any key can reach is confined to the person's customer by the data layer (server/db.ts). The
+  // only keys a customer never holds are the product's own (VENDOR_PERMISSION_KEYS): they work only
+  // for the original installation's people.
+  const vendorOnly = (session.tenant ?? null) === null ? null : new Set(VENDOR_PERMISSION_KEYS);
+  const globalKeys = (user.permissionModule?.permissions.map((p) => p.permission.key) ?? []).filter((key) => !vendorOnly?.has(key));
+  if (projectRolesDisabled()) return { keys: new Set(globalKeys), pages: null };
   const membership = await membershipInThisProject(session.userId);
-  const keys = keysOnHost(resolveRoleKeys(globalKeys, membership), scope);
+  const keys = resolveRoleKeys(globalKeys, membership);
   const pagesApply =
     membership !== null &&
     !membership.isLead &&

@@ -37,7 +37,7 @@ export async function createPermissionModule(
   const adminOnly = await adminGrantRefusal(session.userId, keys);
   if (adminOnly) return { error: adminOnly };
 
-  const existing = await prisma.permissionModule.findUnique({ where: { name } });
+  const existing = await prisma.permissionModule.findFirst({ where: { name } });
   if (existing) return { error: `A Permission Module named "${name}" already exists.` };
 
   const permissions = keys.length
@@ -93,7 +93,7 @@ export async function updatePermissionModule(
   // `name` is unique. Renaming onto another module's name threw a raw P2002 inside the transaction
   // below and replaced the page; create already checked this, update did not.
   if (name !== target.name) {
-    const clash = await prisma.permissionModule.findUnique({ where: { name }, select: { id: true } });
+    const clash = await prisma.permissionModule.findFirst({ where: { name }, select: { id: true } });
     if (clash && clash.id !== id) return { error: `A Permission Module named "${name}" already exists.` };
   }
 

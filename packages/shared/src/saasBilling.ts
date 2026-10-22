@@ -263,6 +263,8 @@ export interface PlanInput {
   maxWhatsAppAccounts: number | null;
   maxUsers: number | null;
   features: string[];
+  /** Every module, including ones added later ("All Access"); `features` is then ignored. */
+  allModules: boolean;
 }
 
 const optionalCount = (raw: unknown): number | null | "invalid" => {
@@ -293,7 +295,8 @@ export function parsePlanInput(
   if (maxWhatsAppAccounts === "invalid") errors.maxWhatsAppAccounts = "Enter a whole number, or leave it empty for no limit.";
   const maxUsers = optionalCount(form.get("maxUsers"));
   if (maxUsers === "invalid") errors.maxUsers = "Enter a whole number, or leave it empty for no limit.";
-  const features = [...new Set(form.getAll("features").map(String))].filter((k) => knownFeatures.includes(k));
+  const allModules = form.get("allModules") === "on";
+  const features = allModules ? [] : [...new Set(form.getAll("features").map(String))].filter((k) => knownFeatures.includes(k));
   if (Object.keys(errors).length > 0) return { errors };
   return {
     plan: {
@@ -306,6 +309,7 @@ export function parsePlanInput(
       maxWhatsAppAccounts: maxWhatsAppAccounts as number | null,
       maxUsers: maxUsers as number | null,
       features,
+      allModules,
     },
   };
 }

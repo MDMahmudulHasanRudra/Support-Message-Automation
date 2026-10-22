@@ -1,5 +1,5 @@
 import { requireAdminPortalHost } from "@/server/hostScope";
-import { workspaceBillingNotice } from "@/server/saasBilling";
+import { workspaceBillingNotice } from "@/server/platform/billing";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/server/db";
 import { requireSession } from "@/server/auth";
@@ -50,13 +50,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
     getPageAccess(session),
   ]);
 
-  // SaaS (SAAS_PLATFORM_PLAN.md section 10): a held workspace tells everybody why nothing saves;
-  // "payment due" and "ends soon" go to the people who can act on them (the Lead, a Main Admin).
-  const billingNotice = await workspaceBillingNotice(project.id, grantedKeys.includes("project_members.manage"));
+  // SaaS (SAAS_PLATFORM_PLAN.md §10, §12): a held workspace tells everybody why nothing saves;
+  // "payment due" and "ends soon" go to the people who can act on them — the customer's Main Admins.
+  const billingNotice = await workspaceBillingNotice(project.id, grantedKeys.includes("projects.manage"));
 
   return (
     <DashboardShell
       billingNotice={billingNotice}
+      supportSession={session.support ? { operatorUsername: session.support.operatorUsername, reason: session.support.reason, expiresAt: session.support.expiresAt.toISOString() } : null}
       username={session.username}
       automationEnabled={Boolean(settings?.automationEnabled)}
       automationMode={settings?.mode ?? "SAFE_AUTO_REPLY"}

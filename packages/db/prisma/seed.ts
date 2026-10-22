@@ -1,11 +1,9 @@
 import { PrismaClient } from "@prisma/client";
+import { ensureDefaultRoles } from "../src/index";
 import { randomBytes, scryptSync } from "node:crypto";
 import {
   DEFAULT_SHIFT_TEMPLATES,
   PERMISSIONS,
-  READ_ONLY_PERMISSION_KEYS,
-  SUPPORT_MANAGER_PERMISSION_KEYS,
-  SUPPORT_AGENT_PERMISSION_KEYS,
 } from "@support-automation/shared";
 
 const prisma = new PrismaClient();
@@ -223,47 +221,14 @@ async function main() {
 
   const allPermissionKeys = PERMISSIONS.map((p) => p.key);
   const keysCreatedNow = new Set(allPermissionKeys.filter((key) => !keysBefore.has(key)));
-  const defaultModules: Array<{ name: string; description: string; keys: readonly string[] }> = [
-    { name: "Administrator", description: "Full access to every module.", keys: allPermissionKeys },
-    {
-      name: "Support Manager",
-      description: "Manages automation rules and views App Users.",
-      keys: SUPPORT_MANAGER_PERMISSION_KEYS,
-    },
-    {
-      name: "Support Agent",
-      description: "Creates and edits automation rules.",
-      keys: SUPPORT_AGENT_PERMISSION_KEYS,
-    },
-    { name: "Read Only", description: "View-only access across every module.", keys: READ_ONLY_PERMISSION_KEYS },
-  ];
-
+  // The standard roles, ADD-ONLY (PROJECT_ROLES.md, audit finding 2; see ensureDefaultRoles): for the
+  // original installation, and for every later customer so a new key reaches each customer's
+  // Administrator too (SAAS_PLATFORM_PLAN.md §12). Nothing is ever removed.
   const administratorModuleId: { current?: string } = {};
-  for (const mod of defaultModules) {
-    // ADD-ONLY (PROJECT_ROLES.md, audit finding 2). This used to delete every permission of the four
-    // default roles and re-create them on EVERY run — and the compose `migrate` service runs this on
-    // every deploy — so any edit to a default role was silently undone by the next deploy, and for a
-    // moment between the delete and the create a live Administrator held no permission at all.
-    //   - a default role created now gets its default keys;
-    //   - Administrator is the Main Admin role and always holds every key: missing ones are added;
-    //   - the other defaults get only keys that are NEW in this run and belong to their default set.
-    //     A key introduced by a migration instead must grant it in that migration (as they already do).
-    // Nothing is ever removed here. The module's own name/isSystem are never overwritten either.
-    const existing = await prisma.permissionModule.findUnique({ where: { name: mod.name }, select: { id: true } });
-    const permissionModule =
-      existing ??
-      (await prisma.permissionModule.create({ data: { name: mod.name, description: mod.description, isSystem: true }, select: { id: true } }));
-    const keysToAdd = !existing || mod.name === "Administrator" ? [...mod.keys] : mod.keys.filter((key) => keysCreatedNow.has(key));
-    if (keysToAdd.length > 0) {
-      const permissionRows = await prisma.permission.findMany({ where: { key: { in: keysToAdd } }, select: { id: true } });
-      await prisma.permissionModulePermission.createMany({
-        data: permissionRows.map((p) => ({ permissionModuleId: permissionModule.id, permissionId: p.id })),
-        skipDuplicates: true,
-      });
-    }
-    if (mod.name === "Administrator") administratorModuleId.current = permissionModule.id;
-  }
-  console.log(`Seeded ${defaultModules.length} default Permission Modules`);
+  administratorModuleId.current = (await ensureDefaultRoles(prisma, null, keysCreatedNow)).administratorId;
+  const customers = await prisma.customer.findMany({ where: { isFounding: false }, select: { id: true } });
+  for (const customer of customers) await ensureDefaultRoles(prisma, customer.id, keysCreatedNow);
+  console.log(`Synced the default roles of the original installation and ${customers.length} customer(s)`);
 
   // The pre-existing seeded admin predates the permission system — give it Administrator so
   // nothing about that login changes, without ever overwriting a module an operator already

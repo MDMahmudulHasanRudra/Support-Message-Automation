@@ -1,11 +1,19 @@
 import "./helpers/requireTestDatabase";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createProjectWithDefaults, ORIGINAL_PROJECT_ID, prisma as rawPrisma } from "@support-automation/db";
 import { forgetProjectFeatureStates } from "@/server/projectFeatures";
 import { chooseWorkspaceProject, workspaceProjects } from "@/server/workspace";
 import { workspaceTabsFor } from "@/lib/workspace";
 import type { Session } from "@/server/auth";
+
+// Called outside any request, as the original installation on an open address (SAAS_PLATFORM_PLAN.md §12):
+// no session cookie and no host, so the customer-scoped client resolves to the original installation.
+vi.mock("next/headers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/headers")>()),
+  headers: async () => new Headers(),
+  cookies: async () => ({ get: () => undefined, set: () => undefined, delete: () => undefined }),
+}));
 
 /**
  * The Main Admin Workspace's server half (MAIN_ADMIN_WORKSPACE.md §3): which projects the tabs can

@@ -2,9 +2,10 @@
 
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { Briefcase, Building2, ChevronRight, CreditCard, FolderKanban, Globe, LayoutDashboard, LogOut, Palette, ShieldCheck } from "lucide-react";
+import { Building2, ChevronRight, FolderKanban, LayoutDashboard, LogOut, Palette, ShieldCheck } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
+import { SupportSessionBanner, type SupportSessionBannerInfo } from "@/components/SupportSessionBanner";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
 import { navGroupsFor, type NavLink } from "@/app/p/[project]/(dashboard)/navigation";
 import { isGlobalPage, workspaceOpenHref } from "@/lib/workspace";
@@ -42,9 +43,6 @@ function buildSections(granted: ReadonlySet<string>): Array<{ title: string; ite
         { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
         { href: "/admin/projects", label: "Projects", icon: FolderKanban, exact: false },
         // SaaS (SAAS_PLATFORM_PLAN.md): customers and the addresses that open their workspaces.
-        { href: "/admin/customers", label: "Customers", icon: Briefcase, exact: false },
-        { href: "/admin/domains", label: "Domains", icon: Globe, exact: false },
-        { href: "/admin/plans", label: "Plans", icon: CreditCard, exact: false },
         ...(granted.has("configuration.view") ? [{ href: "/admin/configuration", label: "Configuration", icon: Building2, exact: false }] : []),
         // Users & Permissions: the overview, then App Users and Permission Modules (the same in every
         // project, opened without project tabs) — one place for every login and every role.
@@ -80,6 +78,7 @@ export function AdminShell({
   canCreate,
   onLogout,
   grantedKeys,
+  supportSession,
 }: {
   children: ReactNode;
   /** Permission keys the role grants — which workspace modules to offer. Presentation only. */
@@ -88,6 +87,8 @@ export function AdminShell({
   projects: SwitcherProject[];
   canCreate: boolean;
   onLogout: () => Promise<void>;
+  /** Set during a Nexora support session (SAAS_PLATFORM_PLAN.md §12): a banner on every page. */
+  supportSession?: SupportSessionBannerInfo | null;
 }) {
   const pathname = usePathname();
   const sections = useMemo(() => buildSections(new Set(grantedKeys)), [grantedKeys]);
@@ -153,6 +154,7 @@ export function AdminShell({
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {supportSession ? <SupportSessionBanner info={supportSession} /> : null}
         <header className="flex h-13 shrink-0 items-center gap-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-[13px] sm:px-6">
           <span className="shrink-0 font-medium text-[color:var(--color-accent)]">Main Admin</span>
           <ChevronRight className="size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)]" aria-hidden />

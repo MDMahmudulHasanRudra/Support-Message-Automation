@@ -4,7 +4,6 @@
  * reading of every rule.
  */
 
-import { MAIN_ADMIN_CATEGORY, PERMISSIONS } from "./permissions.js";
 
 /** Labels no customer may claim, whatever the settings add. */
 export const BUILT_IN_RESERVED_LABELS = [
@@ -126,26 +125,35 @@ export function classifyHost(rawHost: string | null | undefined, settings: Domai
   return { kind: "UNKNOWN" };
 }
 
-/** Whether the Main Admin Portal may be served on this hostname. */
-export function hostAllowsAdminPortal(scope: HostScope): boolean {
+/**
+ * Two layers, two kinds of address (SAAS_PLATFORM_PLAN.md §12):
+ *   - the customer's software — its projects AND its own Main Admin portal — is served on that
+ *     customer's address (and on an open address, as before routing);
+ *   - the Nexora platform is served on the admin address (and on an open address, for recovery).
+ * An unknown address serves neither.
+ */
+export function hostServesCustomerSoftware(scope: HostScope): boolean {
+  return scope.kind === "OPEN" || scope.kind === "CUSTOMER";
+}
+
+export function hostServesPlatform(scope: HostScope): boolean {
   return scope.kind === "OPEN" || scope.kind === "ADMIN";
 }
 
 /**
- * Whether a project may be opened on this hostname. A customer's address opens only that
- * customer's project — for everybody, a Main Admin included. An admin address opens every project
- * for a Main Admin (the Workspace) and none for anybody else.
+ * Whether a project may be opened on this hostname: a customer's address opens only that
+ * customer's projects (`projectCustomerId` is the project's customer, the founding customer for the
+ * original installation's projects) — for everybody. The platform address opens none.
  */
-export function hostAllowsProject(scope: HostScope, projectCustomerId: string | null, viewerIsMainAdmin: boolean): boolean {
+export function hostAllowsProject(scope: HostScope, projectCustomerId: string | null): boolean {
   switch (scope.kind) {
     case "OPEN":
       return true;
-    case "UNKNOWN":
-      return false;
     case "CUSTOMER":
       return projectCustomerId === scope.customerId;
     case "ADMIN":
-      return viewerIsMainAdmin;
+    case "UNKNOWN":
+      return false;
   }
 }
 
@@ -178,25 +186,3 @@ export function nextDomainStatus(current: DomainStatus, steps: readonly DomainCh
   return base ? "VERIFIED" : "PENDING";
 }
 
-/**
- * Keys that act on the whole platform rather than one project: the Main Admin Portal, platform-wide
- * users and permission modules, security settings, release notes. They are held only on an address
- * that may serve the portal — on a customer's address even a Main Admin does not hold them, so a
- * Server Action (a public endpoint, whatever page shows its button) cannot be used from there to
- * reach other customers. A project's own administration (Lead keys) is unaffected.
- */
-const HOST_RESTRICTED_CATEGORIES: ReadonlySet<string> = new Set([MAIN_ADMIN_CATEGORY, "Users & Permissions"]);
-const HOST_RESTRICTED_KEYS: ReadonlySet<string> = new Set([
-  "release_notes.manage",
-  ...PERMISSIONS.filter((p) => HOST_RESTRICTED_CATEGORIES.has(p.category)).map((p) => p.key),
-]);
-
-export function isHostRestrictedKey(key: string): boolean {
-  return HOST_RESTRICTED_KEYS.has(key);
-}
-
-/** The keys a user holds on this hostname: every key on the admin or an open host, platform keys removed elsewhere. */
-export function keysOnHost(keys: ReadonlySet<string>, scope: HostScope): Set<string> {
-  if (hostAllowsAdminPortal(scope)) return new Set(keys);
-  return new Set([...keys].filter((key) => !HOST_RESTRICTED_KEYS.has(key)));
-}

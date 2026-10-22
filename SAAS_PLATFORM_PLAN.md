@@ -551,3 +551,59 @@ Before: back up the database (`pg_dump`) and the WhatsApp session volume; note t
 
 **Rollback:** routing off on the Domains page (or `SAAS_HOST_ROUTING_DISABLED=true` and recreate the app),
 restore the Caddy file, previous image tag for app and worker. Migrations are additive and need no rollback.
+
+---
+
+## 12. Two administration layers (22 Oct 2026, on `rudra`, not deployed)
+
+Rudra's correction: the Nexora SaaS administration must be separate from the software's own Main Admin, and every
+customer must get the FULL existing software — its own Main Admin, projects, users, permissions and settings.
+
+### 12.1 What was mixed (audit of Phases 2–4)
+
+1. **One installation-wide "Main Admin".** `projects.manage` saw every project, user, role, department and setting of
+   every customer — a second customer's Main Admin would have seen and edited the first customer's.
+2. **The SaaS pages lived inside that portal** (`/admin/customers`, `/admin/domains`, `/admin/plans`) under the same login,
+   users and `projects.manage` key as customer administration.
+3. **A customer's own Main Admin was stripped on its address** (`keysOnHost`) — the opposite of what each customer needs.
+4. **One project per customer** and an owner who was a single-project Lead, where each customer needs its own project
+   management.
+5. **Users, roles, departments, job titles, employees, security settings, branding and portal logs were installation-wide.**
+
+### 12.2 The corrected architecture
+
+- **Layer 1 — Nexora platform** (`/platform/*` on `admin.udboy.com`): its own operators (`PlatformOperator`), sessions,
+  cookie (`/platform` only), sign-in, authorization and log. Overview (platform health vs each customer's health),
+  Customers (provisioning, subscription, payments, owner, support access, addresses, details), Domains, Plans & billing,
+  Support access, Operators, Settings (platform email), Activity. No customer login can use it; no operator is a user of
+  any customer.
+- **Layer 2 — each customer's software** (`/admin` + `/p/<slug>/…`, unchanged code): a customer-scoped database layer
+  confines every user, role, department, job title, employee, security setting, branding, project and portal log entry to
+  its customer. NULL = the original installation, so Customer #1's data is untouched. Each customer has its own standard
+  roles, Main Admin, projects (its Main Admin creates more), users and settings; it is served on its own address.
+- **Support access**: audited, time-limited, single-use ticket handoff to the customer's own address, as the operator's
+  support identity inside that customer (no password), banner, every change recorded in the customer's own System Log,
+  revocable, and switched off by the customer if they deactivate the support identity.
+- **Monitoring**: platform health (worker heartbeat and loops, queues, failures, collection gaps) apart from each
+  customer's health (WhatsApp numbers, messages, failed sends/alerts, gaps, people, workspaces, media storage) — counts
+  only, never a message.
+- **One default plan, "All Access"** (every module, including later ones), preselected for new customers; price, period,
+  expiry and enforcement configurable; more plans can be added any time.
+
+### 12.3 Setting up the platform after deploy (no VPS command)
+
+1. While routing is still OFF, sign in to the software as today's Main Admin, open `/platform/setup` on the same address,
+   create your platform operator. The page closes once an operator exists.
+2. `/platform` → Customers → Add customer → **The original installation** (zoventio.udboy.com). Nothing in it changes.
+3. Domains → root `udboy.com`, platform address `admin.udboy.com`, server IP; Caddy one-time change (§7 step 5).
+4. From `https://admin.udboy.com/platform/domains` switch routing ON.
+5. Add customers from Customers → Add customer (company → owner → address → All Access with price, expiry, payment).
+
+Everything in §7's runbook still applies, with "Main Admin → Domains/Customers" now "Platform → Domains/Customers".
+
+### 12.4 Verification
+
+`saasTwoLayers.integration.test.ts` (19 tests, real sign-ins, scoped clients and actions) and the updated
+`saasBilling.integration.test.ts` (8). Each protection was removed in turn and the suite went red: the customer scope,
+project access across customers (on an open address, where no host rule helps), sign-in by address, platform
+authorization, vendor keys, the single-use ticket (both the check and the conditional claim removed), the ticket's address, the support audit, and per-customer portal logs.

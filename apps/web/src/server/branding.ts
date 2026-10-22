@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
 import { platformPrisma } from "@/server/db";
+import { currentTenantOrNone } from "@/server/tenant";
 import { brandAssetUrl, defaultPublicBranding, DEFAULT_BRANDING, type BrandAssetKind, type PublicBranding } from "@/lib/branding";
 
 /**
@@ -37,6 +38,9 @@ export const getBranding = cache(async (): Promise<PublicBranding> => {
   // fills the build log with connection errors.
   if (process.env.NEXT_PHASE === PHASE_PRODUCTION_BUILD) return defaultPublicBranding();
   try {
+    // Each customer's software carries its own brand (one row per customer, SAAS_PLATFORM_PLAN.md §12);
+    // the platform address belongs to no customer and always shows the product's own.
+    if ((await currentTenantOrNone()) === undefined) return defaultPublicBranding();
     const row = await platformPrisma.platformBranding.findUnique({ where: { id: BRANDING_ID }, select: TEXT_SELECT });
     if (!row) return defaultPublicBranding();
     return {

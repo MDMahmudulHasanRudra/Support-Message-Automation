@@ -1,7 +1,7 @@
 import "./helpers/requireTestDatabase";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createProjectWithDefaults, prisma as rawPrisma, recomputeCustomerBilling } from "@support-automation/db";
+import { createProjectWithDefaults, ensureDefaultRoles, prisma as rawPrisma, recomputeCustomerBilling } from "@support-automation/db";
 import { PERMISSIONS } from "@support-automation/shared";
 
 /**
@@ -53,47 +53,64 @@ const context = await import("@/server/projectContext");
 const { forgetHostScopes } = await import("@/server/hostScope");
 const { hasPermission } = await import("@/server/permissions");
 const { checkPermission } = await import("@/server/authorize");
-const billing = await import("@/server/actions/saasBilling");
+const billing = await import("@/server/platform/actions/billing");
 const { acceptInvitation } = await import("@/app/(auth)/invite/[token]/actions");
 const { createUserWithAccess } = await import("@/server/adminUsers");
 const { lockAndCheckCustomerLimit } = await import("@/server/customerLimits");
+const { platformPrisma } = await import("@/server/db");
+const { runWithTenant } = await import("@/server/tenant");
+const { platformLogin } = await import("@/app/platform/login/actions");
 
 const ids = { users: [] as string[], roles: [] as string[], projects: [] as string[], customers: [] as string[], plans: [] as string[] };
-const people = {} as Record<"admin" | "staff", { id: string; username: string }>;
+const people = {} as Record<"staffLegacy" | "staffBilled", { id: string; username: string }>;
+let operatorId = "";
+const OPERATOR = `billop_${tag}`;
 const ws = {} as Record<"legacy" | "late" | "billed" | "limited", { id: string; slug: string; customerId: string }>;
 let planId = "";
 
-async function role(name: string, keys: string[]) {
+async function role(name: string, keys: string[], customerId: string | null = null) {
   const permissions = await Promise.all(
     keys.map((key) => {
       const def = PERMISSIONS.find((p) => p.key === key)!;
       return rawPrisma.permission.upsert({ where: { key }, create: { key, label: def.label, category: def.category }, update: {}, select: { id: true } });
     }),
   );
-  const r = await rawPrisma.permissionModule.create({ data: { name: `${name} ${tag}`, permissions: { create: permissions.map((p) => ({ permissionId: p.id })) } } });
+  const r = await rawPrisma.permissionModule.create({ data: { name: `${name} ${tag}`, customerId, permissions: { create: permissions.map((p) => ({ permissionId: p.id })) } } });
   ids.roles.push(r.id);
   return r.id;
 }
 
-async function person(name: string, roleId: string, projectIds: string[]) {
+async function person(name: string, roleId: string, customerId: string, projectIds: string[]) {
   const username = `${name}_${tag}`.toLowerCase();
-  const u = await rawPrisma.user.create({ data: { username, email: `${username}@example.test`, name, passwordHash: auth.hashPassword(PASSWORD), permissionModuleId: roleId } });
+  const u = await rawPrisma.user.create({ data: { username, email: `${username}@example.test`, name, passwordHash: auth.hashPassword(PASSWORD), permissionModuleId: roleId, customerId } });
   ids.users.push(u.id);
   for (const projectId of projectIds) await rawPrisma.projectAccess.create({ data: { projectId, userId: u.id } });
   return { id: u.id, username };
 }
 
-async function workspace(key: string, admin: string) {
-  const p = await createProjectWithDefaults({ name: `Billing ${key} ${tag}`, slug: `billing-${key}-${tag}`, status: "ACTIVE", creatorUserId: admin }, rawPrisma);
-  ids.projects.push(p.id);
+/** A customer with its own copy of the software (SAAS §12): its standard roles and one workspace. */
+async function workspace(key: string) {
   const c = await rawPrisma.customer.create({ data: { name: `Billing customer ${key} ${tag}`, contactEmail: `${key}-${tag}@example.test` } });
   ids.customers.push(c.id);
-  await rawPrisma.project.update({ where: { id: p.id }, data: { customerId: c.id } });
+  await ensureDefaultRoles(rawPrisma, c.id);
+  const p = await createProjectWithDefaults({ name: `Billing ${key} ${tag}`, slug: `billing-${key}-${tag}`, status: "ACTIVE", creatorUserId: null, customerId: c.id }, rawPrisma);
+  ids.projects.push(p.id);
   return { id: p.id, slug: p.slug, customerId: c.id };
 }
 
+/** The billing actions belong to the Nexora platform (Layer 1): a platform operator runs them. */
+async function operatorSignIn() {
+  jar.delete("nexora_platform_session");
+  request.project = null;
+  try {
+    expect((await platformLogin({}, form({ username: OPERATOR, password: PASSWORD }))).error).toBeUndefined();
+  } catch (err) {
+    if ((err as { redirectTo?: string }).redirectTo !== "/platform") throw err;
+  }
+}
+
 async function signIn(who: { username: string }) {
-  jar.clear();
+  jar.delete("support_automation_session");
   request.project = null;
   const form = new FormData();
   form.set("username", who.username);
@@ -121,7 +138,7 @@ async function opened(slug: string) {
 const held = async (projectId: string) => (await rawPrisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { billingHoldAt: true } })).billingHoldAt !== null;
 
 async function assign(customerId: string, extra: Record<string, string> = {}) {
-  await signIn(people.admin);
+  await operatorSignIn();
   const r = await billing.assignPlan(customerId, {}, form({ planId, ...extra }));
   expect(r.error ?? r.fieldErrors).toBeUndefined();
   return rawPrisma.subscription.findFirstOrThrow({ where: { customerId, endedAt: null } });
@@ -130,11 +147,11 @@ async function assign(customerId: string, extra: Record<string, string> = {}) {
 beforeAll(async () => {
   await rawPrisma.platformDomainSettings.deleteMany({});
   forgetHostScopes();
-  const adminRole = await role("Billing main admin", ["projects.view", "projects.manage", "users.view", "users.create"]);
-  const staffRole = await role("Billing staff", ["messages.view", "messages.reply", "automation_rules.view", "automation_rules.create"]);
-  people.admin = await person("BillAdmin", adminRole, []);
-  for (const key of ["legacy", "late", "billed", "limited"] as const) ws[key] = await workspace(key, people.admin.id);
-  people.staff = await person("BillStaff", staffRole, [ws.billed.id, ws.legacy.id]);
+  operatorId = (await rawPrisma.platformOperator.create({ data: { username: OPERATOR, name: "Billing operator", passwordHash: auth.hashPassword(PASSWORD) } })).id;
+  for (const key of ["legacy", "late", "billed", "limited"] as const) ws[key] = await workspace(key);
+  const staffKeys = ["messages.view", "messages.reply", "automation_rules.view", "automation_rules.create"];
+  people.staffLegacy = await person("BillStaffL", await role("Billing staff L", staffKeys, ws.legacy.customerId), ws.legacy.customerId, [ws.legacy.id]);
+  people.staffBilled = await person("BillStaffB", await role("Billing staff B", staffKeys, ws.billed.customerId), ws.billed.customerId, [ws.billed.id]);
   const plan = await rawPrisma.plan.create({
     data: { name: `Standard ${tag}`, priceMinor: BigInt(150000), currency: "BDT", interval: "MONTH", trialDays: 0, maxWhatsAppAccounts: 1, maxUsers: 1, features: ["WHATSAPP_CHAT"] },
   });
@@ -156,6 +173,8 @@ afterAll(async () => {
   await rawPrisma.projectMemberRole.deleteMany({ where: { projectId: { in: ids.projects } } });
   await rawPrisma.projectAccess.deleteMany({ where: { projectId: { in: ids.projects } } });
   await rawPrisma.project.updateMany({ where: { id: { in: ids.projects } }, data: { customerId: null, status: "ARCHIVED", billingHoldAt: null } });
+  await rawPrisma.user.deleteMany({ where: { id: { in: allUsers } } });
+  await rawPrisma.permissionModule.deleteMany({ where: { customerId: { in: ids.customers } } });
   // Payments are append-only by trigger; the customer's cascade is the only way they go, so lift it for cleanup only.
   await rawPrisma.$executeRawUnsafe('ALTER TABLE "SubscriptionPayment" DISABLE TRIGGER "SubscriptionPayment_immutable"');
   try {
@@ -165,7 +184,9 @@ afterAll(async () => {
   }
   await rawPrisma.plan.deleteMany({ where: { id: { in: ids.plans } } });
   await rawPrisma.user.deleteMany({ where: { id: { in: allUsers } } });
-  await rawPrisma.permissionModule.deleteMany({ where: { id: { in: ids.roles } } });
+  await rawPrisma.permissionModule.deleteMany({ where: { OR: [{ id: { in: ids.roles } }, { customerId: { in: ids.customers } }] } });
+  await rawPrisma.platformOperatorSession.deleteMany({ where: { operatorId } });
+  await rawPrisma.platformOperator.deleteMany({ where: { id: operatorId } });
 });
 
 describe("Customer #1's protection", () => {
@@ -174,7 +195,7 @@ describe("Customer #1's protection", () => {
     expect(await held(ws.legacy.id)).toBe(false);
     expect(await rawPrisma.$transaction((tx) => lockAndCheckCustomerLimit(tx, ws.legacy.id, "USERS"))).toBeNull();
     expect(await rawPrisma.$transaction((tx) => lockAndCheckCustomerLimit(tx, ws.legacy.id, "WHATSAPP_ACCOUNTS"))).toBeNull();
-    await signIn(people.staff);
+    await signIn(people.staffLegacy);
     const project = await opened(ws.legacy.slug);
     expect(project.status).toBe("ACTIVE");
     expect(project.billingHold).toBeFalsy();
@@ -195,7 +216,7 @@ describe("an enforced subscription", () => {
     const sub = await assign(ws.billed.customerId, { paidThrough: lapsed, graceDays: "7", autoEnforce: "on" });
     expect(await held(ws.billed.id)).toBe(true);
 
-    await signIn(people.staff);
+    await signIn(people.staffBilled);
     const project = await opened(ws.billed.slug);
     expect(project.status).toBe("SUSPENDED");
     expect(project.billingHold).toBe(true);
@@ -205,7 +226,7 @@ describe("an enforced subscription", () => {
     expect("denied" in reading).toBe(false); // read-only, not locked out
 
     // Two months behind: the payment covers a period starting today, so it really releases.
-    await signIn(people.admin);
+    await operatorSignIn();
     const paid = await billing.recordPayment(ws.billed.customerId, {}, form({ amount: "1500", method: "BKASH", reference: `TRX${tag}` }));
     expect(paid.error ?? paid.fieldErrors).toBeUndefined();
     expect(await held(ws.billed.id)).toBe(false);
@@ -230,7 +251,7 @@ describe("an enforced subscription", () => {
   });
 
   it("a manual suspension holds at once even with enforcement off, and Unlock releases it", async () => {
-    await signIn(people.admin);
+    await operatorSignIn();
     await billing.updateSubscriptionTerms(ws.billed.customerId, {}, form({ graceDays: "7" })); // enforcement off
     await billing.extendSubscription(ws.billed.customerId, {}, form({ days: "30" }));
     expect(await held(ws.billed.id)).toBe(false);
@@ -241,7 +262,7 @@ describe("an enforced subscription", () => {
   });
 
   it("invoice numbers come from one sequence and never repeat", async () => {
-    await signIn(people.admin);
+    await operatorSignIn();
     expect((await billing.issueInvoice(ws.billed.customerId)).error).toBeUndefined();
     const numbers = (await rawPrisma.subscriptionInvoice.findMany({ where: { customerId: ws.billed.customerId }, select: { number: true } })).map((i) => i.number);
     expect(new Set(numbers).size).toBe(numbers.length);
@@ -256,17 +277,20 @@ describe("limits and the plan's modules", () => {
     const features = await rawPrisma.projectFeature.findMany({ where: { projectId: ws.limited.id }, select: { key: true, enabled: true } });
     expect(features.filter((f) => f.enabled).map((f) => f.key)).toEqual(["WHATSAPP_CHAT"]);
 
+    // Created inside the customer's own software, as its Main Admin portal does (SAAS §12).
     const attempts = await Promise.all(
       [1, 2, 3].map((n) =>
-        createUserWithAccess(rawPrisma, {
-          username: `lim${n}_${tag}`,
-          name: `Limited ${n}`,
-          password: PASSWORD,
-          confirmPassword: PASSWORD,
-          permissionModuleId: null,
-          employee: null,
-          access: [{ projectId: ws.limited.id, level: "FULL", isLead: false }],
-        }),
+        runWithTenant(ws.limited.customerId, () =>
+          createUserWithAccess(platformPrisma, {
+            username: `lim${n}_${tag}`,
+            name: `Limited ${n}`,
+            password: PASSWORD,
+            confirmPassword: PASSWORD,
+            permissionModuleId: null,
+            employee: null,
+            access: [{ projectId: ws.limited.id, level: "FULL" }],
+          }),
+        ),
       ),
     );
     const ok = attempts.filter((a) => a.ok);
@@ -277,8 +301,8 @@ describe("limits and the plan's modules", () => {
 });
 
 describe("the owner invitation", () => {
-  it("works once, makes a Lead with no platform permission, and is refused when used again or expired", async () => {
-    await signIn(people.admin);
+  it("works once, makes the customer's own Main Admin (never a platform operator), and is refused when used again or expired", async () => {
+    await operatorSignIn();
     const r = await billing.inviteOwner(ws.limited.customerId, {}, form({ name: "Owner", email: `owner-${tag}@example.test` }));
     expect(r.link).toMatch(/\/invite\//);
     const token = r.link!.split("/invite/")[1]!;
@@ -294,20 +318,23 @@ describe("the owner invitation", () => {
 
     jar.clear();
     await expect(acceptInvitation(token, {}, form({ username: `owner_${tag}`, password: PASSWORD, confirmPassword: PASSWORD }))).rejects.toMatchObject({ redirectTo: "/open" });
-    const owner = await rawPrisma.user.findUniqueOrThrow({ where: { username: `owner_${tag}` } });
-    expect(owner.permissionModuleId).toBeNull();
-    expect((await rawPrisma.projectMemberRole.findFirstOrThrow({ where: { projectId: ws.limited.id, userId: owner.id } })).isLead).toBe(true);
+    const owner = await rawPrisma.user.findUniqueOrThrow({ where: { username: `owner_${tag}` }, include: { permissionModule: true } });
+    expect(owner.customerId).toBe(ws.limited.customerId);
+    expect(owner.permissionModule).toMatchObject({ customerId: ws.limited.customerId, name: "Administrator" });
     const session = (await auth.getSession())!;
     expect(session.userId).toBe(owner.id);
-    expect(await hasPermission(session, "projects.manage")).toBe(false);
+    expect(session.tenant).toBe(ws.limited.customerId);
     request.project = ws.limited.slug;
     context.forgetProjectAccessDecisions();
-    expect(await hasPermission(session, "project_members.manage")).toBe(true);
+    expect(await hasPermission(session, "projects.manage")).toBe(true); // their own Main Admin
+    // …and nothing on the platform: a customer login never passes a platform action.
+    jar.delete("nexora_platform_session");
+    expect((await billing.recordPayment(ws.limited.customerId, {}, form({ amount: "1", method: "CASH" }))).error).toMatch(/platform session/i);
 
     const again = await acceptInvitation(token, {}, form({ username: `owner2_${tag}`, password: PASSWORD, confirmPassword: PASSWORD }));
     expect(again.error).toMatch(/not valid/);
 
-    await signIn(people.admin);
+    await operatorSignIn();
     const second = await billing.inviteOwner(ws.limited.customerId, {}, form({ name: "Late owner" }));
     await rawPrisma.userInvitation.updateMany({ where: { customerId: ws.limited.customerId, acceptedAt: null }, data: { expiresAt: new Date(Date.now() - 1000) } });
     const expired = await acceptInvitation(second.link!.split("/invite/")[1]!, {}, form({ username: `owner3_${tag}`, password: PASSWORD, confirmPassword: PASSWORD }));

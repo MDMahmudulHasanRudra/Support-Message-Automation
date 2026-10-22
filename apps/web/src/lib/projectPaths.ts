@@ -51,7 +51,8 @@ export function visitedHost(headers: Headers): string {
 export const LAST_PROJECT_COOKIE = "softify-last-project";
 
 /**
- * Paths that are not inside a project: sign-in, the project chooser, the Main Admin Portal, health,
+ * Paths that are not inside a project: sign-in, the project chooser, the Main Admin Portal, the Nexora
+ * platform, health,
  * framework assets. A link to one of these is never prefixed with the current project.
  */
 const OUTSIDE_PROJECT = [
@@ -59,6 +60,9 @@ const OUTSIDE_PROJECT = [
   /^\/open(\/|$|\?)/,
   /^\/invite\//,
   /^\/admin(\/|$|\?)/,
+  // The Nexora platform (Layer 1) and the support-access handoff (SAAS_PLATFORM_PLAN.md §12).
+  /^\/platform(\/|$|\?)/,
+  /^\/support-access\//,
   /^\/api\/health(\/|$|\?)/,
   /^\/p\//,
   /^\/_next\//,

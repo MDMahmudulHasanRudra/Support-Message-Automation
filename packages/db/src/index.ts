@@ -9,8 +9,13 @@ import {
   hasReachablePhoneNumber,
   knowledgeContentHash,
   normalizePhoneNumber,
+  PERMISSIONS,
   PROJECT_FEATURES,
+  READ_ONLY_PERMISSION_KEYS,
   subscriptionState,
+  SUPPORT_AGENT_PERMISSION_KEYS,
+  SUPPORT_MANAGER_PERMISSION_KEYS,
+  VENDOR_PERMISSION_KEYS,
   SUPPORT_ASSIGNMENT_TEMPLATE_KEYS,
   supportAssignmentDedupKey,
   supportAssignmentNoticeVars,
@@ -458,6 +463,236 @@ export function createProjectScopedPrisma(base: PrismaClient, resolveProjectId: 
   // Query-only extension: the model API is unchanged, so the cast is sound and lets every existing
   // call site (and every helper that takes a PrismaClient) use the scoped client as-is.
   return extended as unknown as PrismaClient;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Customer (tenant) scope — SAAS_PLATFORM_PLAN.md §12, Layer 2
+// -------------------------------------------------------------------------------------------------
+
+/**
+ * Rows that belong to ONE customer's copy of the software: its people, roles, organisation, security
+ * settings and branding. `customerId` NULL = the original installation (the founding customer,
+ * Customer #1), so every row that existed before multi-customer keeps its meaning untouched.
+ */
+export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
+  "User", "PermissionModule", "Department", "JobTitle", "Employee", "SecuritySettings", "PlatformBranding", "Project",
+]);
+
+/** Rows reached through a tenant-scoped parent: filtered by that parent's customer. */
+const TENANT_PARENT: Readonly<Record<string, "user" | "project">> = {
+  UserSession: "user",
+  UserGoogleIdentity: "user",
+  ProjectAccess: "project",
+  ProjectFeature: "project",
+};
+
+/** One settings row per customer; the original installation's row keeps its fixed id. */
+const TENANT_SINGLETON_IDS: Readonly<Record<string, string>> = { SecuritySettings: "global", PlatformBranding: "default" };
+
+/**
+ * SystemLog entries written by the Nexora platform layer carry this instead of a customer, so no
+ * customer's System Log ever lists them (customer portals filter on their own customer).
+ */
+export const PLATFORM_LOG_CUSTOMER = "__platform__";
+
+export class TenantScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TenantScopeError";
+  }
+}
+
+const TENANT_WHERE_OPERATIONS = new Set([
+  "findUnique", "findUniqueOrThrow", "findFirst", "findFirstOrThrow", "findMany", "count", "aggregate", "groupBy",
+  "update", "updateMany", "delete", "deleteMany",
+]);
+
+/** The id a customer's own singleton row is stored under. */
+export function tenantSingletonId(model: string, tenant: string | null): string | null {
+  const base = TENANT_SINGLETON_IDS[model];
+  if (!base) return null;
+  return tenant === null ? base : `${base}:${tenant}`;
+}
+
+function assertSameTenant(value: unknown, tenant: string | null, where: string): void {
+  if (value === undefined) return;
+  if ((value ?? null) !== tenant) throw new TenantScopeError(`${where} names another customer; refused.`);
+}
+
+function tenantWhere(model: string, where: unknown, tenant: string | null): Obj {
+  const base: Obj = isObj(where) ? { ...where } : {};
+  const singleton = TENANT_SINGLETON_IDS[model];
+  if (singleton && base.id === singleton) base.id = tenantSingletonId(model, tenant);
+  assertSameTenant(base.customerId, tenant, `${model}.where`);
+  // A singleton's `customerId` is a unique column, and Prisma refuses null in a unique filter — so the
+  // original installation's row is named by its id alone. That id is already the customer's own
+  // (another customer's is `<id>:<customer>`), so nothing is widened.
+  if (singleton && tenant === null && base.id === singleton) {
+    delete base.customerId;
+    return base;
+  }
+  base.customerId = tenant;
+  return base;
+}
+
+function tenantData(model: string, data: unknown, tenant: string | null): Obj {
+  const out: Obj = isObj(data) ? { ...data } : {};
+  const singleton = TENANT_SINGLETON_IDS[model];
+  if (singleton && (out.id === undefined || out.id === singleton)) out.id = tenantSingletonId(model, tenant);
+  assertSameTenant(out.customerId, tenant, `${model}.data`);
+  out.customerId = tenant;
+  return out;
+}
+
+/** Pure: the query arguments for `operation` on `model`, confined to `tenant` (null = the original installation). */
+export function tenantScopeQueryArgs(model: string, operation: string, args: unknown, tenant: string | null): Obj {
+  const out: Obj = isObj(args) ? { ...args } : {};
+  if (TENANT_SCOPED_MODELS.has(model)) {
+    if (TENANT_WHERE_OPERATIONS.has(operation)) out.where = tenantWhere(model, out.where, tenant);
+    if (operation === "create") out.data = tenantData(model, out.data, tenant);
+    if (operation === "createMany" || operation === "createManyAndReturn") {
+      out.data = (Array.isArray(out.data) ? out.data : [out.data]).map((row) => tenantData(model, row, tenant));
+    }
+    if (operation === "upsert") {
+      out.where = tenantWhere(model, out.where, tenant);
+      out.create = tenantData(model, out.create, tenant);
+      if (isObj(out.update)) assertSameTenant(out.update.customerId, tenant, `${model}.update`);
+    }
+    if ((operation === "update" || operation === "updateMany") && isObj(out.data)) assertSameTenant(out.data.customerId, tenant, `${model}.data`);
+    return out;
+  }
+  if (model === "SystemLog") {
+    // Entries inside a project are the project scope's business. Entries outside one (a portal's
+    // administration) belong to the customer whose portal wrote them.
+    if (["findMany", "findFirst", "findFirstOrThrow", "count", "aggregate", "groupBy", "deleteMany", "updateMany"].includes(operation)) {
+      const where: Obj = isObj(out.where) ? out.where : {};
+      out.where = { AND: [where, { OR: [{ projectId: { not: null } }, { customerId: tenant }] }] };
+    }
+    if (operation === "create" && isObj(out.data) && out.data.customerId === undefined) out.data = { ...out.data, customerId: tenant };
+    return out;
+  }
+  const parent = TENANT_PARENT[model];
+  if (parent && (TENANT_WHERE_OPERATIONS.has(operation) || operation === "upsert")) {
+    const where: Obj = isObj(out.where) ? out.where : {};
+    out.where = { ...where, AND: [...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []), { [parent]: { customerId: tenant } }] };
+  }
+  return out;
+}
+
+/**
+ * The customer-scoped client (Layer 2). Every query on a customer-owned table is confined to the
+ * customer of the request — the signed-in person's, or the address's — and a write naming another
+ * customer is refused. `resolveTenant` returns the customer id, or null for the original
+ * installation; it must THROW when the customer cannot be known. The platform layer never uses this
+ * client.
+ */
+export function createTenantScopedPrisma(base: PrismaClient, resolveTenant: () => Promise<string | null>): PrismaClient {
+  const extended = base.$extends({
+    name: "tenant-scope",
+    query: {
+      $allModels: {
+        async $allOperations({ model, operation, args, query }) {
+          if (model === "SystemLog") {
+            // Logging must never fail for want of a customer: on the platform address an entry is the
+            // platform's own, and reading there shows only the platform's entries.
+            let tenant: string | null = PLATFORM_LOG_CUSTOMER;
+            try {
+              tenant = await resolveTenant();
+            } catch (err) {
+              if (!(err instanceof TenantScopeError)) throw err;
+            }
+            return query(tenantScopeQueryArgs(model, operation, args, tenant) as typeof args);
+          }
+          if (!TENANT_SCOPED_MODELS.has(model) && !TENANT_PARENT[model]) return query(args);
+          const tenant = await resolveTenant();
+          return query(tenantScopeQueryArgs(model, operation, args, tenant) as typeof args);
+        },
+      },
+    },
+  });
+  return extended as unknown as PrismaClient;
+}
+
+/** The projects a customer owns: its own, plus — for the founding customer — the original installation's (customerId NULL). */
+export async function customerProjectWhere(db: PrismaClient, customerId: string): Promise<Prisma.ProjectWhereInput> {
+  const customer = await db.customer.findUnique({ where: { id: customerId }, select: { isFounding: true } });
+  return customer?.isFounding ? { OR: [{ customerId }, { customerId: null }] } : { customerId };
+}
+
+/** The tenant key of a customer: null for the founding customer (the original installation), its id otherwise. */
+export async function tenantKeyOfCustomer(db: PrismaClient, customerId: string | null): Promise<string | null> {
+  if (!customerId) return null;
+  const customer = await db.customer.findUnique({ where: { id: customerId }, select: { isFounding: true } });
+  return customer?.isFounding ? null : customerId;
+}
+
+/**
+ * The four standard roles of one customer's copy of the software (customerId null = the original
+ * installation). ADD-ONLY, as the seed always was: a role created now gets its default keys;
+ * Administrator — the customer's Main Admin role — always gains any key it lacks; the others gain
+ * only keys new in this run (`keysCreatedNow`). Nothing is ever removed, names are never overwritten.
+ * A customer other than the original installation never receives a vendor key.
+ */
+export async function ensureDefaultRoles(
+  db: PrismaClient,
+  customerId: string | null,
+  keysCreatedNow: ReadonlySet<string> = new Set(),
+): Promise<{ administratorId: string }> {
+  const vendor = new Set(customerId === null ? [] : VENDOR_PERMISSION_KEYS);
+  const allowed = (keys: readonly string[]) => keys.filter((k) => !vendor.has(k));
+  const roles: Array<{ name: string; description: string; keys: readonly string[] }> = [
+    { name: "Administrator", description: "Full access to every module.", keys: allowed(PERMISSIONS.map((p) => p.key)) },
+    { name: "Support Manager", description: "Manages automation rules and views App Users.", keys: allowed(SUPPORT_MANAGER_PERMISSION_KEYS) },
+    { name: "Support Agent", description: "Creates and edits automation rules.", keys: allowed(SUPPORT_AGENT_PERMISSION_KEYS) },
+    { name: "Read Only", description: "View-only access across every module.", keys: allowed(READ_ONLY_PERMISSION_KEYS) },
+  ];
+  let administratorId = "";
+  for (const role of roles) {
+    const existing = await db.permissionModule.findFirst({ where: { name: role.name, customerId }, select: { id: true } });
+    const row =
+      existing ?? (await db.permissionModule.create({ data: { name: role.name, description: role.description, isSystem: true, customerId }, select: { id: true } }));
+    const keysToAdd = !existing || role.name === "Administrator" ? [...role.keys] : role.keys.filter((key) => keysCreatedNow.has(key));
+    if (keysToAdd.length > 0) {
+      const permissions = await db.permission.findMany({ where: { key: { in: keysToAdd } }, select: { id: true } });
+      await db.permissionModulePermission.createMany({
+        data: permissions.map((p) => ({ permissionModuleId: row.id, permissionId: p.id })),
+        skipDuplicates: true,
+      });
+    }
+    if (role.name === "Administrator") administratorId = row.id;
+  }
+  return { administratorId };
+}
+
+/**
+ * Set projects' modules to a plan's (SAAS_PLATFORM_PLAN.md §10, §12): every module for an "All
+ * Access" plan (including ones added later), otherwise exactly the plan's list. Modules switched off
+ * keep their data; this only flips the existing entitlement switches.
+ */
+export async function applyPlanFeatures(
+  db: Pick<PrismaClient, "projectFeature">,
+  projectIds: readonly string[],
+  plan: { features: readonly string[]; allModules: boolean },
+): Promise<void> {
+  for (const projectId of projectIds) {
+    for (const feature of PROJECT_FEATURES) {
+      const enabled = plan.allModules || plan.features.includes(feature.key);
+      await db.projectFeature.upsert({
+        where: { projectId_key: { projectId, key: feature.key } },
+        create: { projectId, key: feature.key, enabled },
+        update: { enabled },
+      });
+    }
+  }
+}
+
+/** A new project of a customer follows the customer's current plan; a customer with none keeps the defaults. */
+export async function applyCustomerPlanToNewProject(db: PrismaClient, projectId: string): Promise<void> {
+  const project = await db.project.findUnique({ where: { id: projectId }, select: { customerId: true } });
+  const customerId = project?.customerId ?? (await db.customer.findFirst({ where: { isFounding: true }, select: { id: true } }))?.id ?? null;
+  if (!customerId) return;
+  const sub = await db.subscription.findFirst({ where: { customerId, endedAt: null }, select: { features: true, allModules: true } });
+  if (sub) await applyPlanFeatures(db, [projectId], sub);
 }
 
 export interface ResolvedWhatsAppAccount {
@@ -1266,8 +1501,12 @@ export interface CreateProjectInput {
   slug: string;
   description?: string | null;
   status: Extract<ProjectStatus, "SETUP" | "ACTIVE">;
-  /** Given access to the new project, so whoever created it can go straight in. */
-  creatorUserId: string;
+  /** Given access to the new project, so whoever created it can go straight in. Null when the Nexora
+   *  platform provisions a customer's first workspace before the customer has any login. */
+  creatorUserId: string | null;
+  /** The customer whose software this project belongs to (SAAS_PLATFORM_PLAN.md §12). Omitted: the
+   *  client decides — a customer-scoped client stamps its own customer; unscoped = the original installation. */
+  customerId?: string | null;
 }
 
 /**
@@ -1288,7 +1527,7 @@ export interface CreateProjectInput {
 export async function createProjectWithDefaults(input: CreateProjectInput, db: PrismaClient): Promise<{ id: string; slug: string }> {
   return db.$transaction(async (tx) => {
     const project = await tx.project.create({
-      data: { name: input.name, slug: input.slug, description: input.description ?? null, status: input.status },
+      data: { name: input.name, slug: input.slug, description: input.description ?? null, status: input.status, ...(input.customerId !== undefined ? { customerId: input.customerId } : {}) },
       select: { id: true, slug: true },
     });
     const own = { id: project.id, projectId: project.id };
@@ -1320,7 +1559,7 @@ export async function createProjectWithDefaults(input: CreateProjectInput, db: P
     await tx.shiftTemplate.createMany({
       data: DEFAULT_SHIFT_TEMPLATES.map((shift) => ({ ...shift, projectId: project.id })),
     });
-    await tx.projectAccess.create({ data: { projectId: project.id, userId: input.creatorUserId } });
+    if (input.creatorUserId) await tx.projectAccess.create({ data: { projectId: project.id, userId: input.creatorUserId } });
 
     return project;
   });
@@ -1652,9 +1891,9 @@ export interface CustomerBillingResult {
  * nothing the second time.
  */
 export async function recomputeCustomerBilling(db: PrismaClient, customerId: string, now = new Date(), actorUsername: string | null = null): Promise<CustomerBillingResult> {
-  const [subscription, project] = await Promise.all([
+  const [subscription, projectWhere] = await Promise.all([
     db.subscription.findFirst({ where: { customerId, endedAt: null } }),
-    db.project.findUnique({ where: { customerId }, select: { id: true, billingHoldAt: true } }),
+    customerProjectWhere(db, customerId),
   ]);
   const reading = subscription ? subscriptionState(subscription, now) : null;
   const held = Boolean(reading?.held);
@@ -1668,18 +1907,16 @@ export async function recomputeCustomerBilling(db: PrismaClient, customerId: str
     }
   }
 
-  let holdChanged = false;
-  if (project && held !== (project.billingHoldAt !== null)) {
-    const updated = await db.project.updateMany({
-      where: { id: project.id, billingHoldAt: held ? null : { not: null } },
-      data: { billingHoldAt: held ? now : null },
+  // Every project the customer owns follows the subscription (a customer may run several).
+  const updated = await db.project.updateMany({
+    where: { AND: [projectWhere, held ? { billingHoldAt: null } : { billingHoldAt: { not: null } }] },
+    data: { billingHoldAt: held ? now : null },
+  });
+  const holdChanged = updated.count > 0;
+  if (holdChanged) {
+    await db.subscriptionEvent.create({
+      data: { customerId, kind: held ? "WORKSPACE_HELD" : "WORKSPACE_RELEASED", detail: { projects: updated.count, state: reading?.state ?? null }, actorUsername },
     });
-    holdChanged = updated.count === 1;
-    if (holdChanged) {
-      await db.subscriptionEvent.create({
-        data: { customerId, kind: held ? "WORKSPACE_HELD" : "WORKSPACE_RELEASED", detail: { projectId: project.id, state: reading?.state ?? null }, actorUsername },
-      });
-    }
   }
   return { reading, holdChanged };
 }

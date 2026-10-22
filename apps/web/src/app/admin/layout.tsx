@@ -12,8 +12,10 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 /**
- * The Main Admin Portal (MULTI_PROJECT_PLAN.md §8), at /admin — outside every project. Needs
- * `projects.view`; without it the portal is a 404, like a project the user cannot enter.
+ * A customer's own Main Admin Portal (MULTI_PROJECT_PLAN.md §8; SAAS_PLATFORM_PLAN.md §12), at /admin
+ * — outside every project, inside one customer's software: its projects, users and roles only. Needs
+ * `projects.view`; without it the portal is a 404, like a project the user cannot enter. The Nexora
+ * platform is a separate area (/platform) with its own sign-in.
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const { session, canManage } = await requireMainAdminPage();
@@ -25,6 +27,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       canCreate={canManage}
       grantedKeys={grantedKeys}
       onLogout={logout}
+      supportSession={session.support ? { operatorUsername: session.support.operatorUsername, reason: session.support.reason, expiresAt: session.support.expiresAt.toISOString() } : null}
     >
       {children}
     </AdminShell>

@@ -1,7 +1,7 @@
 import { Alert, Badge, Card, EmptyState, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
 import { requireAccess } from "@/server/authorize";
 import { requireActiveProject } from "@/server/projectContext";
-import { customerForProject, getBillingSettings, getCustomerBilling } from "@/server/saasBilling";
+import { customerForProject, getBillingSettings, getCustomerBilling } from "@/server/platform/billing";
 import {
   BILLING_INTERVAL_LABELS,
   billingNotice,

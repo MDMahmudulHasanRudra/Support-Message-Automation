@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { prisma as platformPrisma } from "@support-automation/db";
-import { classifyHost, hostAllowsAdminPortal, normalizeHostname, ROUTABLE_DOMAIN_STATUSES, type HostScope } from "@support-automation/shared";
+import { classifyHost, hostServesCustomerSoftware, hostServesPlatform, normalizeHostname, ROUTABLE_DOMAIN_STATUSES, type HostScope } from "@support-automation/shared";
 import { HOST_HEADER } from "@/lib/projectPaths";
 
 /**
@@ -75,7 +75,15 @@ export function hostScopeKey(scope: HostScope): string {
   return scope.kind === "CUSTOMER" ? `CUSTOMER:${scope.customerId}` : scope.kind;
 }
 
-/** For the Main Admin Portal: on a customer's or an unknown hostname the portal does not exist. */
+/**
+ * For a customer's Main Admin portal (Layer 2): it exists on that customer's own address and on an
+ * open one; on the Nexora platform address and an unknown one it does not (SAAS_PLATFORM_PLAN.md §12).
+ */
 export async function requireAdminPortalHost(): Promise<void> {
-  if (!hostAllowsAdminPortal(await currentHostScope())) notFound();
+  if (!hostServesCustomerSoftware(await currentHostScope())) notFound();
+}
+
+/** For the Nexora platform layer: the admin address and open addresses only. */
+export async function requirePlatformHost(): Promise<void> {
+  if (!hostServesPlatform(await currentHostScope())) notFound();
 }

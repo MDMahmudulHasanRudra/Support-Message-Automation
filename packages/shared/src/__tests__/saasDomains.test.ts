@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyHost,
-  hostAllowsAdminPortal,
+  hostServesCustomerSoftware,
+  hostServesPlatform,
   hostAllowsProject,
   nextDomainStatus,
   normalizeHostname,
@@ -93,28 +94,29 @@ describe("classifyHost", () => {
   });
 });
 
-describe("what a hostname may serve", () => {
-  it("the admin portal: open and admin hosts only", () => {
-    expect(hostAllowsAdminPortal({ kind: "OPEN" })).toBe(true);
-    expect(hostAllowsAdminPortal({ kind: "ADMIN" })).toBe(true);
-    expect(hostAllowsAdminPortal({ kind: "CUSTOMER", customerId: "c2" })).toBe(false);
-    expect(hostAllowsAdminPortal({ kind: "UNKNOWN" })).toBe(false);
+describe("what a hostname may serve (two layers)", () => {
+  it("the customer software — its projects and its own Main Admin — on open and customer hosts only", () => {
+    expect(hostServesCustomerSoftware({ kind: "OPEN" })).toBe(true);
+    expect(hostServesCustomerSoftware({ kind: "CUSTOMER", customerId: "c2" })).toBe(true);
+    expect(hostServesCustomerSoftware({ kind: "ADMIN" })).toBe(false);
+    expect(hostServesCustomerSoftware({ kind: "UNKNOWN" })).toBe(false);
   });
-  it("a customer host opens only its own project — for a Main Admin too", () => {
+  it("the Nexora platform on open and admin hosts only", () => {
+    expect(hostServesPlatform({ kind: "OPEN" })).toBe(true);
+    expect(hostServesPlatform({ kind: "ADMIN" })).toBe(true);
+    expect(hostServesPlatform({ kind: "CUSTOMER", customerId: "c2" })).toBe(false);
+    expect(hostServesPlatform({ kind: "UNKNOWN" })).toBe(false);
+  });
+  it("a customer host opens only its own customer's projects", () => {
     const c2 = { kind: "CUSTOMER", customerId: "c2" } as const;
-    expect(hostAllowsProject(c2, "c2", false)).toBe(true);
-    expect(hostAllowsProject(c2, "c1", false)).toBe(false);
-    expect(hostAllowsProject(c2, "c1", true)).toBe(false);
-    expect(hostAllowsProject(c2, null, true)).toBe(false);
+    expect(hostAllowsProject(c2, "c2")).toBe(true);
+    expect(hostAllowsProject(c2, "c1")).toBe(false);
+    expect(hostAllowsProject(c2, null)).toBe(false);
   });
-  it("the admin host opens every project for a Main Admin and none for anybody else", () => {
-    expect(hostAllowsProject({ kind: "ADMIN" }, "c2", true)).toBe(true);
-    expect(hostAllowsProject({ kind: "ADMIN" }, "c2", false)).toBe(false);
-    expect(hostAllowsProject({ kind: "ADMIN" }, null, false)).toBe(false);
-  });
-  it("an unknown host opens nothing; an open host everything", () => {
-    expect(hostAllowsProject({ kind: "UNKNOWN" }, "c1", true)).toBe(false);
-    expect(hostAllowsProject({ kind: "OPEN" }, "c1", false)).toBe(true);
+  it("the platform host opens no project; an unknown host nothing; an open host everything", () => {
+    expect(hostAllowsProject({ kind: "ADMIN" }, "c2")).toBe(false);
+    expect(hostAllowsProject({ kind: "UNKNOWN" }, "c1")).toBe(false);
+    expect(hostAllowsProject({ kind: "OPEN" }, "c1")).toBe(true);
   });
 });
 

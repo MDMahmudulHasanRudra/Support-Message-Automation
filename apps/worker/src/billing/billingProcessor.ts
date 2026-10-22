@@ -34,6 +34,28 @@ export interface PlatformMailer {
   fromName: string;
 }
 
+/**
+ * The platform's own SMTP account: set on the platform (Settings → Platform email) when enabled there,
+ * otherwise from the environment. Null = email is not configured: nothing is emailed.
+ */
+export async function platformMailer(env: NodeJS.ProcessEnv = process.env): Promise<PlatformMailer | null> {
+  const row = await platformPrisma.platformEmailSettings.findUnique({ where: { id: "default" } }).catch(() => null);
+  if (row?.enabled && row.host && row.fromAddress) {
+    let password = "";
+    try {
+      password = row.passwordCiphertext ? decryptSecret(row.passwordCiphertext) : "";
+    } catch {
+      return null; // a password that cannot be read is not a working account
+    }
+    return {
+      connection: { host: row.host, port: row.port, tlsMode: row.tlsMode === "TLS" ? "TLS" : "STARTTLS", username: row.username ?? "", password },
+      fromAddress: row.fromAddress,
+      fromName: row.fromName ?? "",
+    };
+  }
+  return platformMailerFromEnv(env);
+}
+
 /** The platform's own SMTP account, from the environment. Null = email is not configured: nothing is emailed. */
 export function platformMailerFromEnv(env: NodeJS.ProcessEnv = process.env): PlatformMailer | null {
   const host = env.PLATFORM_SMTP_HOST?.trim();
@@ -63,6 +85,17 @@ export interface BillingDeps {
 
 export function startBillingProcessor(intervalMs = BILLING_INTERVAL_MS): NodeJS.Timeout {
   registerLoop(LOOP_NAME, intervalMs);
+  // A test email requested on the platform is sent within seconds, not at the next billing pass.
+  let testing = false;
+  setInterval(() => {
+    if (testing) return;
+    testing = true;
+    void sendRequestedTestEmail()
+      .catch((err) => console.error("[billing] test email failed", err))
+      .finally(() => {
+        testing = false;
+      });
+  }, 15_000);
   let processing = false;
   return setInterval(() => {
     if (processing) return;
@@ -76,7 +109,8 @@ export function startBillingProcessor(intervalMs = BILLING_INTERVAL_MS): NodeJS.
   }, intervalMs);
 }
 
-export async function runBillingTick(now: Date = new Date(), deps: BillingDeps = { mailer: platformMailerFromEnv(), send: sendWithNodemailer, resolve: resolveHostAddresses }): Promise<void> {
+export async function runBillingTick(now: Date = new Date(), given?: BillingDeps): Promise<void> {
+  const deps: BillingDeps = given ?? { mailer: await platformMailer(), send: sendWithNodemailer, resolve: resolveHostAddresses };
   const current = await platformPrisma.subscription.findMany({ where: { endedAt: null }, select: { customerId: true } });
   for (const { customerId } of current) {
     try {
@@ -94,14 +128,20 @@ async function productName(): Promise<string> {
   return row?.productName?.trim() || DEFAULT_PRODUCT_NAME;
 }
 
-async function recipientsFor(customer: { contactEmail: string | null; project: { id: string } | null }): Promise<string[]> {
-  const leads = customer.project
-    ? await platformPrisma.projectMemberRole.findMany({
-        where: { projectId: customer.project.id, isLead: true, user: { isActive: true, email: { not: null } } },
-        select: { user: { select: { email: true } } },
-      })
-    : [];
-  const all = [customer.contactEmail, ...leads.map((l) => l.user.email)].map((e) => e?.trim().toLowerCase()).filter((e): e is string => !!e);
+/** Who hears about a customer's subscription: its contact, and its own Main Admins (SAAS_PLATFORM_PLAN.md §12). */
+async function recipientsFor(customer: { id: string; isFounding: boolean; contactEmail: string | null }): Promise<string[]> {
+  const admins = await platformPrisma.user.findMany({
+    where: {
+      customerId: customer.isFounding ? null : customer.id,
+      supportOperatorId: null,
+      isActive: true,
+      email: { not: null },
+      permissionModule: { permissions: { some: { permission: { key: "projects.manage" } } } },
+    },
+    select: { email: true },
+    take: 20,
+  });
+  const all = [customer.contactEmail, ...admins.map((a) => a.email)].map((e) => e?.trim().toLowerCase()).filter((e): e is string => !!e);
   return [...new Set(all)];
 }
 
@@ -131,7 +171,7 @@ export async function sendDueReminders(now: Date, deps: BillingDeps): Promise<vo
   const reminderDays = settings?.reminderDaysBefore?.length ? settings.reminderDaysBefore : DEFAULT_REMINDER_DAYS;
   const subs = await platformPrisma.subscription.findMany({
     where: { endedAt: null },
-    include: { customer: { select: { name: true, contactEmail: true, project: { select: { id: true } } } } },
+    include: { customer: { select: { id: true, isFounding: true, name: true, contactEmail: true } } },
   });
   let name: string | null = null;
   for (const sub of subs) {
@@ -201,4 +241,22 @@ export async function sendInvitations(now: Date, deps: BillingDeps): Promise<voi
       data: { customerId: inv.customerId, kind: problem ? "INVITATION_EMAIL_FAILED" : "INVITATION_EMAILED", detail: problem ? { name: inv.name, reason: problem.slice(0, 300) } : { name: inv.name } },
     });
   }
+}
+
+/** Send the test email an operator asked for on the platform, once, and report the outcome there. */
+export async function sendRequestedTestEmail(given?: BillingDeps): Promise<void> {
+  const row = await platformPrisma.platformEmailSettings.findUnique({ where: { id: "default" } });
+  if (!row?.testRequestedAt || !row.testRequestedTo) return;
+  // Claim it: two workers (or ticks) never send the same test twice.
+  const claimed = await platformPrisma.platformEmailSettings.updateMany({ where: { id: "default", testRequestedAt: row.testRequestedAt }, data: { testRequestedAt: null } });
+  if (claimed.count !== 1) return;
+  const deps: BillingDeps = given ?? { mailer: await platformMailer(), send: sendWithNodemailer, resolve: resolveHostAddresses };
+  const name = await productName();
+  const problem = deps.mailer
+    ? await deliver(deps, row.testRequestedTo, { subject: `${name}: platform email works`, text: `This is a test from the ${name} platform. Billing reminders and owner invitations will be sent from this account.` }, `test-${Date.now()}`)
+    : "Platform email is off or incomplete.";
+  await platformPrisma.platformEmailSettings.update({
+    where: { id: "default" },
+    data: { lastTestAt: new Date(), lastTestOk: problem === null, lastTestMessage: problem ? problem.slice(0, 300) : null, testRequestedTo: null },
+  });
 }
