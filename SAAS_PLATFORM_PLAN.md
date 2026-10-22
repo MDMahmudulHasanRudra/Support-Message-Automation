@@ -1,7 +1,7 @@
-# Nexora SaaS platform — Phase 1 assessment and implementation plan
+# RELQIVO SaaS platform — Phase 1 assessment and implementation plan
 
 Status: **proposal, nothing built yet** (21 Oct 2026). Written after a read-only audit of the
-repository (`rudra` = `main` at 3e62e1f + the Nexora defaults change) and of the zoventio server.
+repository (`rudra` = `main` at 3e62e1f + the RELQIVO defaults change) and of the zoventio server.
 Production was not touched. Every phase below ends with a review; nothing is deployed without
 Rudra's explicit approval.
 
@@ -40,7 +40,7 @@ Two facts shape everything below:
 
 > **Question 1 for Rudra:** CLAUDE.md names `assist.softifybd.com` as production, while recent work
 > treats zoventio as production. Which installation is "Customer #1", and which root domain will the
-> SaaS use (keep `udboy.com`, or a new Nexora domain)? The design works for either.
+> SaaS use (keep `udboy.com`, or a new RELQIVO domain)? The design works for either.
 
 ## 3. Target architecture
 
@@ -129,7 +129,7 @@ For each domain, the page shows the exact record to create (`A  customer2  →  
 1. **Format and ownership rules**: valid hostname, under the root domain (or an allowed custom
    domain), not reserved, not used by another customer.
 2. **DNS**: resolves to one of the configured VPS IPs (and does not also point elsewhere).
-3. **Reaches this app**: `http://host/.well-known/nexora-check/<token>` returns the domain's
+3. **Reaches this app**: `http://host/.well-known/relqivo-check/<token>` returns the domain's
    token, which proves the traffic arrives at this deployment, not just the right IP.
 4. **HTTPS**: the app requests `https://host/api/health` with normal certificate validation (this
    is what makes Caddy issue the certificate).
@@ -200,11 +200,11 @@ backup, the migration list, a rollback plan, and a note on whether WhatsApp sess
 
 ## 6. Related change already made (21 Oct 2026)
 
-Nexora is the built-in product name; a fresh install's first project is "Nexora Project 1" and new
-projects are offered "Nexora Project 2, 3…". Migration `20261021090000_nexora_white_label_defaults`
+RELQIVO is the built-in product name; a fresh install's first project is "RELQIVO Project 1" and new
+projects are offered "RELQIVO Project 2, 3…". Migration `20261021090000_relqivo_white_label_defaults`
 stores the old name for any existing install, so live installs look exactly as before (verified on
 throwaway databases: existing install → "Softify Assist" kept; install with its own name → kept;
-fresh install → "Nexora" / "Nexora Project 1").
+fresh install → "RELQIVO" / "RELQIVO Project 1").
 
 ---
 
@@ -223,7 +223,7 @@ Main Admin; the portal is reached only through `admin.udboy.com` (or localhost /
 |---|---|
 | Tables `Customer`, `CustomerDomain`, `PlatformDomainSettings`; `Project.customerId` (unique, nullable); `UserSession.hostname` | migration `20261021120000_saas_customers_domains` (additive; removed Teams tables deliberately not dropped) |
 | The rules: hostname format, reserved names, what a hostname opens, status flow, platform-only keys | `packages/shared/src/saasDomains.ts` (pure, unit-tested) |
-| Hostname → scope, cached 10 s | `apps/web/src/server/hostScope.ts`; the proxy forwards `Host` as `x-nexora-host` (client copies discarded) |
+| Hostname → scope, cached 10 s | `apps/web/src/server/hostScope.ts`; the proxy forwards `Host` as `x-relqivo-host` (client copies discarded) |
 | Project access by hostname | `decideAccess` / `accessibleProjects` in `server/projectContext.ts` |
 | Portal and Workspace only on admin addresses | `requireMainAdminPage` (`server/mainAdmin.ts`), dashboard layout in workspace mode |
 | Platform keys (Main Admin, Users & Permissions, release notes) removed on customer addresses | `keysOnHost` in `server/permissions.ts` — so admin Server Actions are refused there too |
@@ -536,7 +536,7 @@ Covered:
 Before: back up the database (`pg_dump`) and the WhatsApp session volume; note the commit running now.
 1. `git pull` the approved branch, `docker compose build app worker`.
 2. **`docker compose run --rm migrate`**: the SaaS migrations are additive
-   (`20261021090000_nexora_white_label_defaults`, `20261021120000_saas_customers_domains`,
+   (`20261021090000_relqivo_white_label_defaults`, `20261021120000_saas_customers_domains`,
    `20261021150000_saas_billing`), plus anything else pending (check `_prisma_migrations` first).
 3. `docker compose up -d --no-deps app worker`; confirm both healthy, the worker heartbeat on Accounts,
    WhatsApp accounts reconnected, messages arriving (the usual post-deploy checks).
@@ -556,7 +556,7 @@ restore the Caddy file, previous image tag for app and worker. Migrations are ad
 
 ## 12. Two administration layers (22 Oct 2026, on `rudra`, not deployed)
 
-Rudra's correction: the Nexora SaaS administration must be separate from the software's own Main Admin, and every
+Rudra's correction: the RELQIVO SaaS administration must be separate from the software's own Main Admin, and every
 customer must get the FULL existing software — its own Main Admin, projects, users, permissions and settings.
 
 ### 12.1 What was mixed (audit of Phases 2–4)
@@ -572,7 +572,7 @@ customer must get the FULL existing software — its own Main Admin, projects, u
 
 ### 12.2 The corrected architecture
 
-- **Layer 1 — Nexora platform** (`/platform/*` on `admin.udboy.com`): its own operators (`PlatformOperator`), sessions,
+- **Layer 1 — RELQIVO platform** (`/platform/*` on `admin.udboy.com`): its own operators (`PlatformOperator`), sessions,
   cookie (`/platform` only), sign-in, authorization and log. Overview (platform health vs each customer's health),
   Customers (provisioning, subscription, payments, owner, support access, addresses, details), Domains, Plans & billing,
   Support access, Operators, Settings (platform email), Activity. No customer login can use it; no operator is a user of

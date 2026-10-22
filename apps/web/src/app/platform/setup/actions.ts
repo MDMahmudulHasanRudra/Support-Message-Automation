@@ -47,7 +47,7 @@ export async function createFirstOperator(_prev: SetupState, formData: FormData)
 
   const operator = await globalPrisma.$transaction(async (tx) => {
     // Re-checked inside the transaction, under a lock, so two people pressing at once make one.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('nexora-platform-setup'))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('relqivo-platform-setup'))`;
     if ((await tx.platformOperator.count()) > 0) return null;
     return tx.platformOperator.create({ data: { username, name, passwordHash: hashPassword(password), createdByUsername: `software:${allowed.username}` } });
   });

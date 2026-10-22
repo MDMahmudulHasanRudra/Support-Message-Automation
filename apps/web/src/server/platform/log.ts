@@ -2,7 +2,7 @@ import { PLATFORM_LOG_CUSTOMER, prisma as globalPrisma } from "@support-automati
 import type { LogLevel, Prisma } from "@prisma/client";
 
 /**
- * The Nexora platform's own log entries (SAAS_PLATFORM_PLAN.md §12). Marked as the platform's, so no
+ * The RELQIVO platform's own log entries (SAAS_PLATFORM_PLAN.md §12). Marked as the platform's, so no
  * customer's System Log ever lists them; shown on the platform's Activity page. Never throws.
  */
 export async function logPlatformEvent(

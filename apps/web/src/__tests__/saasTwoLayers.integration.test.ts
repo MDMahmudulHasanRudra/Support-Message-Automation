@@ -8,7 +8,7 @@ import { PERMISSIONS } from "@support-automation/shared";
  * The two administration layers (SAAS_PLATFORM_PLAN.md §12), through the REAL sign-ins, sessions,
  * access checks, scoped database clients and actions — only the request plumbing is stubbed.
  *
- *   Layer 1 — the Nexora platform: its own operators, sign-in, session, pages; the admin address.
+ *   Layer 1 — the RELQIVO platform: its own operators, sign-in, session, pages; the admin address.
  *   Layer 2 — each customer's software: its own Main Admin, projects, users, roles and settings, on
  *             its own address, seeing nothing of any other customer.
  *
@@ -17,7 +17,7 @@ import { PERMISSIONS } from "@support-automation/shared";
  */
 
 const tag = randomUUID().replace(/-/g, "").slice(0, 8);
-const host = { f: `f-${tag}.nexora.test`, b: `b-${tag}.nexora.test`, admin: `admin-${tag}.nexora.test`, unknown: `x-${tag}.nexora.test` };
+const host = { f: `f-${tag}.relqivo.test`, b: `b-${tag}.relqivo.test`, admin: `admin-${tag}.relqivo.test`, unknown: `x-${tag}.relqivo.test` };
 const PASSWORD = "Test-password-123";
 
 // --- request plumbing -------------------------------------------------------------------------
@@ -26,7 +26,7 @@ const jar = new Map<string, string>();
 vi.mock("next/headers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/headers")>()),
   headers: async () => {
-    const h = new Headers({ "x-nexora-host": request.host, "user-agent": "vitest" });
+    const h = new Headers({ "x-relqivo-host": request.host, "user-agent": "vitest" });
     if (request.project) h.set("x-softify-project", request.project);
     return h;
   },
@@ -112,7 +112,7 @@ async function signIn(who: { username: string }, on: string): Promise<boolean> {
 }
 
 async function operatorSignIn(on: string): Promise<boolean> {
-  jar.delete("nexora_platform_session");
+  jar.delete("relqivo_platform_session");
   request.host = on;
   request.project = null;
   try {
@@ -195,7 +195,7 @@ beforeAll(async () => {
   await rawPrisma.customerDomain.create({ data: { customerId: customer.f, hostname: host.f, status: "ACTIVE", verificationToken: `t-f-${tag}` } });
 
   await rawPrisma.platformDomainSettings.create({
-    data: { id: "default", hostRoutingEnabled: true, rootDomain: "nexora.test", adminHostnames: [host.admin], publicIps: ["203.0.113.10"] },
+    data: { id: "default", hostRoutingEnabled: true, rootDomain: "relqivo.test", adminHostnames: [host.admin], publicIps: ["203.0.113.10"] },
   });
   forgetCaches();
 });
@@ -355,7 +355,7 @@ describe("onboarding a new customer from the platform", () => {
   it("provisions its own complete software: roles, workspace, All Access plan with its price, payment, owner as its Main Admin", async () => {
     expect(await operatorSignIn(host.admin)).toBe(true);
     const allAccess = await rawPrisma.plan.findFirstOrThrow({ where: { name: "All Access" } });
-    const host3 = `c-${tag}.nexora.test`;
+    const host3 = `c-${tag}.relqivo.test`;
     const result = await platform.createCustomer(
       {},
       form({
@@ -440,14 +440,14 @@ describe("support access — audited, time-limited, on the customer's own addres
     expect(await opens(host.b, project.f.slug)).toBe(false);
 
     await inPortal(host.b, () => platformPrisma.department.create({ data: { name: `Support access ${tag}` } }));
-    const recorded = await rawPrisma.systemLog.findFirst({ where: { message: "NEXORA_SUPPORT_CHANGE", customerId: customer.b, metadata: { path: ["supportAccessSessionId"], equals: session.support!.id } } });
+    const recorded = await rawPrisma.systemLog.findFirst({ where: { message: "RELQIVO_SUPPORT_CHANGE", customerId: customer.b, metadata: { path: ["supportAccessSessionId"], equals: session.support!.id } } });
     expect(recorded?.metadata).toMatchObject({ change: "Department.create", operator: operatorUsername });
 
     expect(await operatorSignIn(host.admin)).toBe(true);
     expect((await supportActions.endSupportAccess(session.support!.id)).success).toBeTruthy();
     request.host = host.b;
     expect(await auth.getSession()).toBeNull();
-    expect(await rawPrisma.systemLog.count({ where: { customerId: customer.b, message: { in: ["NEXORA_SUPPORT_ACCESS_STARTED", "NEXORA_SUPPORT_ACCESS_ENDED"] } } })).toBeGreaterThanOrEqual(2);
+    expect(await rawPrisma.systemLog.count({ where: { customerId: customer.b, message: { in: ["RELQIVO_SUPPORT_ACCESS_STARTED", "RELQIVO_SUPPORT_ACCESS_ENDED"] } } })).toBeGreaterThanOrEqual(2);
   });
 
   it("the support identity has no password that works, and a customer that deactivates it turns support access off", async () => {
@@ -456,7 +456,7 @@ describe("support access — audited, time-limited, on the customer's own addres
     expect(await signIn({ username: identity.username }, host.b)).toBe(false);
     await rawPrisma.user.update({ where: { id: identity.id }, data: { isActive: false } });
     expect(await operatorSignIn(host.admin)).toBe(true);
-    expect((await supportActions.startSupportAccess(customer.b, form({ reason: "Investigating missing messages", minutes: "15", operatorPassword: PASSWORD }))).error).toMatch(/turned Nexora support access off/);
+    expect((await supportActions.startSupportAccess(customer.b, form({ reason: "Investigating missing messages", minutes: "15", operatorPassword: PASSWORD }))).error).toMatch(/turned RELQIVO support access off/);
   });
 });
 
@@ -470,7 +470,7 @@ describe("addresses and recovery (kept from Phase 2)", () => {
 
   it("a domain check moves PENDING → VERIFIED → ACTIVE and explains each failure", async () => {
     expect(await operatorSignIn(host.admin)).toBe(true);
-    const hostname = `new-${tag}.nexora.test`;
+    const hostname = `new-${tag}.relqivo.test`;
     expect((await platform.addCustomerDomain(customer.b, {}, form({ hostname }))).success).toBeTruthy();
     const domain = await rawPrisma.customerDomain.findUniqueOrThrow({ where: { hostname } });
     const answer = domainCheckAnswer(domain.verificationToken);
@@ -491,7 +491,7 @@ describe("addresses and recovery (kept from Phase 2)", () => {
     forgetCaches();
     expect(await operatorSignIn(host.b)).toBe(true); // routing off: every address is open
     request.host = host.b;
-    const state = await platform.saveDomainSettings({}, form({ rootDomain: "nexora.test", adminHostnames: host.admin, publicIps: "203.0.113.10", reservedLabels: "", hostRoutingEnabled: "on" }));
+    const state = await platform.saveDomainSettings({}, form({ rootDomain: "relqivo.test", adminHostnames: host.admin, publicIps: "203.0.113.10", reservedLabels: "", hostRoutingEnabled: "on" }));
     expect(state.fieldErrors?.hostRoutingEnabled).toMatch(/platform/);
     await rawPrisma.platformDomainSettings.update({ where: { id: "default" }, data: { hostRoutingEnabled: true } });
     forgetCaches();

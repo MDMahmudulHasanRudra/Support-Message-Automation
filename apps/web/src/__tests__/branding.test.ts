@@ -94,7 +94,7 @@ describe("image type from the bytes", () => {
 describe("the built-in brand", () => {
   it("is the product as it always looked, with the icon served from the same address as a custom one", () => {
     expect(defaultPublicBranding()).toEqual({
-      productName: "Nexora",
+      productName: "RELQIVO",
       loginHeadline: DEFAULT_BRANDING.loginHeadline,
       loginSubheading: DEFAULT_BRANDING.loginSubheading,
       accentColor: null,

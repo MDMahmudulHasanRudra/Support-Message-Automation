@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
 
 /**
- * The Nexora platform's frame (SAAS_PLATFORM_PLAN.md §12, Layer 1). The same visual language as the
+ * The RELQIVO platform's frame (SAAS_PLATFORM_PLAN.md §12, Layer 1). The same visual language as the
  * software's own portal, deliberately a different place: no project switcher, no customer modules —
  * it manages customers, it never works inside one (support access opens the customer's own address).
  */

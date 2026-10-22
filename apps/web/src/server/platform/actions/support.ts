@@ -51,7 +51,7 @@ export async function startSupportAccess(customerId: string, formData: FormData)
   });
   await logPlatformEvent("WARN", "Support access started", { customerId, operator: operator.username, reason, minutes, supportAccessSessionId: session.id }, { type: "Customer", id: customerId });
   await runWithTenant(tenant, () =>
-    logSystemEvent("WARN", "support", "NEXORA_SUPPORT_ACCESS_STARTED", { operator: operator.username, reason, until: session.expiresAt.toISOString(), supportAccessSessionId: session.id }),
+    logSystemEvent("WARN", "support", "RELQIVO_SUPPORT_ACCESS_STARTED", { operator: operator.username, reason, until: session.expiresAt.toISOString(), supportAccessSessionId: session.id }),
   );
   revalidatePath("/platform", "layout");
   const scheme = (process.env.NEXTAUTH_URL ?? "").startsWith("http://") ? "http" : "https";

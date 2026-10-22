@@ -77,13 +77,13 @@ export function hostScopeKey(scope: HostScope): string {
 
 /**
  * For a customer's Main Admin portal (Layer 2): it exists on that customer's own address and on an
- * open one; on the Nexora platform address and an unknown one it does not (SAAS_PLATFORM_PLAN.md §12).
+ * open one; on the RELQIVO platform address and an unknown one it does not (SAAS_PLATFORM_PLAN.md §12).
  */
 export async function requireAdminPortalHost(): Promise<void> {
   if (!hostServesCustomerSoftware(await currentHostScope())) notFound();
 }
 
-/** For the Nexora platform layer: the admin address and open addresses only. */
+/** For the RELQIVO platform layer: the admin address and open addresses only. */
 export async function requirePlatformHost(): Promise<void> {
   if (!hostServesPlatform(await currentHostScope())) notFound();
 }

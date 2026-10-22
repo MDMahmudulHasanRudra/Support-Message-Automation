@@ -5,8 +5,8 @@
  *
  * A NULL stored value means "use the default below", the same shape as Notification Templates, and
  * Reset is forgetting the edit rather than copying today's default into the database. The default
- * is "Nexora" (21 Oct 2026). An install that existed before then had "Softify Assist" stored for it
- * by the 20261021090000_nexora_white_label_defaults migration, so only a NEW install shows Nexora.
+ * is "RELQIVO" (21 Oct 2026). An install that existed before then had "Softify Assist" stored for it
+ * by the 20261021090000_relqivo_white_label_defaults migration, so only a NEW install shows RELQIVO.
  */
 
 import { DEFAULT_PRODUCT_NAME } from "@support-automation/shared";

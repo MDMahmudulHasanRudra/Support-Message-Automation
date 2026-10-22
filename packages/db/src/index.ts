@@ -490,7 +490,7 @@ const TENANT_PARENT: Readonly<Record<string, "user" | "project">> = {
 const TENANT_SINGLETON_IDS: Readonly<Record<string, string>> = { SecuritySettings: "global", PlatformBranding: "default" };
 
 /**
- * SystemLog entries written by the Nexora platform layer carry this instead of a customer, so no
+ * SystemLog entries written by the RELQIVO platform layer carry this instead of a customer, so no
  * customer's System Log ever lists them (customer portals filter on their own customer).
  */
 export const PLATFORM_LOG_CUSTOMER = "__platform__";
@@ -1501,7 +1501,7 @@ export interface CreateProjectInput {
   slug: string;
   description?: string | null;
   status: Extract<ProjectStatus, "SETUP" | "ACTIVE">;
-  /** Given access to the new project, so whoever created it can go straight in. Null when the Nexora
+  /** Given access to the new project, so whoever created it can go straight in. Null when the RELQIVO
    *  platform provisions a customer's first workspace before the customer has any login. */
   creatorUserId: string | null;
   /** The customer whose software this project belongs to (SAAS_PLATFORM_PLAN.md §12). Omitted: the

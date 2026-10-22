@@ -7,7 +7,7 @@ import { requireOperatorPage } from "@/server/platform/auth";
 import { logPlatformEvent } from "@/server/platform/log";
 
 /**
- * Support access (SAAS_PLATFORM_PLAN.md §12): a Nexora operator enters ONE customer's software for
+ * Support access (SAAS_PLATFORM_PLAN.md §12): a RELQIVO operator enters ONE customer's software for
  * technical support — never with the customer's password, never as a hidden bypass.
  *
  *   - Started on the platform by an operator allowed to (`canSupport`), with a reason and their own
@@ -24,7 +24,7 @@ import { logPlatformEvent } from "@/server/platform/log";
 
 export const SUPPORT_DURATIONS = [15, 30, 60, 120] as const;
 export const TICKET_MS = 60_000;
-export const hashSupportTicket = (ticket: string) => createHash("sha256").update(`nexora-support:${ticket}`).digest("hex");
+export const hashSupportTicket = (ticket: string) => createHash("sha256").update(`relqivo-support:${ticket}`).digest("hex");
 
 export interface SupportSessionView {
   id: string;
@@ -75,13 +75,13 @@ export async function supportIdentity(operator: { operatorId: string; username: 
   const existing = await globalPrisma.user.findFirst({ where: { supportOperatorId: operator.operatorId, customerId: tenant }, select: { id: true, isActive: true } });
   if (existing) {
     // The customer's own decision wins: a support identity their Main Admin deactivated stays off.
-    if (!existing.isActive) return { error: "This customer has turned Nexora support access off (their Main Admin deactivated the support user)." };
+    if (!existing.isActive) return { error: "This customer has turned RELQIVO support access off (their Main Admin deactivated the support user)." };
     return { id: existing.id };
   }
   const user = await globalPrisma.user.create({
     data: {
-      username: `nexora-support-${operator.username}-${randomBytes(3).toString("hex")}`,
-      name: `Nexora Support (${operator.name})`,
+      username: `relqivo-support-${operator.username}-${randomBytes(3).toString("hex")}`,
+      name: `RELQIVO Support (${operator.name})`,
       passwordHash: hashPassword(randomBytes(32).toString("base64url")),
       permissionModuleId: role.id,
       customerId: tenant,
@@ -101,6 +101,6 @@ export async function closeSupportAccess(id: string, endReason: "ENDED" | "REVOK
   const row = await globalPrisma.supportAccessSession.findUniqueOrThrow({ where: { id }, select: { customerId: true, operatorUsername: true } });
   await logPlatformEvent("INFO", endReason === "ENDED" ? "Support access ended" : "Support access revoked", { customerId: row.customerId, operator: row.operatorUsername, by, supportAccessSessionId: id }, { type: "Customer", id: row.customerId });
   await runWithTenant(await tenantOfCustomer(row.customerId), () =>
-    logSystemEvent("INFO", "support", endReason === "ENDED" ? "NEXORA_SUPPORT_ACCESS_ENDED" : "NEXORA_SUPPORT_ACCESS_REVOKED", { operator: row.operatorUsername, by, supportAccessSessionId: id }),
+    logSystemEvent("INFO", "support", endReason === "ENDED" ? "RELQIVO_SUPPORT_ACCESS_ENDED" : "RELQIVO_SUPPORT_ACCESS_REVOKED", { operator: row.operatorUsername, by, supportAccessSessionId: id }),
   );
 }

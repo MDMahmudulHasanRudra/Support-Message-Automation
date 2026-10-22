@@ -26,7 +26,7 @@ const jar = new Map<string, string>();
 vi.mock("next/headers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/headers")>()),
   headers: async () => {
-    const h = new Headers({ "x-nexora-host": request.host, "user-agent": "vitest" });
+    const h = new Headers({ "x-relqivo-host": request.host, "user-agent": "vitest" });
     if (request.project) h.set("x-softify-project", request.project);
     return h;
   },
@@ -98,9 +98,9 @@ async function workspace(key: string) {
   return { id: p.id, slug: p.slug, customerId: c.id };
 }
 
-/** The billing actions belong to the Nexora platform (Layer 1): a platform operator runs them. */
+/** The billing actions belong to the RELQIVO platform (Layer 1): a platform operator runs them. */
 async function operatorSignIn() {
-  jar.delete("nexora_platform_session");
+  jar.delete("relqivo_platform_session");
   request.project = null;
   try {
     expect((await platformLogin({}, form({ username: OPERATOR, password: PASSWORD }))).error).toBeUndefined();
@@ -328,7 +328,7 @@ describe("the owner invitation", () => {
     context.forgetProjectAccessDecisions();
     expect(await hasPermission(session, "projects.manage")).toBe(true); // their own Main Admin
     // …and nothing on the platform: a customer login never passes a platform action.
-    jar.delete("nexora_platform_session");
+    jar.delete("relqivo_platform_session");
     expect((await billing.recordPayment(ws.limited.customerId, {}, form({ amount: "1", method: "CASH" }))).error).toMatch(/platform session/i);
 
     const again = await acceptInvitation(token, {}, form({ username: `owner2_${tag}`, password: PASSWORD, confirmPassword: PASSWORD }));

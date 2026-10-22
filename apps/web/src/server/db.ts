@@ -26,7 +26,7 @@ const AUDIT_WRITES = new Set(["create", "createMany", "createManyAndReturn", "up
 const recordedThisRequest = cache(() => new Set<string>());
 
 /**
- * Every change made during a Nexora support session is recorded in the customer's own System Log
+ * Every change made during a RELQIVO support session is recorded in the customer's own System Log
  * (SAAS_PLATFORM_PLAN.md §12) — at the database, so no page or action can forget it: once per kind
  * of change per request, with the operator, the reason and the project. Written directly (not
  * through the clients above, which would record the record).
@@ -56,7 +56,7 @@ async function recordSupportWrite(model: string, operation: string, args: unknow
       data: {
         level: "INFO",
         scope: "support",
-        message: "NEXORA_SUPPORT_CHANGE",
+        message: "RELQIVO_SUPPORT_CHANGE",
         metadata: { change: key, operator: session.support.operatorUsername, reason: session.support.reason, supportAccessSessionId: session.support.id },
         projectId,
         customerId: session.tenant ?? null,
@@ -133,7 +133,7 @@ export const prisma = scoped.$extends({
 export const platformPrisma = tenantScoped;
 
 /**
- * Unscoped: across every customer. Only for the Nexora platform layer (`server/platform/`), and the
+ * Unscoped: across every customer. Only for the RELQIVO platform layer (`server/platform/`), and the
  * few places that must resolve a person, project or address before a customer is known (sign-in,
  * sessions, access, hostnames). Never in a customer's page or action.
  */

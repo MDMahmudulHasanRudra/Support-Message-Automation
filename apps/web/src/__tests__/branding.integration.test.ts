@@ -79,7 +79,7 @@ afterAll(async () => {
 
 describe("nothing saved is the built-in brand", () => {
   it("every page reads the product as it always looked", async () => {
-    expect(await getBranding()).toMatchObject({ productName: "Nexora", accentColor: null, logoUrl: null, hasCustomIcon: false });
+    expect(await getBranding()).toMatchObject({ productName: "RELQIVO", accentColor: null, logoUrl: null, hasCustomIcon: false });
   });
 
   it("the icon route serves the built-in icon, and there is no logo yet", async () => {
@@ -125,10 +125,10 @@ describe("saving the name, the sign-in wording and the colour", () => {
   });
 
   it("an emptied field, or the default text itself, goes back to the built-in wording", async () => {
-    await branding.saveBranding({}, form({ productName: "Nexora", loginHeadline: "", loginSubheading: "", accentColor: "" }));
+    await branding.saveBranding({}, form({ productName: "RELQIVO", loginHeadline: "", loginSubheading: "", accentColor: "" }));
     const row = await rawPrisma.platformBranding.findUniqueOrThrow({ where: { id: "default" } });
     expect(row).toMatchObject({ productName: null, loginHeadline: null, loginSubheading: null, accentColor: null });
-    expect((await getBranding()).productName).toBe("Nexora");
+    expect((await getBranding()).productName).toBe("RELQIVO");
   });
 });
 

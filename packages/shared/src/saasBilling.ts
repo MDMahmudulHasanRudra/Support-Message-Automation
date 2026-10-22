@@ -377,4 +377,4 @@ export function invitationEmail(input: { productName: string; name: string; cust
 }
 
 /** The built-in product name when no branding is saved (BRANDING.md). The web's DEFAULT_BRANDING reads it too. */
-export const DEFAULT_PRODUCT_NAME = "Nexora";
+export const DEFAULT_PRODUCT_NAME = "RELQIVO";

@@ -28,7 +28,7 @@ import { getBillingSettings, invitationBaseUrl, newInvitationToken } from "@/ser
 import { isUniqueViolation } from "@/lib/prismaErrors";
 
 /**
- * SaaS billing actions — Nexora platform layer (SAAS_PLATFORM_PLAN.md §10, §12): billing settings,
+ * SaaS billing actions — RELQIVO platform layer (SAAS_PLATFORM_PLAN.md §10, §12): billing settings,
  * plans, a customer's subscription, invoices, payments, suspend / unlock, and the customer owner's
  * access. Every action needs a signed-in platform operator and checks it itself — a Server Action is a
  * public endpoint — and no customer's login, of any role, can ever pass that check. Every change is
