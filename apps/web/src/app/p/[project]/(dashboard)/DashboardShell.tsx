@@ -1,5 +1,6 @@
 "use client";
 
+import { SupportSessionBanner, type SupportSessionBannerInfo } from "@/components/SupportSessionBanner";
 import { ChevronRight, LogOut, Menu, Search } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
@@ -123,6 +124,8 @@ export function DashboardShell({
   disabledFeatures,
   pageAccess,
   workspaceProjects,
+  billingNotice,
+  supportSession,
 }: {
   children: ReactNode;
   /**
@@ -142,6 +145,10 @@ export function DashboardShell({
    * applies. Only those pages are offered — sidebar, settings rail, tabs and ⌘K. Presentation only.
    */
   pageAccess?: SectionAccess | null;
+  /** The workspace's subscription notice (SaaS), or null. A "danger" notice means the workspace is held. */
+  billingNotice?: { tone: "danger" | "warning" | "info"; title: string; message: string } | null;
+  /** Set during a Nexora support session (SAAS_PLATFORM_PLAN.md §12): a banner on every page. */
+  supportSession?: SupportSessionBannerInfo | null;
   username: string;
   automationEnabled: boolean;
   automationMode: string;
@@ -244,6 +251,7 @@ export function DashboardShell({
       />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {supportSession ? <SupportSessionBanner info={supportSession} /> : null}
         <header className="flex h-13 shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-6">
           <button
             type="button"
@@ -319,7 +327,14 @@ export function DashboardShell({
             {workspaceProjects && workspaceCurrent ? (
               <WorkspaceTabs projects={workspaceProjects} current={workspaceCurrent} pathname={pathname} search={searchParams} />
             ) : null}
-            {project.status === "SUSPENDED" || project.status === "ARCHIVED" ? (
+            {billingNotice ? (
+              <div className="mb-5">
+                <Alert tone={billingNotice.tone} title={billingNotice.title}>
+                  {billingNotice.message}
+                </Alert>
+              </div>
+            ) : null}
+            {(project.status === "SUSPENDED" && billingNotice?.tone !== "danger") || project.status === "ARCHIVED" ? (
               <div className="mb-5">
                 <Alert tone="warning" title={`${project.name} is ${project.status === "ARCHIVED" ? "archived" : "suspended"} — read-only`}>
                   You can look at everything, but changes are not saved

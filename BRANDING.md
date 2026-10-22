@@ -14,6 +14,20 @@ the same brand. Projects are renamed separately, on Main Admin → Projects → 
 | Logo (wide) | The sign-in page, on a white plate | The app icon and the product name |
 | App icon (square) | The sidebar mark and the browser tab icon (favicon) | The built-in mark |
 
+## Defaults (21 Oct 2026)
+
+- The built-in product name is **Nexora** (`DEFAULT_BRANDING.productName`). A new install's first
+  project is **Nexora Project 1** (`nexora-project-1`), and Create project offers the next free
+  **Nexora Project N** (`nextDefaultProjectName`). Use these names wherever a default is needed.
+- **Existing installs are not changed.** Migration `20261021090000_nexora_white_label_defaults`
+  stores "Softify Assist" in `PlatformBranding.productName` for any install that already had a user
+  and no saved name, and renames the original project only on an empty database. An install with
+  its own saved name keeps it. Verified on three throwaway databases.
+- Internal identifiers (cookie and header names `softify-*`, the npm scope, the project id
+  `proj_isp_digital`) are never shown and are deliberately left as they are: renaming a cookie signs
+  everybody out, and the id is referenced by migrations.
+- Softify Forge is an external integration's own name; the UI calls it "Forge".
+
 ## Rules worth not undoing
 
 - **One row, NULL = default** (`PlatformBranding`, id `default`, no `projectId`). A fresh install has no

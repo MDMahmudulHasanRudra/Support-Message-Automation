@@ -551,13 +551,22 @@ enum ProjectStatus {
 /// `proj_isp_digital`) and any created later. Everything project-scoped carries its `projectId`.
 /// See MULTI_PROJECT_PLAN.md. A status change never deletes data.
 model Project {
-  id          String        @id @default(cuid())
-  name        String
-  slug        String        @unique
-  description String?
-  status      ProjectStatus @default(SETUP)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id            String        @id @default(cuid())
+  name          String
+  slug          String        @unique
+  description   String?
+  status        ProjectStatus @default(SETUP)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  /// The SaaS customer this project belongs to (SAAS_PLATFORM_PLAN.md). NULL = the original
+  /// installation (the founding customer). A customer has as many projects as its Main Admin creates.
+  customerId    String?
+  customer      Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  /// Set while the customer's SaaS subscription holds this project (suspended or cancelled -
+  /// SAAS_PLATFORM_PLAN.md section 10). Held = treated exactly like a SUSPENDED project: read-only,
+  /// no automation or outbound, incoming messages still stored. Never set for a project with no
+  /// subscription, and never by anything but recomputeCustomerBilling (packages/db).
+  billingHoldAt DateTime?
 
   access             ProjectAccess[]
   projectRoles       ProjectRole[]
@@ -684,6 +693,8 @@ model Project {
   teamManagementSettings               TeamManagementSettings?
   mediaStorageSettings                 MediaStorageSettings?
   communicationStyleProfile            CommunicationStyleProfile?
+
+  @@index([customerId])
 }
 
 /// Which projects a user may ENTER — nothing else. What they may do inside a project is decided by
@@ -792,7 +803,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sessions UserSession[]
+  sessions              UserSession[]
+  supportAccessSessions SupportAccessSession[] @relation("SupportIdentity")
 
   createdRules                AutomationRule[]
   createdBroadcastJobs        GroupBroadcastJob[]
@@ -876,6 +888,16 @@ model User {
   googleIdentities        UserGoogleIdentity[]
   googleSheetActivities   GoogleSheetActivity[]      @relation("GoogleSheetActivityUser")
   googleSheetWorkSessions GoogleSheetWorkSession[]   @relation("GoogleSheetWorkSessionUser")
+  /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
+  /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
+  customerId              String?
+  customer                Customer?                  @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
+  /// Set on the support identity a Nexora operator uses inside this customer's workspace (never a
+  /// person's account; no password works for it; shown as "Nexora Support").
+  supportOperatorId       String?
+  supportOperator         PlatformOperator?          @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
 }
 
 // ---------------------------------------------------------------------------
@@ -897,7 +919,8 @@ model User {
 
 model PermissionModule {
   id          String   @id @default(cuid())
-  name        String   @unique
+  /// Unique per customer (partial unique indexes in SQL).
+  name        String
   description String?
   isSystem    Boolean  @default(false) // true only for the 4 seeded defaults — the delete/rename
   // action blocks on this; permissions assigned to it remain editable
@@ -906,6 +929,12 @@ model PermissionModule {
 
   permissions PermissionModulePermission[]
   users       User[]
+  /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
+  /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
+  customerId  String?
+  customer    Customer?                    @relation("CustomerRoles", fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([customerId])
 }
 
 /// Canonical permission catalogue — one row per key in packages/shared/src/permissions.ts,
@@ -930,34 +959,46 @@ model PermissionModulePermission {
 }
 
 model UserSession {
-  id            String    @id @default(cuid())
-  userId        String
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  secretHash    String    @unique // sha256(raw secret); the raw secret only ever lives in the cookie
-  createdAt     DateTime  @default(now())
-  expiresAt     DateTime // absolute: createdAt + SecuritySettings.sessionLifetimeHours at creation
+  id                     String                @id @default(cuid())
+  userId                 String
+  user                   User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  secretHash             String                @unique // sha256(raw secret); the raw secret only ever lives in the cookie
+  createdAt              DateTime              @default(now())
+  expiresAt              DateTime // absolute: createdAt + SecuritySettings.sessionLifetimeHours at creation
   // time — see banner comment above for why this is never recalculated
-  lastUsedAt    DateTime  @default(now())
-  ipAddress     String?
-  userAgent     String?
-  revokedAt     DateTime?
-  revokedReason String? // "USER_LOGOUT" | "ADMIN_REVOKED" | "ADMIN_REVOKED_ALL" |
+  lastUsedAt             DateTime              @default(now())
+  ipAddress              String?
+  userAgent              String?
+  revokedAt              DateTime?
+  revokedReason          String? // "USER_LOGOUT" | "ADMIN_REVOKED" | "ADMIN_REVOKED_ALL" |
   // "PASSWORD_CHANGED" — plain string, internal bookkeeping only, never a user-facing status enum
+  /// The hostname the session was created on (SAAS_PLATFORM_PLAN.md §3.3). A session is refused on
+  /// any other hostname. Null for sessions created before this column existed (accepted anywhere).
+  hostname               String?
+  /// Set when this is a Nexora operator's support session: it ends with that support session.
+  supportAccessSessionId String?
+  supportAccessSession   SupportAccessSession? @relation(fields: [supportAccessSessionId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
+  @@index([supportAccessSessionId])
 }
 
 /// Singleton settings row, same pattern as AutomationSettings (id: "global", upsert-only).
 model SecuritySettings {
-  id                          String   @id @default("global")
-  sessionLifetimeHours        Int      @default(24) // app-layer clamps to [1, 720] (30 days) in
+  id                          String    @id @default("global")
+  sessionLifetimeHours        Int       @default(24) // app-layer clamps to [1, 720] (30 days) in
   // the server action — this schema has no numeric CHECK constraints anywhere else, so validation
   // stays entirely in code, consistent with every other settings model
-  loginLockoutThreshold       Int      @default(5)
-  loginLockoutWindowMinutes   Int      @default(15)
-  loginLockoutDurationMinutes Int      @default(15)
-  updatedAt                   DateTime @updatedAt
+  loginLockoutThreshold       Int       @default(5)
+  loginLockoutWindowMinutes   Int       @default(15)
+  loginLockoutDurationMinutes Int       @default(15)
+  updatedAt                   DateTime  @updatedAt
+  /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
+  /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
+  /// One row per customer; the original installation's row keeps its fixed id.
+  customerId                  String?   @unique
+  customer                    Customer? @relation("CustomerSecurity", fields: [customerId], references: [id], onDelete: Cascade)
 }
 
 model WhatsAppAccount {
@@ -2755,13 +2796,17 @@ model SystemLog {
   /// The pipeline's own trace id, so every line belonging to one incoming message groups together.
   correlationId String?
 
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  /// The customer whose administration this entry records, for entries outside any project (a
+  /// customer's Main Admin portal). NULL = the original installation, or the platform itself.
+  customerId String?
 
   @@index([createdAt])
   @@index([level])
   @@index([targetType, targetId])
   @@index([correlationId])
   @@index([actorUserId, createdAt])
+  @@index([customerId, createdAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -5735,7 +5780,7 @@ model GoogleSheetsSettings {
 /// at upload, never the browser's claim. `assetVersion` moves on every image change and is put in
 /// the image URLs, so browsers can cache an image for good and still see a new one immediately.
 model PlatformBranding {
-  id                String   @id @default("default")
+  id                String    @id @default("default")
   /// The product name everywhere it is shown: browser title, sidebar, sign-in page, AI assistant.
   productName       String?
   /// The sign-in page's headline and the paragraph under it.
@@ -5749,10 +5794,15 @@ model PlatformBranding {
   /// Square app icon: the sidebar mark and the browser tab icon.
   icon              Bytes?
   iconMimeType      String?
-  assetVersion      Int      @default(0)
+  assetVersion      Int       @default(0)
   /// Who saved last, as a snapshot (users are never deleted, and usernames never change).
   updatedByUsername String?
-  updatedAt         DateTime @updatedAt
+  updatedAt         DateTime  @updatedAt
+  /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
+  /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
+  /// One row per customer; the original installation's row keeps its fixed id.
+  customerId        String?   @unique
+  customer          Customer? @relation("CustomerBranding", fields: [customerId], references: [id], onDelete: Cascade)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -5767,25 +5817,39 @@ model PlatformBranding {
 /// A department of the organisation. Deactivated rather than deleted once an employee uses it.
 model Department {
   id          String     @id @default(cuid())
-  name        String     @unique
+  /// Unique per customer (partial unique indexes in SQL).
+  name        String
   /// Optional short code ("SUP", "BILL"), unique when given.
-  code        String?    @unique
+  code        String?
   description String?
   isActive    Boolean    @default(true)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   employees   Employee[]
+  /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
+  /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
+  customerId  String?
+  customer    Customer?  @relation("CustomerDepartments", fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([customerId])
 }
 
 /// A job title ("Support Executive"). A label for a person — never a permission.
 model JobTitle {
   id          String     @id @default(cuid())
-  name        String     @unique
+  /// Unique per customer (partial unique indexes in SQL).
+  name        String
   description String?
   isActive    Boolean    @default(true)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   employees   Employee[]
+  /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
+  /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
+  customerId  String?
+  customer    Customer?  @relation("CustomerJobTitles", fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([customerId])
 }
 
 enum EmployeeStatus {
@@ -5813,9 +5877,14 @@ model Employee {
   joinedOn     DateTime?      @db.Date
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
+  /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
+  /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
+  customerId   String?
+  customer     Customer?      @relation("CustomerEmployees", fields: [customerId], references: [id], onDelete: Restrict)
 
   @@index([departmentId])
   @@index([jobTitleId])
+  @@index([customerId])
 }
 
 /// One person clearing one WhatsApp operation (Add Number to Groups, Groups Admin Maker) from THEIR
@@ -7014,4 +7083,351 @@ model ListViewPreference {
   updatedAt DateTime @updatedAt
 
   @@unique([projectId, userId, listKey])
+}
+
+// ---------------------------------------------------------------------------------------------
+// SaaS platform (SAAS_PLATFORM_PLAN.md, Phase 2): customers and the hostnames that open them.
+// Platform data: no projectId, never reachable through a project-scoped client.
+// ---------------------------------------------------------------------------------------------
+
+/// One customer (tenant) of the platform: a company with its own project and its own address.
+model Customer {
+  id                    String                 @id @default(cuid())
+  name                  String
+  contactName           String?
+  contactEmail          String?
+  contactPhone          String?
+  notes                 String?
+  createdByUsername     String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  projects              Project[]
+  domains               CustomerDomain[]
+  subscriptions         Subscription[]
+  invoices              SubscriptionInvoice[]
+  payments              SubscriptionPayment[]
+  events                SubscriptionEvent[]
+  invitations           UserInvitation[]
+  /// The original installation adopted as a customer (Customer #1): rows with no customer belong to
+  /// it. At most one (partial unique index in SQL). Set by "Adopt the original installation".
+  isFounding            Boolean                @default(false)
+  users                 User[]                 @relation("CustomerUsers")
+  roles                 PermissionModule[]     @relation("CustomerRoles")
+  departments           Department[]           @relation("CustomerDepartments")
+  jobTitles             JobTitle[]             @relation("CustomerJobTitles")
+  employees             Employee[]             @relation("CustomerEmployees")
+  securitySettings      SecuritySettings?      @relation("CustomerSecurity")
+  branding              PlatformBranding?      @relation("CustomerBranding")
+  supportAccessSessions SupportAccessSession[]
+}
+
+/// A hostname that opens one customer's workspace. Status flow (packages/shared/src/saasDomains.ts):
+/// PENDING → VERIFIED (DNS + reachability checked) → ACTIVE (HTTPS checked); DISABLED at any time.
+model CustomerDomain {
+  id                String    @id @default(cuid())
+  customerId        String
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// Lower-case, no port, no trailing dot. Unique across the whole platform.
+  hostname          String    @unique
+  status            String    @default("PENDING")
+  /// Served back at /api/platform/domain-check to prove the hostname reaches THIS deployment.
+  verificationToken String
+  /// The last check, step by step, for the admin page (no secrets).
+  lastCheck         Json?
+  lastCheckedAt     DateTime?
+  verifiedAt        DateTime?
+  activatedAt       DateTime?
+  disabledAt        DateTime?
+  createdByUsername String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([customerId])
+}
+
+/// Platform-wide domain settings, one row (id "default"). Hostname routing is OFF until a Main Admin
+/// switches it on: with it off, every hostname behaves exactly as before this table existed.
+model PlatformDomainSettings {
+  id                 String   @id @default("default")
+  hostRoutingEnabled Boolean  @default(false)
+  /// The domain customer subdomains live under, e.g. "udboy.com".
+  rootDomain         String?
+  /// Hostnames that serve the Main Admin Portal, e.g. ["admin.udboy.com"].
+  adminHostnames     String[] @default([])
+  /// The server's public IP addresses that a customer's DNS record must point to.
+  publicIps          String[] @default([])
+  /// Subdomain labels no customer may claim (in addition to the built-in list).
+  reservedLabels     String[] @default([])
+  updatedByUsername  String?
+  updatedAt          DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------------------------
+// SaaS platform, Phase 3 (SAAS_PLATFORM_PLAN.md section 10): plans, subscriptions, invoices,
+// payments, reminders and owner invitations. Platform data, no projectId. Entirely separate from
+// the Clients module's billing (ClientDue / ClientPayment are a customer's OWN clients).
+// Money is BigInt minor units (poisha) with its currency beside it, never a float, never summed
+// across currencies.
+// ---------------------------------------------------------------------------------------------
+
+/// Platform billing settings, one row (id "default"). Absent = the built-in defaults.
+model PlatformBillingSettings {
+  id                  String   @id @default("default")
+  /// Days of grace after a period ends unpaid, before an enforced subscription is suspended.
+  defaultGraceDays    Int      @default(7)
+  /// Days before the end of a period on which the owner is reminded (in the app and by email).
+  reminderDaysBefore  Int[]    @default([7, 3, 1])
+  /// Shown on invoices and reminders: who to pay and how.
+  paymentInstructions String?
+  /// The plan a new customer is given unless the operator chooses otherwise. Null = none preselected.
+  defaultPlanId       String?
+  updatedByUsername   String?
+  updatedAt           DateTime @updatedAt
+}
+
+/// A package a customer can be on. Editing a plan never changes a customer already on it: a
+/// subscription keeps a snapshot of the plan as it was when assigned.
+model Plan {
+  id                  String         @id @default(cuid())
+  name                String         @unique
+  description         String?
+  priceMinor          BigInt
+  currency            String         @default("BDT")
+  /// MONTH or YEAR.
+  interval            String         @default("MONTH")
+  trialDays           Int            @default(0)
+  /// Null = no limit.
+  maxWhatsAppAccounts Int?
+  maxUsers            Int?
+  /// Feature keys (packages/shared/src/projectFeatures.ts) the plan includes.
+  features            String[]       @default([])
+  /// Every module, including ones added later: `features` is ignored when this is on ("All Access").
+  allModules          Boolean        @default(false)
+  isActive            Boolean        @default(true)
+  sortOrder           Int            @default(0)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  subscriptions       Subscription[]
+}
+
+/// A customer's subscription. One CURRENT row per customer (endedAt null, partial unique in the
+/// migration); a replaced subscription is kept, ended, as history. The state is derived from these
+/// fields (subscriptionState in packages/shared); status is the last computed value.
+model Subscription {
+  id                  String                @id @default(cuid())
+  customerId          String
+  customer            Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  planId              String?
+  plan                Plan?                 @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planName            String
+  priceMinor          BigInt
+  currency            String                @default("BDT")
+  interval            String                @default("MONTH")
+  maxWhatsAppAccounts Int?
+  maxUsers            Int?
+  features            String[]              @default([])
+  /// Snapshot of the plan's "every module" setting: new projects of this customer get every module too.
+  allModules          Boolean               @default(false)
+  startsAt            DateTime
+  trialEndsAt         DateTime?
+  /// The end of the last paid period. Null = nothing paid yet.
+  paidThrough         DateTime?
+  graceDays           Int                   @default(7)
+  /// Off = never suspended automatically (an admin can still suspend by hand). Customer #1's
+  /// protection: nothing is enforced until an admin turns this on.
+  autoEnforce         Boolean               @default(false)
+  suspendedAt         DateTime?
+  suspendReason       String?
+  cancelledAt         DateTime?
+  status              String                @default("ACTIVE")
+  notes               String?
+  endedAt             DateTime?
+  createdByUsername   String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  invoices            SubscriptionInvoice[]
+  payments            SubscriptionPayment[]
+
+  @@index([customerId])
+  @@index([status])
+}
+
+/// A bill for one period. OPEN until paid or voided; numbered from a sequence (INV-000123).
+model SubscriptionInvoice {
+  id                String                @id @default(cuid())
+  number            String                @unique
+  customerId        String
+  customer          Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscriptionId    String
+  subscription      Subscription          @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  periodStart       DateTime
+  periodEnd         DateTime
+  amountMinor       BigInt
+  currency          String                @default("BDT")
+  /// OPEN, PAID or VOID.
+  status            String                @default("OPEN")
+  dueAt             DateTime
+  issuedAt          DateTime              @default(now())
+  paidAt            DateTime?
+  voidedAt          DateTime?
+  voidReason        String?
+  createdByUsername String?
+  payments          SubscriptionPayment[]
+
+  @@index([customerId, issuedAt])
+}
+
+/// A payment recorded by hand. Never edited: a mistake is reversed (with a reason) and recorded again.
+model SubscriptionPayment {
+  id                 String               @id @default(cuid())
+  customerId         String
+  customer           Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscriptionId     String
+  subscription       Subscription         @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  invoiceId          String?
+  invoice            SubscriptionInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  amountMinor        BigInt
+  currency           String               @default("BDT")
+  /// BKASH, NAGAD, BANK_TRANSFER, CASH, CARD, OTHER. No card number or credential is ever stored.
+  method             String
+  reference          String?
+  receivedAt         DateTime
+  note               String?
+  recordedByUsername String?
+  createdAt          DateTime             @default(now())
+  reversedAt         DateTime?
+  reversedByUsername String?
+  reversalReason     String?
+
+  @@index([customerId, receivedAt])
+}
+
+/// Append-only history of everything that happened to a customer's subscription.
+model SubscriptionEvent {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// e.g. PLAN_ASSIGNED, PAYMENT_RECORDED, STATUS_CHANGED, SUSPENDED, UNLOCKED, REMINDER_SENT.
+  kind          String
+  detail        Json?
+  /// For reminders: one per subscription + kind + period, never repeated.
+  dedupKey      String?  @unique
+  actorUsername String?
+  createdAt     DateTime @default(now())
+
+  @@index([customerId, createdAt])
+}
+
+/// An invitation to become a customer's owner: a single-use link, valid 72 h, stored only as a hash.
+model UserInvitation {
+  id                String    @id @default(cuid())
+  customerId        String
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  projectId         String
+  email             String?
+  name              String
+  tokenHash         String    @unique
+  expiresAt         DateTime
+  acceptedAt        DateTime?
+  acceptedUserId    String?
+  revokedAt         DateTime?
+  /// When the invitation email went out (platform SMTP); null = not sent (copy the link by hand).
+  emailedAt         DateTime?
+  /// The link, encrypted (encryptSecret), kept ONLY until the worker emails it, then cleared. The
+  /// token itself is never stored in the clear; null when there is no email or nothing to send.
+  linkCiphertext    String?
+  createdByUsername String?
+  createdAt         DateTime  @default(now())
+
+  @@index([customerId])
+}
+
+/// A person who runs the Nexora platform (SAAS_PLATFORM_PLAN.md §12) — Layer 1. Not a customer user,
+/// holds no customer role, and signs in only to the platform area with its own session cookie.
+model PlatformOperator {
+  id                    String                    @id @default(cuid())
+  username              String                    @unique
+  name                  String
+  email                 String?
+  passwordHash          String
+  isActive              Boolean                   @default(true)
+  /// May enter a customer's workspace through an audited support session.
+  canSupport            Boolean                   @default(true)
+  createdAt             DateTime                  @default(now())
+  createdByUsername     String?
+  lastLoginAt           DateTime?
+  sessions              PlatformOperatorSession[]
+  supportAccessSessions SupportAccessSession[]
+  supportIdentities     User[]
+}
+
+/// A platform operator's sign-in, bound to the address it was made on, like UserSession.
+model PlatformOperatorSession {
+  id         String           @id @default(cuid())
+  operatorId String
+  operator   PlatformOperator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  secretHash String           @unique
+  hostname   String?
+  createdAt  DateTime         @default(now())
+  expiresAt  DateTime
+  lastUsedAt DateTime         @default(now())
+  revokedAt  DateTime?
+  /// When the operator last re-entered their password; sensitive actions need it to be recent.
+  stepUpAt   DateTime?
+
+  @@index([operatorId])
+}
+
+/// A Nexora operator's time-limited, audited entry into ONE customer's workspace. Started on the
+/// platform with a reason and the operator's password; handed to the customer's own address by a
+/// single-use ticket (stored only as a hash, valid one minute); the browser session it creates
+/// there uses the operator's support identity in that customer and ends with this row.
+model SupportAccessSession {
+  id               String            @id @default(cuid())
+  operatorId       String?
+  operator         PlatformOperator? @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+  operatorUsername String
+  customerId       String
+  customer         Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  supportUserId    String?
+  supportUser      User?             @relation("SupportIdentity", fields: [supportUserId], references: [id], onDelete: SetNull)
+  /// The customer address the session is opened on.
+  hostname         String
+  reason           String
+  ticketHash       String            @unique
+  ticketExpiresAt  DateTime
+  ticketUsedAt     DateTime?
+  expiresAt        DateTime
+  createdAt        DateTime          @default(now())
+  endedAt          DateTime?
+  /// ENDED (the operator ended it) or REVOKED (another operator). Expiry is derived from expiresAt.
+  endReason        String?
+  endedByUsername  String?
+  userSessions     UserSession[]
+
+  @@index([customerId, createdAt])
+}
+
+/// The platform's own mail account (billing reminders, owner invitations), set on the platform
+/// instead of in `.env`. The worker uses it when enabled, otherwise PLATFORM_SMTP_*. The password is
+/// stored only encrypted (encryptSecret) and never sent back to a browser.
+model PlatformEmailSettings {
+  id                 String    @id @default("default")
+  enabled            Boolean   @default(false)
+  host               String?
+  port               Int       @default(587)
+  /// TLS or STARTTLS.
+  tlsMode            String    @default("STARTTLS")
+  username           String?
+  passwordCiphertext String?
+  fromAddress        String?
+  fromName           String?
+  /// A test message the worker sends once, to this address, then clears.
+  testRequestedAt    DateTime?
+  testRequestedTo    String?
+  lastTestAt         DateTime?
+  lastTestOk         Boolean?
+  lastTestMessage    String?
+  updatedByUsername  String?
+  updatedAt          DateTime  @updatedAt
 }

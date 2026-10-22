@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createProjectWithDefaults } from "@support-automation/db";
+import { applyCustomerPlanToNewProject, createProjectWithDefaults } from "@support-automation/db";
 import {
   canTransitionProject,
   CREATABLE_PROJECT_STATUSES,
@@ -14,7 +14,7 @@ import {
   validateProjectName,
   validateProjectSlug,
 } from "@support-automation/shared";
-import { platformPrisma } from "@/server/db";
+import { globalPrisma, platformPrisma } from "@/server/db";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { forgetProjectAccessDecisions } from "@/server/projectContext";
@@ -76,9 +76,12 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
   try {
     created = await createProjectWithDefaults({ name, slug, description, status, creatorUserId: access.session.userId }, platformPrisma);
   } catch (err) {
-    if (isUniqueViolation(err)) return { fieldErrors: { slug: `The slug "${slug}" is already used by another project.` } };
+    // Slugs are unique across every customer; "not available" does not confirm whose it is.
+    if (isUniqueViolation(err)) return { fieldErrors: { slug: `The address "${slug}" is not available. Choose another.` } };
     throw err;
   }
+  // A customer's new project gets the modules of its plan (every module on All Access, SAAS §12).
+  await applyCustomerPlanToNewProject(globalPrisma, created.id);
 
   forgetProjectAccessDecisions();
   await logSystemEvent("INFO", "projects", `Project "${name}" created`, {
@@ -196,6 +199,7 @@ export async function setProjectAccess(projectId: string, userId: string, grante
   if (!user) return { error: "That user no longer exists." };
 
   if (granted) {
+    // Access to another of the customer's workspaces adds no user, so no plan limit applies here.
     await platformPrisma.projectAccess.upsert({
       where: { projectId_userId: { projectId, userId } },
       update: {},

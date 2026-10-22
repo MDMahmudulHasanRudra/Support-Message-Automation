@@ -211,6 +211,14 @@ export const READ_ONLY_PERMISSION_KEYS: readonly string[] = PERMISSIONS.filter(
  */
 export const ADMIN_GRANTED_KEYS: readonly string[] = ["clients.delete"];
 
+/**
+ * Keys about the product itself rather than a customer's copy of it (SAAS_PLATFORM_PLAN.md §12): the
+ * release notes are Nexora's changelog, one table every customer reads. Only the original
+ * installation's roles hold them; a later customer's Administrator never does, and a role there
+ * that somehow carries one has it removed at check time.
+ */
+export const VENDOR_PERMISSION_KEYS: readonly string[] = ["release_notes.manage"];
+
 export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
   "messages.reply",

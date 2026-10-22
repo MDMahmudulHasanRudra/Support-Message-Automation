@@ -6,6 +6,7 @@ import {
   isReadOnlyProjectStatus,
   PROJECT_STATUSES,
   suggestProjectSlug,
+  nextDefaultProjectName,
   validateProjectName,
   validateProjectSlug,
 } from "../projects.js";
@@ -171,5 +172,25 @@ describe("which feature a page or action belongs to", () => {
         { key: "UNIFIED_REPORTING", enabled: true },
       ]).size,
     ).toBe(0);
+  });
+});
+
+describe("nextDefaultProjectName", () => {
+  it("offers Nexora Project 1 on an install with no Nexora projects", () => {
+    expect(nextDefaultProjectName([])).toBe("Nexora Project 1");
+    expect(nextDefaultProjectName([{ name: "ISP Digital", slug: "isp-digital" }])).toBe("Nexora Project 1");
+  });
+  it("offers the next free number, skipping a name or a slug already used", () => {
+    expect(nextDefaultProjectName([{ name: "Nexora Project 1", slug: "nexora-project-1" }])).toBe("Nexora Project 2");
+    expect(
+      nextDefaultProjectName([
+        { name: "Nexora Project 1", slug: "nexora-project-1" },
+        { name: "nexora project 2", slug: "custom" },
+        { name: "Something", slug: "nexora-project-3" },
+      ]),
+    ).toBe("Nexora Project 4");
+  });
+  it("fills a gap rather than always counting up", () => {
+    expect(nextDefaultProjectName([{ name: "Nexora Project 2", slug: "nexora-project-2" }])).toBe("Nexora Project 1");
   });
 });

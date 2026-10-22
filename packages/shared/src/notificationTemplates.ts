@@ -50,7 +50,7 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateDefinition[] =
       "Sent to your alerts group when AI decided it could not answer safely and asked for a person. The most frequent alert this system sends once AI automation is on.",
     audience: "TEAM",
     variables: [
-      { name: "groupName", description: "The group the customer wrote in.", sample: "Hamid Net & SoftifyBD" },
+      { name: "groupName", description: "The group the customer wrote in.", sample: "Hamid Net & Support" },
       { name: "clientName", description: "Sender's name, or their number if unknown.", sample: "Kazi Sifat" },
       { name: CUSTOMER_MESSAGE, description: "What the customer actually asked.", sample: "partial payment option khuje pacchi na?" },
       { name: "confidence", description: "How sure AI was, as a percentage, or n/a.", sample: "62%" },
@@ -80,7 +80,7 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateDefinition[] =
     variables: [
       { name: "mentions", description: "The @-tags themselves. Must be kept — removing it tags nobody.", sample: "@8801700000000" },
       { name: "names", description: "The tagged people's names, comma separated.", sample: "Kazi Sifat" },
-      { name: "groupName", description: "The group this is posted in.", sample: "Hamid Net & SoftifyBD" },
+      { name: "groupName", description: "The group this is posted in.", sample: "Hamid Net & Support" },
     ],
     defaultBody: "{{mentions}}\n\nA customer here needs a person — {{names}}, could you take a look?",
   },
@@ -91,7 +91,7 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateDefinition[] =
       "Sent when an automation rule with a 'notify WhatsApp' or 'notify Teams' action matches an incoming message.",
     audience: "TEAM",
     variables: [
-      { name: "groupName", description: "The group the message arrived in.", sample: "Net Express & ISP Digital" },
+      { name: "groupName", description: "The group the message arrived in.", sample: "Net Express & Support" },
       { name: "clientName", description: "Sender's name, or their number if unknown.", sample: "Shoriful Islam Shuvo" },
       { name: CUSTOMER_MESSAGE, description: "The message that matched.", sample: "recharge page asena" },
       { name: "category", description: "The rule's category, if it has one.", sample: "Billing" },

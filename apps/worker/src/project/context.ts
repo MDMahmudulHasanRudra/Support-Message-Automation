@@ -84,6 +84,19 @@ export async function withAccountProject<T>(accountId: string, fn: () => Promise
 export const OPERATING_PROJECT_STATUSES = ["SETUP", "ACTIVE"] as const;
 
 /**
+ * The Prisma filter for "a project the worker acts for": an operating status AND no SaaS billing
+ * hold (SAAS_PLATFORM_PLAN.md section 10). A held project is treated exactly like a SUSPENDED one —
+ * nothing outward, no automation, no scanners; incoming messages are still stored. Every queue claim
+ * and project list uses this one filter, so a new one cannot forget the hold.
+ */
+export const OPERATING_PROJECT_FILTER = { status: { in: [...OPERATING_PROJECT_STATUSES] }, billingHoldAt: null };
+
+/** The status a held project's work is judged by: its own, or SUSPENDED while billing holds it. */
+export function effectiveProjectStatus(project: { status: string; billingHoldAt: Date | null }): string {
+  return project.billingHoldAt && (OPERATING_PROJECT_STATUSES as readonly string[]).includes(project.status) ? "SUSPENDED" : project.status;
+}
+
+/**
  * The projects background work runs for: every SETUP or ACTIVE one, oldest first. Cached briefly
  * because the 2-second queue loops ask on every tick; a project created, suspended or reactivated
  * in the dashboard is picked up within PROJECT_LIST_TTL_MS.
@@ -93,7 +106,7 @@ let projectList: { at: number; ids: string[] } | null = null;
 export async function activeProjectIds(): Promise<string[]> {
   if (projectList && Date.now() - projectList.at < PROJECT_LIST_TTL_MS) return projectList.ids;
   const projects = await platformPrisma.project.findMany({
-    where: { status: { in: [...OPERATING_PROJECT_STATUSES] } },
+    where: OPERATING_PROJECT_FILTER,
     select: { id: true },
     orderBy: { createdAt: "asc" },
   });
@@ -127,8 +140,8 @@ const operatingCache = new Map<string, { at: number; operating: boolean }>();
 export async function projectIsOperating(projectId: string): Promise<boolean> {
   const cached = operatingCache.get(projectId);
   if (cached && Date.now() - cached.at < PROJECT_LIST_TTL_MS) return cached.operating;
-  const project = await platformPrisma.project.findUnique({ where: { id: projectId }, select: { status: true } });
-  const operating = Boolean(project && (OPERATING_PROJECT_STATUSES as readonly string[]).includes(project.status));
+  const project = await platformPrisma.project.findUnique({ where: { id: projectId }, select: { status: true, billingHoldAt: true } });
+  const operating = Boolean(project && (OPERATING_PROJECT_STATUSES as readonly string[]).includes(effectiveProjectStatus(project)));
   operatingCache.set(projectId, { at: Date.now(), operating });
   return operating;
 }

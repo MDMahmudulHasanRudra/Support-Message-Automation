@@ -1,7 +1,9 @@
 "use server";
 
 import { projectPath } from "@/server/projectPaths";
-import { prisma } from "@/server/db";
+import { platformPrisma, prisma } from "@/server/db";
+import { activeProjectId } from "@/server/projectContext";
+import { CustomerLimitError, lockAndCheckCustomerLimit } from "@/server/customerLimits";
 import { revalidatePath } from "next/cache";
 import { encryptSecret, countAccountHistory, reconcileAttendanceAfterAccountRemoval } from "@support-automation/db";
 import type { AccountHistoryImpact } from "@support-automation/db";
@@ -207,14 +209,29 @@ export async function addWhatsAppAccount(formData: FormData): Promise<AddAccount
   const label = String(formData.get("label") ?? "").trim();
   if (!label) return { error: "Label is required." };
 
-  const first = (await prisma.whatsAppAccount.count()) === 0;
+  // The customer's plan may cap its WhatsApp numbers (SaaS section 10.4): checked and created in
+  // one transaction under a lock, so two clicks cannot both take the last place.
+  const projectId = await activeProjectId();
+  const create = (primaryIfFirst: boolean) =>
+    platformPrisma.$transaction(async (tx) => {
+      const refusal = await lockAndCheckCustomerLimit(tx, projectId, "WHATSAPP_ACCOUNTS");
+      if (refusal) throw new CustomerLimitError(refusal);
+      const first = primaryIfFirst && (await tx.whatsAppAccount.count({ where: { projectId } })) === 0;
+      return tx.whatsAppAccount.create({ data: { projectId, label, status: "DISCONNECTED", isPrimary: first } });
+    });
   let account;
   try {
-    account = await prisma.whatsAppAccount.create({ data: { label, status: "DISCONNECTED", isPrimary: first } });
+    account = await create(true);
   } catch (err) {
+    if (err instanceof CustomerLimitError) return { error: err.message };
     // Two first numbers added at the same moment: the database allows one Primary per project.
-    if (!first || (err as { code?: string }).code !== "P2002") throw err;
-    account = await prisma.whatsAppAccount.create({ data: { label, status: "DISCONNECTED" } });
+    if ((err as { code?: string }).code !== "P2002") throw err;
+    try {
+      account = await create(false);
+    } catch (again) {
+      if (again instanceof CustomerLimitError) return { error: again.message };
+      throw again;
+    }
   }
   await logSystemEvent("INFO", "accounts", `WhatsApp account "${label}" added`, { accountId: account.id });
   revalidatePath(await projectPath("/accounts"));

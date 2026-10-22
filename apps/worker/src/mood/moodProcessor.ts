@@ -28,7 +28,7 @@ import {
   type TriggerableMood,
 } from "@support-automation/shared";
 import { platformPrisma, prisma } from "../db.js";
-import { OPERATING_PROJECT_STATUSES, currentProjectId, withProject } from "../project/context.js";
+import { OPERATING_PROJECT_FILTER, currentProjectId, withProject } from "../project/context.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { enqueueNotification } from "../notifications/enqueueNotification.js";
@@ -62,7 +62,7 @@ export const MOOD_STUCK_AFTER_MS = 5 * 60_000;
 
 async function claimNextEvent(): Promise<{ id: string; projectId: string } | null> {
   const candidate = await platformPrisma.customerMoodEvent.findFirst({
-    where: { status: "PENDING", scheduledAt: { lte: new Date() }, project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
+    where: { status: "PENDING", scheduledAt: { lte: new Date() }, project: OPERATING_PROJECT_FILTER },
     orderBy: { scheduledAt: "asc" },
     select: { id: true, projectId: true },
   });
@@ -76,7 +76,7 @@ async function claimNextEvent(): Promise<{ id: string; projectId: string } | nul
 
 async function claimNextAction(): Promise<{ id: string; projectId: string } | null> {
   const candidate = await platformPrisma.moodAlertAction.findFirst({
-    where: { status: "PENDING", scheduledAt: { lte: new Date() }, project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
+    where: { status: "PENDING", scheduledAt: { lte: new Date() }, project: OPERATING_PROJECT_FILTER },
     orderBy: { scheduledAt: "asc" },
     select: { id: true, projectId: true },
   });

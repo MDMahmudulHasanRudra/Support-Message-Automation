@@ -146,7 +146,7 @@ export const PROJECT_FEATURES = [
   {
     key: "PRODUCT_KNOWLEDGE_FORGE",
     label: "Product knowledge (Forge)",
-    description: "Learning from the product's own repository through Softify Forge.",
+    description: "Learning from the product's own repository through Forge.",
     defaultEnabled: true,
     routes: ["/integrations/forge"],
     permissionKeys: [],

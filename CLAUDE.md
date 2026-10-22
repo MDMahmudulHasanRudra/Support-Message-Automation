@@ -292,12 +292,51 @@ the same. Kill switch for the page side only: `PROJECT_ROLE_PAGES_DISABLED=true`
 
 **White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
 `projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the
-built-in default (`lib/branding.ts`), so a fresh install is unchanged. Never hard-code the product
+built-in default (`lib/branding.ts`: **Nexora** since 21 Oct 2026; existing installs had their old name stored by
+migration `20261021090000_nexora_white_label_defaults`, so they look unchanged — BRANDING.md §Defaults). A fresh
+install's first project is "Nexora Project 1", and new projects are offered "Nexora Project N". Never hard-code the product
 name again: server code reads `getBranding()`, client code `useBranding()` (root-layout provider),
 and the mark is `BrandMark`, which follows the uploaded icon. Saving needs `projects.manage`. The
 colour moves only the accent tokens, never the ink primary. Images are sniffed from their bytes,
 capped at 512 KB, stored in the database and served by `/api/brand/<logo|icon>` with a sandbox CSP.
 A project's NAME is editable on its Main Admin page; its slug never is.
+
+**Two administration layers (`SAAS_PLATFORM_PLAN.md` §12, 22 Oct 2026) — read this before touching users,
+roles, projects, hostnames or anything under `/admin` or `/platform`.**
+- **Layer 1, the Nexora platform** (`/platform/*`, `server/platform/`): the software owner's control centre —
+  customers, provisioning, domains, plans, billing, monitoring, support access, operators, platform email. Its own
+  accounts (`PlatformOperator`), session (`nexora_platform_session`, path `/platform`), sign-in and authorization
+  (`requireOperatorPage` / `requireOperatorAction`). No customer login, of any role, passes it — and no operator holds a
+  role in any customer's software. It reads across customers with the unscoped `globalPrisma` and logs through
+  `logPlatformEvent` (`customerId = "__platform__"`, never in a customer's System Log). Served on the admin address and
+  open addresses only (`hostServesPlatform`).
+- **Layer 2, each customer's software** (everything that existed: `/admin` Main Admin portal, `/p/<slug>/…`): a complete,
+  separate copy per customer. `customerId` on `User`, `PermissionModule`, `Department`, `JobTitle`, `Employee`,
+  `SecuritySettings`, `PlatformBranding`, portal `SystemLog` entries and `Project` says whose; **NULL = the original
+  installation** (the founding customer, `Customer.isFounding`), so every pre-existing row kept its meaning — adopting
+  Customer #1 rewrites nothing. The web's `platformPrisma` and `prisma` are CUSTOMER-SCOPED (`createTenantScopedPrisma`,
+  `server/tenant.ts`: explicit `runWithTenant` → explicit project → the session's customer → the address's customer →
+  refused on the platform address → the original installation on an open address). `globalPrisma` (unscoped) is only for
+  `server/platform/`, sign-in, sessions, access and hostnames. Raw SQL on a customer-owned table must name the customer.
+- A customer's Main Admin (`projects.manage` in ITS roles) manages only its own projects, users and roles, on its own
+  address. A project opens only for its own customer's people (`decideAccess`), on its customer's address or an open one,
+  never on the platform address (`hostAllowsProject`). Sign-in: the address's customer must be the person's
+  (`mayUseThisAddress`). `VENDOR_PERMISSION_KEYS` (release notes) work only in the original installation.
+- A customer has ITS OWN standard roles (`ensureDefaultRoles`, also run by the seed for every customer) — role, department
+  and job-title names are unique per customer (partial indexes). Plan limits count per customer
+  (`lockAndCheckCustomerLimit`: users on login creation only, WhatsApp numbers across its workspaces). A new project
+  takes the customer's plan modules (`applyCustomerPlanToNewProject`).
+- **Support access** (`server/platform/support.ts`): reason + operator password → single-use, one-minute ticket (hashed)
+  → `/support-access/<ticket>` on the customer's address → a session of the operator's SUPPORT IDENTITY in that customer
+  (`User.supportOperatorId`, its Administrator role, no usable password, refused at sign-in), bound to the
+  `SupportAccessSession` and dying with it. Banner on every page, every write recorded in the customer's System Log at the
+  database (`recordSupportWrite` in `server/db.ts`), revocable on the platform; a customer that deactivates the support
+  identity turns support access off. Never a password, never a bypass.
+- Hostnames: routing OFF by default (`classifyHost` → OPEN, everything as before). On: a customer's address serves that
+  customer's software (its Main Admin portal included); the admin address serves the platform; an unknown address
+  nothing. Sessions are bound to their address. The hostname is `visitedHost()` (x-forwarded-host first). Caddy gets
+  certificates only for what `/api/platform/tls-allowed` approves. Recovery (§8): localhost/IP always open,
+  `SAAS_HOST_ROUTING_DISABLED=true`. `saasTwoLayers.integration.test.ts` pins every rule above.
 
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
@@ -2881,6 +2920,23 @@ records, CRUD, duplicates, list/details, import/export, timeline, per-channel co
     Personal chat links are untouched and still refuse `@g.us`.
   - **Billing figures are never selected for a viewer without `clients.view_billing`**, and a billing filter from one is
     ignored. Column preferences are re-sanitized on every read. Photos are stripped, bounded thumbnails in `ClientPhoto`.
+
+### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
+
+On the platform (Layer 1). Rules worth not undoing:
+- **An address is the platform's OR one customer's, never both** (`classifyHost`). `admin.udboy.com` is the platform;
+  `zoventio.udboy.com` is Customer #1's. Routing ships OFF.
+- **A customer with no subscription is never held or limited, and a subscription suspends by itself only
+  with `autoEnforce` ticked** (default off). This is Customer #1's protection; never default either.
+- **The billing hold IS the SUSPENDED rule** (`Project.billingHoldAt` on every project of the customer, written only by
+  `recomputeCustomerBilling`): worker `OPERATING_PROJECT_FILTER` / `effectiveProjectStatus`, web `effectiveProject`.
+- **Payments are append-only** (DB trigger) and reversed, never edited; money is BigInt minor units.
+- **"All Access"** (`Plan.allModules`, created by the migration and preselected via `PlatformBillingSettings.defaultPlanId`)
+  switches every module on, including later ones. New plans default to the modules a new project gets.
+- **Add customer provisions a whole copy of the software** (`createCustomer`): roles, first workspace, plan with its
+  price, payment, address, owner as ITS Main Admin. "The original installation" mode only marks the founding customer.
+- **Change plan starts from the current terms** (paid-through, enforcement, no new trial).
+- Billing email: the worker's `platformMailer()` — Platform → Settings when enabled, else `PLATFORM_SMTP_*`.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

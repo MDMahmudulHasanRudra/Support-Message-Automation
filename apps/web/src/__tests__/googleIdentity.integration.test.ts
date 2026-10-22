@@ -95,6 +95,14 @@ async function user(name: string, roleId: string, projectIds: string[]): Promise
 
 const people = {} as Record<"borhan" | "istiyak" | "manager", Session>;
 
+// These tests are written around the original installation as it exists in production ("ISP
+// Digital", /p/isp-digital). A database created after 21 Oct 2026 names that project "Nexora Project
+// 1" instead (20261021090000_nexora_white_label_defaults), so give it the existing install's name and
+// address first. Test database only.
+beforeAll(async () => {
+  await rawPrisma.project.update({ where: { id: ORIGINAL_PROJECT_ID }, data: { name: "ISP Digital", slug: "isp-digital" } });
+});
+
 beforeAll(async () => {
   vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "test-client.apps.googleusercontent.com");
   vi.stubEnv("GOOGLE_OAUTH_CLIENT_SECRET", "test-secret");

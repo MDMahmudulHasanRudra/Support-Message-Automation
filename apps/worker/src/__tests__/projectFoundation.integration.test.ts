@@ -23,7 +23,14 @@ afterAll(async () => {
 describe("ISP Digital is the original installation", () => {
   it("exists, active, with the slug the routes will use", async () => {
     const project = await prisma.project.findUniqueOrThrow({ where: { id: ISP_DIGITAL } });
-    expect(project).toMatchObject({ name: "ISP Digital", slug: "isp-digital", status: "ACTIVE" });
+    expect(project.status).toBe("ACTIVE");
+    // An install that existed before 21 Oct 2026 keeps "ISP Digital"; a database created after it
+    // starts as "Nexora Project 1" (20261021090000_nexora_white_label_defaults). Either is correct.
+    expect([
+      { name: project.name, slug: project.slug },
+    ]).toContainEqual(
+      project.slug === "isp-digital" ? { name: "ISP Digital", slug: "isp-digital" } : { name: "Nexora Project 1", slug: "nexora-project-1" },
+    );
   });
 
   it("a write that names no project is refused — there is no default project any more (Phase 3)", async () => {

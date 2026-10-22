@@ -11,6 +11,7 @@ import {
   type PermissionKey,
   type ProjectAccessLevelValue,
   type ProjectMembership,
+  VENDOR_PERMISSION_KEYS,
 } from "@support-automation/shared";
 import { activeProjectSlug, requireActiveProject } from "@/server/projectContext";
 import { getSession, type Session } from "@/server/auth";
@@ -173,7 +174,12 @@ async function accessForRequest(session: Session): Promise<{ keys: Set<string>; 
     },
   });
   if (!user || !user.isActive) return null;
-  const globalKeys = user.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
+  // A customer's own Main Admin keeps every key on that customer's address (SAAS_PLATFORM_PLAN.md §12);
+  // what any key can reach is confined to the person's customer by the data layer (server/db.ts). The
+  // only keys a customer never holds are the product's own (VENDOR_PERMISSION_KEYS): they work only
+  // for the original installation's people.
+  const vendorOnly = (session.tenant ?? null) === null ? null : new Set(VENDOR_PERMISSION_KEYS);
+  const globalKeys = (user.permissionModule?.permissions.map((p) => p.permission.key) ?? []).filter((key) => !vendorOnly?.has(key));
   if (projectRolesDisabled()) return { keys: new Set(globalKeys), pages: null };
   const membership = await membershipInThisProject(session.userId);
   const keys = resolveRoleKeys(globalKeys, membership);

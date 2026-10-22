@@ -1,6 +1,6 @@
 import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
-import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
+import { accountInCurrentProject, OPERATING_PROJECT_FILTER, withProject } from "../project/context.js";
 import { normalizePhoneNumber } from "@support-automation/shared";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
@@ -48,7 +48,7 @@ async function checkingJobCandidates() {
   // than one, so a job whose account is disconnected cannot hold every other account's jobs behind
   // it — the oldest job whose session is live is the one checked.
   return platformPrisma.groupParticipantAddJob.findMany({
-    where: { status: "CHECKING", project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
+    where: { status: "CHECKING", project: OPERATING_PROJECT_FILTER },
     orderBy: { createdAt: "asc" },
     take: 20,
     select: { id: true, accountId: true, projectId: true },

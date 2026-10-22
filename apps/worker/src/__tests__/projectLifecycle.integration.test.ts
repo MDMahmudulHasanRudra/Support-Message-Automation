@@ -130,8 +130,10 @@ describe("creating a project", () => {
 
   it("is all or nothing: a clashing slug leaves no half-created project behind", async () => {
     const before = await rawPrisma.automationSettings.count();
+    // The original project's slug, whichever name this database started with.
+    const { slug: takenSlug } = await rawPrisma.project.findUniqueOrThrow({ where: { id: "proj_isp_digital" }, select: { slug: true } });
     await expect(
-      createProjectWithDefaults({ name: "Clash", slug: "isp-digital", status: "SETUP", creatorUserId: creatorId }, rawPrisma),
+      createProjectWithDefaults({ name: "Clash", slug: takenSlug, status: "SETUP", creatorUserId: creatorId }, rawPrisma),
     ).rejects.toThrow();
     expect(await rawPrisma.automationSettings.count()).toBe(before);
   });
@@ -287,5 +289,61 @@ describe("commands queued before a project stopped operating (audit MEDIUM #4)",
     const provider = new MockProvider();
     await processOneCommand(live.id, provider);
     expect(JSON.stringify((await result(send.id)).result ?? {})).not.toContain("not run");
+  });
+});
+
+describe("a project held for billing (SAAS_PLATFORM_PLAN.md §10) — status still ACTIVE", () => {
+  async function setHold(projectId: string, held: boolean) {
+    await rawPrisma.project.update({ where: { id: projectId }, data: { billingHoldAt: held ? new Date() : null } });
+    resetProjectCachesForTests();
+  }
+
+  it("sends nothing it had queued, keeps it, and sends it once released", async () => {
+    const project = await newProject();
+    const account = await withProject(project.id, () => prisma.whatsAppAccount.create({ data: { label: `H ${tag}`, status: "CONNECTED" } }));
+    const chat = `${tag}-4444444444@g.us`;
+    const outbound = await rawPrisma.outboundMessage.create({
+      data: {
+        projectId: project.id, accountId: account.id, chatId: chat, toPhone: chat, body: "held-for-billing",
+        actionType: "MANUAL_REPLY", idempotencyKey: randomUUID(), status: "PENDING", scheduledAt: epoch,
+      },
+    });
+    await setHold(project.id, true);
+    const provider = new MockProvider();
+    for (let i = 0; i < 20 && (await processOne(provider)); i++);
+    expect((await rawPrisma.outboundMessage.findUniqueOrThrow({ where: { id: outbound.id } })).status).toBe("PENDING");
+    expect(provider.sentMessages.find((m) => m.body === "held-for-billing")).toBeUndefined();
+
+    await setHold(project.id, false);
+    expect(await processOne(provider)).toBe(true);
+    expect((await rawPrisma.outboundMessage.findUniqueOrThrow({ where: { id: outbound.id } })).status).toBe("SENT");
+  });
+
+  it("still stores incoming messages without automation, and the scanners skip it", async () => {
+    const project = await newProject();
+    const account = await withProject(project.id, () => prisma.whatsAppAccount.create({ data: { label: `H2 ${tag}`, status: "CONNECTED", isPrimary: true } }));
+    await withProject(project.id, async () => {
+      await prisma.automationSettings.update({ where: { id: "global" }, data: { automationEnabled: true } });
+      await prisma.automationRule.create({
+        data: {
+          name: `Held rule ${tag}`, type: "AUTO_REPLY", matchType: "KEYWORDS", keywords: [`quil${tag}`],
+          conditions: {}, actions: [{ type: "AUTO_REPLY" }], replyMessage: "should not go", priority: 1, status: "ACTIVE",
+        },
+      });
+    });
+    await setHold(project.id, true);
+    const whatsappMessageId = `wamid-${randomUUID()}`;
+    await processIncomingMessage({
+      accountId: account.id, whatsappMessageId, chatId: `${tag}-5555555555@g.us`, whatsappGroupId: `${tag}-5555555555@g.us`,
+      senderPhone: "8801711000222", direction: "INCOMING", body: `hello quil${tag}`, timestampWa: new Date(),
+    });
+    const stored = await rawPrisma.message.findFirstOrThrow({ where: { whatsappMessageId } });
+    expect(stored.processingStatus).toBe("IGNORED");
+    expect(await rawPrisma.outboundMessage.count({ where: { projectId: project.id } })).toBe(0);
+
+    const visited: string[] = [];
+    await forEachProject("lifecycle-test", async (id) => void visited.push(id));
+    expect(visited).not.toContain(project.id);
+    await setHold(project.id, false);
   });
 });

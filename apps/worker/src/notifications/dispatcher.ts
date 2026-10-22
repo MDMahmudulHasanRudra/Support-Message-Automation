@@ -1,7 +1,7 @@
 import { trackTick } from "../lifecycle.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { platformPrisma, prisma } from "../db.js";
-import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
+import { accountInCurrentProject, OPERATING_PROJECT_FILTER, withProject } from "../project/context.js";
 import type { Notification } from "@prisma/client";
 import type { NotificationProvider } from "./NotificationProvider.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
@@ -40,7 +40,7 @@ async function claimNextNotification() {
   // inside the claimed row's own project.
   const candidate = await platformPrisma.notification.findFirst({
     // A suspended or archived project's alerts are held, like its outbound messages.
-    where: { status: "PENDING", project: { status: { in: [...OPERATING_PROJECT_STATUSES] } } },
+    where: { status: "PENDING", project: OPERATING_PROJECT_FILTER },
     orderBy: { createdAt: "asc" },
   });
   if (!candidate) return null;

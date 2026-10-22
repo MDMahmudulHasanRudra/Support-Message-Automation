@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  HOST_HEADER,
+  visitedHost,
   isOutsideProject,
   LAST_PROJECT_COOKIE,
   PROJECT_HEADER,
@@ -35,6 +37,8 @@ export function proxy(request: NextRequest) {
   forwarded.delete(PROJECT_HEADER);
   forwarded.delete(PROJECT_PATH_HEADER);
   forwarded.delete(WORKSPACE_HEADER);
+  // The hostname, for the SaaS host rules (server/hostScope.ts). Any copy a client sent is replaced.
+  forwarded.set(HOST_HEADER, visitedHost(request.headers));
 
   const slug = slugFromPath(pathname);
   if (slug) {

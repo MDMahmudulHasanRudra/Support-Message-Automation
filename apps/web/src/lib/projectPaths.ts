@@ -27,17 +27,42 @@ export const PROJECT_PATH_HEADER = "x-softify-project-path";
  */
 export const WORKSPACE_HEADER = "x-softify-workspace";
 
+/**
+ * The hostname the request was made to, as the proxy read it from `Host` (SAAS_PLATFORM_PLAN.md
+ * §3.3). Always overwritten by the proxy, never taken from a client. Trusted because the app port is
+ * reachable only through the reverse proxy, which passes the browser's hostname on.
+ */
+export const HOST_HEADER = "x-nexora-host";
+
+/**
+ * The address the visitor used, for the proxy to forward as HOST_HEADER. `x-forwarded-host` first:
+ * Next sets it from `Host` on every request that arrives without one, the reverse proxy sets it to
+ * the visitor's address, and Next's own render of a Server Action's redirect target — a request
+ * from this server to itself, `Host: localhost` — carries the original value forward. Reading `Host`
+ * alone made that render look like localhost, so a session bound to the real address read as signed
+ * out and every sign-in on a named address bounced back to /login. Trusting the header adds nothing
+ * an outside caller could not already do with `Host`; in production only the reverse proxy reaches the app.
+ */
+export function visitedHost(headers: Headers): string {
+  return (headers.get("x-forwarded-host") ?? headers.get("host") ?? "").split(",")[0]!.trim().toLowerCase();
+}
+
 /** Remembers the last project opened, ONLY so `/open` can continue there. Never decides reads or writes. */
 export const LAST_PROJECT_COOKIE = "softify-last-project";
 
 /**
- * Paths that are not inside a project: sign-in, the project chooser, the Main Admin Portal, health,
+ * Paths that are not inside a project: sign-in, the project chooser, the Main Admin Portal, the Nexora
+ * platform, health,
  * framework assets. A link to one of these is never prefixed with the current project.
  */
 const OUTSIDE_PROJECT = [
   /^\/login(\/|$|\?)/,
   /^\/open(\/|$|\?)/,
+  /^\/invite\//,
   /^\/admin(\/|$|\?)/,
+  // The Nexora platform (Layer 1) and the support-access handoff (SAAS_PLATFORM_PLAN.md §12).
+  /^\/platform(\/|$|\?)/,
+  /^\/support-access\//,
   /^\/api\/health(\/|$|\?)/,
   /^\/p\//,
   /^\/_next\//,

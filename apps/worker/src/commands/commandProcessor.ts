@@ -1,6 +1,6 @@
 import { isShuttingDown, trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
-import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withAccountProject, withProject } from "../project/context.js";
+import { accountInCurrentProject, effectiveProjectStatus, OPERATING_PROJECT_STATUSES, withAccountProject, withProject } from "../project/context.js";
 import { SessionNotReadyError, type WhatsAppProvider, GroupListNotReadyError } from "../provider/WhatsAppProvider.js";
 import type { ProviderRegistry } from "../provider/ProviderRegistry.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -1288,8 +1288,9 @@ const ALLOWED_WHEN_HELD: Record<string, readonly string[]> = {
 
 /** Closes a claimed command its project's status no longer permits. True when it was refused. */
 async function refuseForHeldProject(command: ClaimedCommand): Promise<boolean> {
-  const project = await platformPrisma.project.findUnique({ where: { id: command.projectId }, select: { status: true } });
-  const status = project?.status ?? "ARCHIVED";
+  const project = await platformPrisma.project.findUnique({ where: { id: command.projectId }, select: { status: true, billingHoldAt: true } });
+  // A SaaS billing hold is judged as SUSPENDED: session upkeep and read-only lookups only.
+  const status = project ? effectiveProjectStatus(project) : "ARCHIVED";
   if ((OPERATING_PROJECT_STATUSES as readonly string[]).includes(status)) return false;
   if ((ALLOWED_WHEN_HELD[status] ?? []).includes(command.type)) return false;
   await platformPrisma.workerCommand.update({
@@ -1461,7 +1462,7 @@ async function closeRetiredTeamsCommand(command: ClaimedCommand): Promise<void> 
     data: {
       status: "FAILED",
       processedAt: new Date(),
-      result: { error: "Microsoft Teams Integration has been removed from Softify Assist." },
+      result: { error: "Microsoft Teams Integration has been removed." },
     },
   });
 }

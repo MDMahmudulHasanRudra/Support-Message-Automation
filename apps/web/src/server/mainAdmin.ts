@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { requireAdminPortalHost } from "@/server/hostScope";
 import { getDhakaDayRange, resolveProjectFeatures, type PermissionKey, type ProjectAccessLevelValue, type ProjectStatusValue } from "@support-automation/shared";
 import { platformPrisma } from "@/server/db";
 import { requireSession, type Session } from "@/server/auth";
@@ -18,6 +19,8 @@ import { isMainAdmin } from "@/server/projectContext";
  * user (404), the same way a project they cannot enter does not.
  */
 export async function requireMainAdminPage(): Promise<{ session: Session; canManage: boolean }> {
+  // On a customer's or an unknown address the portal does not exist (SAAS_PLATFORM_PLAN.md §3.3).
+  await requireAdminPortalHost();
   const session = await requireSession();
   if (!(await hasPermission(session, "projects.view"))) notFound();
   return { session, canManage: await hasPermission(session, "projects.manage") };

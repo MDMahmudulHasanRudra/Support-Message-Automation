@@ -147,7 +147,7 @@ describe("a role without projects.manage cannot reach Main Admin", () => {
     expect(await rawPrisma.permissionModulePermission.count({ where: { permissionModuleId: ids.plainRole } })).toBe(before);
     const c = await call(() => roles.createPermissionModule({}, form({ name: `New ${tag}`, permissionKeys: ["projects.manage"] })));
     expect(c).toEqual({ error: MAIN_ADMIN_ONLY_ERROR });
-    expect(await rawPrisma.permissionModule.findUnique({ where: { name: `New ${tag}` } })).toBeNull();
+    expect(await rawPrisma.permissionModule.findFirst({ where: { name: `New ${tag}` } })).toBeNull();
   });
 
   it("cannot take over a Main Admin: password, role, or deactivation", async () => {
