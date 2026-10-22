@@ -51,6 +51,7 @@ import { startChannelInboundProcessor } from "./channels/inboundProcessor.js";
 import { startChannelOutboundProcessor } from "./channels/outboundProcessor.js";
 import { startEmailOutboxProcessor } from "./email/outboxProcessor.js";
 import { startBillingProcessor } from "./billing/billingProcessor.js";
+import { startPictureProcessor } from "./avatars/whatsappPictures.js";
 import { startIdentityReattributionProcessor } from "./teamManagement/reattribution.js";
 import { startChannelAiProcessor } from "./channels/aiReply.js";
 
@@ -204,6 +205,10 @@ async function main() {
     // SaaS billing (SAAS_PLATFORM_PLAN.md §10): workspace holds, reminders, owner invitations. Platform
     // data only; a customer with no subscription is never read, so it can never be held.
     startBillingProcessor(),
+    // WhatsApp profile pictures (WHATSAPP_AVATARS.md): fetches, once per version, only pictures an
+    // incoming message already carried. Idle unless a project switched WHATSAPP_AVATARS on; does
+    // nothing at all under WHATSAPP_AVATARS_DISABLED=true.
+    startPictureProcessor(),
     // Report accuracy: brings the stored team-member stamps, Support Activity members and Duty History
     // in line after a roster identity change (teamManagement/reattribution.ts). Database only.
     startIdentityReattributionProcessor(),

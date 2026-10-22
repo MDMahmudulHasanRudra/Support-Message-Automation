@@ -3,7 +3,9 @@ import Link from "@/components/ProjectLink";
 import { Badge } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import type { ContactProfile, GroupPerson, GroupProfile, LiveMember } from "@/server/chatProfiles";
+import { PHONE_SOURCE_LABELS } from "@support-automation/shared";
 import { conversationAvatar } from "./avatar";
+import { AvatarFace } from "./AvatarFace";
 import { LinkSenderForm, ReadMembersButton } from "./ChatPanelActions";
 
 /**
@@ -65,7 +67,7 @@ const Muted = ({ children }: { children: React.ReactNode }) => <span className="
 /** How to write an id that is not a dialable number: masked, and never formatted as one. */
 const maskedId = (id: string | null) => (id ? `···${id.slice(-4)}` : "unknown");
 
-export function ContactPanel({ profile, accountId, closeHref }: { profile: ContactProfile; accountId: string; closeHref: string }) {
+export function ContactPanel({ profile, accountId, closeHref, picturePath }: { profile: ContactProfile; accountId: string; closeHref: string; picturePath?: string | null }) {
   const member = profile.roster.member;
   const title = member?.name ?? profile.names[0] ?? profile.phone ?? `WhatsApp user ${maskedId(profile.whatsappId)}`;
   const avatar = conversationAvatar(profile.senderId, title);
@@ -83,9 +85,9 @@ export function ContactPanel({ profile, accountId, closeHref }: { profile: Conta
         <span
           aria-hidden
           style={{ background: avatar.background, color: avatar.color }}
-          className="flex size-16 items-center justify-center rounded-full text-[20px] font-semibold"
+          className="relative flex size-16 items-center justify-center overflow-hidden rounded-full text-[20px] font-semibold"
         >
-          {avatar.initials}
+          <AvatarFace path={picturePath}>{avatar.initials}</AvatarFace>
         </span>
         <div>
           <p className="text-[15px] font-semibold text-[color:var(--color-foreground)]">{title}</p>
@@ -96,12 +98,22 @@ export function ContactPanel({ profile, accountId, closeHref }: { profile: Conta
 
       <Section title="WhatsApp">
         <Row icon={Phone} label="Phone number">
-          {profile.phone ? (
-            <span className="tabular">{profile.phone}</span>
-          ) : profile.kind === "LID" ? (
-            <Muted>Hidden by WhatsApp — this person writes with a private WhatsApp ID, which is not a phone number.</Muted>
+          {profile.phoneInfo.state === "KNOWN" ? (
+            <>
+              <span className="tabular">{profile.phoneInfo.phone}</span>
+              <Muted> · {PHONE_SOURCE_LABELS[profile.phoneInfo.source]}</Muted>
+            </>
           ) : (
-            <Muted>Not known — stored before this app recorded whether an id is a number.</Muted>
+            <>
+              Phone number unavailable
+              <Muted>
+                {" "}
+                —{" "}
+                {profile.phoneInfo.reason === "HIDDEN_BY_WHATSAPP"
+                  ? "this person writes with a private WhatsApp ID, which is not a phone number. Link them to a team member or a client to show a number."
+                  : "WhatsApp gave no number for this sender."}
+              </Muted>
+            </>
           )}
         </Row>
         <Row icon={Hash} label={profile.kind === "LID" ? "Private WhatsApp ID (LID)" : "WhatsApp ID"}>
@@ -234,7 +246,7 @@ function PersonBadges({ person }: { person: { memberName: string | null; status:
   return null;
 }
 
-export function GroupPanel({ profile, contactHref, closeHref }: { profile: GroupProfile; contactHref: (key: string) => string; closeHref: string }) {
+export function GroupPanel({ profile, contactHref, closeHref, picturePath }: { profile: GroupProfile; contactHref: (key: string) => string; closeHref: string; picturePath?: string | null }) {
   const { group, live } = profile;
   const avatar = conversationAvatar(group.id, group.name);
   return (
@@ -243,9 +255,9 @@ export function GroupPanel({ profile, contactHref, closeHref }: { profile: Group
         <span
           aria-hidden
           style={{ background: avatar.background, color: avatar.color }}
-          className="flex size-16 items-center justify-center rounded-[var(--radius-xl)] text-[20px] font-semibold"
+          className="relative flex size-16 items-center justify-center overflow-hidden rounded-[var(--radius-xl)] text-[20px] font-semibold"
         >
-          {avatar.initials}
+          <AvatarFace path={picturePath}>{avatar.initials}</AvatarFace>
         </span>
         <p className="text-[15px] font-semibold text-[color:var(--color-foreground)]">{group.name}</p>
         <div className="flex flex-wrap justify-center gap-1.5">

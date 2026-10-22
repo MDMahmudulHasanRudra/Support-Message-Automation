@@ -645,6 +645,7 @@ model Project {
   clientChatLinks                      ClientWhatsAppChatLink[]
   clientSubscriptions                  ClientSubscription[]
   clientPhotos                         ClientPhoto[]
+  whatsAppPictures                     WhatsAppPicture[]
   clientPayments                       ClientPayment[]
   clientPaymentAllocations             ClientPaymentAllocation[]
   clientGroupLinks                     ClientWhatsAppGroupLink[]
@@ -1126,6 +1127,7 @@ model WhatsAppAccount {
   attendanceEvidence   TeamAttendanceGroup[]
   droppedMessages      MessageDropCounter[]
   personalChatReviews  PersonalChatReview[]
+  pictures             WhatsAppPicture[]
   scopedKnowledge      AiKnowledgeItem[]         @relation("AiKnowledgeScopeAccount")
 }
 
@@ -7430,4 +7432,40 @@ model PlatformEmailSettings {
   lastTestMessage    String?
   updatedByUsername  String?
   updatedAt          DateTime  @updatedAt
+}
+
+/// A WhatsApp profile picture or group icon, as ONE of our numbers saw it (WHATSAPP_AVATARS.md).
+/// Per account, because what WhatsApp shows depends on who is looking (privacy settings), and per
+/// project like every account-owned row. Only pictures WhatsApp itself attached to an incoming
+/// message are recorded — nothing is ever requested from WhatsApp to get one. The bytes are the
+/// small thumbnail, type-sniffed and size-checked (a CHECK repeats the cap), served only through
+/// the authenticated avatar route.
+model WhatsAppPicture {
+  id            String          @id @default(cuid())
+  projectId     String          @default(dbgenerated("project_id_required()"))
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId     String
+  account       WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// The chat or person, domain kept: "…@g.us", "…@lid" or "…@c.us".
+  jid           String
+  /// PENDING (to fetch) | STORED | FAILED.
+  state         String          @default("PENDING")
+  /// WhatsApp's version tag of the picture; a new tag means a new picture.
+  sourceTag     String?
+  /// The address WhatsApp put on the event. Server-side only, never sent to a browser, cleared once
+  /// fetched or given up on.
+  sourceUrl     String?
+  mimeType      String?
+  bytes         Bytes?
+  attempts      Int             @default(0)
+  lastError     String?
+  nextAttemptAt DateTime?
+  /// When an incoming message last carried this picture.
+  observedAt    DateTime
+  storedAt      DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@unique([projectId, accountId, jid])
+  @@index([state, nextAttemptAt])
 }

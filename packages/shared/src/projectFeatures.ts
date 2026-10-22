@@ -33,6 +33,11 @@ export interface ProjectFeatureDefinition {
   permissionKeys: readonly string[];
   /** What switching it off does in the background, for the Main Admin Portal to say plainly. */
   workerEffect: string;
+  /**
+   * Switched only by a person, never by a plan — not even "All Access" (WHATSAPP_AVATARS.md). For
+   * a switch whose own approval is separate from the customer's package.
+   */
+  manualOnly?: boolean;
 }
 
 export const PROJECT_FEATURES = [
@@ -207,6 +212,18 @@ export const PROJECT_FEATURES = [
     routes: [],
     permissionKeys: [],
     workerEffect: "Nothing runs in the background for it; the reports read stored messages.",
+  },
+  {
+    key: "WHATSAPP_AVATARS",
+    label: "WhatsApp profile pictures",
+    description:
+      "Shows the profile pictures and group icons WhatsApp already attaches to incoming messages, in WhatsApp Chat (WHATSAPP_AVATARS.md). Nothing is ever asked of WhatsApp to get one. Off = coloured initials, as before.",
+    defaultEnabled: false,
+    manualOnly: true,
+    routes: [],
+    permissionKeys: [],
+    workerEffect:
+      "Stops recording pictures from incoming messages and stops fetching them. Pictures already saved stay in the database but are no longer shown.",
   },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 

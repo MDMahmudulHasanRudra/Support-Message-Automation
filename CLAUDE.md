@@ -2840,6 +2840,22 @@ rmyndharis/OpenWA@078b8aa — `docs/third-party/OPENWA_REFERENCE.md`. Rules wort
   - History loaded on request is STORE-ONLY (`storeHistoryMessages`): no rules, AI, waits, cases,
     escalation or mood, no checkpoint move. Never route it through `persistIncomingMessage`.
 
+### WhatsApp profile pictures and phone identity (`WHATSAPP_AVATARS.md`)
+
+Feature `WHATSAPP_AVATARS`, **off by default and never switched by a plan** (`manualOnly`); emergency stop
+`WHATSAPP_AVATARS_DISABLED=true` (app and worker). Rules worth not undoing:
+- **Passive only.** Pictures come from `profilePicThumbObj` that OpenWA already put on an incoming event
+  (`raw.pictures`); nothing asks WhatsApp for a picture — no `getProfilePicFromServer`, no scan, no refresh
+  timer, no fetch on opening a chat. Active lookups need their own approval after the lab test.
+- **Recording never touches the message**: `recordMessagePictures` runs after the `Message` insert, never
+  throws, writes only on a new picture version. One fetch per 10 s for the whole server.
+- **Every address is re-checked** (`isAllowedPictureUrl`: https, `*.whatsapp.net`, no redirects), every image
+  sniffed and capped (`prepareClientPhoto`, 100 KB, CHECK in the database), served only by
+  `/p/<slug>/api/whatsapp/avatar/<id>` through the scoped client. `WhatsAppPicture` is per project AND account.
+- **A LID is never a phone number.** `resolveContactPhone` shows a number only from WhatsApp (`@c.us`), the
+  Team Members record (roster viewers) or a linked client (`clients.view`), with its source; otherwise
+  "Phone number unavailable".
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →

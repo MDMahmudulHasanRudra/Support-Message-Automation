@@ -17,6 +17,8 @@ import { MarkWaitingButton } from "../../../MarkWaitingButton";
 import { AiActiveNotice, MessageThread } from "../../../MessageThread";
 import { ThreadScroller } from "../../../ThreadScroller";
 import { conversationAvatar } from "../../../avatar";
+import { AvatarFace } from "../../../AvatarFace";
+import { picturePaths } from "@/server/whatsappPictures";
 import { ConversationV2, ThreadSearchToggle } from "../../../v2/ConversationV2";
 import { PhoneChatMenu } from "../../../v2/PhoneChatMenu";
 import { ChatHeaderV2, MemberCount } from "../../../v2/ChatHeaderV2";
@@ -84,6 +86,8 @@ export default async function ChatConversationPage({
     contactKey ? getContactProfile(session, group.accountId, contactKey) : null,
     !contactKey && info === "group" ? getGroupProfile(session, group.id) : null,
   ]);
+  // Stored WhatsApp pictures for the group and an open contact (WHATSAPP_AVATARS.md); empty when off.
+  const pictures = await picturePaths(group.accountId, [group.whatsappGroupId, contactProfile?.senderId ?? ""]);
 
   // First, because it is about the person rather than the conversation: nothing below matters to
   // somebody whose role cannot send at all.
@@ -117,9 +121,9 @@ export default async function ChatConversationPage({
           <span
             aria-hidden
             style={{ background: avatar.background, color: avatar.color }}
-            className={`flex shrink-0 items-center justify-center text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] ${withSearch ? "size-10 rounded-full" : "size-9 rounded-[var(--radius-lg)]"}`}
+            className={`relative flex shrink-0 items-center justify-center overflow-hidden text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] ${withSearch ? "size-10 rounded-full" : "size-9 rounded-[var(--radius-lg)]"}`}
           >
-            {avatar.initials}
+            <AvatarFace path={pictures[group.whatsappGroupId]}>{avatar.initials}</AvatarFace>
           </span>
 
           <div className="min-w-0 flex-1">
@@ -174,8 +178,8 @@ export default async function ChatConversationPage({
   const otherCopiesForReply = canReply ? otherCopies.filter((copy) => copy.connected) : [];
   const contactPanels = (
     <>
-      {contactProfile ? <ContactPanel profile={contactProfile} accountId={group.accountId} closeHref={basePath} /> : null}
-      {groupProfile ? <GroupPanel profile={groupProfile} contactHref={contactHref} closeHref={basePath} /> : null}
+      {contactProfile ? <ContactPanel profile={contactProfile} accountId={group.accountId} closeHref={basePath} picturePath={pictures[contactProfile.senderId]} /> : null}
+      {groupProfile ? <GroupPanel profile={groupProfile} contactHref={contactHref} closeHref={basePath} picturePath={pictures[group.whatsappGroupId]} /> : null}
     </>
   );
 
@@ -193,6 +197,7 @@ export default async function ChatConversationPage({
               infoHref={`${basePath}?info=group`}
               infoTitle="Group info"
               avatar={avatar}
+              picturePath={pictures[group.whatsappGroupId]}
               isGroup
               name={group.name}
               accountLabel={group.accountLabel}

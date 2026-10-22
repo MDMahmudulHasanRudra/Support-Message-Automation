@@ -30,7 +30,7 @@ import {
 import Link from "@/components/ProjectLink";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { useToast } from "@/components/ui";
 import {
   setChatArchived,
@@ -61,6 +61,7 @@ import {
 import { CategoryManager } from "./CategoryManager";
 import { MOOD_EMOJI, MOOD_LABELS, MOOD_LEVEL } from "@support-automation/shared";
 import { conversationAvatar } from "./avatar";
+import { AvatarFace } from "./AvatarFace";
 import { categoryDotClass } from "./categoryColors";
 import { accountStatusTone, rememberChatAccount } from "./chatAccounts";
 
@@ -192,6 +193,9 @@ function writeDensity(compact: boolean): void {
  * workspace, and changing the filter clears it — so a bulk action can only ever reach what is on
  * screen. The server re-checks the account anyway.
  */
+/** Stored profile pictures for the listed chats, by WhatsApp id (WHATSAPP_AVATARS.md); empty when off. */
+const PicturesContext = createContext<Record<string, string>>({});
+
 export function ChatWorkspace({
   account,
   accounts,
@@ -199,6 +203,7 @@ export function ChatWorkspace({
   counts,
   categories,
   v2 = false,
+  pictures = {},
   children,
 }: {
   account: ChatAccountOption;
@@ -208,6 +213,7 @@ export function ChatWorkspace({
   categories: ChatCategorySummary[];
   /** CHAT_UI_V2 is on: the WhatsApp-style look (CHAT_UI_V2.md §13). Off renders exactly what v1 always did. */
   v2?: boolean;
+  pictures?: Record<string, string>;
   children: React.ReactNode;
 }) {
   const pathname = stripProjectPrefix(usePathname());
@@ -497,6 +503,7 @@ export function ChatWorkspace({
   const allCapped = filter.kind === "all" && type === "all" && !needle && counts.total > conversations.length;
 
   return (
+    <PicturesContext.Provider value={pictures}>
     <div className="flex min-h-0 flex-1 flex-col">
       {/* ── Account, search, filters ─────────────────────────────────────────────────────────── */}
       <div
@@ -865,6 +872,7 @@ export function ChatWorkspace({
 
       <CategoryManager open={managingCategories} onClose={() => setManagingCategories(false)} categories={categories} />
     </div>
+    </PicturesContext.Provider>
   );
 }
 
@@ -1167,6 +1175,7 @@ function Row({
   v2?: boolean;
 }) {
   const avatar = conversationAvatar(conversation.id, conversation.name);
+  const pictures = useContext(PicturesContext);
   // Weight carries the unread state, not just a dot: an unanswered customer should be legible from
   // the far end of the list at a glance, the way an unread mail is.
   const unread = conversation.awaitingReply;
@@ -1189,9 +1198,9 @@ function Row({
           <span
             aria-hidden
             style={{ background: avatar.background, color: avatar.color }}
-            className={`flex ${compact ? "size-7 text-[10px]" : "size-9 text-[12px] group-data-[v2]/chat:size-11 group-data-[v2]/chat:text-[13px]"} items-center justify-center rounded-[var(--radius-lg)] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] group-data-[v2]/chat:rounded-full`}
+            className={`relative flex overflow-hidden ${compact ? "size-7 text-[10px]" : "size-9 text-[12px] group-data-[v2]/chat:size-11 group-data-[v2]/chat:text-[13px]"} items-center justify-center rounded-[var(--radius-lg)] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] group-data-[v2]/chat:rounded-full`}
           >
-            {avatar.initials}
+            <AvatarFace path={pictures[conversation.chatId]}>{avatar.initials}</AvatarFace>
           </span>
         )}
         {/* Two states, not one. A solid dot means nobody has looked. A hollow ring means somebody

@@ -14,6 +14,8 @@ import { MarkWaitingButton } from "../../../../MarkWaitingButton";
 import { MessageThread } from "../../../../MessageThread";
 import { ThreadScroller } from "../../../../ThreadScroller";
 import { conversationAvatar } from "../../../../avatar";
+import { AvatarFace } from "../../../../AvatarFace";
+import { picturePaths } from "@/server/whatsappPictures";
 import { ConversationV2, ThreadSearchToggle } from "../../../../v2/ConversationV2";
 import { PhoneChatMenu } from "../../../../v2/PhoneChatMenu";
 import { ChatHeaderV2, PersonalDetail } from "../../../../v2/ChatHeaderV2";
@@ -67,6 +69,8 @@ export default async function PersonalChatPage({
   const basePath = `/chat/account/${chat.accountId}/personal/${encodeURIComponent(chat.chatId)}`;
   // A personal chat's id IS the person (`…@c.us` / `…@lid`).
   const contactProfile = contact ? await getContactProfile(session, chat.accountId, chat.chatId) : null;
+  // The person's stored WhatsApp picture (WHATSAPP_AVATARS.md); empty when the feature is off.
+  const pictures = await picturePaths(chat.accountId, [chat.chatId]);
 
   // One header for both views; v2 adds its search button to it. `withSearch` is true only for v2, so
   // it also marks the v2 layout: one compact row on a phone, a round avatar, and a subline that
@@ -90,9 +94,9 @@ export default async function PersonalChatPage({
           <span
             aria-hidden
             style={{ background: avatar.background, color: avatar.color }}
-            className={`flex shrink-0 items-center justify-center text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] ${withSearch ? "size-10 rounded-full" : "size-9 rounded-[var(--radius-lg)]"}`}
+            className={`relative flex shrink-0 items-center justify-center overflow-hidden text-[12px] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)] ${withSearch ? "size-10 rounded-full" : "size-9 rounded-[var(--radius-lg)]"}`}
           >
-            {avatar.initials}
+            <AvatarFace path={pictures[chat.chatId]}>{avatar.initials}</AvatarFace>
           </span>
 
           <div className="min-w-0 flex-1">
@@ -140,6 +144,7 @@ export default async function PersonalChatPage({
               infoHref={`${basePath}?contact=1`}
               infoTitle="Contact info"
               avatar={avatar}
+              picturePath={pictures[chat.chatId]}
               isGroup={false}
               name={chat.name}
               accountLabel={chat.accountLabel}
@@ -168,7 +173,7 @@ export default async function PersonalChatPage({
           draftId={chat.id}
           emptyText="No messages stored for this chat yet."
         />
-        {contactProfile ? <ContactPanel profile={contactProfile} accountId={chat.accountId} closeHref={basePath} /> : null}
+        {contactProfile ? <ContactPanel profile={contactProfile} accountId={chat.accountId} closeHref={basePath} picturePath={pictures[chat.chatId]} /> : null}
       </div>
     );
   }
@@ -202,7 +207,7 @@ export default async function PersonalChatPage({
         />
       </div>
 
-      {contactProfile ? <ContactPanel profile={contactProfile} accountId={chat.accountId} closeHref={basePath} /> : null}
+      {contactProfile ? <ContactPanel profile={contactProfile} accountId={chat.accountId} closeHref={basePath} picturePath={pictures[chat.chatId]} /> : null}
     </div>
   );
 }

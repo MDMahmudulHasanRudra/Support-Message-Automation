@@ -72,7 +72,7 @@ const dateField = (raw: FormDataEntryValue | null): Date | null => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const KNOWN_FEATURES = PROJECT_FEATURES.map((f) => f.key);
+const KNOWN_FEATURES = PROJECT_FEATURES.filter((f) => !("manualOnly" in f && f.manualOnly)).map((f) => f.key);
 
 // ---------------------------------------------------------------------------------------------
 // Billing settings

@@ -100,7 +100,7 @@ describe("project features", () => {
     const all = resolveProjectFeatures([]);
     expect(all).toHaveLength(PROJECT_FEATURES.length);
     expect(all.every((f) => f.isDefault)).toBe(true);
-    expect(all.filter((f) => !f.enabled).map((f) => f.key)).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING"]);
+    expect(all.filter((f) => !f.enabled).map((f) => f.key)).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING", "WHATSAPP_AVATARS"]);
     expect(resolveProjectFeatures([{ key: "GOOGLE_SHEETS", enabled: true }]).find((f) => f.key === "GOOGLE_SHEETS")).toMatchObject({ enabled: true, isDefault: false });
     const withOverride = resolveProjectFeatures([{ key: "AI_REPLY", enabled: false }]);
     expect(withOverride.find((f) => f.key === "AI_REPLY")).toMatchObject({ enabled: false, isDefault: false });
@@ -150,11 +150,11 @@ describe("which feature a page or action belongs to", () => {
     const disabled = disabledProjectFeatures([{ key: "WHATSAPP_CHAT", enabled: false }, { key: "AI_REPLY", enabled: true }]);
     // Google Sheets, Omnichannel, Client Management and the new chat view are off until a Main Admin
     // switches them on.
-    expect([...disabled]).toEqual(["WHATSAPP_CHAT", "GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING"]);
+    expect([...disabled]).toEqual(["WHATSAPP_CHAT", "GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING", "WHATSAPP_AVATARS"]);
     expect(pathAllowedByFeatures("/chat/1", disabled)).toBe(false);
     expect(pathAllowedByFeatures("/messages", disabled)).toBe(true);
     expect(pathAllowedByFeatures("/ai-learning/activity", disabled)).toBe(true);
-    expect([...disabledProjectFeatures([])]).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING"]);
+    expect([...disabledProjectFeatures([])]).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING", "WHATSAPP_AVATARS"]);
     // The new chat view is a presentation switch: off, it blocks no page at all.
     expect(pathAllowedByFeatures("/chat/account/a/g", disabledProjectFeatures([]))).toBe(true);
     expect(pathAllowedByFeatures("/clients/import", disabledProjectFeatures([]))).toBe(false);
@@ -170,6 +170,7 @@ describe("which feature a page or action belongs to", () => {
         { key: "CLIENT_CENTER", enabled: true },
         { key: "CHAT_UI_V2", enabled: true },
         { key: "UNIFIED_REPORTING", enabled: true },
+        { key: "WHATSAPP_AVATARS", enabled: true },
       ]).size,
     ).toBe(0);
   });

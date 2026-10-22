@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { getChatAccounts, getChatCategories, getChatInbox } from "@/server/chatInbox";
+import { picturePaths } from "@/server/whatsappPictures";
 import { isChatUiV2Enabled } from "@/server/chatThreadV2";
 import { ChatWorkspace } from "../../ConversationList";
 
@@ -35,6 +36,8 @@ export default async function ChatAccountLayout({
   if (!account) notFound();
 
   const [inbox, categories, v2] = await Promise.all([getChatInbox(account.id), getChatCategories(account.id), isChatUiV2Enabled()]);
+  // Profile pictures saved from incoming messages (WHATSAPP_AVATARS.md); empty when the feature is off.
+  const pictures = await picturePaths(account.id, inbox.conversations.map((c) => c.chatId));
 
   return (
     // `data-v2` marks the container only when CHAT_UI_V2 is on; the list's v2 styling keys off it
@@ -52,6 +55,7 @@ export default async function ChatAccountLayout({
         counts={inbox.counts}
         categories={categories}
         v2={v2}
+        pictures={pictures}
       >
         {children}
       </ChatWorkspace>

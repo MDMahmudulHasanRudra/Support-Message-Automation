@@ -19,6 +19,7 @@ import type { MediaDownloadInfo, MessageUpdateEvent, RawIncomingMessage, RawMedi
 import {
   classifyWhatsAppMedia,
   isPersonalChatId,
+  pictureRefFromThumb,
   readRichContent,
   recordableAckLevel,
   REVOKED_WA_TYPE,
@@ -475,6 +476,12 @@ export function toRawIncomingMessage(accountId: string, message: WaMessage): Raw
     // Receipts are only ever about what THIS account sent (CHAT_RICH_MESSAGING.md §2).
     ackLevel: message.fromMe ? recordableAckLevel((message as { ack?: unknown }).ack) : null,
     richContent: toRichContent(message),
+    // Only what OpenWA already serialised onto this event (`sender` / `chat.contact`) — reading it
+    // asks WhatsApp nothing (WHATSAPP_AVATARS.md).
+    pictures: {
+      sender: pictureRefFromThumb((message.sender as { profilePicThumbObj?: unknown } | undefined)?.profilePicThumbObj),
+      group: isGroupMsg ? pictureRefFromThumb((message.chat as { contact?: { profilePicThumbObj?: unknown } } | undefined)?.contact?.profilePicThumbObj) : null,
+    },
   };
 }
 

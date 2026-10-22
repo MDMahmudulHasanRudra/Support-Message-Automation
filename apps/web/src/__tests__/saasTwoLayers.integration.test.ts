@@ -384,7 +384,8 @@ describe("onboarding a new customer from the platform", () => {
     const sub = await rawPrisma.subscription.findFirstOrThrow({ where: { customerId: c, endedAt: null } });
     expect(sub).toMatchObject({ planName: "All Access", allModules: true, priceMinor: BigInt(250000), status: "ACTIVE" });
     const features = await rawPrisma.projectFeature.findMany({ where: { projectId: cProject.id } });
-    expect(features.every((f) => f.enabled)).toBe(true);
+    // Every module — except a switch that needs its own approval (WHATSAPP_AVATARS), which no plan turns on.
+    expect(features.filter((f) => !f.enabled).map((f) => f.key)).toEqual(features.some((f) => f.key === "WHATSAPP_AVATARS") ? ["WHATSAPP_AVATARS"] : []);
     const owner = await rawPrisma.user.findUniqueOrThrow({ where: { username: `cowner_${tag}` }, include: { permissionModule: true } });
     expect(owner.customerId).toBe(c);
     expect(owner.permissionModule?.customerId).toBe(c);

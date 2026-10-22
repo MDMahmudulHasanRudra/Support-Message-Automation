@@ -26,6 +26,7 @@ import { countDroppedMessage } from "./dropCounter.js";
 import { recordCollection } from "../health/collectionByKind.js";
 import { initialMessageColumns, recordMessageRevoked } from "./messageUpdates.js";
 import { registerMessageMedia } from "../media/registerMessageMedia.js";
+import { recordMessagePictures } from "../avatars/whatsappPictures.js";
 import { trackSupportResponse } from "../supportResponse/tracker.js";
 import { trackSupportAssignment } from "../supportAssignment/tracker.js";
 import { recordMoodSignal } from "../mood/moodDetection.js";
@@ -611,6 +612,9 @@ async function persistIncomingMessage(
   if (raw.media) {
     await registerMessageMedia({ messageId: message.id, accountId: raw.accountId, groupId: group?.id ?? null, media: raw.media });
   }
+  // Pictures WhatsApp attached to this event, for the avatar fetch loop (WHATSAPP_AVATARS.md). A
+  // no-op unless the project's WHATSAPP_AVATARS feature is on. Never throws.
+  await recordMessagePictures(raw);
 
   // Messages → Unanswered Groups / Response Time (SUPPORT_RESPONSE.md). Runs once per new message,
   // live or recovered, since this insert is the dedup guard. Never throws.
