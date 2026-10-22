@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { Alert, BrandMark, Button, Field, Input } from "@/components/ui";
+import { useBranding } from "@/components/BrandingProvider";
 import { login, type LoginState } from "./actions";
 
 const initialState: LoginState = {};
@@ -14,6 +15,8 @@ const CAPABILITIES = [
 
 export default function LoginPage() {
   const [state, formAction, pending] = useActionState(login, initialState);
+  // White labeling (BRANDING.md): name, headline, text and logo are the installation's own.
+  const brand = useBranding();
 
   return (
     <main className="flex min-h-dvh bg-[var(--color-background)]">
@@ -37,6 +40,16 @@ export default function LoginPage() {
           }}
         />
 
+        {brand.logoUrl ? (
+          <div className="relative">
+            <BrandLogo src={brand.logoUrl} name={brand.productName} />
+          </div>
+        ) : brand.hasCustomIcon ? (
+          <div className="relative flex items-center gap-3">
+            <BrandMark className="size-9" />
+            <span className="text-[15px] font-semibold tracking-[-0.01em]">{brand.productName}</span>
+          </div>
+        ) : (
         <div className="relative flex items-center gap-3">
           <span className="flex size-9 items-center justify-center rounded-[var(--radius-md)] bg-[#fafafa] text-[#0b0b0d]">
             <svg viewBox="0 0 24 24" fill="none" className="size-[62%]" aria-hidden>
@@ -46,17 +59,13 @@ export default function LoginPage() {
               <circle cx="7" cy="18.4" r="2.3" fill="currentColor" />
             </svg>
           </span>
-          <span className="text-[15px] font-semibold tracking-[-0.01em]">Softify Assist</span>
+          <span className="text-[15px] font-semibold tracking-[-0.01em]">{brand.productName}</span>
         </div>
+        )}
 
         <div className="relative max-w-md">
-          <h2 className="text-[40px] font-semibold leading-[1.08] tracking-[-0.03em]">
-            WhatsApp support that answers before anyone has to.
-          </h2>
-          <p className="mt-5 text-[15px] leading-relaxed text-white/60">
-            Deterministic rules decide what gets an instant reply, what waits for a human, and what
-            escalates — with the whole decision trace recorded for every message.
-          </p>
+          <h2 className="text-[40px] font-semibold leading-[1.08] tracking-[-0.03em] [text-wrap:balance]">{brand.loginHeadline}</h2>
+          <p className="mt-5 whitespace-pre-line text-[15px] leading-relaxed text-white/60">{brand.loginSubheading}</p>
 
           <dl className="mt-10 space-y-4 border-t border-white/10 pt-8">
             {CAPABILITIES.map((item) => (
@@ -72,7 +81,7 @@ export default function LoginPage() {
         </div>
 
         <p className="relative text-xs text-white/30">
-          &copy; {new Date().getFullYear()} Softify Assist
+          &copy; {new Date().getFullYear()} {brand.productName}
         </p>
       </aside>
 
@@ -80,10 +89,16 @@ export default function LoginPage() {
       <div className="flex flex-1 items-center justify-center px-6 py-12">
         <div className="w-full max-w-[380px]">
           <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <BrandMark className="size-8" />
-            <span className="text-[15px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
-              Softify Assist
-            </span>
+            {brand.logoUrl ? (
+              <BrandLogo src={brand.logoUrl} name={brand.productName} />
+            ) : (
+              <>
+                <BrandMark className="size-8" />
+                <span className="text-[15px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
+                  {brand.productName}
+                </span>
+              </>
+            )}
           </div>
 
           <div className="mb-7">
@@ -131,5 +146,18 @@ export default function LoginPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+/**
+ * An uploaded logo, on a light plate: the sign-in panel is dark in every theme, and a logo is
+ * almost always drawn for a light background, so without the plate a dark wordmark would vanish.
+ */
+function BrandLogo({ src, name }: { src: string; name: string }) {
+  return (
+    <span className="inline-flex max-w-[240px] items-center rounded-[var(--radius-md)] bg-white px-3 py-2 shadow-[var(--shadow-xs)]">
+      {/* eslint-disable-next-line @next/next/no-img-element -- the uploaded logo served by our own route; next/image would only re-encode it */}
+      <img src={src} alt={name} className="h-8 w-auto max-w-full object-contain" />
+    </span>
   );
 }

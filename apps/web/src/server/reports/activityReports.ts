@@ -10,7 +10,7 @@ import {
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
-import { senderIdentifiers } from "@/server/teamReport";
+import { loadReportIdentity, messageKeySql, outboundByKeyJoin, storedCopiesSql } from "@/server/messageIdentity";
 import type { ReportContext } from "./context";
 import { count, duration, hourLabel, when, WEEKDAYS } from "./format";
 import { waitsInScope } from "./responseReports";
@@ -95,34 +95,65 @@ const MAX_CALL_ROWS = 5000;
 
 export async function buildCalls(ctx: ReportContext): Promise<BuiltReport> {
   const { groupKeys, accountId } = ctx.filters;
-  const [candidates, members] = await Promise.all([
+  const projectId = await activeProjectId();
+  const [candidates, identity] = await Promise.all([
     // Only messages whose text could mention a call cross to this process; detectCallMention decides.
     // DISTINCT ON collapses the copies two of our numbers store of one message, as the Team Report does.
-    prisma.$queryRaw<Array<{ wgid: string; wamid: string; ts: Date; direction: string; fromTeam: boolean; sender: string; body: string }>>`
-      SELECT DISTINCT ON (g."whatsappGroupId", m."whatsappMessageId")
-        g."whatsappGroupId" AS wgid, m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."direction"::text AS direction,
-        m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, left(m."body", 400) AS body
-      FROM "Message" m
-      JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
-      WHERE m."projectId" = ${await activeProjectId()}
-        AND m."timestampWa" >= ${new Date(ctx.rangeStart)} AND m."timestampWa" < ${new Date(ctx.rangeEnd)}
-        AND m."direction" <> 'SYSTEM'
-        AND m."body" ~* ${CALL_SQL_PREFILTER}
-        ${groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty}
-        ${accountId ? Prisma.sql`AND m."accountId" = ${accountId}` : Prisma.empty}
-      ORDER BY g."whatsappGroupId", m."whatsappMessageId", m."timestampWa", m."id"`,
-    prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } }),
+    prisma.$queryRaw<
+      Array<{
+        wgid: string;
+        wamid: string;
+        ts: Date;
+        direction: string;
+        fromTeam: boolean;
+        sender: string;
+        senderJid: string | null;
+        copies: string[] | null;
+        obMatched: boolean | null;
+        actionType: string | null;
+        ruleId: string | null;
+        createdById: string | null;
+        body: string;
+      }>
+    >`
+      SELECT DISTINCT ON (c.wgid, c.k)
+        c.wgid, c.wamid, c.ts, c.direction, c."fromTeam", c.sender, c."senderJid", c.body, c.copies,
+        c."obMatched", c."actionType", c."ruleId", c."createdById"
+      FROM (
+        SELECT
+          g."whatsappGroupId" AS wgid, ${messageKeySql()} AS k, m."id" AS mid,
+          m."whatsappMessageId" AS wamid, m."timestampWa" AS ts, m."direction"::text AS direction,
+          m."isFromTeamMember" AS "fromTeam", m."senderPhone" AS sender, m."senderJid" AS "senderJid", left(m."body", 400) AS body,
+          ${storedCopiesSql(Prisma.sql`g."whatsappGroupId"`)} AS copies,
+          -- With an account chosen the report reads that account's messages, but WHO sent one is decided from every
+          -- account's copies (the Team Report's rule): the window sees them all, the outer onAccount test narrows.
+          ${accountId ? Prisma.sql`bool_or(m."accountId" = ${accountId}) OVER (PARTITION BY g."whatsappGroupId", ${messageKeySql()})` : Prisma.sql`true`} AS "onAccount",
+          ${accountId ? Prisma.sql`(m."accountId" = ${accountId})` : Prisma.sql`true`} AS "ownCopy",
+          (m."direction" = 'OUTGOING') AS p1, (left(m."whatsappMessageId", 5) = 'true_') AS p2, m."isFromTeamMember" AS p3,
+          o."obMatched" AS "obMatched", o."actionType"::text AS "actionType", o."ruleId" AS "ruleId", o."createdById" AS "createdById"
+        FROM "Message" m
+        JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
+        ${outboundByKeyJoin(projectId, new Date(ctx.rangeStart), new Date(ctx.rangeEnd))}
+        WHERE m."projectId" = ${projectId}
+          AND m."timestampWa" >= ${new Date(ctx.rangeStart)} AND m."timestampWa" < ${new Date(ctx.rangeEnd)}
+          AND m."direction" <> 'SYSTEM'
+          AND m."body" ~* ${CALL_SQL_PREFILTER}
+          ${groupKeys?.length ? Prisma.sql`AND g."whatsappGroupId" IN (${Prisma.join(groupKeys)})` : Prisma.empty}
+      ) c
+      WHERE c."onAccount"
+      ORDER BY c.wgid, c.k, c."ownCopy" DESC, c.p1 DESC, c.p2 DESC, c.p3 DESC, c.ts, c.mid`,
+    // The one identity rule (WHATSAPP_IDENTITY.md), so a sender here is who the Team Report says.
+    loadReportIdentity(projectId),
   ]);
-  const identifierToMember = new Map<string, string>();
-  for (const member of members) for (const id of senderIdentifiers(member)) if (!identifierToMember.has(id)) identifierToMember.set(id, member.id);
 
   const scope = ctx.data.scope;
   const found = candidates
     .map((row) => {
       const mention = detectCallMention(row.body);
       if (!mention) return null;
-      const memberId = row.direction === "OUTGOING" ? null : (identifierToMember.get(row.sender) ?? null);
-      const who = row.direction === "OUTGOING" ? "BUSINESS" : memberId || row.fromTeam ? "MEMBER" : "CUSTOMER";
+      const decided = identity.classify(row, row.ts.getTime());
+      const memberId = decided.memberId;
+      const who = decided.kind;
       return { ...row, ms: row.ts.getTime(), mention, memberId, who };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)

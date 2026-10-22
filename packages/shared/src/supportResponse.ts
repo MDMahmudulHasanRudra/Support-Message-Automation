@@ -37,10 +37,16 @@ export function classifyResponseMessage(input: {
   memberId: string | null;
   /** Whether that member was in a Support Team at the moment of the message. */
   inSupportTeam: boolean;
+  /**
+   * The sender is certainly on the roster, but WHICH member could not be settled (their WhatsApp id
+   * and phone name different people, or an identifier is shared — WHATSAPP_IDENTITY.md). Such a
+   * message is no customer's, so it opens no wait; and it is credited to nobody, so it answers none.
+   */
+  unattributedRosterMember?: boolean;
 }): ResponseMessageRole {
   if (input.direction === "SYSTEM") return "IGNORED";
   if (input.direction === "OUTGOING") return "BUSINESS";
-  if (!input.memberId) return "CUSTOMER";
+  if (!input.memberId) return input.unattributedRosterMember ? "OTHER_TEAM" : "CUSTOMER";
   return input.inSupportTeam ? "SUPPORT" : "OTHER_TEAM";
 }
 

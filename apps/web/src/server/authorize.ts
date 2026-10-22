@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { PermissionKey } from "@support-automation/shared";
 import { requireSession, type Session } from "@/server/auth";
-import { hasPermission, permissionRefusal, requirePermission } from "@/server/permissions";
+import { blockedPagePath, hasPermission, permissionRefusal, requirePermission, type PageGate } from "@/server/permissions";
 import { ProjectAccessError, requireActiveProject, type ActiveProject } from "@/server/projectContext";
 import { isReadOnlyProjectStatus, PROJECT_ACCESS_LEVEL_LABELS, type ProjectFeatureKey } from "@support-automation/shared";
 import { redirect } from "next/navigation";
@@ -50,10 +50,31 @@ export async function requireProjectPage(): Promise<ActiveProject> {
   // — the project exists and the user may be in it; this one module is switched off.
   const blocked = await blockedFeature();
   if (blocked) redirect(await projectPath(`/overview?unavailable=${blocked}`));
+  // The page step (PROJECT_ROLES.md, "Pages"): a member whose project role selects pages opens only
+  // those. Here rather than per page so it also covers pages that check no key (hubs, redirects).
+  // The Overview always opens, so this can never loop.
+  const blockedPage = await blockedPagePath();
+  if (blockedPage) redirect(await projectPath(`/overview?page=${encodeURIComponent(blockedPage)}`));
   return project;
 }
 
 export const PERMISSION_DENIED_ERROR = "You do not have permission to perform this action.";
+
+/** A project role that does not give this page (or not at Full). Worded so the reader knows who can change it. */
+export const PAGE_DENIED_ERROR =
+  "Your project role does not include this here. The project's Lead chooses which pages each role opens, and which it can change.";
+
+/**
+ * The second argument of the checks below: the feature a shared-key action serves (as before), or
+ * `{ feature?, sections? }`, where `sections` names the pages an action belongs to (PROJECT_ROLES.md).
+ */
+export type CheckOptions = ProjectFeatureKey | (PageGate & { feature?: ProjectFeatureKey });
+
+function optionsOf(options: CheckOptions | undefined): { feature?: ProjectFeatureKey; gate?: PageGate } {
+  if (options === undefined) return {};
+  if (typeof options === "string") return { feature: options };
+  return { feature: options.feature, gate: { sections: options.sections } };
+}
 
 /**
  * For an action that returns form state: the session, or the sentence to return. The existing
@@ -64,9 +85,10 @@ export const PERMISSION_DENIED_ERROR = "You do not have permission to perform th
  */
 export async function checkPermission(
   key: PermissionKey,
-  /** For an action whose key is shared with other modules: the feature it serves. */
-  feature?: ProjectFeatureKey,
+  /** For an action whose key is shared with other modules: the feature it serves, and/or its own pages. */
+  options?: CheckOptions,
 ): Promise<{ session: Session } | { denied: string }> {
+  const { feature, gate } = optionsOf(options);
   const session = await requireSession();
   let project: ActiveProject;
   try {
@@ -75,9 +97,10 @@ export async function checkPermission(
     if (err instanceof ProjectAccessError) return { denied: PROJECT_ACCESS_DENIED_ERROR };
     throw err;
   }
-  const refusal = await permissionRefusal(session, key);
+  const refusal = await permissionRefusal(session, key, gate);
   if (refusal === "ROLE") return { denied: PERMISSION_DENIED_ERROR };
   if (refusal === "LEVEL") return { denied: accessLevelError(project) };
+  if (refusal === "PAGE") return { denied: PAGE_DENIED_ERROR };
   const blocked = await blockedFeature({ key, feature });
   if (blocked) return { denied: featureUnavailableError(blocked) };
   // A suspended or archived project is read-only (MULTI_PROJECT_PLAN.md §8). Refused here, with a
@@ -98,7 +121,7 @@ export function accessLevelError(project: ActiveProject): string {
 
 /** Keys that only read: `.view` and the export keys. Everything else changes something. */
 function isReadKey(key: string): boolean {
-  return key.endsWith(".view") || key.endsWith(".bulk_export");
+  return key.endsWith(".view") || key.endsWith(".bulk_export") || key.endsWith(".view_billing");
 }
 
 export function projectReadOnlyError(project: ActiveProject): string {
@@ -115,10 +138,11 @@ export function projectReadOnlyError(project: ActiveProject): string {
  * the error boundary; returning silently would let the caller show a success toast for something
  * that did not happen. A redirect is neither, and it is what pages already do on a denial.
  */
-export async function requireAccess(key: PermissionKey, feature?: ProjectFeatureKey): Promise<Session> {
+export async function requireAccess(key: PermissionKey, options?: CheckOptions): Promise<Session> {
+  const { feature, gate } = optionsOf(options);
   const session = await requireSession();
   await requireProjectPage();
-  await requirePermission(session, key);
+  await requirePermission(session, key, gate);
   const blocked = await blockedFeature({ key, feature });
   if (blocked) redirect(await projectPath(`/overview?unavailable=${blocked}`));
   return session;
@@ -132,8 +156,9 @@ export async function requireAccess(key: PermissionKey, feature?: ProjectFeature
 export async function pageAccess(
   viewKey: PermissionKey,
   manageKey: PermissionKey,
-  feature?: ProjectFeatureKey,
+  options?: CheckOptions,
 ): Promise<{ session: Session; canManage: boolean }> {
-  const session = await requireAccess(viewKey, feature);
-  return { session, canManage: await hasPermission(session, manageKey) };
+  const session = await requireAccess(viewKey, options);
+  // A member whose project role gives this page Read only sees it view-only (the page's own path decides).
+  return { session, canManage: await hasPermission(session, manageKey, optionsOf(options).gate) };
 }

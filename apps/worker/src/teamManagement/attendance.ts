@@ -1,7 +1,7 @@
 import { projectHasFeature } from "../project/features.js";
 import { currentProjectId } from "../project/context.js";
 import { prisma } from "../db.js";
-import { getDhakaDayRange, normalizePhoneNumber, toDhakaDateOnly } from "@support-automation/shared";
+import { createSenderResolver, getDhakaDayRange, toDhakaDateOnly } from "@support-automation/shared";
 import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
 
 /**
@@ -25,19 +25,6 @@ import { resolveActiveTeamMember } from "../pipeline/teamFilter.js";
  * guarantee the roster's first week is blank.
  */
 
-/**
- * Every form this person's `senderPhone` could have been stored in.
- *
- * `resolveActiveTeamMember` matches a sender by `whatsappId` EXACTLY first and then by
- * digits-normalised `phoneNumber`, so the recompute has to look for the same set or it would find
- * a different pile of messages than the one that triggered it. A LID-only member has the same
- * value in both columns, which the `Set` collapses.
- */
-function senderIdentifiers(member: { phoneNumber: string; whatsappId: string | null }): string[] {
-  const candidates = [member.whatsappId, member.phoneNumber, normalizePhoneNumber(member.phoneNumber)];
-  return [...new Set(candidates.filter((value): value is string => Boolean(value)))];
-}
-
 interface GroupTotals {
   groupId: string;
   accountId: string;
@@ -55,6 +42,8 @@ export async function recordTeamAttendance(input: {
   groupId: string | null;
   isFromTeamMember: boolean;
   senderPhone: string;
+  /** The sender with its WhatsApp domain (`Message.senderJid`), when known. */
+  senderJid?: string | null;
   timestampWa: Date;
 }): Promise<void> {
   // Cheap filters first, costing zero queries on the overwhelming majority of messages — the same
@@ -63,20 +52,68 @@ export async function recordTeamAttendance(input: {
   if (!input.isFromTeamMember) return; // a customer
   if (!(await projectHasFeature("TEAM_MANAGEMENT"))) return; // not entitled (MULTI_PROJECT_PLAN.md §9)
 
-  const member = await resolveActiveTeamMember(input.senderPhone);
-  if (!member) return; // no longer on the roster, or deactivated
+  const member = await resolveActiveTeamMember(input.senderPhone, input.senderJid);
+  if (!member) return; // no longer on the roster, deactivated, or an identity conflict nobody can be credited with
 
-  const full = await prisma.internalTeamMember.findUnique({
-    where: { id: member.id },
-    select: { phoneNumber: true, whatsappId: true },
-  });
-  if (!full) return;
+  await recomputeAttendanceDay(member.id, input.timestampWa);
+}
 
-  const identifiers = senderIdentifiers(full);
-  if (identifiers.length === 0) return;
+/**
+ * A reply a dashboard user sent from the inbox (MANUAL_REPLY) is that person's work too: credited to
+ * the team member linked to that login (Team Members → login link), exactly as the Team Report
+ * credits it (report accuracy audit, 19 Oct 2026). Without this, somebody who worked a whole shift
+ * in WhatsApp Chat showed "No activity" on Duty History.
+ *
+ * Called from both ends of the send — when the queue records the WhatsApp id it was sent under, and
+ * when WhatsApp echoes it back — because either can happen first; the recompute counts what is
+ * there each time, so whichever runs last sees both. Never throws.
+ */
+export async function recordOperatorAttendance(input: { providerMessageId: string | null; timestampWa: Date }): Promise<void> {
+  try {
+    if (!input.providerMessageId) return;
+    if (!(await projectHasFeature("TEAM_MANAGEMENT"))) return;
+    const sent = await prisma.outboundMessage.findFirst({
+      where: { providerMessageId: input.providerMessageId, actionType: "MANUAL_REPLY", createdById: { not: null } },
+      select: { createdById: true },
+    });
+    if (!sent?.createdById) return;
+    const member = await prisma.internalTeamMember.findFirst({ where: { userId: sent.createdById, status: "ACTIVE" }, select: { id: true } });
+    if (!member) return;
+    await recomputeAttendanceDay(member.id, input.timestampWa);
+  } catch (err) {
+    console.error("[attendance] could not record a dashboard reply's attendance; the message itself is stored", err);
+  }
+}
 
-  const activityDate = toDhakaDateOnly(input.timestampWa);
-  const { start, end } = getDhakaDayRange(input.timestampWa);
+/**
+ * Recomputes one member-day of attendance from the messages themselves (see `recordTeamAttendance`).
+ * Exported for the re-attribution job, which recomputes the days an identity change touched.
+ */
+export async function recomputeAttendanceDay(memberId: string, when: Date): Promise<void> {
+  // Every stored form of this person's sender id — read through the same rule that resolves them
+  // (WHATSAPP_IDENTITY.md), so the recompute looks for the same pile of messages that triggered it.
+  // An identifier this member SHARES with another active member is left out: their messages are
+  // credited to nobody, so counting them here would credit them to this person.
+  // The roster is the ACTIVE members plus this one. For an active member that is exactly the roster it always
+  // was. A DEACTIVATED member is recomputed too (an identity re-attribution does it): they keep their history,
+  // and when an identifier is corrected away from them their days must lose the messages, which an
+  // active-only roster could not do, because it returned here and left the same messages on two members.
+  const select = { id: true, phoneNumber: true, whatsappId: true, attributeFrom: true, userId: true } as const;
+  const [active, self] = await Promise.all([
+    prisma.internalTeamMember.findMany({ where: { status: "ACTIVE" }, select }),
+    prisma.internalTeamMember.findUnique({ where: { id: memberId }, select }),
+  ]);
+  if (!self) return;
+  const roster = active.some((m) => m.id === self.id) ? active : [...active, self];
+  const member = self;
+  const identifiers = createSenderResolver(roster).identifiersFor(member.id);
+
+  const activityDate = toDhakaDateOnly(when);
+  const { start: dayStart, end } = getDhakaDayRange(when);
+  // Before the member's "count their messages from" date their number was a customer's: those
+  // messages are not their work (the Team Report's rule).
+  // (A date after the whole day leaves nothing to count, which withdraws any row written before it.)
+  const start = member.attributeFrom && member.attributeFrom > dayStart ? member.attributeFrom : dayStart;
 
   /**
    * One transaction, holding a lock nobody outside the database can bypass.
@@ -96,26 +133,58 @@ export async function recordTeamAttendance(input: {
     const lockKey = `team-attendance:${member.id}:${activityDate.toISOString().slice(0, 10)}`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey})::bigint)`;
 
+    const projectId = currentProjectId();
     const totals = await tx.$queryRaw<Array<{ groupId: string; accountId: string; messages: bigint; firstAt: Date; lastAt: Date }>>`
+      WITH mine AS (
+        -- Their own messages. INCOMING only: an executive typing from the business phone produces an
+        -- OUTGOING row carrying the ACCOUNT's number, not theirs, so it cannot be attributed to a
+        -- person — and counting it would credit whoever is on the roster with the AI's replies.
+        SELECT m."groupId", m."accountId", m."chatId", m."whatsappMessageId", m."timestampWa"
+        FROM "Message" m
+        WHERE m."projectId" = ${projectId}
+          -- Raw SQL is not scoped by the client, so the project is stated here: the same person can
+          -- be on two projects' rosters, and one project's attendance must never count the other's.
+          AND m."senderPhone" = ANY(${identifiers})
+          AND m."direction" = 'INCOMING'
+          AND m."groupId" IS NOT NULL
+          AND m."timestampWa" >= ${start}
+          AND m."timestampWa" < ${end}
+        UNION ALL
+        -- Replies they sent from the dashboard inbox, through the login linked to them: the echo of a
+        -- MANUAL_REPLY that login queued.
+        SELECT m."groupId", m."accountId", m."chatId", m."whatsappMessageId", m."timestampWa"
+        FROM "Message" m
+        JOIN "OutboundMessage" o ON o."providerMessageId" = m."whatsappMessageId" AND o."projectId" = ${projectId}
+        WHERE m."projectId" = ${projectId}
+          AND ${member.userId ?? ""} <> ''
+          AND o."createdById" = ${member.userId ?? ""}
+          AND o."actionType" = 'MANUAL_REPLY'
+          AND m."direction" = 'OUTGOING'
+          AND m."groupId" IS NOT NULL
+          AND m."timestampWa" >= ${start}
+          AND m."timestampWa" < ${end}
+      ),
+      logical AS (
+        -- One row per logical message per WhatsApp group: each of our numbers in a group stores its own
+        -- copy, and counting copies doubled the messages and the groups of anybody in a group two of
+        -- our numbers share (report accuracy audit, 19 Oct 2026). The group row kept is the lowest id,
+        -- so the same WhatsApp group is always recorded under the same row.
+        SELECT DISTINCT ON (g."whatsappGroupId", (CASE WHEN x."whatsappMessageId" ~ '^(true|false)_[^_]*@[^_]*_[^_]+'
+                                                  THEN split_part(x."whatsappMessageId", '_', 3) ELSE x."whatsappMessageId" END))
+          g."whatsappGroupId" AS wgid, x."groupId", x."accountId", x."timestampWa"
+        FROM mine x
+        JOIN "WhatsAppGroup" g ON g."id" = x."groupId"
+        ORDER BY g."whatsappGroupId", (CASE WHEN x."whatsappMessageId" ~ '^(true|false)_[^_]*@[^_]*_[^_]+'
+                                       THEN split_part(x."whatsappMessageId", '_', 3) ELSE x."whatsappMessageId" END), x."groupId"
+      )
       SELECT
-        m."groupId"          AS "groupId",
-        m."accountId"        AS "accountId",
-        COUNT(*)             AS "messages",
-        MIN(m."timestampWa") AS "firstAt",
-        MAX(m."timestampWa") AS "lastAt"
-      FROM "Message" m
-      WHERE m."projectId" = ${currentProjectId()}
-        -- Raw SQL is not scoped by the client, so the project is stated here: the same person can
-        -- be on two projects' rosters, and one project's attendance must never count the other's.
-        AND m."senderPhone" = ANY(${identifiers})
-        -- INCOMING only. An executive typing from the business phone produces an OUTGOING row
-        -- carrying the ACCOUNT's number, not theirs, so it cannot be attributed to a person at all
-        -- — and counting it would credit whoever happens to be on the roster with the AI's replies.
-        AND m."direction" = 'INCOMING'
-        AND m."groupId" IS NOT NULL
-        AND m."timestampWa" >= ${start}
-        AND m."timestampWa" < ${end}
-      GROUP BY m."groupId", m."accountId"
+        MIN(l."groupId")                                     AS "groupId",
+        (array_agg(l."accountId" ORDER BY l."groupId"))[1]   AS "accountId",
+        COUNT(*)                                             AS "messages",
+        MIN(l."timestampWa")                                 AS "firstAt",
+        MAX(l."timestampWa")                                 AS "lastAt"
+      FROM logical l
+      GROUP BY l.wgid
     `;
 
     // Deliberately NOT filtered on `Message.isFromTeamMember`. That column is stamped at insert
@@ -132,9 +201,25 @@ export async function recordTeamAttendance(input: {
     }));
 
     if (groups.length === 0) {
-      // The message that triggered this is not in the window — a clock skew, or a replay of
-      // something since deleted. Writing a zero-message "worked" row would be a claim about
-      // somebody's day that nothing supports.
+      // Nothing of theirs in this day (a clock skew, a replay of something since deleted, or an
+      // identity change that moved these messages to somebody else or before their "count from"
+      // date). Writing a zero-message "worked" row would be a claim nothing supports; a row already
+      // written from evidence that no longer holds is withdrawn — kept, at zero, only when a manager
+      // has recorded an override on it, which is not evidence and must survive.
+      const existing = await tx.teamAttendanceDay.findUnique({
+        where: { teamMemberId_activityDate: { teamMemberId: member.id, activityDate } },
+        select: { id: true, override: true },
+      });
+      if (!existing) return;
+      await tx.teamAttendanceGroup.deleteMany({ where: { attendanceDayId: existing.id } });
+      if (existing.override) {
+        await tx.teamAttendanceDay.update({
+          where: { id: existing.id },
+          data: { messageCount: 0, uniqueGroupCount: 0, firstActivityAt: null, lastActivityAt: null },
+        });
+      } else {
+        await tx.teamAttendanceDay.delete({ where: { id: existing.id } });
+      }
       return;
     }
 

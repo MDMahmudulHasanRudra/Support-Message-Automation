@@ -7,11 +7,22 @@ const MAX_PHONE_DIGITS = 15; // E.164 max, including country code
  * expects (`<digits>@c.us`). Returns null if it doesn't look like a real
  * phone number, so callers can reject bad input before ever touching the
  * WhatsApp session.
+ *
+ * A Bangladeshi mobile number written the local way ("01712345678": 11 digits starting 01) gets its
+ * country code. WhatsApp always delivers "8801712345678", so a colleague entered as "01…" never
+ * matched a single message: every one was processed and reported as a customer's, the automation
+ * could answer them, and "01…" and "+8801…" were accepted as two different people. No international
+ * number starts with 0, so nothing else is touched (`normalizeClientPhone` applies the same rule).
  */
 export function normalizePhoneNumber(input: string): string | null {
   const digits = input.replace(/\D/g, "");
   if (digits.length < MIN_PHONE_DIGITS || digits.length > MAX_PHONE_DIGITS) return null;
-  return digits;
+  return isLocalBangladeshMobile(digits) ? `88${digits}` : digits;
+}
+
+/** "01" + nine digits: a Bangladeshi mobile number without its country code. */
+export function isLocalBangladeshMobile(digits: string): boolean {
+  return /^01\d{9}$/.test(digits);
 }
 
 /**

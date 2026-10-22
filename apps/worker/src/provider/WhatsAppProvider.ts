@@ -1,4 +1,5 @@
-import type { MediaDownloadInfo, RawIncomingMessage } from "../pipeline/types.js";
+import type { ChatActivity, LocationContent, PollContent } from "@support-automation/shared";
+import type { MediaDownloadInfo, MessageUpdateEvent, RawIncomingMessage } from "../pipeline/types.js";
 
 export type ConnectionStatus =
   | "CONNECTED"
@@ -81,6 +82,30 @@ export interface SendResult {
   error?: string;
 }
 
+export interface SendOptions {
+  /** The WhatsApp id of the message this send replies to (a real quote, not a visual one). */
+  quotedMessageId?: string | null;
+}
+
+export type SendRoute = "TEXT" | "MENTIONS" | "REPLY" | "REFUSE_REPLY_WITH_MENTIONS";
+
+/**
+ * Which library call a send needs. A reply that ALSO tags people is refused: the installed library's
+ * `sendReplyWithMentions` is a stub that returns false, so attempting it would fail every time with no
+ * better reason than "not accepted", and quietly dropping either half would send something the operator
+ * did not write.
+ */
+export function chooseSendRoute(mentions: readonly string[] | undefined, options?: SendOptions): SendRoute {
+  const quoted = Boolean(options?.quotedMessageId);
+  const tagged = Boolean(mentions && mentions.length > 0);
+  if (quoted && tagged) return "REFUSE_REPLY_WITH_MENTIONS";
+  if (quoted) return "REPLY";
+  return tagged ? "MENTIONS" : "TEXT";
+}
+
+export const REPLY_WITH_MENTIONS_REFUSAL =
+  "A quoted reply cannot also tag people on this WhatsApp connection. Nothing was sent — send it without the quote or without the tags.";
+
 /** What was created, or why not — never a bare boolean, since a group name alone tells nobody its id. */
 export type GroupCreationResult =
   | { success: true; whatsappGroupId: string; name: string }
@@ -123,7 +148,37 @@ export interface ProfileUpdateResult {
  * at all; everything the watchdog does with it depends on this type.
  */
 export type CollectionProbe =
-  | { ok: true; messages: RawIncomingMessage[] }
+  /**
+   * `incomplete` says what the read could not check although the session answered — the one-to-one
+   * chat list, or a chat whose history would not load. The watchdog judges on the rest; a gap sweep
+   * records PARTIAL rather than RECOVERED, because "nothing more to recover" was not shown.
+   */
+  | {
+      ok: true;
+      messages: RawIncomingMessage[];
+      incomplete?: string;
+      /**
+       * A kind of chat the read could not check at all — the group list failed or came back empty,
+       * or the personal list could not be read. The other kind was still read, so a personal message
+       * is recovered even when the group list is too large to read in time. A watchdog that found
+       * nothing must not read an unchecked GROUP half as agreement.
+       */
+      uncheckedKinds?: Array<"GROUP" | "PERSONAL">;
+    }
+  | { ok: false; reason: string };
+
+/** One message as WhatsApp Web's message store holds it: enough to check whether it is stored. */
+export interface StoreMessageRef {
+  /** The serialized message id — the same value stored as `Message.whatsappMessageId`. */
+  id: string;
+  chatId: string;
+  /** Seconds since the epoch, as WhatsApp reports it. */
+  t: number;
+}
+
+/** What `readChatHistory` found in one chat. */
+export type ChatHistoryRead =
+  | { ok: true; messages: RawIncomingMessage[]; undecrypted: number; reachedSince: boolean; earlierPagesLoaded: number }
   | { ok: false; reason: string };
 
 /**
@@ -131,10 +186,33 @@ export type CollectionProbe =
  * interface — never on OpenWA directly (see ARCHITECTURE.md). A future
  * official WhatsApp Business Platform provider is a drop-in implementation.
  */
+/** What `getBrowserUsage` reports. `cpuPercent` is summed over processes, so 100 means one core fully busy. */
+export interface BrowserUsage {
+  cpuPercent: number;
+  memoryBytes: number;
+  processes: number;
+}
+
 export interface WhatsAppProvider {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getConnectionStatus(): ConnectionStatus;
+  /**
+   * Whether the provider still holds a live browser/client. Optional: a provider that cannot tell
+   * simply omits it and is treated as live. It exists because `getGroups()` answers `[]` both for a
+   * session with no groups AND for one whose client is gone, and a recovery must not believe the
+   * second as if it were the first. `getConnectionStatus()` alone is not enough: the state label
+   * and the client are updated separately during a disconnect.
+   */
+  hasLiveClient?(): boolean;
+  /**
+   * CPU and memory of THIS worker process and its browser (Chromium and its children) right now.
+   * Optional and purely informational: a provider that cannot say simply omits it. It answers the
+   * question the host load average cannot — how busy is the thing that actually reads the group
+   * list — because the load average is the whole machine's and the event-loop delay is only Node's.
+   * Never throws; null means "unknown", which callers must treat as "not busy".
+   */
+  getBrowserUsage?(): Promise<BrowserUsage | null>;
   getGroups(): Promise<GroupInfo[]>;
   /**
    * Registers the one handler every incoming message is delivered to.
@@ -145,6 +223,11 @@ export interface WhatsAppProvider {
    * Safe to call before connect().
    */
   subscribeToMessages(handler: (message: RawIncomingMessage) => void): void;
+  /**
+   * Told about a message the provider received but could not convert, so it is counted rather than
+   * vanishing. Optional: a provider that cannot fail that way need not offer it. Set before connect().
+   */
+  onMessageConversionError?: (err: unknown) => void;
   /**
    * Messages the provider can still see for chats touched since `since`, oldest first, capped at
    * `limit`.
@@ -177,8 +260,12 @@ export interface WhatsAppProvider {
   /**
    * `mentions` are contact ids ("<digits>@c.us") to tag. WhatsApp only notifies a mentioned person
    * if they are a participant of that chat; tagging someone who is not simply renders as text.
+   *
+   * `options.quotedMessageId` (WhatsApp Chat v2, CHAT_UI_V2.md §4) sends the text as a real WhatsApp
+   * reply to that message. A provider that cannot quote must FAIL the send rather than drop the quote:
+   * a reply that silently lost its context reads as a stray message in a busy group.
    */
-  sendMessage(chatId: string, body: string, mentions?: string[]): Promise<SendResult>;
+  sendMessage(chatId: string, body: string, mentions?: string[], options?: SendOptions): Promise<SendResult>;
   getAccountInfo(): Promise<AccountInfo>;
   /**
    * Lightweight, single-chat membership check used by the Group Message
@@ -189,6 +276,13 @@ export interface WhatsAppProvider {
    * Returns false (never throws) if membership can't be confirmed.
    */
   verifyGroupMembership(chatId: string): Promise<boolean>;
+  /**
+   * The one-to-one counterpart, checked right before a manual reply to a personal chat: the chat is
+   * an individual one (`@c.us` / `@lid`) and it exists on this account's WhatsApp. A reply is only
+   * ever sent into a conversation that already exists — never a first message to a stranger.
+   * Returns false (never throws) when that cannot be confirmed.
+   */
+  verifyPersonalChat(chatId: string): Promise<boolean>;
   /**
    * On-demand, single-group participant count. Deliberately NOT part of
    * getGroups()/the bulk sync path — fetching full participant metadata for
@@ -297,4 +391,57 @@ export interface WhatsAppProvider {
    * could not confirm changing is simply absent (or false) in the result, not an exception.
    */
   updateProfile(update: ProfileUpdate): Promise<ProfileUpdateResult>;
+
+  // ---- Chat v2 rich messaging (CHAT_RICH_MESSAGING.md). Optional: a provider without one of these
+  // ---- makes the caller report "this connection cannot …" rather than pretend. None of them throws.
+
+  /**
+   * Registers the handler for changes to messages already seen: a delivery / read receipt on one this
+   * account sent, or a message deleted for everyone. Kept wired across reconnects exactly like
+   * `subscribeToMessages`. Safe to call before connect().
+   */
+  subscribeToMessageUpdates?(handler: (update: MessageUpdateEvent) => void): void;
+  /**
+   * Asks WhatsApp for one more page of a chat's earlier messages and returns every message the
+   * session now holds for that chat (the caller stores only the ones it does not have).
+   */
+  loadEarlierMessages?(chatId: string): Promise<{ ok: true; messages: RawIncomingMessage[]; reachedStart: boolean } | { ok: false; reason: string }>;
+  /**
+   * Personal (1:1) chats active after `since`: ids and last-activity time only. For the personal
+   * backfill (pipeline/personalBackfill.ts). Throws when the list cannot be read.
+   */
+  listPersonalChatsSince?(since: Date): Promise<ChatActivity[]>;
+  /**
+   * One chat's messages from `since` on, as this session holds them, after loading at most
+   * `earlierPages` more pages from the phone when the loaded history does not reach back that far.
+   * `reachedSince` says whether the read covered the whole window; `undecrypted` counts messages
+   * still waiting to be decrypted, which cannot be stored. Never throws.
+   */
+  readChatHistory?(chatId: string, since: Date, options: { earlierPages: number }): Promise<ChatHistoryRead>;
+  /**
+   * Every message this session's page holds that was sent after `since`, in a group or a personal
+   * chat, read from WhatsApp Web's MESSAGE store rather than its chat list: ids, chat and time only,
+   * newest first, at most `limit`. Null when the page has no message store. For the store sweep
+   * (pipeline/reconcileRecentMessages.ts), which exists because every other recovery path finds a
+   * message through its chat's activity time — and a chat that never shows as active (a first
+   * message from an unknown number) hides its message from all of them. Never throws.
+   */
+  listStoreMessageRefs?(since: Date, limit: number): Promise<StoreMessageRef[] | null>;
+  /**
+   * The full messages for these ids. One still encrypted or not answered is counted in `unreadable`
+   * (worth reading again); one read but in a shape that cannot be stored is listed in `unusableIds`
+   * (not worth reading again). Never throws.
+   */
+  readMessagesById?(ids: readonly string[]): Promise<{ messages: RawIncomingMessage[]; unreadable: number; unusableIds: string[] }>;
+  /** A poll, to a group only (WhatsApp's own rule). */
+  sendPoll?(chatId: string, poll: PollContent): Promise<SendResult>;
+  sendLocation?(chatId: string, location: LocationContent): Promise<SendResult>;
+  /** A WebP sticker as it is — no conversion, no third-party service. */
+  sendSticker?(chatId: string, webpBase64: string, animated: boolean): Promise<SendResult>;
+  /** Forwards one message this session holds to another chat of the same account. */
+  forwardMessage?(chatId: string, whatsappMessageId: string): Promise<SendResult>;
+  setMessageStarred?(whatsappMessageId: string, star: boolean): Promise<SendResult>;
+  /** Pin / archive on the phone. `changed: false` = it already was in that state. */
+  setChatPinned?(chatId: string, pin: boolean): Promise<SendResult & { changed?: boolean }>;
+  setChatArchived?(chatId: string, archive: boolean): Promise<SendResult & { changed?: boolean }>;
 }

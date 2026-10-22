@@ -7,6 +7,9 @@ import { revalidatePath } from "next/cache";
 
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { isPersonalChatId, personalChatFallbackName } from "@/lib/chatConversationType";
+import { isValidReactionEmoji, validateMentions } from "@support-automation/shared";
+import { isChatUiV2Enabled, mentionCandidatesFor } from "@/server/chatThreadV2";
 
 export interface ChatSendState {
   error?: string;
@@ -24,10 +27,63 @@ const MAX_BODY_LENGTH = 4096;
  */
 const IDEMPOTENCY_WINDOW_MS = 10_000;
 
-function buildManualReplyIdempotencyKey(groupId: string, body: string): string {
+function buildManualReplyIdempotencyKey(groupId: string, body: string, extras?: { replyTo: string | null; mentions: string[] }): string {
   const bucket = Math.floor(Date.now() / IDEMPOTENCY_WINDOW_MS);
-  const digest = createHash("sha256").update(body).digest("hex").slice(0, 32);
+  // A quote or tags make it a different message: the same words quoting another message must not be
+  // collapsed into the first. Without either, the key is exactly what it always was.
+  const material = extras && (extras.replyTo || extras.mentions.length) ? [body, extras.replyTo ?? "", extras.mentions.join(",")].join("\u0000") : body;
+  const digest = createHash("sha256").update(material).digest("hex").slice(0, 32);
   return `manual-reply:${groupId}:${bucket}:${digest}`;
+}
+
+/**
+ * Chat v2 (CHAT_UI_V2.md): what this send quotes and who it tags, from the form, checked against the
+ * conversation the server already resolved. Refused, never trimmed: a reply that silently lost its
+ * quote or a tag is a different message from the one the operator wrote.
+ *
+ * Without either field the send is exactly what it always was. With either, the CHAT_UI_V2 feature
+ * must be on for the project, so nothing new can happen in a project that has not switched it on.
+ */
+async function readReplyExtras(
+  formData: FormData,
+  conversation: { accountId: string; groupRowId: string; chatId: string } | { accountId: string; personalChatId: string },
+  body: string,
+): Promise<{ ok: true; replyTo: string | null; mentions: string[] } | { ok: false; error: string }> {
+  const replyTo = String(formData.get("replyTo") ?? "").trim() || null;
+  const rawMentions = String(formData.get("mentions") ?? "").trim();
+  if (!replyTo && !rawMentions) return { ok: true, replyTo: null, mentions: [] };
+  if (!(await isChatUiV2Enabled())) return { ok: false, error: "Replies and tags need the new conversation view, which is off for this project. Nothing was sent." };
+
+  let mentions: string[] = [];
+  if (rawMentions && rawMentions !== "[]") {
+    if ("personalChatId" in conversation) return { ok: false, error: "Tags work only in groups. Nothing was sent." };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawMentions);
+    } catch {
+      return { ok: false, error: "The tag list was not readable. Nothing was sent." };
+    }
+    const { candidates } = await mentionCandidatesFor({ kind: "GROUP", ...conversation });
+    const check = validateMentions(parsed, new Set(candidates.map((c) => c.jid)), body);
+    if (!check.ok) return { ok: false, error: check.error };
+    mentions = check.mentions;
+  }
+
+  if (replyTo) {
+    if (replyTo.length > 64) return { ok: false, error: "The message being replied to could not be found. Nothing was sent." };
+    if (mentions.length) {
+      return { ok: false, error: "A quoted reply cannot also tag people on this WhatsApp connection. Remove the quote or the tags. Nothing was sent." };
+    }
+    // The scoped client: a message of another project is "not found". Then it must be this
+    // conversation's own stored message on this account — a queued bubble has no WhatsApp id to quote.
+    const target = await prisma.message.findUnique({ where: { id: replyTo }, select: { accountId: true, groupId: true, chatId: true } });
+    const inConversation =
+      target !== null &&
+      target.accountId === conversation.accountId &&
+      ("groupRowId" in conversation ? target.groupId === conversation.groupRowId : target.groupId === null && target.chatId === conversation.personalChatId);
+    if (!inConversation) return { ok: false, error: "The message being replied to is not in this conversation. Nothing was sent." };
+  }
+  return { ok: true, replyTo, mentions };
 }
 
 /**
@@ -92,6 +148,9 @@ export async function sendChatMessage(
     };
   }
 
+  const extras = await readReplyExtras(formData, { accountId: account.id, groupRowId: group.id, chatId: group.whatsappGroupId }, body);
+  if (!extras.ok) return { error: extras.error };
+
   try {
     await prisma.outboundMessage.create({
       data: {
@@ -102,8 +161,10 @@ export async function sendChatMessage(
         toPhone: group.whatsappGroupId,
         body,
         actionType: "MANUAL_REPLY",
-        idempotencyKey: buildManualReplyIdempotencyKey(groupId, body),
+        idempotencyKey: buildManualReplyIdempotencyKey(groupId, body, extras),
         groupId: group.id,
+        replyToMessageId: extras.replyTo,
+        mentions: extras.mentions,
         groupNameSnapshot: group.name,
         // WHO pressed send, from the server-side session — the attribution the conversation and the
         // User Activity report both read. The account above is WHICH NUMBER sent it.
@@ -174,6 +235,100 @@ export async function sendChatMessage(
 }
 
 /**
+ * Queues one operator-typed reply to a PERSONAL (one-to-one) chat, from the selected account.
+ *
+ * The same single hand-off as a group reply — one `OutboundMessage` row, `MANUAL_REPLY`, sent by the
+ * worker through the one outbound queue, under the same account rate limits — with the checks a
+ * personal chat needs instead of a group's:
+ *   - the chat id is an individual one (`@c.us` / `@lid`), never a group, broadcast or channel;
+ *   - the account already HAS this conversation (a stored message in it). This is a reply, never a
+ *     first message to a number nobody wrote to us from — the product does not cold-message;
+ *   - the worker checks again, live, that the chat exists on the account before sending
+ *     (`verifyPersonalChat`).
+ * The account comes from the URL and is re-derived on the server, exactly as for a group.
+ */
+export async function sendPersonalChatMessage(
+  accountId: string,
+  chatId: string,
+  _prevState: ChatSendState,
+  formData: FormData,
+): Promise<ChatSendState> {
+  const granted = await checkPermission("messages.reply");
+  if ("denied" in granted) return { error: granted.denied };
+  const session = granted.session;
+
+  const body = String(formData.get("body") ?? "").trim();
+  if (!body) return { error: "Type a message before sending." };
+  if (body.length > MAX_BODY_LENGTH) {
+    return { error: `That message is ${body.length} characters. WhatsApp accepts at most ${MAX_BODY_LENGTH}.` };
+  }
+  if (!isPersonalChatId(chatId)) return { error: "That is not a personal chat. Nothing was sent." };
+
+  // The scoped client only finds this project's account; another project's id is "not found".
+  const account = await prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { id: true, label: true, status: true } });
+  if (!account) return { error: "That WhatsApp account is not in this project. Choose an account at the top of WhatsApp Chat." };
+
+  const [existing, named] = await Promise.all([
+    prisma.message.findFirst({ where: { accountId: account.id, chatId, groupId: null }, select: { id: true } }),
+    prisma.message.findFirst({
+      where: { accountId: account.id, chatId, groupId: null, direction: "INCOMING", AND: [{ senderName: { not: null } }, { senderName: { not: "" } }] },
+      orderBy: { timestampWa: "desc" },
+      select: { senderName: true },
+    }),
+  ]);
+  if (!existing) {
+    return { error: `${account.label} has no conversation with this number, so nothing was sent. Replies continue an existing chat; they never start one.` };
+  }
+  const name = named?.senderName || personalChatFallbackName(chatId);
+
+  if (account.status !== "CONNECTED") {
+    return { error: `${account.label} is ${account.status.toLowerCase()}, so nothing was sent. Reconnect it on WhatsApp Accounts.` };
+  }
+
+  const extras = await readReplyExtras(formData, { accountId: account.id, personalChatId: chatId }, body);
+  if (!extras.ok) return { error: extras.error };
+
+  try {
+    await prisma.outboundMessage.create({
+      data: {
+        accountId: account.id,
+        chatId,
+        // The per-client rate limit keys off this, as it does for a group's chat id.
+        toPhone: chatId,
+        body,
+        actionType: "MANUAL_REPLY",
+        // Keyed by account AND chat: unlike a group row id, a chat id is the same on every account.
+        idempotencyKey: buildManualReplyIdempotencyKey(`personal:${account.id}:${chatId}`, body, extras),
+        groupNameSnapshot: name,
+        replyToMessageId: extras.replyTo,
+        createdById: session.userId,
+      },
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code === "P2002") {
+      revalidatePath(await projectPath("/chat"), "layout");
+      return { sentAt: Date.now() };
+    }
+    await logSystemEvent("ERROR", "chat-inbox", "Failed to queue a manual reply to a personal chat", {
+      error: (err as Error).message,
+      chatId,
+      accountId: account.id,
+      userId: session.userId,
+    });
+    return { error: `Your message to ${name} could not be queued because of a server error, and was not sent. Try again — if it keeps failing, check System Logs.` };
+  }
+
+  await logSystemEvent("INFO", "chat-inbox", `Queued a manual reply to ${name} (personal chat)`, {
+    chatId,
+    accountId: account.id,
+    userId: session.userId,
+    length: body.length,
+  });
+  revalidatePath(await projectPath("/chat"), "layout");
+  return { sentAt: Date.now() };
+}
+
+/**
  * Cancels a queued reply that has not left yet. Only ever touches a MANUAL_REPLY row that is
  * still PENDING — an automation-generated send or one already in flight is never cancellable
  * from here.
@@ -202,18 +357,40 @@ export interface MessageActionResult {
 export async function reactToChatMessage(messageId: string, emoji: string): Promise<MessageActionResult> {
   const granted = await checkPermission("messages.reply");
   if ("denied" in granted) return { error: granted.denied };
+  // Exactly one emoji: the worker refuses an empty one, and removing a reaction is not a contract this
+  // connection has been verified to honour (CHAT_UI_V2.md §2), so it is not offered.
+  if (!isValidReactionEmoji(emoji)) return { error: "Choose one emoji to react with." };
+  if (typeof messageId !== "string" || messageId.length > 64) return { error: "That message could not be found." };
 
+  // The scoped client: another project's message is "not found".
   const message = await prisma.message.findUnique({
     where: { id: messageId },
-    select: { accountId: true, whatsappMessageId: true, groupId: true },
+    select: { id: true, accountId: true, whatsappMessageId: true, groupId: true, account: { select: { label: true, status: true } } },
   });
   if (!message) return { error: "That message could not be found." };
+  if (message.account.status !== "CONNECTED") {
+    return { error: `${message.account.label} is ${message.account.status.toLowerCase()}, so the reaction was not sent.` };
+  }
+
+  // A second press while the first is still with the worker is the same request, not a new one.
+  const inFlight = await prisma.workerCommand.findFirst({
+    where: {
+      type: "REACT_TO_MESSAGE",
+      accountId: message.accountId,
+      status: { in: ["PENDING", "PROCESSING"] },
+      payload: { path: ["messageId"], equals: message.id },
+    },
+    select: { payload: true },
+  });
+  if (inFlight && (inFlight.payload as { emoji?: unknown } | null)?.emoji === emoji) return {};
 
   await prisma.workerCommand.create({
     data: {
       type: "REACT_TO_MESSAGE",
       accountId: message.accountId,
-      payload: { whatsappMessageId: message.whatsappMessageId, emoji },
+      // `messageId` and `requestedById` are for showing the result on the message; the worker reads
+      // only the first two fields.
+      payload: { whatsappMessageId: message.whatsappMessageId, emoji, messageId: message.id, requestedById: granted.session.userId },
     },
   });
   if (message.groupId) revalidatePath(await projectPath("/chat"), "layout");

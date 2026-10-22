@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 
 import Link from "@/components/ProjectLink";
 import { Alert, Badge, Button, ConfirmDialog, Dialog, EmptyState, Field, Input, Table, Td, Th } from "@/components/ui";
-import { setUserActive, resetUserPassword } from "@/server/actions/users";
+import { deleteUser, setUserActive, resetUserPassword } from "@/server/actions/users";
 
 export interface UserRow {
   id: string;
@@ -16,6 +16,10 @@ export interface UserRow {
   isActive: boolean;
   lastLoginAtLabel: string | null;
   isCurrentUser: boolean;
+  /** Administrator-level role (Main Admin or project-administration keys): never deletable. */
+  isAdministrator: boolean;
+  /** The viewer may delete this login (a Main Admin, and the row is a lower user). */
+  canDelete: boolean;
 }
 
 export function UsersTable({ users }: { users: UserRow[] }) {
@@ -29,6 +33,30 @@ export function UsersTable({ users }: { users: UserRow[] }) {
   const [isResetting, startReset] = useTransition();
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetDone, setResetDone] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<UserRow | null>(null);
+  const [typed, setTyped] = useState("");
+  const [isDeleting, startDelete] = useTransition();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  function closeDelete() {
+    setDeleteTarget(null);
+    setTyped("");
+    setDeleteError(null);
+  }
+
+  function confirmDelete() {
+    if (!deleteTarget) return;
+    startDelete(async () => {
+      const result = await deleteUser(deleteTarget.id, typed);
+      if (result.error) {
+        setDeleteError(result.error);
+        return;
+      }
+      closeDelete();
+      router.refresh();
+    });
+  }
 
   function confirmToggle() {
     if (!toggleTarget) return;
@@ -89,7 +117,14 @@ export function UsersTable({ users }: { users: UserRow[] }) {
                 {u.name}
                 {u.isCurrentUser ? <span className="ml-1.5 text-xs text-[color:var(--color-muted-foreground)]">(you)</span> : null}
               </Td>
-              <Td>{u.permissionModuleName ?? <span className="text-[color:var(--color-muted-foreground)]">None assigned</span>}</Td>
+              <Td>
+                {u.permissionModuleName ?? <span className="text-[color:var(--color-muted-foreground)]">None assigned</span>}
+                {u.isAdministrator ? (
+                  <span className="ml-2">
+                    <Badge color="blue">Administrator</Badge>
+                  </span>
+                ) : null}
+              </Td>
               <Td>
                 <Badge color={u.isActive ? "green" : "gray"} dot>
                   {u.isActive ? "Active" : "Inactive"}
@@ -119,6 +154,11 @@ export function UsersTable({ users }: { users: UserRow[] }) {
                   >
                     {u.isActive ? "Deactivate" : "Activate"}
                   </Button>
+                  {u.canDelete ? (
+                    <Button variant="danger" size="sm" onClick={() => setDeleteTarget(u)}>
+                      Delete
+                    </Button>
+                  ) : null}
                 </div>
               </Td>
             </tr>
@@ -145,6 +185,30 @@ export function UsersTable({ users }: { users: UserRow[] }) {
       >
         {toggleError ? <Alert tone="danger">{toggleError}</Alert> : null}
       </ConfirmDialog>
+
+      <Dialog
+        open={deleteTarget !== null}
+        onClose={closeDelete}
+        title={`Delete "${deleteTarget?.username}" permanently?`}
+        description="The login is removed for good and they are signed out everywhere. What they did stays in the records without their name; the System Log keeps who was deleted. This cannot be undone — Deactivate instead if they may come back."
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeDelete} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={confirmDelete} loading={isDeleting} disabled={typed.trim() !== deleteTarget?.username}>
+              Delete user
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          {deleteError ? <Alert tone="danger">{deleteError}</Alert> : null}
+          <Field label={`Type ${deleteTarget?.username ?? ""} to confirm`}>
+            <Input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
+          </Field>
+        </div>
+      </Dialog>
 
       <Dialog
         open={resetTarget !== null}

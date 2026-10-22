@@ -35,7 +35,8 @@ export function DashboardModuleCard({
 }: {
   title: string;
   icon: LucideIcon;
-  href: string;
+  /** Omitted when the viewer cannot open the module (a project role without it): the card stays, inert. */
+  href?: string;
   linkLabel?: string;
   secondaryLink?: { href: string; label: string };
   status?: ModuleHealthStatus;
@@ -61,17 +62,22 @@ export function DashboardModuleCard({
 
       <div className="mt-4 flex-1 space-y-2.5">{children}</div>
 
+      {href || secondaryLink ? (
       <div className="mt-5 flex items-center justify-between border-t border-[var(--color-border)] pt-3">
-        <Link
-          href={href}
-          className="group/link inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-foreground)] transition-opacity hover:opacity-70"
-        >
-          {linkLabel}
-          <ArrowRight
-            className="size-3.5 transition-transform duration-[var(--duration-base)] ease-[var(--ease-out)] group-hover/link:translate-x-1"
-            aria-hidden
-          />
-        </Link>
+        {href ? (
+          <Link
+            href={href}
+            className="group/link inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-foreground)] transition-opacity hover:opacity-70"
+          >
+            {linkLabel}
+            <ArrowRight
+              className="size-3.5 transition-transform duration-[var(--duration-base)] ease-[var(--ease-out)] group-hover/link:translate-x-1"
+              aria-hidden
+            />
+          </Link>
+        ) : (
+          <span />
+        )}
         {secondaryLink ? (
           <Link
             href={secondaryLink.href}
@@ -81,6 +87,7 @@ export function DashboardModuleCard({
           </Link>
         ) : null}
       </div>
+      ) : null}
     </Card>
   );
 }

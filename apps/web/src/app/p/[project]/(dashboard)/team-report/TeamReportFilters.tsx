@@ -5,6 +5,8 @@ import { flushSync } from "react-dom";
 import Link from "@/components/ProjectLink";
 import { Field, Input, Select } from "@/components/ui";
 import { GroupFilter } from "./GroupFilter";
+import { ScopeSelector } from "./ScopeSelector";
+import type { ReportScope } from "@support-automation/shared";
 
 export interface PresetLink {
   id: string;
@@ -53,6 +55,8 @@ export function TeamReportFilters({
   showGranularity = true,
   showMemberFilters = true,
   selects = [],
+  scopeChoice,
+  compareChoice,
 }: {
   period: string;
   date: string;
@@ -75,6 +79,10 @@ export function TeamReportFilters({
   /** Offer the Team and Team member pickers (a report about software users has no use for them). */
   showMemberFilters?: boolean;
   selects?: ExtraSelect[];
+  /** Unified reporting: offer the Groups / Personal chats / Both control. Omitted = no scope in the form. */
+  scopeChoice?: ReportScope;
+  /** Unified reporting: offer "Compare with the previous period". Omitted = no checkbox, and nothing added to the URL. */
+  compareChoice?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [chosenPeriod, setChosenPeriod] = useState(period);
@@ -89,6 +97,11 @@ export function TeamReportFilters({
         ? `All ${teams.find((team) => team.id === chosenTeam)?.name ?? "team"} members`
         : "All team members";
   const submit = () => formRef.current?.requestSubmit();
+  // A date typed by keyboard passes through years like 0002 on its way to 2026; only a year a report
+  // can mean reloads the page, so typing is not interrupted mid-entry.
+  const submitDate = (event: { currentTarget: HTMLInputElement }) => {
+    if (/^2\d{3}-\d{2}-\d{2}$/.test(event.currentTarget.value)) submit();
+  };
 
   return (
     <div>
@@ -111,6 +124,8 @@ export function TeamReportFilters({
         </nav>
       ) : null}
     <form ref={formRef} method="GET" className="flex flex-wrap items-end gap-3">
+      {scopeChoice ? <ScopeSelector value={scopeChoice} onChange={submit} /> : null}
+
       <Field label="Period">
         <Select
           name="period"
@@ -132,15 +147,15 @@ export function TeamReportFilters({
       {chosenPeriod === "custom" ? (
         <>
           <Field label="From">
-            <Input type="date" name="from" defaultValue={from} className="w-40" onChange={submit} />
+            <Input type="date" name="from" defaultValue={from} className="w-40" onChange={submitDate} />
           </Field>
           <Field label="To">
-            <Input type="date" name="to" defaultValue={to} className="w-40" onChange={submit} />
+            <Input type="date" name="to" defaultValue={to} className="w-40" onChange={submitDate} />
           </Field>
         </>
       ) : (
         <Field label={chosenPeriod === "day" ? "Day" : chosenPeriod === "week" ? "Any day in the week" : "Any day in the month"}>
-          <Input type="date" name="date" defaultValue={date} className="w-44" onChange={submit} />
+          <Input type="date" name="date" defaultValue={date} className="w-44" onChange={submitDate} />
         </Field>
       )}
 
@@ -239,6 +254,13 @@ export function TeamReportFilters({
           </Select>
         </Field>
       ))}
+
+      {compareChoice !== undefined ? (
+        <label className="flex h-9.5 items-center gap-2 text-[13px] text-[color:var(--color-foreground)]">
+          <input type="checkbox" name="compare" value="1" defaultChecked={compareChoice} onChange={submit} className="size-4" />
+          Compare with the previous period
+        </label>
+      ) : null}
 
       {/* Needed for Custom (two dates, one submit) and as the keyboard path for everything else. */}
       <button

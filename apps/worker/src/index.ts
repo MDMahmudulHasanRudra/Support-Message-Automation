@@ -2,6 +2,7 @@ import { checkDatabaseConnection } from "@support-automation/db";
 import { platformPrisma } from "./db.js";
 import type { Prisma } from "@prisma/client";
 import { startHealthServer, type WorkerHealthState } from "./health/server.js";
+import { registerPersonalBackfillRoutes } from "./health/backfillRoutes.js";
 import { ProviderRegistry } from "./provider/ProviderRegistry.js";
 import { ensureLegacyAccountExists, ensurePrimaryAccountExists, findConnectableAccounts } from "./provider/accountProvisioning.js";
 import { startAccountRegistrySync } from "./provider/accountRegistrySync.js";
@@ -24,6 +25,8 @@ import {
 import { awaitQuiescence, beginShutdown, installProcessGuards } from "./lifecycle.js";
 import { startMessageRecoveryProcessor } from "./pipeline/messageRecovery.js";
 import { startCollectionWatchdog } from "./health/collectionWatchdog.js";
+import { startGroupRecoveryProcessor } from "./commands/groupRecovery.js";
+import { startMessageReconcileProcessor, startMessageStoreSweepProcessor } from "./pipeline/reconcileRecentMessages.js";
 import { readLoops, recordLoopTick, registerLoop } from "./health/loopLiveness.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
@@ -43,6 +46,12 @@ import {
   startForgeResearchProcessor,
 } from "./forge/forgeProcessor.js";
 import { provisionAiProviderFromEnv } from "./bootstrap/provisionAiProviderFromEnv.js";
+import { startGoogleExternalActivityProcessor } from "./googleSheets/externalActivityProcessor.js";
+import { startChannelInboundProcessor } from "./channels/inboundProcessor.js";
+import { startChannelOutboundProcessor } from "./channels/outboundProcessor.js";
+import { startEmailOutboxProcessor } from "./email/outboxProcessor.js";
+import { startIdentityReattributionProcessor } from "./teamManagement/reattribution.js";
+import { startChannelAiProcessor } from "./channels/aiReply.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -101,7 +110,8 @@ async function main() {
 
   // Backward compatibility, load-bearing: this is the exact account (same sessionDataPath,
   // same sessionId) every pre-multi-account install already has — see ensureLegacyAccountExists's
-  // own doc comment. It also becomes Primary automatically if this is a fresh install.
+  // own doc comment. Created only on a fresh install, where it also becomes Primary; null once the
+  // operator has deleted it while other accounts exist.
   const legacyAccount = await ensureLegacyAccountExists();
   await ensurePrimaryAccountExists();
 
@@ -112,6 +122,8 @@ async function main() {
   await ensureForgeSettings();
 
   const registry = new ProviderRegistry();
+  // The personal backfill's controls (loopback-only, PERSONAL_MESSAGES_RUNBOOK.md). Inert until called.
+  registerPersonalBackfillRoutes(registry);
 
   // Connecting accounts is NOT on the startup path, and that is the whole point.
   //
@@ -135,7 +147,7 @@ async function main() {
   console.log(`[worker] ${accountsToConnect.length} account(s) will be connected in the background: ${accountsToConnect.map((a) => a.label).join(", ")}`);
   await logSystemEvent("INFO", "worker", "Worker starting up", {
     accountIds: accountsToConnect.map((a) => a.id),
-    legacyAccountId: legacyAccount.id,
+    legacyAccountId: legacyAccount?.id ?? null,
   });
 
   const intervals: NodeJS.Timeout[] = [
@@ -176,6 +188,21 @@ async function main() {
     // are set AND an admin enabled the integration, same convention as Conversation Learning above.
     startForgeKnowledgeProcessor(),
     startForgeResearchProcessor(),
+    // Google Sheets (GOOGLE_SHEETS.md, Phase 8): who changed a MONITORED sheet in Google directly.
+    // A no-op until the server has an OAuth client and a project has the feature on.
+    startGoogleExternalActivityProcessor(),
+    // Messenger, Instagram and Telegram (OMNICHANNEL.md): recorded webhook events → conversations, the
+    // channels' send queue, and AI replies on them. No-ops for a project without the Omnichannel
+    // feature; none of them touches a WhatsApp session.
+    startChannelInboundProcessor(),
+    startChannelOutboundProcessor(),
+    startChannelAiProcessor(),
+    // Email (CLIENT_CENTER_PLAN.md §3.1): the SMTP send queue. A no-op for a project without the Client
+    // Management feature or without a configured, enabled Email setup; nothing is queued by default.
+    startEmailOutboxProcessor(),
+    // Report accuracy: brings the stored team-member stamps, Support Activity members and Duty History
+    // in line after a roster identity change (teamManagement/reattribution.ts). Database only.
+    startIdentityReattributionProcessor(),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),
@@ -193,6 +220,16 @@ async function main() {
     startMessageRecoveryProcessor(),
     // Detects the failure with no symptom: CONNECTED, heartbeating, and collecting nothing.
     startCollectionWatchdog(registry),
+    // Finishes a group list that never finished arriving: re-reads (ADD_ONLY, slowly, never more
+    // than one account per tick) any CONNECTED account left FAILED/PARTIAL or holding inactive groups.
+    startGroupRecoveryProcessor(registry),
+    // Finds the message the watchdog cannot: a busy number that stores most messages and loses a few
+    // one at a time. Compares WhatsApp's last half hour with what is stored, adds only what is missing.
+    startMessageReconcileProcessor(registry),
+    // Every minute, reads WhatsApp Web's MESSAGE store rather than its chat list, so a message whose
+    // chat never shows as active (a first message from an unknown number) is still stored.
+    // MESSAGE_STORE_SWEEP_INTERVAL_SECONDS=0 switches it off.
+    ...[startMessageStoreSweepProcessor(registry)].filter((timer): timer is NodeJS.Timeout => timer !== null),
     startHeartbeat(state, registry),
   ];
 

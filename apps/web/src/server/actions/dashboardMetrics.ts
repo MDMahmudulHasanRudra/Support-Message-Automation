@@ -1,6 +1,8 @@
 
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
+import { messageKeySql } from "@/server/messageIdentity";
+import { computeFirstResponseWaits, loadAttributedMessages, median, type AttributedMessage } from "@/server/attributedMessages";
 import { getDhakaDayRange } from "@/lib/supportActivityPeriod";
 
 /**
@@ -67,12 +69,15 @@ export async function getMessageLoadSeries(nowMs: number) {
   const currentHourStartMs = Math.floor(nowMs / HOUR_MS) * HOUR_MS;
   const hourWindowStartMs = currentHourStartMs - (LOAD_HOURS - 1) * HOUR_MS;
 
+  // When the message was SENT (timestampWa), not when this server stored it — a burst recovered
+  // after a restart used to land in the hour it was recovered — and each message once, however many
+  // of our numbers stored a copy of it (report accuracy audit, 19 Oct 2026).
   const buckets = await prisma.$queryRaw<Array<{ bucketStart: Date; messageCount: bigint }>>`
-    SELECT date_trunc('hour', m."createdAt") AS "bucketStart", COUNT(*) AS "messageCount"
+    SELECT date_trunc('hour', m."timestampWa") AS "bucketStart", COUNT(DISTINCT (m."chatId", ${messageKeySql()})) AS "messageCount"
     FROM "Message" m
     WHERE m."direction" = 'INCOMING'::"MessageDirection"
       AND m."projectId" = ${await activeProjectId()}
-      AND m."createdAt" >= ${new Date(dayWindowStartMs)}
+      AND m."timestampWa" >= ${new Date(dayWindowStartMs)}
     GROUP BY 1
   `;
 
@@ -214,32 +219,26 @@ export async function getDeliveryOutcomes(nowMs: number) {
  */
 export async function getBusiestGroups(nowMs: number) {
   const since = new Date(nowMs - 7 * DAY_MS);
-  const grouped = await prisma.message.groupBy({
-    by: ["groupId"],
-    where: { direction: "INCOMING", createdAt: { gte: since }, groupId: { not: null } },
-    _count: { groupId: true },
-    // The group id breaks ties. Without it Postgres returns equal counts in whatever order its plan
-    // produces, so the chart could reorder, and at the cut-off swap WHICH groups it shows, between
-    // two refreshes with no new messages.
-    orderBy: [{ _count: { groupId: "desc" } }, { groupId: "asc" }],
-    take: BUSIEST_GROUP_LIMIT,
-  });
-
-  const groupIds = grouped.map((g) => g.groupId).filter((id): id is string => id !== null);
-  if (groupIds.length === 0) return { groups: [] as Array<{ id: string; name: string; value: number }> };
-
-  const named = await prisma.whatsAppGroup.findMany({
-    where: { id: { in: groupIds } },
-    select: { id: true, name: true },
-  });
-  const nameById = new Map(named.map((g) => [g.id, g.name]));
+  // One WhatsApp group, however many of our numbers are in it, and each message once — a group two
+  // of our numbers sit in used to show up twice with each half of its load (report accuracy audit).
+  // The group id breaks ties, so equal counts cannot reorder between two refreshes.
+  const grouped = await prisma.$queryRaw<Array<{ wgid: string; value: bigint; id: string; name: string }>>`
+    SELECT g."whatsappGroupId" AS wgid,
+           COUNT(DISTINCT ${messageKeySql()}) AS value,
+           (array_agg(g."id" ORDER BY a."isPrimary" DESC, g."id"))[1] AS id,
+           (array_agg(g."name" ORDER BY a."isPrimary" DESC, g."id"))[1] AS name
+    FROM "Message" m
+    JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
+    JOIN "WhatsAppAccount" a ON a."id" = g."accountId"
+    WHERE m."projectId" = ${await activeProjectId()}
+      AND m."direction" = 'INCOMING'
+      AND m."timestampWa" >= ${since}
+    GROUP BY g."whatsappGroupId"
+    ORDER BY value DESC, g."whatsappGroupId" ASC
+    LIMIT ${BUSIEST_GROUP_LIMIT}`;
 
   return {
-    groups: groupIds.map((id, index) => ({
-      id,
-      name: nameById.get(id) ?? "Unknown group",
-      value: grouped[index]._count.groupId,
-    })),
+    groups: grouped.map((row) => ({ id: row.id, name: row.name ?? "Unknown group", value: Number(row.value) })),
   };
 }
 
@@ -337,59 +336,50 @@ export async function getResponseTimeSeries(nowMs: number) {
   const todayStartMs = getDhakaDayRange(new Date(nowMs)).start.getTime();
   const windowStartMs = todayStartMs - (VOLUME_DAYS - 1) * DAY_MS;
 
-  const rows = await prisma.$queryRaw<Array<{ bucket: Date; median: number | null }>>`
-    WITH ordered AS (
-      SELECT
-        m."groupId" AS group_id,
-        m."timestampWa" AS ts,
-        (m."direction" = 'OUTGOING' OR m."isFromTeamMember" = true) AS is_reply
-      FROM "Message" m
-      JOIN "WhatsAppGroup" g ON g."id" = m."groupId"
-      WHERE m."groupId" IS NOT NULL
-        AND m."projectId" = ${await activeProjectId()}
-        AND g."isMonitored" = true
-        AND m."timestampWa" >= ${new Date(windowStartMs)}
-    ),
-    marked AS (
-      SELECT
-        ts,
-        is_reply,
-        LAG(is_reply) OVER (PARTITION BY group_id ORDER BY ts) AS prev_is_reply,
-        MIN(ts) FILTER (WHERE is_reply) OVER (
-          PARTITION BY group_id ORDER BY ts
-          ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING
-        ) AS next_reply_ts
-      FROM ordered
-    )
-    SELECT
-      date_trunc('day', ts AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka')           AS bucket,
-      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (next_reply_ts - ts)))::float
-                                                                                   AS median
-    FROM marked
-    WHERE is_reply = false
-      AND (prev_is_reply IS TRUE OR prev_is_reply IS NULL)
-      AND next_reply_ts IS NOT NULL
-    GROUP BY bucket
-    ORDER BY bucket
-  `;
-
-  const keyed = new Map(rows.map((row) => [row.bucket.toISOString().slice(0, 10), row.median]));
+  // The Team Report's wait over monitored groups, from the same classified messages (who is staff is
+  // decided at read time, our own numbers' posts are replies, each message once) — no longer the
+  // team-member stamp taken when a message arrived.
+  const messages = await loadAttributedMessages({ start: new Date(windowStartMs - 4 * HOUR_MS), end: new Date(nowMs + 1), monitoredOnly: true });
+  const byDay = new Map<number, number[]>();
+  for (const wait of computeFirstResponseWaits(messages, windowStartMs, nowMs + 1)) {
+    if (wait.repliedAt === null) continue;
+    const day = Math.floor((wait.askedAt - windowStartMs) / DAY_MS);
+    const list = byDay.get(day) ?? [];
+    list.push((wait.repliedAt - wait.askedAt) / 1000);
+    byDay.set(day, list);
+  }
 
   const daily: TimeBucket[] = [];
   let latestWithData: number | null = null;
   for (let i = 0; i < VOLUME_DAYS; i += 1) {
     const startMs = windowStartMs + i * DAY_MS;
-    const key = new Date(startMs + 6 * HOUR_MS).toISOString().slice(0, 10);
-    const median = keyed.get(key) ?? null;
+    const mid = median(byDay.get(i) ?? []);
     // A day nobody was answered on is genuinely zero minutes of waiting measured, not a gap in the
     // chart — but it is also not "instant", so the caption reports how many days actually had data.
-    const minutes = median == null ? 0 : Math.round(median / 60);
+    const minutes = mid == null ? 0 : Math.round(mid / 60);
     daily.push({ label: dayLabelFormat.format(new Date(startMs)), value: minutes, startMs });
-    if (median != null) latestWithData = minutes;
+    if (mid != null) latestWithData = minutes;
   }
 
-  const measured = rows.length;
-  return { daily, measured, latestMedianMinutes: latestWithData };
+  return { daily, measured: byDay.size, latestMedianMinutes: latestWithData };
+}
+
+/**
+ * The last seven Dhaka days of classified messages, shared by the two weekly Overview charts: the
+ * page asks both for the same moment, so the read is made once and reused for a few seconds.
+ */
+const weekLoads = new Map<string, Promise<AttributedMessage[]>>();
+async function lastSevenDays(nowMs: number): Promise<AttributedMessage[]> {
+  const key = `${await activeProjectId()}:${nowMs}`;
+  let load = weekLoads.get(key);
+  if (!load) {
+    const todayStartMs = getDhakaDayRange(new Date(nowMs)).start.getTime();
+    load = loadAttributedMessages({ start: new Date(todayStartMs - 6 * DAY_MS), end: new Date(nowMs + 1) });
+    weekLoads.set(key, load);
+    setTimeout(() => weekLoads.delete(key), 10_000).unref?.();
+    load.catch(() => weekLoads.delete(key));
+  }
+  return load;
 }
 
 /**
@@ -401,33 +391,23 @@ export async function getResponseTimeSeries(nowMs: number) {
  * states the fact; which of the two it is depends on the group.
  */
 export async function getSupportActorMix(nowMs: number) {
-  const todayStartMs = getDhakaDayRange(new Date(nowMs)).start.getTime();
-  const start = new Date(todayStartMs - 6 * DAY_MS);
-
-  const [byActor, aiGroups, humanGroups] = await Promise.all([
-    prisma.supportActivity.groupBy({
-      by: ["actor"],
-      where: { occurredAt: { gte: start } },
-      _count: { actor: true },
-    }),
-    prisma.supportActivity.findMany({
-      where: { occurredAt: { gte: start }, actor: "AI" },
-      select: { groupId: true },
-      distinct: ["groupId"],
-    }),
-    prisma.supportActivity.findMany({
-      where: { occurredAt: { gte: start }, actor: "TEAM_MEMBER" },
-      select: { groupId: true },
-      distinct: ["groupId"],
-    }),
-  ]);
-
-  const humanSet = new Set(humanGroups.map((row) => row.groupId));
-  const aiOnlyGroups = aiGroups.filter((row) => !humanSet.has(row.groupId)).length;
-
-  const counts = new Map(byActor.map((row) => [row.actor, row._count.actor]));
-  const human = counts.get("TEAM_MEMBER") ?? 0;
-  const ai = counts.get("AI") ?? 0;
+  // From the messages themselves, not Support Activity rows (which exist only while that tracking is
+  // on, once per account copy): people = replies credited to a team member, AI = the AI's own sends.
+  const messages = await lastSevenDays(nowMs);
+  const humanGroups = new Set<string>();
+  const aiGroups = new Set<string>();
+  let human = 0;
+  let ai = 0;
+  for (const message of messages) {
+    if (message.kind === "MEMBER") {
+      human += 1;
+      humanGroups.add(message.groupKey);
+    } else if (message.actor === "AI") {
+      ai += 1;
+      aiGroups.add(message.groupKey);
+    }
+  }
+  const aiOnlyGroups = [...aiGroups].filter((g) => !humanGroups.has(g)).length;
 
   const slices: Slice[] = [
     // Identity slots, not status colours: neither actor is a good or bad outcome, and painting AI
@@ -451,31 +431,22 @@ export async function getSupportActorMix(nowMs: number) {
  * never be attributed to somebody who did not do it.
  */
 export async function getExecutiveLoad(nowMs: number) {
-  const todayStartMs = getDhakaDayRange(new Date(nowMs)).start.getTime();
-  const start = new Date(todayStartMs - 6 * DAY_MS);
-
-  const grouped = await prisma.supportActivity.groupBy({
-    by: ["teamMemberId"],
-    where: { occurredAt: { gte: start }, actor: "TEAM_MEMBER", teamMemberId: { not: null } },
-    _count: { teamMemberId: true },
-    orderBy: { _count: { teamMemberId: "desc" } },
-    take: BUSIEST_GROUP_LIMIT,
-  });
-  if (grouped.length === 0) return { people: [] as Array<{ id: string; label: string; value: number }> };
+  // Every message a person sent (each once, credited by the one identity rule) — the Team Report's
+  // own count, not Support Activity rows.
+  const counts = new Map<string, number>();
+  for (const message of await lastSevenDays(nowMs)) {
+    if (message.kind === "MEMBER" && message.memberId) counts.set(message.memberId, (counts.get(message.memberId) ?? 0) + 1);
+  }
+  const top = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, BUSIEST_GROUP_LIMIT);
+  if (top.length === 0) return { people: [] as Array<{ id: string; label: string; value: number }> };
 
   const members = await prisma.internalTeamMember.findMany({
-    where: { id: { in: grouped.map((row) => row.teamMemberId as string) } },
+    where: { id: { in: top.map(([id]) => id) } },
     select: { id: true, name: true },
   });
   const nameById = new Map(members.map((member) => [member.id, member.name]));
 
   return {
-    people: grouped.map((row) => ({
-      id: row.teamMemberId as string,
-      // A deleted member's rows survive with a null name (SetNull), and dropping them would make
-      // the totals here disagree with every other report.
-      label: nameById.get(row.teamMemberId as string) ?? "(removed team member)",
-      value: row._count.teamMemberId,
-    })),
+    people: top.map(([id, value]) => ({ id, label: nameById.get(id) ?? "(removed team member)", value })),
   };
 }

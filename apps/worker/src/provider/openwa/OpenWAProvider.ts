@@ -1,4 +1,4 @@
-import { access, mkdir, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { toDataURL as renderQrDataUrl } from "qrcode";
 import { join } from "node:path";
 import {
@@ -15,8 +15,19 @@ import {
   type Message as WaMessage,
   type MessageId,
 } from "@open-wa/wa-automate";
-import type { MediaDownloadInfo, RawIncomingMessage, RawMediaDescriptor } from "../../pipeline/types.js";
-import { classifyWhatsAppMedia } from "@support-automation/shared";
+import type { MediaDownloadInfo, MessageUpdateEvent, RawIncomingMessage, RawMediaDescriptor } from "../../pipeline/types.js";
+import {
+  classifyWhatsAppMedia,
+  isPersonalChatId,
+  readRichContent,
+  recordableAckLevel,
+  REVOKED_WA_TYPE,
+  selectCatchUpChats,
+  type ChatActivity,
+  type LocationContent,
+  type PollContent,
+  type RichContent,
+} from "@support-automation/shared";
 import type {
   AccountInfo,
   CollectionProbe,
@@ -28,10 +39,20 @@ import type {
   NumberCheckResult,
   ProfileUpdate,
   ProfileUpdateResult,
+  SendOptions,
   SendResult,
+  StoreMessageRef,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
-import { GroupListNotReadyError, SessionNotReadyError } from "../WhatsAppProvider.js";
+import {
+  type ChatHistoryRead,
+  chooseSendRoute,
+  GroupListNotReadyError,
+  REPLY_WITH_MENTIONS_REFUSAL,
+  SessionNotReadyError,
+  type BrowserUsage,
+} from "../WhatsAppProvider.js";
+import { summariseProcessStats } from "./processStats.js";
 import {
   readPairingPreference,
   recordLinkWindow,
@@ -43,6 +64,21 @@ import {
 import { serializeMessageId } from "./messageId.js";
 import { withTimeout } from "../../util/withTimeout.js";
 import { killBrowsersUsingProfile } from "./orphanBrowsers.js";
+import { hasRestorableSessionData } from "./sessionData.js";
+import { recordCollection } from "../../health/collectionByKind.js";
+import {
+  clearLinkMarker,
+  growthBytes,
+  hasProgressed,
+  isResumableLink,
+  judgeLoading,
+  LINK_LOADING_SETTINGS,
+  linkMarkerPath,
+  readLinkMarker,
+  readProfileActivity,
+  writeLinkMarker,
+  type ProfileActivity,
+} from "./linkLoading.js";
 
 /**
  * Ceilings on the two teardown calls into Chromium, neither of which had one.
@@ -64,6 +100,35 @@ const LOGOUT_TIMEOUT_MS = 30_000;
  * a bad one costs one tick rather than three minutes.
  */
 const PROBE_ENUMERATION_TIMEOUT_MS = Number(process.env.COLLECTION_PROBE_TIMEOUT_SECONDS || 90) * 1_000;
+
+/**
+ * A message WhatsApp Web has not decrypted yet ("Waiting for this message. This may take a while.")
+ * arrives as type `ciphertext` with no body. Common on a linked device in one-to-one chats — after a
+ * link, or when the sender's phone changed — and it used to be read as an empty message and dropped.
+ * WhatsApp decrypts it in place moments or minutes later, which raises no new "message" event, so the
+ * id is kept and the message read again on this schedule until it can be read (18 Oct 2026 incident).
+ * About 80 minutes in all; past that the reconcile sweep (30-minute window) cannot reach it either,
+ * and it is counted as given up rather than retried forever.
+ */
+const DEFAULT_DECRYPT_RETRY_DELAYS_MS = [15_000, 60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+function decryptRetryDelays(): number[] {
+  const raw = process.env.WHATSAPP_DECRYPT_RETRY_DELAYS_MS;
+  if (!raw) return DEFAULT_DECRYPT_RETRY_DELAYS_MS;
+  const parsed = raw
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return parsed.length > 0 ? parsed : DEFAULT_DECRYPT_RETRY_DELAYS_MS;
+}
+/** Messages waiting to be readable, per account. A cap, because each is a timer and a later read. */
+const MAX_PENDING_DECRYPTION = 2_000;
+/** A re-read is one call into the page; it must not hold anything for long. */
+const DECRYPT_READ_TIMEOUT_MS = 30_000;
+
+/** WhatsApp Web's type for a message it has received but not yet been able to decrypt. */
+function isStillEncrypted(message: unknown): boolean {
+  return String((message as { type?: unknown } | null)?.type ?? "") === "ciphertext";
+}
 
 /** Post-connection state transitions (STATE enum) mapped onto our fine-grained lifecycle. */
 function mapLibraryState(state: STATE): OpenWAConnectionState {
@@ -126,11 +191,35 @@ function toInterfaceStatus(state: OpenWAConnectionState): ConnectionStatus {
  * the message body. `caption`/`filename`/`loc` hold the actual human text.
  */
 function resolveMessageBody(message: WaMessage): string {
-  if (!message.isMedia) {
+  // Read by type FIRST for the three that are not text whatever `isMedia` says (CHAT_RICH_MESSAGING.md):
+  // a location's `body` is its map thumbnail, a poll's is empty, a deleted message has none left.
+  const type = String((message as { type?: unknown }).type ?? "");
+  if (type === REVOKED_WA_TYPE) return "";
+  if (type === MessageTypes.LOCATION) {
+    const loc = message.loc?.trim();
+    return loc ? `[Location] ${loc}` : "[Location]";
+  }
+  if (isPollType(type)) {
+    const name = readPollName(message);
+    return name ? `[Poll] ${name}` : "[Poll]";
+  }
+  // By TYPE as well as by `isMedia`: WhatsApp Web has removed getters before (`isGroupMsg`), and
+  // without `isMedia` a voice note read as an empty message and was dropped everywhere, while an
+  // image stored its base64 preview as "text".
+  // A WhatsApp system entry (someone added, the subject changed, a call log, an edit's protocol
+  // message) is not something anybody said. Some carry a body, and the store sweep reads WhatsApp
+  // Web's whole message store, so without this an admin's "added X" could be stored as their reply
+  // and an edited message counted twice. Empty = dropped as an empty body everywhere.
+  if (NON_CONTENT_TYPES.has(type) || (message as { isNotification?: unknown }).isNotification === true) return "";
+  // A contact card's `body` is the raw vCard, which carries the contact's phone number: never text.
+  if (type === MessageTypes.CONTACT_CARD || type === MessageTypes.CONTACT_CARD_MULTI) return "[Contact card]";
+  if (!message.isMedia && !MEDIA_TYPES.has(type)) {
     return message.body ?? message.text ?? "";
   }
 
   const caption = message.caption?.trim();
+  // A video note ("ptv") is not in the library's enum, so it is read before the switch.
+  if (type === "ptv") return "[Video note]";
   switch (message.type) {
     case MessageTypes.IMAGE:
       return caption ? `[Image] ${caption}` : "[Image]";
@@ -152,6 +241,58 @@ function resolveMessageBody(message: WaMessage): string {
     default:
       return caption ? `[Media] ${caption}` : "[Media]";
   }
+}
+
+/** The message types that carry a file, whatever WhatsApp Web's `isMedia` getter says. */
+const MEDIA_TYPES = new Set<string>(["image", "video", "audio", "ptt", "ptv", "document", "sticker"]);
+
+/**
+ * WhatsApp Web message types that record an event rather than something a person wrote. Never
+ * `ciphertext` (a real message still being decrypted — `awaitDecryption` reads it again) and never
+ * `revoked` (it marks a stored message deleted).
+ */
+const NON_CONTENT_TYPES = new Set<string>([
+  "gp2",
+  "notification",
+  "notification_template",
+  "e2e_notification",
+  "call_log",
+  "protocol",
+  "broadcast_notification",
+  "pinned_message",
+]);
+
+/** WhatsApp Web names a poll message "poll_creation" (older builds: "poll"). */
+function isPollType(type: string): boolean {
+  return type === "poll_creation" || type === "poll";
+}
+
+/** WhatsApp Web keeps a poll's question in `pollName`; some builds leave it in `body` or `caption`. */
+function readPollName(message: WaMessage): string {
+  const fields = message as unknown as { pollName?: unknown; body?: unknown; caption?: unknown };
+  for (const value of [fields.pollName, fields.caption, fields.body]) {
+    if (typeof value === "string" && value.trim() && value.length < 2_000) return value.trim();
+  }
+  return "";
+}
+
+/**
+ * A poll's or a location's own details, as WhatsApp delivered them — display only. Read defensively
+ * through `readRichContent`, so a shape this build of WhatsApp Web changed comes back null (the body
+ * label still says what it was) instead of storing something half-read.
+ */
+export function toRichContent(message: WaMessage): RichContent | null {
+  const type = String((message as { type?: unknown }).type ?? "");
+  if (type === MessageTypes.LOCATION) {
+    return readRichContent({ kind: "LOCATION", latitude: message.lat, longitude: message.lng, name: message.loc ?? "" });
+  }
+  if (isPollType(type)) {
+    const fields = message as unknown as { pollOptions?: Array<{ name?: unknown }>; pollSelectableOptionsCount?: unknown };
+    const options = Array.isArray(fields.pollOptions) ? fields.pollOptions.map((o) => (typeof o?.name === "string" ? o.name : "")).filter(Boolean) : [];
+    // WhatsApp's own field: 1 = one choice, 0 = any number.
+    return readRichContent({ kind: "POLL", name: readPollName(message), options, allowMultiple: fields.pollSelectableOptionsCount === 0 });
+  }
+  return null;
 }
 
 /** "8801XXXXXXXXX@c.us" -> "8801XXXXXXXXX". Leaves an already-bare number untouched. */
@@ -186,8 +327,29 @@ function readAddParticipantError(err: unknown): string {
   return (err as Error)?.message ?? "Failed to add participant.";
 }
 
-function stripJidDomain(jid: string | null | undefined): string {
-  return String(jid ?? "").split("@")[0] ?? "";
+/**
+ * The person part of a JID: domain AND multi-device suffix removed ("8801…:12@s.whatsapp.net" →
+ * "8801…"). Keeping the ":12" made `senderPhone` a different string for every linked device of one
+ * person, so SQL selecting a member's messages by `senderPhone = ANY(...)` (attendance) missed them,
+ * and adding them from a group offered "8801…:12" as a separate person whose digits were a wrong
+ * 15-digit number. `parseWhatsAppId` has always dropped it; this now agrees.
+ */
+export function stripJidDomain(jid: string | null | undefined): string {
+  return (String(jid ?? "").split("@")[0] ?? "").split(":")[0] ?? "";
+}
+
+/**
+ * A group chat is one whose id is in WhatsApp's group domain (`…@g.us`).
+ *
+ * The id, not a flag, because the flags are gone: WhatsApp Web 2.3000.1049703040 (seen 8 Oct 2026)
+ * removed the `isGroup` getter from Chat and `isGroupMsg` from Msg, so both read `undefined` on
+ * every model and OpenWA passes that through. A number linked on that build listed 0 of its 304
+ * groups and stored every group message as if it were a one-to-one chat. The `@g.us` domain is
+ * WhatsApp's own addressing, which no build can drop without breaking group messaging itself; the
+ * old flag is still honoured where a build sets it. Mirrored inside the page by `readGroupChats`.
+ */
+function isGroupChatId(chatId: unknown): boolean {
+  return typeof chatId === "string" && chatId.endsWith("@g.us");
 }
 
 /**
@@ -259,31 +421,60 @@ function toMediaDescriptor(message: WaMessage): RawMediaDescriptor | null {
   };
 }
 
-function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomingMessage {
+/**
+ * WhatsApp's own send time. `timestamp` is always set on a real message; `t` is the same value under
+ * WhatsApp Web's own name, read when `timestamp` is missing. With neither, the time stays invalid and
+ * the message is not stored — deliberately (WHATSAPP_IDENTITY.md §9): a receive time in its place
+ * would invent a send time, and every report would put the message on the wrong day.
+ */
+function messageTime(message: WaMessage): Date {
+  const seconds = Number(message.timestamp ?? (message as { t?: unknown }).t);
+  return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : new Date(Number.NaN);
+}
+
+/** Exported for its unit test (messageConversion.test.ts); the provider is its only production caller. */
+export function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomingMessage {
+  const isGroupMsg = Boolean(message.isGroupMsg) || isGroupChatId(message.chatId);
+  // Who sent it, domain kept (WHATSAPP_IDENTITY.md). In a group that is `author`, with the contact
+  // OpenWA attaches as the second witness. Only when neither names anybody does it fall back to
+  // `from`, which for a group is the GROUP's own id — kept with its `@g.us` so the identity rule
+  // reads it as "not a person" and never matches it to a colleague whose digits happen to agree.
+  const senderJid = String((isGroupMsg ? message.author || message.sender?.id || message.from : message.from) ?? "") || null;
   return {
     accountId,
-    whatsappMessageId: message.id,
+    // Normalised like the quoted id below: a history read can hand the key over as an object, which
+    // Prisma refuses, losing the message on that path.
+    whatsappMessageId: serializeMessageId(message.id) ?? String(message.id),
     chatId: message.chatId,
-    whatsappGroupId: message.isGroupMsg ? message.chatId : null,
+    whatsappGroupId: isGroupMsg ? message.chatId : null,
     // Optional chaining because the history API behind catch-up does not always attach `chat`.
-    groupName: message.isGroupMsg ? message.chat?.name || message.chat?.formattedTitle || null : null,
+    groupName: isGroupMsg ? message.chat?.name || message.chat?.formattedTitle || null : null,
     // OpenWA hands these over as JIDs ("8801XXXXXXXXX@c.us"), not phone numbers. Everything
     // downstream compares this against InternalTeamMember.phoneNumber, which people type as
     // "+8801XXXXXXXXX" — so storing the JID verbatim meant no team member ever matched, and
     // their own messages were processed as if a customer had sent them. The mention list two
     // lines below has always split the domain off; this one was simply missed.
-    senderPhone: stripJidDomain(message.isGroupMsg ? message.author || message.from : message.from),
-    senderName: message.sender?.pushname || message.sender?.formattedName || null,
+    senderPhone: stripJidDomain(senderJid),
+    senderJid,
+    // `notifyName` is the push name carried in the message itself — present for an unsaved LID
+    // contact whose contact object has none. `formattedName` is last because it is often just the
+    // number back again.
+    senderName: message.sender?.pushname || message.notifyName || message.sender?.formattedName || null,
     direction: message.fromMe ? "OUTGOING" : "INCOMING",
     body: resolveMessageBody(message),
-    timestampWa: new Date(message.timestamp * 1000),
+    timestampWa: messageTime(message),
     // Support Activity Tracking's REPLY_TO_CUSTOMER/MENTION triggers — both ride on this same
     // onAnyMessage payload, no separate subscription needed.
     // Normalised rather than read raw: the history API behind the missed-message catch-up returns
     // this as WhatsApp's key object, not the string the live listener gets — see messageId.ts.
     quotedWhatsappMessageId: message.isQuotedMsgAvailable ? serializeMessageId(message.quotedMsg?.id) : null,
     mentionedPhones: (message.mentionedJidList ?? []).map((jid) => String(jid).split("@")[0] ?? "").filter(Boolean),
-    media: toMediaDescriptor(message),
+    // A location is not a file to fetch (its `body` is only a map preview), whatever `isMedia` says.
+    media: String((message as { type?: unknown }).type ?? "") === MessageTypes.LOCATION ? null : toMediaDescriptor(message),
+    revoked: String((message as { type?: unknown }).type ?? "") === REVOKED_WA_TYPE,
+    // Receipts are only ever about what THIS account sent (CHAT_RICH_MESSAGING.md §2).
+    ackLevel: message.fromMe ? recordableAckLevel((message as { ack?: unknown }).ack) : null,
+    richContent: toRichContent(message),
   };
 }
 
@@ -334,6 +525,12 @@ function toRawIncomingMessage(accountId: string, message: WaMessage): RawIncomin
 const ABANDONED = "OPENWA_ATTEMPT_ABANDONED";
 
 /**
+ * The longest one "load earlier" read may hold the command processor (CHAT_RICH_MESSAGING.md §4). The
+ * phone answers a page within seconds; past this the load is reported failed and can be pressed again.
+ */
+const HISTORY_LOAD_TIMEOUT_MS = 60_000;
+
+/**
  * The exact messages `@open-wa/wa-automate` 4.76.0 emits on `STARTUP.<sessionId>` at the moment a
  * pairing is accepted. Exact strings, matched whole — see the listener that reads them for why
  * this is a deliberate trade rather than an oversight.
@@ -366,10 +563,13 @@ interface LeanGroupChat {
   t: number | null;
 }
 
-const ACCEPTED_STARTUP_MESSAGES = new Set([
-  "QR code scanned. Loading session...",
-  "Authenticated",
-]);
+/**
+ * The message the library prints when WhatsApp accepts a QR scan (`QrManager.smartQr`): the one
+ * moment a NEW link is known to exist before its chats have loaded — see `markLinkAccepted`.
+ */
+const SCAN_ACCEPTED_MESSAGE = "QR code scanned. Loading session...";
+
+const ACCEPTED_STARTUP_MESSAGES = new Set([SCAN_ACCEPTED_MESSAGE, "Authenticated"]);
 
 
 /**
@@ -390,6 +590,16 @@ const LIBRARY_EFFECTIVE_AUTH_TIMEOUT_SECONDS = 120;
  * `shouldResetProfile()` for why it is not one.
  */
 const CODELESS_FAILURES_BEFORE_PROFILE_RESET = 2;
+
+/** How long the session health check waits for the page to answer one line. */
+const HEALTH_CHECK_ANSWER_MS = Number(process.env.WHATSAPP_HEALTH_CHECK_ANSWER_MS) || 20_000;
+/** Checks in a row that PROVE the page has no WhatsApp (closed, or no chat store) before a restart. */
+const HEALTH_FAILED_CHECKS_BEFORE_RESTART = 2;
+/**
+ * Checks in a row the page did not answer at all before a restart: about ten minutes at the
+ * registry's two-minute cadence. Longer than a proven failure on purpose — see `checkSessionHealth`.
+ */
+const HEALTH_UNANSWERED_CHECKS_BEFORE_RESTART = 5;
 
 /**
  * The first-code deadline, and the rule it has to obey:
@@ -421,17 +631,6 @@ const MIN_FIRST_CODE_TIMEOUT_MS = 240_000;
  */
 const LINK_WINDOW_MS = 300_000;
 
-/**
- * What replaces the linking window the moment a scan is accepted.
- *
- * Without this a scan at 4:55 would be cut off by the window at 5:00, in the middle of the phone
- * syncing — killing a pairing that had already succeeded, and presenting it as time having run out.
- * From the scan onward the attempt is not waiting on a person, so the person's window stops
- * applying. It is replaced rather than cancelled because this is still the only bound on a wedged
- * `create()`: the library allows `authTimeout` + `oorTimeout` = 180s for the sync, and this clears
- * that by a minute.
- */
-const POST_SCAN_GRACE_MS = 240_000;
 
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
@@ -441,6 +640,8 @@ export class OpenWAProvider implements WhatsAppProvider {
    * the next caller joins it instead of queueing a second read behind it.
    */
   private groupRead: { client: Client; promise: Promise<LeanGroupChat[]> } | null = null;
+  /** The same guard for the gap probe's personal-chat read (`listActivePersonalChats`). */
+  private personalRead: { client: Client; promise: Promise<ChatActivity[]> } | null = null;
   private state: OpenWAConnectionState = "DISCONNECTED";
   // OpenWA's onStateChanged can fire several transitions within milliseconds of each other (e.g.
   // OPENING -> PAIRING -> CONNECTED), and each call site below fires setState() without awaiting
@@ -463,6 +664,12 @@ export class OpenWAProvider implements WhatsAppProvider {
   // THIS client wired up", so a re-attach after a reconnect happens and a second attach to the
   // same client (which would process every message twice) cannot.
   private listenerClient: Client | null = null;
+  /** Encrypted-on-arrival messages being read again until they can be (`awaitDecryption`). */
+  private readonly pendingDecryption = new Map<string, { attempt: number; chatId: string | null }>();
+  // Receipts and deletions (CHAT_RICH_MESSAGING.md), held on the instance for the same reason as the
+  // message handler above, and attached to each new client exactly once.
+  private updateHandler: ((update: MessageUpdateEvent) => void) | null = null;
+  private updateListenerClient: Client | null = null;
   // The in-flight connect, if there is one. `connect()` launches Chromium and does a
   // process-global `process.chdir()` first; two overlapping attempts for the same account would
   // race each other exactly as two accounts connecting concurrently would. Now that a dropped
@@ -561,6 +768,12 @@ export class OpenWAProvider implements WhatsAppProvider {
    * once — the moment WhatsApp accepts the scan — and cleared when the attempt settles.
    */
   private extendAfterScan: (() => void) | null = null;
+  /**
+   * Called when a code reaches the dashboard during THIS attempt. Only a resumed link acts on it: a
+   * code means WhatsApp no longer holds the half-finished link, so the resume is over and an
+   * ordinary linking window starts. Set per attempt, cleared when the attempt settles.
+   */
+  private onCodeShown: (() => void) | null = null;
 
   constructor(
     private readonly accountId: string,
@@ -602,24 +815,30 @@ export class OpenWAProvider implements WhatsAppProvider {
    * try. Waiting for the pattern costs one extra retry and buys not destroying a session over a
    * blip.
    *
-   * NO SESSION DATA FILE is what makes this safe rather than merely effective. While
-   * `<sessionId>.data.json` exists a restore is genuinely possible, and the profile is the thing
-   * that would restore it — deleting it would turn a recoverable session into a mandatory re-scan,
-   * which on an unattended worker at 3am means an account that stays down until somebody notices.
-   * With no data file there is nothing to preserve: the profile is not restoring anything, it is
-   * demonstrably not producing a code either, and a fresh directory is strictly better than the
-   * one that has failed twice.
+   * NO USABLE SESSION DATA is what makes this safe rather than merely effective. While
+   * `<sessionId>.data.json` holds a session a restore is genuinely possible, and the profile is the
+   * thing that would restore it — deleting it would turn a recoverable session into a mandatory
+   * re-scan, which on an unattended worker at 3am means an account that stays down until somebody
+   * notices. With nothing to restore there is nothing to preserve: the profile is not restoring
+   * anything, it is demonstrably not producing a code either, and a fresh directory is strictly
+   * better than the one that has failed twice.
+   *
+   * CONTENT, not existence (Rifat's fix from 24 Sep 2026, `sessionData.ts`). The check was
+   * `access()`, which asks only whether a file is there. Production sat with a four-byte `{}`: the
+   * library creates the file and, on a multi-device session, has nothing to put in it, because MD
+   * keeps the credentials in the Chromium profile's IndexedDB. So the guard read "a restore is
+   * possible" about a file that could restore nothing, the poisoned profile was never cleared, and
+   * the account looped App Offline for a day without ever showing a code.
    */
   private async shouldResetProfile(): Promise<boolean> {
     if (this.codelessFailures < CODELESS_FAILURES_BEFORE_PROFILE_RESET) return false;
-    const sessionDataFile = join(this.sessionDataPath, `${this.sessionId}.data.json`);
-    try {
-      await access(sessionDataFile);
-      // A restore is still on the table. Leave it alone and let the retries keep trying.
-      return false;
-    } catch {
-      return true;
-    }
+    // A profile holding an ACCEPTED scan whose chats had not finished loading is not a suspect,
+    // it is the link. It has no session file only because WhatsApp writes that at the end of the
+    // load — which is exactly how it used to look like a profile that never produced a code, and
+    // got deleted, sending the number back to 0% (GROUP_SYNC.md §10). `resumableLink()` has
+    // already removed a marker that is too old to honour, so one still here is current.
+    if (await readLinkMarker(this.linkMarker())) return false;
+    return !(await hasRestorableSessionData(this.sessionDataPath, this.sessionId));
   }
 
   /**
@@ -757,6 +976,9 @@ export class OpenWAProvider implements WhatsAppProvider {
       if (!this.connecting) return;
       // An accepted scan is plainly not an attempt that failed to produce a code.
       this.attemptReachedLinkingScreen = true;
+      // A NEW link now exists and its chats have not loaded. Recorded on disk, because WhatsApp
+      // writes the session file only once they have — see `markLinkAccepted`.
+      if (message.trim() === SCAN_ACCEPTED_MESSAGE) this.markLinkAccepted();
       this.cancelFirstCodeDeadline?.();
       // Nobody is being waited on any more, so the person's five minutes stop applying.
       this.extendAfterScan?.();
@@ -784,6 +1006,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     // reasoning, as the STARTUP listener.
     if (!this.connecting) return;
     this.attemptReachedLinkingScreen = true;
+    this.onCodeShown?.();
     this.setState("QR_AVAILABLE", metadata, qrCode).catch(() => undefined);
   }
 
@@ -821,6 +1044,13 @@ export class OpenWAProvider implements WhatsAppProvider {
     this.attemptGeneration += 1;
     const generation = this.attemptGeneration;
     this.attemptReachedLinkingScreen = false;
+
+    // An earlier attempt had a scan accepted and was cut off while the chats were loading. This
+    // one resumes that load rather than treating the profile as broken. Decided first: it is what
+    // the profile reset below must not undo.
+    const resuming = await this.resumableLink();
+    // Resuming is not an attempt that failed to produce a code: the code was produced and used.
+    if (resuming) this.attemptReachedLinkingScreen = true;
 
     // Before anything is launched, because the profile directory is what gets launched AGAINST.
     if (await this.shouldResetProfile()) {
@@ -868,29 +1098,120 @@ export class OpenWAProvider implements WhatsAppProvider {
     // connectWithRetry can then actually retry.
     const watchdogMs = Number(process.env.WHATSAPP_CONNECT_WATCHDOG_MS) || LINK_WINDOW_MS;
     let watchdogTimer: NodeJS.Timeout | undefined;
-    // Set only by the LINKING-window timer, never by the post-scan one that may replace it, so the
+    // Set only by the LINKING-window timer, never by the load watch that may replace it, so the
     // catch below can tell "nobody scanned in time" from "the attempt wedged".
     let linkWindowExpired = false;
     let rejectWatchdog: (reason: Error) => void = () => undefined;
-    const watchdog = new Promise<never>((_, reject) => {
-      rejectWatchdog = reject;
-      watchdogTimer = setTimeout(() => {
-        linkWindowExpired = true;
-        reject(new Error(`No scan within the ${Math.round(watchdogMs / 1000)}s linking window — starting a fresh one.`));
-      }, watchdogMs);
-    });
-    this.extendAfterScan = () => {
+    // Once the attempt has settled, nothing below may act on it: a poll already in flight must not
+    // re-arm a timer or reject a promise nobody is waiting on.
+    let settled = false;
+    const profileDir = this.chromiumProfileDir();
+    // What the profile held before this attempt asked for a code. A phone-code pairing raises no
+    // "accepted" event, so when its window runs out, growth since here is how a load is recognised.
+    const baseline = await readProfileActivity(profileDir);
+
+    /**
+     * Waiting for WhatsApp to copy the chats, for as long as it keeps doing so (`linkLoading.ts`).
+     *
+     * Replaces the linking window — nobody is being waited on any more — and is a bound of a
+     * different kind: not "this long", but "until nothing new has been written for `stallMs`, or
+     * `maxMs` at most". Polls file metadata only; it never touches the page.
+     */
+    interface LoadingWatch {
+      startedAt: number;
+      lastProgressAt: number;
+      last: ProfileActivity | null;
+      timer?: NodeJS.Timeout;
+    }
+    let loading: LoadingWatch | null = null as LoadingWatch | null;
+    const stopLoadingWatch = () => {
+      if (loading?.timer) clearTimeout(loading.timer);
+      loading = null;
+    };
+    const startLoadingWatch = (why: string) => {
+      if (loading || settled) return;
       clearTimeout(watchdogTimer);
-      watchdogTimer = setTimeout(
-        () =>
+      const startedAt = Date.now();
+      const watch: LoadingWatch = { startedAt, lastProgressAt: startedAt, last: null };
+      loading = watch;
+      console.log(
+        `[openwa] ${why} for ${this.sessionId} — waiting for WhatsApp to copy this number's chats for as long as it keeps writing them (gives up after ${Math.round(LINK_LOADING_SETTINGS.stallMs / 60_000)} min without progress, ${Math.round(LINK_LOADING_SETTINGS.maxMs / 60_000)} min at most)`,
+      );
+      const tick = async () => {
+        if (settled || loading !== watch) return;
+        const sample = await readProfileActivity(profileDir);
+        if (settled || loading !== watch) return;
+        const now = Date.now();
+        if (hasProgressed(watch.last, sample)) watch.lastProgressAt = now;
+        if (sample) watch.last = sample;
+        const verdict = judgeLoading({ startedAt: watch.startedAt, lastProgressAt: watch.lastProgressAt, now });
+        if (verdict.kind === "STALLED") {
           rejectWatchdog(
             new Error(
-              `The scan was accepted but the session did not finish loading within ${Math.round(POST_SCAN_GRACE_MS / 1000)}s — treating as stalled.`,
+              `WhatsApp stopped sending this number's chats: nothing new arrived for ${Math.round(verdict.quietMs / 60_000)} minutes while linking. Keep the phone online with WhatsApp open; the next attempt carries on from where this one stopped.`,
             ),
-          ),
-        POST_SCAN_GRACE_MS,
-      );
+          );
+          return;
+        }
+        if (verdict.kind === "TOO_LONG") {
+          rejectWatchdog(
+            new Error(
+              `WhatsApp was still copying this number's chats after ${Math.round(verdict.elapsedMs / 60_000)} minutes. Stopping this attempt; the next one carries on from where it stopped.`,
+            ),
+          );
+          return;
+        }
+        watch.timer = setTimeout(() => void tick(), LINK_LOADING_SETTINGS.pollMs);
+      };
+      watch.timer = setTimeout(() => void tick(), LINK_LOADING_SETTINGS.pollMs);
+    };
+
+    const watchdog = new Promise<never>((_, reject) => {
+      rejectWatchdog = reject;
+    });
+    /**
+     * The human's window. On expiry, a phone-code attempt asks the profile first whether chats are
+     * already arriving: a phone-code pairing announces nothing when the code is accepted, so without
+     * this one that worked would be killed at five minutes exactly like an unused code.
+     */
+    const armLinkWindow = () => {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = setTimeout(() => {
+        void (async () => {
+          const grown = growthBytes(baseline, await readProfileActivity(profileDir));
+          if (settled || loading) return;
+          // Phone codes only: a QR scan announces itself (SCAN_ACCEPTED_MESSAGE), so for a QR this
+          // inference would only ever be a second opinion, and a wrong one could hold an unscanned
+          // window open. A phone code has nothing else to go on.
+          if (this.pairingMode === "PHONE_CODE" && grown >= LINK_LOADING_SETTINGS.loadingDetectBytes) {
+            this.attemptReachedLinkingScreen = true;
+            this.markLinkAccepted();
+            this.cancelFirstCodeDeadline?.();
+            if (this.state !== "CONNECTED") this.setState("AUTHENTICATED", { detectedBy: "profile growth", grownBytes: grown }).catch(() => undefined);
+            startLoadingWatch(`The linking window ended with ${Math.round(grown / 1024)} KB of chats already written, so the code was accepted`);
+            return;
+          }
+          // Logged with the measured growth, so the detection threshold can be set from real numbers.
+          console.log(`[openwa] linking window ended for ${this.sessionId} with ${grown} bytes written to the profile — no pairing detected`);
+          linkWindowExpired = true;
+          rejectWatchdog(new Error(`No scan within the ${Math.round(watchdogMs / 1000)}s linking window — starting a fresh one.`));
+        })();
+      }, watchdogMs);
+    };
+    armLinkWindow();
+    this.extendAfterScan = () => {
       this.extendAfterScan = null;
+      startLoadingWatch("The pairing was accepted");
+    };
+    this.onCodeShown = () => {
+      // Only a resumed link acts on a code: WhatsApp is asking for a NEW scan, so the half-finished
+      // link it was resuming no longer exists. Forget it, and give the person a full window.
+      if (!resuming || !loading) return;
+      this.onCodeShown = null;
+      stopLoadingWatch();
+      void clearLinkMarker(this.linkMarker());
+      console.log(`[openwa] ${this.sessionId}: WhatsApp asked for a new code, so the interrupted link cannot be resumed — linking from scratch`);
+      armLinkWindow();
     };
     // The dashboard counts down to this. Chained onto the same write queue as every state change,
     // so it cannot land after — and undo — a transition that has already closed the window.
@@ -958,6 +1279,12 @@ export class OpenWAProvider implements WhatsAppProvider {
       clearTimeout(firstCodeTimer);
       this.cancelFirstCodeDeadline = null;
     };
+    if (resuming) {
+      // No code will appear — the browser already holds the login — and none is needed.
+      this.cancelFirstCodeDeadline();
+      this.setState("AUTHENTICATED", { resumingLink: true }).catch(() => undefined);
+      startLoadingWatch("Resuming a link whose chats had not finished loading");
+    }
 
     try {
       this.client = await Promise.race([
@@ -1032,7 +1359,15 @@ export class OpenWAProvider implements WhatsAppProvider {
           // recovers from the state this failure leaves behind rather than trying to prevent it.
           // `connectTimeouts.test.ts` now asserts the library's own expression, so a version that
           // fixes the precedence makes that test fail and this decision gets revisited.
-          authTimeout: 120,
+          //
+          // RESUMING A LINK IS THE ONE EXCEPTION, and passes 0 (GROUP_SYNC.md §10). There the page
+          // is WhatsApp's own "Loading your chats" for a scan already accepted, and the library's
+          // 120 s race killed it every time — "Authentication timed out" → "App Offline" — so an
+          // interrupted first load could never finish. With 0 the library pushes no timeout at all
+          // (`config.authTimeout !== 0`), and the load watch above is the bound instead: it ends the
+          // attempt when nothing has been written for `stallMs`, which is also what a page wedged
+          // the way the paragraph above describes looks like.
+          authTimeout: resuming ? 0 : 120,
           popup: false,
           cacheEnabled: false,
           /**
@@ -1152,12 +1487,18 @@ export class OpenWAProvider implements WhatsAppProvider {
       await this.setState("ERROR", { error: (err as Error).message, stack: (err as Error).stack });
       throw err;
     } finally {
+      settled = true;
       clearTimeout(watchdogTimer);
       clearTimeout(firstCodeTimer);
+      stopLoadingWatch();
       this.cancelFirstCodeDeadline = null;
       this.extendAfterScan = null;
+      this.onCodeShown = null;
       this.abandonAttempt = null;
     }
+
+    // The chats finished loading (create() resolves only then), so there is nothing to resume.
+    await clearLinkMarker(this.linkMarker());
 
     // create() only resolves after a successful scan+auth — OpenWA's public
     // API has no earlier observable boundary between "QR scanned" and
@@ -1303,6 +1644,42 @@ export class OpenWAProvider implements WhatsAppProvider {
    * refusing to change state would leave the operator with no working control at all — which is
    * the situation this whole method exists to end.
    */
+  /** Where this session's record of an accepted-but-unfinished link lives (`linkLoading.ts`). */
+  private linkMarker(): string {
+    return linkMarkerPath(this.sessionDataPath, this.sessionId);
+  }
+
+  /**
+   * Records that a scan was accepted for this profile. Fire-and-forget and never throws: failing to
+   * write it costs only the resume, never the attempt in flight.
+   */
+  private markLinkAccepted(): void {
+    writeLinkMarker(this.linkMarker(), Date.now()).catch((err) =>
+      console.warn(`[openwa] could not record the accepted link for ${this.sessionId} — an interrupted load will not be resumed`, err),
+    );
+  }
+
+  /**
+   * Whether this attempt resumes an interrupted first load (`isResumableLink`). A marker that no
+   * longer applies — the load finished, or it is too old to honour — is removed here, so the rest
+   * of the attempt (and the profile reset) sees only a current one.
+   */
+  private async resumableLink(): Promise<boolean> {
+    const markerPath = this.linkMarker();
+    const marker = await readLinkMarker(markerPath);
+    if (!marker) return false;
+    // What the file holds, not whether it is there: a leftover `{}` from an earlier session is no
+    // proof that THIS load finished, and reading it as one dropped the record of the scan and handed
+    // the attempt back to the library's 120 s race — the 0% restart the record exists to prevent.
+    const hasSessionData = await hasRestorableSessionData(this.sessionDataPath, this.sessionId);
+    if (isResumableLink(marker, hasSessionData, Date.now())) {
+      console.log(`[openwa] ${this.sessionId}: resuming a link accepted ${Math.round((Date.now() - marker.scannedAt) / 60_000)} min ago whose chats had not finished loading`);
+      return true;
+    }
+    await clearLinkMarker(markerPath);
+    return false;
+  }
+
   private async removeSessionProfile(): Promise<void> {
     const profileDir = join(this.sessionDataPath, `_IGNORE_${this.sessionId}`);
     try {
@@ -1318,6 +1695,8 @@ export class OpenWAProvider implements WhatsAppProvider {
         maxRetries: 5,
         retryDelay: 200,
       });
+      // And the record of a half-finished link in it: there is no link left to resume.
+      await clearLinkMarker(this.linkMarker());
       console.log(`[openwa] removed session profile at ${profileDir} — the next connect will ask for a fresh code`);
     } catch (err) {
       // Loud, because of what a survivor does. A profile left HALF-deleted rather than absent is
@@ -1335,6 +1714,22 @@ export class OpenWAProvider implements WhatsAppProvider {
     return toInterfaceStatus(this.state);
   }
 
+  /** See `WhatsAppProvider.getBrowserUsage`. Local only (reads /proc through pidusage): no WhatsApp request, no page script. */
+  async getBrowserUsage(): Promise<BrowserUsage | null> {
+    const client = this.client;
+    if (!client) return null;
+    try {
+      return summariseProcessStats(await withTimeout(client.getProcessStats(), 5_000, "process stats"));
+    } catch {
+      return null;
+    }
+  }
+
+  /** False once `disconnect()`/`logout()` has dropped the client — `getGroups()` then answers `[]`, which is not a group list. */
+  hasLiveClient(): boolean {
+    return this.client !== null;
+  }
+
   /**
    * Called by `connectWithRetry` once every automatic attempt has failed. Only an account whose
    * LAST attempt ended with an unscanned code changes: a code being offered means the saved session
@@ -1350,6 +1745,8 @@ export class OpenWAProvider implements WhatsAppProvider {
 
   /** Consecutive health checks that found no working WhatsApp in the page. */
   private unhealthyChecks = 0;
+  /** Consecutive health checks the page did not answer in time — busy, not proven dead. */
+  private unresponsiveChecks = 0;
 
   /**
    * Notices a session that says CONNECTED while its page holds no WhatsApp at all.
@@ -1363,7 +1760,8 @@ export class OpenWAProvider implements WhatsAppProvider {
    *
    * Two failed checks in a row, never one: WhatsApp Web can briefly rebuild its store (an in-page
    * update), and restarting a working session over that would cost a minute of collection for
-   * nothing. When it does trip, the account is recorded DISCONNECTED — which is the truth, and
+   * nothing. A check the page does not ANSWER needs five (about ten minutes): a page still storing
+   * a new link's chats can be too busy to answer, and restarting it stops that copy (15 Oct 2026). When it does trip, the account is recorded DISCONNECTED — which is the truth, and
    * which `recoverIfDropped` already knows what to do with: restart the browser from the saved
    * session, then sync groups and run the catch-up sweep. No second recovery path.
    */
@@ -1374,29 +1772,43 @@ export class OpenWAProvider implements WhatsAppProvider {
       return;
     }
     let healthy: boolean;
+    let unanswered = false;
     try {
       const page = client.getPage();
       healthy =
         !page.isClosed() &&
         (await withTimeout(
           page.evaluate(() => Boolean((globalThis as unknown as { Store?: { Chat?: unknown } }).Store?.Chat)),
-          20_000,
+          HEALTH_CHECK_ANSWER_MS,
           "session health check",
         ));
-    } catch {
-      // A browser that cannot answer twenty seconds' worth of a one-line question is not
-      // collecting messages either.
+    } catch (err) {
       healthy = false;
+      // No answer in time is a different finding from a wrong answer. A newly linked number's page
+      // spends its first hours storing the chats the phone is still sending, and a page busy doing
+      // that can miss twenty seconds without being dead — restarting it there is what stopped the
+      // copy halfway (GROUP_SYNC.md §10). A closed page, or one that answers "no chat store", is
+      // proof, and keeps the two-strike rule.
+      unanswered = (err as Error).message?.includes("timed out") ?? false;
     }
     if (healthy) {
       this.unhealthyChecks = 0;
+      this.unresponsiveChecks = 0;
       return;
     }
-    this.unhealthyChecks += 1;
-    console.warn(`[openwa] session health check failed for ${this.sessionId} (${this.unhealthyChecks}/2)`);
+    if (unanswered) this.unresponsiveChecks += 1;
+    else this.unhealthyChecks += 1;
+    console.warn(
+      unanswered
+        ? `[openwa] session health check got no answer from ${this.sessionId} within ${HEALTH_CHECK_ANSWER_MS / 1000}s (${this.unresponsiveChecks}/${HEALTH_UNANSWERED_CHECKS_BEFORE_RESTART}) — busy, not yet treated as dead`
+        : `[openwa] session health check failed for ${this.sessionId} (${this.unhealthyChecks}/${HEALTH_FAILED_CHECKS_BEFORE_RESTART})`,
+    );
+    const tripped =
+      this.unhealthyChecks >= HEALTH_FAILED_CHECKS_BEFORE_RESTART || this.unresponsiveChecks >= HEALTH_UNANSWERED_CHECKS_BEFORE_RESTART;
     // Re-checked after the await: a reconnect may have begun while the page was being asked.
-    if (this.unhealthyChecks < 2 || this.state !== "CONNECTED" || this.connecting) return;
+    if (!tripped || this.state !== "CONNECTED" || this.connecting) return;
     this.unhealthyChecks = 0;
+    this.unresponsiveChecks = 0;
     await this.setState("DISCONNECTED", {
       reason: "The account said it was connected, but WhatsApp Web in its browser had stopped working. Reconnecting automatically.",
     });
@@ -1504,7 +1916,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const lean = await client.getPage().evaluate(() => {
         interface PageChat {
           isGroup?: boolean;
-          id?: { _serialized?: string };
+          id?: { _serialized?: string; server?: string };
           formattedTitle?: string;
           toJSON?: () => { name?: string; t?: number };
         }
@@ -1525,7 +1937,12 @@ export class OpenWAProvider implements WhatsAppProvider {
         const total =
           typeof store.Chat.length === "number" ? store.Chat.length : Array.isArray(store.Chat.models) ? store.Chat.models.length : null;
         if (total === 0) return "NOT_LOADED" as const;
-        return store.Chat.filter((chat) => Boolean(chat?.isGroup)).map((chat) => {
+        // By id, not by `isGroup` alone: newer WhatsApp Web builds no longer have that getter and it
+        // reads undefined on every chat (see isGroupChatId). The id's server is WhatsApp's own
+        // addressing; the flag is still honoured where a build sets it.
+        const isGroupChat = (chat: PageChat) =>
+          chat?.isGroup === true || chat?.id?.server === "g.us" || String(chat?.id?._serialized ?? "").endsWith("@g.us");
+        return store.Chat.filter(isGroupChat).map((chat) => {
           // A chat the phone is still sending can be half-built, and one throw here used to fail
           // the whole read over to the slow path. Its id is still readable, so it is listed (and
           // never missed by a sweep) with its name left to the next read.
@@ -1595,20 +2012,173 @@ export class OpenWAProvider implements WhatsAppProvider {
     this.attachMessageListener();
   }
 
+  subscribeToMessageUpdates(handler: (update: MessageUpdateEvent) => void): void {
+    this.updateHandler = handler;
+    this.attachUpdateListeners();
+  }
+
+  /**
+   * Receipts (`onAck`, public) and deletions (`onMessageDeleted`, public) on the current client.
+   * Like the message listener, gated on client identity so a reconnect re-wires them and a second
+   * call cannot wire them twice. Each event is converted inside its own try/catch: a shape this code
+   * cannot read must never throw into the library's emitter.
+   *
+   * Whether `onMessageDeleted` fires on this deployment depends on the library's runtime patch, which
+   * cannot be checked offline — the catch-up and history paths also notice a "revoked" message, so a
+   * deletion is not lost if it does not (CHAT_RICH_MESSAGING.md §3).
+   */
+  private attachUpdateListeners(): void {
+    const handler = this.updateHandler;
+    const client = this.client;
+    if (!handler || !client) return;
+    if (this.updateListenerClient === client) return;
+    this.updateListenerClient = client;
+    const accountId = this.accountId;
+    const idOf = (message: unknown) => serializeMessageId((message as { id?: unknown } | null)?.id);
+    void client
+      .onAck((message) => {
+        try {
+          if (!(message as { fromMe?: unknown })?.fromMe) return;
+          const whatsappMessageId = idOf(message);
+          const ackLevel = recordableAckLevel((message as { ack?: unknown }).ack);
+          if (whatsappMessageId && ackLevel !== null) handler({ kind: "ACK", accountId, whatsappMessageId, ackLevel });
+        } catch (err) {
+          console.error(`[openwa] could not read a receipt for ${this.sessionId}`, err);
+        }
+      })
+      .catch((err) => console.error(`[openwa] could not listen for receipts on ${this.sessionId}`, err));
+    void client
+      .onMessageDeleted((message) => {
+        try {
+          const whatsappMessageId = idOf(message);
+          if (whatsappMessageId) handler({ kind: "REVOKED", accountId, whatsappMessageId });
+        } catch (err) {
+          console.error(`[openwa] could not read a deleted message for ${this.sessionId}`, err);
+        }
+      })
+      .catch((err) => console.error(`[openwa] could not listen for deleted messages on ${this.sessionId}`, err));
+  }
+
   private attachMessageListener(): void {
+    this.attachUpdateListeners();
     const handler = this.messageHandler;
     const client = this.client;
     if (!handler || !client) return;
     if (this.listenerClient === client) return; // already wired — a second onAnyMessage would double-process every message
     this.listenerClient = client;
     client.onAnyMessage((message) => {
-      handler(toRawIncomingMessage(this.accountId, message));
+      // Not decrypted yet: nothing to store now, and no second event will say when there is.
+      if (isStillEncrypted(message)) {
+        this.awaitDecryption(client, message);
+        return;
+      }
+      // The readable version reached us as an ordinary event after all — the pending re-read stops.
+      const messageId = String((message as { id?: unknown })?.id ?? "");
+      if (messageId) this.pendingDecryption.delete(messageId);
+      // Converted inside its own try/catch: a message shape this code cannot read must not throw
+      // into the library's event emitter, where nothing counts it and nothing says it existed. It is
+      // reported through `onMessageConversionError` (the registry counts and logs it) and the next
+      // message is unaffected. The recent-message reconciliation (`reconcileRecentMessages.ts`)
+      // reads the same chat history, so a message this skips is offered there once more.
+      let raw: RawIncomingMessage;
+      try {
+        raw = toRawIncomingMessage(this.accountId, message);
+      } catch (err) {
+        console.error(`[openwa] could not read an incoming message for ${this.sessionId} (id ${String((message as { id?: unknown })?.id ?? "unknown")})`, err);
+        try {
+          this.onMessageConversionError?.(err);
+        } catch {
+          // a reporting failure must never reach the listener either
+        }
+        return;
+      }
+      handler(raw);
     });
   }
 
   /**
+   * Keeps an encrypted-on-arrival message and reads it again until WhatsApp has decrypted it, then
+   * hands it to the pipeline marked `deliveredLate` (the registry applies the catch-up's automation
+   * window to it). Bounded: a fixed schedule, a cap on how many wait at once, and nothing survives a
+   * new session — the reconcile sweep reads that session's history instead.
+   */
+  private awaitDecryption(client: Client, message: unknown): void {
+    const id = String((message as { id?: unknown })?.id ?? "");
+    const chatId = String((message as { chatId?: unknown })?.chatId ?? "") || null;
+    if (!id || this.pendingDecryption.has(id)) return;
+    recordCollection(this.accountId, chatId, "undecrypted");
+    if (this.pendingDecryption.size >= MAX_PENDING_DECRYPTION) {
+      recordCollection(this.accountId, chatId, "undecryptedGaveUp");
+      return;
+    }
+    this.pendingDecryption.set(id, { attempt: 0, chatId });
+    this.scheduleDecryptionRead(client, id);
+  }
+
+  private scheduleDecryptionRead(client: Client, id: string): void {
+    const entry = this.pendingDecryption.get(id);
+    if (!entry) return;
+    const delay = decryptRetryDelays()[entry.attempt];
+    if (delay === undefined) {
+      this.pendingDecryption.delete(id);
+      recordCollection(this.accountId, entry.chatId, "undecryptedGaveUp");
+      console.warn(`[openwa] ${this.sessionId}: a message was still encrypted after ${entry.attempt} re-reads — not stored by the live path`);
+      return;
+    }
+    const timer = setTimeout(() => void this.readDecrypted(client, id), delay);
+    timer.unref?.();
+  }
+
+  private async readDecrypted(client: Client, id: string): Promise<void> {
+    const entry = this.pendingDecryption.get(id);
+    if (!entry) return; // delivered by an ordinary event meanwhile
+    if (this.client !== client) {
+      // A new session: its own history is read by the reconcile sweep and the catch-up.
+      this.pendingDecryption.delete(id);
+      return;
+    }
+    entry.attempt += 1;
+    let again: unknown = null;
+    try {
+      again = await withTimeout(client.getMessageById(id as MessageId), DECRYPT_READ_TIMEOUT_MS, "reading a message again");
+    } catch (err) {
+      console.warn(`[openwa] ${this.sessionId}: could not read a pending message again`, err);
+    }
+    if (!this.pendingDecryption.has(id)) return;
+    if (again && !isStillEncrypted(again)) {
+      let raw: RawIncomingMessage;
+      try {
+        raw = toRawIncomingMessage(this.accountId, again as WaMessage);
+      } catch (err) {
+        this.pendingDecryption.delete(id);
+        try {
+          this.onMessageConversionError?.(err);
+        } catch {
+          // never let a reporting failure escape a timer
+        }
+        return;
+      }
+      if (raw.revoked || raw.body.trim().length > 0) {
+        this.pendingDecryption.delete(id);
+        recordCollection(this.accountId, raw.chatId, "decryptedLater");
+        this.messageHandler?.({ ...raw, deliveredLate: true });
+        return;
+      }
+    }
+    this.scheduleDecryptionRead(client, id);
+  }
+
+  /**
+   * Told when an incoming message could not be converted at all. Set by whoever wires the provider
+   * into the pipeline, so this module stays free of the pipeline's own imports.
+   */
+  onMessageConversionError?: (err: unknown) => void;
+
+  /**
    * Everything the browser still holds for chats touched since `since` — how a gap gets filled
    * after the worker was down, restarted, or reconnecting.
+   *
+   * Groups and one-to-one chats (`selectCatchUpChats`); status, channels and broadcast lists never.
    *
    * Bounded by chat activity, not by the roster: `getAllGroups()` reports each chat's last
    * interaction, so a fifteen-minute gap reads the handful of groups that actually received
@@ -1640,17 +2210,20 @@ export class OpenWAProvider implements WhatsAppProvider {
    *   groups it cannot be one. WhatsApp Web returning an empty roster is a statement about the
    *   page's state, not about the account, so it is `unknown` too.
    *
-   * A failure to read ONE chat's history is not a failure of the probe — the other chats still
-   * answered, which is what the question was.
+   * A failure to read ONE chat's history, or the personal-chat list, is not a failure of the probe —
+   * the other chats still answered, which is what the question was. It is reported as `incomplete`,
+   * so a gap sweep records PARTIAL rather than RECOVERED.
    */
   async probeCollection(since: Date, limit: number): Promise<CollectionProbe> {
     if (!this.client) {
       return { ok: false, reason: "No live WhatsApp session in this process — nothing to ask." };
     }
     const sinceMs = since.getTime();
-    const collected: RawIncomingMessage[] = [];
+    const gaps: string[] = [];
+    const uncheckedKinds: Array<"GROUP" | "PERSONAL"> = [];
 
-    let chats: LeanGroupChat[];
+    let groups: LeanGroupChat[] = [];
+    let groupFailure: string | null = null;
     try {
       // Bounded by us, not by Puppeteer. `getAllGroups()` is the single most expensive call this
       // provider makes — on a roster of ~1,848 groups it has been observed exceeding the 150s
@@ -1658,7 +2231,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       // 2026) — and without a bound of its own it runs until Puppeteer's 180s `protocolTimeout`
       // gives up. That is three minutes of a watchdog tick held open for a question that was
       // supposed to be cheap.
-      chats = await withTimeout(this.listGroupChats(), PROBE_ENUMERATION_TIMEOUT_MS, "chat list");
+      groups = await withTimeout(this.listGroupChats(), PROBE_ENUMERATION_TIMEOUT_MS, "chat list");
     } catch (err) {
       const message = (err as Error).message || "unknown error";
       // Worded apart from a hard failure on purpose. "The session is dead" and "the chat list is
@@ -1666,44 +2239,183 @@ export class OpenWAProvider implements WhatsAppProvider {
       // first is an outage, the second is this account's normal shape. An alert that confuses them
       // sends somebody to restart a worker that is fine.
       const timedOut = message.includes("timed out");
-      console.warn("[openwa] could not enumerate chats — the session cannot be read", err);
-      return {
-        ok: false,
-        reason: timedOut
-          ? `The chat list took longer than ${Math.round(PROBE_ENUMERATION_TIMEOUT_MS / 1000)}s to read, so what WhatsApp is holding could not be checked. On a very large roster this can be normal; if it is constant, the group sync is likely timing out too.`
-          : `Could not enumerate chats: ${message}`,
-      };
+      console.warn("[openwa] could not enumerate group chats", err);
+      groupFailure = timedOut
+        ? `The chat list took longer than ${Math.round(PROBE_ENUMERATION_TIMEOUT_MS / 1000)}s to read, so what WhatsApp is holding could not be checked. On a very large roster this can be normal; if it is constant, the group sync is likely timing out too.`
+        : `Could not enumerate chats: ${message}`;
     }
 
-    if (chats.length === 0) {
+    // Personal chats are read WHATEVER the group list did (18 Oct 2026 incident). They used to be
+    // read only after a successful, non-empty group list, so a roster too large to list in time — or
+    // a number in no groups at all — meant no one-to-one message was ever read back by the reconcile
+    // sweep or the catch-up, while group messages kept being recovered.
+    let personal: ChatActivity[] = [];
+    let personalFailure: string | null = null;
+    try {
+      personal = await withTimeout(this.listActivePersonalChats(Math.floor(sinceMs / 1000)), PROBE_ENUMERATION_TIMEOUT_MS, "personal chat list");
+    } catch (err) {
+      personalFailure = (err as Error).message || "unknown error";
+      console.warn("[openwa] could not list personal chats for the gap probe", err);
+    }
+
+    // Only when NEITHER could be read is the answer "unknown". An empty group list with no personal
+    // read either is a fact about the page, not the account (see the watchdog), as it always was.
+    if (groupFailure && personalFailure) return { ok: false, reason: groupFailure };
+    if (!groupFailure && groups.length === 0 && personalFailure) {
       return { ok: false, reason: "WhatsApp returned no chats at all, which an account in groups cannot truly be." };
+    }
+    if (groupFailure) {
+      gaps.push(`The group list could not be read (${groupFailure}), so group messages in this window were not checked.`);
+      uncheckedKinds.push("GROUP");
+    } else if (groups.length === 0) {
+      gaps.push("WhatsApp listed no group chats, so group messages in this window were not checked.");
+      uncheckedKinds.push("GROUP");
+    }
+    if (personalFailure) {
+      gaps.push(`One-to-one chats could not be listed (${personalFailure}), so personal messages in this window were not checked.`);
+      uncheckedKinds.push("PERSONAL");
     }
 
     // `t` is seconds since the epoch of the chat's last interaction. A chat that has not been
-    // touched since the gap began cannot be hiding a message from inside it.
-    const active = chats.filter((chat) => typeof chat.t === "number" && chat.t * 1000 > sinceMs);
+    // touched since the gap began cannot be hiding a message from inside it (selectCatchUpChats).
+    const active = selectCatchUpChats([...groups, ...personal], sinceMs);
 
-    for (const chat of active) {
-      if (collected.length >= limit) break;
-      try {
-        // includeMe: our own replies are half of every conversation and the chat inbox reads
-        // them. includeNotifications: false — "X joined the group" is not a customer message.
-        const messages = await this.client.getAllMessagesInChat(chat.id as ChatId, true, false);
-        for (const message of messages) {
-          if (typeof message.timestamp !== "number" || message.timestamp * 1000 <= sinceMs) continue;
-          collected.push(toRawIncomingMessage(this.accountId, message));
-          if (collected.length >= limit) break;
+    // `limit` is per KIND, personal chats first. One shared budget, most recently active chat first,
+    // let a few busy groups use it all before a quieter personal chat was reached.
+    const collected: RawIncomingMessage[] = [];
+    let unreadable = 0;
+    let unreadableMessages = 0;
+    for (const kind of ["PERSONAL", "GROUP"] as const) {
+      const chats = active.filter((chat) => chat.kind === kind);
+      let taken = 0;
+      let stoppedAt: number | null = null;
+      for (let index = 0; index < chats.length; index++) {
+        if (taken >= limit) {
+          stoppedAt = index;
+          break;
         }
-      } catch (err) {
-        console.warn(`[openwa] could not read history for chat ${chat.id} — skipping it`, err);
+        const chat = chats[index]!;
+        try {
+          // includeMe: our own replies are half of every conversation and the chat inbox reads
+          // them. includeNotifications: false — "X joined the group" is not a customer message.
+          const messages = await this.client.getAllMessagesInChat(chat.id as ChatId, true, false);
+          for (const message of messages) {
+            if (typeof message.timestamp !== "number" || message.timestamp * 1000 <= sinceMs) continue;
+            if (taken >= limit) {
+              stoppedAt = index;
+              break;
+            }
+            // One message WhatsApp hands back in a shape that cannot be read costs only itself: it
+            // used to throw out of this loop and abandon the rest of the chat.
+            let raw: RawIncomingMessage;
+            try {
+              raw = toRawIncomingMessage(this.accountId, message);
+            } catch (err) {
+              unreadableMessages += 1;
+              console.warn(`[openwa] could not read one message in chat ${chat.id} — skipping it`, err);
+              continue;
+            }
+            collected.push(raw);
+            taken += 1;
+          }
+        } catch (err) {
+          unreadable += 1;
+          console.warn(`[openwa] could not read history for chat ${chat.id} — skipping it`, err);
+        }
+        if (stoppedAt !== null) break;
+      }
+      if (stoppedAt !== null) {
+        gaps.push(
+          `The ${kind === "GROUP" ? "group" : "one-to-one"} read stopped at its limit of ${limit} messages; ${chats.length - stoppedAt} chat(s) were not fully read.`,
+        );
       }
     }
+    if (unreadable > 0) gaps.push(`The history of ${unreadable} chat(s) could not be read.`);
+    if (unreadableMessages > 0) gaps.push(`${unreadableMessages} message(s) could not be read.`);
 
-    return { ok: true, messages: collected.sort((a, b) => a.timestampWa.getTime() - b.timestampWa.getTime()) };
+    const messages = collected.sort((a, b) => a.timestampWa.getTime() - b.timestampWa.getTime());
+    if (gaps.length === 0) return { ok: true, messages };
+    return uncheckedKinds.length > 0
+      ? { ok: true, messages, incomplete: gaps.join(" "), uncheckedKinds }
+      : { ok: true, messages, incomplete: gaps.join(" ") };
   }
 
-  async sendMessage(chatId: string, body: string, mentions?: string[]): Promise<SendResult> {
+  /**
+   * One-to-one chats (`@c.us` / `@lid`) touched after `sinceSeconds`: ids and activity times only,
+   * read inside the page so nothing is serialised for the thousands of chats that are not. Same
+   * one-read-per-session rule as `listGroupChats`, for the same reason: an evaluate the caller
+   * stopped waiting for keeps running in the page, and a second one would queue behind it.
+   */
+  private async listActivePersonalChats(sinceSeconds: number): Promise<ChatActivity[]> {
+    const client = this.client;
+    if (!client) throw new Error("No live WhatsApp session in this process.");
+    const running = this.personalRead;
+    if (running && running.client === client) return running.promise;
+    const promise = this.readActivePersonalChats(client, sinceSeconds);
+    this.personalRead = { client, promise };
+    const release = () => {
+      if (this.personalRead?.promise === promise) this.personalRead = null;
+    };
+    promise.then(release, release);
+    return promise;
+  }
+
+  private async readActivePersonalChats(client: Client, sinceSeconds: number): Promise<ChatActivity[]> {
+    try {
+      const lean = await client.getPage().evaluate((since: number) => {
+        interface PageChat {
+          id?: { _serialized?: string; server?: string };
+          t?: unknown;
+          toJSON?: () => { t?: number };
+        }
+        const store = (
+          globalThis as unknown as { Store?: { Chat?: { filter?: (fn: (chat: PageChat) => boolean) => PageChat[] } } }
+        ).Store;
+        if (!store?.Chat || typeof store.Chat.filter !== "function") return null;
+        // WhatsApp's individual domains, as isPersonalChatId (packages/shared/src/whatsappChats.ts).
+        const isPersonal = (chat: PageChat) => {
+          const server = chat?.id?.server;
+          const id = String(chat?.id?._serialized ?? "");
+          return server === "c.us" || server === "lid" || id.endsWith("@c.us") || id.endsWith("@lid");
+        };
+        const lastActivity = (chat: PageChat): number | null => {
+          if (typeof chat.t === "number") return chat.t;
+          try {
+            const json = typeof chat.toJSON === "function" ? chat.toJSON() : {};
+            return typeof json.t === "number" ? json.t : null;
+          } catch {
+            return null; // a chat still arriving from the phone; its activity is read next time
+          }
+        };
+        const active: { id: string; t: number }[] = [];
+        for (const chat of store.Chat.filter(isPersonal)) {
+          const id = chat?.id?._serialized;
+          const t = lastActivity(chat);
+          if (typeof id === "string" && typeof t === "number" && t > since) active.push({ id, t });
+        }
+        return active;
+      }, sinceSeconds);
+      if (Array.isArray(lean)) return lean;
+      console.warn("[openwa] lean personal-chat read found no usable chat store — falling back to getAllChats()");
+    } catch (err) {
+      console.warn("[openwa] lean personal-chat read failed — falling back to getAllChats()", err);
+    }
+    const chats: unknown = await client.getAllChats();
+    if (!Array.isArray(chats)) {
+      throw new Error(`WhatsApp Web returned no chat list (got ${chats === null ? "null" : typeof chats}).`);
+    }
+    const active: ChatActivity[] = [];
+    for (const chat of chats as Array<{ id?: unknown; t?: unknown }>) {
+      if (typeof chat?.id !== "string" || !isPersonalChatId(chat.id)) continue;
+      if (typeof chat.t === "number" && chat.t > sinceSeconds) active.push({ id: chat.id, t: chat.t });
+    }
+    return active;
+  }
+
+  async sendMessage(chatId: string, body: string, mentions?: string[], options?: SendOptions): Promise<SendResult> {
     if (!this.client) return { success: false, error: "Provider is not connected." };
+    const route = chooseSendRoute(mentions, options);
+    if (route === "REFUSE_REPLY_WITH_MENTIONS") return { success: false, error: REPLY_WITH_MENTIONS_REFUSAL };
     try {
       // ChatId is a branded template-literal string type; a plain runtime
       // string (from our DB) is structurally valid but needs an explicit
@@ -1714,15 +2426,27 @@ export class OpenWAProvider implements WhatsAppProvider {
       // would change the behaviour of every message in the product to serve one feature.
       // `hideTags: false` keeps the @name visible in the message — the whole point here is that a
       // person reading the group can see who is being asked.
+      //
+      // A quoted reply goes through `reply()`, the library's public call (no Insiders licence). It
+      // returns false when WhatsApp Web cannot find the quoted message on this device; that is a
+      // failure with a reason, never a fallback to an unquoted send.
       const result =
-        mentions && mentions.length > 0
-          ? await this.client.sendTextWithMentions(
-              chatId as ChatId,
-              body as Content,
-              false,
-              mentions as ContactId[],
-            )
-          : await this.client.sendText(chatId as ChatId, body as Content);
+        route === "REPLY"
+          ? await this.client.reply(chatId as ChatId, body as Content, options!.quotedMessageId as MessageId)
+          : route === "MENTIONS"
+            ? await this.client.sendTextWithMentions(
+                chatId as ChatId,
+                body as Content,
+                false,
+                mentions as ContactId[],
+              )
+            : await this.client.sendText(chatId as ChatId, body as Content);
+      if (route === "REPLY" && !result) {
+        return {
+          success: false,
+          error: "WhatsApp did not accept the reply — the quoted message may no longer be on this account's WhatsApp. Nothing was sent.",
+        };
+      }
       return {
         success: Boolean(result),
         providerMessageId: typeof result === "string" ? result : undefined,
@@ -1754,7 +2478,22 @@ export class OpenWAProvider implements WhatsAppProvider {
       // getChatById's typings only declare ContactId (a 1:1 chat id), but it works for any ChatId at
       // runtime — a group id is structurally a valid ChatId, just not this specific narrower alias.
       const chat = await this.client.getChatById(chatId as unknown as ContactId);
+      // `isGroup` is undefined on newer WhatsApp Web builds (see isGroupChatId), which this already
+      // read as "still a group"; an explicit false still means it is not one.
       return Boolean(chat && chat.isGroup !== false);
+    } catch {
+      return false;
+    }
+  }
+
+  async verifyPersonalChat(chatId: string): Promise<boolean> {
+    if (!this.client) return false;
+    // Individual chats only: never a group (that is verifyGroupMembership), a status broadcast or a
+    // channel, whatever a queued row says.
+    if (!/^[^@]+@(c\.us|lid)$/.test(chatId)) return false;
+    try {
+      const chat = await this.client.getChatById(chatId as unknown as ContactId);
+      return Boolean(chat);
     } catch {
       return false;
     }
@@ -1921,6 +2660,234 @@ export class OpenWAProvider implements WhatsAppProvider {
         return { success: false, error: "This account cannot edit messages, or the message is too old to edit." };
       }
       return { success: true, providerMessageId: typeof result === "string" ? result : whatsappMessageId };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  // ---- Chat v2 rich messaging (CHAT_RICH_MESSAGING.md). Every call here is a public, unlicensed
+  // ---- method of wa-automate 4.76; none of them throws.
+
+  async loadEarlierMessages(
+    chatId: string,
+  ): Promise<{ ok: true; messages: RawIncomingMessage[]; reachedStart: boolean } | { ok: false; reason: string }> {
+    const client = this.client;
+    if (!client) return { ok: false, reason: "This WhatsApp account is not connected." };
+    if (!isGroupChatId(chatId) && !isPersonalChatId(chatId)) return { ok: false, reason: "Only a group or a personal chat has history to load." };
+    try {
+      // One more page (up to ~50) from the phone into the session, then everything the session now holds
+      // for the chat — the caller stores only what it does not have. Bounded: an unanswered page is a
+      // failed load, never a held command processor.
+      const page = await withTimeout(client.loadEarlierMessages(chatId as ContactId), HISTORY_LOAD_TIMEOUT_MS, "loading earlier messages");
+      const held = await withTimeout(client.getAllMessagesInChat(chatId as ChatId, true, false), HISTORY_LOAD_TIMEOUT_MS, "reading the chat's messages");
+      const messages: RawIncomingMessage[] = [];
+      for (const message of held ?? []) {
+        try {
+          messages.push(toRawIncomingMessage(this.accountId, message));
+        } catch {
+          // One unreadable message must not cost the page; the next load offers it again.
+        }
+      }
+      return { ok: true, messages, reachedStart: !page || page.length === 0 };
+    } catch (err) {
+      return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  async listPersonalChatsSince(since: Date): Promise<ChatActivity[]> {
+    return withTimeout(this.listActivePersonalChats(Math.floor(since.getTime() / 1000)), PROBE_ENUMERATION_TIMEOUT_MS, "personal chat list");
+  }
+
+  /**
+   * For the personal backfill. Reads what this session already holds for the chat and, only when that
+   * does not reach back to `since`, asks the phone for at most `earlierPages` more pages — each one a
+   * bounded call, so one chat can never hold the browser for long. Messages still encrypted are
+   * counted, not converted: there is nothing in them to store.
+   */
+  async readChatHistory(chatId: string, since: Date, options: { earlierPages: number }): Promise<ChatHistoryRead> {
+    const client = this.client;
+    if (!client) return { ok: false, reason: "This WhatsApp account is not connected." };
+    if (!isGroupChatId(chatId) && !isPersonalChatId(chatId)) return { ok: false, reason: "Only a group or a personal chat has history to read." };
+    const sinceMs = since.getTime();
+    try {
+      const readHeld = () => withTimeout(client.getAllMessagesInChat(chatId as ChatId, true, false), HISTORY_LOAD_TIMEOUT_MS, "reading the chat's messages");
+      let held = (await readHeld()) ?? [];
+      const oldestMs = () =>
+        held.reduce((oldest, m) => (typeof m.timestamp === "number" ? Math.min(oldest, m.timestamp * 1000) : oldest), Number.POSITIVE_INFINITY);
+      let pages = 0;
+      let reachedStart = false;
+      while (oldestMs() > sinceMs && pages < options.earlierPages) {
+        const page = await withTimeout(client.loadEarlierMessages(chatId as ContactId), HISTORY_LOAD_TIMEOUT_MS, "loading earlier messages");
+        pages += 1;
+        if (!page || page.length === 0) {
+          reachedStart = true;
+          break;
+        }
+        held = (await readHeld()) ?? [];
+      }
+      let undecrypted = 0;
+      const messages: RawIncomingMessage[] = [];
+      for (const message of held) {
+        if (typeof message.timestamp !== "number" || message.timestamp * 1000 < sinceMs) continue;
+        if (isStillEncrypted(message)) {
+          undecrypted += 1;
+          continue;
+        }
+        try {
+          messages.push(toRawIncomingMessage(this.accountId, message));
+        } catch {
+          undecrypted += 1; // a shape this code cannot read is as unrecoverable as an encrypted one
+        }
+      }
+      return { ok: true, messages, undecrypted, reachedSince: reachedStart || oldestMs() <= sinceMs, earlierPagesLoaded: pages };
+    } catch (err) {
+      return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  async listStoreMessageRefs(since: Date, limit: number): Promise<StoreMessageRef[] | null> {
+    const client = this.client;
+    if (!client) return null;
+    try {
+      return await withTimeout(
+        client.getPage().evaluate(
+          (sinceSeconds: number, max: number) => {
+            interface PageMsg {
+              id?: { _serialized?: string; remote?: { _serialized?: string; server?: string } | string };
+              t?: unknown;
+            }
+            const msgStore = (globalThis as unknown as { Store?: { Msg?: { getModelsArray?: () => PageMsg[]; models?: PageMsg[] } } }).Store?.Msg;
+            if (!msgStore) return null;
+            const all = typeof msgStore.getModelsArray === "function" ? msgStore.getModelsArray() : (msgStore.models ?? []);
+            const refs: { id: string; chatId: string; t: number }[] = [];
+            for (const msg of all) {
+              const t = msg?.t;
+              if (typeof t !== "number" || t <= sinceSeconds) continue;
+              const id = msg.id?._serialized;
+              const remote = msg.id?.remote;
+              const chatId = typeof remote === "string" ? remote : String(remote?._serialized ?? "");
+              // Groups and WhatsApp's individual domains only, as selectCatchUpChats: never status,
+              // channels or broadcast lists.
+              if (typeof id !== "string" || !/@(g\.us|c\.us|lid)$/.test(chatId)) continue;
+              refs.push({ id, chatId, t });
+            }
+            refs.sort((a, b) => b.t - a.t);
+            return refs.slice(0, max);
+          },
+          Math.floor(since.getTime() / 1000),
+          limit,
+        ),
+        PROBE_ENUMERATION_TIMEOUT_MS,
+        "message store read",
+      );
+    } catch (err) {
+      console.warn("[openwa] could not read the message store", err);
+      return null;
+    }
+  }
+
+  async readMessagesById(ids: readonly string[]): Promise<{ messages: RawIncomingMessage[]; unreadable: number; unusableIds: string[] }> {
+    const client = this.client;
+    if (!client) return { messages: [], unreadable: ids.length, unusableIds: [] };
+    const messages: RawIncomingMessage[] = [];
+    const unusableIds: string[] = [];
+    let unreadable = 0;
+    for (const id of ids) {
+      try {
+        const message = await withTimeout(client.getMessageById(id as MessageId), DECRYPT_READ_TIMEOUT_MS, "reading one message");
+        // A message still encrypted has nothing to store yet; the decryption re-read or the next sweep takes it.
+        if (!message || isStillEncrypted(message)) {
+          unreadable += 1;
+          continue;
+        }
+        try {
+          messages.push(toRawIncomingMessage(this.accountId, message));
+        } catch {
+          // Read, and a shape this code cannot turn into a message: reading it again will not change that.
+          unusableIds.push(id);
+        }
+      } catch {
+        unreadable += 1;
+      }
+    }
+    return { messages, unreadable, unusableIds };
+  }
+
+  async sendPoll(chatId: string, poll: PollContent): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    if (!isGroupChatId(chatId)) return { success: false, error: "WhatsApp allows polls in groups only." };
+    try {
+      const id = await this.client.sendPoll(chatId as GroupChatId, poll.name, poll.options, undefined, poll.allowMultiple);
+      const providerMessageId = serializeMessageId(id);
+      return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the poll." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async sendLocation(chatId: string, location: LocationContent): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      // `address` and `url` are licence-only parameters, so only the name is passed.
+      const id = await this.client.sendLocation(chatId as ChatId, String(location.latitude), String(location.longitude), location.name);
+      const providerMessageId = typeof id === "boolean" ? null : serializeMessageId(id);
+      return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the location." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async sendSticker(chatId: string, webpBase64: string, animated: boolean): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      // The raw-WebP path only: `sendImageAsSticker` uploads the image to the library's own conversion
+      // server, and a customer's picture must never leave this deployment for a third party.
+      const id = await this.client.sendRawWebpAsSticker(chatId as ChatId, webpBase64, animated);
+      const providerMessageId = typeof id === "boolean" ? null : serializeMessageId(id);
+      return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the sticker." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async forwardMessage(chatId: string, whatsappMessageId: string): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const result = await this.client.forwardMessages(chatId as ChatId, [whatsappMessageId as MessageId], false);
+      if (result === false) return { success: false, error: "WhatsApp did not forward the message. It may no longer be on this account's phone." };
+      const providerMessageId = Array.isArray(result) ? serializeMessageId(result[0]) : null;
+      return { success: true, providerMessageId: providerMessageId ?? undefined };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async setMessageStarred(whatsappMessageId: string, star: boolean): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const ok = star ? await this.client.starMessage(whatsappMessageId as MessageId) : await this.client.unstarMessage(whatsappMessageId as MessageId);
+      return ok ? { success: true } : { success: false, error: star ? "WhatsApp did not star the message." : "WhatsApp did not unstar the message." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async setChatPinned(chatId: string, pin: boolean): Promise<SendResult & { changed?: boolean }> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const changed = await this.client.pinChat(chatId as ChatId, pin);
+      // `false` is the library's "probably already in that state"; WhatsApp also caps pinned chats at three.
+      return { success: true, changed: changed === true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async setChatArchived(chatId: string, archive: boolean): Promise<SendResult & { changed?: boolean }> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      const changed = await this.client.archiveChat(chatId as ChatId, archive);
+      return { success: true, changed: changed === true };
     } catch (err) {
       return { success: false, error: (err as Error).message };
     }

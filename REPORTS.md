@@ -905,8 +905,11 @@ Each guard was mutation-checked.
 | Support Activity | "Duration (seconds)", a raw number |
 | Duty History | "Engaged (minutes)", a raw number |
 
-**"Support Overtime".** The Team Report's support time — `activeSeconds`, the idle-gap stretches
-in §4 — is labelled **Support Overtime** everywhere it is shown:
+**"Support Overtime" — superseded 12 Oct 2026 by real overtime (`TEAM_OVERTIME.md`).** The Team
+Report's tile, members and by-day tables, chart and exports now show support time beyond each
+member's regular duty, per day. The support-time analyses below were relabelled **Support time**.
+What follows is the 5 Oct record. Then, the Team Report's support time — `activeSeconds`, the
+idle-gap stretches in §4 — was labelled **Support Overtime** everywhere it was shown:
 - Team Report tiles, tables, chart and Help;
 - the group page;
 - Team Workload, Workload Distribution and Employee Support Breakdown;
@@ -925,3 +928,90 @@ Different metrics keep their own names:
 - Team Performance's "Time engaged";
 - Support Intelligence's "Observed Support Session Time";
 - Call Activity's "Duration".
+
+## Report accuracy audit (19 Oct 2026)
+
+- **Who sent it** is decided by one classifier for every report (WHATSAPP_IDENTITY.md §10): every
+  stored copy is a witness, our own numbers' posts are the business's, dashboard replies are credited
+  to the member linked to the login, and the member's "count their messages from" date wins over the
+  stored team-member stamp.
+- **Team Performance, availability, first response, "waiting for a reply" and the Overview charts**
+  read the same classified messages (`server/attributedMessages.ts`) with the Team Report's own wait
+  and support-time rules, so they agree with the Team Report about every person and day.
+- **Missed is charged to the assignee when the customer asked**, judged by the threshold then
+  (`GroupResponsibilityChange`). A Team/member report includes the groups it was assigned when a
+  customer asked, so Missed never exceeds Waits. Staff replies credited to nobody are counted and shown.
+- **Exports carry the page's moment** (`asof`), so an open period's file matches the page.
+- **Personal (one-to-one) chats are not in these reports.** They count groups only; a personal
+  conversation is in WhatsApp Chat and the WhatsApp Chat User Activity report.
+
+## Team Report audit (19 Oct 2026)
+
+- Every wait records who it is charged to when the customer asked (`chargedTo`) and the threshold then.
+  The Team Report, Missed Support, Group Coverage, Employee Effectiveness, Human Response SLA and the
+  Excel "Missed & Recall" sheet all read those, so reassigning a group or changing its priority never
+  rewrites the past. "Assigned now" columns are labelled as today's assignee.
+- In a Team/member view, Missed counts the waits charged to someone in scope and Recall the late
+  answers given by someone in scope; group rows add up to the headline; other reports use the same
+  scope rule.
+- Support Overtime in a Team view is the share of each whole day's overtime worked in that Team.
+- With one account chosen, the report lists that account's messages but recognises senders from every
+  account's copies.
+- Exports and drill-downs carry the page's moment (`asof`); the Excel Summary carries data health and the
+  unidentified-staff count; the CSV is UTF-8 with a BOM and always has a header.
+
+## Unified messaging reporting (20 Oct 2026)
+
+Behind the `UNIFIED_REPORTING` project feature (off by default; no migration, no worker change, no new
+permission key). Specs and the as-built notes are in `docs/unified-reporting/` (00-07 specs, 08-12 as built).
+With the feature off, or `scope=group`, the Team Report, its tables, CSV and Excel are exactly what they were
+(`teamReportParity.integration.test.ts`).
+
+- **Scopes** (`?scope=group|personal|combined`, the scope selector appears only for a viewer who may see
+  personal chats). Personal and combined need `messages.view` as well as `support_activity.view`; without it the
+  group report renders with a one-line note. Anything unrecognised is `group`.
+- **Personal report.** One conversation is one account + one chat (`@c.us` or `@lid`, no group): the same
+  customer on two of our numbers is two conversations. Our own numbers' chats and chats with a team member are
+  excluded and counted; status, newsletter and orphaned group ids are never conversations. Waits, missed and
+  recall are the Team Report's own (`computeTeamReport` is called unchanged), "missed" uses
+  `missedReplyAfterMinutes`, and nobody is charged. A **verified employee reply** is a dashboard reply typed
+  through a login linked to a team member; a reply from the business phone is the business's.
+- **Combined.** The group report and the personal report side by side with a "how combined" label per line:
+  additive lines add, medians are recomputed over the union of waits, distinct customers are not offered, support
+  time and overtime stay group only. The group half is byte-for-byte `scope=group`.
+- **Run information** (collapsed panel, and an Excel sheet): calculation versions (`group-2026.10.19`,
+  `personal-1`, `combined-1`, `reply-attribution-1`), the period, the data cutoff, the identity statement
+  ("Senders are identified with the team roster as it is now; Team membership and group assignment are taken as
+  they were at the time of each message"), pending re-attributions. **Collection detail** lines (also in the
+  Excel "Data quality" sheet): stored later than sent (more than 15 minutes), loaded from history, deleted for
+  everyone, excluded rows. Counts only, never a percentage.
+- **Customer-specific replies** (group and combined, beside the figures): which customer each reply answered,
+  from evidence only (a quote, a single mention, or the only waiting customer inside 4 hours); unresolved replies
+  are counted with the reason and close nothing. Excel sheet "Customer-specific replies"; the group drill-down
+  lists the per-request detail. It changes no group figure.
+- **Identity-change preview** on Team Members (add, edit) and the WhatsApp Chat link panel: what would be
+  attributed differently, by member, by month, with a labelled estimate for the latest month. Read-only (see
+  WHATSAPP_IDENTITY.md section 11).
+- **Employee ranking, daily engagement and period comparison (WP10)**, group scope, beside the existing tables:
+  - **No second counting rule.** `computeEmployeeAnalytics` (packages/shared `unifiedReporting/employeeRanking.ts`)
+    reads the report's own classified messages and `computeTeamReport` result. A member's groups engaged is the
+    members table's `groups` (distinct groups with their in-scope messages): for a one-day period the two are equal,
+    and a test pins it for a day, a week, a month and a custom range.
+  - **Ranking by measure.** Each measure is ranked alone (groups engaged, replies, active days, average groups per
+    active day, support time, Missed charged to them, median response on the waits they closed); no blended score.
+    Ties share a rank (1, 2, 2, 4). Fewer than 3 active days (or fewer than the period has), or fewer than 5 closed
+    waits for the median: "Not enough data", never last. Active days is the sample itself and is ranked for anybody
+    who worked. The top 3 and the 3 furthest behind are tinted; with fewer than 4 ranked, or all equal, nobody is.
+  - **Daily engagement.** Per member per Dhaka day, distinct groups. Row total = distinct groups over the period,
+    shown beside the sum of days; the bottom row = distinct groups anyone in scope engaged that day.
+  - **Comparison** (`compare=1`): the previous period of equal length, loaded through `loadTeamReport` once more
+    with the same filters; absent, it is not loaded. If the Team or member filter would not apply to the earlier
+    period it says so instead of widening to the whole Team. A member absent from a period has 0 in it.
+  - **Excel:** "Ranking", "Daily engagement" and (with compare) "Comparison" after the existing sheets, only with the
+    feature on; the parity snapshot is unchanged. Ranking and Comparison also export from their table menus.
+- **Identity check fixes (WP11):** link an unknown sender to an existing member, a name suggestion and the impact
+  line (WHATSAPP_IDENTITY.md section 12).
+- **Bug fixes in this release:** Support Intelligence and Calls no longer decide a sender from the chosen
+  account's copy alone (they hear every account's copies, like this report); a hard-deleted member's group
+  assignments are recorded; Duty History follows an identifier corrected away from a deactivated member; a
+  group's assignee is read Primary first, then lowest id.

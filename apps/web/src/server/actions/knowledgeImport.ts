@@ -9,6 +9,7 @@ import type { KnowledgeImportSourceType, Prisma } from "@prisma/client";
 import { parseKnowledgeImportRows, validateImportUrl } from "@support-automation/shared";
 import { checkPermission, requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { isMainAdmin } from "@/server/projectContext";
 import {
   extractDocxText,
   extractPdfText,
@@ -355,4 +356,28 @@ export async function retryKnowledgeImport(id: string): Promise<void> {
     data: { status: "PENDING", error: null, chunksDone: 0, startedAt: null, completedAt: null },
   });
   revalidatePath(await projectPath("/ai-learning/knowledge-base/import"));
+}
+
+/**
+ * Clears finished imports from the "Recent imports" list. Only the record of the import (and the
+ * source text kept for Retry) goes: every knowledge entry it produced stays, just no longer linked to
+ * it (AiKnowledgeItem.importId is SetNull). Clearing is a delete, so it is an Administrator's (the
+ * owner's rule, 17 Oct 2026). An import still waiting or running is never cleared.
+ */
+export async function clearKnowledgeImports(ids: string[] | "finished"): Promise<{ ok: boolean; message: string }> {
+  const granted = await checkPermission("ai_learning.manage", "AI_LEARNING");
+  if ("denied" in granted) return { ok: false, message: granted.denied };
+  if (!(await isMainAdmin(granted.session.userId))) return { ok: false, message: "Only an Administrator can clear import history." };
+  if (ids !== "finished" && (!Array.isArray(ids) || ids.length === 0 || ids.length > 500 || ids.some((id) => typeof id !== "string"))) {
+    return { ok: false, message: "Choose the imports to clear." };
+  }
+  const finished: Prisma.KnowledgeImportWhereInput = { status: { in: ["COMPLETED", "PARTIAL", "FAILED"] } };
+  const removed = await prisma.knowledgeImport.deleteMany({ where: ids === "finished" ? finished : { AND: [{ id: { in: ids } }, finished] } });
+  if (removed.count) {
+    await logSystemEvent("INFO", "knowledge-import", `Cleared ${removed.count} knowledge import(s) from the list`, { count: removed.count }, { actorUserId: granted.session.userId, targetType: "KnowledgeImport" });
+  }
+  revalidatePath(await projectPath("/ai-learning/knowledge-base/import"));
+  return removed.count
+    ? { ok: true, message: "Cleared " + removed.count + " import" + (removed.count === 1 ? "" : "s") + " from the list. The knowledge entries they produced are kept." }
+    : { ok: false, message: "Nothing to clear: imports still waiting or running are kept." };
 }

@@ -11,6 +11,7 @@ import { featureForPath } from "@support-automation/shared";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { CommandPalette } from "./CommandPalette";
 import { FloatingAiChat } from "./FloatingAiChat";
+import { useBranding } from "@/components/BrandingProvider";
 import { WhatsAppJobCenter } from "@/components/whatsappOperations/WhatsAppJobCenter";
 import {
   isSettingsPath,
@@ -24,10 +25,11 @@ import {
 } from "./navigation";
 import { SubNavTabs } from "./SubNavTabs";
 import { SettingsNav } from "./SettingsNav";
-import { MAIN_ADMIN_LINKS, Sidebar } from "./Sidebar";
+import { ADMIN_USERS_OVERVIEW_LINK, MAIN_ADMIN_LINKS, Sidebar } from "./Sidebar";
 import type { SwitcherProject } from "@/components/ProjectSwitcher";
 import { Alert } from "@/components/ui";
 import { pathAllowedByFeatures } from "@support-automation/shared";
+import { canOpenPath, type SectionAccess } from "./projectSections";
 
 /** First one or two letters of a username, for the header identity chip — "rudra" → "RU". */
 function userInitials(username: string): string {
@@ -119,6 +121,7 @@ export function DashboardShell({
   project,
   switchableProjects,
   disabledFeatures,
+  pageAccess,
   workspaceProjects,
 }: {
   children: ReactNode;
@@ -134,6 +137,11 @@ export function DashboardShell({
   switchableProjects: SwitcherProject[];
   /** Features this project is not entitled to: their pages are not offered anywhere in the shell. */
   disabledFeatures: string[];
+  /**
+   * The pages this member's project role opens (PROJECT_ROLES.md), or null when no page selection
+   * applies. Only those pages are offered — sidebar, settings rail, tabs and ⌘K. Presentation only.
+   */
+  pageAccess?: SectionAccess | null;
   username: string;
   automationEnabled: boolean;
   automationMode: string;
@@ -143,12 +151,13 @@ export function DashboardShell({
 }) {
   const granted = useMemo(() => new Set(grantedKeys), [grantedKeys]);
   const featuresOff = useMemo(() => new Set(disabledFeatures), [disabledFeatures]);
+  const pages = useMemo(() => (pageAccess ? (href: string) => canOpenPath(href, pageAccess) : undefined), [pageAccess]);
   const inWorkspace = Boolean(workspaceProjects);
   // In the workspace the sidebar offers every module that is on in ANY of the viewer's projects; one
   // that is off in THIS project opens in a project that has it (lib/workspace.ts workspaceOpenHref).
   // Global modules (Users & Permissions, Release Notes) move up to the Main Admin section.
   const { navGroups, globalGroups } = useMemo(() => {
-    if (!workspaceProjects) return { navGroups: navGroupsFor(granted, featuresOff), globalGroups: [] as NavGroup[] };
+    if (!workspaceProjects) return { navGroups: navGroupsFor(granted, featuresOff, pages), globalGroups: [] as NavGroup[] };
     const groups = navGroupsFor(granted, new Set(featuresOffEverywhere(workspaceProjects))).map((group) => ({
       ...group,
       links: group.links.map((link) => {
@@ -158,19 +167,24 @@ export function DashboardShell({
     }));
     const isGlobal = (group: NavGroup) => group.links.every((link) => isGlobalPage(link.href));
     return { navGroups: groups.filter((g) => !isGlobal(g)), globalGroups: groups.filter(isGlobal) };
-  }, [granted, featuresOff, workspaceProjects]);
-  const settingsSections = useMemo(() => settingsSectionsFor(granted, featuresOff), [granted, featuresOff]);
+  }, [granted, featuresOff, workspaceProjects, pages]);
+  const settingsSections = useMemo(() => settingsSectionsFor(granted, featuresOff, pages), [granted, featuresOff, pages]);
   const paletteLinks = useMemo(
     () =>
       ALL_NAV_LINKS.filter((link) => {
         const key = navPermissionFor(link.href);
-        return (key === null || granted.has(key)) && pathAllowedByFeatures(link.href, featuresOff);
+        return (key === null || granted.has(key)) && pathAllowedByFeatures(link.href, featuresOff) && (pages === undefined || pages(link.href));
       }),
-    [granted, featuresOff],
+    [granted, featuresOff, pages],
   );
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const pathname = stripProjectPrefix(usePathname());
+  const { productName } = useBranding();
+  // WhatsApp Chat on a phone is a full-screen app, not a page in a card: no padding around it, and
+  // nothing floating over its composer (see the content div and the floating controls below).
+  const isChatPage = pathname === "/chat" || pathname.startsWith("/chat/");
+  const phoneChat = isChatPage && !inWorkspace;
   const searchParams = useSearchParams();
   const location = resolveNavLocation(pathname, searchParams);
   // Pages sharing one sidebar entry show their siblings as tabs; see SubNavTabs.
@@ -217,8 +231,12 @@ export function DashboardShell({
         workspace={
           inWorkspace
             ? {
-                // Users & Permissions is the Main Admin's own page there; Release Notes stays a global module.
-                globalGroups: globalGroups.filter((g) => g.label !== "Users & Permissions"),
+                // Users & Permissions (App Users, Permission Modules) sits under Main Admin with the portal's
+                // own overview first, so every login and role is managed from one group; Release Notes
+                // stays a global module. Project Members / Project Roles stay in the workspace below.
+                globalGroups: globalGroups.map((g) =>
+                  g.label === "Users & Permissions" && granted.has("users.view") ? { ...g, links: [ADMIN_USERS_OVERVIEW_LINK, ...g.links] } : g,
+                ),
                 mainAdminLinks: MAIN_ADMIN_LINKS.filter((l) => l.key === null || granted.has(l.key)).map(({ href, label, icon }) => ({ href, label, icon })),
               }
             : null
@@ -261,7 +279,7 @@ export function DashboardShell({
               </>
             ) : null}
             <span className="truncate font-medium text-[color:var(--color-foreground)]">
-              {location?.label ?? "Softify Assist"}
+              {location?.label ?? productName}
             </span>
           </nav>
 
@@ -287,8 +305,16 @@ export function DashboardShell({
             key={pathname}
             // In the workspace the project tabs sit above the page: full-height pages (the chat
             // inbox) read this to leave room for them.
-            style={inWorkspace ? ({ "--chat-inset": "10rem", "--chat-inset-sm": "11.5rem" } as CSSProperties) : undefined}
-            className="mx-auto w-full max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9"
+            // On a phone (below `sm`) the chat drops the page padding and fills the screen under the
+            // 3.25rem top bar, so the inset there is just that bar.
+            style={
+              inWorkspace
+                ? ({ "--chat-inset": "10rem", "--chat-inset-sm": "11.5rem" } as CSSProperties)
+                : phoneChat
+                  ? ({ "--chat-inset": "3.25rem" } as CSSProperties)
+                  : undefined
+            }
+            className={`mx-auto w-full max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9 ${phoneChat ? "max-sm:p-0" : ""}`}
           >
             {workspaceProjects && workspaceCurrent ? (
               <WorkspaceTabs projects={workspaceProjects} current={workspaceCurrent} pathname={pathname} search={searchParams} />
@@ -322,11 +348,17 @@ export function DashboardShell({
       {paletteOpen ? <CommandPalette onClose={closePalette} links={paletteLinks} /> : null}
       {/* Only for roles that can use it: every send is refused without ai_learning.view, and a
           floating button on every page that always answers "not allowed" is worse than none. */}
-      {granted.has("ai_learning.view") ? <FloatingAiChat /> : null}
+      {granted.has("ai_learning.view") ? (
+        <div className={isChatPage ? "max-sm:hidden" : undefined}>
+          <FloatingAiChat />
+        </div>
+      ) : null}
       {/* Long-running WhatsApp jobs stay visible on every page (Add Number to Groups, Groups Admin
           Maker). Offered to whoever may see those modules; the reader refuses everyone else anyway. */}
       {granted.has("bulk_messaging.view") && !featuresOff.has("BULK_MESSAGING") ? (
-        <WhatsAppJobCenter projectSlug={project.slug} besideAiChat={granted.has("ai_learning.view")} />
+        <div className={isChatPage ? "max-sm:hidden" : undefined}>
+          <WhatsAppJobCenter projectSlug={project.slug} besideAiChat={granted.has("ai_learning.view")} />
+        </div>
       ) : null}
     </div>
     </WorkspaceModeContext.Provider>

@@ -398,6 +398,32 @@ enum WorkerCommandType {
   /// { displayName?, about?, pictureDataUrl? }). A partial update: a field left out of the payload
   /// is left untouched on WhatsApp.
   UPDATE_PROFILE
+  /// Chat v2 (CHAT_RICH_MESSAGING.md §4): read up to one page of a chat's earlier messages from
+  /// WhatsApp (payload: { chatId, conversationKey }) and store the ones we do not have. Stored for
+  /// reading only — no rule, AI, wait, case, alert or escalation is ever opened for them.
+  LOAD_EARLIER_MESSAGES
+  /// Star or unstar one stored message on WhatsApp (payload: { messageId, whatsappMessageId, star }).
+  /// The worker writes `Message.starredAt` only after WhatsApp accepted it.
+  STAR_MESSAGE
+  /// Pin or unpin a chat on the WhatsApp phone (payload: { chatId, pin }). Not the inbox's own pin.
+  PIN_CHAT
+  /// Archive or unarchive a chat on the WhatsApp phone (payload: { chatId, archive }). Not the
+  /// inbox's own archive, and never a change to monitoring.
+  ARCHIVE_CHAT
+}
+
+/// What an outbound row carries (CHAT_RICH_MESSAGING.md §5). TEXT is every row that existed before;
+/// the others are typed by a person in Chat v2 only (`MANUAL_REPLY`) and described by `content`.
+enum OutboundContentType {
+  TEXT
+  /// payload: { name, options[], allowMultiple } — groups only.
+  POLL
+  /// payload: { latitude, longitude, name }.
+  LOCATION
+  /// payload: { mediaId } — a sticker already stored in media storage, sent as it is.
+  STICKER
+  /// payload: { sourceMessageId } — a stored message of the same account, forwarded.
+  FORWARD
 }
 
 enum WorkerCommandStatus {
@@ -533,8 +559,10 @@ model Project {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  access   ProjectAccess[]
-  features ProjectFeature[]
+  access             ProjectAccess[]
+  projectRoles       ProjectRole[]
+  projectMemberRoles ProjectMemberRole[]
+  features           ProjectFeature[]
 
   whatsAppAccountRows                  WhatsAppAccount[]
   whatsAppServiceRouteRows             WhatsAppServiceRoute[]
@@ -584,6 +612,40 @@ model Project {
   processingCheckpointRows             ProcessingCheckpoint[]
   collectionGapRows                    CollectionGap[]
   whatsappOperationDismissals          WhatsAppOperationDismissal[]
+  personalChatReviews                  PersonalChatReview[]
+  googleIntegrationAccounts            GoogleIntegrationAccount[]
+  googleSpreadsheets                   GoogleSpreadsheet[]
+  googleSpreadsheetAccessRows          GoogleSpreadsheetAccess[]
+  googleSpreadsheetMembers             GoogleSpreadsheetMember[]
+  googleSheetActivities                GoogleSheetActivity[]
+  googleSheetWorkSessions              GoogleSheetWorkSession[]
+  googleSheetWorkSessionEvents         GoogleSheetWorkSessionEvent[]
+  googleSheetsSettings                 GoogleSheetsSettings?
+  googleIntegrationConfig              GoogleIntegrationConfig?
+  channelConnections                   ChannelConnection[]
+  channelConversations                 ChannelConversation[]
+  channelMessages                      ChannelMessage[]
+  clients                              Client[]
+  clientChannels                       ClientChannel[]
+  clientNotes                          ClientNote[]
+  clientActivities                     ClientActivity[]
+  clientImportJobs                     ClientImportJob[]
+  clientDues                           ClientDue[]
+  clientDueEvents                      ClientDueEvent[]
+  clientBillingCurrencies              ClientBillingCurrency[]
+  clientChatLinks                      ClientWhatsAppChatLink[]
+  clientSubscriptions                  ClientSubscription[]
+  clientPhotos                         ClientPhoto[]
+  clientPayments                       ClientPayment[]
+  clientPaymentAllocations             ClientPaymentAllocation[]
+  clientGroupLinks                     ClientWhatsAppGroupLink[]
+  clientModuleSettings                 ClientModuleSettings?
+  listViewPreferences                  ListViewPreference[]
+  groupResponsibilityChanges           GroupResponsibilityChange[]
+  identityReattributions               IdentityReattribution[]
+  emailSettings                        EmailSettings?
+  emailOutbox                          EmailOutbox[]
+  channelInboundEvents                 ChannelInboundEvent[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
   groupParticipantAddJobRows           GroupParticipantAddJob[]
@@ -643,6 +705,52 @@ model ProjectAccess {
 
   @@unique([projectId, userId])
   @@index([userId])
+}
+
+/// A role defined INSIDE one project (PROJECT_ROLES.md), by that project's Lead or a Main Admin. Its
+/// keys are only ever project-scoped ones (`isProjectAssignableKey`): never a Main Admin key, never
+/// the platform's App Users / Permission Modules keys. Stored as key strings, validated against the
+/// shared catalogue on every write and every read, so a retired key simply stops meaning anything.
+model ProjectRole {
+  id             String              @id @default(cuid())
+  projectId      String              @default(dbgenerated("project_id_required()"))
+  project        Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name           String
+  description    String?
+  permissionKeys String[]            @default([])
+  /// Which pages (modules and sub-modules) the role opens, as { "<section id>": "READ" | "FULL" }, and
+  /// which parts of the Dashboard it shows (apps/web projectSections.ts). Null = no page selection: the
+  /// role is governed by its keys alone, as every role saved before pages existed.
+  sectionAccess  Json?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  members        ProjectMemberRole[]
+
+  @@unique([projectId, name])
+}
+
+/// A user's PROJECT-LEVEL role in one project (PROJECT_ROLES.md). Kept apart from ProjectAccess, which
+/// still only says who may enter (MULTI_PROJECT_PLAN.md §7). No row — every user before this existed —
+/// means their global role applies here exactly as before.
+///   isLead         the project's Lead: every project key here, plus this project's members and roles.
+///                  Only a Main Admin sets it.
+///   projectRoleId  a ProjectRole of THIS project (a same-project trigger enforces it); replaces the
+///                  project-scoped part of the global role in this project only.
+model ProjectMemberRole {
+  id            String       @id @default(cuid())
+  projectId     String       @default(dbgenerated("project_id_required()"))
+  project       Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isLead        Boolean      @default(false)
+  projectRoleId String?
+  projectRole   ProjectRole? @relation(fields: [projectRoleId], references: [id], onDelete: Restrict)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([projectRoleId])
 }
 
 /// A project's entitlement to one feature. Absent row = the feature catalogue's default, so adding a
@@ -733,10 +841,41 @@ model User {
   reviewedConversationCandidates ConversationCandidate[]
   knowledgeVerified              AiKnowledgeItem[]         @relation("AiKnowledgeVerifier")
   systemLogs                     SystemLog[]
+  channelMessagesSent            ChannelMessage[]          @relation("ChannelMessageCreatedBy")
+  channelConversationsAssigned   ChannelConversation[]     @relation("ChannelConversationAssignee")
+  clientsCreated                 Client[]                  @relation("ClientCreatedBy")
+  clientNotesWritten             ClientNote[]              @relation("ClientNoteAuthor")
+  clientActivitiesDone           ClientActivity[]          @relation("ClientActivityActor")
+  clientImportsStarted           ClientImportJob[]         @relation("ClientImportCreatedBy")
+  clientDuesCreated              ClientDue[]               @relation("ClientDueCreatedBy")
+  clientDuesUpdated              ClientDue[]               @relation("ClientDueUpdatedBy")
+  clientDueEventsDone            ClientDueEvent[]          @relation("ClientDueEventActor")
+  clientCurrenciesAdded          ClientBillingCurrency[]   @relation("ClientCurrencyAddedBy")
+  clientChatsLinked              ClientWhatsAppChatLink[]  @relation("ClientChatLinkedBy")
+  clientChatsUnlinked            ClientWhatsAppChatLink[]  @relation("ClientChatUnlinkedBy")
+  clientSubscriptionsCreated     ClientSubscription[]      @relation("ClientSubscriptionCreatedBy")
+  clientPhotosUploaded           ClientPhoto[]             @relation("ClientPhotoUploadedBy")
+  clientPaymentsRecorded         ClientPayment[]           @relation("ClientPaymentRecordedBy")
+  clientPaymentsReversed         ClientPayment[]           @relation("ClientPaymentReversedBy")
+  clientGroupsLinked             ClientWhatsAppGroupLink[] @relation("ClientGroupLinkedBy")
+  clientGroupsUnlinked           ClientWhatsAppGroupLink[] @relation("ClientGroupUnlinkedBy")
+  clientModuleSettingsUpdated    ClientModuleSettings[]    @relation("ClientModuleSettingsUpdatedBy")
+  listViewPreferences            ListViewPreference[]
+  emailsQueued                   EmailOutbox[]             @relation("EmailQueuedBy")
 
-  projectAccess ProjectAccess[]
+  projectAccess           ProjectAccess[]
+  projectMemberRoles      ProjectMemberRole[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
-  employee      Employee?
+  employee                Employee?
+  /// Google accounts this person connected (GOOGLE_SHEETS.md). Audit only; grants nothing.
+  googleAccountsConnected GoogleIntegrationAccount[] @relation("GoogleAccountConnectedBy")
+  googleSheetMemberships  GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberUser")
+  googleSheetMembersAdded GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberAddedBy")
+  googleSheetMembersEnded GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberEndedBy")
+  /// Google identities this person proved are theirs by signing in with Google (Phase 4).
+  googleIdentities        UserGoogleIdentity[]
+  googleSheetActivities   GoogleSheetActivity[]      @relation("GoogleSheetActivityUser")
+  googleSheetWorkSessions GoogleSheetWorkSession[]   @relation("GoogleSheetWorkSessionUser")
 }
 
 // ---------------------------------------------------------------------------
@@ -901,6 +1040,10 @@ model WhatsAppAccount {
   groupSyncFailed      Int?
   groupSyncDurationMs  Int?
   groupSyncError       String?
+  /// What a COMPLETED / PARTIAL result rests on (packages/shared groupSyncBasis.ts, PHASE2.md):
+  /// STABLE_READS, KNOWN_GROUPS_PRESENT, SINGLE_READ or WINDOW_ENDED. WhatsApp gives no "list
+  /// complete" signal, so this is never "verified". Null for other statuses and older rows.
+  groupSyncBasis       String?
   sessionDataPath      String?
   /// OpenWA's own session identifier — distinct from `id` because it doubles as part of the
   /// on-disk Chromium profile path (`${sessionDataPath}/_IGNORE_${sessionId}`, see
@@ -918,6 +1061,8 @@ model WhatsAppAccount {
 
   groups               WhatsAppGroup[]
   messages             Message[]
+  clientChatLinks      ClientWhatsAppChatLink[]
+  clientGroupLinks     ClientWhatsAppGroupLink[]
   outboundMessages     OutboundMessage[]
   broadcastJobs        GroupBroadcastJob[]
   participantAddJobs   GroupParticipantAddJob[]
@@ -939,7 +1084,8 @@ model WhatsAppAccount {
   aiFallbackDecisions  AiFallbackDecision[]
   attendanceEvidence   TeamAttendanceGroup[]
   droppedMessages      MessageDropCounter[]
-  scopedKnowledge      AiKnowledgeItem[]        @relation("AiKnowledgeScopeAccount")
+  personalChatReviews  PersonalChatReview[]
+  scopedKnowledge      AiKnowledgeItem[]         @relation("AiKnowledgeScopeAccount")
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -1179,6 +1325,7 @@ model WhatsAppGroup {
   attendanceEvidence     TeamAttendanceGroup[]
   sandboxSessions        SandboxSession[]
   conversationCandidates ConversationCandidate[]
+  clientLinks            ClientWhatsAppGroupLink[]
 
   @@unique([accountId, whatsappGroupId])
   @@index([chatCategoryId])
@@ -1210,6 +1357,12 @@ model InternalTeamMember {
   /// picked out of message history matches by this. Editing the phone number to the person's real
   /// one never breaks matching, because this keeps working.
   whatsappId      String?
+  /// Reports credit this person's messages only from this moment on (Phase 2, PHASE2.md Stage 5): a
+  /// number that wrote as a customer before it joined the team keeps that history as customer
+  /// history. Null — every existing row — means all of it counts, exactly as before. Read only by the
+  /// report loaders (`createSenderResolver(...).resolve(…, at)`); the live pipeline ignores it, so a
+  /// person on the roster is always staff for automation.
+  attributeFrom   DateTime?
   /// The person's designation / job title (Support Executive, CTO, ...). Free text, shown as
   /// "Designation" in the UI; the column keeps its original name so nothing reading it changes.
   role            String
@@ -1236,6 +1389,9 @@ model InternalTeamMember {
   assignedSupportCases      SupportAssignment[]                @relation("SupportAssignmentAssignee")
   respondedSupportCases     SupportAssignment[]                @relation("SupportAssignmentResponder")
   supportAssignmentEvents   SupportAssignmentEvent[]
+  /// Google Sheets work credited to this roster member AT THE MOMENT it happened (through the login link).
+  googleSheetActivities     GoogleSheetActivity[]
+  googleSheetWorkSessions   GoogleSheetWorkSession[]
   assignedGroups            WhatsAppGroup[]
   assignedEscalationCases   SupportEscalationCase[]
   SupportEscalationSettings SupportEscalationSettings[]
@@ -1245,6 +1401,10 @@ model InternalTeamMember {
   supportRuleScopes         SupportRuleTeamMember[]
   notificationPreferences   TeamMemberNotificationPreference[]
   answeredSupportEpisodes   SupportResponseEpisode[]
+  assignedClients           Client[]                           @relation("ClientAssignedMember")
+  soldClients               Client[]                           @relation("ClientSoldBy")
+  soldSubscriptions         ClientSubscription[]
+  soldDues                  ClientDue[]
 
   /// The shift this person normally works, used to pre-fill a weekly pattern and nothing else.
   ///
@@ -1256,6 +1416,9 @@ model InternalTeamMember {
   /// same person, holding one field, would be a second identity concept for no benefit.
   defaultShiftTemplateId String?
   defaultShiftTemplate   ShiftTemplate? @relation(fields: [defaultShiftTemplateId], references: [id], onDelete: SetNull)
+  /// When the default shift was last set or cleared. Support Overtime applies it only to days after this
+  /// moment; `updatedAt` moved on every unrelated edit and silently changed past overtime.
+  defaultShiftChangedAt  DateTime?
 
   weeklySchedule        WeeklyScheduleEntry[]
   dutyAssignments       DutyAssignment[]
@@ -1288,9 +1451,11 @@ model Team {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  members         InternalTeamMember[]
-  memberships     TeamMembership[]
-  supportEpisodes SupportResponseEpisode[]
+  members           InternalTeamMember[]
+  memberships       TeamMembership[]
+  supportEpisodes   SupportResponseEpisode[]
+  assignedClients   Client[]
+  soldSubscriptions ClientSubscription[]
 
   @@unique([projectId, name])
   @@unique([projectId, code])
@@ -1337,6 +1502,14 @@ model Message {
   whatsappMessageId String
   chatId            String
   senderPhone       String
+  /// The sender exactly as WhatsApp named them, domain kept: `8801…@c.us` (a phone number) or
+  /// `1616…@lid` (WhatsApp's opaque per-person id, deliberately NOT a phone number).
+  ///
+  /// `senderPhone` strips the domain, which made the two indistinguishable — 1,118 of 1,151 stored
+  /// messages carried a LID, and nothing could tell which of them was a number anybody could dial.
+  /// Null on rows stored before this column existed; `reconcile:messages` recovers it from what each
+  /// row itself proves (an incoming group message's key names its author). WHATSAPP_IDENTITY.md.
+  senderJid         String?
   senderName        String?
   isFromTeamMember  Boolean          @default(false)
   direction         MessageDirection
@@ -1366,8 +1539,29 @@ model Message {
   /// Powers Support Activity Tracking's MENTION trigger type.
   mentionedPhones  String[]  @default([])
 
+  /// Receipts for a message this account sent (CHAT_RICH_MESSAGING.md §2): WhatsApp's own ack level
+  /// (1 sent, 2 delivered, 3 read, 4 played), only ever raised, and when we first learned each step.
+  /// In a group, 2 and 3 mean every participant. Null on incoming rows and on rows from before.
+  ackLevel            Int?
+  deliveredAt         DateTime?
+  readAt              DateTime?
+  playedAt            DateTime?
+  /// When WhatsApp told us this message was deleted for everyone. The row and its text are kept —
+  /// what was said stays on record; the thread marks it as deleted (§3).
+  revokedAt           DateTime?
+  /// Starred on WhatsApp by this account, as the worker confirmed it (§6).
+  starredAt           DateTime?
+  /// A poll or a location, as WhatsApp described it: { kind: "POLL", name, options[], allowMultiple }
+  /// or { kind: "LOCATION", latitude, longitude, name }. Display only; `body` stays the searchable text.
+  richContent         Json?
+  /// Stored on request by "Load earlier from WhatsApp" (§4), never live: no rule, wait, case or alert
+  /// was opened for it.
+  loadedFromHistoryAt DateTime?
+
   executions               AutomationExecution[]
-  outboundReplies          OutboundMessage[]
+  outboundReplies          OutboundMessage[]          @relation("OutboundRelatedMessage")
+  /// Chat v2 manual replies that quote this message (OutboundMessage.replyToMessageId).
+  quotedByOutbound         OutboundMessage[]          @relation("OutboundReplyTo")
   notifications            Notification[]
   triggeredEscalationCases SupportEscalationCase[]    @relation("EscalationTriggerMessage")
   patternCandidateEvidence PatternCandidateEvidence[]
@@ -1481,13 +1675,24 @@ model OutboundMessage {
   toPhone          String
   body             String
   relatedMessageId String?
-  relatedMessage   Message?              @relation(fields: [relatedMessageId], references: [id], onDelete: SetNull)
+  relatedMessage   Message?              @relation("OutboundRelatedMessage", fields: [relatedMessageId], references: [id], onDelete: SetNull)
+  /// WhatsApp Chat v2 (CHAT_UI_V2.md): the stored message this MANUAL_REPLY quotes, as a real WhatsApp
+  /// reply. Set only by the chat composer, after the action proved the message is in the same
+  /// conversation of the same account. The worker sends through `reply()` with that message's
+  /// WhatsApp id; the echo's own `Message.quotedMessageId` is the proof it landed as a quote. SetNull:
+  /// deleting the quoted row never deletes the send — the worker then refuses to send it unquoted.
+  replyToMessageId String?
+  replyToMessage   Message?              @relation("OutboundReplyTo", fields: [replyToMessageId], references: [id], onDelete: SetNull)
   ruleId           String?
   rule             AutomationRule?       @relation(fields: [ruleId], references: [id], onDelete: SetNull)
   /// Contact ids to @mention when this is sent. Empty for almost everything — set only by the AI
   /// handover mention, which tags a team member inside the customer's own group so a human is
   /// pulled into the conversation rather than told about it somewhere else.
   mentions         String[]              @default([])
+  /// TEXT for everything but the Chat v2 composer's poll / location / sticker / forward (§5). The
+  /// worker sends a non-TEXT row only for a MANUAL_REPLY; `body` is its readable summary.
+  contentType      OutboundContentType   @default(TEXT)
+  content          Json?
   actionType       ActionType
   idempotencyKey   String                @unique
   status           OutboundMessageStatus @default(PENDING)
@@ -1523,6 +1728,7 @@ model OutboundMessage {
   @@index([broadcastJobId, status])
   @@index([groupId, status])
   @@index([relatedMessageId])
+  @@index([replyToMessageId])
   /// The global rate-limit check's exact WHERE shape (accountId + status SENT + sentAt window),
   /// run several times per outbound send.
   @@index([accountId, status, sentAt])
@@ -2042,6 +2248,13 @@ model SupportResponseEpisode {
   /// The Support Assignment case(s) built on this wait, if the module was on (SUPPORT_ASSIGNMENT.md).
   assignments SupportAssignment[]
 
+  /// Another of our numbers holds the same wait (same WhatsApp group, same first customer message
+  /// time) and that copy is the one shown: with two of our numbers in a group the tracker keeps an
+  /// episode per group ROW, so one wait was two rows and Response Time counted one answer twice.
+  /// Twins are shown only when one account is chosen (report accuracy audit, 19 Oct 2026).
+  isTwin Boolean @default(false)
+
+  @@index([projectId, isTwin, status])
   /// Unanswered Groups: one project's open episodes, longest waiting first.
   @@index([projectId, status, firstIncomingAt])
   /// Response Time: one project's answered episodes, newest reply first.
@@ -2104,31 +2317,31 @@ enum SupportAssignmentEventType {
 /// the customer's message and both open an episode, and two cases for one question would mean one
 /// of them is assigned while its twin sits "unassigned" forever.
 model SupportAssignment {
-  id        String                  @id @default(cuid())
+  id              String                  @id @default(cuid())
   /// The project this row belongs to. Every write must name it: the default raises (no default
   /// project since MULTI_PROJECT_PLAN.md Phase 3).
-  projectId String                  @default(dbgenerated("project_id_required()"))
-  project   Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectId       String                  @default(dbgenerated("project_id_required()"))
+  project         Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
   /// The wait that opened this case. Usually one case per wait; a wait can outlive its case (the
   /// assignee replied without being in the Support Team, an admin cancelled it), and a customer
   /// message after that opens a new case on the same wait, as Clear does on Unanswered groups.
-  episodeId String
-  episode   SupportResponseEpisode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
-  accountId String
-  account   WhatsAppAccount         @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  groupId   String
-  group     WhatsAppGroup           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  episodeId       String
+  episode         SupportResponseEpisode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         WhatsAppAccount         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId         String
+  group           WhatsAppGroup           @relation(fields: [groupId], references: [id], onDelete: Cascade)
   /// The WhatsApp group itself (…@g.us): what identifies "this conversation" across accounts.
   whatsappGroupId String
-  status    SupportAssignmentStatus @default(UNASSIGNED)
+  status          SupportAssignmentStatus @default(UNASSIGNED)
 
   /// The earliest customer message in the wait that is NOT ignored — the "issue" shown and sent.
   /// Null while the case is IGNORED. Points at the Message; no text is copied.
   firstMessageId      String?
-  firstMessage        Message? @relation("SupportAssignmentFirstMessage", fields: [firstMessageId], references: [id], onDelete: SetNull)
+  firstMessage        Message?  @relation("SupportAssignmentFirstMessage", fields: [firstMessageId], references: [id], onDelete: SetNull)
   firstMessageAt      DateTime?
   /// Customer messages in this wait that an ignore rule filtered out.
-  ignoredMessageCount Int      @default(0)
+  ignoredMessageCount Int       @default(0)
 
   assignedMemberId String?
   assignedMember   InternalTeamMember? @relation("SupportAssignmentAssignee", fields: [assignedMemberId], references: [id], onDelete: SetNull)
@@ -3763,14 +3976,14 @@ enum SupportSessionStatus {
 /// feature is off until an admin opts in; while off, apps/worker/src/supportActivity/detector.ts
 /// countingPeriod are global, not per-rule, by explicit requirement.
 model SupportActivitySettings {
-  id                      String                        @id @default("global")
+  id                          String                        @id @default("global")
   /// The project this row belongs to. Every write must name it: the default raises (no default
   /// project since MULTI_PROJECT_PLAN.md Phase 3).
-  projectId               String                        @unique @default(dbgenerated("project_id_required()"))
-  project                 Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  enabled                 Boolean                       @default(false)
-  countingPeriod          SupportActivityCountingPeriod @default(DAILY)
-  updatedAt               DateTime                      @updatedAt
+  projectId                   String                        @unique @default(dbgenerated("project_id_required()"))
+  project                     Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  enabled                     Boolean                       @default(false)
+  countingPeriod              SupportActivityCountingPeriod @default(DAILY)
+  updatedAt                   DateTime                      @updatedAt
   /// How long an executive can go without messaging any group before they count as offline, and
   /// the gap that splits one stretch of work from the next.
   ///
@@ -3779,21 +3992,25 @@ model SupportActivitySettings {
   /// which is what happened when availability used a hardcoded 30 minutes while work time was
   /// measured per group per day — produces a page where somebody shows as offline inside a stretch
   /// of work the same page is counting.
-  offlineAfterMinutes     Int                           @default(120)
+  offlineAfterMinutes         Int                           @default(120)
   /// Team Report: a customer wait answered later than this — or not at all, once older than this —
   /// counts as Missed (and as Recall if it was answered in the end). Groups with a support priority
   /// use their escalation policy's first-alert time instead; this covers every other group, since
   /// no rule for them existed. See packages/shared/src/teamReport.ts.
-  missedReplyAfterMinutes Int                           @default(30)
+  missedReplyAfterMinutes     Int                           @default(30)
+  /// Team Report Support Overtime (TEAM_OVERTIME.md): the regular duty length assumed for a member-day
+  /// with work and no schedule at all — no roster row, holiday, weekly pattern or default shift.
+  /// Overtime that day is support time beyond this. Clamped to 1–16 hours when read.
+  overtimeFallbackDutyMinutes Int                           @default(480)
   /// The Teams that are the Support Team for Messages → Unanswered Groups / Response Time
   /// (SUPPORT_RESPONSE.md). Only a reply from a member of one of these Teams — at the moment they
   /// replied — answers an episode. Empty = response tracking is not set up, and nothing is tracked.
-  responseTrackingTeamIds String[]                      @default([])
+  responseTrackingTeamIds     String[]                      @default([])
   /// Reporting is verified from this moment (SUPPORT_INTELLIGENCE_IMPLEMENTATION_AUDIT.md). Before
   /// it every report labels its figures historical / unverified; after it a period is verified
   /// unless a CollectionGap overlaps it. Null = nothing is verified yet — the honest default, since
   /// collection health was not recorded before CollectionGap existed. Set by an admin.
-  reportingVerifiedFrom   DateTime?
+  reportingVerifiedFrom       DateTime?
 }
 
 /// Admin-managed keyword/phrase. Referenced by zero or more SupportRules via SupportRuleKeyword —
@@ -5067,6 +5284,478 @@ model ConversationCandidate {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Google Sheets work management (GOOGLE_SHEETS.md). Project-scoped: a Google account is connected
+// to one project, by someone allowed to manage the module there.
+// ---------------------------------------------------------------------------------------------
+
+/// Whether a connected Google account can be used right now.
+enum GoogleAccountStatus {
+  /// Tokens held and working.
+  CONNECTED
+  /// Google refused the stored refresh token (revoked, expired, password reset): someone must
+  /// connect the account again. History is kept; nothing is deleted.
+  NEEDS_RECONNECT
+  /// Disconnected from the app on purpose. Tokens are wiped; the row stays so every record that
+  /// names the account keeps its meaning.
+  DISCONNECTED
+}
+
+/// One Google account connected to a project through OAuth.
+///
+/// The identity is Google's own stable account id (OpenID `sub`), never the email, which can change.
+/// Tokens are stored ONLY as `encryptSecret` envelopes (AES-256-GCM, key id, rotatable — the same
+/// as AI provider keys) and are never selected into anything a browser receives. Disconnecting
+/// wipes them and keeps the row, so activity recorded against the account is never orphaned;
+/// connecting the same Google account again revives the same row.
+model GoogleIntegrationAccount {
+  id                         String                    @id @default(cuid())
+  projectId                  String                    @default(dbgenerated("project_id_required()"))
+  project                    Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  googleSubject              String
+  email                      String
+  displayName                String?
+  pictureUrl                 String?
+  /// The scopes Google actually granted (the user may untick some on the consent screen).
+  grantedScopes              String[]                  @default([])
+  status                     GoogleAccountStatus       @default(CONNECTED)
+  refreshTokenCiphertext     String?
+  accessTokenCiphertext      String?
+  accessTokenExpiresAt       DateTime?
+  /// The last refusal from Google, in words an admin can act on.
+  lastError                  String?
+  /// How many spreadsheets the account can see, from the last list refresh (Drive metadata only).
+  spreadsheetCount           Int?
+  spreadsheetsCountedAt      DateTime?
+  connectedById              String?
+  connectedBy                User?                     @relation("GoogleAccountConnectedBy", fields: [connectedById], references: [id], onDelete: SetNull)
+  connectedAt                DateTime                  @default(now())
+  disconnectedAt             DateTime?
+  disconnectedByUsername     String?
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
+  spreadsheetAccess          GoogleSpreadsheetAccess[]
+  /// Phase 8. Set when Google's Drive Activity named this account's own edit as `people/<id>` and that
+  /// id EQUALS `googleSubject` — the proof that an external actor's id can be matched to a person's
+  /// own Google sign-in. Google does not document it, so nothing external is credited to anyone
+  /// until some account in the project has shown it.
+  activityIdentityVerifiedAt DateTime?
+  /// Set when the two ids DIFFERED. Then nothing external is credited in the project until somebody
+  /// investigates: crediting the wrong person is worse than crediting nobody.
+  activityIdentityMismatchAt DateTime?
+  /// The OAuth client that issued this account's tokens (a refresh token works only with it). Null =
+  /// connected before this was recorded, through the server's environment client.
+  oauthClientId              String?
+  activities                 GoogleSheetActivity[]
+
+  @@unique([projectId, googleSubject])
+  @@index([projectId, status])
+}
+
+/// One Google spreadsheet known to a project — METADATA ONLY (name, dates, link, owner). Nothing from
+/// inside the sheet is stored, ever: the list is built from Drive's file metadata, never by opening
+/// a sheet.
+///
+/// One row per Google FILE per project, however many connected accounts can reach it: the same
+/// sheet shared with two connected accounts is one sheet with two paths
+/// (`GoogleSpreadsheetAccess`), so whatever later hangs off a sheet (members, activity, sessions)
+/// hangs off one row. A row per account is what made WhatsApp group setup fail to carry across
+/// numbers.
+///
+/// Never deleted. When no connected account can see the file any more, `removedAt` is set and the
+/// row stays, so history recorded against it keeps its meaning; seeing it again clears it.
+model GoogleSpreadsheet {
+  id                             String                    @id @default(cuid())
+  projectId                      String                    @default(dbgenerated("project_id_required()"))
+  project                        Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Google's file id (the spreadsheet id in its URL).
+  googleFileId                   String
+  name                           String
+  webViewLink                    String?
+  /// Google's own modified time for the file.
+  modifiedTime                   DateTime?
+  ownerEmail                     String?
+  ownerName                      String?
+  /// Who Google says modified the file last — shown in the list as Google's statement, never used
+  /// to attribute work to anybody (it is one person for the whole file, and only the last one).
+  lastModifiedByName             String?
+  lastModifiedByEmail            String?
+  /// Whether the file is shared with anyone in Google (Drive's `shared`).
+  sharedInGoogle                 Boolean                   @default(false)
+  /// Chosen by a manager: the sheets whose work the module tracks.
+  isMonitored                    Boolean                   @default(false)
+  monitoredAt                    DateTime?
+  monitoredByUsername            String?
+  firstSeenAt                    DateTime                  @default(now())
+  /// Set when no connected account can see the file any more; cleared when one can again.
+  removedAt                      DateTime?
+  createdAt                      DateTime                  @default(now())
+  updatedAt                      DateTime                  @updatedAt
+  access                         GoogleSpreadsheetAccess[]
+  members                        GoogleSpreadsheetMember[]
+  activities                     GoogleSheetActivity[]
+  workSessions                   GoogleSheetWorkSession[]
+  /// Phase 8 — Drive Activity polling of a MONITORED sheet: read up to this instant (the next read
+  /// overlaps it a little; rows are deduplicated by `externalKey`), when it was last tried, and the
+  /// last problem worded for the page.
+  externalActivityCheckedThrough DateTime?
+  externalActivityCheckedAt      DateTime?
+  externalActivityError          String?
+
+  @@unique([projectId, googleFileId])
+  @@index([projectId, removedAt, modifiedTime])
+  @@index([projectId, isMonitored])
+}
+
+/// Which connected Google account can reach which spreadsheet, and what Google lets that account
+/// do with it (from Drive's `capabilities` at the last refresh). Google's permission, not the
+/// app's: what a PERSON may do through the app is decided by the app's own permissions.
+model GoogleSpreadsheetAccess {
+  id              String                   @id @default(cuid())
+  projectId       String                   @default(dbgenerated("project_id_required()"))
+  project         Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  spreadsheetId   String
+  spreadsheet     GoogleSpreadsheet        @relation(fields: [spreadsheetId], references: [id], onDelete: Cascade)
+  googleAccountId String
+  googleAccount   GoogleIntegrationAccount @relation(fields: [googleAccountId], references: [id], onDelete: Cascade)
+  canEdit         Boolean                  @default(false)
+  canShare        Boolean                  @default(false)
+  firstSeenAt     DateTime                 @default(now())
+  lastSeenAt      DateTime                 @default(now())
+  /// Set when a refresh of this account no longer lists the file, or the account was disconnected.
+  removedAt       DateTime?
+
+  @@unique([spreadsheetId, googleAccountId])
+  @@index([projectId, googleAccountId, removedAt])
+}
+
+/// A person's role on one spreadsheet IN THE APP (GOOGLE_SHEETS.md §5, Phase 5). Kept in
+/// packages/shared/src/googleSheetMembers.ts (`SHEET_MEMBER_ROLES`) — the two are kept in sync.
+enum GoogleSheetMemberRole {
+  /// Responsible for the sheet: works on it, and staffs its editors and monitors.
+  LEAD
+  /// Works on the sheet through the app.
+  EDITOR
+  /// Follows it read-only; never counted as working on it.
+  MONITOR
+}
+
+/// Why a membership period ended.
+enum GoogleSheetMemberEndReason {
+  /// Replaced by a period with another role, starting the same instant.
+  ROLE_CHANGED
+  /// Taken off the sheet.
+  REMOVED
+}
+
+/// Who works on, or monitors, one spreadsheet through the app — the app's own record, separate from
+/// Google Drive's sharing (which says who may open the FILE in Google; the two are never copied into
+/// each other). Members are app USERS: a CTO who is not on the support roster can still monitor. The
+/// team member is the existing `InternalTeamMember.userId` link, never a name or email match.
+///
+/// HISTORY, never overwritten: each row is one period [startedAt, endedAt) in one role. Changing a
+/// role ends the open row and opens a new one at the same instant; removing ends it; adding back
+/// opens a new one. So "who was an editor on 3 October" stays answerable after any change, the way
+/// `TeamMembership` keeps Team history. A partial unique index (migration) allows ONE open period
+/// per person per sheet.
+model GoogleSpreadsheetMember {
+  id            String                      @id @default(cuid())
+  projectId     String                      @default(dbgenerated("project_id_required()"))
+  project       Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  spreadsheetId String
+  spreadsheet   GoogleSpreadsheet           @relation(fields: [spreadsheetId], references: [id], onDelete: Restrict)
+  userId        String
+  user          User                        @relation("GoogleSheetMemberUser", fields: [userId], references: [id], onDelete: Restrict)
+  role          GoogleSheetMemberRole
+  startedAt     DateTime                    @default(now())
+  endedAt       DateTime?
+  endReason     GoogleSheetMemberEndReason?
+  addedById     String?
+  addedBy       User?                       @relation("GoogleSheetMemberAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  endedById     String?
+  endedBy       User?                       @relation("GoogleSheetMemberEndedBy", fields: [endedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime                    @default(now())
+
+  @@index([projectId, spreadsheetId, endedAt])
+  @@index([projectId, userId, endedAt])
+}
+
+/// A person's own Google identity (GOOGLE_SHEETS.md §5, Phase 4) — proved by THEM signing in with
+/// that Google account (openid + email; no token is kept). Never inferred from a matching email or
+/// name. It is the only bridge from an edit Google reports (`people/<id>`) to a person in the app.
+///
+/// Platform-wide, no projectId: a person's Google account is the same in every project. A Google
+/// account can be linked to one login only. Unlinking deletes the row; activity already credited
+/// keeps the user it was credited to (it is stored on each activity row).
+model UserGoogleIdentity {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Google's stable account id (OpenID `sub`).
+  googleSubject String   @unique
+  email         String
+  displayName   String?
+  /// When the person last proved it by signing in.
+  verifiedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// Viewing, work, or neither (an external comment or sharing change). Kept in sync with
+/// packages/shared/src/googleSheetActivity.ts.
+enum GoogleSheetActivityKind {
+  VIEW
+  WORK
+  OTHER
+}
+
+/// Where an activity happened: in this app, or in Google directly.
+enum GoogleSheetActivitySource {
+  APPLICATION
+  EXTERNAL_GOOGLE
+}
+
+/// What was done. Kept in sync with `SHEET_ACTION_TYPES` in packages/shared.
+enum GoogleSheetActionType {
+  SPREADSHEET_OPENED
+  TAB_OPENED
+  REFRESHED
+  SEARCHED
+  CELLS_EDITED
+  ROWS_ADDED
+  ROWS_DELETED
+  COLUMNS_ADDED
+  COLUMNS_DELETED
+  EXTERNAL_EDIT
+  EXTERNAL_CREATE
+  EXTERNAL_RENAME
+  EXTERNAL_DELETE
+  EXTERNAL_RESTORE
+  EXTERNAL_COMMENT
+  EXTERNAL_PERMISSION_CHANGE
+  EXTERNAL_MOVE
+  EXTERNAL_OTHER
+}
+
+/// How an activity is credited (packages/shared `SHEET_ATTRIBUTIONS`).
+enum GoogleSheetAttribution {
+  /// Done in the app — the signed-in person, by construction.
+  APPLICATION
+  /// Done in Google by a single actor whose Google identity a person linked themselves.
+  ATTRIBUTED
+  /// Done in Google by someone the module cannot name with certainty (`unattributedReason`).
+  UNATTRIBUTED
+  /// Google's own record of a change the app made: already counted as application work.
+  APPLICATION_ECHO
+}
+
+/// The activity log (GOOGLE_SHEETS.md §6, Phase 6) — APPEND-ONLY, one row per thing done.
+///
+/// Application rows are exact: the signed-in person, the tab, the A1 range, the moment. External rows
+/// (Phase 8) say only that Google recorded a change, when, and — sometimes — which Google account.
+/// No cell VALUE is ever stored (no spreadsheet contents in PostgreSQL), and no search text.
+///
+/// Who is credited is resolved AT THAT MOMENT and stored on the row (user, team member, sheet role),
+/// so relinking a login or changing a role later never rewrites the past.
+model GoogleSheetActivity {
+  id                    String                    @id @default(cuid())
+  projectId             String                    @default(dbgenerated("project_id_required()"))
+  project               Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  spreadsheetId         String
+  spreadsheet           GoogleSpreadsheet         @relation(fields: [spreadsheetId], references: [id], onDelete: Restrict)
+  kind                  GoogleSheetActivityKind
+  source                GoogleSheetActivitySource
+  actionType            GoogleSheetActionType
+  attribution           GoogleSheetAttribution
+  /// UNATTRIBUTED only: why (packages/shared `UNATTRIBUTED_REASONS`).
+  unattributedReason    String?
+  /// The tab: Google's numeric sheet id, and its title at that moment.
+  tabId                 Int?
+  tabTitle              String?
+  /// Application only: the A1 range touched (never the values in it).
+  range                 String?
+  /// Application only: how many cells, rows or columns the action touched.
+  itemCount             Int?
+  /// A short description of a structural change ("Deleted row 12") — never cell contents.
+  detail                String?
+  /// The app user credited: the signed-in person (application), or the person whose linked Google
+  /// identity Google named (external). Null for an unattributed external change.
+  userId                String?
+  user                  User?                     @relation("GoogleSheetActivityUser", fields: [userId], references: [id], onDelete: Restrict)
+  /// Their roster member at that moment, through the explicit login link only.
+  teamMemberId          String?
+  teamMember            InternalTeamMember?       @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  /// Their role on the sheet at that moment (null: not a member then).
+  memberRole            GoogleSheetMemberRole?
+  /// The connected Google account whose access carried the call (application), or that read
+  /// Google's record (external). Never the person credited.
+  googleAccountId       String?
+  googleAccount         GoogleIntegrationAccount? @relation(fields: [googleAccountId], references: [id], onDelete: Restrict)
+  /// The open-sheet session it happened in (application, Phase 7).
+  sessionId             String?
+  session               GoogleSheetWorkSession?   @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  occurredAt            DateTime
+  /// External only: a deterministic key built from Google's record (Drive Activity has no id), so
+  /// reading the same period twice never records a change twice.
+  externalKey           String?
+  /// External only: the actor as Google gave it (`people/<id>`), and its kind.
+  externalActorPersonId String?
+  externalActorKind     String?
+  /// External only: the application change this row is Google's echo of.
+  echoOfActivityId      String?
+  echoOf                GoogleSheetActivity?      @relation("GoogleSheetActivityEcho", fields: [echoOfActivityId], references: [id], onDelete: SetNull)
+  echoes                GoogleSheetActivity[]     @relation("GoogleSheetActivityEcho")
+  createdAt             DateTime                  @default(now())
+
+  @@unique([projectId, externalKey])
+  @@index([projectId, spreadsheetId, occurredAt])
+  @@index([projectId, userId, occurredAt])
+  @@index([projectId, occurredAt])
+}
+
+/// One signal from an open sheet page (GOOGLE_SHEETS.md §7). Kept in sync with packages/shared
+/// `SESSION_SIGNAL_KINDS`.
+enum GoogleSheetSessionEventKind {
+  START
+  VIEW_SIGNAL
+  WORK_SIGNAL
+  CLOSE
+}
+
+/// One person with one spreadsheet open in the app (GOOGLE_SHEETS.md §7, Phase 7). Its EVENTS are the
+/// record: work and viewing time are computed from them at read time by ONE pure function
+/// (packages/shared `computeSheetTime`) and never stored as a second number that could drift.
+///
+/// `clientKey` is a random value the open page makes for itself, so its signals find this row without
+/// a round trip, and a repeated signal never opens a second session. A session that goes quiet is not
+/// closed by any job: it simply stops being live, and its time ends at its last signal.
+model GoogleSheetWorkSession {
+  id            String                        @id @default(cuid())
+  projectId     String                        @default(dbgenerated("project_id_required()"))
+  project       Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  spreadsheetId String
+  spreadsheet   GoogleSpreadsheet             @relation(fields: [spreadsheetId], references: [id], onDelete: Restrict)
+  userId        String
+  user          User                          @relation("GoogleSheetWorkSessionUser", fields: [userId], references: [id], onDelete: Restrict)
+  /// Their roster member and sheet role when the session started, through the login link only.
+  teamMemberId  String?
+  teamMember    InternalTeamMember?           @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  memberRole    GoogleSheetMemberRole?
+  /// Whether this person could work when it started (a working role and the edit permission). A work
+  /// signal from someone who cannot work is recorded as a view signal.
+  canWork       Boolean                       @default(false)
+  clientKey     String
+  startedAt     DateTime
+  lastSignalAt  DateTime
+  lastWorkAt    DateTime?
+  closedAt      DateTime?
+  events        GoogleSheetWorkSessionEvent[]
+  activities    GoogleSheetActivity[]
+
+  @@unique([projectId, clientKey])
+  @@index([projectId, spreadsheetId, lastSignalAt])
+  @@index([projectId, userId, lastSignalAt])
+}
+
+/// A signal received from an open sheet page, stamped with the SERVER's clock (the browser's is never
+/// trusted).
+model GoogleSheetWorkSessionEvent {
+  id        String                      @id @default(cuid())
+  projectId String                      @default(dbgenerated("project_id_required()"))
+  project   Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sessionId String
+  session   GoogleSheetWorkSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  kind      GoogleSheetSessionEventKind
+  at        DateTime
+
+  @@index([projectId, sessionId, at])
+  @@index([projectId, at])
+}
+
+/// Whether a project's own Google OAuth client was accepted by Google when it was last checked.
+enum GoogleOAuthClientStatus {
+  /// Saved, but Google could not be reached to check it.
+  UNVALIDATED
+  /// Google accepted the client ID and secret.
+  VALID
+  /// Google rejected them: nothing uses this client until it is updated.
+  INVALID
+}
+
+/// The project's own Google integration (GOOGLE_SHEETS.md §22): its OAuth client and whether the
+/// integration is on. One row per project; absent = on, using the server's environment client if any.
+///
+/// The client SECRET is stored only as an `encryptSecret` envelope and is never selected into anything a
+/// browser receives. The client ID is not a secret (it appears in every consent URL). Switching the
+/// integration off keeps everything — credentials, accounts, tokens — so switching it on resumes.
+model GoogleIntegrationConfig {
+  id                           String                  @id @default("global")
+  projectId                    String                  @unique @default(dbgenerated("project_id_required()"))
+  project                      Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  enabled                      Boolean                 @default(true)
+  clientId                     String?
+  clientSecretCiphertext       String?
+  validationStatus             GoogleOAuthClientStatus @default(UNVALIDATED)
+  validatedAt                  DateTime?
+  /// The last validation problem, worded for the page (never Google's raw text, never a secret).
+  validationError              String?
+  credentialsUpdatedAt         DateTime?
+  credentialsUpdatedByUsername String?
+  enabledChangedAt             DateTime?
+  enabledChangedByUsername     String?
+  createdAt                    DateTime                @default(now())
+  updatedAt                    DateTime                @updatedAt
+}
+
+/// The project's Google Sheets settings (one row per project; absent = the defaults).
+model GoogleSheetsSettings {
+  id                      String   @id @default("global")
+  projectId               String   @unique @default(dbgenerated("project_id_required()"))
+  project                 Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// T in GOOGLE_SHEETS.md §7: a gap longer than this between two signals is a pause. 1–60.
+  inactivityMinutes       Int      @default(5)
+  /// Phase 8: read who changed MONITORED sheets in Google directly (Drive Activity).
+  externalActivityEnabled Boolean  @default(true)
+  updatedByUsername       String?
+  updatedAt               DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------------------------
+// White labeling (BRANDING.md): what the installation calls itself and how it looks. Platform-wide,
+// no projectId — one installation, one brand. Set by a Main Admin on Main Admin → Branding.
+// ---------------------------------------------------------------------------------------------
+
+/// The installation's brand. ONE row (id "default"), and an absent row or a NULL column means "the
+/// built-in default" (apps/web/src/lib/branding.ts) — so a fresh install looks like it always has,
+/// an unedited field keeps following improvements to the default, and Reset is setting NULL.
+///
+/// The two images are stored here as bytes: they are small (capped at 512 KB each), they must
+/// survive a database backup together with the rest of the configuration, and they are needed on
+/// the sign-in page before anything else is loaded. Their type is the one SNIFFED from the bytes
+/// at upload, never the browser's claim. `assetVersion` moves on every image change and is put in
+/// the image URLs, so browsers can cache an image for good and still see a new one immediately.
+model PlatformBranding {
+  id                String   @id @default("default")
+  /// The product name everywhere it is shown: browser title, sidebar, sign-in page, AI assistant.
+  productName       String?
+  /// The sign-in page's headline and the paragraph under it.
+  loginHeadline     String?
+  loginSubheading   String?
+  /// The brand colour (#rrggbb): links, active navigation, focus rings — the app's accent.
+  accentColor       String?
+  /// Wide logo (wordmark), shown on the sign-in page.
+  logo              Bytes?
+  logoMimeType      String?
+  /// Square app icon: the sidebar mark and the browser tab icon.
+  icon              Bytes?
+  iconMimeType      String?
+  assetVersion      Int      @default(0)
+  /// Who saved last, as a snapshot (users are never deleted, and usernames never change).
+  updatedByUsername String?
+  updatedAt         DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------------------------
 // Main Admin Configuration (MAIN_ADMIN_WORKSPACE.md §5): the organisation, platform-wide.
 //
 // None of these carries a projectId: a department, a job title or a person belongs to the company,
@@ -5151,6 +5840,30 @@ model WhatsAppOperationDismissal {
 
   @@unique([projectId, userId, kind, jobId])
   @@index([projectId, userId])
+}
+
+/// "Somebody opened this personal (1:1) chat" for the WhatsApp Chat inbox — the personal-chat
+/// counterpart of `WhatsAppGroup.chatReviewedAt`, and nothing more.
+///
+/// A personal chat has no row of its own: it IS its `Message` rows (`groupId` null, a `@c.us` or
+/// `@lid` chat id), and the inbox derives it from them. Only the review mark needs storing, because
+/// "Seen, unanswered" cannot be derived from messages. A row exists once somebody has opened the
+/// chat; no row means never reviewed. A timestamp for the same reason as the group column: the next
+/// customer message is newer than it, so the chat goes straight back to "waiting".
+///
+/// Shared, not per user, like the group column. Display only: nothing in the worker reads it.
+model PersonalChatReview {
+  id         String          @id @default(cuid())
+  projectId  String          @default(dbgenerated("project_id_required()"))
+  project    Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId  String
+  account    WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// The chat id exactly as stored on `Message.chatId` (`8801…@c.us` or `…@lid`).
+  chatId     String
+  reviewedAt DateTime
+  updatedAt  DateTime        @updatedAt
+
+  @@unique([projectId, accountId, chatId])
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -5331,4 +6044,974 @@ model MoodAlertAction {
 
   @@unique([alertId, action])
   @@index([status, scheduledAt])
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// Messaging channels beyond WhatsApp — Facebook Messenger, Instagram DM, Telegram (OMNICHANNEL.md)
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//
+// WhatsApp keeps its own tables (Message, WhatsAppGroup, OutboundMessage). These four hold the other
+// channels, and the unified inbox reads both. Kept apart on purpose: Message has ~40 readers that
+// assume WhatsApp semantics (Team Report, attendance, support response, escalation…), and adding
+// Messenger rows to it would silently change every one of those figures.
+
+enum ChannelType {
+  MESSENGER
+  INSTAGRAM
+  TELEGRAM
+}
+
+enum ChannelConnectionStatus {
+  /// Credentials not entered (or not yet checked).
+  SETUP_REQUIRED
+  CONNECTED
+  /// The provider refused a check or a send for a reason other than the credential.
+  ERROR
+  /// The provider no longer accepts the stored credential.
+  NEEDS_RECONNECT
+  /// A person disconnected it. Credentials wiped; history kept.
+  DISCONNECTED
+}
+
+enum ChannelEventStatus {
+  PENDING
+  PROCESSED
+  /// Recorded and deliberately not used (a reaction, an edit, an account nobody connected…).
+  IGNORED
+  FAILED
+}
+
+enum ChannelMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum ChannelSenderType {
+  CUSTOMER
+  /// A person using this app.
+  AGENT
+  AI
+  /// Sent from the provider's own app (Meta Business Suite, the Page inbox) — seen as an echo.
+  BUSINESS
+}
+
+enum ChannelDeliveryStatus {
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  /// The send's outcome could not be confirmed (a timeout mid-request). Never retried automatically.
+  UNKNOWN
+}
+
+enum ChannelContentType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  STICKER
+  LOCATION
+  CONTACT
+  SHARE
+  UNSUPPORTED
+}
+
+enum ChannelThreadKind {
+  DIRECT
+  GROUP
+}
+
+enum ChannelConversationStatus {
+  OPEN
+  CLOSED
+}
+
+enum ChannelAiOutcome {
+  REPLIED
+  HANDED_OVER
+  /// Not eligible (AI off, a person handling it, too old…) — recorded so it is not looked at twice.
+  SKIPPED
+}
+
+/// One connected Facebook Page, Instagram professional account or Telegram bot, in one project.
+/// Credentials are `encryptSecret` envelopes, read only in apps/web `server/channels/connections.ts`
+/// and the worker's send path; nothing returns them to a browser.
+model ChannelConnection {
+  id                           String                  @id @default(cuid())
+  projectId                    String                  @default(dbgenerated("project_id_required()"))
+  project                      Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  type                         ChannelType
+  /// What people call it here ("Softify Page", "@softify_support_bot").
+  name                         String
+  status                       ChannelConnectionStatus @default(SETUP_REQUIRED)
+  /// Off: webhooks are still recorded, nothing is processed or sent.
+  enabled                      Boolean                 @default(true)
+  /// Random and unguessable; the webhook URL is /api/channels/<meta|telegram>/<webhookKey>. Unique
+  /// across the installation because the webhook arrives outside any project.
+  webhookKey                   String                  @unique
+  /// The Page id (Messenger), the Instagram professional account id (Instagram), the bot id (Telegram).
+  externalAccountId            String?
+  externalAccountName          String?
+  /// The Instagram username or the bot's @username.
+  externalUsername             String?
+  /// Instagram: the Facebook Page the account is linked to (replies are sent through it).
+  pageId                       String?
+  /// Meta: the app id. Not a secret; used to recognise the echoes of our own sends.
+  appId                        String?
+  /// The Page access token (Meta) or the bot token (Telegram).
+  accessTokenCiphertext        String?
+  /// Meta: the app secret, which signs every webhook.
+  appSecretCiphertext          String?
+  /// Meta: the token Meta must present when the webhook is registered. Shown to managers to paste.
+  verifyTokenCiphertext        String?
+  /// Telegram: the secret Telegram sends back in X-Telegram-Bot-Api-Secret-Token.
+  webhookSecretCiphertext      String?
+  /// AI may answer customers on this connection (still subject to every AI setting and safety gate).
+  aiAutomationEnabled          Boolean                 @default(false)
+  /// Meta: the admin says the app has the Human Agent permission, so a PERSON may reply for 7 days.
+  humanAgentEnabled            Boolean                 @default(false)
+  webhookVerifiedAt            DateTime?
+  lastEventAt                  DateTime?
+  lastCheckedAt                DateTime?
+  lastError                    String?
+  lastErrorAt                  DateTime?
+  credentialsUpdatedAt         DateTime?
+  credentialsUpdatedByUsername String?
+  createdByUsername            String?
+  disconnectedAt               DateTime?
+  createdAt                    DateTime                @default(now())
+  updatedAt                    DateTime                @updatedAt
+
+  conversations ChannelConversation[]
+  messages      ChannelMessage[]
+  events        ChannelInboundEvent[]
+
+  @@unique([projectId, type, externalAccountId])
+  @@index([projectId, type])
+}
+
+/// One conversation: a customer's thread with a Page / Instagram account, or one Telegram chat.
+model ChannelConversation {
+  id                   String                    @id @default(cuid())
+  projectId            String                    @default(dbgenerated("project_id_required()"))
+  project              Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId         String
+  connection           ChannelConnection         @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  type                 ChannelType
+  /// The customer's page-scoped / Instagram-scoped id, or the Telegram chat id.
+  externalThreadId     String
+  kind                 ChannelThreadKind         @default(DIRECT)
+  /// A Telegram group's title, or the customer's name when the provider gave one.
+  title                String?
+  customerExternalId   String?
+  customerName         String?
+  customerUsername     String?
+  status               ChannelConversationStatus @default(OPEN)
+  assignedUserId       String?
+  assignedUser         User?                     @relation("ChannelConversationAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  lastMessageAt        DateTime?
+  lastMessagePreview   String?
+  lastMessageDirection ChannelMessageDirection?
+  /// The customer's newest message — what Meta's reply window counts from.
+  lastInboundAt        DateTime?
+  /// When somebody last opened it. Unread = a customer message after this (a timestamp, never a
+  /// boolean, so a new message always brings it back).
+  reviewedAt           DateTime?
+  /// A person replied: AI stays quiet until this passes (the same rule as WhatsApp's takeover).
+  aiSuppressedUntil    DateTime?
+  closedAt             DateTime?
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+
+  messages ChannelMessage[]
+
+  @@unique([projectId, connectionId, externalThreadId])
+  @@index([projectId, lastMessageAt])
+  @@index([projectId, type, lastMessageAt])
+}
+
+/// One message on a channel, in either direction. An outbound row IS the send queue entry: it is
+/// written QUEUED when a person or AI replies and the worker moves it through SENDING to SENT (and
+/// DELIVERED / READ when the provider says so), so the thread and the queue cannot disagree.
+model ChannelMessage {
+  id                String                  @id @default(cuid())
+  projectId         String                  @default(dbgenerated("project_id_required()"))
+  project           Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  conversationId    String
+  conversation      ChannelConversation     @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  connectionId      String
+  connection        ChannelConnection       @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  type              ChannelType
+  direction         ChannelMessageDirection
+  senderType        ChannelSenderType
+  senderExternalId  String?
+  senderName        String?
+  /// The provider's id (Meta `mid`, Telegram `<chat>:<message_id>`). Null until an outbound is sent.
+  externalMessageId String?
+  text              String?
+  contentType       ChannelContentType      @default(TEXT)
+  /// References only (kind, provider link or file id, name) — never the file.
+  attachments       Json?
+  replyToExternalId String?
+  /// When it happened: the provider's timestamp for inbound, the queue time for outbound.
+  occurredAt        DateTime
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  // ─ outbound: the send queue ─
+  deliveryStatus   ChannelDeliveryStatus?
+  /// One row per intended send: a double-click, a retried request or a re-run AI pass finds it.
+  idempotencyKey   String?
+  attempts         Int                    @default(0)
+  nextAttemptAt    DateTime?
+  sendingStartedAt DateTime?
+  sentAt           DateTime?
+  deliveredAt      DateTime?
+  readAt           DateTime?
+  failedAt         DateTime?
+  lastError        String?
+  /// Meta: RESPONSE, or MESSAGE_TAG with tag HUMAN_AGENT, decided when it was queued.
+  messagingType    String?
+  messagingTag     String?
+  createdByUserId  String?
+  createdBy        User?                  @relation("ChannelMessageCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  // ─ inbound: the AI decision, claimed once ─
+  aiClaimedAt      DateTime?
+  aiOutcome        ChannelAiOutcome?
+  aiReason         String?
+  aiConfidence     Float?
+  aiModelId        String?
+  /// The AI reply this message received (an outbound row's id).
+  aiReplyMessageId String?
+
+  @@unique([projectId, connectionId, externalMessageId])
+  @@unique([projectId, idempotencyKey])
+  @@index([projectId, conversationId, occurredAt])
+  @@index([conversationId, direction, createdAt])
+  @@index([deliveryStatus, nextAttemptAt])
+}
+
+/// A webhook event exactly as the provider sent it, recorded before anything else so a provider's
+/// retry, a worker restart or a processing failure never loses a customer's message. Processed by
+/// the worker; processed rows are pruned after 14 days.
+model ChannelInboundEvent {
+  id           String             @id @default(cuid())
+  projectId    String             @default(dbgenerated("project_id_required()"))
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId String
+  connection   ChannelConnection  @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  /// From the provider's own ids (packages/shared `splitMetaWebhook` / `telegramDedupKey`).
+  dedupKey     String
+  status       ChannelEventStatus @default(PENDING)
+  payload      Json
+  receivedAt   DateTime           @default(now())
+  processedAt  DateTime?
+  attempts     Int                @default(0)
+  lastError    String?
+  /// Why it was ignored, in words.
+  note         String?
+
+  @@unique([projectId, connectionId, dedupKey])
+  @@index([status, receivedAt])
+}
+
+// ─── Client Management (CLIENT_CENTER.md) ──────────────────────────────────────────────────────────
+//
+// One record per client, whatever app they write from. Deliberately NOT here: billing (the company's
+// invoices live in their own system; a second ledger here could only ever disagree with it) and
+// anything that sends — channel references and consent are DATA for the phases that send. Every
+// table is project-scoped and carries the same-project triggers (migration 20261012100000).
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  ARCHIVED
+  BLOCKED
+}
+
+enum ClientSource {
+  MANUAL
+  IMPORT
+  WHATSAPP
+  FACEBOOK
+  INSTAGRAM
+  API
+}
+
+enum ClientChannelKind {
+  PHONE
+  EMAIL
+  WHATSAPP
+  WHATSAPP_GROUP
+  MESSENGER
+  INSTAGRAM
+  TELEGRAM
+  OTHER
+}
+
+enum ClientConsentStatus {
+  UNKNOWN
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum ClientImportStatus {
+  PREVIEW
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+}
+
+enum ClientDuplicatePolicy {
+  SKIP
+  UPDATE
+  CREATE
+}
+
+model Client {
+  id                    String              @id @default(cuid())
+  /// The project this row belongs to. Every write must name it: the default raises (no default
+  /// project since MULTI_PROJECT_PLAN.md Phase 3).
+  projectId             String              @default(dbgenerated("project_id_required()"))
+  project               Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Unique within the project. Generated ("CL-000042") unless the administrator types or imports one.
+  code                  String
+  name                  String
+  companyName           String?
+  status                ClientStatus        @default(ACTIVE)
+  category              String?
+  preferredChannel      ClientChannelKind?
+  preferredLanguage     String?
+  address               String?
+  businessDetails       String?
+  /// What staff should do or remember on the next contact. Internal: never part of a message.
+  followUpInstructions  String?
+  /// Lower-cased, trimmed, de-duplicated (packages/shared clients.ts normalizeTags).
+  tags                  String[]            @default([])
+  customFields          Json                @default("{}")
+  source                ClientSource        @default(MANUAL)
+  /// e.g. the import's file name.
+  sourceDetail          String?
+  assignedMemberId      String?
+  assignedMember        InternalTeamMember? @relation("ClientAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
+  assignedTeamId        String?
+  assignedTeam          Team?               @relation(fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  createdById           String?
+  createdBy             User?               @relation("ClientCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  /// Set by the phases that record real contact (messages, calls); never guessed.
+  lastContactAt         DateTime?
+  /// Soft deletion. An archived client keeps every channel, note and timeline entry.
+  archivedAt            DateTime?
+  /// ISO 3166-1 alpha-2 (CLIENTS_V3.md §6). Suggested from the phone number only when unambiguous.
+  country               String?
+  /// ISO 4217. A suggestion for new invoices, never a rule: an invoice keeps the currency it was raised in.
+  preferredCurrency     String?
+  /// Who brought the client in (a real roster member). Each subscription records its own seller as well.
+  soldByMemberId        String?
+  soldByMember          InternalTeamMember? @relation("ClientSoldBy", fields: [soldByMemberId], references: [id], onDelete: SetNull)
+  /// The term that speaks for the client: the latest-ending uncancelled subscription
+  /// (`pickCurrentSubscription`), recomputed in the same transaction as any change to a term. Its STATE is
+  /// derived at read time against today; only which row it is, is stored, so expiry sorts in SQL.
+  currentSubscriptionId String?
+  currentSubscription   ClientSubscription? @relation("ClientCurrentSubscription", fields: [currentSubscriptionId], references: [id], onDelete: SetNull)
+  /// Set when a profile photo is saved or removed; the avatar URL carries it so a new photo is fetched at once.
+  photoUpdatedAt        DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  channels      ClientChannel[]
+  notes         ClientNote[]
+  activities    ClientActivity[]
+  dues          ClientDue[]
+  dueEvents     ClientDueEvent[]
+  chatLinks     ClientWhatsAppChatLink[]
+  subscriptions ClientSubscription[]      @relation("ClientSubscriptions")
+  photo         ClientPhoto?
+  payments      ClientPayment[]
+  groupLinks    ClientWhatsAppGroupLink[]
+
+  @@unique([projectId, code])
+  @@index([projectId, status, name])
+  @@index([projectId, assignedMemberId])
+  @@index([projectId, createdAt])
+  @@index([projectId, country])
+  @@index([currentSubscriptionId])
+  @@index([tags], type: Gin)
+}
+
+/// One way to reach a client: a phone, an email, a WhatsApp number or group, a Messenger / Instagram /
+/// Telegram reference. `normalizedValue` is what duplicates are matched on (digits for a number,
+/// lower-case for an email). Consent is per channel, because somebody who has asked for no SMS may
+/// still want WhatsApp. Nothing in Client Management sends to a channel; the consent is recorded for
+/// the phases that will. A WHATSAPP_GROUP's value is the group's WhatsApp id; the group's name is
+/// looked up from WhatsAppGroup when shown, so there is no foreign key to choose between accounts' copies.
+model ClientChannel {
+  id               String              @id @default(cuid())
+  projectId        String              @default(dbgenerated("project_id_required()"))
+  project          Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId         String
+  client           Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  kind             ClientChannelKind
+  /// As typed (trimmed), for display.
+  value            String
+  normalizedValue  String
+  label            String?
+  isPrimary        Boolean             @default(false)
+  consentStatus    ClientConsentStatus @default(UNKNOWN)
+  consentChangedAt DateTime?
+  /// Where the consent came from: "recorded by staff", "client reply", "import"…
+  consentSource    String?
+  consentNote      String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@unique([clientId, kind, normalizedValue])
+  @@index([projectId, kind, normalizedValue])
+}
+
+/// Internal notes. A different table from anything that can be sent, so a note can never be sent by accident.
+model ClientNote {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  body      String
+  authorId  String?
+  author    User?    @relation("ClientNoteAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, createdAt])
+}
+
+/// The timeline: what happened to this client and who did it. Append-only; later phases add their own types.
+model ClientActivity {
+  id          String   @id @default(cuid())
+  projectId   String   @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// CREATED, UPDATED, STATUS_CHANGED, ASSIGNED, TAGS_CHANGED, NOTE_ADDED, CHANNEL_ADDED, CHANNEL_REMOVED,
+  /// CONSENT_CHANGED, ARCHIVED, RESTORED, IMPORTED, IMPORT_UPDATED.
+  type        String
+  summary     String
+  details     Json?
+  actorUserId String?
+  actor       User?    @relation("ClientActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([clientId, createdAt])
+  @@index([projectId, createdAt])
+}
+
+/// One CSV / XLSX import, from the preview to its final report. `rows` holds the file's own rows
+/// (text cells, as uploaded) between the upload and the end of the import, and is emptied once the
+/// import finishes or is abandoned: it is personal data that has no reason to stay. `mapping` says
+/// which column is which client field, and can be changed while the job is still a PREVIEW.
+model ClientImportJob {
+  id              String                @id @default(cuid())
+  projectId       String                @default(dbgenerated("project_id_required()"))
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdById     String?
+  createdBy       User?                 @relation("ClientImportCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  fileName        String
+  fileType        String
+  status          ClientImportStatus    @default(PREVIEW)
+  duplicatePolicy ClientDuplicatePolicy @default(SKIP)
+  mapping         Json                  @default("{}")
+  rows            Json                  @default("[]")
+  totalRows       Int                   @default(0)
+  validRows       Int                   @default(0)
+  invalidRows     Int                   @default(0)
+  importedCount   Int                   @default(0)
+  updatedCount    Int                   @default(0)
+  skippedCount    Int                   @default(0)
+  failedCount     Int                   @default(0)
+  /// [{ rowNumber, errors[] }], capped at 200 entries.
+  errors          Json                  @default("[]")
+  createdAt       DateTime              @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  @@index([projectId, createdAt])
+}
+
+// ─── Client billing (CLIENT_CENTER_PLAN.md §2) — manual records, never a ledger ─────────────────────
+
+/// "Paid" is a person's statement, never a payment confirmation: nothing here is connected to a
+/// payment system, and nothing is sent because of a due.
+enum ClientDueStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  WAIVED
+  CANCELLED
+}
+
+/// One due date for one client, typed by staff. Kept as history: a settled due is never overwritten
+/// or deleted (cancel it instead). The amount is optional; the currency is required only when an
+/// amount is present and comes from the project's ClientBillingCurrency list.
+model ClientDue {
+  id              String              @id @default(cuid())
+  projectId       String              @default(dbgenerated("project_id_required()"))
+  project         Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId        String
+  client          Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// A calendar day in Dhaka, with no time.
+  dueDate         DateTime            @db.Date
+  amount          Decimal?            @db.Decimal(12, 2)
+  currency        String?
+  status          ClientDueStatus     @default(UNPAID)
+  paidAmount      Decimal?            @db.Decimal(12, 2)
+  note            String?
+  createdById     String?
+  createdBy       User?               @relation("ClientDueCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById     String?
+  updatedBy       User?               @relation("ClientDueUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  statusChangedAt DateTime?
+  /// CLIENTS_V3.md §4. "INV-000042" from `client_invoice_seq`, on every due raised since; older dues have none.
+  invoiceNumber   String?
+  kind            ClientDueKind?
+  /// The day the invoice was raised (Dhaka). Older dues have none and show their creation day.
+  issuedDate      DateTime?           @db.Date
+  /// What was sold, as written on the invoice (a snapshot, so renaming a plan later does not rewrite it).
+  service         String?
+  subscriptionId  String?
+  subscription    ClientSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  soldByMemberId  String?
+  soldByMember    InternalTeamMember? @relation(fields: [soldByMemberId], references: [id], onDelete: SetNull)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  events      ClientDueEvent[]
+  allocations ClientPaymentAllocation[]
+
+  @@unique([projectId, invoiceNumber])
+  @@index([clientId, dueDate])
+  @@index([projectId, status, dueDate])
+  @@index([subscriptionId])
+}
+
+/// The audit of every change to a due. Append-only (the database refuses an UPDATE) and separate
+/// from ClientActivity, because the timeline is readable with clients.view while amounts and dates
+/// need the billing key.
+model ClientDueEvent {
+  id          String    @id @default(cuid())
+  projectId   String    @default(dbgenerated("project_id_required()"))
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  dueId       String
+  due         ClientDue @relation(fields: [dueId], references: [id], onDelete: Cascade)
+  clientId    String
+  client      Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// CREATED, UPDATED, STATUS_CHANGED.
+  type        String
+  /// { field: { from, to } } for the fields that changed.
+  changes     Json
+  actorUserId String?
+  actor       User?     @relation("ClientDueEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@index([dueId, createdAt])
+  @@index([clientId, createdAt])
+}
+
+/// The currencies this project's staff may pick on a due. Ships EMPTY: no currency is assumed.
+model ClientBillingCurrency {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// ISO 4217, upper case.
+  code      String
+  enabled   Boolean  @default(true)
+  addedById String?
+  addedBy   User?    @relation("ClientCurrencyAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, code])
+}
+
+// ─── Client ⇄ WhatsApp chat link (CLIENT_CENTER_PLAN.md §3.4, stage 4B) ────────────────────────────
+
+/// A person's statement that this one-to-one chat on this account IS this client. Created only by an
+/// authorized admin, one chat at a time, never from a number match or an import. A link is kept when
+/// removed (`unlinkedAt`): the history of who linked what is the audit. The database allows ONE active
+/// link per (account, chat), so a chat can never belong to two clients at once (partial unique index
+/// in the migration; Prisma cannot express it).
+model ClientWhatsAppChatLink {
+  id           String          @id @default(cuid())
+  projectId    String          @default(dbgenerated("project_id_required()"))
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId     String
+  client       Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  accountId    String
+  account      WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// `…@c.us` or `…@lid` only (a group is never linked this way).
+  chatId       String
+  linkedById   String?
+  linkedBy     User?           @relation("ClientChatLinkedBy", fields: [linkedById], references: [id], onDelete: SetNull)
+  linkedAt     DateTime        @default(now())
+  unlinkedById String?
+  unlinkedBy   User?           @relation("ClientChatUnlinkedBy", fields: [unlinkedById], references: [id], onDelete: SetNull)
+  unlinkedAt   DateTime?
+
+  @@index([clientId, unlinkedAt])
+  @@index([projectId, accountId, chatId])
+}
+
+// ─── Email (SMTP) — CLIENT_CENTER_PLAN.md §3.1, stage 4C ───────────────────────────────────────────
+
+/// No plain-text SMTP: the password is only ever sent over TLS. STARTTLS is the usual port 587;
+/// TLS (implicit) is the usual port 465.
+enum EmailTlsMode {
+  STARTTLS
+  TLS
+}
+
+enum EmailPurpose {
+  /// A test message to the signed-in administrator's own address — the only way the channel becomes "connected".
+  TEST
+}
+
+/// SMTP only says the server ACCEPTED the message, so the state is ACCEPTED, never "delivered".
+/// UNKNOWN is an outcome nobody can know (a timeout after the message was handed over); it is never
+/// retried by itself, because a retry could email the person twice.
+enum EmailOutboxStatus {
+  QUEUED
+  SENDING
+  ACCEPTED
+  FAILED
+  UNKNOWN
+}
+
+/// One row per project. Ships absent: nothing is configured, nothing is assumed, no provider is chosen.
+/// The password is encrypted with encryptSecret and never returned to a page.
+model EmailSettings {
+  id                 String       @id @default(cuid())
+  projectId          String       @unique @default(dbgenerated("project_id_required()"))
+  project            Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Off until somebody switches it on; a project may configure it first.
+  enabled            Boolean      @default(false)
+  host               String       @default("")
+  port               Int          @default(587)
+  tlsMode            EmailTlsMode @default(STARTTLS)
+  username           String       @default("")
+  passwordCiphertext String?
+  fromName           String       @default("")
+  fromAddress        String       @default("")
+  replyTo            String?
+  /// Conservative defaults; the real ceiling is the provider's allowance, which this code cannot know.
+  maxPerMinute       Int          @default(10)
+  maxPerDay          Int          @default(500)
+  /// Bumped on every change that could alter whether mail is accepted (host, port, TLS, username,
+  /// password, from address). The channel is "connected" only while verifiedVersion equals it, so a
+  /// changed setting must be tested again.
+  settingsVersion    Int          @default(1)
+  /// The settingsVersion a test message was last ACCEPTED under. Null = never verified.
+  verifiedVersion    Int?
+  lastTestAt         DateTime?
+  lastTestOk         Boolean?
+  lastTestError      String?
+  updatedById        String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+}
+
+/// The send queue, drained only by the worker's email loop. Plain text, one recipient per message (no
+/// shared To / CC / BCC), so no recipient ever sees another's address.
+model EmailOutbox {
+  id                String            @id @default(cuid())
+  projectId         String            @default(dbgenerated("project_id_required()"))
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  purpose           EmailPurpose
+  status            EmailOutboxStatus @default(QUEUED)
+  toAddress         String
+  subject           String
+  bodyText          String
+  /// Unique per project: the same message can never be queued twice.
+  idempotencyKey    String
+  /// EmailSettings.settingsVersion when it was queued — what a TEST verifies.
+  settingsVersion   Int
+  attempts          Int               @default(0)
+  nextAttemptAt     DateTime?
+  sendingStartedAt  DateTime?
+  acceptedAt        DateTime?
+  /// The SMTP server's own message id, once it accepted the message.
+  providerMessageId String?
+  lastError         String?
+  createdById       String?
+  createdBy         User?             @relation("EmailQueuedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([projectId, idempotencyKey])
+  @@index([projectId, status, nextAttemptAt])
+  @@index([projectId, createdAt])
+}
+
+// ── Clients V3 (CLIENTS_V3.md) ─────────────────────────────────────────────────────────────────
+
+enum ClientSubscriptionKind {
+  PAID
+  TRIAL
+  DEMO
+  COMPLIMENTARY
+}
+
+enum ClientDurationUnit {
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
+enum ClientDueKind {
+  SUBSCRIPTION
+  RENEWAL
+  SERVICE
+  ONE_OFF
+  OTHER
+}
+
+enum ClientPaymentMethod {
+  CASH
+  BANK_TRANSFER
+  MOBILE_BANKING
+  CARD
+  CHEQUE
+  ONLINE
+  OTHER
+}
+
+/// One term of service for one client ("Tiger IPTV, 17 Oct → 17 Nov"). Never money: its expiry is not a
+/// debt. State (active, renew soon, expired…) is derived at read time (packages/shared clientSubscriptions.ts).
+/// Kept as history: a term is paused or cancelled, never deleted.
+model ClientSubscription {
+  id             String                 @id @default(cuid())
+  projectId      String                 @default(dbgenerated("project_id_required()"))
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId       String
+  client         Client                 @relation("ClientSubscriptions", fields: [clientId], references: [id], onDelete: Cascade)
+  service        String
+  kind           ClientSubscriptionKind @default(PAID)
+  startDate      DateTime               @db.Date
+  /// The day the service expires (it runs while today < endDate).
+  endDate        DateTime               @db.Date
+  durationValue  Int?
+  durationUnit   ClientDurationUnit?
+  /// A repeat purchase: renewed from an earlier term, or bought by a client who already had one.
+  isRenewal      Boolean                @default(false)
+  renewedFromId  String?
+  renewedFrom    ClientSubscription?    @relation("ClientSubscriptionRenewal", fields: [renewedFromId], references: [id], onDelete: SetNull)
+  renewals       ClientSubscription[]   @relation("ClientSubscriptionRenewal")
+  /// The seller, by roster id — and their name and team as they were at the sale, so history keeps its owner.
+  soldByMemberId String?
+  soldByMember   InternalTeamMember?    @relation(fields: [soldByMemberId], references: [id], onDelete: SetNull)
+  soldByTeamId   String?
+  soldByTeam     Team?                  @relation(fields: [soldByTeamId], references: [id], onDelete: SetNull)
+  soldByName     String?
+  soldByTeamName String?
+  note           String?
+  pausedAt       DateTime?
+  cancelledAt    DateTime?
+  cancelReason   String?
+  createdById    String?
+  createdBy      User?                  @relation("ClientSubscriptionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  currentFor Client[]    @relation("ClientCurrentSubscription")
+  dues       ClientDue[]
+
+  @@index([clientId, endDate])
+  @@index([projectId, endDate])
+  @@index([soldByMemberId])
+}
+
+/// A client's profile picture: a small, metadata-stripped thumbnail (≤ 200 KB, CHECK-enforced), one per
+/// client, deleted with the client. Served only by /p/<slug>/api/clients/<id>/photo after a permission check.
+model ClientPhoto {
+  id           String   @id @default(cuid())
+  projectId    String   @default(dbgenerated("project_id_required()"))
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId     String   @unique
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  mimeType     String
+  bytes        Bytes
+  width        Int
+  height       Int
+  uploadedById String?
+  uploadedBy   User?    @relation("ClientPhotoUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/// Money received from a client, recorded by hand, in ONE currency (CLIENTS_V3.md §4). Allocated to one or
+/// more of that client's dues in the same currency. A mistake is REVERSED (with a reason), never edited
+/// or deleted: the database refuses a change to the amount, currency or client, and an un-reversal.
+model ClientPayment {
+  id             String              @id @default(cuid())
+  projectId      String              @default(dbgenerated("project_id_required()"))
+  project        Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// "RCPT-000042" from `client_receipt_seq`.
+  receiptNumber  String
+  clientId       String
+  client         Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  currency       String
+  amount         Decimal             @db.Decimal(12, 2)
+  method         ClientPaymentMethod
+  reference      String?
+  /// The day the money arrived (Dhaka), as the person recording it says.
+  receivedDate   DateTime            @db.Date
+  note           String?
+  /// Payments recorded in one batch share it, so the batch can be read back together.
+  batchReference String?
+  /// The submission's own key: pressing Record twice records once.
+  idempotencyKey String
+  recordedById   String?
+  recordedBy     User?               @relation("ClientPaymentRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+  recordedAt     DateTime            @default(now())
+  reversedAt     DateTime?
+  reversedById   String?
+  reversedBy     User?               @relation("ClientPaymentReversedBy", fields: [reversedById], references: [id], onDelete: SetNull)
+  reversalReason String?
+
+  allocations ClientPaymentAllocation[]
+
+  @@unique([projectId, receiptNumber])
+  @@unique([projectId, idempotencyKey])
+  @@index([clientId, receivedDate])
+  @@index([projectId, receivedDate])
+}
+
+/// How much of one payment settles one due. Immutable (the database refuses an UPDATE); a reversed
+/// payment's allocations stay as the record of what it had settled.
+model ClientPaymentAllocation {
+  id        String        @id @default(cuid())
+  projectId String        @default(dbgenerated("project_id_required()"))
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  paymentId String
+  payment   ClientPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  dueId     String
+  due       ClientDue     @relation(fields: [dueId], references: [id], onDelete: Cascade)
+  amount    Decimal       @db.Decimal(12, 2)
+  createdAt DateTime      @default(now())
+
+  @@unique([paymentId, dueId])
+  @@index([dueId])
+}
+
+/// A person's statement that a client is supported in an existing WhatsApp GROUP (CLIENTS_V3.md §8).
+/// Separate from ClientWhatsAppChatLink (one-to-one chats only). Data only: it joins nothing, sends
+/// nothing and changes no monitoring. One ACTIVE owner per WhatsApp group id (partial unique index);
+/// unlinking keeps the row. The group's id and name are snapshotted so history survives a re-sync.
+model ClientWhatsAppGroupLink {
+  id              String           @id @default(cuid())
+  projectId       String           @default(dbgenerated("project_id_required()"))
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId        String
+  client          Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  accountId       String?
+  account         WhatsAppAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  groupId         String?
+  group           WhatsAppGroup?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  /// `…@g.us`, as it was when linked.
+  whatsappGroupId String
+  groupName       String
+  linkedById      String?
+  linkedBy        User?            @relation("ClientGroupLinkedBy", fields: [linkedById], references: [id], onDelete: SetNull)
+  linkedAt        DateTime         @default(now())
+  unlinkedById    String?
+  unlinkedBy      User?            @relation("ClientGroupUnlinkedBy", fields: [unlinkedById], references: [id], onDelete: SetNull)
+  unlinkedAt      DateTime?
+  unlinkReason    String?
+
+  @@index([clientId, unlinkedAt])
+  @@index([projectId, whatsappGroupId])
+  @@index([groupId])
+}
+
+/// A project's own choices inside Client Management: which sub-modules it uses and which fields are
+/// required (packages/shared clientModuleSettings.ts). No row = everything on, nothing required.
+model ClientModuleSettings {
+  id                        String   @id @default(cuid())
+  projectId                 String   @unique @default(dbgenerated("project_id_required()"))
+  project                   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  subscriptionsEnabled      Boolean  @default(true)
+  billingEnabled            Boolean  @default(true)
+  paymentsEnabled           Boolean  @default(true)
+  whatsappGroupLinksEnabled Boolean  @default(true)
+  requiredFields            String[] @default([])
+  renewalWindowDays         Int      @default(7)
+  defaultCountry            String?
+  updatedById               String?
+  updatedBy                 User?    @relation("ClientModuleSettingsUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+/// Who a WhatsApp group was assigned to, and its priority, over time (report accuracy audit, 19 Oct
+/// 2026). The Team Report charges a Missed wait to the assignee, and judges it by the threshold, as
+/// they were when the customer asked: one row per change with the values before and after, and a
+/// moment before the first row reads that row's "before". Member ids are plain values, not a relation,
+/// so history keeps a removed member's id.
+model GroupResponsibilityChange {
+  id                           String           @id @default(cuid())
+  projectId                    String           @default(dbgenerated("project_id_required()"))
+  project                      Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  whatsappGroupId              String
+  previousAssignedTeamMemberId String?
+  previousPriority             SupportPriority?
+  assignedTeamMemberId         String?
+  priority                     SupportPriority?
+  changedAt                    DateTime         @default(now())
+  changedByUserId              String?
+
+  @@index([projectId, whatsappGroupId, changedAt])
+}
+
+/// A request to bring stored attribution in line with the roster after a team member's identifiers
+/// change: the team-member stamp on their messages, the member on Support Activity rows, and their
+/// Duty History days. Written by the Team Members actions, worked by the worker
+/// (teamManagement/reattribution.ts). Status: PENDING, RUNNING, DONE or FAILED.
+model IdentityReattribution {
+  id                String    @id @default(cuid())
+  projectId         String    @default(dbgenerated("project_id_required()"))
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  status            String    @default("PENDING")
+  reason            String
+  memberIds         String[]  @default([])
+  identifiers       String[]  @default([])
+  requestedByUserId String?
+  attempts          Int       @default(0)
+  result            Json?
+  error             String?
+  createdAt         DateTime  @default(now())
+  startedAt         DateTime?
+  finishedAt        DateTime?
+
+  @@index([projectId, status, createdAt])
+}
+
+/// Which columns one person shows, in which order, on one list in one project ("clients", "billing").
+/// Presentation only: the server still decides what each column may contain.
+model ListViewPreference {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listKey   String
+  columns   String[] @default([])
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, userId, listKey])
 }

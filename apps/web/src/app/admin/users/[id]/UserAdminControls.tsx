@@ -10,8 +10,8 @@ import {
   type ProjectAccessLevelValue,
   type ProjectStatusValue,
 } from "@support-automation/shared";
-import { Button, Select, useToast } from "@/components/ui";
-import { setUserAccessLevel, setUserEmployee, setUserRole, type AdminUserFormState } from "@/server/actions/adminUsers";
+import { Badge, Button, Select, Switch, useToast } from "@/components/ui";
+import { setUserAccessLevel, setUserEmployee, setUserLead, setUserRole, type AdminUserFormState } from "@/server/actions/adminUsers";
 
 function useRun() {
   const router = useRouter();
@@ -97,7 +97,15 @@ export function AccessMatrix({
   canEdit,
 }: {
   userId: string;
-  rows: Array<{ projectId: string; name: string; slug: string; status: ProjectStatusValue; level: ProjectAccessLevelValue | null }>;
+  rows: Array<{
+    projectId: string;
+    name: string;
+    slug: string;
+    status: ProjectStatusValue;
+    level: ProjectAccessLevelValue | null;
+    isLead: boolean;
+    projectRoleName: string | null;
+  }>;
   canEdit: boolean;
 }) {
   const { run, pending } = useRun();
@@ -110,7 +118,22 @@ export function AccessMatrix({
             <span className="min-w-0 flex-1 text-[13px] font-medium">
               {row.name}
               {row.status !== "ACTIVE" ? <span className="ml-2 text-xs font-normal text-[color:var(--color-muted-foreground)]">{PROJECT_STATUS_LABELS[row.status]}</span> : null}
+              {row.isLead ? (
+                <span className="ml-2">
+                  <Badge color="blue">Lead</Badge>
+                </span>
+              ) : null}
+              {row.projectRoleName ? <span className="ml-2 text-xs font-normal text-[color:var(--color-muted-foreground)]">Project role: {row.projectRoleName}</span> : null}
             </span>
+            <label className="flex items-center gap-2 text-xs text-[color:var(--color-muted-foreground)]" title="The Lead runs this project: its app users, its project roles and each member's modules.">
+              <Switch
+                checked={row.isLead}
+                disabled={!canEdit || pending || row.status === "ARCHIVED"}
+                onChange={(e) => run(() => setUserLead(userId, row.projectId, e.target.checked))}
+                aria-label={`Lead of ${row.name}`}
+              />
+              Lead
+            </label>
             <div className="w-36">
               <Select
                 aria-label={`Access to ${row.name}`}

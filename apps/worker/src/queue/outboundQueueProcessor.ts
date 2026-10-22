@@ -3,13 +3,22 @@ import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
 import { currentProjectId, OPERATING_PROJECT_STATUSES, projectIdForAccount, withProject } from "../project/context.js";
 import type { OutboundMessage } from "@prisma/client";
-import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
+import type { SendResult, WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { isCooldownActive } from "./cooldown.js";
-import { MOOD_CUSTOMER_MESSAGE_VARIANT } from "@support-automation/shared";
+import {
+  forwardRefusal,
+  isSendableSticker,
+  MOOD_CUSTOMER_MESSAGE_VARIANT,
+  STICKER_MAX_BYTES,
+  validateLocation,
+  validatePoll,
+} from "@support-automation/shared";
+import { createMediaStorageFromEnv } from "@support-automation/media-storage";
 import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from "./rateLimiter.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { getAiSettings } from "../ai/settings.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { recordOperatorAttendance } from "../teamManagement/attendance.js";
 import {
   countJobSentLastMinute,
   getGroupBroadcastSettings,
@@ -396,7 +405,23 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
     }
   }
 
-  if (isManualReply) {
+  if (isManualReply && !message.chatId.endsWith("@g.us")) {
+    // A reply typed into a personal (one-to-one) chat. Checked live, like a group: the chat must be
+    // an individual one that exists on this account, so a manual reply can only ever continue a
+    // conversation — never open one with a stranger. Anything else that is not a group (a status
+    // broadcast, a channel) fails this check too.
+    const reachable = await provider.verifyPersonalChat(message.chatId);
+    if (!reachable) {
+      await prisma.outboundMessage.update({
+        where: { id: message.id },
+        data: {
+          status: "SKIPPED",
+          failureReason: "This chat could not be found on this WhatsApp account, so the message was not sent.",
+        },
+      });
+      return;
+    }
+  } else if (isManualReply) {
     // Same live membership check the broadcast path does, for the same reason: the group list the
     // inbox rendered from can be minutes stale, and sending into a group this account has been
     // removed from is an error worth reporting rather than a silent provider failure.
@@ -413,8 +438,37 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
     }
   }
 
+  // WhatsApp Chat v2 (CHAT_UI_V2.md §4): a manual reply that quotes a stored message. The web action
+  // already proved the target is in this conversation of this account; checked again here because the
+  // row is what is trusted at send time, not the browser that wrote it. A target that is not this
+  // chat's on this account fails outright — sending it unquoted would be a different message from
+  // the one the operator wrote.
+  let quotedMessageId: string | null = null;
+  if (message.replyToMessageId) {
+    const target = await prisma.message.findUnique({
+      where: { id: message.replyToMessageId },
+      select: { accountId: true, chatId: true, whatsappMessageId: true },
+    });
+    if (!target || target.accountId !== message.accountId || target.chatId !== message.chatId) {
+      await prisma.outboundMessage.update({
+        where: { id: message.id },
+        data: {
+          status: "FAILED",
+          attemptCount: { increment: 1 },
+          failureReason: "The message this reply quotes is not in this conversation on this account, so nothing was sent.",
+        },
+      });
+      return;
+    }
+    quotedMessageId = target.whatsappMessageId;
+  }
+
   try {
-    const result = await provider.sendMessage(message.chatId, message.body, message.mentions);
+    const result =
+      message.contentType === "TEXT"
+        ? await provider.sendMessage(message.chatId, message.body, message.mentions, quotedMessageId ? { quotedMessageId } : undefined)
+        : await sendRichContent(message, provider, isManualReply);
+    if (result === null) return; // refused and settled by sendRichContent: nothing left to retry
     if (result.success) {
       await prisma.outboundMessage.update({
         where: { id: message.id },
@@ -427,6 +481,11 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
       });
       countMetric("replied");
       if (isBroadcast) await maybeCompleteBroadcastJob(message.broadcastJobId!);
+      // A dashboard reply credits the team member linked to the login that sent it (attendance.ts);
+      // the echo may already be stored, so the day is recomputed from here too. Never throws.
+      if (message.actionType === "MANUAL_REPLY" && message.createdById && result.providerMessageId) {
+        void recordOperatorAttendance({ providerMessageId: result.providerMessageId, timestampWa: new Date() });
+      }
     } else {
       await handleSendFailure(message, result.error ?? "Unknown provider error");
     }
@@ -434,6 +493,95 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
     await handleSendFailure(message, (err as Error).message);
   }
   return;
+}
+
+/**
+ * A poll, location, sticker or forward (CHAT_RICH_MESSAGING.md §5). Reached only after every check a
+ * text send passes — kill switch, rate limits, membership — because it is the same queue row.
+ *
+ * Everything the row names is re-read and re-checked here rather than trusted from the browser that
+ * wrote it: the content is validated again, a sticker must be a stored WebP of this project, a forward
+ * must be a stored message of THIS account. A row that fails one of these is settled FAILED at once
+ * (returns null) — retrying cannot make an invalid poll valid. A provider failure returns a result,
+ * and is retried like any send.
+ */
+async function sendRichContent(message: OutboundMessage, provider: WhatsAppProvider, isManualReply: boolean): Promise<SendResult | null> {
+  const refuse = async (failureReason: string): Promise<null> => {
+    await prisma.outboundMessage.update({
+      where: { id: message.id },
+      data: { status: "FAILED", attemptCount: { increment: 1 }, failureReason },
+    });
+    return null;
+  };
+  // Only a person composes these, in Chat v2. Anything else carrying one is a row nothing should
+  // have written, and is never sent.
+  if (!isManualReply) return refuse("Only a message typed in WhatsApp Chat can be a poll, location, sticker or forward. Nothing was sent.");
+  if (message.replyToMessageId || message.mentions.length) return refuse("A poll, location, sticker or forward cannot also quote or tag. Nothing was sent.");
+  const content = (message.content ?? {}) as Record<string, unknown>;
+
+  switch (message.contentType) {
+    case "POLL": {
+      const poll = validatePoll(content);
+      if (!poll.ok) return refuse(`${poll.error} Nothing was sent.`);
+      if (!message.chatId.endsWith("@g.us")) return refuse("WhatsApp allows polls in groups only. Nothing was sent.");
+      if (!provider.sendPoll) return refuse("This WhatsApp connection cannot send polls. Nothing was sent.");
+      return provider.sendPoll(message.chatId, poll.value);
+    }
+    case "LOCATION": {
+      const location = validateLocation(content);
+      if (!location.ok) return refuse(`${location.error} Nothing was sent.`);
+      if (!provider.sendLocation) return refuse("This WhatsApp connection cannot send locations. Nothing was sent.");
+      return provider.sendLocation(message.chatId, location.value);
+    }
+    case "STICKER": {
+      const mediaId = typeof content.mediaId === "string" ? content.mediaId : "";
+      // The scoped client: another project's file is "not found".
+      const media = mediaId
+        ? await prisma.messageMedia.findUnique({
+            where: { id: mediaId },
+            select: { mediaType: true, mimeType: true, status: true, sizeBytes: true, storageKey: true, isAnimated: true },
+          })
+        : null;
+      if (!media || !media.storageKey || !isSendableSticker(media)) return refuse("That sticker is no longer stored, so nothing was sent.");
+      if (!provider.sendSticker) return refuse("This WhatsApp connection cannot send stickers. Nothing was sent.");
+      const webp = await readStoredFile(media.storageKey);
+      if (!webp) return refuse("That sticker's file could not be read from media storage, so nothing was sent.");
+      return provider.sendSticker(message.chatId, webp.toString("base64"), media.isAnimated);
+    }
+    case "FORWARD": {
+      const sourceId = typeof content.sourceMessageId === "string" ? content.sourceMessageId : "";
+      const source = sourceId
+        ? await prisma.message.findUnique({ where: { id: sourceId }, select: { accountId: true, whatsappMessageId: true, revokedAt: true } })
+        : null;
+      const refusal = forwardRefusal(source, message.accountId);
+      if (refusal) return refuse(`${refusal} Nothing was sent.`);
+      if (!provider.forwardMessage) return refuse("This WhatsApp connection cannot forward messages. Nothing was sent.");
+      return provider.forwardMessage(message.chatId, source!.whatsappMessageId);
+    }
+    default:
+      return refuse("This message has a content type this worker does not know, so nothing was sent.");
+  }
+}
+
+/** A stored media file, whole — a sticker is under a megabyte by `isSendableSticker`. */
+async function readStoredFile(key: string): Promise<Buffer | null> {
+  try {
+    const storage = createMediaStorageFromEnv();
+    if (!storage) return null; // media storage is not configured in this worker
+    const { stream } = await storage.get(key);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of stream) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+      size += buf.length;
+      if (size > STICKER_MAX_BYTES) return null;
+      chunks.push(buf);
+    }
+    return Buffer.concat(chunks);
+  } catch (err) {
+    console.error("[outbound] could not read a stored sticker", err);
+    return null;
+  }
 }
 
 async function handleSendFailure(message: OutboundMessage, failureReason: string): Promise<void> {

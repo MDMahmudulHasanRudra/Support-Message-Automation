@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import Link from "@/components/ProjectLink";
 import { Badge, Button, ConfirmDialog, EmptyState, Table, Td, Th, Tooltip } from "@/components/ui";
 import { deleteTeamMember, toggleTeamMemberStatus } from "@/server/actions/teamMembers";
+import { whatsappIdBadge } from "@support-automation/shared";
 
 export interface TeamMemberRow {
   id: string;
@@ -16,20 +17,60 @@ export interface TeamMemberRow {
   department: string | null;
   status: string;
   team: { id: string; name: string; status: string } | null;
+  /**
+   * Other members who share one of this member's identifiers (WHATSAPP_IDENTITY.md §3). Messages
+   * from that identifier are credited to nobody until the clash is fixed.
+   */
+  identityClash?: string[];
+  /** Their earlier history after being added or re-identified: being collected, or what was found. */
+  historySync?: { state: "SYNCING" | "DONE" | "FAILED"; messages: number | null; groups: number | null; firstAt: string | null };
+}
+
+function HistorySyncNote({ sync }: { sync: NonNullable<TeamMemberRow["historySync"]> }) {
+  if (sync.state === "SYNCING") {
+    return (
+      <Tooltip content="Their earlier messages in groups are being collected into Team Performance, Duty History and the Activity Feed. The Team Report and every other report already count them.">
+        <span className="ml-2 align-middle">
+          <Badge color="blue">Syncing history…</Badge>
+        </span>
+      </Tooltip>
+    );
+  }
+  if (sync.state === "FAILED") {
+    return (
+      <span className="ml-2 align-middle">
+        <Badge color="red">History sync failed</Badge>
+      </span>
+    );
+  }
+  if (!sync.messages) return null;
+  const since = sync.firstAt ? new Date(sync.firstAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Dhaka" }) : null;
+  return (
+    <span className="mt-0.5 block text-[11px] text-[color:var(--color-muted-foreground)]">
+      History synced: {sync.messages.toLocaleString("en-US")} message(s) in {sync.groups ?? 0} group(s){since ? ` since ${since}` : ""}
+    </span>
+  );
 }
 
 type DialogState = { kind: "delete" | "toggle"; member: TeamMemberRow } | null;
 
-export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
+export function TeamMembersTable({ members, unified = false }: { members: TeamMemberRow[]; unified?: boolean }) {
   const router = useRouter();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [isPending, startTransition] = useTransition();
+  const [notice, setNotice] = useState<{ tone: "error" | "info"; text: string } | null>(null);
 
   function confirm() {
     if (!dialog) return;
     const { kind, member } = dialog;
     startTransition(async () => {
-      if (kind === "delete") await deleteTeamMember(member.id);
+      if (kind === "delete") {
+        const result = await deleteTeamMember(member.id);
+        if (result.error) setNotice({ tone: "error", text: result.error });
+        else if (result.deactivated) {
+          setNotice({ tone: "info", text: `${member.name} has messages or activity on record, so they were disabled instead of deleted to keep that history. Their reports are unchanged. If they were added by mistake and their messages are a customer's, set "Count their messages from" on their edit page instead.` });
+        } else setNotice({ tone: "info", text: `${member.name} was deleted.` });
+      }
       if (kind === "toggle") await toggleTeamMemberStatus(member.id);
       setDialog(null);
       router.refresh();
@@ -42,6 +83,14 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
 
   return (
     <div>
+      {notice ? (
+        <div
+          role={notice.tone === "error" ? "alert" : "status"}
+          className={`mb-3 rounded-md border px-3 py-2 text-sm ${notice.tone === "error" ? "border-[var(--color-danger)] text-[color:var(--color-danger)]" : "border-[var(--color-border)]"}`}
+        >
+          {notice.text}
+        </div>
+      ) : null}
       <Table>
         <thead>
           <tr>
@@ -57,15 +106,35 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
         <tbody>
           {members.map((m) => (
             <tr key={m.id}>
-              <Td>{m.name}</Td>
+              <Td>
+                {m.name}
+                {m.historySync ? <HistorySyncNote sync={m.historySync} /> : null}
+              </Td>
               <Td className="font-[family-name:var(--font-mono)] text-xs">
                 {m.phoneNumber}
                 {/* Mapped from message history, so this is a WhatsApp id rather than a number.
                     It recognises them fine; it cannot receive an escalation. */}
-                {m.whatsappId && m.whatsappId.trim() === m.phoneNumber.trim() ? (
+                {unified && whatsappIdBadge(m) === "UNLINKED_BD_MOBILE" ? (
+                  // UNIFIED_REPORTING: the number typed is a real mobile number, so what is missing is the private
+                  // WhatsApp ID. Display only: sending rules are unchanged.
+                  <Tooltip content="This phone number is on file, but WhatsApp shows this person in groups by a private WhatsApp ID that has not been linked, so some of their messages may not be credited to them. Use Link to member in the Identity check below, or This person is… in WhatsApp Chat.">
+                    <span className="ml-2 align-middle">
+                      <Badge color="yellow">WhatsApp ID not linked</Badge>
+                    </span>
+                  </Tooltip>
+                ) : m.whatsappId && m.whatsappId.trim() === m.phoneNumber.trim() ? (
                   <Tooltip content="This is a WhatsApp id, not a phone number. They will be recognised in groups, but a support escalation cannot reach them directly until you enter their real number.">
                     <span className="ml-2 align-middle">
                       <Badge color="yellow">Needs phone number</Badge>
+                    </span>
+                  </Tooltip>
+                ) : null}
+                {m.identityClash?.length ? (
+                  <Tooltip
+                    content={`Shares a phone number or WhatsApp ID with ${m.identityClash.join(", ")}. Their messages are counted as a team member's but credited to nobody in reports until one of the two records is corrected.`}
+                  >
+                    <span className="ml-2 align-middle">
+                      <Badge color="red">Identity clash</Badge>
                     </span>
                   </Tooltip>
                 ) : null}
@@ -124,7 +193,7 @@ export function TeamMembersTable({ members }: { members: TeamMemberRow[] }) {
         }
         description={
           dialog?.kind === "delete"
-            ? "This permanently removes the team member record. This cannot be undone."
+            ? "This permanently removes the team member. If they have recorded support activity they are disabled instead, so past reports keep their name."
             : dialog?.kind === "toggle" && dialog.member.status === "ACTIVE"
               ? "Their messages will no longer be treated as internal team member messages by automation."
               : undefined

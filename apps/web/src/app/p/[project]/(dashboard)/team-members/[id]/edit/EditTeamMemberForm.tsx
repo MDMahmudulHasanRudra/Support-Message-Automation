@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { Alert, Button, Field, Input, Select } from "@/components/ui";
 import { updateTeamMember, type TeamMemberFormState } from "@/server/actions/teamMembers";
+import { IdentityImpactPanel } from "@/components/teamMembers/IdentityImpactPanel";
 import { MemberSuggestionLists, TeamSelect, type MemberFormOptions } from "../../MemberFormFields";
 
 /**
@@ -18,8 +19,10 @@ export function EditTeamMemberForm({
   defaults,
   options,
   seenMessages = null,
+  previewEnabled = false,
 }: {
   seenMessages?: number | null;
+  previewEnabled?: boolean;
   memberId: string;
   defaults: {
     name: string;
@@ -29,6 +32,8 @@ export function EditTeamMemberForm({
     department: string | null;
     teamId: string | null;
     status: string;
+    /** YYYY-MM-DD (Asia/Dhaka), or null when all their messages count. */
+    attributeFrom: string | null;
   };
   options: MemberFormOptions;
 }) {
@@ -60,6 +65,12 @@ export function EditTeamMemberForm({
         ) : null}
       </Field>
       <Field
+        label="Count their messages from (optional)"
+        hint="Reports credit this person only from this date. Use it when the number wrote to you as a customer before they joined, so that history stays customer history. Leave it empty to count everything. Automation always treats them as staff."
+      >
+        <Input name="attributeFrom" type="date" defaultValue={defaults.attributeFrom ?? ""} />
+      </Field>
+      <Field
         label="Team"
         hint="Changing the team keeps their past work with the team they were in at the time; the Team Report counts it there."
       >
@@ -77,6 +88,7 @@ export function EditTeamMemberForm({
           <option value="INACTIVE">Disabled</option>
         </Select>
       </Field>
+      {previewEnabled ? <IdentityImpactPanel memberId={memberId} newMemberLabel={defaults.name} /> : null}
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
       <Button type="submit" loading={pending}>
         Save

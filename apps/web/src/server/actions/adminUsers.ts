@@ -8,7 +8,7 @@ import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { forgetProjectAccessDecisions } from "@/server/projectContext";
 import { logSystemEvent } from "@/server/logSystemEvent";
-import { createUserWithAccess, setUserProjectAccess, type AccessGrant, type NewUserInput } from "@/server/adminUsers";
+import { createUserWithAccess, setUserProjectAccess, setUserProjectLead, type AccessGrant, type NewUserInput } from "@/server/adminUsers";
 import { linkEmployeeToUser } from "@/server/configuration";
 import { privilegeRefusal } from "@/server/privilegeGuard";
 
@@ -45,7 +45,12 @@ export async function createUserFromAdmin(_prev: AdminUserFormState, form: FormD
     if (!name.startsWith("access:")) continue;
     const level = String(value);
     if (level === "NONE" || level === "") continue;
-    if (!isProjectAccessLevel(level)) return { error: "Choose No access, Read, Write or Full for each project." };
+    // "LEAD" (PROJECT_ROLES.md): the project's Lead — FULL, plus that project's members and roles.
+    if (level === "LEAD") {
+      access.push({ projectId: name.slice("access:".length), level: "FULL", isLead: true });
+      continue;
+    }
+    if (!isProjectAccessLevel(level)) return { error: "Choose No access, Read, Write, Full or Project Lead for each project." };
     access.push({ projectId: name.slice("access:".length), level });
   }
   if (access.length > 0 && !(await hasPermission(session, "projects.manage"))) {
@@ -92,7 +97,7 @@ export async function createUserFromAdmin(_prev: AdminUserFormState, form: FormD
   await logSystemEvent("INFO", "users", "USER_CREATED", {
     actorId: session.userId,
     targetUserId: result.userId,
-    projects: access.map((a) => `${a.projectId}:${a.level}`),
+    projects: access.map((a) => `${a.projectId}:${a.isLead ? "LEAD" : a.level}`),
     employeeCode: result.employeeCode ?? null,
     from: "main-admin",
   });
@@ -124,6 +129,25 @@ export async function setUserAccessLevel(userId: string, projectId: string, leve
           ? "No change."
           : `Access set to ${PROJECT_ACCESS_LEVEL_LABELS[level ?? "FULL"]}.`,
   };
+}
+
+/**
+ * Makes a user the Lead of one project, or stops them being it (PROJECT_ROLES.md). A Main Admin's
+ * decision: it needs `projects.manage`, the key that already decides who may enter a project.
+ */
+export async function setUserLead(userId: string, projectId: string, isLead: boolean): Promise<AdminUserFormState> {
+  const session = await portalSession();
+  if (!session || !(await hasPermission(session, "projects.manage"))) return { error: NEEDS("choose a project's Lead") };
+  const result = await setUserProjectLead(platformPrisma, userId, projectId, isLead);
+  if (!result.ok) return { error: result.error };
+  forgetProjectAccessDecisions();
+  if (result.changed) {
+    await logSystemEvent("WARN", "projects", isLead ? "Project Lead assigned" : "Project Lead removed", { projectId, userId, changedBy: session.username });
+  }
+  revalidatePath(`/admin/users/${userId}`);
+  revalidatePath("/admin/users");
+  revalidatePath(`/admin/projects/${projectId}`);
+  return { success: !result.changed ? "No change." : isLead ? "Now the Lead of this project." : "No longer the Lead of this project." };
 }
 
 /** The user's role — the existing Permission Module. */

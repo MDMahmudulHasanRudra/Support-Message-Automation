@@ -1,4 +1,4 @@
-import { trackTick } from "../lifecycle.js";
+import { isShuttingDown, trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
 import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withAccountProject, withProject } from "../project/context.js";
 import { SessionNotReadyError, type WhatsAppProvider, GroupListNotReadyError } from "../provider/WhatsAppProvider.js";
@@ -16,6 +16,8 @@ import { connectWithRetry } from "../provider/connectWithRetry.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { shouldHoldDeactivationSweep } from "./groupSyncGuard.js";
 import type { Prisma } from "@prisma/client";
+import type { GroupSyncBasis } from "@support-automation/shared";
+import { storeHistoryMessages } from "../pipeline/messageUpdates.js";
 
 /** Name this loop reports itself under in the per-loop liveness view. */
 const LOOP_NAME = "command-processor";
@@ -52,6 +54,16 @@ export interface GroupSyncOutcome {
   failed: number;
   /** The list looked incomplete, so nothing was deactivated (groupSyncGuard.ts). */
   sweepHeld: boolean;
+  /**
+   * Rows that were ACTIVE when this pass started and are not in the list WhatsApp just returned.
+   * This — not "every row the list lacks" — is what separates a list that is still arriving from
+   * history: an active group that disappears from a read is the signal of a partial list (it is the
+   * sweep guard's own signal), whereas an INACTIVE row the list lacks is just as likely a group the
+   * account left long ago, and says nothing about whether this read is complete (groupRecovery.ts).
+   */
+  unlistedActive: number;
+  /** Rows the account had before this read (active or not): what an empty list is judged against. */
+  knownRows: number;
   /** Reading the list from WhatsApp. */
   discoveryMs: number;
   /** Writing it to the database. */
@@ -91,6 +103,22 @@ export class GroupListStillLoadingError extends Error {
   }
 }
 
+/**
+ * The provider could not give a group list at all — no live client, or the session was no longer
+ * CONNECTED before or after the read. Unlike "the list is empty", this says nothing about the
+ * account's groups, so a recovery treats it as unknown and writes nothing.
+ */
+export class GroupListUnavailableError extends Error {
+  constructor(
+    message: string,
+    /** UNAVAILABLE: no live client / not connected. EMPTY_LIST: a list with no group that cannot be trusted. */
+    public readonly reason: "UNAVAILABLE" | "EMPTY_LIST" = "UNAVAILABLE",
+  ) {
+    super(message);
+    this.name = "GroupListUnavailableError";
+  }
+}
+
 const syncGeneration = new Map<string, number>();
 const generationOf = (accountId: string) => syncGeneration.get(accountId) ?? 0;
 
@@ -104,11 +132,13 @@ const CANCEL_SETTLE_WAIT_MS = 5_000;
  * once and records nothing.
  */
 export async function cancelGroupSync(accountId: string, reason: string): Promise<boolean> {
-  const running = syncInFlight.get(accountId);
+  const running = syncInFlight.get(accountId)?.promise;
   const account = running
     ? null
     : await prisma.whatsAppAccount.findFirst({ where: { id: accountId }, select: { groupSyncStatus: true } }).catch(() => null);
   syncGeneration.set(accountId, generationOf(accountId) + 1);
+  // A FULL queued behind a sync belongs to the session that is going away.
+  rejectPendingFull(accountId, reason);
   if (!running && account?.groupSyncStatus !== "RUNNING") return false;
 
   // Released so a sync started after this (the reconnect's own) is a new one, not a join of this.
@@ -118,6 +148,7 @@ export async function cancelGroupSync(accountId: string, reason: string): Promis
     groupSyncStage: null,
     groupSyncCompletedAt: new Date(),
     groupSyncError: reason,
+    groupSyncBasis: null,
   });
   await logSystemEvent("INFO", "provider", "GROUP_SYNC_CANCELLED", { accountId, reason });
   if (running) {
@@ -140,6 +171,27 @@ async function readGroupList(provider: WhatsAppProvider, readTimeoutMs: number) 
     }
     throw err;
   }
+}
+
+/**
+ * The one way a group list is read for a sync, in every mode (post-connect, arrival passes, manual
+ * FULL, recovery). The provider must still hold a live client BEFORE the read and AFTER it
+ * (`WhatsAppProvider.hasLiveClient`): `getGroups()` answers `[]` both for an account in no groups
+ * and for a session whose client is gone, and a list handed back by a session that dropped mid-read
+ * is not evidence of anything. The check after runs before anything is persisted.
+ *
+ * `requireConnected` adds the state label (CONNECTED) to that test and is for the background
+ * recovery only. The connect's own sync and the passes after it do NOT use it: OpenWA reports
+ * RECONNECTING for a while right after a successful connect, and refusing that label would stop the
+ * sync that fills in a freshly linked number. A provider that cannot say whether its client is live
+ * (no `hasLiveClient`) is trusted as before.
+ */
+async function readGroupListChecked(provider: WhatsAppProvider, readTimeoutMs: number | undefined, requireConnected: boolean) {
+  const available = () => provider.hasLiveClient?.() !== false && (!requireConnected || provider.getConnectionStatus() === "CONNECTED");
+  if (!available()) throw new GroupListUnavailableError("The session has no live browser, so its group list cannot be read.");
+  const groups = readTimeoutMs ? await readGroupList(provider, readTimeoutMs) : await provider.getGroups();
+  if (!available()) throw new GroupListUnavailableError("The session dropped while its group list was being read, so the result is not trusted.");
+  return groups;
 }
 
 export async function syncGroupsDetailed(
@@ -172,6 +224,7 @@ async function syncGroupsInProject(
   mode: GroupSyncMode,
   generation: number,
   readTimeoutMs?: number,
+  requireConnected = false,
 ): Promise<GroupSyncOutcome> {
   // Before every write: a Logout or Reconnect since this sync started means stop, writing nothing.
   const checkpoint = () => {
@@ -184,7 +237,7 @@ async function syncGroupsInProject(
   // pictures (OpenWAProvider.listGroupChats). A chat listed twice is kept once.
   // Discovery is bounded on its own, apart from the writes, only where a slow read means "still
   // loading" rather than "broken" (the post-connect read and the arrival passes).
-  const listed = readTimeoutMs ? await readGroupList(provider, readTimeoutMs) : await provider.getGroups();
+  const listed = await readGroupListChecked(provider, readTimeoutMs, requireConnected);
   checkpoint();
   const discoveryMs = Math.round(performance.now() - discoveryStarted);
   const groups = [...new Map(listed.map((group) => [group.whatsappGroupId, group])).values()];
@@ -329,6 +382,7 @@ async function syncGroupsInProject(
     }
   }
 
+  const listedNow = new Set(groups.map((group) => group.whatsappGroupId));
   return {
     discovered: groups.length,
     created,
@@ -337,6 +391,8 @@ async function syncGroupsInProject(
     deactivated,
     failed,
     sweepHeld,
+    unlistedActive: existing.filter((row) => row.isActive && !listedNow.has(row.whatsappGroupId)).length,
+    knownRows: existing.length,
     discoveryMs,
     persistMs: Math.round(performance.now() - persistStarted),
   };
@@ -391,7 +447,111 @@ const GROUP_SYNC_RETRY_DELAYS_MS = [10_000, 30_000];
  * connecting during startup was handed the FIRST account's promise, so its own getGroups() never
  * ran — it ended up with zero groups while the log reported the other account's count.
  */
-const syncInFlight = new Map<string, Promise<number>>();
+interface InFlightSync {
+  mode: GroupSyncMode;
+  promise: Promise<number>;
+  /** Settles when the entry is released — what a queued FULL waits for, not the work's own promise. */
+  released: Promise<void>;
+  markReleased: () => void;
+}
+const syncInFlight = new Map<string, InFlightSync>();
+
+function registerInFlight(accountId: string, mode: GroupSyncMode, promise: Promise<number>): InFlightSync {
+  let markReleased!: () => void;
+  const released = new Promise<void>((resolve) => (markReleased = resolve));
+  const entry: InFlightSync = { mode, promise, released, markReleased };
+  syncInFlight.set(accountId, entry);
+  return entry;
+}
+
+/** Idempotent. Only removes the entry if it is still THIS one (a cancel may have replaced it). */
+function releaseInFlight(accountId: string, entry: InFlightSync): void {
+  if (syncInFlight.get(accountId) === entry) syncInFlight.delete(accountId);
+  entry.markReleased();
+}
+
+/**
+ * A manual FULL resync that arrives while an ADD_ONLY pass (an arrival pass or a recovery pass) is
+ * reading must not be handed that pass's result: ADD_ONLY has no stamp, no sweep and no status, so
+ * the operator would believe a full sync ran. It is queued instead, and run when the pass has
+ * released the account — never beside it, so there is still only one read at a time.
+ *
+ * One queued request per account: later ones share it (the first request's options, except that a
+ * manual request — no `afterConnect` — wins, since it is the stricter reading). A logout or reconnect
+ * rejects it (`cancelGroupSync`), and so does a worker that has begun shutting down, or a generation
+ * that moved while it waited.
+ */
+/**
+ * How a FULL sync is asked for. `basis` is what its result will rest on (groupSyncBasis.ts): the
+ * arrival passes that settled before it, or one read. Recorded beside COMPLETED/PARTIAL only.
+ */
+export interface FullSyncOptions {
+  afterConnect?: boolean;
+  basis?: GroupSyncBasis;
+}
+
+interface PendingFull {
+  promise: Promise<number>;
+  options: FullSyncOptions;
+  generation: number;
+  reject: (err: Error) => void;
+}
+const pendingFull = new Map<string, PendingFull>();
+
+function rejectPendingFull(accountId: string, reason: string): void {
+  const pending = pendingFull.get(accountId);
+  if (!pending) return;
+  pendingFull.delete(accountId);
+  pending.reject(new GroupSyncCancelledError(reason));
+}
+
+/** Whether a FULL sync is waiting behind a pass for this account. */
+export function hasPendingFullSync(accountId: string): boolean {
+  return pendingFull.has(accountId);
+}
+
+function queueFullAfterAddOnly(
+  accountId: string,
+  provider: WhatsAppProvider,
+  options: FullSyncOptions,
+  inFlight: InFlightSync,
+): Promise<number> {
+  const existing = pendingFull.get(accountId);
+  if (existing) {
+    existing.options.afterConnect = Boolean(existing.options.afterConnect && options.afterConnect);
+    // One read answers both requests; it rests on what the first one asked for.
+    existing.options.basis = existing.options.basis ?? options.basis;
+    console.log(`[groupsync] GROUP_FULL_SYNC_ALREADY_QUEUED accountId=${accountId} -- sharing the queued FULL sync`);
+    return existing.promise;
+  }
+  let resolve!: (count: number) => void;
+  let reject!: (err: Error) => void;
+  const promise = new Promise<number>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  promise.catch(() => undefined); // each caller handles its own copy; this one only prevents an unhandled rejection
+  const pending: PendingFull = { promise, options: { afterConnect: options.afterConnect, basis: options.basis }, generation: generationOf(accountId), reject };
+  pendingFull.set(accountId, pending);
+  console.log(`[groupsync] GROUP_FULL_SYNC_QUEUED accountId=${accountId} -- a FULL sync was asked for while a ${inFlight.mode} pass is reading; it runs when that pass ends`);
+
+  void inFlight.released.then(async () => {
+    if (pendingFull.get(accountId) !== pending) return; // cancelled, already rejected
+    pendingFull.delete(accountId);
+    if (generationOf(accountId) !== pending.generation || isShuttingDown()) {
+      pending.reject(new GroupSyncCancelledError("The queued group sync was dropped because the account was logged out or reconnected, or the worker is shutting down."));
+      return;
+    }
+    try {
+      // Through the public entry point: if another ADD_ONLY pass slipped in first it is queued again,
+      // and if a FULL started it is joined.
+      resolve(await syncGroupsWithTimeoutAndRetry(accountId, provider, pending.options));
+    } catch (err) {
+      reject(err as Error);
+    }
+  });
+  return promise;
+}
 
 /** Whether this account has a group sync running in this process right now. */
 export function isGroupSyncRunning(accountId: string): boolean {
@@ -401,23 +561,27 @@ export function isGroupSyncRunning(accountId: string): boolean {
 export async function syncGroupsWithTimeoutAndRetry(
   accountId: string,
   provider: WhatsAppProvider,
-  options: { afterConnect?: boolean } = {},
+  options: FullSyncOptions = {},
 ): Promise<number> {
   const alreadyRunning = syncInFlight.get(accountId);
   if (alreadyRunning) {
-    console.log(
-      `[groupsync] GROUP_SYNC_ALREADY_IN_PROGRESS accountId=${accountId} -- reusing the in-flight sync instead of starting a second one`,
-    );
-    return alreadyRunning;
+    // Another FULL is the same job: join it. An ADD_ONLY pass is not — see `queueFullAfterAddOnly`.
+    if (alreadyRunning.mode === "FULL") {
+      console.log(
+        `[groupsync] GROUP_SYNC_ALREADY_IN_PROGRESS accountId=${accountId} -- reusing the in-flight sync instead of starting a second one`,
+      );
+      return alreadyRunning.promise;
+    }
+    return queueFullAfterAddOnly(accountId, provider, options, alreadyRunning);
   }
 
   const run = withAccountProject(accountId, () => runSyncWithRetry(accountId, provider, options));
-  syncInFlight.set(accountId, run);
+  const entry = registerInFlight(accountId, "FULL", run);
   try {
     return await run;
   } finally {
     // Only our own entry: a cancel may already have released it for a newer sync.
-    if (syncInFlight.get(accountId) === run) syncInFlight.delete(accountId);
+    releaseInFlight(accountId, entry);
   }
 }
 
@@ -429,7 +593,7 @@ export async function syncGroupsWithTimeoutAndRetry(
  * from even starting its arrival passes, and ended in FAILED although nothing was broken. A session
  * whose list reads in a few seconds (every established account) is unaffected.
  */
-async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, options: { afterConnect?: boolean } = {}): Promise<number> {
+async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, options: FullSyncOptions = {}): Promise<number> {
   const attempts = GROUP_SYNC_RETRY_DELAYS_MS.length + 1;
   const started = performance.now();
   const generation = generationOf(accountId);
@@ -444,6 +608,7 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
     groupSyncStage: "Reading the group list from WhatsApp",
     groupSyncStartedAt: new Date(),
     groupSyncError: null,
+    groupSyncBasis: null,
   });
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -459,6 +624,16 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
       // arrival passes, which wait for the list to arrive.
       if (options.afterConnect && outcome.discovered === 0) {
         throw new GroupListStillLoadingError("WhatsApp has not listed any group for this number yet.");
+      }
+      // Otherwise an empty list is believed only for an account with nothing on record. For one that
+      // has groups it is a page that has not delivered them (or a session that cannot be read), and
+      // recording COMPLETED/0 over a good discovery is exactly the lie this refuses. Nothing was
+      // written (an empty list never deactivates), so this only says so and lets recovery retry.
+      if (outcome.discovered === 0 && outcome.knownRows > 0) {
+        throw new GroupListUnavailableError(
+          `WhatsApp returned no group, but this account has ${outcome.knownRows} on record. The list is not trusted; nothing was changed. Try again once the session has finished loading.`,
+          "EMPTY_LIST",
+        );
       }
       const totalMs = Math.round(performance.now() - started);
       await logSystemEvent("INFO", "provider", "GROUP_SYNC_COMPLETED", {
@@ -479,6 +654,8 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
         groupSyncStatus: outcome.failed > 0 || outcome.sweepHeld ? "PARTIAL" : "COMPLETED",
         groupSyncStage: null,
         groupSyncCompletedAt: new Date(),
+        // What this result rests on — never "verified complete": WhatsApp gives no such signal.
+        groupSyncBasis: options.basis ?? "SINGLE_READ",
         groupSyncDiscovered: outcome.discovered,
         groupSyncNew: outcome.created,
         groupSyncUpdated: outcome.renamed + outcome.reactivated,
@@ -505,6 +682,7 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
         await record({
           groupSyncStatus: "RUNNING",
           groupSyncStage: "Waiting for WhatsApp to load this number's chats — reading the group list again shortly",
+          groupSyncBasis: null,
         });
         throw err;
       }
@@ -512,7 +690,7 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
       // A logged-out or disconnected session will be exactly as logged out in ten seconds, so this
       // is the last attempt whatever the counter says. Retrying it produced two more identical
       // failures and forty seconds of the operator waiting on an answer that was already known.
-      const isLastAttempt = attempt === attempts || err instanceof SessionNotReadyError;
+      const isLastAttempt = attempt === attempts || err instanceof SessionNotReadyError || err instanceof GroupListUnavailableError;
       await logSystemEvent(
         isLastAttempt ? "ERROR" : "WARN",
         "provider",
@@ -526,6 +704,7 @@ async function runSyncWithRetry(accountId: string, provider: WhatsAppProvider, o
           groupSyncCompletedAt: new Date(),
           groupSyncDurationMs: Math.round(performance.now() - started),
           groupSyncError: message.slice(0, 500),
+          groupSyncBasis: null,
         });
         throw err;
       }
@@ -717,9 +896,9 @@ function watchGroupListArrival(
     timer.unref?.();
   };
 
-  const fullSync = (label: string) => {
+  const fullSync = (label: string, basis: GroupSyncBasis) => {
     if (cancelled() || provider.getConnectionStatus() !== "CONNECTED") return;
-    syncGroupsWithTimeoutAndRetry(accountId, provider)
+    syncGroupsWithTimeoutAndRetry(accountId, provider, { basis })
       .then((groupCount) => console.log(`[worker] ${label} after ${source}: ${groupCount} group(s) for account ${accountId}`))
       .catch((err) => {
         // It joined an arrival pass whose read is still loading: the passes carry on, nothing failed.
@@ -741,6 +920,7 @@ function watchGroupListArrival(
         groupSyncStatus: "PARTIAL",
         groupSyncStage: null,
         groupSyncCompletedAt: new Date(),
+        groupSyncBasis: null,
         groupSyncError: "The session disconnected while the phone was still sending chats. The groups received so far are saved; the rest arrive after reconnecting.",
       }),
     ).catch(() => undefined);
@@ -771,19 +951,23 @@ function watchGroupListArrival(
     // Registered like any sync, so a manual resync arriving now joins this pass instead of racing it.
     const tracked = run.then((outcome) => outcome.discovered);
     tracked.catch(() => undefined);
-    syncInFlight.set(accountId, tracked);
+    const entry = registerInFlight(accountId, "ADD_ONLY", tracked);
     void run
       .then(async (outcome) => {
         if (cancelled()) return; // stopped between this pass's last write and here
         // Released before deciding, so the FULL sync started below is a sync of its own rather
         // than joining this ADD_ONLY pass (which would skip the stamp, the sweep and the status).
-        if (syncInFlight.get(accountId) === tracked) syncInFlight.delete(accountId);
+        releaseInFlight(accountId, entry);
         const arrived = outcome.created + outcome.reactivated;
         // An empty list before any group has ever been listed is no evidence of a finished list:
         // a second number's phone may simply not have sent a group yet. Counting it as stable is
         // how three quick empty reads would "settle" a roster that has not started to arrive. It
         // waits instead, and the arrival window's own limit still ends the wait.
-        const grew = outcome.discovered === 0 && maxReturned === 0 ? null : isGrowthPass(arrived, outcome.discovered, maxReturned);
+        // An empty list is never evidence of stability, whether or not a group has been listed
+        // before: after a bigger one it is far more likely a page that dropped its chats than an
+        // account that left every group, and counting it as "stable" is how three of them would
+        // settle a roster that is still arriving.
+        const grew = outcome.discovered === 0 ? null : isGrowthPass(arrived, outcome.discovered, maxReturned);
         growthPerPass.push(grew);
         maxReturned = Math.max(maxReturned, outcome.discovered);
         if (grew === true) timeline.push({ atSeconds: Math.round((Date.now() - connectedAt) / 1000), total: outcome.discovered, new: arrived });
@@ -795,6 +979,7 @@ function watchGroupListArrival(
               groupSyncStatus: "RUNNING",
               groupSyncStage: `Receiving chats from the phone — ${outcome.discovered.toLocaleString("en-US")} groups so far`,
               groupSyncDiscovered: outcome.discovered,
+              groupSyncBasis: null,
             }),
           );
         }
@@ -802,12 +987,15 @@ function watchGroupListArrival(
         if (decision === "CONTINUE") schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
         else {
           void logTimeline(decision);
-          fullSync(decision === "SETTLED" ? "group list settled; full sync" : "group arrival window ended; full sync");
+          fullSync(
+            decision === "SETTLED" ? "group list settled; full sync" : "group arrival window ended; full sync",
+            decision === "SETTLED" ? "STABLE_READS" : "WINDOW_ENDED",
+          );
         }
       })
       .catch(async (err) => {
         if (err instanceof GroupSyncCancelledError || cancelled()) return;
-        if (syncInFlight.get(accountId) === tracked) syncInFlight.delete(accountId);
+        releaseInFlight(accountId, entry);
         // A read that did not finish, or failed, is no evidence either way: it never counts towards
         // "settled", nothing is deactivated, and the groups already saved stay saved.
         growthPerPass.push(null);
@@ -821,25 +1009,136 @@ function watchGroupListArrival(
                 maxReturned > 0
                   ? `Receiving chats from the phone — ${maxReturned.toLocaleString("en-US")} groups so far; WhatsApp is still loading`
                   : "Waiting for WhatsApp to load this number's chats — reading the group list again shortly",
+              groupSyncBasis: null,
             }),
           ).catch(() => undefined);
+        } else if (err instanceof GroupListUnavailableError) {
+          // The session had no live browser before or after the read: no result, nothing written.
+          console.log(`[groupsync] GROUP_LIST_UNAVAILABLE account ${accountId}, pass ${growthPerPass.length}: ${err.message}`);
         } else {
           console.error(`[groupsync] arrival pass failed for account ${accountId}`, err);
         }
         if (groupArrivalDecision(growthPerPass, Date.now() - started) === "GAVE_UP") {
           void logTimeline("GAVE_UP");
-          fullSync("group arrival window ended; full sync");
+          fullSync("group arrival window ended; full sync", "WINDOW_ENDED");
         } else {
           schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
         }
       })
       .finally(() => {
-        if (syncInFlight.get(accountId) === tracked) syncInFlight.delete(accountId);
+        releaseInFlight(accountId, entry);
       });
   };
 
   schedule(pass, GROUP_ARRIVAL_SETTINGS.intervalMs);
-  schedule(() => fullSync("15-minute follow-up sync"), FINAL_FULL_SYNC_AFTER_MS);
+  schedule(() => fullSync("15-minute follow-up sync", "SINGLE_READ"), FINAL_FULL_SYNC_AFTER_MS);
+}
+
+/**
+ * One recovery read of an account whose group list may not have finished arriving: the ADD_ONLY
+ * pass the arrival watcher runs, started by `groupRecovery.ts` long after that watcher has given up.
+ *
+ * ADD_ONLY is the whole safety of it. It saves groups that appeared, renames, and reactivates a
+ * group WhatsApp LISTS — it has no sweep, so it can never switch anything off, and it can never
+ * switch on a group the list does not contain (`syncGroupsInProject`, mode !== "FULL").
+ *
+ * The answer is typed, because "no usable list" and "a list" are different facts:
+ *
+ * - `READ`: a list was read from a connected session. `pending` is the ACTIVE groups it lacks plus
+ *   groups that could not be saved — the evidence of a partial list; inactive rows the list lacks
+ *   are history and never count. `grew` is a group created or switched back on.
+ * - `UNKNOWN / UNAVAILABLE`: the session had no live client or was not CONNECTED before or after the
+ *   read (`readGroupListStrict`). Nothing is written — the check runs before persistence.
+ * - `UNKNOWN / EMPTY_LIST`: a connected session returned no group. That is never authoritative here:
+ *   a page whose chats have not arrived looks exactly like an account in no groups (the post-connect
+ *   sync draws the same line), so nothing is recorded and nothing is completed.
+ * - `null`: another sync of this account is running, or a logout/reconnect moved the sync generation.
+ *
+ * `mode` decides whether the account's recorded sync STATUS is touched. `RETRY` is for an account a
+ * sync left FAILED/PARTIAL: a pass that finds no active group missing completes it, otherwise it
+ * stays PARTIAL. `VERIFY` is for a COMPLETED account that merely holds inactive groups: it may
+ * reactivate what WhatsApp now lists, but never writes the status, the discovered count or any
+ * error — a valid COMPLETED sync is not made PARTIAL by history.
+ *
+ * Registered in `syncInFlight` like any sync, so an arrival pass defers to it. (A manual FULL resync
+ * that arrives meanwhile joins it and therefore gets this ADD_ONLY result — the same as joining an
+ * arrival pass; see GROUP_SYNC.md section 8.)
+ */
+export type GroupRecoveryPassResult =
+  | { kind: "READ"; outcome: GroupSyncOutcome; pending: number; grew: boolean }
+  | { kind: "UNKNOWN"; reason: "UNAVAILABLE" | "EMPTY_LIST" };
+
+/**
+ * Why the recovery loop is reading an account (`groupRecovery.ts`): RETRY - a sync said "not
+ * finished"; FOLLOW - a recent connect whose phone may still be sending chats; VERIFY - inactive
+ * groups worth a bounded second look; DAILY - a settled account's once-a-day add-only read. Only
+ * RETRY writes the account's sync status.
+ */
+export type GroupRecoveryMode = "RETRY" | "FOLLOW" | "VERIFY" | "DAILY";
+
+export async function runGroupRecoveryPass(
+  accountId: string,
+  provider: WhatsAppProvider,
+  mode: GroupRecoveryMode,
+  /** Extra facts for the pass's System Log entry (the caller's browser-load sample). Informational only. */
+  context: Record<string, unknown> = {},
+): Promise<GroupRecoveryPassResult | null> {
+  if (isGroupSyncRunning(accountId)) return null;
+  const generation = generationOf(accountId);
+  const run = withAccountProject(accountId, () =>
+    syncGroupsInProject(accountId, provider, "ADD_ONLY", generation, GROUP_ARRIVAL_SETTINGS.readTimeoutMs, true),
+  );
+  const tracked = run.then((outcome) => outcome.discovered);
+  tracked.catch(() => undefined);
+  const entry = registerInFlight(accountId, "ADD_ONLY", tracked);
+  try {
+    let outcome: GroupSyncOutcome;
+    try {
+      outcome = await run;
+    } catch (err) {
+      if (err instanceof GroupListUnavailableError) return { kind: "UNKNOWN", reason: "UNAVAILABLE" };
+      throw err;
+    }
+    if (generationOf(accountId) !== generation) return null; // logged out / reconnected meanwhile
+    if (outcome.discovered === 0) return { kind: "UNKNOWN", reason: "EMPTY_LIST" };
+
+    const pending = outcome.unlistedActive + outcome.failed;
+    const grew = outcome.created + outcome.reactivated > 0;
+    await withAccountProject(accountId, async () => {
+      if (mode === "RETRY") {
+        await recordGroupSyncState(accountId, {
+          groupSyncStatus: pending === 0 ? "COMPLETED" : "PARTIAL",
+          groupSyncStage: null,
+          groupSyncCompletedAt: new Date(),
+          // Completed by evidence the recovery has: every group recorded active is in the list.
+          groupSyncBasis: pending === 0 ? "KNOWN_GROUPS_PRESENT" : null,
+          groupSyncDiscovered: outcome.discovered,
+          groupSyncNew: outcome.created,
+          groupSyncUpdated: outcome.renamed + outcome.reactivated,
+          groupSyncFailed: outcome.failed,
+          groupSyncError:
+            pending === 0
+              ? null
+              : `${pending} group(s) that were active are not in the list WhatsApp returned. WhatsApp may not have delivered them yet, or the account left them; this is checked again automatically.`,
+        });
+      }
+      if (mode === "RETRY" || grew) {
+        await logSystemEvent("INFO", "provider", "GROUP_RECOVERY_PASS", {
+          ...context,
+          accountId,
+          mode,
+          discovered: outcome.discovered,
+          created: outcome.created,
+          reactivated: outcome.reactivated,
+          pending,
+          discoveryMs: outcome.discoveryMs,
+        });
+      }
+    });
+    return { kind: "READ", outcome, pending, grew };
+  } finally {
+    releaseInFlight(accountId, entry);
+  }
 }
 
 /**
@@ -852,6 +1151,14 @@ function watchGroupListArrival(
  * top of the first, while releasing it late costs one more five-minute sweep.
  */
 const COMMAND_STUCK_TIMEOUT_MS = Number(process.env.COMMAND_STUCK_TIMEOUT_MINUTES || 20) * 60_000;
+
+/**
+ * RECONNECT's own, longer bound. Since a newly linked number may take as long as WhatsApp needs to
+ * copy its chats (up to 45 minutes per attempt while it keeps making progress, three attempts —
+ * GROUP_SYNC.md §10), twenty minutes would mark a RECONNECT FAILED while it was still loading and
+ * tell the operator to run it again on top of itself. Three hours clears three full attempts.
+ */
+const RECONNECT_STUCK_TIMEOUT_MS = Number(process.env.COMMAND_STUCK_RECONNECT_MINUTES || 180) * 60_000;
 
 /**
  * Crash recovery for commands interrupted mid-flight. Until this existed a PROCESSING row was
@@ -883,7 +1190,13 @@ export async function recoverStuckCommands(options: { atBoot?: boolean } = {}): 
   const result = await platformPrisma.workerCommand.updateMany({
     where: options.atBoot
       ? { status: "PROCESSING" }
-      : { status: "PROCESSING", startedAt: { lt: new Date(Date.now() - COMMAND_STUCK_TIMEOUT_MS) } },
+      : {
+          status: "PROCESSING",
+          OR: [
+            { type: { not: "RECONNECT" }, startedAt: { lt: new Date(Date.now() - COMMAND_STUCK_TIMEOUT_MS) } },
+            { type: "RECONNECT", startedAt: { lt: new Date(Date.now() - RECONNECT_STUCK_TIMEOUT_MS) } },
+          ],
+        },
     data: {
       status: "FAILED",
       processedAt: new Date(),
@@ -1189,6 +1502,19 @@ async function executeBuildCommunicationStyleCommand(command: ClaimedCommand): P
   }
 }
 
+/**
+ * Whether a RECONNECT for a session that reads CONNECTED should still restart it: a person asked
+ * (`payload.force`), and asked after the account last connected. A forced command the session has
+ * connected since is answered already — restarting again would be the stale double-reconnect the
+ * skip exists to stop.
+ */
+async function isFreshOperatorRestart(command: ClaimedCommand, accountId: string): Promise<boolean> {
+  const payload = command.payload as { force?: unknown } | null;
+  if (payload?.force !== true) return false;
+  const account = await prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { lastConnectedAt: true } });
+  return !account?.lastConnectedAt || account.lastConnectedAt < command.createdAt;
+}
+
 async function executeClaimedCommand(command: ClaimedCommand, accountId: string, provider: WhatsAppProvider): Promise<void> {
   try {
     switch (command.type) {
@@ -1199,7 +1525,13 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         // not blindly tear down an already-healthy session. This is the exact real incident that
         // motivated this guard (two stale RECONNECT commands fired back-to-back into a session
         // that had just connected, the second one broke the browser into an unresponsive state).
-        if (provider.getConnectionStatus() === "CONNECTED") {
+        //
+        // Except when a person asked for it AFTER the session last connected (`force`, set by the
+        // dashboard's Reconnect and proxy save). "Reads CONNECTED" is exactly the state of a session
+        // whose page has died, and the collection alerts tell operators to press Reconnect for it —
+        // skipping that request made the button, and the advice, do nothing. A forced command older
+        // than the latest connection is still the stale kind above, and is still skipped.
+        if (provider.getConnectionStatus() === "CONNECTED" && !(await isFreshOperatorRestart(command, accountId))) {
           await prisma.workerCommand.update({
             where: { id: command.id },
             data: {
@@ -1515,6 +1847,84 @@ async function executeClaimedCommand(command: ClaimedCommand, accountId: string,
         await prisma.workerCommand.update({
           where: { id: command.id },
           data: { status: "DONE", processedAt: new Date(), result: { ...result } },
+        });
+        break;
+      }
+
+      // ---- Chat v2 rich messaging (CHAT_RICH_MESSAGING.md) ---------------------------------------
+
+      case "LOAD_EARLIER_MESSAGES": {
+        const payload = command.payload as { chatId?: string } | null;
+        if (!payload?.chatId) throw new Error("LOAD_EARLIER_MESSAGES requires { chatId } in the command payload.");
+        if (!provider.loadEarlierMessages) throw new Error("This WhatsApp connection cannot load earlier messages.");
+        const page = await provider.loadEarlierMessages(payload.chatId);
+        if (!page.ok) {
+          await prisma.workerCommand.update({
+            where: { id: command.id },
+            data: { status: "FAILED", processedAt: new Date(), result: { success: false, error: page.reason } },
+          });
+          break;
+        }
+        // Store-only: nothing loaded here is answered, tracked as a wait or alerted on (§4).
+        const stored = await storeHistoryMessages(accountId, payload.chatId, page.messages);
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: {
+            status: "DONE",
+            processedAt: new Date(),
+            result: {
+              success: true,
+              seen: stored.seen,
+              stored: stored.stored,
+              markedDeleted: stored.markedDeleted,
+              oldestAt: stored.oldestAt?.toISOString() ?? null,
+              reachedStart: page.reachedStart,
+            },
+          },
+        });
+        break;
+      }
+
+      case "STAR_MESSAGE": {
+        const payload = command.payload as { messageId?: string; whatsappMessageId?: string; star?: boolean } | null;
+        if (!payload?.messageId || !payload.whatsappMessageId || typeof payload.star !== "boolean") {
+          throw new Error("STAR_MESSAGE requires { messageId, whatsappMessageId, star } in the command payload.");
+        }
+        if (!provider.setMessageStarred) throw new Error("This WhatsApp connection cannot star messages.");
+        const result = await provider.setMessageStarred(payload.whatsappMessageId, payload.star);
+        // The row records what WhatsApp accepted, nothing sooner. Scoped to the command's own account, so
+        // a payload naming another account's row changes nothing.
+        if (result.success) {
+          await prisma.message.updateMany({
+            where: { id: payload.messageId, accountId, whatsappMessageId: payload.whatsappMessageId },
+            data: { starredAt: payload.star ? new Date() : null },
+          });
+        }
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: { status: result.success ? "DONE" : "FAILED", processedAt: new Date(), result: { success: result.success, error: result.error ?? null } },
+        });
+        break;
+      }
+
+      case "PIN_CHAT":
+      case "ARCHIVE_CHAT": {
+        const pin = command.type === "PIN_CHAT";
+        const payload = command.payload as { chatId?: string; pin?: boolean; archive?: boolean } | null;
+        const on = pin ? payload?.pin : payload?.archive;
+        if (!payload?.chatId || typeof on !== "boolean") {
+          throw new Error(`${command.type} requires { chatId, ${pin ? "pin" : "archive"} } in the command payload.`);
+        }
+        const call = pin ? provider.setChatPinned : provider.setChatArchived;
+        if (!call) throw new Error(`This WhatsApp connection cannot ${pin ? "pin" : "archive"} chats.`);
+        const result = await call.call(provider, payload.chatId, on);
+        await prisma.workerCommand.update({
+          where: { id: command.id },
+          data: {
+            status: result.success ? "DONE" : "FAILED",
+            processedAt: new Date(),
+            result: { success: result.success, changed: result.changed ?? null, error: result.error ?? null },
+          },
         });
         break;
       }

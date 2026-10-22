@@ -8,6 +8,7 @@ import {
   type AttentionIssue,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
+import { messageKeySql } from "@/server/messageIdentity";
 import { activeProjectId } from "@/server/projectContext";
 import { measuredTo, type ReportContext } from "./context";
 import { count, duration, percent, when } from "./format";
@@ -40,7 +41,8 @@ async function previousPeriodCounts(ctx: ReportContext, groupKeys: readonly stri
   const prevStart = new Date(ctx.rangeStart - length);
   const start = new Date(ctx.rangeStart);
   const rows = await prisma.$queryRaw<Array<{ wgid: string; previous: bigint }>>`
-    SELECT g."whatsappGroupId" AS wgid, COUNT(DISTINCT m."whatsappMessageId") AS previous
+    -- The logical key (WHATSAPP_IDENTITY.md): one message stored by two of our accounts counts once.
+    SELECT g."whatsappGroupId" AS wgid, COUNT(DISTINCT ${messageKeySql()}) AS previous
     FROM "WhatsAppGroup" g
     JOIN "Message" m ON m."groupId" = g."id"
     WHERE g."projectId" = ${await activeProjectId()}
@@ -69,7 +71,8 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
 
   // Demand and response — the Team Report's own figures and waits, Response SLA's SLA.
   const { summary } = ctx.data.result;
-  const waits = waitsInScope(ctx);
+  // Missed as the Team Report counts it in a Team/member view: charged to someone in scope.
+  const waits = waitsInScope(ctx).filter(ctx.missedInScope);
   const stats = responseStats(waits);
   const unanswered = stats.never + stats.pending;
   const missed = stats.late + stats.never;
@@ -101,7 +104,7 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
       { label: "Also" },
       { label: "Last activity", muted: true },
       { label: "Waiting" },
-      { label: "Assigned" },
+      { label: "Assigned now" },
       { label: "Team" },
     ],
     rows: items.map((item) => {
@@ -138,12 +141,14 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
   // How the work sat across the Teams: distribution, not a ranking of people.
   const teams = new Map<string, { members: number; replies: number; seconds: number; missed: number }>();
   for (const m of ctx.data.result.members) {
-    if (m.memberId === "UNASSIGNED" || (m.messages === 0 && m.activeSeconds === 0)) continue;
+    // Somebody charged a Missed wait counts here even if they sent nothing, or the Missed column would
+    // add up to less than the Team Report's.
+    if (m.memberId === "UNASSIGNED" || (m.messages === 0 && m.activeSeconds === 0 && m.missed === 0)) continue;
     const team = roster.teamOf.get(m.memberId) ?? "No team";
     const row = teams.get(team) ?? { members: 0, replies: 0, seconds: 0, missed: 0 };
     row.members += 1;
     row.replies += m.messages;
-    row.seconds += m.activeSeconds;
+    row.seconds += m.overtimeSeconds;
     row.missed += m.missed;
     teams.set(team, row);
   }
@@ -188,7 +193,7 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
       { label: "Average first response", value: duration(stats.averageSeconds) },
       { label: "Median first response", value: duration(stats.medianSeconds) },
       { label: "SLA %", value: percent(stats.slaRatio), hint: "answered within the threshold" },
-      { label: "Support Overtime", value: duration(summary.activeSeconds) },
+      { label: "Support Overtime", value: duration(summary.overtimeSeconds), hint: "beyond regular duty, per day" },
       { label: "Active team members", value: count(summary.activeMembers) },
       { label: "Groups requiring attention", value: count(items.length), tone: tone(items.length, "warning") },
       { label: "Groups with declining activity", value: count(issueCount("DECLINING")), hint: "half or less of the previous period" },
@@ -227,7 +232,7 @@ export async function buildExecutiveHealth(ctx: ReportContext): Promise<BuiltRep
       { title: "Groups", text: "Monitored groups are the ones monitored and active today. Active: at least one stored message of any kind in the period. No communication: none — the Inactive Groups definition." },
       {
         title: "Customer messages, team replies, Support Overtime, active members",
-        text: "The Team Report's own figures for the same filters: one row per real message, team replies including the business number, Support Overtime by the idle-gap rule.",
+        text: "The Team Report's own figures for the same filters: one row per real message, team replies including the business number, and Support Overtime — each person's support time beyond their regular duty, per day (TEAM_OVERTIME.md).",
       },
       {
         title: "Waits, unanswered, missed, response, SLA",

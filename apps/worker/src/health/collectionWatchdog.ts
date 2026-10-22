@@ -312,15 +312,23 @@ async function checkOneAccount(
   }
 
   const probe = await provider!.probeCollection(newest!.timestampWa, PROBE_LIMIT);
+  // The probe reads personal chats even when the group list cannot be read (so a personal message is
+  // still recovered). For THIS question that half-answer is still "could not check the groups": with
+  // nothing found it must strike like an unreadable session, never be logged as agreement.
+  const unknownReason = !probe.ok
+    ? probe.reason
+    : probe.messages.length === 0 && probe.uncheckedKinds?.includes("GROUP")
+      ? (probe.incomplete ?? "Group chats could not be checked.")
+      : null;
 
-  if (!probe.ok) {
+  if (unknownReason !== null) {
     // The distinction this whole phase turns on. An unreadable session is NOT agreement — it is
     // the single most likely shape of the failure being hunted, and it used to be logged as
     // "WhatsApp agrees".
     const strikes = countStrike(account.id);
     if (strikes < UNKNOWN_STRIKES_BEFORE_ALERT) {
       console.warn(
-        `[watchdog] account "${account.label}" quiet for ${quietForMinutes}m and could not be read (${probe.reason}) — strike ${strikes}/${UNKNOWN_STRIKES_BEFORE_ALERT}`,
+        `[watchdog] account "${account.label}" quiet for ${quietForMinutes}m and could not be read (${unknownReason}) — strike ${strikes}/${UNKNOWN_STRIKES_BEFORE_ALERT}`,
       );
       return null;
     }
@@ -329,9 +337,10 @@ async function checkOneAccount(
     return report(registry, {
       ...base,
       problem: "UNREADABLE",
-      reason: `Reports itself connected, has stored nothing for ${quietForMinutes} minutes, and the session could not be read to find out why. ${probe.reason}`,
+      reason: `Reports itself connected, has stored nothing for ${quietForMinutes} minutes, and the session could not be read to find out why. ${unknownReason}`,
     });
   }
+  if (!probe.ok) return null; // unreachable: an unreadable probe always has a reason above
 
   resetStrikes(account.id);
   const missed = probe.messages.length;

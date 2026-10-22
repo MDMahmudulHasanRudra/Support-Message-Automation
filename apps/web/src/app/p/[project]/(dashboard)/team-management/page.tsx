@@ -90,7 +90,8 @@ export default async function TeamManagementPage() {
           label="Not scheduled"
           value={overview.unassigned}
           tone={overview.unassigned > 0 ? "warning" : "neutral"}
-          hint="Nobody has decided their day — different from an assigned day off"
+          hint="Nobody has decided their day — different from an assigned day off. Until it is, overtime is measured against their weekly pattern or default shift, or else the default duty length."
+          href={overview.unassigned > 0 ? "/team-management/roster" : undefined}
         />
       </div>
 

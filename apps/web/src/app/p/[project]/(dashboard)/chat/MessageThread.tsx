@@ -1,62 +1,11 @@
-import { AlertTriangle, Bot, Check, Clock, ListChecks, Megaphone, Settings2, UserRound } from "lucide-react";
-import type { OutboundSenderType } from "@support-automation/shared";
+import { AlertTriangle, Bot, Check, Clock, UserRound } from "lucide-react";
+import Link from "@/components/ProjectLink";
 import { isMediaPlaceholderBody, mediaCaption } from "@support-automation/shared";
 import type { ThreadEntry } from "@/server/chatInbox";
 import { formatDateTime, formatTime } from "@/lib/date";
 import { MediaNotArchived, MessageAttachment } from "./MessageAttachment";
 import { MoodBadge } from "@/components/MoodBadge";
-
-const dayFormat = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Asia/Dhaka",
-  weekday: "short",
-  month: "short",
-  day: "numeric",
-});
-
-/** Copy for each not-yet-settled outbound state, in the operator's terms rather than the enum's. */
-const QUEUED_LABEL: Record<string, { text: string; tone: "wait" | "bad" }> = {
-  PENDING: { text: "Queued — waiting for the worker", tone: "wait" },
-  PROCESSING: { text: "Sending…", tone: "wait" },
-  RATE_LIMITED: { text: "Held back by the account rate limit", tone: "bad" },
-  FAILED: { text: "Failed to send", tone: "bad" },
-  CANCELLED: { text: "Cancelled", tone: "bad" },
-  SKIPPED: { text: "Not sent", tone: "bad" },
-  SENT: { text: "Sent — waiting for WhatsApp to confirm", tone: "wait" },
-};
-
-/**
- * Automated authorship, in the operator's terms. A person's send is named instead (the software user
- * who pressed send), so it has no badge here.
- */
-const AUTHOR_BADGE: Partial<Record<OutboundSenderType, { text: string; icon: typeof Bot }>> = {
-  AI: { text: "AI", icon: Bot },
-  RULE_AUTOMATION: { text: "Rule", icon: ListChecks },
-  BROADCAST: { text: "Broadcast", icon: Megaphone },
-  SYSTEM: { text: "Automated", icon: Settings2 },
-};
-
-/** Longer and the next message reads as a new thought rather than the same one continued. */
-const RUN_GAP_MS = 5 * 60_000;
-
-/** Whether `next` continues `current` — same speaker, same side, close in time. */
-function continues(current: ThreadEntry, next: ThreadEntry): boolean {
-  if (current.kind === "SYSTEM" || next.kind === "SYSTEM") return false;
-
-  const currentOutbound = current.kind === "OUTGOING" || current.kind === "QUEUED";
-  const nextOutbound = next.kind === "OUTGOING" || next.kind === "QUEUED";
-  if (currentOutbound !== nextOutbound) return false;
-
-  // Inbound runs also need the same person: a group has many speakers, and merging two of them
-  // into one run would attribute somebody's message to whoever spoke above them.
-  if (!nextOutbound && (current.senderPhone ?? null) !== (next.senderPhone ?? null)) return false;
-
-  // Outbound runs need the same author — and, for people, the same person — so an AI reply never
-  // merges into a person's, and Hasan's reply never appears under Rudra's name.
-  if (nextOutbound && (current.authoredBy ?? null) !== (next.authoredBy ?? null)) return false;
-  if (nextOutbound && (current.sentBy?.id ?? null) !== (next.sentBy?.id ?? null)) return false;
-
-  return next.at.getTime() - current.at.getTime() <= RUN_GAP_MS;
-}
+import { AUTHOR_BADGE, continues, dayFormat, QUEUED_LABEL } from "./threadPresentation";
 
 function DayDivider({ label }: { label: string }) {
   return (
@@ -80,7 +29,16 @@ function DayDivider({ label }: { label: string }) {
  * outbound queue; the worker does the sending), so without it an operator would press
  * send and watch nothing happen for a couple of seconds.
  */
-export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[]; accountLabel: string }) {
+export function MessageThread({
+  entries,
+  accountLabel,
+  contactHref,
+}: {
+  entries: ThreadEntry[];
+  accountLabel: string;
+  /** Where a sender's name leads: the contact panel for that id. Omitted = names are plain text. */
+  contactHref?: (contactKey: string) => string;
+}) {
   if (entries.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-6 py-12">
@@ -118,7 +76,7 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
   });
 
   return (
-    <div className="flex flex-col gap-1 px-4 py-5 sm:px-6">
+    <div className="flex flex-col gap-1 px-4 py-5 max-sm:px-3 max-sm:py-4 sm:px-6">
       {rows.map(({ entry, day, showDivider, startsRun, endsRun }) => {
         const isOutbound = entry.kind === "OUTGOING" || entry.kind === "QUEUED";
         const isSystem = entry.kind === "SYSTEM";
@@ -140,14 +98,33 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
               </p>
             ) : (
               <div className={`group/bubble flex ${isOutbound ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[min(38rem,80%)] ${isOutbound ? "items-end" : "items-start"} flex flex-col`}>
+                <div className={`max-w-[min(38rem,80%)] max-sm:max-w-[86%] ${isOutbound ? "items-end" : "items-start"} flex flex-col`}>
                   {/* Named once per run, not once per message. */}
+                  {/* The roster name when the identity rule names one member (WHATSAPP_IDENTITY.md),
+                      else their WhatsApp name, else a number — and a private WhatsApp ID is masked,
+                      never printed as if it were a phone number. Opens the contact panel. */}
                   {!isOutbound && startsRun ? (
                     <span className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium text-[color:var(--color-muted-foreground)]">
-                      {entry.isTeamMember ? (
-                        <UserRound className="size-3" aria-hidden />
+                      {entry.isTeamMember || entry.sender?.memberId ? <UserRound className="size-3" aria-hidden /> : null}
+                      {entry.sender && contactHref ? (
+                        <Link
+                          href={contactHref(entry.sender.contactKey)}
+                          className="rounded-[var(--radius-xs)] hover:text-[color:var(--color-foreground)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+                          title="Contact info"
+                        >
+                          {entry.sender.label}
+                        </Link>
+                      ) : (
+                        (entry.sender?.label ?? entry.senderName ?? entry.senderPhone)
+                      )}
+                      {entry.sender?.needsReview ? (
+                        <span
+                          className="rounded-[var(--radius-xs)] bg-[var(--color-warning-bg)] px-1 text-[10px] text-[color:var(--color-warning-fg)]"
+                          title="This WhatsApp ID matches more than one team member, so the message is credited to nobody until Team Members is corrected."
+                        >
+                          identity needs review
+                        </span>
                       ) : null}
-                      {entry.senderName ?? entry.senderPhone}
                     </span>
                   ) : null}
 
@@ -156,7 +133,7 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
                       side said this", carried by geometry rather than another label. Mid-run
                       bubbles keep both inner corners tight so a run reads as one block. */}
                   <div
-                    className={`${hasFile ? "p-1.5" : "px-3.5 py-2"} text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] transition-shadow duration-[var(--duration-fast)] ease-[var(--ease-out)] group-hover/bubble:shadow-[var(--shadow-sm)] ${
+                    className={`${hasFile ? "p-1.5" : "px-3.5 py-2"} text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-[var(--shadow-xs)] max-sm:text-[14px] transition-shadow duration-[var(--duration-fast)] ease-[var(--ease-out)] group-hover/bubble:shadow-[var(--shadow-sm)] ${
                       isOutbound
                         ? `rounded-l-[var(--radius-lg)] rounded-br-[var(--radius-xs)] ${startsRun ? "rounded-tr-[var(--radius-lg)]" : "rounded-tr-[var(--radius-xs)]"}`
                         : `rounded-r-[var(--radius-lg)] ${startsRun ? "rounded-tl-[var(--radius-lg)]" : "rounded-tl-[var(--radius-xs)]"} rounded-bl-[var(--radius-xs)]`
@@ -168,6 +145,19 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
                           : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-foreground)]"
                     }`}
                   >
+                    {/* What this replies to — WhatsApp's swipe-to-reply, kept with the message. */}
+                    {entry.quoted ? (
+                      <div
+                        className={`mb-1.5 rounded-[var(--radius-sm)] border-l-2 px-2 py-1 text-[12px] leading-snug ${
+                          isOutbound
+                            ? "border-[var(--color-on-primary)]/60 bg-black/15"
+                            : "border-[var(--color-accent)] bg-[var(--color-surface-sunken)]"
+                        } ${hasFile ? "mx-1 mt-1" : ""}`}
+                      >
+                        <span className="block font-semibold">{entry.quoted.author}</span>
+                        <span className="line-clamp-2 opacity-80">{entry.quoted.body}</span>
+                      </div>
+                    ) : null}
                     {entry.media ? <MessageAttachment media={entry.media} /> : null}
                     {notArchived ? <MediaNotArchived body={entry.body} /> : null}
                     {text ? <div className={hasFile ? "px-2 pt-1.5 pb-0.5" : undefined}>{text}</div> : null}
@@ -232,21 +222,28 @@ export function MessageThread({ entries, accountLabel }: { entries: ThreadEntry[
 }
 
 /** Shown above the composer while a group has AI automation switched on. */
-export function AiActiveNotice({ suppressedUntil }: { suppressedUntil: Date | null }) {
+export function AiActiveNotice({ suppressedUntil, compact = false }: { suppressedUntil: Date | null; compact?: boolean }) {
   const suppressed = suppressedUntil && new Date(suppressedUntil) > new Date();
   return (
-    <div className="flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-2 text-[11px] text-[color:var(--color-muted-foreground)] sm:px-6">
+    <div className={`flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 text-[11px] text-[color:var(--color-muted-foreground)] sm:px-6 ${compact ? "py-1.5 max-sm:px-3 sm:py-2" : "py-2"}`}>
       <Bot className="size-3.5 shrink-0" aria-hidden />
       {suppressed ? (
-        <span>
-          AI is paused for this group until {formatTime(new Date(suppressedUntil))} because a team
-          member replied recently.
-        </span>
+        <>
+          {/* `compact` (Chat v2): one short line on a phone, the full sentence everywhere else. */}
+          {compact ? <span className="min-w-0 truncate sm:hidden">AI paused until {formatTime(new Date(suppressedUntil))}</span> : null}
+          <span className={compact ? "max-sm:hidden" : undefined}>
+            AI is paused for this group until {formatTime(new Date(suppressedUntil))} because a team
+            member replied recently.
+          </span>
+        </>
       ) : (
-        <span>
-          AI automation is on for this group. Replying here pauses it while you handle the
-          conversation.
-        </span>
+        <>
+          {compact ? <span className="min-w-0 truncate sm:hidden">AI is on · replying here pauses it</span> : null}
+          <span className={compact ? "max-sm:hidden" : undefined}>
+            AI automation is on for this group. Replying here pauses it while you handle the
+            conversation.
+          </span>
+        </>
       )}
     </div>
   );

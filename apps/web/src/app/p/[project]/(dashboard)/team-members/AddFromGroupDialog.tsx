@@ -21,6 +21,7 @@ import {
   type AddFromGroupState,
   type GroupParticipantCandidate,
 } from "@/server/actions/teamMembers";
+import { addFromGroupValue } from "@/lib/teamMemberIdentity";
 import { MemberSuggestionLists, TeamSelect, type MemberFormOptions } from "./MemberFormFields";
 
 const INITIAL: AddFromGroupState = {};
@@ -135,7 +136,9 @@ export function AddFromGroupDialog({ groups, options }: { groups: GroupOption[];
       tone: "success",
       title: `${state.addedCount} member${state.addedCount === 1 ? "" : "s"} added`,
       description:
-        state.addedCount === 0 ? "Everyone selected was already on the roster." : undefined,
+        state.addedCount === 0
+          ? "Everyone selected was already on the roster."
+          : "Every message they already sent in your groups is being collected into their reports.",
     });
     // Deferred via a microtask (fires before the next paint, so no visible delay) rather than
     // called directly in the effect body — the convention already used in DashboardShell and
@@ -274,7 +277,7 @@ export function AddFromGroupDialog({ groups, options }: { groups: GroupOption[];
                 </div>
               <div className="max-h-72 overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)]">
                 {candidates.map((candidate) => {
-                  const value = `${candidate.phoneNumber}|${candidate.suggestedName ?? ""}`;
+                  const value = addFromGroupValue(candidate);
                   return (
                     <label
                       key={candidate.phoneNumber}

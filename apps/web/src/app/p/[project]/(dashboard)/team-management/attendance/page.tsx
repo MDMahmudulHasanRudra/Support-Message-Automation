@@ -1,4 +1,6 @@
 
+import { loadDataHealth } from "@/server/dataHealth";
+import { DataHealthStrip } from "@/components/reports/DataHealthStrip";
 import { prisma } from "@/server/db";
 import { formatMinutesShort } from "@support-automation/shared";
 import { requireSession } from "@/server/auth";
@@ -77,13 +79,15 @@ export default async function AttendancePage({
     ? requestedPageSize
     : DEFAULT_PAGE_SIZE;
 
-  const [history, members] = await Promise.all([
+  const [history, members, dataHealth] = await Promise.all([
     getDutyHistory(range, teamMemberId, page, pageSize),
     prisma.internalTeamMember.findMany({
       where: { status: "ACTIVE" },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
+    // A collection gap is "no messages stored", never "did not work": said beside the days it covers.
+    loadDataHealth({ periodStart: range.start.getTime(), periodEnd: range.end.getTime(), now }),
   ]);
   const rows = history.rows;
 
@@ -139,6 +143,8 @@ export default async function AttendancePage({
           </form>
         }
       />
+
+      <DataHealthStrip health={dataHealth} />
 
       {rows.length > 0 ? (
         <div className="mb-5 grid grid-cols-2 gap-3.5 lg:grid-cols-4">

@@ -54,7 +54,8 @@ const CATEGORY_BY_KEY = new Map(PERMISSIONS.map((p) => [p.key, p.category]));
 const FULL_ONLY_KEYS = new Set(["settings.edit", "ai_settings.edit"]);
 
 export function isReadOnlyKey(key: string): boolean {
-  return key.endsWith(".view") || key.endsWith(".bulk_export");
+  // "clients.view_billing" only reads: a READ level must still be able to look at billing.
+  return key.endsWith(".view") || key.endsWith(".bulk_export") || key.endsWith(".view_billing");
 }
 
 /** Whether a level lets a user use this key of their role. Unknown keys are refused under a limited level. */

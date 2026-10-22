@@ -371,3 +371,247 @@ Simulated providers cannot show how fast WhatsApp hands a new device its list. T
   one response is small.
 - **Fallback:** if WhatsApp Web reshapes its internal store, the fallback `getAllGroups()` is heavy
   and has timed out on large rosters before. That remains the slow path.
+
+## 8. Group recovery — finishing a list that never finished arriving
+
+The arrival passes after a connect read for at most twenty minutes, then stop. If WhatsApp had not
+delivered the whole list by then, if the sync failed under load, or if the worker restarted mid-sync,
+the account stayed CONNECTED with `groupSyncStatus` FAILED or PARTIAL and **nothing read the list
+again** until somebody pressed Resync. (Reproduced in the lab, 14 Oct 2026: after the worker's own
+health check failed under CPU load and it restarted the session, WhatsApp Web came back with 477 of
+the 573 known groups; the passes settled there and stopped.)
+
+`commands/groupRecovery.ts` (loop `group-recovery`, 60 s) is that missing retry.
+
+**What is "genuinely partial" and what is history.** The two are never confused:
+
+| Situation | Kind | What it means | Effect on status |
+|---|---|---|---|
+| Sync status FAILED/PARTIAL | `RETRY` | a sync said "not finished" | re-read slowly, no cap, until **no group that was ACTIVE is missing** from the list (and nothing failed to save): then COMPLETED, otherwise PARTIAL |
+| COMPLETED, but inactive groups exist | `VERIFY` | history: a group left long ago, or a logout's casualties | **none** — never writes the status, the discovered count or an error |
+| COMPLETED and settled (nothing above applies) | `DAILY` | a list that may have arrived after the 24 h FOLLOW window — e.g. 500 shown, 1,800 on the phone | **none** — once a day, ADD_ONLY; see below |
+| Inactive groups the list lacks | — | not evidence of anything: they may be gone for good or not delivered yet | never counted as pending, never called "left" |
+
+An ACTIVE group disappearing from a read is the signal of a partial list (it is the sweep guard's own
+signal). An INACTIVE row the list lacks is not. `VERIFY` exists only to catch a group WhatsApp lists
+late: it reactivates what the list now contains, is bounded (`verifyMaxReads`, 4 reads in a row that
+find nothing, waits 2/5/10/30 min), restarts its count on a find, and is then left alone until the
+account reconnects. No account is read forever because of history.
+
+**`DAILY` (17 Oct 2026).** Before it, a settled account was never read again: a sync that said COMPLETED
+with 500 of 1,800 groups, after the FOLLOW window had ended, stayed at 500 until a message came from each
+missing group or somebody pressed Resync. Now every CONNECTED account none of the other kinds covers gets
+one ADD_ONLY read a day (`dailyCheckMs`, `WHATSAPP_GROUP_DAILY_CHECK_HOURS`, `0` = off — the old
+behaviour). It never writes the status, never deactivates anything, and is subject to everything above:
+one read per tick across all accounts, held off while the machine is busy, never beside an arrival pass
+or another sync. The first daily read is a day after the last completed sync or the end of the FOLLOW
+window, whichever is later; the schedule is in memory, so a worker restart costs at most one early read.
+A spent `VERIFY` is carried into it (`verifySpent`), so history is not verified over again.
+A read still sees only what WhatsApp Web has loaded on the linked device: a group the phone never sent
+there appears with its first message, not before.
+
+**A read that did not happen is not a result.** `runGroupRecoveryPass` answers `READ`, or `UNKNOWN`:
+- `UNAVAILABLE` — no live client (`WhatsAppProvider.hasLiveClient`; `getGroups()` answers `[]` for a
+  gone client) or the session not CONNECTED before or after the read. The check after runs before
+  anything is persisted, so a list handed back by a session that dropped mid-read is discarded.
+- `EMPTY_LIST` — a connected session returned no group. Never authoritative: a page whose chats have
+  not arrived looks exactly like an account in no groups. Nothing is written or completed.
+`UNKNOWN` writes nothing (no status, no discovered count, no group) and only lengthens the wait.
+
+Other rules:
+
+- **ADD_ONLY, always** (`runGroupRecoveryPass`). It saves groups that appeared and switches back on a
+  group WhatsApp LISTS. It has no sweep, so it can never deactivate anything, and it never switches
+  on a group the list does not contain. The FULL sync and its 10% sweep guard are unchanged.
+- **The need is read from the database, the schedule is not.** A restart forgets only *when* to
+  look. A reconnect (`lastConnectedAt` changes) or a change of kind starts a fresh schedule.
+- **Slow, and slower each time nothing new arrives:** 2, 5, 10, 30 minutes, then every 6 hours. A
+  pass that finds something starts over at 2. A first sighting waits the shortest delay before reading.
+- **Never beside the connect's own passes.** An account connected less than the arrival window
+  (20 min) plus a minute ago is left to the arrival watcher.
+- **At most one read per tick, none while busy, and "busy" is bounded** — see "Load protection" below.
+- **Only a live account:** CONNECTED in the database and in the provider, with a phone number
+  (LOGOUT clears it, and a logged-out account's groups are inactive on purpose), in a project that
+  is operating, and not already syncing. A logout or reconnect during the read cancels it through
+  the sync generation.
+- **A manual FULL resync that arrives while a recovery (or arrival) pass is in flight is queued**
+  behind it and run as a FULL sync of its own — section 9.
+
+Tests: `groupRecovery.integration.test.ts` (isolated database) and `groupRecoverySchedule.test.ts`.
+
+### Load protection
+
+What the guard measures — and what it does not:
+
+- **`loadPerCpu`** = `os.loadavg()[0] / os.availableParallelism()`. On Linux `loadavg()` is
+  `/proc/loadavg`, which is **not namespaced by a container**: in Docker (including Docker Desktop's
+  VM) it is the whole host kernel's figure, every container and the VM itself. It is the 1-minute
+  exponentially damped count of runnable plus uninterruptible tasks, so it lags by about a minute, and
+  `availableParallelism()` is the CPUs the process may use (8 in the lab; a cgroup quota would lower
+  it). `1.0` therefore means "as many runnable tasks as CPUs", **not** "100% busy for sure".
+- **`eventLoopDelayMs`** = the p99 event-loop delay of this Node process over the last tick. It sees
+  this worker's own loop only. **Chromium, where the WhatsApp page does its work, is a separate
+  process and is invisible to it.**
+- **`getBrowserUsage`** (OpenWA `getProcessStats`, `pidusage` over this worker's process tree and
+  Chromium's, read from /proc: local, no WhatsApp request, no page script) is the figure that was
+  missing — the CPU of the thing that actually reads the list. It is **always measured** and written
+  to each recovery pass's System Log entry (`browser: { cpuPercent, memoryMb, processes }`; 100 =
+  one core). It only defers a read once `WHATSAPP_GROUP_RECOVERY_MAX_BROWSER_LOAD_PER_CPU` (cores
+  busy per available CPU) is set; **0 = off, and off is the default**, because no number has been
+  chosen from measurements yet. Unknown or failing readings count as "not busy"; deferral is bounded
+  by `maxDeferredTicks` like the other signals. cgroup v2 `cpu.stat` (`usage_usec`) would be the
+  container-level equivalent and is not wired in.
+
+Policy: busy means `loadPerCpu > maxLoadPerCpu` or `eventLoopDelayMs > maxEventLoopDelayMs`; a busy
+tick defers the read and changes nothing else; after `maxDeferredTicks` (30) busy ticks in a row the
+next due read goes ahead once, and the count restarts, so deferral cannot be indefinite. Backoff
+(2 min to 6 h) and the read's own timeout are unchanged. **The thresholds are not justified by
+measurement** and the 1.5 default will rarely if ever trigger; a 10-minute read-only sample of the lab
+(15 s apart, 39 samples) had load per CPU between 0.24 and 0.56 while the worker's own cgroup used
+0.46 cores on average and peaked at 3.7 — the 1-minute host average smooths the spikes that matter,
+and carries a floor from everything else on the VM. Until measured under the real failure, treat the guard as a brake on
+sustained saturation, not as proof recovery is gentle. Measurement method: sample, read-only, every
+15 s for a session that is actually dropping — `/proc/loadavg`, `docker stats` and the cgroup
+`usage_usec` delta — and compare them with the moments the health check fails.
+
+## 9. Group-list reads, and a FULL sync that arrives during a pass
+
+**Every read of the list is checked.** `readGroupListChecked` (all modes: post-connect, arrival
+passes, manual FULL, recovery) requires `WhatsAppProvider.hasLiveClient()` before and after the read.
+`getGroups()` answers `[]` for a session whose client is gone as well as for an account in no groups;
+a list returned by a session that dropped mid-read proves nothing, and the check after runs before
+anything is persisted. The recovery additionally requires the state label CONNECTED; the others do
+not, because OpenWA reports RECONNECTING for a while after a successful connect.
+
+- Unavailable: `GroupListUnavailableError`. A manual or post-connect FULL records FAILED with the reason
+  and **does not retry** (the session will be as unavailable in ten seconds); the discovered count and
+  every group are untouched. An arrival pass counts it as "unknown" (never towards settled).
+- Empty list: for an account **with groups on record**, a FULL sync refuses it (`EMPTY_LIST`, FAILED,
+  nothing changed — an empty list never sweeps, and recording COMPLETED/0 over a good discovery is
+  the lie). For an account with none it is a real answer (COMPLETED, 0). An arrival pass treats an
+  empty read as unknown, never as "stable". The FULL sweep guard (10%) is unchanged.
+- A provider without `hasLiveClient` is trusted as before.
+
+**A FULL sync keeps its meaning.** Every in-flight sync records its mode. A FULL request that finds
+another FULL joins it (unchanged). One that finds an ADD_ONLY pass is **queued**: one queued request
+per account, shared by later ones (a manual request's options win over a post-connect one's), run
+when the pass has released the account — so there is never more than one read — through the ordinary
+entry point, which re-queues it if another ADD_ONLY slipped in first. A logout or reconnect
+(`cancelGroupSync`), a moved sync generation and worker shutdown each drop it with a "cancelled"
+result, and the RESYNC_GROUPS command records that as DONE/cancelled as it always has.
+
+
+## 10. A newly linked number gets as long as WhatsApp needs (15 Oct 2026)
+
+Built on `rudra`; not deployed.
+
+### What went wrong
+
+After a scan, WhatsApp copies the number's chats from the phone to the new device. That copy is
+the "Loading your chats" percentage on the phone. OpenWA's `create()` resolves only when it
+finishes, and the library writes `<sessionId>.data.json` only then.
+
+| Date | Commit | Change | Effect on a number in ~2,000 groups |
+|---|---|---|---|
+| 11 Aug | `a5fd3a3` | No limit after a scan | The copy finished overnight |
+| 14 Aug | `8f765db` | 10-minute bound on the whole attempt, browser left running | More forgiving than later |
+| 23 Sep | `ceb4c99` | **240 s after the scan**, then the attempt failed | Killed mid-copy |
+| 23 Sep | `8cec1f2` | Two failed attempts with no code and no session file: **profile deleted** | An interrupted copy restarted from 0% |
+| 24 Sep | `f88f830` | The browser of a failed attempt is killed by process | The copy stopped for certain |
+| 24 Sep | `6a66010` | Health check: two 20 s timeouts restart the session | A page busy storing chats could be restarted |
+
+The retry after an interrupted copy showed no QR, because the browser held the login. The library's
+own 120 s race then killed it ("Authentication timed out" → "App Offline"). That attempt counted as
+"codeless", and after two of them the profile was deleted. The percentage froze at a different
+value each round.
+
+### What replaced it
+
+- **A progress watch, not a fixed limit** (`provider/openwa/linkLoading.ts`). An accepted scan
+  starts a watch over the profile's IndexedDB (size, file count, newest change), read from file
+  metadata every 30 s. The page is never touched.
+  - The attempt waits while anything is written.
+  - It ends when nothing is written for `stallMs` (10 min), or after `maxMs` (45 min) in total.
+- **The accepted scan is recorded** (`<sessionId>.link-pending.json`) when WhatsApp accepts it, and
+  removed when the load finishes, on logout, on a profile reset, or when it is older than
+  `resumeMaxAgeMs` (6 h).
+- **The next attempt resumes the copy.** While the record exists and no session file does:
+  - the progress watch starts at once;
+  - the no-code deadline is dropped;
+  - `authTimeout: 0` is passed, so the library's 120 s race no longer applies;
+  - the dashboard shows "Accepted — copying chats";
+  - the profile is **never reset**.
+
+  If WhatsApp shows a code instead (the phone removed the device), the record is dropped and an
+  ordinary 5-minute window starts.
+- **Phone-code pairing** raises no "accepted" event. When its linking window ends, IndexedDB growth
+  of at least `loadingDetectBytes` (2 MB) since the attempt began counts as accepted, and the
+  watch starts. QR attempts never use this inference. The measured growth is logged on every
+  expiry, so the threshold can be set from real numbers.
+- **The health check tells "no answer" from "wrong answer."**
+  - A page that is closed, or answers that it has no chat store, still trips after 2 checks.
+  - A page that does not answer within 20 s needs 5 checks in a row (about 10 minutes).
+- **The group recovery loop follows a recent connection (`FOLLOW`).**
+  - For 24 h after a connect, an ADD_ONLY re-read runs at 2, 5, 10, then every 30 minutes. A find
+    starts the cadence over.
+  - It never writes the sync status and never deactivates anything.
+  - RETRY (a FAILED/PARTIAL sync) still comes first. VERIFY applies after the window.
+  - This restores the original "collected overnight" behaviour without relying on restarts.
+- **RECONNECT's stuck-command cutoff is 180 minutes** (`COMMAND_STUCK_RECONNECT_MINUTES`); every
+  other command stays at 20. Before, a RECONNECT still loading was marked FAILED with "run it again".
+
+### Cost and limits
+
+- One attempt can hold the serial command queue, or the registry loop, for up to `maxMs`. With
+  three automatic attempts the worst case is about 2.3 h. This only happens when WhatsApp keeps
+  writing without ever finishing.
+- A RECONNECT after three stalled attempts needs a person, as before. Drop recovery needs a number
+  that has connected before.
+- FOLLOW costs one lean in-page read per account every 30 minutes for a day after each connect,
+  under the loop's existing load deferral.
+
+### Settings (all optional, defaults in code)
+
+| Variable | Default |
+|---|---|
+| `WHATSAPP_LINK_LOADING_STALL_MS` | 600000 (10 min) |
+| `WHATSAPP_LINK_LOADING_MAX_MS` | 2700000 (45 min) |
+| `WHATSAPP_LINK_LOADING_POLL_MS` | 30000 |
+| `WHATSAPP_LINK_LOADING_DETECT_BYTES` | 2097152 |
+| `WHATSAPP_LINK_RESUME_MAX_AGE_MS` | 21600000 (6 h) |
+| `WHATSAPP_HEALTH_CHECK_ANSWER_MS` | 20000 |
+| `WHATSAPP_GROUP_FOLLOW_WINDOW_HOURS` | 24 |
+| `COMMAND_STUCK_RECONNECT_MINUTES` | 180 |
+
+### Operating it
+
+- After scanning, keep the phone online with WhatsApp open until the account shows CONNECTED.
+  Don't press Reconnect while it reads "Accepted — copying chats".
+- Don't recreate the worker while a new number is loading: that restarts Chromium. The next
+  attempt resumes, but only within 6 h.
+- Logs to look for:
+  - "waiting for WhatsApp to copy this number's chats": the watch started;
+  - "WhatsApp stopped sending this number's chats": stalled;
+  - "resuming a link accepted … min ago": the next attempt resumed;
+  - "no pairing detected" with a byte count: an expired phone-code window.
+
+### Tests
+
+- `linkLoading.test.ts`: pure decisions and the disk helpers.
+- `linkLoading.integration.test.ts`: the connect path with a stand-in library that only loads when
+  told to:
+  - a load longer than six stall periods survives;
+  - stall and total bounds;
+  - resume with `authTimeout: 0`;
+  - the profile is kept;
+  - a code during a resume;
+  - stale record;
+  - phone code;
+  - a QR is never extended by inference.
+- `groupRosterResilience.test.ts`: busy vs dead health checks.
+- `groupRecovery.integration.test.ts`: FOLLOW. The suite's clock moved past the 24 h window so its
+  "connected long ago" fixtures keep their meaning.
+- `recoveryRobustness.integration.test.ts`: RECONNECT cutoff.
+- `connectTimeouts.test.ts`: no fixed post-scan limit, and the ordering.
+
+Each protection was confirmed to fail its test when removed (17 mutations).

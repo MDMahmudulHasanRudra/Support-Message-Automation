@@ -209,7 +209,7 @@ export function mediaCaption(body: string, type: MessageMediaKind | null): strin
 export function isMediaPlaceholderBody(body: string): boolean {
   const trimmed = body.trim();
   return MEDIA_PLACEHOLDER_LABELS.some(
-    (l) => l !== "[Location]" && l !== "[Contact card]" && (trimmed === l || trimmed.startsWith(`${l} `)),
+    (l) => l !== "[Location]" && l !== "[Contact card]" && l !== "[Poll]" && (trimmed === l || trimmed.startsWith(`${l} `)),
   );
 }
 

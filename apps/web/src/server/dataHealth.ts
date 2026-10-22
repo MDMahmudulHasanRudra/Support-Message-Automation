@@ -17,7 +17,8 @@ export interface ReportDataHealth extends DataHealth {
   lastProcessedAt: number | null;
 }
 
-const MAX_GAPS = 200;
+/** At most this many gaps are read; the NEWEST are kept, since those are the ones still being felt. */
+const MAX_GAPS = 1000;
 
 export async function loadDataHealth(input: { periodStart: number; periodEnd: number; now: Date; accountId?: string | null }): Promise<ReportDataHealth> {
   const { periodStart, periodEnd, now, accountId } = input;
@@ -31,7 +32,7 @@ export async function loadDataHealth(input: { periodStart: number; periodEnd: nu
         OR: [{ endedAt: null }, { endedAt: { gt: new Date(periodStart) } }],
         account: { groups: { some: {} } },
       },
-      orderBy: { startedAt: "asc" },
+      orderBy: { startedAt: "desc" },
       take: MAX_GAPS,
       select: {
         accountId: true,
@@ -44,7 +45,8 @@ export async function loadDataHealth(input: { periodStart: number; periodEnd: nu
         account: { select: { label: true } },
       },
     }),
-    prisma.message.findFirst({ where: accountWhere, orderBy: { timestampWa: "desc" }, select: { timestampWa: true } }),
+    // Not after now: a sender's clock can be ahead, and a "last message" in the future reads as healthy.
+    prisma.message.findFirst({ where: { ...accountWhere, timestampWa: { lte: now } }, orderBy: { timestampWa: "desc" }, select: { timestampWa: true } }),
     prisma.processingCheckpoint.findFirst({ where: accountWhere, orderBy: { updatedAt: "desc" }, select: { updatedAt: true } }),
   ]);
 
@@ -53,7 +55,7 @@ export async function loadDataHealth(input: { periodStart: number; periodEnd: nu
     periodEnd,
     now: now.getTime(),
     verifiedFrom: settings?.reportingVerifiedFrom?.getTime() ?? null,
-    gaps: gaps.map((g) => ({
+    gaps: [...gaps].reverse().map((g) => ({
       accountId: g.accountId,
       accountLabel: g.account.label,
       cause: g.cause,

@@ -170,7 +170,7 @@ export function NewUserForm({
                       {p.name}
                       {p.status !== "ACTIVE" ? <span className="ml-2 text-xs font-normal text-[color:var(--color-muted-foreground)]">{PROJECT_STATUS_LABELS[p.status]}</span> : null}
                     </span>
-                    <div className="w-36">
+                    <div className="w-40">
                       <Select name={`access:${p.id}`} defaultValue="NONE" aria-label={`Access to ${p.name}`}>
                         <option value="NONE">No access</option>
                         {PROJECT_ACCESS_LEVELS.map((level) => (
@@ -178,6 +178,7 @@ export function NewUserForm({
                             {PROJECT_ACCESS_LEVEL_LABELS[level]}
                           </option>
                         ))}
+                        <option value="LEAD">Project Lead</option>
                       </Select>
                     </div>
                   </li>
@@ -189,6 +190,10 @@ export function NewUserForm({
                     <span className="font-medium text-[color:var(--color-foreground)]">{PROJECT_ACCESS_LEVEL_LABELS[level]}:</span> {PROJECT_ACCESS_LEVEL_DESCRIPTIONS[level]}
                   </li>
                 ))}
+                <li>
+                  <span className="font-medium text-[color:var(--color-foreground)]">Project Lead:</span> Full access to that project, and runs it: creates its
+                  app users, creates its project roles and chooses each member&apos;s modules. Never reaches another project or the Main Admin Portal.
+                </li>
               </ul>
             </>
           )

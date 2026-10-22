@@ -5,16 +5,24 @@ import { requireSession } from "@/server/auth";
 import { requirePermission } from "@/server/permissions";
 import { Button, HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
+import { isMainAdmin } from "@/server/projectContext";
+import { PRIVILEGED_KEYS } from "@/server/privilegeGuard";
 import { UsersTable, type UserRow } from "./UsersTable";
 
 export default async function UsersPage() {
   const session = await requireSession();
   await requirePermission(session, "users.view");
 
-  const users = await prisma.user.findMany({
-    include: { permissionModule: { select: { name: true } } },
-    orderBy: { createdAt: "asc" },
-  });
+  const [users, viewerIsMainAdmin, adminRoles] = await Promise.all([
+    prisma.user.findMany({
+      include: { permissionModule: { select: { name: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    isMainAdmin(session.userId),
+    // Roles at Administrator level: any Main Admin or project-administration key (privilegeGuard).
+    prisma.permissionModulePermission.findMany({ where: { permission: { key: { in: [...PRIVILEGED_KEYS] } } }, select: { permissionModuleId: true }, distinct: ["permissionModuleId"] }),
+  ]);
+  const administratorRoles = new Set(adminRoles.map((r) => r.permissionModuleId));
 
   const rows: UserRow[] = users.map((u) => ({
     id: u.id,
@@ -25,6 +33,9 @@ export default async function UsersPage() {
     isActive: u.isActive,
     lastLoginAtLabel: u.lastLoginAt ? formatDateTime(u.lastLoginAt) : null,
     isCurrentUser: u.id === session.userId,
+    isAdministrator: Boolean(u.permissionModuleId && administratorRoles.has(u.permissionModuleId)),
+    // Only a Main Admin deletes, never an Administrator-level account, never themselves (deleteUser re-checks).
+    canDelete: viewerIsMainAdmin && u.id !== session.userId && !(u.permissionModuleId && administratorRoles.has(u.permissionModuleId)),
   }));
 
   return (
@@ -44,9 +55,12 @@ export default async function UsersPage() {
               </HelpSection>
               <HelpSection title="Deactivate vs. Delete">
                 <p>
-                  There is no delete — deactivating blocks login and immediately signs the user
-                  out of every device, while preserving their history (rules they created,
-                  messages they resolved, etc). Reactivating restores access instantly.
+                  Deactivating blocks login and signs the user out of every device; reactivating
+                  restores access instantly. Delete removes the login for good. Only a Main Admin
+                  can delete, and an Administrator account can never be deleted (nor your own).
+                  What a deleted user did stays in the records without their name, and the System
+                  Log keeps who was deleted. A user with Google Sheets work history can only be
+                  deactivated.
                 </p>
               </HelpSection>
               <HelpSection title="Sessions">

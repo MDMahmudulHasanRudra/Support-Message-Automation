@@ -19,6 +19,13 @@
 /** The Main Admin Portal's keys. Platform-level, and never part of a default role except Administrator. */
 export const MAIN_ADMIN_CATEGORY = "Main Admin";
 
+/**
+ * A project's own administration: its members and its project roles (PROJECT_ROLES.md). Held by a
+ * project's Lead (a Main Admin's designation, `ProjectAccess.isLead`) and by Administrator; never
+ * part of a project role, and adding one to a platform role is a Main Admin's call (privilegeGuard).
+ */
+export const PROJECT_ADMIN_CATEGORY = "Project Administration";
+
 export interface PermissionDefinition {
   key: string;
   label: string;
@@ -86,6 +93,61 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "release_notes.view", label: "View Release Notes", category: "Release Notes" },
   { key: "release_notes.manage", label: "Manage Release Notes", category: "Release Notes" },
 
+  // Google Sheets work management (GOOGLE_SHEETS.md). Its own keys so no existing role gains
+  // anything by its arrival; the module is also a project feature that ships switched OFF.
+  //   view    — see connected accounts, the sheet list and a sheet's contents
+  //   edit    — change a sheet's cells, rows and columns from the app
+  //   manage  — connect / disconnect Google accounts, link people, assign sheets, settings
+  //   monitor — turn work tracking on for a sheet
+  //   report  — the work reports
+  { key: "google_sheets.view", label: "View Google Sheets", category: "Google Sheets" },
+  { key: "google_sheets.edit", label: "Edit Google Sheets", category: "Google Sheets" },
+  { key: "google_sheets.manage", label: "Manage Google Sheets Accounts & Assignments", category: "Google Sheets" },
+  { key: "google_sheets.monitor", label: "Monitor Google Sheets Work", category: "Google Sheets" },
+  { key: "google_sheets.report", label: "View Google Sheets Work Reports", category: "Google Sheets" },
+
+  // Messaging channels beyond WhatsApp (OMNICHANNEL.md): Facebook Messenger, Instagram DM, Telegram.
+  // Their own keys so no existing role gains anything by their arrival; the module is also a project
+  // feature that ships switched OFF. Reading the unified inbox uses `messages.view`, like WhatsApp Chat.
+  //   view   — see which channels are connected and their health
+  //   manage — connect / disconnect channels, enter credentials, switch AI on for a channel
+  //   reply  — reply to customers on those channels. Separate from `messages.reply`, which belongs to
+  //            WhatsApp Chat (and its feature); a migration grants it to every custom role that
+  //            already holds `messages.reply`, so nobody who answers customers loses the ability.
+  { key: "channels.view", label: "View Messaging Channels", category: "Messaging Channels" },
+  { key: "channels.manage", label: "Manage Messaging Channels", category: "Messaging Channels" },
+  { key: "conversations.reply", label: "Reply on Messenger, Instagram & Telegram", category: "Messaging Channels" },
+
+  // Client Management (CLIENT_CENTER.md). A client record holds personal data, so reading, changing,
+  // exporting and deleting it are separate rights. Nothing here sends a message; sending, when it
+  // arrives, gets its own keys. `.view` is read-only and is part of the Read Only role like every other.
+  //   view    — see clients, their channels, notes and timeline
+  //   create  — add a client
+  //   update  — edit a client, its channels, tags, assignee, consent and notes
+  //   archive — archive and restore (soft deletion; nothing is lost)
+  //   delete  — permanently delete an ARCHIVED client
+  //   import  — import clients from a file
+  //   export  — export clients to a file (personal data leaves the system)
+  { key: "clients.view", label: "View Clients", category: "Clients" },
+  { key: "clients.create", label: "Create Clients", category: "Clients" },
+  { key: "clients.update", label: "Edit Clients", category: "Clients" },
+  { key: "clients.archive", label: "Archive & Restore Clients", category: "Clients" },
+  { key: "clients.delete", label: "Delete Anything in Clients (clients, subscriptions, invoices, payments, notes)", category: "Clients" },
+  { key: "clients.import", label: "Import Clients", category: "Clients" },
+  { key: "clients.export", label: "Export Clients", category: "Clients" },
+  // Billing is its own pair; neither key ends in ".view", so Read Only does not receive amounts or dates.
+  { key: "clients.view_billing", label: "View Client Billing", category: "Clients" },
+  { key: "clients.edit_billing", label: "Edit Client Billing", category: "Clients" },
+  // Linking a chat decides who a later message is addressed to, so it is an authorized admin's key, apart from clients.update.
+  { key: "clients.link_whatsapp_chat", label: "Link WhatsApp Chats to Clients", category: "Clients" },
+  // Clients V3 (CLIENTS_V3.md). Selling and renewing changes what a client is owed service for; linking a group
+  // decides where a later reminder may go; the settings switch sub-modules off for everyone in the project.
+  { key: "clients.manage_subscriptions", label: "Sell, Renew and Cancel Client Subscriptions", category: "Clients" },
+  { key: "clients.link_whatsapp_group", label: "Link WhatsApp Groups to Clients", category: "Clients" },
+  { key: "clients.manage_settings", label: "Manage Client Module Settings", category: "Clients" },
+  // SMTP settings hold a credential and decide where mail leaves from: an authorized admin's key.
+  { key: "communications.manage_email", label: "Manage Email Settings", category: "Communications" },
+
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },
   { key: "settings.edit", label: "Edit Settings", category: "System" },
@@ -116,6 +178,11 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   // Administrator receives them.
   { key: "configuration.view", label: "View Departments, Job Titles & Employees", category: MAIN_ADMIN_CATEGORY },
   { key: "configuration.manage", label: "Manage Departments, Job Titles & Employees", category: MAIN_ADMIN_CATEGORY },
+
+  // Project Administration (PROJECT_ROLES.md): inside ONE project, its members and its project roles.
+  // A Lead holds both in the project they lead; neither reaches another project or the platform.
+  { key: "project_members.manage", label: "Manage This Project's Members", category: PROJECT_ADMIN_CATEGORY },
+  { key: "project_roles.manage", label: "Manage This Project's Roles", category: PROJECT_ADMIN_CATEGORY },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number]["key"];
@@ -137,9 +204,17 @@ export const READ_ONLY_PERMISSION_KEYS: readonly string[] = PERMISSIONS.filter(
 ).map((p) => p.key);
 
 /** Matches the spec's own illustrative example for this default module verbatim. */
+/**
+ * Keys only a Main Admin may GIVE (17 Oct 2026, owner's rule): deleting is the Administrator's by
+ * default, and an Administrator can hand it to a role. Not project-assignable either, so a Lead never
+ * receives it and a project role can never carry it (`PLATFORM_ONLY_KEYS`).
+ */
+export const ADMIN_GRANTED_KEYS: readonly string[] = ["clients.delete"];
+
 export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
   "messages.reply",
+  "conversations.reply",
   "automation_rules.view",
   "automation_rules.create",
   "automation_rules.edit",
@@ -153,6 +228,7 @@ export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
 export const SUPPORT_AGENT_PERMISSION_KEYS: readonly string[] = [
   "messages.view",
   "messages.reply",
+  "conversations.reply",
   "automation_rules.view",
   "automation_rules.create",
   "automation_rules.edit",

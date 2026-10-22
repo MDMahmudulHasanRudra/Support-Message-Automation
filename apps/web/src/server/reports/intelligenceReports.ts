@@ -65,7 +65,8 @@ async function operatorNames(intel: IntelligenceData): Promise<Map<string, strin
 
 function answeredBy(intel: IntelligenceData, w: HumanWait, operators: Map<string, string>): string {
   if (!w.repliedBy) return "—";
-  if (w.repliedBy.actor === "MEMBER") return name(intel, w.repliedBy.memberId);
+  // A dashboard reply credited to the member linked to that login is theirs, as in the Team Report.
+  if (w.repliedBy.actor === "MEMBER" || (w.repliedBy.actor === "OPERATOR" && w.repliedBy.memberId)) return name(intel, w.repliedBy.memberId);
   if (w.repliedBy.actor === "OPERATOR") return `${operators.get(w.repliedBy.operatorUserId ?? "") ?? "Dashboard operator"} (dashboard)`;
   return INTEL_ACTOR_LABELS[w.repliedBy.actor];
 }
@@ -436,7 +437,7 @@ const EFFECTIVENESS_FORMULAS = [
   { title: "What this measures", text: "Support behaviour visible in WhatsApp records and the duty roster — not anyone's overall performance. Separate leaderboards, never one merged ranking." },
   { title: "Eligibility", text: `A score needs at least ${ELIGIBILITY.minWaitsHandled} human waits answered and ${ELIGIBILITY.minVerifiedActiveDays} verified active days (days before the verified-from date, or touched by an incomplete collection gap, do not count). Below that: Insufficient sample — never a low score.` },
   { title: "Shrinkage", text: "Every rate is pulled toward the team's rate by 10 pseudo-observations (5 pseudo-hours for efficiency), so 3 perfect cases land near the team average while 200 good ones earn their distance from it." },
-  { title: "Observed Support Session Time", text: "The union of the employee's support sessions across every group — overlapping groups counted once. Different from the Team Report's Support Overtime, which joins all of a person's messages into stretches split at the idle gap: session time leaves out the gaps between groups. Both are shown; neither replaces the other." },
+  { title: "Observed Support Session Time", text: "The union of the employee's support sessions across every group — overlapping groups counted once. Different from the Team Report's Support time, which joins all of a person's messages into stretches split at the idle gap: session time leaves out the gaps between groups. Both are shown; neither replaces the other." },
   { title: "Duty", text: "Observed session time inside a scheduled shift is during duty; outside it, before or after a shift that day, or on a day with no shift. Outside-duty time is shown, never scored." },
 ];
 
@@ -603,7 +604,7 @@ function employeeDetail(ctx: ReportContext, intel: IntelligenceData, memberId: s
   const myPreferences = intel.preferences.filter((p) => p.memberId === memberId);
   const tiles: ReportTile[] = [
     { label: "Support Effectiveness", value: scoreText(e), hint: e.eligibilityNote ?? `${conf(e.confidence)} confidence`, tone: e.score === null ? "neutral" : "accent" },
-    { label: "Observed session time", value: duration(m.observed.observedSeconds), hint: `Team Report Support Overtime: ${duration(existingSupportTime)}` },
+    { label: "Observed session time", value: duration(m.observed.observedSeconds), hint: `Team Report support time: ${duration(existingSupportTime)}` },
     { label: "Scheduled", value: duration(m.duty.scheduledSeconds) },
     { label: "During duty", value: duration(m.duty.inDutySeconds) },
     { label: "Outside duty", value: duration(m.duty.beforeShiftSeconds + m.duty.afterShiftSeconds + m.duty.offDaySeconds), hint: `before ${duration(m.duty.beforeShiftSeconds)} · after ${duration(m.duty.afterShiftSeconds)} · off-day ${duration(m.duty.offDaySeconds)}` },

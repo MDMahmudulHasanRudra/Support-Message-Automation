@@ -1,5 +1,7 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 
+import { loadDataHealth } from "@/server/dataHealth";
+import { DataHealthStrip } from "@/components/reports/DataHealthStrip";
 import { activeProjectId } from "@/server/projectContext";
 import { prisma } from "@/server/db";
 import { pageAccess } from "@/server/authorize";
@@ -49,6 +51,7 @@ export default async function SupportActivityPage() {
     staleSessionCount,
     actorBreakdown,
     activeRuleCount,
+    dataHealth,
   ] = await Promise.all([
     getUniqueGroupCount(period),
     getEveryActivityCount(period),
@@ -65,6 +68,7 @@ export default async function SupportActivityPage() {
     getStaleSessionCount(),
     getActorBreakdown(period),
     prisma.supportRule.count({ where: { isActive: true } }),
+    loadDataHealth({ periodStart: period.start.getTime(), periodEnd: period.end.getTime(), now: new Date() }),
   ]);
 
   const repeatedThisPeriod = Math.max(0, periodActivities - periodSupportedGroups);
@@ -102,6 +106,8 @@ export default async function SupportActivityPage() {
           </HelpButton>
         }
       />
+
+      <DataHealthStrip health={dataHealth} />
 
       {canManage ? null : <ViewOnlyNotice />}
 

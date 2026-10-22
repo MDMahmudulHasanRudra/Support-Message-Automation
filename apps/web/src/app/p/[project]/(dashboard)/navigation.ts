@@ -1,6 +1,13 @@
 import { pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
+  Camera,
+  Contact,
+  ReceiptText,
+  Wallet,
+  Inbox,
+  Mail,
+  PlugZap,
   AlertCircle,
   AlertTriangle,
   CalendarClock,
@@ -23,6 +30,7 @@ import {
   Cpu,
   EyeOff,
   FileEdit,
+  FileSpreadsheet,
   FileUp,
   Fingerprint,
   FlaskConical,
@@ -62,6 +70,13 @@ import {
 
 /** No project features switched off — the default for every caller that does not pass a set. */
 const NO_FEATURES_OFF: ReadonlySet<string> = new Set();
+
+/**
+ * Which pages a member's project role opens (projectSections.ts), or undefined when no page selection
+ * applies — every global role, every Lead, every role saved before pages existed. Presentation only:
+ * the page and its actions check again (server/permissions.ts).
+ */
+export type PageFilter = ((href: string) => boolean) | undefined;
 
 /**
  * The single source of truth for dashboard navigation. Lives outside Sidebar.tsx
@@ -183,6 +198,26 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       { href: "/team-management/settings", label: "Team Settings", icon: CalendarDays },
     ],
   },
+  {
+    label: "Messaging Channels",
+    description: "Facebook Messenger, Instagram DM and Telegram connections, their webhooks and whether AI answers on them.",
+    links: [{ href: "/settings/channels", label: "Messaging Channels", icon: PlugZap }],
+  },
+  {
+    label: "Clients",
+    description: "Which parts of Client Management this project uses, which fields are required, and the renewal window.",
+    links: [{ href: "/settings/clients", label: "Client Module", icon: Contact }],
+  },
+  {
+    label: "Email",
+    description: "The SMTP mail server this project's email leaves from, and a test message to confirm it works.",
+    links: [{ href: "/settings/email", label: "Email", icon: Mail }],
+  },
+  {
+    label: "Google Sheets",
+    description: "The Google accounts this project's spreadsheets are reached through, and how work time is measured.",
+    links: [{ href: "/settings/google-sheets", label: "Google Accounts", icon: FileSpreadsheet }],
+  },
 ];
 
 const SETTINGS_PATHS = SETTINGS_SECTIONS.flatMap((section) => section.links.map((link) => link.href));
@@ -204,16 +239,20 @@ export function isSettingsPath(pathname: string): boolean {
  * feature the page belongs to (MULTI_PROJECT_PLAN.md §9). Presentation only — the page and its
  * actions make both checks themselves.
  */
-function canOffer(href: string, granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string>): boolean {
+function canOffer(href: string, granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string>, pages?: PageFilter): boolean {
   const key = navPermissionFor(href);
-  return (key === null || granted.has(key)) && pathAllowedByFeatures(href, disabledFeatures);
+  return (key === null || granted.has(key)) && pathAllowedByFeatures(href, disabledFeatures) && (pages === undefined || pages(href));
 }
 
 /** The Settings sections reduced to the pages this role can open. Empty sections are dropped. */
-export function settingsSectionsFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF): SettingsSection[] {
+export function settingsSectionsFor(
+  granted: ReadonlySet<string>,
+  disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF,
+  pages?: PageFilter,
+): SettingsSection[] {
   return SETTINGS_SECTIONS.map((section) => ({
     ...section,
-    links: section.links.filter((link) => canOffer(link.href, granted, disabledFeatures)),
+    links: section.links.filter((link) => canOffer(link.href, granted, disabledFeatures, pages)),
   })).filter((section) => section.links.length > 0);
 }
 
@@ -284,8 +323,8 @@ export function isReportPath(pathname: string): boolean {
 }
 
 /** The reports this role can open. */
-export function reportPagesFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF): ReportPage[] {
-  return REPORT_PAGES.filter((page) => canOffer(page.href, granted, disabledFeatures));
+export function reportPagesFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF, pages?: PageFilter): ReportPage[] {
+  return REPORT_PAGES.filter((page) => canOffer(page.href, granted, disabledFeatures, pages));
 }
 
 // Ordered for day-to-day frequency: live/operational areas checked constantly (messages,
@@ -296,7 +335,13 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Support",
     icon: MessageCircleMore,
     links: [
+      // The unified inbox and the channel inboxes beside WhatsApp (OMNICHANNEL.md). The Omnichannel
+      // feature hides all four when it is off; WhatsApp Chat is unaffected either way.
+      { href: "/conversations/all", label: "All Conversations", icon: Inbox },
       { href: "/chat", label: "WhatsApp Chat", icon: MessageCircleMore },
+      { href: "/conversations/messenger", label: "Facebook Messenger", icon: MessagesSquare },
+      { href: "/conversations/instagram", label: "Instagram DM", icon: Camera },
+      { href: "/conversations/telegram", label: "Telegram", icon: Send },
       {
         href: "/messages",
         label: "Messages",
@@ -321,6 +366,19 @@ export const NAV_GROUPS: NavGroup[] = [
         ],
       },
       { href: "/support-escalation", label: "Escalations", icon: ShieldAlert },
+    ],
+  },
+  {
+    // Client Management (CLIENT_CENTER.md): the one client database. A project feature that ships off.
+    label: "Clients",
+    icon: Contact,
+    links: [
+      { href: "/clients", label: "All Clients", icon: Contact },
+      { href: "/clients/subscriptions", label: "Subscriptions", icon: CalendarClock },
+      // The route is still /clients/dues (bookmarks keep working); the page is the Billing List now.
+      { href: "/clients/dues", label: "Billing List", icon: ReceiptText },
+      { href: "/clients/payments", label: "Payments & Receipts", icon: Wallet },
+      { href: "/clients/import", label: "Import Clients", icon: FileUp },
     ],
   },
   {
@@ -362,6 +420,17 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
       { href: "/group-admin-maker", label: "Groups Admin Maker", icon: UserCog },
+    ],
+  },
+  {
+    // GOOGLE_SHEETS.md. Its account connections and settings live under Settings → Google Sheets.
+    label: "Google Sheets",
+    icon: FileSpreadsheet,
+    links: [
+      { href: "/google-sheets", label: "Spreadsheets", icon: FileSpreadsheet },
+      { href: "/google-sheets/activity", label: "Activity", icon: Activity },
+      { href: "/google-sheets/reports", label: "Work Reports", icon: BarChart3 },
+      { href: "/google-sheets/identity", label: "My Google Identity", icon: Fingerprint },
     ],
   },
   {
@@ -428,11 +497,22 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Logins and roles of the whole installation — the same in every project. In the Main Admin
+    // Workspace this group sits under Main Admin → Users & Permissions (DashboardShell), not here.
     label: "Users & Permissions",
     icon: ShieldCheck,
     links: [
       { href: "/users", label: "App Users", icon: UserCog },
       { href: "/permissions", label: "Permission Modules", icon: ShieldCheck },
+    ],
+  },
+  {
+    // This project's own administration (PROJECT_ROLES.md): its Lead's pages, and a Main Admin's.
+    label: "Project Users & Permissions",
+    icon: UsersRound,
+    links: [
+      { href: "/project-members", label: "Project Members", icon: UsersRound },
+      { href: "/project-roles", label: "Project Roles", icon: KeyRound },
     ],
   },
   {
@@ -480,6 +560,11 @@ const NAV_KEY_EXACT: Record<string, string> = {
 /** Longest prefix wins, so `/ai-learning/providers` resolves before `/ai-learning`. */
 const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/chat", "messages.view"],
+  ["/clients/dues", "clients.view_billing"],
+  ["/clients/payments", "clients.view_billing"],
+  ["/clients/import", "clients.import"],
+  ["/clients/new", "clients.create"],
+  ["/clients", "clients.view"],
   ["/messages", "messages.view"],
   ["/support-escalation", "escalations.view"],
   ["/support-activity", "support_activity.view"],
@@ -507,10 +592,20 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/conversation-learning", "conversation_learning.view"],
   ["/notifications", "notifications.view"],
   ["/settings/security", "security_settings.view"],
+  ["/settings/google-sheets", "google_sheets.view"],
+  ["/settings/channels", "channels.view"],
+  ["/settings/email", "communications.manage_email"],
+  ["/settings/clients", "clients.manage_settings"],
+  ["/conversations", "messages.view"],
+  ["/google-sheets/activity", "google_sheets.monitor"],
+  ["/google-sheets/reports", "google_sheets.report"],
+  ["/google-sheets", "google_sheets.view"],
   ["/settings", "settings.view"],
   ["/logs", "system_logs.view"],
   ["/users", "users.view"],
   ["/permissions", "permissions.view"],
+  ["/project-members", "project_members.manage"],
+  ["/project-roles", "project_roles.manage"],
   ["/release-notes", "release_notes.view"],
 ].sort((a, b) => b[0].length - a[0].length) as Array<[string, string]>;
 
@@ -523,17 +618,17 @@ export function navPermissionFor(href: string): string | null {
 }
 
 /** The nav, reduced to what a role can open. Groups left empty are dropped rather than shown bare. */
-export function navGroupsFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF): NavGroup[] {
+export function navGroupsFor(granted: ReadonlySet<string>, disabledFeatures: ReadonlySet<string> = NO_FEATURES_OFF, pages?: PageFilter): NavGroup[] {
   // Settings is shown whenever the role can open ANY settings page, and opens the first one it can:
   // a role with AI access but no general settings access must still find its way to AI Settings.
-  const firstSettingsPage = settingsSectionsFor(granted, disabledFeatures)[0]?.links[0] ?? null;
-  const canOpenAnyReport = reportPagesFor(granted, disabledFeatures).length > 0;
+  const firstSettingsPage = settingsSectionsFor(granted, disabledFeatures, pages)[0]?.links[0] ?? null;
+  const canOpenAnyReport = reportPagesFor(granted, disabledFeatures, pages).length > 0;
   return NAV_GROUPS.map((group) => ({
     ...group,
     links: group.links.flatMap((link) => {
       if (link === SETTINGS_LINK) return firstSettingsPage ? [{ ...SETTINGS_LINK, href: firstSettingsPage.href }] : [];
       if (link === REPORTS_LINK) return canOpenAnyReport ? [link] : [];
-      const permitted = (candidate: NavLink) => canOffer(candidate.href, granted, disabledFeatures);
+      const permitted = (candidate: NavLink) => canOffer(candidate.href, granted, disabledFeatures, pages);
       if (link.tabs) {
         // Shown when ANY tab opens for this role, pointing at the first one that does — a role
         // that can read Broadcast history but not send one still finds its way in.

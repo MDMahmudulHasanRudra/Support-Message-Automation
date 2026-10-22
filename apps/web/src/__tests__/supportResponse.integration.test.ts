@@ -306,7 +306,11 @@ describe("export", () => {
     const { rows: data, sheet } = await sheetRows(res);
     expect(data).toHaveLength(1);
     expect(data[0]).toMatchObject({ "Response Duration": "5m 00s", "Response (seconds)": 300, "Response (minutes)": 5, "Support Team Member": `Rudra ${tag}`, "Response Episode ID": rows[0]!.id });
-    expect(typeof data[0]!["Support Reply Time"]).toBe("number");
+    // Stored as a numeric Excel serial with a date format — a real Excel date, not text. (SheetJS 0.20's
+    // sheet_to_json hands a date-formatted number back as a JS Date, so the cell itself is what is asserted.)
+    expect(sheet["E2"]?.t).toBe("n");
+    expect(typeof sheet["E2"]?.v).toBe("number");
+    expect(data[0]!["Support Reply Time"]).toBeInstanceOf(Date);
     expect(sheet["E2"]?.z).toBe("yyyy-mm-dd hh:mm:ss");
   });
 
@@ -320,7 +324,7 @@ describe("export", () => {
     const res = await exportFile({ tab: "unanswered", format: "xlsx", query: q({ status: "CLEARED" }), ids: null });
     const { rows } = await sheetRows(res);
     expect(rows).toHaveLength(2);
-    expect(rows.every((r) => r["Status"] === "Cleared" && typeof r["Cleared At"] === "number")).toBe(true);
+    expect(rows.every((r) => r["Status"] === "Cleared" && r["Cleared At"] instanceof Date)).toBe(true); // a date-formatted number (SheetJS 0.20 returns a Date)
     const open = await sheetRows(await exportFile({ tab: "unanswered", format: "xlsx", query: q(), ids: null }));
     expect(open.rows).toHaveLength(2);
     expect(open.rows[0]).toMatchObject({ "Group Name": `Famous Online ${tag}`, "Unanswered Message Count": 4, "Latest Message": "Change kora jabe?", Status: "Unanswered" });

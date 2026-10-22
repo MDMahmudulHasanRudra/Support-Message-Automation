@@ -1,3 +1,4 @@
+import { recordCollection } from "../health/collectionByKind.js";
 import { withAccountProject } from "../project/context.js";
 import { countMetric } from "../health/metrics.js";
 import { prisma } from "../db.js";
@@ -19,8 +20,8 @@ import { recordGapRecovery } from "../health/collectionGaps.js";
  * message since the pipeline was built and read by nothing at all — this is the reader it was
  * always for.
  *
- * Scoped to groups, which is where this product's conversations live and what `getGroups()`
- * already enumerates.
+ * Groups and one-to-one chats alike (Phase 2): the live path stores both, so the gap sweep reads
+ * both back (`selectCatchUpChats`, packages/shared). Status, channels and broadcast lists never.
  */
 
 /**
@@ -151,18 +152,25 @@ async function catchUpMissedMessagesInProject(accountId: string, provider: Whats
       stored: 0,
       duplicates: 0,
     };
+    // A read that answered but could not check everything (the one-to-one chat list, a chat whose
+    // history would not load) has not shown that nothing more was missed: PARTIAL, with the reason.
+    const incomplete = probe.ok ? (probe.incomplete ?? null) : null;
     const recordRecovery = () =>
       recordGapRecovery(accountId, {
-        status: !probe.ok ? "FAILED" : lookbackCut || missed.length >= MAX_MESSAGES ? "PARTIAL" : "RECOVERED",
+        status: !probe.ok ? "FAILED" : lookbackCut || missed.length >= MAX_MESSAGES || incomplete ? "PARTIAL" : "RECOVERED",
         from: since,
         count: result.automated + result.stored,
         note: !probe.ok
           ? `The session could not be read: ${probe.reason}`
-          : lookbackCut
-            ? `Only the last ${Math.round(MAX_LOOKBACK_MS / 3_600_000)} hours could be read back; anything older in this gap was not recovered.`
-            : missed.length >= MAX_MESSAGES
-              ? `The sweep stopped at its limit of ${MAX_MESSAGES} messages.`
-              : null,
+          : [
+              lookbackCut
+                ? `Only the last ${Math.round(MAX_LOOKBACK_MS / 3_600_000)} hours could be read back; anything older in this gap was not recovered.`
+                : null,
+              missed.length >= MAX_MESSAGES ? `The sweep stopped at its limit of ${MAX_MESSAGES} messages.` : null,
+              incomplete,
+            ]
+              .filter((part): part is string => Boolean(part))
+              .join(" ") || null,
       });
     if (missed.length === 0) {
       await recordRecovery();
@@ -183,6 +191,7 @@ async function catchUpMissedMessagesInProject(accountId: string, provider: Whats
         } else if (await storeMissedMessage(raw)) {
           result.stored += 1;
           countMetric("retried");
+          recordCollection(accountId, raw.chatId, "recovered");
         } else {
           result.duplicates += 1;
         }
@@ -196,7 +205,13 @@ async function catchUpMissedMessagesInProject(accountId: string, provider: Whats
     // Advance the checkpoint so the next sweep starts where this one finished. Conditional, never
     // unconditional: live processing writes this column too, and a sweep that finishes just after a
     // fresh message landed must not wind it backwards and re-scan ground already covered.
-    if (newest) {
+    //
+    // Never after a read that could not check everything (a kind of chat unread, a chat that would
+    // not load, the message limit). The checkpoint is the account's, so moving it past a gap the read
+    // did not cover put every message there — personal ones above all — behind it for good. Left
+    // where it was, the next sweep reads the gap again; storing is idempotent.
+    const readEverything = !incomplete && missed.length < MAX_MESSAGES;
+    if (newest && readEverything) {
       await prisma.processingCheckpoint.updateMany({
         where: {
           accountId,

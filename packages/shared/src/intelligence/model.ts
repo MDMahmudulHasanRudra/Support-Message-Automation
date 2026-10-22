@@ -51,7 +51,37 @@ export const INTEL_ACTOR_LABELS: Record<IntelActor, string> = {
   BUSINESS_PHONE: "Business phone (person unknown)",
 };
 
+/**
+ * Who sent an OUTGOING message, from the `OutboundMessage` it echoes (matched on
+ * `providerMessageId = whatsappMessageId`, so never from direction alone). No send at all: the
+ * business phone — somebody typed it there, or it is an alert the worker posted (a `Notification`
+ * keeps no WhatsApp id, so it cannot be matched). One rule for every report that classifies replies.
+ */
+export function outgoingActorFor(actionType: string | null, ruleId: string | null): IntelActor {
+  switch (actionType) {
+    case null:
+      return "BUSINESS_PHONE";
+    case "MANUAL_REPLY":
+      return "OPERATOR";
+    case "GROUP_BROADCAST":
+      return "BROADCAST";
+    case "AUTO_REPLY":
+      // The AI fallback, its holding reply and its handover mention send without a rule.
+      return ruleId ? "RULE" : "AI";
+    default:
+      return "RULE";
+  }
+}
+
 /** A reply a human wrote. AI, rules and broadcasts are not. */
+/**
+ * A message that is a team member's own work: sent as themselves (MEMBER), or typed in WhatsApp Chat
+ * through the login linked to them (OPERATOR with the member credited) — the Team Report counts both
+ * as that member's, so sessions, case ownership and participation do too.
+ */
+export const isMemberWork = (m: { actor: IntelActor; memberId: string | null }): boolean =>
+  (m.actor === "MEMBER" || m.actor === "OPERATOR") && m.memberId !== null;
+
 export const HUMAN_REPLY_ACTORS: ReadonlySet<IntelActor> = new Set(["MEMBER", "MEMBER_UNMAPPED", "OPERATOR", "BUSINESS_PHONE"]);
 export const isHumanReply = (actor: IntelActor) => HUMAN_REPLY_ACTORS.has(actor);
 export const isTeamActor = (actor: IntelActor) => actor !== "CUSTOMER";
@@ -88,8 +118,11 @@ export interface IntelSettings {
   reopenWindowMs: number;
   /** One employee's session in a group ends after this much silence from them — the Team Report's idle gap. */
   sessionGapMs: number;
-  /** The Missed threshold of a wait in a group — the Team Report's. */
-  thresholdMs: (groupKey: string) => number;
+  /**
+   * The Missed threshold of a wait in a group — the Team Report's, as it stood when the customer
+   * asked (`at`): a priority set or removed later does not reach back.
+   */
+  thresholdMs: (groupKey: string, at?: number) => number;
 }
 
 export const DEFAULT_CASE_GAP_MS = 4 * 3_600_000;
@@ -324,7 +357,7 @@ function evaluateResolution(
 }
 
 function ownershipOf(wc: WorkingCase, resolution: CaseResolution | null): CaseOwnership | null {
-  const human = wc.messages.filter(({ m }) => m.actor === "MEMBER" && m.memberId);
+  const human = wc.messages.filter(({ m }) => isMemberWork(m));
   if (human.length === 0) return null;
   const members = [...new Set(human.map(({ m }) => m.memberId!))];
   const firstHumanAny = wc.messages.find(({ m }) => isHumanReply(m.actor));
@@ -443,7 +476,7 @@ function finishCase(wc: WorkingCase, measuredTo: number, settings: IntelSettings
       }
       if (m.actor === "AI") aiReplies += 1;
       if (m.actor === "RULE") ruleReplies += 1;
-      if (m.actor === "MEMBER" && m.memberId && !memberIds.includes(m.memberId)) memberIds.push(m.memberId);
+      if (isMemberWork(m) && !memberIds.includes(m.memberId!)) memberIds.push(m.memberId!);
       if (s.handoff) {
         handoffs.push({
           memberId: m.memberId,
@@ -620,7 +653,7 @@ export function buildSessions(messages: readonly IntelMessage[], cases: readonly
   for (const c of cases) for (const k of c.messageKeys) caseOf.set(k, c);
   const byPair = new Map<string, IntelMessage[]>();
   for (const m of messages) {
-    if (m.actor !== "MEMBER" || !m.memberId) continue;
+    if (!isMemberWork(m)) continue;
     const k = `${m.memberId}|${m.groupKey}`;
     const list = byPair.get(k);
     if (list) list.push(m);
@@ -739,7 +772,7 @@ export interface HumanWait {
  */
 export function humanWaits(
   messages: readonly IntelMessage[],
-  opts: { rangeStart: number; rangeEnd: number; measuredTo: number; thresholdMs: (groupKey: string) => number },
+  opts: { rangeStart: number; rangeEnd: number; measuredTo: number; thresholdMs: (groupKey: string, at?: number) => number },
 ): HumanWait[] {
   const byGroup = new Map<string, IntelMessage[]>();
   for (const m of messages) {
@@ -749,12 +782,16 @@ export function humanWaits(
   }
   const out: HumanWait[] = [];
   for (const [groupKey, list] of byGroup) {
-    list.sort((a, b) => a.ts - b.ts || a.key.localeCompare(b.key));
+    // Stable on ties: two messages in the same second keep the order the caller stored them in (the
+    // Team Report's own order), so this wait and the first observed one pair a reply the same way.
+    list.sort((a, b) => a.ts - b.ts);
     let open: HumanWait | null = null;
-    const threshold = opts.thresholdMs(groupKey);
+    let threshold = 0;
     for (const m of list) {
       if (m.actor === "CUSTOMER") {
         if (!open && !isClosingRemark(m)) {
+          // The threshold in force when the customer asked.
+          threshold = opts.thresholdMs(groupKey, m.ts);
           open = {
             groupKey,
             customer: m.sender,

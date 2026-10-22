@@ -1,9 +1,23 @@
+"use client";
+
+import { useBranding } from "@/components/BrandingProvider";
+
 /**
  * The product mark: a message routed from one endpoint to another. Drawn here
  * rather than pulled from an icon set so the app is not wearing the same generic
  * glyph as everything else built on lucide.
+ *
+ * White labeling (BRANDING.md): when a Main Admin has uploaded an app icon, that icon is the mark,
+ * in the same box at the same size, so every place that draws the brand follows it.
  */
 export function BrandMark({ className = "size-8" }: { className?: string }) {
+  const { hasCustomIcon, iconUrl } = useBranding();
+  if (hasCustomIcon) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- a small uploaded icon served by our own route; next/image would only re-encode it
+      <img src={iconUrl} alt="" aria-hidden className={`shrink-0 rounded-[var(--radius-md)] object-contain ${className}`} />
+    );
+  }
   return (
     <span
       aria-hidden

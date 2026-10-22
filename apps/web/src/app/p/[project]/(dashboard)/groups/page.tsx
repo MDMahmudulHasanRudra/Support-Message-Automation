@@ -105,6 +105,7 @@ export default async function GroupsPage({ searchParams }: { searchParams: Promi
         groupSyncDeactivated: true,
         groupSyncFailed: true,
         groupSyncDurationMs: true,
+        groupSyncBasis: true,
         groupSyncError: true,
       },
       orderBy: { label: "asc" },

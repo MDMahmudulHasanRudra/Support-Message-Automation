@@ -8,6 +8,13 @@ import { projectPath } from "@/server/projectPaths";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 /**
+ * The page these actions belong to (PROJECT_ROLES.md, "Pages"). A member whose project role selects
+ * pages needs THIS page at Full to change anything here — holding the same key through a sibling page
+ * is not enough. Ignored for everybody else (global roles, Leads, Main Admins).
+ */
+const ADMIN_MAKER_PAGE = { sections: ["/group-admin-maker"] };
+
+/**
  * WhatsApp Groups Admin Maker — the dashboard's three actions (GROUP_ADMIN_MAKER.md). None of them
  * talks to WhatsApp: they write the job row, and the worker's own loop does the work, so the job
  * survives the page being closed, refreshed or navigated away from. Same key as Add Number to Groups
@@ -25,7 +32,7 @@ export interface StartAdminPromotionResult {
 const CHUNK = 500;
 
 export async function startGroupAdminPromotion(input: { accountId: string; phoneNumber: string }): Promise<StartAdminPromotionResult> {
-  const granted = await checkPermission("bulk_messaging.manage", "BULK_MESSAGING");
+  const granted = await checkPermission("bulk_messaging.manage", { feature: "BULK_MESSAGING", ...ADMIN_MAKER_PAGE });
   if ("denied" in granted) return { error: granted.denied };
 
   const phoneNumber = normalizeAdminTargetNumber(input.phoneNumber ?? "");
@@ -85,7 +92,7 @@ export interface AdminPromotionActionResult {
 
 /** Stops the job. Groups already promoted stay promoted; the rest are left undecided. */
 export async function cancelGroupAdminPromotion(jobId: string): Promise<AdminPromotionActionResult> {
-  const granted = await checkPermission("bulk_messaging.manage", "BULK_MESSAGING");
+  const granted = await checkPermission("bulk_messaging.manage", { feature: "BULK_MESSAGING", ...ADMIN_MAKER_PAGE });
   if ("denied" in granted) return { error: granted.denied };
   const result = await prisma.groupAdminPromotionJob.updateMany({
     where: { id: jobId, status: { in: [...ACTIVE_ADMIN_PROMOTION_JOB_STATUSES] } },
@@ -99,7 +106,7 @@ export async function cancelGroupAdminPromotion(jobId: string): Promise<AdminPro
 
 /** Carries on a job paused by a dropped connection or the kill switch, from where it stopped. */
 export async function resumeGroupAdminPromotion(jobId: string): Promise<AdminPromotionActionResult> {
-  const granted = await checkPermission("bulk_messaging.manage", "BULK_MESSAGING");
+  const granted = await checkPermission("bulk_messaging.manage", { feature: "BULK_MESSAGING", ...ADMIN_MAKER_PAGE });
   if ("denied" in granted) return { error: granted.denied };
   const job = await prisma.groupAdminPromotionJob.findFirst({
     where: { id: jobId },

@@ -152,6 +152,62 @@ export const PROJECT_FEATURES = [
     permissionKeys: [],
     workerEffect: "The Forge sync, question research and live answer research stop.",
   },
+  {
+    key: "GOOGLE_SHEETS",
+    label: "Google Sheets",
+    description: "Connecting Google accounts, working on spreadsheets from the app, and tracking that work.",
+    // Additive and new: no project gets it until a Main Admin switches it on.
+    defaultEnabled: false,
+    routes: ["/google-sheets", "/settings/google-sheets", "/api/google-sheets"],
+    permissionKeys: ["google_sheets.view", "google_sheets.edit", "google_sheets.manage", "google_sheets.monitor", "google_sheets.report"],
+    workerEffect: "Stops reading who changed monitored spreadsheets in Google directly. Connected accounts, sheets, members and their history are kept.",
+  },
+  {
+    key: "OMNICHANNEL",
+    label: "Omnichannel inbox",
+    description: "All Conversations, plus Facebook Messenger, Instagram DM and Telegram alongside WhatsApp.",
+    // Additive and new: no project gets it until a Main Admin switches it on. WhatsApp Chat is its
+    // own feature and is unaffected either way.
+    defaultEnabled: false,
+    routes: ["/conversations", "/settings/channels"],
+    permissionKeys: ["channels.view", "channels.manage", "conversations.reply"],
+    workerEffect:
+      "Messenger, Instagram and Telegram messages stop being processed and replies stop being sent; webhooks are still recorded so nothing is lost. Connections and conversation history are kept.",
+  },
+  {
+    key: "CLIENT_CENTER",
+    label: "Client Management",
+    description: "One client database across every channel: contacts, channel references, tags, notes, import and export.",
+    // New and unreleased: no project gets it until a Main Admin switches it on.
+    defaultEnabled: false,
+    routes: ["/clients", "/settings/email", "/settings/clients"],
+    permissionKeys: ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export", "clients.view_billing", "clients.edit_billing", "clients.link_whatsapp_chat", "clients.manage_subscriptions", "clients.link_whatsapp_group", "clients.manage_settings", "communications.manage_email"],
+    workerEffect: "Nothing runs in the background for it. Switching it off hides the pages and refuses the actions; client records are kept.",
+  },
+  {
+    key: "CHAT_UI_V2",
+    label: "WhatsApp Chat — new conversation view",
+    description:
+      "The upgraded thread and composer (CHAT_UI_V2.md): older history, replies that quote, reactions, mentions, formatting, search in a conversation. Off = the current chat.",
+    // A presentation switch, not a module: it owns no page and no key, so it never blocks anything.
+    // Off for every project until a Main Admin switches it on; switching it off again is the
+    // rollback, effective on the next page load, with no data to restore.
+    defaultEnabled: false,
+    routes: [],
+    permissionKeys: [],
+    workerEffect: "Nothing runs in the background for it. Replies already queued with a quote are still sent as replies.",
+  },
+  {
+    key: "UNIFIED_REPORTING",
+    label: "Unified messaging reports",
+    description:
+      "Team Report additions: personal-chat and combined scopes, run information, data-quality detail, customer-specific replies, and the identity-change impact preview. Off = the Team Report exactly as before.",
+    // A presentation switch like CHAT_UI_V2: it owns no page and no key, so it never blocks a page.
+    defaultEnabled: false,
+    routes: [],
+    permissionKeys: [],
+    workerEffect: "Nothing runs in the background for it; the reports read stored messages.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];

@@ -80,15 +80,51 @@ describe("the connect timeouts are ordered, not merely chosen", () => {
     expect(numericConstant("LINK_WINDOW_MS")).toBe(300_000);
   });
 
-  it("an accepted scan gets longer than the library needs to finish syncing", () => {
-    // The window is swapped for this the moment a scan lands. If it were shorter than the library's
-    // own post-scan sync, a pairing that had already succeeded would be killed and reported as time
-    // running out — the exact experience the swap exists to prevent.
-    const libraryCodelessWindowMs = (authTimeoutSeconds + outOfReachSeconds) * 1000;
-    expect(numericConstant("POST_SCAN_GRACE_MS")).toBeGreaterThan(libraryCodelessWindowMs);
+  it("an accepted scan is never given a fixed deadline again", () => {
+    // The 240 s POST_SCAN_GRACE_MS (23 Sep 2026) is what froze large numbers at 30% / 50% / 80%:
+    // WhatsApp copies every chat before the session is usable, and a fixed limit shorter than that
+    // copy killed it every time (GROUP_SYNC.md §10). The scan now starts a progress watch instead.
+    expect(source).not.toContain("POST_SCAN_GRACE_MS");
+    const extend = source.slice(source.indexOf("this.extendAfterScan = () => {"), source.indexOf("this.onCodeShown = () => {"));
+    expect(extend).toContain('startLoadingWatch("The pairing was accepted")');
+    expect(extend).not.toMatch(/setTimeout/);
   });
 
-  it("the post-scan window is whatever the LIBRARY does, not what we pass it", () => {
+  it("and the progress watch is more patient than anything that killed a load before", async () => {
+    const { LINK_LOADING_SETTINGS } = await import("../provider/openwa/linkLoading.js");
+    const libraryCodelessWindowMs = (authTimeoutSeconds + outOfReachSeconds) * 1000;
+    // A stall must be longer than the old fixed limit AND the library's own window, or a load that
+    // pauses (a locked phone, a network switch) is killed exactly as before.
+    expect(LINK_LOADING_SETTINGS.stallMs).toBeGreaterThan(240_000);
+    expect(LINK_LOADING_SETTINGS.stallMs).toBeGreaterThan(libraryCodelessWindowMs);
+    // And the total bound leaves a large number real time to finish.
+    expect(LINK_LOADING_SETTINGS.maxMs).toBeGreaterThanOrEqual(30 * 60_000);
+    expect(LINK_LOADING_SETTINGS.maxMs).toBeGreaterThan(LINK_LOADING_SETTINGS.stallMs);
+  });
+
+  it("a resumed load switches the library's 120 s race off, and only a resumed load does", () => {
+    // That race is what killed every attempt after an interrupted load: "Authentication timed out"
+    // -> "App Offline" two minutes in, observed live on 23 Sep 2026.
+    expect(source).toContain("authTimeout: resuming ? 0 : 120,");
+  });
+
+  it("the profile of an accepted scan is never reset", () => {
+    const reset = source.slice(source.indexOf("private async shouldResetProfile()"), source.indexOf("private attachSessionListeners"));
+    expect(reset).toMatch(/if \(await readLinkMarker\(this\.linkMarker\(\)\)\) return false;/);
+  });
+
+  it("a page that does not answer the health check is given longer than one that answers wrongly", () => {
+    // A page busy storing a new link's chats can miss twenty seconds without being dead, and
+    // restarting it stops the copy; a closed page or a missing chat store is proof.
+    const failed = numericConstant("HEALTH_FAILED_CHECKS_BEFORE_RESTART");
+    const unanswered = numericConstant("HEALTH_UNANSWERED_CHECKS_BEFORE_RESTART");
+    expect(failed).toBe(2);
+    expect(unanswered).toBeGreaterThan(failed);
+    // At the registry's two-minute cadence, at least ten minutes of silence before a restart.
+    expect(unanswered * 2).toBeGreaterThanOrEqual(10);
+  });
+
+  it("the library's own race is whatever the LIBRARY does, not what we pass it", () => {
     /**
      * This replaced an assertion that read our own constant and required it to be >= 180 — which
      * passed while the effective value was still 120, because the library discards the number.
@@ -129,13 +165,24 @@ describe("a profile that cannot produce a code gets replaced rather than retried
     expect(source).toContain("if (this.codelessFailures < CODELESS_FAILURES_BEFORE_PROFILE_RESET) return false;");
   });
 
-  it("and refuses while session data still exists", () => {
-    // This is what makes it safe rather than merely effective: while `<sessionId>.data.json` is
-    // present a restore is possible and the profile is what would restore it. Deleting it there
-    // turns a recoverable session into a mandatory re-scan, which on an unattended worker means an
-    // account down until somebody notices.
-    expect(source).toContain("`${this.sessionId}.data.json`");
-    expect(source).toMatch(/await access\(sessionDataFile\);[\s\S]{0,200}?return false;/);
+  it("and refuses only while session data it could actually restore from exists", () => {
+    // This is what makes it safe rather than merely effective: while there is a session to restore,
+    // the profile is what would restore it, and deleting it turns a recoverable session into a
+    // mandatory re-scan — on an unattended worker, an account down until somebody notices.
+    //
+    // But the question is what the file CONTAINS, never whether it is there. Asking `access()` kept
+    // a live account down for a day on 24 Sep 2026: the library had written a four-byte `{}`, which
+    // is all a multi-device session leaves here, and the guard read it as a restorable session. The
+    // dead profile was never cleared, so no code was ever produced. See sessionData.test.ts for the
+    // rule itself; this pins the wiring, which is the half that regressed.
+    expect(source).toContain("return !(await hasRestorableSessionData(this.sessionDataPath, this.sessionId));");
+    expect(source).not.toMatch(/await access\(sessionDataFile\)/);
+  });
+
+  it("the resume of an accepted scan reads the session file the same way", () => {
+    // A leftover `{}` read as "the load finished" dropped the scan's record and gave the attempt
+    // back to the library's 120 s race — the restart from 0% the record exists to prevent.
+    expect(source).toContain("const hasSessionData = await hasRestorableSessionData(this.sessionDataPath, this.sessionId);");
   });
 
   it("logout removes the profile whether or not a client existed", () => {

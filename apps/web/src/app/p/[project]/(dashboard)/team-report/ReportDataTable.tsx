@@ -147,6 +147,11 @@ export function ReportDataTable({
         return;
       }
       if (!response.ok) throw new Error(await response.text());
+      // A refused or expired session is redirected to a page, which fetch follows: never save that HTML
+      // as a spreadsheet and call it ready.
+      if (response.redirected || (response.headers.get("content-type") ?? "").includes("text/html")) {
+        throw new Error("The export was refused — your session may have ended. Reload the page and try again.");
+      }
       const blob = await response.blob();
       const disposition = response.headers.get("Content-Disposition") ?? "";
       const encoded = /filename\*=UTF-8''([^;]+)/.exec(disposition)?.[1];
@@ -245,6 +250,7 @@ export function ReportDataTable({
                       <button
                         type="button"
                         onClick={() => toggleSort(index)}
+                        title={column.hint}
                         className={`inline-flex cursor-pointer items-center gap-1 rounded-[var(--radius-xs)] hover:text-[color:var(--color-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:outline-none ${
                           active ? "text-[color:var(--color-foreground)]" : ""
                         }`}
@@ -286,6 +292,12 @@ export function ReportDataTable({
                         <td
                           key={index}
                           className={`border-b border-[var(--color-border)] px-4 py-3 align-middle whitespace-nowrap ${
+                            row.tones?.[index] === "good"
+                              ? "bg-[var(--color-success-bg)] "
+                              : row.tones?.[index] === "bad"
+                                ? "bg-[var(--color-warning-bg)] "
+                                : ""
+                          }${
                             index === 0
                               ? row.muted
                                 ? "text-[color:var(--color-muted-foreground)]"
@@ -388,8 +400,18 @@ function ExportMenu({
     const onPointer = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
+    // A menu is walked with the arrow keys: focus starts on the first item that can be used.
+    const items = () => [...(rootRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])];
+    items()[0]?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const list = items();
+      if (list.length === 0) return;
+      event.preventDefault();
+      const at = list.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === "ArrowDown" ? (at + 1) % list.length : (at - 1 + list.length) % list.length;
+      list[next]?.focus();
     };
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);

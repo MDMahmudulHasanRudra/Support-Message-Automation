@@ -196,6 +196,9 @@ async function main() {
   // Permission catalogue is code-defined at packages/shared/src/permissions.ts — synced here
   // (never created ad hoc from the UI), so a key's label/category can be corrected in code and
   // will update on the next seed run without touching PermissionModule assignments.
+  // Which keys exist before this run, so a key genuinely NEW in this deploy can be offered to the
+  // default roles that should have it (below) without re-deciding the keys they already have.
+  const keysBefore = new Set((await prisma.permission.findMany({ select: { key: true } })).map((p) => p.key));
   for (const p of PERMISSIONS) {
     await prisma.permission.upsert({
       where: { key: p.key },
@@ -217,6 +220,7 @@ async function main() {
   if (retired.count > 0) console.log(`Removed ${retired.count} retired permission(s)`);
 
   const allPermissionKeys = PERMISSIONS.map((p) => p.key);
+  const keysCreatedNow = new Set(allPermissionKeys.filter((key) => !keysBefore.has(key)));
   const defaultModules: Array<{ name: string; description: string; keys: readonly string[] }> = [
     { name: "Administrator", description: "Full access to every module.", keys: allPermissionKeys },
     {
@@ -234,19 +238,27 @@ async function main() {
 
   const administratorModuleId: { current?: string } = {};
   for (const mod of defaultModules) {
-    // Only sets isSystem on first creation; permissions are re-synced every run so the defaults
-    // stay current as new permission keys are added, matching the "code is the source of truth"
-    // rule stated above — but the module's own name/isSystem never gets silently overwritten.
-    const permissionRows = await prisma.permission.findMany({ where: { key: { in: [...mod.keys] } }, select: { id: true } });
-    const permissionModule = await prisma.permissionModule.upsert({
-      where: { name: mod.name },
-      update: {},
-      create: { name: mod.name, description: mod.description, isSystem: true },
-    });
-    await prisma.permissionModulePermission.deleteMany({ where: { permissionModuleId: permissionModule.id } });
-    await prisma.permissionModulePermission.createMany({
-      data: permissionRows.map((p) => ({ permissionModuleId: permissionModule.id, permissionId: p.id })),
-    });
+    // ADD-ONLY (PROJECT_ROLES.md, audit finding 2). This used to delete every permission of the four
+    // default roles and re-create them on EVERY run — and the compose `migrate` service runs this on
+    // every deploy — so any edit to a default role was silently undone by the next deploy, and for a
+    // moment between the delete and the create a live Administrator held no permission at all.
+    //   - a default role created now gets its default keys;
+    //   - Administrator is the Main Admin role and always holds every key: missing ones are added;
+    //   - the other defaults get only keys that are NEW in this run and belong to their default set.
+    //     A key introduced by a migration instead must grant it in that migration (as they already do).
+    // Nothing is ever removed here. The module's own name/isSystem are never overwritten either.
+    const existing = await prisma.permissionModule.findUnique({ where: { name: mod.name }, select: { id: true } });
+    const permissionModule =
+      existing ??
+      (await prisma.permissionModule.create({ data: { name: mod.name, description: mod.description, isSystem: true }, select: { id: true } }));
+    const keysToAdd = !existing || mod.name === "Administrator" ? [...mod.keys] : mod.keys.filter((key) => keysCreatedNow.has(key));
+    if (keysToAdd.length > 0) {
+      const permissionRows = await prisma.permission.findMany({ where: { key: { in: keysToAdd } }, select: { id: true } });
+      await prisma.permissionModulePermission.createMany({
+        data: permissionRows.map((p) => ({ permissionModuleId: permissionModule.id, permissionId: p.id })),
+        skipDuplicates: true,
+      });
+    }
     if (mod.name === "Administrator") administratorModuleId.current = permissionModule.id;
   }
   console.log(`Seeded ${defaultModules.length} default Permission Modules`);

@@ -9,6 +9,8 @@ import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { activeProjectId } from "@/server/projectContext";
+import { personalChatIdFromKey, personalConversationKey } from "@/lib/chatConversationType";
 
 /**
  * Organising the chat inbox: categories, pinning, archiving, and the bulk versions of each.
@@ -31,6 +33,8 @@ export interface ChatOrganisationResult {
   unchanged?: number;
   /** Selected rows that belong to another WhatsApp account, left untouched. */
   outsideAccount?: number;
+  /** Selected personal (1:1) chats left alone: pin, categories and archive are for groups. */
+  personalSkipped?: number;
 }
 
 async function revalidateInbox() {
@@ -41,6 +45,38 @@ async function revalidateInbox() {
 /** Shared guard: a bulk action over an empty selection is a no-op, not a failure. */
 function normaliseIds(groupIds: string[]): string[] {
   return [...new Set(groupIds.filter(Boolean))];
+}
+
+/**
+ * A selection can hold group conversations (a `WhatsAppGroup.id`) and personal chats (a personal key,
+ * lib/chatConversationType.ts). Pin, category and archive are columns on the group row, so they act
+ * on the groups only and report how many personal chats they left alone.
+ */
+function splitSelection(ids: string[]): { groupIds: string[]; personalChatIds: string[] } {
+  const groupIds: string[] = [];
+  const personalChatIds: string[] = [];
+  for (const id of normaliseIds(ids)) {
+    const chatId = personalChatIdFromKey(id);
+    if (chatId) personalChatIds.push(chatId);
+    else groupIds.push(id);
+  }
+  return { groupIds, personalChatIds };
+}
+
+const GROUPS_ONLY = "Pinning, categories and archive apply to group conversations only. Nothing was changed.";
+
+/**
+ * The selected personal chats that really are this account's: it has a stored message in that chat.
+ * A personal chat has no row of its own, so its messages are the only proof it exists here.
+ */
+async function personalInAccount(accountId: string, chatIds: string[]): Promise<{ chatIds: string[]; outsideAccount: number }> {
+  if (chatIds.length === 0) return { chatIds: [], outsideAccount: 0 };
+  const rows = await prisma.message.findMany({
+    where: { accountId, chatId: { in: chatIds }, groupId: null },
+    distinct: ["chatId"],
+    select: { chatId: true },
+  });
+  return { chatIds: rows.map((r) => r.chatId), outsideAccount: chatIds.length - rows.length };
 }
 
 const NONE_IN_ACCOUNT = "None of the selected conversations belong to this WhatsApp account. Nothing was changed.";
@@ -151,8 +187,11 @@ export async function setChatCategory(
   const granted = await checkPermission("messages.reply");
   if ("denied" in granted) return { error: granted.denied };
   if (normaliseIds(groupIds).length === 0) return { error: "Select at least one conversation." };
-  const { ids, outsideAccount } = await inAccount(accountId, groupIds);
-  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount };
+  const selection = splitSelection(groupIds);
+  const personalSkipped = selection.personalChatIds.length;
+  if (selection.groupIds.length === 0) return { error: GROUPS_ONLY, personalSkipped };
+  const { ids, outsideAccount } = await inAccount(accountId, selection.groupIds);
+  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount, personalSkipped };
 
   if (categoryId) {
     const exists = await prisma.chatCategory.findUnique({ where: { id: categoryId }, select: { id: true } });
@@ -188,15 +227,18 @@ export async function setChatCategory(
   });
 
   await revalidateInbox();
-  return { updated: count, unchanged: alreadyThere, outsideAccount };
+  return { updated: count, unchanged: alreadyThere, outsideAccount, personalSkipped };
 }
 
 export async function setChatPinned(accountId: string, groupIds: string[], pinned: boolean): Promise<ChatOrganisationResult> {
   const granted = await checkPermission("messages.reply");
   if ("denied" in granted) return { error: granted.denied };
   if (normaliseIds(groupIds).length === 0) return { error: "Select at least one conversation." };
-  const { ids, outsideAccount } = await inAccount(accountId, groupIds);
-  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount };
+  const selection = splitSelection(groupIds);
+  const personalSkipped = selection.personalChatIds.length;
+  if (selection.groupIds.length === 0) return { error: GROUPS_ONLY, personalSkipped };
+  const { ids, outsideAccount } = await inAccount(accountId, selection.groupIds);
+  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount, personalSkipped };
 
   const alreadyThere = await prisma.whatsAppGroup.count({
     where: { id: { in: ids }, chatPinnedAt: pinned ? { not: null } : null },
@@ -210,15 +252,18 @@ export async function setChatPinned(accountId: string, groupIds: string[], pinne
   });
 
   await revalidateInbox();
-  return { updated: count, unchanged: alreadyThere, outsideAccount };
+  return { updated: count, unchanged: alreadyThere, outsideAccount, personalSkipped };
 }
 
 export async function setChatArchived(accountId: string, groupIds: string[], archived: boolean): Promise<ChatOrganisationResult> {
   const granted = await checkPermission("messages.reply");
   if ("denied" in granted) return { error: granted.denied };
   if (normaliseIds(groupIds).length === 0) return { error: "Select at least one conversation." };
-  const { ids, outsideAccount } = await inAccount(accountId, groupIds);
-  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount };
+  const selection = splitSelection(groupIds);
+  const personalSkipped = selection.personalChatIds.length;
+  if (selection.groupIds.length === 0) return { error: GROUPS_ONLY, personalSkipped };
+  const { ids, outsideAccount } = await inAccount(accountId, selection.groupIds);
+  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount, personalSkipped };
 
   const alreadyThere = await prisma.whatsAppGroup.count({
     where: { id: { in: ids }, chatArchivedAt: archived ? { not: null } : null },
@@ -236,7 +281,7 @@ export async function setChatArchived(accountId: string, groupIds: string[], arc
   });
 
   await revalidateInbox();
-  return { updated: count, unchanged: alreadyThere, outsideAccount };
+  return { updated: count, unchanged: alreadyThere, outsideAccount, personalSkipped };
 }
 
 
@@ -274,7 +319,7 @@ export async function markChatReviewed(groupId: string): Promise<void> {
     // show a refusal to and a redirect has nowhere to go. A view-only observer simply does not
     // clear conversations from the team's "waiting" queue — which is right, since reading one is
     // what marks it handled for everybody.
-    if (!(await hasPermission(session, "messages.reply"))) return;
+    if (!(await hasPermission(session, "messages.reply", { sections: ["/chat"] }))) return;
 
     const newest = await prisma.message.findFirst({
       where: { groupId },
@@ -321,19 +366,31 @@ export async function setChatReviewed(accountId: string, groupIds: string[], rev
   const granted = await checkPermission("messages.reply");
   if ("denied" in granted) return { error: granted.denied };
   if (normaliseIds(groupIds).length === 0) return { error: "Select at least one conversation." };
-  const { ids, outsideAccount } = await inAccount(accountId, groupIds);
-  if (ids.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount };
+  const selection = splitSelection(groupIds);
+  const [groups, personal] = await Promise.all([
+    inAccount(accountId, selection.groupIds),
+    personalInAccount(accountId, selection.personalChatIds),
+  ]);
+  const ids = groups.ids;
+  const outsideAccount = groups.outsideAccount + personal.outsideAccount;
+  if (ids.length === 0 && personal.chatIds.length === 0) return { error: NONE_IN_ACCOUNT, outsideAccount };
 
   if (!reviewed) {
     // Clearing the mark rather than setting a flag, so the ordinary rule simply resumes:
     // unanswered and unreviewed, therefore waiting.
-    const alreadyWaiting = await prisma.whatsAppGroup.count({ where: { id: { in: ids }, chatReviewedAt: null } });
-    const { count } = await prisma.whatsAppGroup.updateMany({
-      where: { id: { in: ids }, chatReviewedAt: { not: null } },
-      data: { chatReviewedAt: null },
-    });
+    const alreadyWaiting = ids.length ? await prisma.whatsAppGroup.count({ where: { id: { in: ids }, chatReviewedAt: null } }) : 0;
+    const { count } = ids.length
+      ? await prisma.whatsAppGroup.updateMany({
+          where: { id: { in: ids }, chatReviewedAt: { not: null } },
+          data: { chatReviewedAt: null },
+        })
+      : { count: 0 };
+    // A personal chat's mark is its row: no row is "never reviewed", the same as a NULL column.
+    const cleared = personal.chatIds.length
+      ? (await prisma.personalChatReview.deleteMany({ where: { accountId, chatId: { in: personal.chatIds } } })).count
+      : 0;
     await revalidateInbox();
-    return { updated: count, unchanged: alreadyWaiting, outsideAccount };
+    return { updated: count + cleared, unchanged: alreadyWaiting + (personal.chatIds.length - cleared), outsideAccount };
   }
 
   // No `chatReviewedAt: null` narrowing on the write. A row already carrying a mark can still be
@@ -341,13 +398,30 @@ export async function setChatReviewed(accountId: string, groupIds: string[], rev
   // conversations the operator was trying to clear. (It would also hit the NULL-comparison trap
   // documented in CLAUDE.md.) Re-stamping a row that was already settled changes nothing anybody
   // can see.
-  const { count } = await prisma.whatsAppGroup.updateMany({
-    where: { id: { in: ids } },
-    data: { chatReviewedAt: new Date() },
-  });
+  const now = new Date();
+  const { count } = ids.length
+    ? await prisma.whatsAppGroup.updateMany({
+        where: { id: { in: ids } },
+        data: { chatReviewedAt: now },
+      })
+    : { count: 0 };
+  await stampPersonalReviews(accountId, personal.chatIds, now);
 
   await revalidateInbox();
-  return { updated: count, outsideAccount };
+  return { updated: count + personal.chatIds.length, outsideAccount };
+}
+
+/** Sets the review mark on personal chats already proven to be this account's. */
+async function stampPersonalReviews(accountId: string, chatIds: string[], reviewedAt: Date): Promise<void> {
+  if (chatIds.length === 0) return;
+  const projectId = await activeProjectId();
+  for (const chatId of chatIds) {
+    await prisma.personalChatReview.upsert({
+      where: { projectId_accountId_chatId: { projectId, accountId, chatId } },
+      create: { projectId, accountId, chatId, reviewedAt },
+      update: { reviewedAt },
+    });
+  }
 }
 
 /** Single-conversation form, for the thread header's undo — in the conversation's own account. */
@@ -355,4 +429,34 @@ export async function markChatWaiting(groupId: string): Promise<ChatOrganisation
   const group = await prisma.whatsAppGroup.findUnique({ where: { id: groupId }, select: { accountId: true } });
   if (!group) return { error: "That conversation no longer exists." };
   return setChatReviewed(group.accountId, [groupId], false);
+}
+
+/**
+ * `markChatReviewed` for a personal (1:1) chat: opening it clears it from "waiting". Same rules — the
+ * thread page calls it from `after()`, it never throws, it needs Reply, and it writes only when the
+ * mark is older than the newest message, so the 4-second refresh does not rewrite it every time.
+ */
+export async function markPersonalChatReviewed(accountId: string, chatId: string): Promise<void> {
+  try {
+    const session = await requireSession();
+    if (!(await hasPermission(session, "messages.reply", { sections: ["/chat"] }))) return;
+
+    const newest = await prisma.message.findFirst({
+      where: { accountId, chatId, groupId: null },
+      orderBy: { timestampWa: "desc" },
+      select: { timestampWa: true },
+    });
+    if (!newest) return;
+
+    const mark = await prisma.personalChatReview.findFirst({ where: { accountId, chatId }, select: { reviewedAt: true } });
+    if (mark && mark.reviewedAt >= newest.timestampWa) return;
+    await stampPersonalReviews(accountId, [chatId], new Date());
+  } catch {
+    /* see markChatReviewed */
+  }
+}
+
+/** The thread header's "Mark as waiting" for a personal chat, in the chat's own account. */
+export async function markPersonalChatWaiting(accountId: string, chatId: string): Promise<ChatOrganisationResult> {
+  return setChatReviewed(accountId, [personalConversationKey(chatId)], false);
 }

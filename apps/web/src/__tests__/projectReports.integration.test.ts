@@ -322,7 +322,8 @@ describe("Bizify's figures are exactly its own rows", () => {
 
   it("another project's WhatsApp account opens an empty inbox, not its conversations", async () => {
     const crossed = await runWithProject(isp, () => getChatInbox(bizFixtures.account.id));
-    expect(crossed).toEqual({ conversations: [], counts: { total: 0, waiting: 0, seenUnanswered: 0 } });
+    const none = { total: 0, waiting: 0, seenUnanswered: 0 };
+    expect(crossed).toEqual({ conversations: [], counts: { ...none, groups: none, personal: none } });
     expect(await runWithProject(isp, () => getChatConversations(bizFixtures.account.id, { search: tag }))).toEqual([]);
   });
 });

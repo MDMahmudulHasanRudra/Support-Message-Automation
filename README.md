@@ -13,6 +13,104 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Unified messaging reporting** (`UNIFIED_REPORTING`, off by default; no migration, no worker change). Built on `rudra`; not deployed.
+  - **Team Report**: personal and combined scopes, run information, customer-specific replies, and per employee: a ranking
+    on each measure (no blended score, small samples shown as not enough data), daily engagement by group, and a
+    comparison with the previous period.
+  - **Team Members**: an identity-change preview, and in the Identity check "Link to member", a name suggestion and a
+    "WhatsApp ID not linked" badge, so a colleague WhatsApp shows by a private ID is credited their messages.
+  - Fixes B1-B4 from the audit (Duty History after an identifier change, account-filtered reports, deleted members, group order).
+  - Reference: `docs/unified-reporting/`, `REPORTS.md`, `WHATSAPP_IDENTITY.md`.
+
+- **Personal (1:1) messages: collection and visibility hotfix** (18 Oct incident: many personal
+  messages missing, groups fine). Merged to `main` in PR #19 (branch `hotfix/personal-messages`); not deployed.
+  - **Live listener**: a number whose first automatic connect gave up, and was then connected from
+    the dashboard, now receives messages live instead of only through the 10-minute re-check.
+  - **Recovery** reads personal chats even when the group list fails or the number is in no groups,
+    with its own message budget, and never moves the account's checkpoint past a read that was
+    incomplete.
+  - **"Waiting for this message"** — a message WhatsApp delivers still encrypted is read again until
+    it can be, instead of being dropped; voice notes are recognised by type.
+  - **WhatsApp Chat "All"** always lists the 100 most recent personal chats, which hundreds of busy
+    groups used to push out of the first 300.
+  - **Monitoring**: `/metrics` counts received / stored / dropped / recovered per account per kind.
+    `scripts/diagnose-personal-messages.sh` is the read-only production check.
+- **WhatsApp Accounts and Groups: seven fixes from the 18 Oct audit.** Built on `rudra`; not deployed.
+  - **Collecting.** A number whose first automatic connect gave up, and was then connected from
+    the dashboard, now receives messages live. Before, they arrived only through the 10-minute re-check.
+    (Also shipped on its own in the hotfix above.)
+  - **Broken profiles.** An empty `{}` session file no longer counts as a session (Rifat's 24 Sep
+    fix). It had blocked the profile reset and the resume of an accepted scan.
+  - **Primary.** Only a connected number can be made Primary, because only the Primary answers
+    customers. A project's first number is Primary at once. A restart no longer undoes Remove
+    Primary.
+  - **Reconnect** on a number that shows CONNECTED now restarts the session, and saving a proxy
+    applies it.
+  - **Delete** needs the history figures on screen before it will destroy anything.
+  - **Group switches** set the value the button showed, never the opposite.
+  - **Deleted accounts.** A deleted original account no longer comes back on restart.
+- **A newly linked number finishes loading its chats** (`GROUP_SYNC.md` §10). Built on `rudra`; not
+  deployed.
+  - **The problem.** Since 23 Sep a scan got a fixed 4 minutes. A large number was killed mid-copy,
+    and the phone's progress froze at 30%, 50% or 80%.
+  - **After a scan.** The worker waits for as long as WhatsApp keeps writing chats (up to 45
+    minutes), and resumes an interrupted copy instead of starting again from 0%.
+  - **Health check.** A busy page is no longer restarted as if it were dead.
+  - **Overnight arrivals.** Groups that arrive during the first 24 hours are re-read and saved
+    automatically, as they were originally.
+- **Page-level project roles** (`PROJECT_ROLES.md` §Pages). A Lead chooses, module by module and
+  page by page, Hidden / Read / Full, plus which parts of the Dashboard a role shows. Built on
+  `rudra`; not deployed.
+- **Real Support Overtime on the Team Report** (`TEAM_OVERTIME.md`).
+  - **What it shows.** Support time beyond each member's regular duty, per day, then added up.
+    Before, the column showed all support time.
+  - **Where duty comes from.** The roster for that date, then holidays, the weekly pattern, the
+    default shift, and finally a configurable default duty length (8 hours).
+  - **Only overtime is ever shown**, never a duty length.
+  - **The chart** tells "no data" apart from zero.
+  - **The Excel export** adds an "Overtime by day" sheet.
+  - **Other reports.** Executive Health uses the new figure. Reports that analyse time worked now
+    call it "Support time".
+- **WhatsApp identity and message integrity** (`WHATSAPP_IDENTITY.md`).
+  - **One sender rule everywhere.** The live pipeline, every report, WhatsApp Chat and Team Members
+    use one rule to decide which team member sent a message: exact WhatsApp ID, digits-only phone,
+    and a group id is never a person.
+  - **Clashes credit nobody.** When the WhatsApp ID and the number point to different members, or two
+    members share one, the message is still treated as staff but credited to nobody, and the Team
+    Members page shows an "Identity clash".
+  - **Senders keep their WhatsApp domain** (`Message.senderJid`), so a private ID is never shown as a
+    phone number.
+  - **Reports count each WhatsApp message once.** Our own post seen by our second number no longer
+    becomes a customer message, in reports or in the first-response figures.
+  - **The worker recognises our own numbers.** A message one of our numbers posts in a group another
+    of our numbers is also in is stored as the business's own message: no rules, AI, escalation or
+    customer wait.
+  - **WhatsApp Chat** names senders by roster name, shows quoted replies, and has contact-info and
+    group-info panels; an unrecognised sender can be linked to a team member.
+  - **`pnpm db:reconcile:messages`** audits stored history and, with `--apply`, recovers each row's
+    sender id.
+- **Omnichannel inbox** (Support → All Conversations, Facebook Messenger, Instagram DM, Telegram;
+  Settings → Messaging Channels). WhatsApp, Messenger, Instagram and Telegram conversations in one
+  inbox, with channel tabs, filters and search across everything; each channel also has its own
+  inbox. A project connects its own Facebook Page, Instagram professional account (linked to a Page)
+  or Telegram bot with credentials checked by the provider and stored encrypted. Webhooks are
+  verified and recorded once per provider event; the worker turns them into conversations, sends
+  replies from one queue (retries, honest "unconfirmed" state, Meta's 24-hour / Human Agent window),
+  and can answer with the same AI and knowledge base as WhatsApp under the same safety rules. WhatsApp
+  itself is unchanged and read in place. Tested against mocked providers; live credentials not yet
+  tested. Off by default per project (`OMNICHANNEL.md`).
+- **Google Sheets work management** (Google Sheets → Spreadsheets / Activity / Work Reports / My
+  Google Identity; Settings → Google Sheets), all ten phases. A manager connects the Google accounts
+  the team's spreadsheets live in through Google's own sign-in; every spreadsheet they reach is listed
+  once from Drive's file details. Each spreadsheet has its own members — a Lead, editors and monitors —
+  and members edit it in the app: a bounded grid, paste, rows and columns, search, and a Save that never
+  overwrites a cell somebody changed in Google meanwhile. Everything done is logged (viewing apart from
+  work, no cell values), credited to the person — never the Google account it went through — and timed
+  from real interaction (a pause threshold, unioned across sheets). For monitored sheets the worker
+  reads Google's own activity record, crediting a change only through a Google account the person
+  linked themselves, once Google is seen to use sign-in's ids. Employee and spreadsheet reports with
+  Excel / CSV. Needs a Google OAuth client on the server; off by default per project
+  (`GOOGLE_SHEETS.md`).
 - **Support Assignment** (Support → Support Assignment). Every customer waiting for a reply becomes a
   case, unless it is only "thanks"/"ok" or from an ignored sender (filtered cases are kept and
   counted). Assign one or many cases to a person; they get a WhatsApp message. The case completes
@@ -124,6 +222,8 @@ module, field, and behavior in the app.
   provider; a **Teams CSV/xlsx export**; searchable, paginated high-volume lists; loading and error
   states on every page; and touch-sized controls on phones and tablets.
 
+> **Deploying? Follow [DEPLOY.md](DEPLOY.md) — migrations first, every time.**
+>
 > **Deploying requires running the pending migrations** — `pnpm db:migrate:deploy` before starting
 > the new build. Every one is additive, and each new column defaults to the behaviour that existed
 > before it, so an existing deployment behaves identically until someone changes a setting.

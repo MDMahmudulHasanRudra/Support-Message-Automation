@@ -7,10 +7,14 @@ import { AddTeamMemberForm } from "./AddTeamMemberForm";
 import { TeamMembersTable, type TeamMemberRow } from "./TeamMembersTable";
 import { AddFromGroupDialog } from "./AddFromGroupDialog";
 import { loadMemberFormOptions } from "./memberFormOptions";
+import { createSenderResolver } from "@support-automation/shared";
+import { getMemberHistorySync, getRosterIdentityHealth } from "@/server/rosterIdentityHealth";
+import { IdentityHealthCard } from "./IdentityHealthCard";
+import { isUnifiedReportingEnabled } from "@/server/unifiedReporting";
 
 export default async function TeamMembersPage() {
   const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
-  const [members, groups, options] = await Promise.all([
+  const [members, groups, options, identityHealth, historySync, unifiedOn] = await Promise.all([
     prisma.internalTeamMember.findMany({
       orderBy: { createdAt: "desc" },
       include: { team: { select: { id: true, name: true, status: true } } },
@@ -21,7 +25,30 @@ export default async function TeamMembersPage() {
       orderBy: { name: "asc" },
     }),
     loadMemberFormOptions(),
+    // Roster problems that make reports credit messages to the wrong person, or to nobody.
+    getRosterIdentityHealth(),
+    getMemberHistorySync(),
+    isUnifiedReportingEnabled(),
   ]);
+  const previewEnabled = canManage && unifiedOn;
+
+  // Members sharing an identifier, through the same rule that attributes their messages
+  // (WHATSAPP_IDENTITY.md §3): each such identifier is credited to nobody, so the clash is shown here.
+  const resolver = createSenderResolver(members);
+  const nameOf = new Map(members.map((m) => [m.id, m.name]));
+  const rows: TeamMemberRow[] = members.map((m) => {
+    const others = new Set<string>();
+    for (const identifier of [m.whatsappId, m.phoneNumber]) {
+      if (!identifier) continue;
+      const res = resolver.resolve(identifier);
+      if (res.status === "CONFLICT" || res.status === "AMBIGUOUS") {
+        for (const id of res.candidateIds) if (id !== m.id) others.add(nameOf.get(id) ?? "another member");
+      }
+    }
+    const sync = historySync.get(m.id);
+    const row: TeamMemberRow = sync ? { ...m, historySync: sync } : m;
+    return others.size ? { ...row, identityClash: [...others] } : row;
+  });
 
   return (
     <div>
@@ -47,6 +74,20 @@ export default async function TeamMembersPage() {
                 e.g. +8801XXXXXXXXX). If it doesn't match, their messages get processed as if from a
                 client — which could trigger unwanted auto-replies to your own staff, or open Priority
                 Support escalation cases against your own team's chatter.
+              </p>
+            </HelpSection>
+            <HelpSection title="WhatsApp ID, and an identity clash">
+              <p>
+                In groups, WhatsApp usually hides people's numbers behind a private WhatsApp ID. A
+                colleague entered by phone number alone is therefore not recognised in groups until
+                their WhatsApp ID is recorded too. Add them from a group, or open their name in
+                WhatsApp Chat and use "This person is…". Every change to these two fields is kept in
+                System Logs.
+              </p>
+              <p>
+                <strong>Identity clash</strong> means two members share a number or a WhatsApp ID. Their
+                messages are still treated as staff, but no report credits them to either person
+                until one record is corrected.
               </p>
             </HelpSection>
             <HelpSection title="What being an active team member actually changes">
@@ -92,14 +133,16 @@ export default async function TeamMembersPage() {
 
       {canManage ? null : <ViewOnlyNotice />}
 
+      <IdentityHealthCard health={identityHealth} canManage={canManage} unified={previewEnabled} />
+
       {canManage ? (
         <Card className="mb-6">
           <SectionHeader title="Add Team Member" />
-          <AddTeamMemberForm options={options} />
+          <AddTeamMemberForm options={options} previewEnabled={previewEnabled} />
         </Card>
       ) : null}
 
-      <TeamMembersTable members={members} />
+      <TeamMembersTable members={rows} unified={unifiedOn} />
     </div>
   );
 }

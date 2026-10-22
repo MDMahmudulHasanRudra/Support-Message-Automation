@@ -35,6 +35,11 @@ query that touches a recently-changed model starts failing, check `_prisma_migra
 `pnpm db:migrate:deploy`'s own status output) before treating it as a new problem — and don't run
 that deploy against the live DB without the user's explicit go-ahead.
 
+**Every deploy runs the migrations first — `DEPLOY.md` is the checklist.** `docker compose up -d
+--no-deps app|worker` skips the `migrate` service, so `docker compose run --rm migrate` must come
+before it. Happened on 17 Oct 2026: a merge was pulled and built without its two migrations. When
+telling Rudra to deploy, always give the migrate step.
+
 ## Commands
 
 ```bash
@@ -167,8 +172,10 @@ install-wide uniques were removed in Phase 3 (below).
 
 Two rules that hold from here on:
 - **Project access ≠ permission.** `ProjectAccess` says which projects a user may enter, nothing
-  more. What they may do inside is the EXISTING permission system, unchanged, the same in every
-  project. Never add a role or permission column to `ProjectAccess`.
+  more. Never add a role or permission column to `ProjectAccess`. What they may do inside is the
+  permission system: their global role, unless a project-level role applies in THAT project
+  (`ProjectMemberRole`: a project role or the Lead flag — `PROJECT_ROLES.md`). One resolver,
+  `resolveRoleKeys` (packages/shared), feeds every check; no row = the global role exactly.
 - **`projectId` means the platform project, everywhere.** ForgeSettings' own Forge-repository
   project is `forgeProjectId`/`forgeProjectName` (renamed in the Phase 1 migration) so the two
   cannot be confused.
@@ -258,6 +265,40 @@ skip it. Never add a check that grants because of a level. **Main Admin Configur
 from the `employee_code_seq` sequence, never from a count. A job title is not a role and a department
 is not a WhatsApp `Team`. See `MAIN_ADMIN_WORKSPACE.md` §5–§7.
 
+**Two-level permissions** (`PROJECT_ROLES.md`, 14 Oct 2026). A Main Admin (global role with
+`projects.manage`) runs the platform; a project's **Lead** (`ProjectMemberRole.isLead`, set only by a
+Main Admin) runs one project: its members (`/project-members`, creates logins for that project only)
+and its project roles (`/project-roles`, `ProjectRole.permissionKeys`, project-scoped keys only — a
+CHECK refuses platform keys). Leads never manage themselves, another Lead or a Main Admin, and change
+a login's password/active state only when it belongs to their project alone (`projectMemberActions`).
+`project_members.manage` / `project_roles.manage` are privileged on a platform role. Kill switch:
+`PROJECT_ROLES_DISABLED=true` (web only, deletes nothing). The seed is add-only now: it never strips a
+default role's permissions on deploy.
+
+**Page-level project roles** (`PROJECT_ROLES.md` §Pages, 15 Oct 2026). A project role also chooses
+which pages it opens — module by module, sub-module by sub-module, Hidden / Read / Full — and which
+parts of the Overview it shows (`ProjectRole.sectionAccess`; null = keys alone, every older role). The
+catalogue (`(dashboard)/projectSections.ts`) is DERIVED from the sidebar; only a page's write keys and
+extra paths are written by hand (`SECTION_RULES`). The keys are derived from the pages on the server,
+never taken from the form. A selection applies only to a member with a project role — never a Lead, a
+Main Admin or a global role. Enforced in `requireProjectPage` (every page, keyless ones too) and in
+every permission check (the page posted from must be granted, Full to change). A new page belongs in
+the sidebar, and if it changes something its keys go in `SECTION_RULES` — `projectSections.test.ts`
+fails until every page file and export route is covered. **Sibling pages share keys** (the four
+WhatsApp pages all use `whatsapp.manage`), so the highest-risk actions name their own page:
+`checkPermission(key, { sections: ["/accounts"] })` (Accounts, Automation Control, safety settings,
+broadcast, add-to-groups, admin maker, AI providers). A new dangerous action on a shared key should do
+the same. Kill switch for the page side only: `PROJECT_ROLE_PAGES_DISABLED=true`.
+
+**White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
+`projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the
+built-in default (`lib/branding.ts`), so a fresh install is unchanged. Never hard-code the product
+name again: server code reads `getBranding()`, client code `useBranding()` (root-layout provider),
+and the mark is `BrandMark`, which follows the uploaded icon. Saving needs `projects.manage`. The
+colour moves only the accent tokens, never the ink primary. Images are sniffed from their bytes,
+capped at 512 KB, stored in the database and served by `/api/brand/<logo|icon>` with a sandbox CSP.
+A project's NAME is editable on its Main Admin page; its slug never is.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.
@@ -295,6 +336,11 @@ since `setInterval` doesn't await its callback)
 | `startCommunicationStyleProcessor` | 12h | rebuilds `CommunicationStyleProfile` from the team's own replies — manner, never fact (gated on `aiEngineEnabled` + `communicationStyleLearningEnabled`) |
 | `startForgeKnowledgeProcessor` | 6h | reads ISPDIGITAL's own docs + module source through Softify Forge into the knowledge base (no-op until `FORGE_API_KEY`/`FORGE_API_URL` are set **and** an admin enables it; on-demand via a `FORGE_SYNC_NOW` WorkerCommand) |
 | `startForgeResearchProcessor` | 2min | works through customer questions verified knowledge could not answer, researching each against the product's source (same gate, plus `ForgeSettings.researchUnanswered`, off by default) |
+| `startChannelInboundProcessor` | 2s | Messenger / Instagram / Telegram: recorded webhook events → conversations, echoes, receipts (no-op unless the project has `OMNICHANNEL`; `OMNICHANNEL.md`) |
+| `startChannelOutboundProcessor` | 2s | the channels' send queue (`ChannelMessage` QUEUED → SENT), retries, UNKNOWN on an unknowable outcome |
+| `startChannelAiProcessor` | 3s | AI replies on the channels — the WhatsApp answering logic and gates, 1:1 only, ≤15 min old |
+| `startGroupRecoveryProcessor` | 60s | re-reads (ADD_ONLY, never deactivates) the group list of a CONNECTED account a sync left FAILED/PARTIAL (RETRY, 2 min → 6 h), one connected in the last 24 h whose phone may still be sending chats (FOLLOW, 2 → 30 min, never touches the status — `GROUP_SYNC.md` §10), a COMPLETED one holding inactive groups (VERIFY, bounded, never touches the status), or any other connected account once a day (DAILY, 17 Oct 2026, ADD_ONLY, never touches the status, `WHATSAPP_GROUP_DAILY_CHECK_HOURS=0` turns it off — catches a list shown as 500 of 1,800 after the FOLLOW window); an unavailable or empty read is unknown and writes nothing (`GROUP_SYNC.md` §8) |
+| `startIdentityReattributionProcessor` | 30s | after a Team Members identity change, re-decides the stored `isFromTeamMember` stamp (every member, "count from" date at the message's time), `SupportActivity.teamMemberId`, and Duty History days (last 120) for the identifiers involved — one `IdentityReattribution` request per project per tick (`teamManagement/reattribution.ts`) |
 | heartbeat | 15s | health state + DB connectivity log |
 
 On boot: health server → DB connectivity check (fatal if unreachable) → crash recovery (resets
@@ -337,14 +383,51 @@ are now killed by process, matched on the exact `--user-data-dir` argument (one 
 account), before every launch and when an attempt unwinds; a code arriving with no attempt in
 flight is never published; and an attempt ending clears its stored QR.
 
+**After a scan, the attempt waits for as long as WhatsApp keeps copying chats — never a fixed
+time** (`provider/openwa/linkLoading.ts`, `GROUP_SYNC.md` §10, 15 Oct 2026). `create()` resolves
+only when WhatsApp's "Loading your chats" finishes, and the session file is written only then. A
+fixed 240 s post-scan limit (23 Sep) killed every large number mid-copy, which froze the phone's
+percentage at 30%, 50% or 80%. The retry then hit the library's 120 s race, and two such retries
+deleted the profile, sending the copy back to 0%. Now:
+- An accepted scan starts a progress watch over the profile's IndexedDB (file metadata only). It
+  ends after 10 minutes without a write, or 45 minutes in total.
+- The scan is recorded in `<sessionId>.link-pending.json`. The next attempt RESUMES: progress
+  watch, no no-code deadline, `authTimeout: 0`, and the profile is never reset under it.
+- A phone code is recognised by IndexedDB growth when its window ends. A QR attempt never uses
+  that inference.
+- The health check needs 5 unanswered checks, but still only 2 proven failures, before a restart.
+
+Never put a fixed deadline back on the post-scan load. `connectTimeouts.test.ts` fails if one
+appears. Whether `<sessionId>.data.json` holds a session is read from its CONTENT
+(`openwa/sessionData.ts`, Rifat's 24 Sep fix): a multi-device session leaves only `{}`, and reading its
+mere existence as "restorable" kept a broken profile from ever being reset and dropped the record of
+an accepted scan.
+
+**An operator's Reconnect restarts a session even when it reads CONNECTED** (`payload.force`, set by
+`requestReconnect` and `saveAccountProxy`). The worker still skips a RECONNECT for a CONNECTED session
+unless it is forced AND newer than the account's `lastConnectedAt` — the stale double-reconnect stays
+blocked, while "connected but dead" (the state the collection alerts tell people to press Reconnect
+for) can finally be restarted from the dashboard. **The registry wires the message, receipt and
+conversion-error handlers BEFORE `connectWithRetry`**: when the automatic connect gave up, the
+provider stayed registered and was later connected by a RECONNECT with no handler at all —
+CONNECTED, sending, and collecting only through the 10-minute reconcile sweep.
+
 ### Replacing the number that serves customers (`accounts.ts`, `GroupSetupTransfer.tsx`)
 
 **A customer reply always goes out on the account that received the message** — `runAiFallback` is
-handed `accountId: raw.accountId` and never calls `resolveWhatsAppAccount()`. Primary and Account
-Routing govern only the *notification* service keys (`NOTIFY_WHATSAPP`, `PRIORITY_SUPPORT`,
-`CONVERSATION_LEARNING`; `TEAMS_RESOLUTION_NOTIFY` is retired); none of them is "reply to a customer", and
-none could be — the send would fail `verifyGroupMembership` from an account that is not in the
-group. Setting an account Primary does not move existing conversations onto it.
+handed `accountId: raw.accountId` and never calls `resolveWhatsAppAccount()`, because a send from an
+account not in the group fails `verifyGroupMembership`. Account Routing governs only the
+*notification* service keys (`NOTIFY_WHATSAPP`, `PRIORITY_SUPPORT`, `CONVERSATION_LEARNING`;
+`TEAMS_RESOLUTION_NOTIFY` is retired). **Primary, though, decides WHETHER a number answers:** once a
+project has a Primary, only messages arriving on it are automated (`processIncomingMessage`, "Only the
+Primary account answers customers"); every other number collects and never replies. With no Primary,
+every connected number answers its own groups. Three rules follow (18 Oct 2026 audit):
+`setPrimaryAccount` refuses a number that is not CONNECTED (a disconnected spare made Primary silenced
+the whole project); a project's first number is Primary when it is added; and the worker's boot
+self-heal (`ensurePrimaryAccountExists`) promotes only a project's ONLY account — it used to make the
+oldest of several Primary on every restart, undoing Remove Primary. Setting an account Primary does
+not move existing conversations onto it. `ensureLegacyAccountExists` likewise creates the original
+account only on a fresh install, so a deleted one does not come back.
 
 **Logout deactivates that account's groups** (the `LOGOUT` command handler). This is the one case
 `syncGroups`' own deactivation sweep can never cover: that sweep compares against a live provider
@@ -409,7 +492,14 @@ has been written on every message since the pipeline was built and read by **not
 the reader it was always for. The provider answers with `fetchMessagesSince()`, bounded by chat
 activity rather than by roster size — `getAllGroups()` reports each chat's last interaction, so a
 fifteen-minute gap reads the handful of groups that actually received something, not all 1,848.
-Groups only; that is where this product's conversations live.
+**Groups and one-to-one chats** (Phase 2, 16 Oct 2026): the live path always stored personal
+messages, so a gap sweep that read groups only lost every personal message sent during a restart.
+`selectCatchUpChats` (`packages/shared/src/whatsappChats.ts`) is the one rule — `@g.us`, `@c.us` and
+`@lid` chats touched since the gap began, never status, channels or broadcast lists — and the inbox's
+`isPersonalChatId` is the same function. The personal list is read separately and after the group
+list, which stays the proof the session can be read; a probe that answered but could not check
+everything (that list, or one chat's history) returns `incomplete`, and the gap is then PARTIAL with
+the reason, never RECOVERED.
 
 **Replay is safe because `Message @@unique([accountId, whatsappMessageId])` already is the dedup
 guard** — `persistIncomingMessage()` returns null on `P2002` and both paths share it, so a message
@@ -429,6 +519,49 @@ for a reply" if it really was never answered. Escalation is deliberately **not o
 message — a backdated case is instantly overdue and fires its whole alert ladder — but
 `markHumanReplied` still runs, because that only ever closes one. `CATCHUP_MAX_LOOKBACK_HOURS` (12)
 stops a worker that was off for a week dragging a week back in.
+
+**Personal (1:1) messages are recovered on their own terms** (18 Oct 2026 incident: "many personal
+messages missing, groups fine"). Rules worth not undoing:
+- **`probeCollection` reads personal chats whatever the group list does.** It used to return
+  "unknown" as soon as the group list failed or came back empty, so on a roster too large to list in
+  time, or a number in no groups, no one-to-one message was ever read back. Now only BOTH failing is
+  unknown; a half that could not be checked is named in `uncheckedKinds`. The watchdog treats an
+  unchecked GROUP half with nothing found as "could not read" (a strike), never as agreement.
+- **The message limit is per kind, personal chats first.** One budget, most recent chat first, let a
+  few busy groups use it all. A read that stops at its limit says so (`incomplete`).
+- **The catch-up never moves the account's checkpoint after an incomplete read.** The checkpoint is
+  shared by every chat, so moving it past a gap the read did not cover put those messages behind it
+  for good.
+- **A message that arrives still encrypted (`ciphertext`, "Waiting for this message") is read again**
+  (`OpenWAProvider.awaitDecryption`: 15 s → 1 h, capped, per session) instead of being dropped as an
+  empty body; WhatsApp decrypts it in place and raises no new event. It is handed over
+  `deliveredLate`, and the registry applies the catch-up's 15-minute automation window to it.
+- **Media is recognised by type as well as `isMedia`** — without the getter a voice note read as empty.
+- **`health/collectionByKind.ts`** counts received / stored / dropped / recovered / undecrypted per
+  account per kind (GROUP, PERSONAL) on `/metrics`. Counts and account ids only.
+- **WhatsApp Chat "All" always lists the 100 most recent personal chats** (`PERSONAL_CHATS_ALWAYS_LISTED`)
+  on top of the ranked 300, in their place by recency: on a number in ~1,900 busy groups the 300th
+  group can be minutes old, and a personal chat behind it was stored but not shown.
+- `scripts/diagnose-personal-messages.sh` is the read-only production check (counts only; its SQL
+  session is read-only; it fingerprints the RUNNING build inside the containers, not just the checkout).
+- **The personal backfill** (`pipeline/personalBackfill.ts`, `PERSONAL_MESSAGES_RUNBOOK.md` §3) runs in
+  the worker over the loopback health port (`/backfill/personal`). Dry run by default; a write needs
+  `mode=write&confirm=WRITE`; store-only through `storeHistoryMessages` (no rules, AI, waits, cases or
+  notifications); one account, ≤14 days, capped chats and earlier-history pages, one run per worker;
+  a write run checkpoints per chat beside the session and resumes. Never claims complete recovery:
+  PARTIAL chats and unreadable messages are counted.
+
+**The store sweep reads WhatsApp Web's MESSAGE store, not its chat list** (`sweepMessageStore` in
+`pipeline/reconcileRecentMessages.ts`, every 60 s, 30-minute look-back, 18 Oct 2026: personal messages
+from unknown foreign numbers on the phone and in no database row). The live listener, the catch-up,
+the reconcile pass and the personal backfill all find a message through its chat's activity time, so
+a chat that never shows as active hides its message from all four at once. The sweep reads ids and
+times from `Store.Msg` (`listStoreMessageRefs`), checks which are stored, and reads in full only the
+missing ones (`readMessagesById`, ≤100 per pass), skipping anything under 20 s old (the live path's
+turn). Same recovery rule as the reconcile (`recoverMissing`): inside the 15-minute window through the
+pipeline, older stored without rules. An encrypted message is retried next pass; one with nothing to
+store is remembered and not re-read. `MESSAGE_STORE_SWEEP_INTERVAL_SECONDS=0` turns it off. It cannot
+recover a message WhatsApp never delivered to the linked device.
 
 **A dropped session now reconnects itself.** `accountRegistrySync` skipped any account already in
 the registry (`has()` was true forever, since the provider outlives the session), so a number whose
@@ -469,6 +602,10 @@ Three rules worth not undoing:
   browser can sync it).
 - **Per-account state lives on `WhatsAppAccount.groupSync*`** (RUNNING / COMPLETED / PARTIAL /
   FAILED, counts, timing), shown on Accounts and Groups; a RUNNING left by a restart is closed at boot.
+  WhatsApp never says a group list is complete, so COMPLETED/PARTIAL carry `groupSyncBasis` — what
+  the result rests on (stable reads, every known group present, one read, the arrival window ended;
+  `groupSyncBasis.ts`), printed after the count. Never a "verified complete"; every other status
+  clears it.
   Persistence is batched (500 / 5,000) and a failed batch is retried row by row, so one bad group
   costs only itself. A sync writes only name, `isActive` and `lastSyncedAt`.
 - **A slow first read is "still loading", never FAILED** (8 Oct 2026, second number timing out at
@@ -481,7 +618,7 @@ Three rules worth not undoing:
 - **Logout and Reconnect cancel a running sync first** (`cancelGroupSync`, a per-account generation
   checked before every write): CANCELLED, never FAILED, and a cancelled sync writes nothing more —
   otherwise a sync that read the list before a LOGOUT re-activates every group the logout switched off.
-- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011090400`).
+- **Migration names on `rudra` run ahead of the calendar** (`20261007...` to `20261011091800`).
   Prisma orders by name and `migrate deploy` silently applies an earlier-named one out of order, so
   until 12 Oct 2026 name new migrations after the last one by hand.
 
@@ -768,14 +905,18 @@ replaced.** Hours-worked sums `SupportSession.durationSeconds`, which is only wr
 session COMPLETES, which needs a rule whose keyword carries `marksCompletion` — a deployment
 running the `ANY_MESSAGE` rule (the configuration this module is most often used in, and the one
 running here) has no such keyword, so its sessions never complete and its hours report is
-permanently empty **while looking perfectly healthy**. `getExecutiveWorkload()` instead reads the
-activity rows directly: one raw-SQL query spanning each person's first→last message **per group
-per Dhaka calendar day**, summed. Per group *and* per day deliberately — one span across a week
-would count the nights in between, one span across every group at once would count the time they
-were busy elsewhere. A day with one message is zero seconds, which is honest rather than
-flattering; the message count beside it is what says they were working. `date_trunc('day', … AT
-TIME ZONE 'Asia/Dhaka')` bounds the shift the way the person lived it: UTC midnight falls at 06:00
-local and would split every morning in two.
+permanently empty **while looking perfectly healthy**. Since the report accuracy audit (19 Oct
+2026) `getExecutiveWorkload()` — and availability, first response, "waiting for a reply" and the
+Overview's executive load, people/AI split and wait chart — read `Message` through
+`server/attributedMessages.ts`: the Team Report's own classification (one row per logical message,
+every stored copy a witness, read-time identity, our own numbers' posts as the business's, dashboard
+replies credited through the linked login) and the Team Report's own support-time rule
+(`splitIntoStretches`: one timeline per person across all groups, split at the idle gap and at Dhaka
+midnight). It used to read `SupportActivity`, which exists only while tracking is on, only for rule
+matches, once per account copy, against the roster at arrival — so Team Performance and the Team
+Report disagreed about the same person. `SupportActivity` still feeds the Activity Feed, its counts
+deduplicated per logical message and WhatsApp group (`distinctActivities`). A day with one message
+is zero seconds, which is honest rather than flattering.
 
 **A team member with recorded activity is deactivated, never deleted.** `SupportActivity.teamMemberId`
 is `SetNull`, so hard-deleting someone silently orphaned every activity they ever recorded — this
@@ -840,6 +981,60 @@ deployment does not have**, so the trigger would appear configured in the UI and
 (`sendTextWithMentions`, used by the handover mention, is *not* licence-gated — the two are often
 assumed to go together.)
 
+### WhatsApp identity — who sent it, and which rows are one message (`packages/shared/src/whatsappIdentity.ts`, `WHATSAPP_IDENTITY.md`)
+
+One rule decides which roster member sent a message, everywhere: the worker (`teamFilter.ts`
+`resolveTeamSender`), every report loader, the chat, Team Members candidates, reconciliation. Never
+write another identifier→member map. Rules worth not undoing:
+
+- **`createSenderResolver(members).resolve(senderPhone, senderJid)`.** The `whatsappId` is matched
+  exactly, the phone digits-only.
+  - The WhatsApp id naming one member and the phone ANOTHER is `CONFLICT`. A shared identifier is
+    `AMBIGUOUS`. Both credit nobody but keep `isRosterMember: true`, so staff safety (no auto-reply,
+    no customer wait) is unchanged.
+  - A group id is `NOT_A_PERSON`.
+  - The worker passes ACTIVE members, reports pass all of them. Attribution is decided at read time,
+    never stored.
+- **`Message.senderJid`** keeps the domain `senderPhone` strips: the only way to tell a LID from a
+  phone number. A LID is never displayed as a number (`describeSenderId`).
+- **Deduplicate on the LOGICAL key** (`logicalMessageKey` / `messageKeySql()` with
+  `preferSenderCopySql()`), never on `whatsappMessageId`. That id starts `true_` on the sending
+  account and `false_` on our other accounts, so our own posts were counted again as customer
+  messages.
+- **A message from another of OUR numbers is stored as OUTGOING** (`pipeline/ownAccounts.ts`) and
+  never automated. "Ours" is learned only from account phone numbers, GROUP outgoing rows and a
+  just-sent outbound with the same key, never from a one-to-one row's sender.
+- **History reconciliation** is `pnpm db:reconcile:messages`: a dry run by default; `--apply` only
+  fills NULL `senderJid` from what each row proves.
+- **History keeps its owner** (`InternalTeamMember.attributeFrom`, Phase 2): reports pass each
+  message's time to `resolve(phone, jid, at)`, and before a member's "count their messages from" date
+  they are not a candidate — a customer's number that later joins the team keeps its customer history.
+  Null (every existing member) = all history, as before. The live pipeline passes no time: anyone on
+  the roster is staff for automation. No LID→phone table exists, because no provider evidence for
+  one does; add one only when a provider supplies it.
+- **Identifier changes on Team Members are System Log entries.** WhatsApp Chat's contact panel links
+  an unresolved sender to a member (`linkWhatsAppSender`, `whatsapp.manage`). Panels are URL state
+  (`?contact=` / `?info=group`).
+- **Report accuracy audit (19 Oct 2026) — rules worth not undoing:**
+  - `normalizePhoneNumber` gives a local Bangladeshi number ("01" + 9 digits) its country code: a
+    member typed as "01…" matched nothing WhatsApp delivers ("8801…").
+  - Every report classifies a kept message through ONE function, `createReportClassifier`
+    (`server/messageIdentity.ts`): our own message (kept copy OUTGOING, its echoed send found on the
+    LOGICAL key by `outboundByKeyJoin`, or a copy's sender in `loadOwnSenderIds`) is the business's; a
+    MANUAL_REPLY is credited to the member linked to that login; otherwise `attributeAcrossCopies`
+    hears EVERY stored copy (`storedCopiesSql`), since one number can see the author's LID and another
+    their phone. The stored `isFromTeamMember` stamp only keeps a deleted member's history staff; it
+    never overrides a "count their messages from" date.
+  - `preferSenderCopySql` keeps OUTGOING, then the `true_` copy, then a staff-stamped one.
+  - Team Members: Add from group stores a PHONE as a number (no WhatsApp ID) and a LID as the ID; the
+    chat link may replace a placeholder ID equal to the phone; Delete deactivates anybody with any
+    message or attendance. Identity changes queue an `IdentityReattribution` (`server/reattribution.ts`).
+    Team Members → Identity check (`rosterIdentityHealth.ts`) lists members on our own numbers, quiet
+    members and frequent unknown senders, with "Add to team" (`addTeamMemberFromSender`). The
+    re-attribution also backfills Support Activity rows for a newly added colleague's earlier messages
+    (rules permitting, last 365 days) and records per-member what it found; Team Members shows
+    "Syncing history…" then "History synced: N messages in G groups" (`getMemberHistorySync`).
+
 ### Support response tracking — Messages → Unanswered Groups / Response Time (`apps/worker/src/supportResponse/`, `SUPPORT_RESPONSE.md`)
 
 - **One record per wait.** `SupportResponseEpisode` has one row per wait per group row (account +
@@ -859,6 +1054,10 @@ assumed to go together.)
   next customer message opens a new wait.
 - **The web reads episodes only.** One `where` builder serves the page, select-all, Clear all and
   export.
+- **One wait, one row (`isTwin`, 19 Oct 2026).** With two of our numbers in a group the tracker keeps an
+  episode per row, so it marks every later copy of the same wait (same WhatsApp group, same first
+  customer time, decided under a per-WhatsApp-group lock) `isTwin`. Readers hide twins unless one account
+  is chosen; a reply answers every copy; Clear clears every copy.
 
 ### Support Assignment (`apps/worker/src/supportAssignment/`, `(dashboard)/support-assignment/`, `SUPPORT_ASSIGNMENT.md`)
 
@@ -1044,8 +1243,9 @@ later stage). Three rules worth not undoing:
 ### Team Report (`packages/shared/src/teamReport.ts`, `apps/web/src/server/teamReport.ts`, `(dashboard)/team-report/`)
 
 Per-member and per-group WhatsApp support report — groups supported, replies, customer messages,
-customer waits, **Missed**, **Recall** and **Support Overtime** (the idle-gap support duration —
-the label only; internally still `activeSeconds`/support time, and NOT yet duty-based overtime) — for a day, week, month or custom range
+customer waits, **Missed**, **Recall** and **Support Overtime** (support time beyond each member's
+regular duty, per Dhaka day, summed — `TEAM_OVERTIME.md`; only overtime is ever shown, never a duty
+length) — for a day, week, month or custom range
 (capped at 92 days), for the whole team or one member, broken down by day/week/month, with a group
 drill-down listing every wait and CSV (groups) / Excel (full: Summary, Team Members, Groups, period,
 Missed & Recall) exports. Sidebar: Reports → Team Report; also the first card on All Reports.
@@ -1066,9 +1266,47 @@ priority uses its escalation policy's `firstAlertMinutes`; every other group use
 `SupportActivitySettings.missedReplyAfterMinutes` (default 30, on Support Activity Setup). Answered
 after the threshold = Recall (a subset of Missed, never counted twice); never answered past it =
 Missed and unrecovered; still inside it = neither. Missed is charged to the group's
-`assignedTeamMemberId` ("Unassigned" otherwise); Recall to whoever sent the late reply. Business-number
+`assignedTeamMemberId` AT THE MOMENT THE CUSTOMER ASKED ("Unassigned" otherwise) and judged by the
+threshold then — `GroupResponsibilityChange` (written by `setGroupPriority`) records each change with
+its before/after values, so reassigning a group never moves earlier misses; Recall to whoever sent the
+late reply. A Team/member report covers the groups it replied in AND the groups it was assigned when a
+customer asked, so Missed never exceeds Waits.
+
+**Team Report audit (19 Oct 2026), rules worth not undoing:** every `ReportWait` carries `chargedTo` (the
+assignee when the customer asked) and its at-the-time `thresholdSeconds`; every report, export and the
+human-response measure read those — never `groups.get(..).assignedMemberId` or today's priority
+(`TeamReportData.responsibilityAt` / `missedAfterMs` for anything else). History is recorded on the
+group's MERGED reading (`server/groupResponsibility.ts`, Primary copy first), also when setup is copied
+to a new number. In a Team/member view Missed is the waits charged in scope and Recall the late answers
+given in scope (independent); group rows use the same predicates; `ctx.groupInScope` is the Team Report's
+scoped group rows for groups with messages; `ctx.missedInScope` filters late/never waits by `chargedTo`.
+Overtime is the whole member-day's, shared to a scope by the part of the day worked in it. With one
+account chosen, identity is still decided over every account's copies (inner query, account filter
+outside). Exports carry `asof` and read only rows stored by then (`exportStoredBy`); the drill-down link
+carries it too. Default-shift history is `InternalTeamMember.defaultShiftChangedAt`, never `updatedAt`.
+A template test send (`template-test:` key) is never a member's reply; a dashboard reply respects the
+member's "count from" date. Business-number
 replies count as replies but carry no person and no duration. Replies are looked for up to 24 h
 past the period end, and only waits starting inside the period count.
+
+**Who answered, the human response, and reliability (Phase 2, `teamReportReliability.ts`).** Beside the
+figures, never changing one:
+- **Provenance from evidence.** Every message carries an `actor`. An outgoing one is AI / RULE /
+  BROADCAST / OPERATOR from the `OutboundMessage` it echoes (`outgoingActorFor`, shared with Support
+  Intelligence), and BUSINESS_PHONE when it echoes none. Six report categories (CUSTOMER,
+  HUMAN_TEAM_MEMBER, AUTOMATED_AI, AUTOMATED_RULE, OTHER_BUSINESS_REPLY, UNKNOWN_OR_UNATTRIBUTED).
+  Direction never decides authorship.
+- **Three response measures, each defined once.** First observed response is the existing wait
+  (`responseStats`, Response SLA's). Automated response is the waits an AI or rule reply closed. First
+  human response is Human Response SLA's `humanWaits`, timed to a verified person (member or
+  dashboard user).
+- **Context, never counted.** The loader also reads the 4 hours before the period and each group's
+  last earlier message, so a wait open at midnight is not counted again: a month's waits are the
+  sum of its days'. `TeamReportData.messages` is still the period and look-ahead only.
+- **Provenance is joined once as a hash, not probed per row.** The per-row probe doubled a month's
+  report (PHASE2.md Stage 9). Text is read only where a customer's line can be.
+- **Reliability is counts only.** Stored copies, logical messages, attribution strength,
+  conflicts, gaps, incomplete and unverified days. Never an accuracy percentage; a test refuses one.
 
 **Team filter (28 Sep 2026): a Team is "who was in it AT THAT MOMENT", not "who is in it now".**
 `Team` rows are created on `/teams` (WhatsApp module); `InternalTeamMember.teamId` is the person's
@@ -1138,7 +1376,7 @@ one.**
     (`pnpm --filter @support-automation/web validate:intelligence`) cannot disagree.
   - They sit beside the operational figures, never replacing them. Human Response SLA sits beside
     Response SLA. Observed Support Session Time (the union of sessions across groups) sits beside
-    Support Overtime (the Team Report's support time, relabelled). An internal hand-off (the employee's words) is kept apart from an SLA escalation
+    support time (the timeline the Team Report measures overtime from). An internal hand-off (the employee's words) is kept apart from an SLA escalation
     (a recorded fact).
 - **Inference rules worth not undoing.**
   - Every inferred figure carries its confidence and evidence, and is labelled "(inferred)".
@@ -1154,6 +1392,57 @@ one.**
   runs the validation script against real groups and compares with WhatsApp, the reports say so.
   Do not remove that caveat on the strength of the tests.
 
+**Unified messaging reporting (20 Oct 2026, `UNIFIED_REPORTING`, off by default, no migration, no worker
+change, no new key; `docs/unified-reporting/` is the reference, 00-07 are the specs, 08-12 describe what was
+built).** The Team Report gains personal and combined scopes, run information, customer-specific reply
+attribution and an identity-change preview. Rules worth not undoing:
+- **Flag off, or `scope=group`, is byte-identical.** `teamReportParity.integration.test.ts` compares the
+  loader, the three tables, the CSV and the XLSX with a committed snapshot; never regenerate it to make a
+  change pass. `teamReportQuery` writes `scope` only when it is not `group`.
+- **Personal and combined need `messages.view` on top of `support_activity.view`**, decided in ONE place
+  (`resolvePageScope`) for the page and both exports; a viewer without it gets the group report and a note.
+  Personal rows are `PERSONAL_CHAT_SQL` only (`@c.us`/`@lid`, no group), one conversation per
+  account + chat, own-number and colleague chats excluded and counted, never status/newsletter/orphaned ids.
+- **No second counting rule.** `computePersonalReport` calls `computeTeamReport` and `humanWaits` unchanged
+  with the conversation as the "group"; combined is two reports set side by side (additive lines add, medians
+  are recomputed over the union, distinct customers and overtime are never combined). Only a dashboard reply
+  from a login linked to a member is a verified employee reply in a personal chat.
+- **Who sent it is still the one classifier** (`createReportClassifier`, now in packages/shared); the
+  preview, the personal loader and the group loader all take an `identity` they can be handed.
+- **Customer-specific replies are evidence only** (`replyAttribution.ts`): a quote of the customer's line
+  (Tier 1), one mention or the only waiting customer inside 4 h (Tier 2), everything else unresolved and closes
+  nothing. `TIER3_PROBABLE` is never produced; ids are compared exactly and a LID is never shown as a number.
+  It sits beside the group figures and changes none.
+- **The identity preview is strictly read-only** (`previewTeamMemberIdentityChange`: `whatsapp.manage`, the
+  flag, the project). It writes nothing, queues no `IdentityReattribution`, selects no body, masks a personal
+  chat's id, and without `messages.view` reads no personal message into any count. Save is the existing action;
+  it only records the digest the browser carried (`previewDigest`) in the System Log entry, and a save without
+  one logs exactly as before. Field validation is `readIdentityFields`, shared with Save.
+- **Run information and Collection detail are counts and plain notes, never a percentage or a score**;
+  "no stored message" is never "no communication". Every raw query names `"projectId"`.
+- **Employee ranking, daily engagement and comparison (WP10) are derivations, not a second report.**
+  `computeEmployeeAnalytics` (`unifiedReporting/employeeRanking.ts`) reads the loader's `messages`, `scope` and
+  `computeTeamReport` result; a member's groups engaged is the members table's `groups` rule (a test pins the
+  equality for day, week, month and custom). Each measure is ranked alone, never blended; ties share a rank; a
+  small sample (fewer than 3 active days, or fewer than 5 closed waits for the median) is "Not enough data" and
+  never last (Active days itself is ranked for anybody who worked). The daily grid's row total is DISTINCT groups,
+  shown beside the sum of days; do not "fix" the two to agree. `compare=1` is honoured only with the flag on and
+  loads the previous equal-length period once, through `loadTeamReport`; off, nothing extra is read. New sheets
+  ("Ranking", "Daily engagement", "Comparison") come after the existing ones and only with the flag on.
+- **Fixing an identity from the Identity check (WP11) reuses `linkWhatsAppSender`**, never a second link path: its
+  permission, duplicate-holder refusal, System Log entry and `IdentityReattribution` come with it. It stores a
+  WhatsApp ID only, never a phone number made from a LID. The name suggestion (`suggestMemberForSender`) is display
+  only: several matches are "several possible members", a one-word containment is not a match, and only a member who
+  matched no message in 30 days or has no real WhatsApp ID is offered. The "WhatsApp ID not linked" badge
+  (`whatsappIdBadge`, Bangladeshi mobile `8801[3-9]` + 8 digits) is display only; `hasReachablePhoneNumber` is
+  unchanged. All of it needs the flag; off, the roster and the Identity check are what they were.
+- **Audit fixes B1-B4 (same release):** a deactivated member's Duty History follows a corrected identifier
+  (`recomputeAttendanceDay` roster = ACTIVE plus that member); Support Intelligence and Calls decide who sent a
+  message from every account's copies when one account is chosen (copies window outside, `onAccount` test
+  outside); a hard delete records `GroupResponsibilityChange` for the groups it unassigns, and a member whose only
+  work is linked-login dashboard replies is deactivated; the Team Report orders a group's copies Primary first,
+  lowest id. B5 and B6 were not fixed (`12-deferred-work-and-known-limits.md`).
+
 **Report durations are shown ONE way: total hours and minutes** (`formatHoursMinutes`,
 `packages/shared/src/duration.ts`, 5 Oct 2026).
 - Examples: "35h 0m", never "1d 11h"; "0h 45m", never "45m" or "38s"; zero is "0h 0m".
@@ -1163,10 +1452,14 @@ one.**
   History). Display only — no stored value or calculation changed.
 - Raw numeric export columns stay numeric: Team Report "Support Overtime (hours)", "Wait
   (minutes)", Support Activity "Duration (seconds)", Duty History "Engaged (minutes)".
-- **"Support Overtime" is a label**, applied 5 Oct 2026 at Rudra's request to the existing
-  idle-gap support time. Internal names (`activeSeconds`, support time) are deliberately unchanged,
-  because it is not yet roster-based overtime. Do not rename internals until that real calculation
-  exists.
+- **"Support Overtime" is real overtime since 12 Oct 2026** (`TEAM_OVERTIME.md`).
+  - `overtimeSeconds` = Σ per member-day of max(0, support time − regular duty).
+  - Regular duty comes from: the roster for that date → holiday → weekly pattern → default shift →
+    `SupportActivitySettings.overtimeFallbackDutyMinutes` (8h). The pattern and default shift apply
+    only to dates after they were last changed.
+  - `activeSeconds` is still support time. Where a report shows it, it is labelled "Support time",
+    never "Support Overtime".
+  - Never show a duty length on the Team Report; Rudra's explicit rule.
 
 **Element-level rules in `globals.css` belong in `@layer base`.** Tailwind's utilities live in a
 layer, and ANY unlayered style beats ANY layered one regardless of specificity: the default
@@ -1222,6 +1515,12 @@ an unstaggered `Promise.all` (the ten creates all finish before the first SELECT
 arrivals over fourteen rounds is what works — with the lock deleted, probe rounds returned 10, 8, 9,
 9, 10, 10, 10, 10, 10, 8. Do not simplify that test; each simplification was tried and each passed
 against broken code.
+
+**Since 19 Oct 2026 the recompute counts each logical message and each WhatsApp group once** (copies
+two of our numbers store were doubling both), honours "count their messages from", credits MANUAL_REPLY
+sends through the member's linked login (`recordOperatorAttendance`, hooked on the send and its echo),
+and withdraws a day whose evidence moved away (kept at zero only under a manager's override).
+`recomputeAttendanceDay` is the shared core the re-attribution job also calls.
 
 The recompute is deliberately **not** filtered on `Message.isFromTeamMember`. That column is stamped
 at insert time, so it is false for everything somebody sent before they joined the roster — filtering
@@ -1534,8 +1833,33 @@ worth not undoing:
   classified by `attributeOutbound()` (`packages/shared/src/outboundAttribution.ts`). The thread
   ("Rudra · via Primary Account") and the WhatsApp Chat User Activity report
   (`/reports/whatsapp-user-activity`, `messages.view`) both use it. There is no new table or name
-  snapshot: users are never deleted and `username` never changes. Echoes are matched by an exact
+  snapshot: `username` never changes, and a user is deleted only by a Main Admin (App Users → Delete, never an
+  Administrator-level account) — their sends then show without a name, and the System Log keeps who it was. Echoes are matched by an exact
   `providerMessageId` lookup.
+
+**Groups and Personal (8 Oct 2026, `lib/chatConversationType.ts`).** The list holds an account's
+groups AND its personal (1:1) chats; All / Groups / Personal compose with Waiting, Seen, categories
+and search. Rules worth not undoing:
+- **The type is derived, never stored.** A group is a `WhatsAppGroup` row. A personal chat is the
+  account's `Message` rows with `groupId` NULL and a `@c.us` / `@lid` chat id (WhatsApp's own
+  domains; `status@broadcast` and `@newsletter` are neither). Never the display name.
+  `isPersonalChatId` and `PERSONAL_CHAT_SQL` are one rule in two languages; a test pins them.
+- **Applied in SQL.** `inboxBaseSql` is groups UNION ALL personal chats with a `kind` column, so
+  the 300 limit, search and the views apply per type and the counts carry All, `groups` and
+  `personal`. The partial index `Message_personal_chat_idx` (`groupId IS NULL`) keeps the personal
+  half off the group messages.
+- **A personal chat belongs to the account with the messages.** The same customer writing to two of
+  our numbers is two chats. Only that account's outbound answers it, unlike a group, where any of
+  our numbers' replies count.
+- **Only the review mark is stored** (`PersonalChatReview`, one row once opened). Pin, category and
+  archive stay group-only; a bulk action reports `personalSkipped`.
+- **A personal chat is answered, never started** (9 Oct 2026). It opens at
+  `/chat/account/<id>/personal/<chatId>` with the ordinary composer. `sendPersonalChatMessage` queues
+  one MANUAL_REPLY only into a chat the account already has a stored message in, and the queue checks
+  `verifyPersonalChat` (an existing `@c.us`/`@lid` chat) instead of group membership for any
+  non-`@g.us` manual reply. Same queue, same rate limits; no cold messages.
+- **The type is the URL** (`?type=personal`, `useConversationType`), carried on row links; the view
+  chips stay client state as before.
 
 **Inbox organisation is `chatCategoryId` / `chatPinnedAt` / `chatArchivedAt` on `WhatsAppGroup`,
 plus `ChatCategory`** (`server/actions/chatOrganisation.ts`). All three govern what an operator
@@ -2374,6 +2698,189 @@ to derive them from exists. Purely operational commits (merges, the GitLab histo
 status updates, planning-only commits describing no shipped change) are deliberately excluded.
 Idempotent by `version` and safe to re-run — it only creates a release that doesn't already exist,
 never overwrites one an admin has since edited.
+
+### Google Sheets work management (`apps/web/src/server/google/`, `GOOGLE_SHEETS.md`)
+
+All ten phases are built (`GOOGLE_SHEETS.md` §12–§20; §21 is how to test it live): accounts,
+the spreadsheet list, members, the editor on each spreadsheet's page, a person's own Google identity,
+the activity log, work / viewing time, changes made in Google (a worker loop) and the employee and
+sheet reports. §3 records what Google's APIs can and cannot say about who did what — read it before
+any attribution work. Feature `GOOGLE_SHEETS`, **off by default in every project**; keys
+`google_sheets.view/edit/manage/monitor/report`. Rules worth not undoing:
+
+- **Tokens are read in exactly one file** (`server/google/accounts.ts`), stored only as `encryptSecret`
+  envelopes, and nothing leaves it except `PUBLIC_ACCOUNT_SELECT`. The client secret is env-only.
+  Google's raw error text never goes into a URL; the callback redirects with a short code.
+- **One OAuth client per installation and ONE callback** (`/api/google/oauth/callback`, outside any
+  project). The project, user, state and PKCE verifier travel in an encrypted, HTTP-only cookie
+  scoped to that path; the callback re-checks the same person, project entry, `google_sheets.manage`
+  and the feature INSIDE the project before redeeming the code.
+- **A row per Google account per project** (`@@unique([projectId, googleSubject])`): reconnecting
+  revives the same row, and disconnecting wipes the tokens and KEEPS the row. A grant missing the
+  Drive-metadata or Sheets scope is revoked and refused; Google refusing a stored grant makes it
+  NEEDS_RECONNECT, never a retry loop.
+- **The list is Drive file METADATA only** (`DRIVE_SPREADSHEET_FIELDS`): never contents, never the
+  Sheets API, not even the sharing list. **One `GoogleSpreadsheet` per Google file per project**,
+  each connected account that reaches it a `GoogleSpreadsheetAccess` path. Nothing is deleted: a file
+  nobody reaches is `removedAt` and comes back as the same row. Removal is decided by the set a
+  COMPLETE listing named — never by timestamps, never from a capped or failed listing. A listing
+  that omits a detail (Google hides emails per requester) never erases a known one, or two accounts
+  would overwrite each other on every refresh.
+- **Sheets are shared team work, and identity is never guessed.** The Google account owner, the
+  file's creator and the account that connected it are none of them "the worker". App work is
+  attributed to the signed-in user (and their team member at that moment); an edit made in Google is
+  attributed only through a Google identity the person linked themselves, otherwise it is
+  UNATTRIBUTED. Google's `lastModifyingUser` is display only. Viewing is never work time.
+- **Sheet members are the app's own record, as HISTORY** (`GoogleSpreadsheetMember`, one row per
+  period, partial unique = one open period per person per sheet). Roles LEAD / EDITOR / MONITOR
+  (`packages/shared/src/googleSheetMembers.ts`); a monitor never works. A manager changes any member;
+  a sheet's Lead with `google_sheets.edit` staffs editors and monitors but never touches a Lead, itself
+  included. Every write goes through `server/google/members.ts`, which applies `decideMemberChange`
+  itself. Nobody is a member by default; Google's sharing list is read live for reference and never
+  copied into members. Attribution of anything done through the app is `resolveSheetActor`: the
+  signed-in user, their role AT that moment, and their team member through the explicit
+  `InternalTeamMember.userId` link only (now audited in System Logs) — never a name or email match.
+- **The editor writes only what still holds what was loaded** (`planSave`): Save re-reads the cells,
+  a cell changed in Google meanwhile comes back as a conflict and is never overwritten; a row or column
+  delete re-reads it and refuses if it moved. Contents open for members (and managers, read-only);
+  edits need LEAD/EDITOR + `google_sheets.edit` + a writable project (`decideEditorAccess`); only an
+  editor receives formulas. Writes go only through an account Google lets edit the file.
+- **The activity log stores no cell value and no search text.** Every application row is credited to
+  the signed-in person with team member and role resolved AT THAT MOMENT — never to the Google account
+  that carried the call (kept beside it as "via"). VIEW ≠ WORK.
+- **Work time is computed, never stored** (`computeSheetTime` in packages/shared over the session
+  events): server-clock signals, gaps ≤ the project's pause threshold, unioned per person across sheets.
+  A work signal from someone who cannot work is recorded as viewing; a save is itself a work signal.
+- **A person's Google identity (`UserGoogleIdentity`, platform) is linked only by them signing in**
+  (openid + email, no token kept, nothing revoked — Google revokes a whole grant, and the same account
+  is often connected to a project). Disconnecting never revokes a grant another project still uses.
+- **Changes made in Google are credited conservatively** (worker `googleSheets/`, monitored sheets
+  only, an account that allowed `drive.activity.readonly`): one known actor, linked by the person
+  themselves, AND the project's identity bridge verified — an account's own change whose `people/<id>`
+  equals its `googleSubject`. A mismatch stops all crediting in that project. Google's record of the
+  app's own save is an APPLICATION_ECHO, never counted twice. Counts only, never time. Plain `fetch`,
+  no `googleapis` SDK, and no `packages/google-client` (two calls did not justify a new build step).
+- **Each project has its own OAuth client and on/off switch** (`GoogleIntegrationConfig`,
+  `server/google/clientConfig.ts`, `decideGoogleClient` in packages/shared, GOOGLE_SHEETS.md §22). Every
+  Google call resolves `resolveProjectGoogleClient()` inside its project (worker: per project); the env
+  client is only a fallback. The secret is encrypted and never leaves `clientConfig.ts`; a pair Google
+  rejects is not saved; tokens refresh only with the client that issued them (`oauthClientId`), so a
+  client change sends accounts back to reconnect. Off stops all Google calls and deletes nothing.
+
+### WhatsApp Chat v2 — the upgraded conversation view (`chat/v2/`, `server/chatThreadV2.ts`, `CHAT_UI_V2.md`)
+
+Behind the `CHAT_UI_V2` project feature, **off by default**; off = the v1 pages render exactly as
+before, and switching it off is the whole rollback. Design patterns (not code) from
+rmyndharis/OpenWA@078b8aa — `docs/third-party/OPENWA_REFERENCE.md`. Rules worth not undoing:
+- **A thread is ordered by `(timestampWa, id)`, on every query** — the live window, older pages
+  (`loadOlderEntries`, opaque `<ms>.<id>` cursor) and jump-to. Timestamp alone repeats or skips the
+  burst that shares a second at a page boundary. Messages that drop out of the 80-row live window
+  are retained client-side so no gap opens above it.
+- **A quote is real only when WhatsApp's echo says so.** `OutboundMessage.replyToMessageId` is the
+  intent (validated: same account, same conversation); the worker sends through `client.reply()` and
+  refuses a target from another chat. The thread shows a stored message's quote only from
+  `Message.quotedMessageId` on the echo. Reply + mentions is refused: the library's
+  `sendReplyWithMentions` is a stub.
+- **Mentions only for phone-number ids** (`chatMentions.ts`): `…@c.us` senders who wrote in this
+  group copy, plus roster members with a typed number. A LID is never offered, converted or printed
+  as a number; the server recomputes candidates on every send.
+- **Reactions shown are this account's own, as the worker settled them** (`chatReactions.ts`, from
+  `REACT_TO_MESSAGE` results). Others' reactions need the Insiders licence and are never invented;
+  removal is not offered (unverified contract).
+- **Nothing new works with the feature off**: `replyTo` / `mentions` on a send and every v2 read
+  action refuse unless `CHAT_UI_V2` is on for the project.
+- **Rich messaging (16 Oct 2026, `CHAT_RICH_MESSAGING.md`)**: delivery/read ticks, deleted-for-everyone,
+  "Load earlier from WhatsApp", polls, locations, stickers, forward, star, pin/archive on the phone —
+  all on the current engine, all behind `CHAT_UI_V2`. Rules worth not undoing:
+  - Receipts only rise and each time is written once (`applyAck`; conditional `updateMany`s in
+    `recordMessageAck`), OUTGOING rows of that account only. A deletion sets `Message.revokedAt` and
+    KEEPS the row and its text; a revoked event is never stored as a message.
+  - A poll / location / sticker / forward is ONE `OutboundMessage` (`contentType` + `content`,
+    MANUAL_REPLY only), re-validated by the worker at send time (`sendRichContent`). Stickers are only
+    stored WebPs sent raw — never `sendImageAsSticker`, which uploads to a third-party server.
+  - History loaded on request is STORE-ONLY (`storeHistoryMessages`): no rules, AI, waits, cases,
+    escalation or mood, no checkpoint move. Never route it through `persistIncomingMessage`.
+
+### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
+
+All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →
+Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.view`, `channels.manage`,
+`conversations.reply` (reading uses `messages.view`). Rules worth not undoing:
+
+- **WhatsApp is read in place, never copied, and never sent from here.** New channels have their own
+  four tables (`ChannelConnection`, `ChannelConversation`, `ChannelMessage`, `ChannelInboundEvent`),
+  because ~40 readers assume every `Message` is WhatsApp. The unified list merges `ChannelConversation`
+  with WhatsApp Chat's own `getChatInbox` / `getChatConversations`, so "waiting" means the same in
+  both. A WhatsApp row opens WhatsApp Chat. Do not put channel rows into `Message`.
+- **The web records, the worker processes.** `/api/channels/<meta|telegram>/<webhookKey>` (no session)
+  verifies the Meta HMAC (app secret, raw body) or the Telegram secret header, splits the body
+  (`splitMetaWebhook` / `telegramDedupKey` in packages/shared), and inserts `ChannelInboundEvent`
+  with `skipDuplicates` on `(projectId, connectionId, dedupKey)`. Nothing else happens on the
+  request. One Meta app has ONE callback URL, so an event is routed to the connection **in the key's
+  project** that owns `entry.id`; an account nobody connected is dropped.
+- **An outbound `ChannelMessage` IS the send queue** (QUEUED → SENDING → SENT → DELIVERED / READ, or
+  FAILED / UNKNOWN), drained only by `channel-outbound`. A timeout after the request left is UNKNOWN and
+  never retried by itself (a retry could message the customer twice); "Send again" on UNKNOWN needs
+  the person's confirmation. The window, the connection and (for AI) the kill switch are re-checked at
+  send time.
+- **Meta's window is `decideReplyWindow`**: 24 h for anything; 24 h–7 days for a PERSON only, tagged
+  HUMAN_AGENT, and only with the connection's Human Agent switch on; AI never uses the tag. Telegram
+  has none. Instagram text is limited to 1,000 BYTES.
+- **Echo handling**: our own send is recognised by `message.metadata` (Messenger, set to our row id),
+  the provider id, or the in-flight row with the same text (Instagram's echo can outrun the send
+  response); `markSent` removes a BUSINESS duplicate. A reply typed in Meta Business Suite is stored as
+  BUSINESS and pauses AI (`aiSuppressedUntil`) — the WhatsApp takeover rule.
+- **Channel AI calls the WhatsApp answering functions, in the same order, with the same gates**
+  (`channels/aiReply.ts`); `runAiFallback` is untouched (only `sendHumanFallbackAlert` was exported and
+  takes a null message id). Never in a group chat, never a bot, never past 15 minutes, only the
+  customer's latest line, claimed once by `aiClaimedAt`, reply keyed `ai:<message id>`.
+- **Credentials** are decrypted only in `server/channels/connections.ts` (web) and the worker's send /
+  profile path. Views never carry a token; the Meta verify token is revealed to `channels.manage` only.
+  Disconnecting wipes credentials, keeps every conversation and cancels QUEUED replies; reconnecting
+  revives the same row with a new webhook key.
+- TikTok is NOT built (beta API, regional, needs approval) and is shown as unavailable, never as a
+  channel. Instagram uses the Page-linked (Facebook Login) flow; Instagram Login is not built.
+
+### Client Management (`CLIENT_CENTER.md`)
+
+One client database per project (`Client`, `ClientChannel`, `ClientNote`, `ClientActivity`, `ClientImportJob`), feature
+`CLIENT_CENTER`, **off by default**; keys `clients.view/create/update/archive/delete/import/export`. Phases 2–3 only:
+records, CRUD, duplicates, list/details, import/export, timeline, per-channel consent DATA. Rules worth not undoing:
+- **Billing is manual and nothing is sent.** Stage 4A: staff-typed dues (`ClientDue`, `ClientDueEvent` append-only,
+  `ClientBillingCurrency` empty by default), keys `clients.view_billing` / `clients.edit_billing`. No invoice, ledger or
+  payment link, no default currency (required only with an amount); the timeline never carries an amount or a date.
+  Stage 4B: `ClientWhatsAppChatLink` (key `clients.link_whatsapp_chat`): manual, one existing individual chat at a
+  time, a number match is only a suggestion, one active link per (account, chat) by partial unique index.
+  Stage 4C: Email over SMTP (`EmailSettings`, `EmailOutbox`, worker loop `email-outbox`, key
+  `communications.manage_email`, Settings → Email): no provider assumed; "connected" only after a test message was
+  accepted under the CURRENT settings (`settingsVersion`/`verifiedVersion`); SMTP is ACCEPTED, never delivered; an
+  unknowable outcome is UNKNOWN and never retried; the test goes only to the signed-in admin; the password is write-only. No
+  WhatsApp/SMS/email/Messenger/Instagram message is sent from here. Consent is recorded, not enforced yet. Sending,
+  campaigns, reminders, notices and tasks are later stages (`CLIENT_CENTER_PLAN.md`).
+- **Duplicates are shown, never merged** — a shared phone/WhatsApp number (one group; local `01…` gets `88`), email,
+  channel reference or code, never a similar name. There is no merge action.
+- **One filter builder** (`lib/clientFilters.ts`) serves the list, select-all, export and bulk actions. Import is claimed
+  once by a conditional update, deletes the file's rows when it ends, and runs inside the request (≤2,000 rows) — a
+  durable background import is the extension point.
+- **Deleting in Clients is the Administrator's by default** (owner's rule, 17 Oct 2026; CLIENTS_V3.md §Delete):
+  clients, subscriptions, invoices, payments and notes. `canDeleteClientRecords` = Main Admin OR `clients.delete`, and
+  `clients.delete` is in `ADMIN_GRANTED_KEYS`: only a Main Admin can ADD it to a role (`adminGrantRefusal`), it is never
+  project-assignable (no project role or Lead carries it; the `ProjectRole_no_platform_keys` CHECK refuses it), and
+  migration `20261017200000_clients_delete_admin_granted` stripped it from every non-Main-Admin role. Every delete
+  action is in `server/actions/clientDeletes.ts`; the controls render only for a viewer with `caps.canDelete`. An
+  invoice a recorded payment still settles is kept; deleting an unreversed payment takes it off its invoices first.
+- **Clients V3 (`CLIENTS_V3.md`, 17 Oct 2026)**: subscriptions, numbered invoices, payments, WhatsApp GROUP links,
+  photos, per-person columns, per-project sub-module switches (`ClientModuleSettings`). Rules worth not undoing:
+  - **Expiry is not a debt.** Terms (`ClientSubscription`) and money (`ClientDue`/`ClientPayment`) are separate; state is
+    derived (`termState`), only `Client.currentSubscriptionId` is stored, recomputed under the client row lock.
+    `subscriptionStateWhere` is its SQL twin — a test runs both over the same rows.
+  - **Money is BigInt minor units, never summed across currencies.** A batch payment is all-or-nothing, one payment per
+    client+currency, dues locked `FOR UPDATE`, one idempotency key per submission. The DB refuses rewriting a payment,
+    un-reversing it, or allocating across client/currency; mistakes are reversed with a reason.
+  - **A group link is data**: one active owner per WhatsApp group id, never sends or touches monitoring/AI, kept on unlink.
+    Personal chat links are untouched and still refuse `@g.us`.
+  - **Billing figures are never selected for a viewer without `clients.view_billing`**, and a billing filter from one is
+    ignored. Column preferences are re-sanitized on every read. Photos are stripped, bounded thumbnails in `ClientPhoto`.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

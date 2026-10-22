@@ -6,12 +6,19 @@ import { revalidatePath } from "next/cache";
 
 import { checkPermission, requireAccess } from "@/server/authorize";
 
+/**
+ * The page these actions belong to (PROJECT_ROLES.md, "Pages"). A member whose project role selects
+ * pages needs THIS page at Full to change anything here — holding the same key through a sibling page
+ * is not enough. Ignored for everybody else (global roles, Leads, Main Admins).
+ */
+const SAFETY_SETTINGS_PAGE = { sections: ["/settings"] };
+
 async function getOrCreateSettings() {
   return prisma.automationSettings.upsert({ where: { id: "global" }, update: {}, create: { id: "global" } });
 }
 
 export async function setAutomationEnabled(enabled: boolean): Promise<void> {
-  await requireAccess("settings.edit");
+  await requireAccess("settings.edit", { sections: ["/automation-control"] });
   await getOrCreateSettings();
   await prisma.automationSettings.update({ where: { id: "global" }, data: { automationEnabled: enabled } });
 
@@ -43,7 +50,7 @@ export async function setAutomationEnabled(enabled: boolean): Promise<void> {
 }
 
 export async function setAutomationMode(mode: "MANUAL_ONLY" | "SAFE_AUTO_REPLY" | "FULL_RULE_AUTOMATION"): Promise<void> {
-  await requireAccess("settings.edit");
+  await requireAccess("settings.edit", { sections: ["/automation-control"] });
   await getOrCreateSettings();
   await prisma.automationSettings.update({ where: { id: "global" }, data: { mode } });
   revalidatePath(await projectPath("/automation-control"));
@@ -68,7 +75,7 @@ function parseRetryIntervals(raw: FormDataEntryValue | null, current: unknown): 
 }
 
 export async function updateSafetySettings(_prevState: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
-  const granted = await checkPermission("settings.edit");
+  const granted = await checkPermission("settings.edit", SAFETY_SETTINGS_PAGE);
   if ("denied" in granted) return { error: granted.denied };
   const current = await getOrCreateSettings();
 

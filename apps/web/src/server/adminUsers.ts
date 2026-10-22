@@ -21,6 +21,10 @@ import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
 export interface AccessGrant {
   projectId: string;
   level: ProjectAccessLevelValue;
+  /** The project's Lead (PROJECT_ROLES.md). Implies FULL; only a Main Admin may set it. */
+  isLead?: boolean;
+  /** A project role of THIS project (PROJECT_ROLES.md); null/absent = their global role applies there. */
+  projectRoleId?: string | null;
 }
 
 export interface NewUserInput {
@@ -63,6 +67,12 @@ export async function createUserWithAccess(db: PrismaClient, input: NewUserInput
     if (found.length !== projectIds.length) return { ok: false, error: "One of those projects no longer exists or is archived." };
   }
 
+  for (const grant of input.access) {
+    if (!grant.projectRoleId) continue;
+    const role = await db.projectRole.findUnique({ where: { id: grant.projectRoleId }, select: { projectId: true } });
+    if (!role || role.projectId !== grant.projectId) return { ok: false, error: "That project role no longer exists in this project." };
+  }
+
   if (input.employee && "existingId" in input.employee) {
     const existing = await db.employee.findUnique({ where: { id: input.employee.existingId }, select: { userId: true, status: true } });
     if (!existing) return { ok: false, error: "That employee no longer exists." };
@@ -87,8 +97,15 @@ export async function createUserWithAccess(db: PrismaClient, input: NewUserInput
       if (input.access.length > 0) {
         await tx.projectAccess.createMany({
           // FULL is stored as null: it is what "no narrowing" has always meant on this table.
-          data: input.access.map((a) => ({ projectId: a.projectId, userId: user.id, level: a.level === "FULL" ? null : a.level })),
+          data: input.access.map((a) => ({ projectId: a.projectId, userId: user.id, level: a.isLead || a.level === "FULL" ? null : a.level })),
         });
+        // The project-level role, only where one was given: no row means the global role applies.
+        const memberRoles = input.access.filter((a) => a.isLead || a.projectRoleId);
+        if (memberRoles.length > 0) {
+          await tx.projectMemberRole.createMany({
+            data: memberRoles.map((a) => ({ projectId: a.projectId, userId: user.id, isLead: Boolean(a.isLead), projectRoleId: a.projectRoleId ?? null })),
+          });
+        }
       }
       return { ok: true as const, userId: user.id, employeeCode };
     });
@@ -120,7 +137,12 @@ export async function setUserProjectAccess(
   const existing = await db.projectAccess.findUnique({ where: { projectId_userId: { projectId, userId } }, select: { level: true } });
   if (level === null) {
     if (!existing) return { ok: true, changed: "unchanged" };
-    await db.projectAccess.deleteMany({ where: { projectId, userId } });
+    // Their project-level role goes with the access: re-granting later starts from the global role,
+    // never silently from an old Lead flag.
+    await db.$transaction([
+      db.projectMemberRole.deleteMany({ where: { projectId, userId } }),
+      db.projectAccess.deleteMany({ where: { projectId, userId } }),
+    ]);
     return { ok: true, changed: "removed" };
   }
   if (!isProjectAccessLevel(level)) return { ok: false, error: "Choose Read, Write or Full." };
@@ -135,6 +157,48 @@ export async function setUserProjectAccess(
   return { ok: true, changed: "updated" };
 }
 
+/**
+ * Makes a user the Lead of one project, or stops them being it (PROJECT_ROLES.md). A Lead may enter
+ * the project (access is granted if missing) with FULL access — a narrowed Lead would be a contradiction.
+ * Stopping keeps their access and any project role; a row that then says nothing is removed.
+ */
+export async function setUserProjectLead(
+  db: PrismaClient,
+  userId: string,
+  projectId: string,
+  isLead: boolean,
+): Promise<{ ok: true; changed: boolean } | { ok: false; error: string }> {
+  const [user, project, row] = await Promise.all([
+    db.user.findUnique({ where: { id: userId }, select: { id: true, isActive: true } }),
+    db.project.findUnique({ where: { id: projectId }, select: { id: true, status: true } }),
+    db.projectMemberRole.findUnique({ where: { projectId_userId: { projectId, userId } }, select: { isLead: true, projectRoleId: true } }),
+  ]);
+  if (!user) return { ok: false, error: "That user no longer exists." };
+  if (!project) return { ok: false, error: "That project no longer exists." };
+  if ((row?.isLead ?? false) === isLead) return { ok: true, changed: false };
+  if (isLead) {
+    if (project.status === "ARCHIVED") return { ok: false, error: "That project is archived." };
+    if (!user.isActive) return { ok: false, error: "That user is deactivated. Reactivate them first." };
+    await db.$transaction([
+      db.projectAccess.upsert({
+        where: { projectId_userId: { projectId, userId } },
+        update: { level: null },
+        create: { projectId, userId, level: null },
+      }),
+      db.projectMemberRole.upsert({
+        where: { projectId_userId: { projectId, userId } },
+        update: { isLead: true },
+        create: { projectId, userId, isLead: true },
+      }),
+    ]);
+  } else if (row?.projectRoleId) {
+    await db.projectMemberRole.update({ where: { projectId_userId: { projectId, userId } }, data: { isLead: false } });
+  } else {
+    await db.projectMemberRole.deleteMany({ where: { projectId, userId } });
+  }
+  return { ok: true, changed: true };
+}
+
 export interface AdminUserRow {
   id: string;
   username: string;
@@ -145,7 +209,7 @@ export interface AdminUserRow {
   role: { id: string; name: string } | null;
   isMainAdmin: boolean;
   employee: { id: string; employeeCode: string; fullName: string } | null;
-  access: Array<{ projectId: string; projectName: string; projectSlug: string; level: ProjectAccessLevelValue }>;
+  access: Array<{ projectId: string; projectName: string; projectSlug: string; level: ProjectAccessLevelValue; isLead: boolean }>;
 }
 
 export async function listAdminUsers(db: PrismaClient, search = ""): Promise<AdminUserRow[]> {
@@ -165,6 +229,7 @@ export async function listAdminUsers(db: PrismaClient, search = ""): Promise<Adm
       permissionModule: { select: { id: true, name: true, permissions: { where: { permission: { key: "projects.manage" } }, select: { permissionId: true } } } },
       employee: { select: { id: true, employeeCode: true, fullName: true } },
       projectAccess: { select: { level: true, project: { select: { id: true, name: true, slug: true, createdAt: true } } } },
+      projectMemberRoles: { where: { isLead: true }, select: { projectId: true } },
     },
   });
   return users.map((u) => ({
@@ -179,7 +244,13 @@ export async function listAdminUsers(db: PrismaClient, search = ""): Promise<Adm
     employee: u.employee,
     access: u.projectAccess
       .sort((a, b) => a.project.createdAt.getTime() - b.project.createdAt.getTime())
-      .map((a) => ({ projectId: a.project.id, projectName: a.project.name, projectSlug: a.project.slug, level: a.level ?? "FULL" })),
+      .map((a) => ({
+        projectId: a.project.id,
+        projectName: a.project.name,
+        projectSlug: a.project.slug,
+        level: a.level ?? "FULL",
+        isLead: u.projectMemberRoles.some((m) => m.projectId === a.project.id),
+      })),
   }));
 }
 
@@ -190,6 +261,10 @@ export interface AccessMatrixRow {
   status: ProjectStatusValue;
   /** null = no access. */
   level: ProjectAccessLevelValue | null;
+  /** The project's Lead (PROJECT_ROLES.md). */
+  isLead: boolean;
+  /** Their project role there, if one is set (otherwise their global role applies). */
+  projectRoleName: string | null;
 }
 
 /** Every non-archived project, with this user's access to each — the grid on a user's page. */
@@ -198,6 +273,16 @@ export async function userAccessMatrix(db: PrismaClient, userId: string): Promis
     db.project.findMany({ where: { status: { not: "ARCHIVED" } }, orderBy: { createdAt: "asc" }, select: { id: true, name: true, slug: true, status: true } }),
     db.projectAccess.findMany({ where: { userId }, select: { projectId: true, level: true } }),
   ]);
+  const memberRoles = await db.projectMemberRole.findMany({ where: { userId }, select: { projectId: true, isLead: true, projectRole: { select: { name: true } } } });
   const byProject = new Map(rows.map((r) => [r.projectId, r.level ?? "FULL"] as const));
-  return projects.map((p) => ({ projectId: p.id, name: p.name, slug: p.slug, status: p.status as ProjectStatusValue, level: byProject.get(p.id) ?? null }));
+  const memberByProject = new Map(memberRoles.map((m) => [m.projectId, m] as const));
+  return projects.map((p) => ({
+    projectId: p.id,
+    name: p.name,
+    slug: p.slug,
+    status: p.status as ProjectStatusValue,
+    level: byProject.get(p.id) ?? null,
+    isLead: Boolean(byProject.has(p.id) && memberByProject.get(p.id)?.isLead),
+    projectRoleName: byProject.has(p.id) ? (memberByProject.get(p.id)?.projectRole?.name ?? null) : null,
+  }));
 }

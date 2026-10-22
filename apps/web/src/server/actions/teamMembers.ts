@@ -7,8 +7,18 @@ import { redirect } from "next/navigation";
 import { type Prisma } from "@support-automation/db";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { checkPermission, requireAccess } from "@/server/authorize";
-import { normalizePhoneNumber } from "@support-automation/shared";
+import {
+  createSenderResolver,
+  normalizePhoneNumber,
+  parseWhatsAppId,
+  whatsappIdKey,
+  type WhatsAppIdKind,
+} from "@support-automation/shared";
+import { dhakaDayStart, readIdentityFields, rosterEntryFromGroup } from "@/lib/teamMemberIdentity";
+import { memberIdentifiers, queueReattribution } from "@/server/reattribution";
 import { loginsForProject } from "@/server/projectLogins";
+import { logSystemEvent } from "@/server/logSystemEvent";
+import { mergedGroupResponsibility, recordResponsibilityChange } from "@/server/groupResponsibility";
 
 export interface TeamMemberFormState {
   error?: string;
@@ -28,6 +38,11 @@ interface TeamMemberInput {
   department: string | null;
   teamId: string | null;
   status: "ACTIVE" | "INACTIVE";
+  /**
+   * Reports credit this member only from this moment (Dhaka midnight of the chosen day). Null =
+   * every message counts. Undefined = the form did not carry the field, so it is left as it is.
+   */
+  attributeFrom?: Date | null;
 }
 
 /**
@@ -40,22 +55,23 @@ interface TeamMemberInput {
  */
 function readTeamMemberForm(formData: FormData): TeamMemberInput | { error: string } {
   const name = String(formData.get("name") ?? "").trim();
-  const phoneNumber = String(formData.get("phoneNumber") ?? "").trim();
+  const typedPhone = String(formData.get("phoneNumber") ?? "").trim();
   const role = String(formData.get("role") ?? "").trim();
-  // The id as the worker stores a sender: no "@lid" / "@c.us" suffix, which is stripped before
-  // comparing, so pasting either form works.
-  const whatsappId = String(formData.get("whatsappId") ?? "").trim().replace(/@.*$/, "").replace(/\s+/g, "") || null;
   const department = String(formData.get("department") ?? "").trim() || null;
   const teamId = String(formData.get("teamId") ?? "").trim() || null;
   const status = formData.get("status") === "INACTIVE" ? "INACTIVE" : "ACTIVE";
-  if (!name || !phoneNumber || !role) return { error: "Name, phone number and designation are all required." };
-  if (!normalizePhoneNumber(phoneNumber)) {
-    return { error: "That does not look like a phone number. Enter it with the country code, e.g. +8801XXXXXXXXX." };
+  if (!name || !typedPhone || !role) return { error: "Name, phone number and designation are all required." };
+  // The phone number and WhatsApp id are read by the one function the impact preview also uses.
+  const identity = readIdentityFields({ phoneNumber: typedPhone, whatsappId: String(formData.get("whatsappId") ?? "") });
+  if ("error" in identity) return identity;
+  const { phoneNumber, whatsappId } = identity;
+  let attributeFrom: Date | null | undefined;
+  if (formData.has("attributeFrom")) {
+    const key = String(formData.get("attributeFrom") ?? "").trim();
+    attributeFrom = key ? dhakaDayStart(key) : null;
+    if (attributeFrom === undefined) return { error: "That date could not be read. Pick a day, or leave it empty to count every message." };
   }
-  if (whatsappId && !/^\d{6,}$/.test(whatsappId)) {
-    return { error: "The WhatsApp ID is digits only (for example 145938777669643). Leave it empty if you do not have one." };
-  }
-  return { name, phoneNumber, whatsappId, role, department, teamId, status };
+  return { name, phoneNumber, whatsappId, role, department, teamId, status, attributeFrom };
 }
 
 /**
@@ -118,7 +134,7 @@ async function findPhoneConflict(phoneNumber: string, excludeId?: string) {
     members.find(
       (m) =>
         m.id !== excludeId &&
-        (normalizePhoneNumber(m.phoneNumber) === digits || (m.whatsappId && normalizePhoneNumber(m.whatsappId) === digits)),
+        (normalizePhoneNumber(m.phoneNumber) === digits || (m.whatsappId && normalizePhoneNumber(whatsappIdKey(m.whatsappId) ?? "") === digits)),
     ) ?? null
   );
 }
@@ -136,7 +152,8 @@ async function findWhatsAppIdConflict(whatsappId: string | null, excludeId?: str
     members.find(
       (m) =>
         m.id !== excludeId &&
-        (m.whatsappId === whatsappId || normalizePhoneNumber(m.phoneNumber) === normalizePhoneNumber(whatsappId)),
+        // On the comparison key, not the stored text: an older row can hold "…@lid" or "…:12".
+        (whatsappIdKey(m.whatsappId) === whatsappIdKey(whatsappId) || normalizePhoneNumber(m.phoneNumber) === normalizePhoneNumber(whatsappId)),
     ) ?? null
   );
 }
@@ -154,21 +171,111 @@ export async function createTeamMember(_prev: TeamMemberFormState, formData: For
   const teamProblem = await checkTeam(input.teamId);
   if (teamProblem) return { error: teamProblem };
 
+  let createdId: string;
   try {
-    await prisma.$transaction(async (tx) => {
+    createdId = await prisma.$transaction(async (tx) => {
       const created = await tx.internalTeamMember.create({ data: input, select: { id: true } });
       if (input.teamId) await applyTeamChange(tx, created.id, input.teamId, new Date());
+      return created.id;
     });
   } catch (err) {
     if (isUniqueViolation(err)) return { error: "Someone already has that number." };
     throw err;
   }
+  await logIdentityChange(granted.session.userId, createdId, input.name, null, { phoneNumber: input.phoneNumber, whatsappId: input.whatsappId }, "form", readPreviewRecord(formData));
+  // Their messages from before today were stored as a customer's: bring the stored stamps and Duty
+  // History in line (reports already read identity at read time).
+  await queueReattribution({ reason: `Team member ${input.name} added`, memberIds: [createdId], identifiers: memberIdentifiers(input), userId: granted.session.userId });
   revalidatePath(await projectPath("/team-members"));
   return { success: true };
 }
 
+/**
+ * What the person saw when they pressed "Preview impact" before saving (unified reporting): the digest of
+ * the preview and its headline counts, as the browser carried them. Recorded in the System Log entry only;
+ * nothing is recomputed here and no decision reads it. A form without a valid digest carries none.
+ */
+interface IdentityPreviewRecord {
+  digest: string;
+  affectedLogical: number;
+  affectedGroups: number;
+  affectedPersonal: number;
+  window: { from: string; to: string };
+}
+
+function readPreviewRecord(formData: FormData): IdentityPreviewRecord | undefined {
+  const digest = String(formData.get("previewDigest") ?? "");
+  if (!/^[0-9a-f]{64}$/.test(digest)) return undefined;
+  const count = (key: string): number | null => {
+    const value = Number(formData.get(key));
+    return Number.isInteger(value) && value >= 0 && value <= 10_000_000 ? value : null;
+  };
+  const iso = (key: string): string | null => {
+    const value = String(formData.get(key) ?? "");
+    const date = new Date(value);
+    return value && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
+  };
+  const affectedLogical = count("previewAffected");
+  const affectedGroups = count("previewGroups");
+  const affectedPersonal = count("previewPersonal");
+  const from = iso("previewFrom");
+  const to = iso("previewTo");
+  if (affectedLogical === null || affectedGroups === null || affectedPersonal === null || !from || !to) return undefined;
+  return { digest, affectedLogical, affectedGroups, affectedPersonal, window: { from, to } };
+}
+
+/** The columns attribution follows, as the identity log records them. */
+interface IdentityColumns {
+  phoneNumber: string;
+  whatsappId: string | null;
+  /** ISO instant, or null; absent where the change could not touch it (adding from a chat). */
+  attributeFrom?: string | null;
+}
+
+/**
+ * Identity mapping history (WHATSAPP_IDENTITY.md §4): every change to the identifiers a member's
+ * messages are matched on is a System Log entry, old and new side by side. Attribution in every
+ * report follows these columns — and the attribute-from date — so "why did last month's figures
+ * move?" has to be answerable.
+ */
+
+async function logIdentityChange(
+  actorUserId: string,
+  memberId: string,
+  memberName: string,
+  before: IdentityColumns | null,
+  after: IdentityColumns,
+  via: "form" | "chat-link",
+  preview?: IdentityPreviewRecord,
+): Promise<void> {
+  if (
+    before &&
+    before.phoneNumber === after.phoneNumber &&
+    before.whatsappId === after.whatsappId &&
+    (before.attributeFrom ?? null) === (after.attributeFrom ?? null)
+  ) {
+    return;
+  }
+  await logSystemEvent(
+    "INFO",
+    "team-members",
+    before
+      ? `Identifiers of team member ${memberName} changed${via === "chat-link" ? " (WhatsApp sender linked from WhatsApp Chat)" : ""}`
+      : `Team member ${memberName} added`,
+    // `preview` is present only when the person pressed Preview impact before saving; without it the entry is exactly what it was.
+    preview ? { before, after, via, preview } : { before, after, via },
+    { actorUserId, targetType: "InternalTeamMember", targetId: memberId },
+  );
+}
+
 export interface GroupParticipantCandidate {
   phoneNumber: string;
+  /**
+   * What the identifier is, from the domain WhatsApp gave it: a PHONE number, a LID, or null when
+   * nothing recorded the domain. Decides whether adding the person stores it as their WhatsApp ID
+   * (a LID, which only identifies) or as a number messages can be sent to.
+   */
+  idKind: WhatsAppIdKind | null;
   /** The push name WhatsApp supplied, if this person has ever set one. */
   suggestedName: string | null;
   messageCount: number;
@@ -197,22 +304,17 @@ export async function getGroupParticipantCandidates(groupId: string): Promise<Gr
       orderBy: { _count: { senderPhone: "desc" } },
       take: 100,
     }),
-    prisma.internalTeamMember.findMany({ select: { phoneNumber: true, whatsappId: true } }),
+    prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } }),
   ]);
+  const group = await prisma.whatsAppGroup.findUnique({ where: { id: groupId }, select: { whatsappGroupId: true } });
 
-  // Compared as digits, not as raw strings: the same person is "+8801700000123" on the roster and
-  // "8801700000123" in a message row, and a raw comparison would offer an existing colleague as a
-  // new candidate — then add them a second time. The identifier WhatsApp actually sends is also
-  // compared as-is, since a LID has no format to normalise.
-  const alreadyOnRoster = new Set(
-    existing.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((d): d is string => d !== null),
-  );
-  const knownWhatsAppIds = new Set(existing.map((m) => m.whatsappId).filter((id): id is string => Boolean(id)));
-  const isOnRoster = (senderId: string) => {
-    if (knownWhatsAppIds.has(senderId)) return true;
-    const digits = normalizePhoneNumber(senderId);
-    return digits !== null && alreadyOnRoster.has(digits);
-  };
+  // The one identity rule (WHATSAPP_IDENTITY.md): an exact WhatsApp id, or the same phone digits
+  // however either side was written, so an existing colleague is never offered again and added
+  // twice. A sender equal to the GROUP's own id is a message WhatsApp named no author for, never a
+  // person to add.
+  const resolver = createSenderResolver(existing);
+  const groupUser = parseWhatsAppId(group?.whatsappGroupId)?.user ?? null;
+  const isOnRoster = (senderId: string) => senderId === groupUser || resolver.resolve(senderId).isRosterMember;
   const candidatePhones = senders.map((s) => s.senderPhone).filter((phone) => !isOnRoster(phone));
   if (candidatePhones.length === 0) return [];
 
@@ -230,11 +332,20 @@ export async function getGroupParticipantCandidates(groupId: string): Promise<Gr
     take: 1000,
   });
   const nameByPhone = new Map(named.map((m) => [m.senderPhone, m.senderName]));
+  // The domain each sender arrived with, which says whether it is a phone number or a LID.
+  const withJid = await prisma.message.findMany({
+    where: { groupId, senderPhone: { in: candidatePhones }, senderJid: { not: null } },
+    distinct: ["senderPhone"],
+    select: { senderPhone: true, senderJid: true },
+    take: 1000,
+  });
+  const kindByPhone = new Map(withJid.map((m) => [m.senderPhone, parseWhatsAppId(m.senderJid)?.kind ?? null]));
 
   return senders
     .filter((s) => !isOnRoster(s.senderPhone))
     .map((s) => ({
       phoneNumber: s.senderPhone,
+      idKind: kindByPhone.get(s.senderPhone) ?? null,
       suggestedName: nameByPhone.get(s.senderPhone) ?? null,
       messageCount: s._count.senderPhone,
       lastSeenAt: s._max.timestampWa ?? new Date(0),
@@ -259,17 +370,14 @@ export interface RosterFetchState {
 export async function requestGroupParticipants(groupId: string): Promise<void> {
   await requireAccess("whatsapp.manage");
 
+  // Filtered on the payload's group in the database (PostgreSQL JSON path). Only the NEWEST command
+  // project-wide used to be checked, so another group's request in flight let this one queue a
+  // duplicate.
   const inFlight = await prisma.workerCommand.findFirst({
-    where: {
-      type: "GET_GROUP_PARTICIPANTS",
-      status: { in: ["PENDING", "PROCESSING"] },
-      // Prisma cannot filter inside Json on every connector, so the narrow type filter plus the
-      // per-group check below is done in application code.
-    },
-    orderBy: { createdAt: "desc" },
+    where: { type: "GET_GROUP_PARTICIPANTS", status: { in: ["PENDING", "PROCESSING"] }, payload: { path: ["groupId"], equals: groupId } },
+    select: { id: true },
   });
-  const inFlightGroupId = (inFlight?.payload as { groupId?: string } | null)?.groupId;
-  if (inFlight && inFlightGroupId === groupId) return;
+  if (inFlight) return;
 
   const group = await prisma.whatsAppGroup.findUnique({ where: { id: groupId }, select: { accountId: true } });
   if (!group) return;
@@ -289,13 +397,13 @@ export async function readGroupParticipants(groupId: string): Promise<RosterFetc
   const granted = await checkPermission("whatsapp.view");
   if ("denied" in granted) return { status: "FAILED", participants: [], error: granted.denied };
 
+  // THIS group's newest request. Reading the newest request project-wide meant two people fetching
+  // two groups at once each saw "nothing yet" for whichever was not last.
   const command = await prisma.workerCommand.findFirst({
-    where: { type: "GET_GROUP_PARTICIPANTS" },
+    where: { type: "GET_GROUP_PARTICIPANTS", payload: { path: ["groupId"], equals: groupId } },
     orderBy: { createdAt: "desc" },
   });
-
-  const commandGroupId = (command?.payload as { groupId?: string } | null)?.groupId;
-  if (!command || commandGroupId !== groupId) return { status: "IDLE", participants: [] };
+  if (!command) return { status: "IDLE", participants: [] };
 
   if (command.status === "PENDING" || command.status === "PROCESSING") {
     return { status: "PENDING", participants: [] };
@@ -310,30 +418,26 @@ export async function readGroupParticipants(groupId: string): Promise<RosterFetc
     };
   }
 
-  const raw = (command.result as { participants?: Array<{ phoneNumber?: string; name?: string | null; isSelf?: boolean }> } | null)
-    ?.participants;
+  const raw = (
+    command.result as { participants?: Array<{ phoneNumber?: string; rawId?: string; name?: string | null; isSelf?: boolean }> } | null
+  )?.participants;
   if (!Array.isArray(raw)) return { status: "IDLE", participants: [] };
 
-  const existing = await prisma.internalTeamMember.findMany({ select: { phoneNumber: true, whatsappId: true } });
-  const onRoster = new Set(
-    existing.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((d): d is string => d !== null),
-  );
-  const knownWhatsAppIds = new Set(existing.map((m) => m.whatsappId).filter((id): id is string => Boolean(id)));
+  // The one identity rule, with the domain WhatsApp gave, so a LID is never mistaken for a number.
+  const resolver = createSenderResolver(await prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } }));
+  const rawIdOf = new Map(raw.map((r) => [String(r?.phoneNumber ?? ""), r?.rawId ?? null]));
 
   const participants = raw
     // The signed-in account is the business's own WhatsApp line, never a colleague to add.
     .filter((p) => p?.phoneNumber && !p.isSelf)
     .map((p) => ({
       phoneNumber: String(p.phoneNumber),
+      idKind: parseWhatsAppId(rawIdOf.get(String(p.phoneNumber)) ?? null)?.kind ?? null,
       suggestedName: p.name ?? null,
       messageCount: 0,
       lastSeenAt: new Date(0),
     }))
-    .filter((p) => {
-      if (knownWhatsAppIds.has(p.phoneNumber)) return false;
-      const digits = normalizePhoneNumber(p.phoneNumber);
-      return digits !== null && !onRoster.has(digits);
-    });
+    .filter((p) => normalizePhoneNumber(p.phoneNumber) !== null && resolver.resolve(p.phoneNumber, rawIdOf.get(p.phoneNumber)).status === "UNRESOLVED");
 
   return { status: "READY", participants };
 }
@@ -368,12 +472,16 @@ export async function addTeamMembersFromGroup(
 
   const parsed = selections
     .map((value) => {
-      // "<phone>|<name>" — the name travels with the checkbox so the server does not have to
-      // re-derive it, and an empty name falls back to the number itself.
+      // "[lid:|pn:]<phone>|<name>" — the name travels with the checkbox so the server does not have
+      // to re-derive it, and an empty name falls back to the number itself. The prefix is the kind
+      // of identifier WhatsApp delivered (absent from an older tab: decided below).
       const separator = value.indexOf("|");
-      const phoneNumber = (separator === -1 ? value : value.slice(0, separator)).trim();
+      let identifier = (separator === -1 ? value : value.slice(0, separator)).trim();
+      let kind: "LID" | "PHONE" | null = null;
+      if (identifier.startsWith("lid:")) [kind, identifier] = ["LID", identifier.slice(4)];
+      else if (identifier.startsWith("pn:")) [kind, identifier] = ["PHONE", identifier.slice(3)];
       const name = (separator === -1 ? "" : value.slice(separator + 1)).trim();
-      return { phoneNumber, name: name || phoneNumber };
+      return { phoneNumber: identifier, kind, name: name || identifier };
     })
     .filter((entry) => entry.phoneNumber.length > 0);
 
@@ -387,19 +495,17 @@ export async function addTeamMembersFromGroup(
   const seen = new Set(
     existing.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((d): d is string => d !== null),
   );
-  const seenWhatsAppIds = new Set(existing.map((m) => m.whatsappId).filter((id): id is string => Boolean(id)));
+  const seenWhatsAppIds = new Set(existing.map((m) => whatsappIdKey(m.whatsappId)).filter((id): id is string => Boolean(id)));
 
-  const toCreate: Array<{ name: string; phoneNumber: string; whatsappId: string }> = [];
+  const toCreate: Array<{ name: string; phoneNumber: string; whatsappId: string | null }> = [];
   for (const entry of parsed) {
-    if (seenWhatsAppIds.has(entry.phoneNumber)) continue;
-    const digits = normalizePhoneNumber(entry.phoneNumber);
+    const key = whatsappIdKey(entry.phoneNumber);
+    if (!key || seenWhatsAppIds.has(key)) continue;
+    const digits = normalizePhoneNumber(key);
     if (digits === null || seen.has(digits)) continue;
     seen.add(digits);
-    seenWhatsAppIds.add(entry.phoneNumber);
-    // Whatever this identifier is — a phone number or a LID — it is exactly what arrives on this
-    // person's messages, so it is recorded as such. That is what makes the match survive an admin
-    // later correcting `phoneNumber` to the person's real, human-readable number.
-    toCreate.push({ name: entry.name, phoneNumber: entry.phoneNumber, whatsappId: entry.phoneNumber });
+    seenWhatsAppIds.add(key);
+    toCreate.push(rosterEntryFromGroup(entry.name, key, entry.kind));
   }
 
   if (toCreate.length === 0) {
@@ -433,6 +539,13 @@ export async function addTeamMembersFromGroup(
     return created;
   });
 
+  const added = await prisma.internalTeamMember.findMany({ where: { phoneNumber: { in: toCreate.map((entry) => entry.phoneNumber) } }, select: { id: true } });
+  await queueReattribution({
+    reason: `${result.count} team member(s) added from a group`,
+    memberIds: added.map((m) => m.id),
+    identifiers: toCreate.flatMap((entry) => memberIdentifiers(entry)),
+    userId: granted.session.userId,
+  });
   revalidatePath(await projectPath("/team-members"));
   return { addedCount: result.count };
 }
@@ -454,7 +567,7 @@ export async function updateTeamMember(
   if (conflict) return { error: `${conflict.name} already has that number.` };
   const idConflict = await findWhatsAppIdConflict(input.whatsappId, id);
   if (idConflict) return { error: `${idConflict.name} already has that WhatsApp ID.` };
-  const current = await prisma.internalTeamMember.findUnique({ where: { id }, select: { teamId: true } });
+  const current = await prisma.internalTeamMember.findUnique({ where: { id }, select: { teamId: true, phoneNumber: true, whatsappId: true, attributeFrom: true } });
   if (!current) return { error: "This team member no longer exists." };
   const teamProblem = await checkTeam(input.teamId, current.teamId);
   if (teamProblem) return { error: teamProblem };
@@ -468,8 +581,106 @@ export async function updateTeamMember(
     if (isUniqueViolation(err)) return { error: "Someone already has that number." };
     throw err;
   }
+  await logIdentityChange(
+    granted.session.userId,
+    id,
+    input.name,
+    { phoneNumber: current.phoneNumber, whatsappId: current.whatsappId, attributeFrom: current.attributeFrom?.toISOString() ?? null },
+    {
+      phoneNumber: input.phoneNumber,
+      whatsappId: input.whatsappId,
+      attributeFrom: input.attributeFrom === undefined ? (current.attributeFrom?.toISOString() ?? null) : (input.attributeFrom?.toISOString() ?? null),
+    },
+    "form",
+    readPreviewRecord(formData),
+  );
+  const identityChanged =
+    current.phoneNumber !== input.phoneNumber ||
+    current.whatsappId !== input.whatsappId ||
+    (input.attributeFrom !== undefined && (current.attributeFrom?.getTime() ?? null) !== (input.attributeFrom?.getTime() ?? null));
+  if (identityChanged) {
+    await queueReattribution({
+      reason: `Identifiers of team member ${input.name} changed`,
+      memberIds: [id],
+      identifiers: [...memberIdentifiers(current), ...memberIdentifiers(input)],
+      userId: granted.session.userId,
+    });
+  }
   revalidatePath(await projectPath("/team-members"));
   redirect(await projectPath("/team-members"));
+}
+
+export interface LinkSenderState {
+  error?: string;
+  linked?: string;
+}
+
+/**
+ * Records that a WhatsApp sender IS a given team member: the human verification the identity rule
+ * cannot do by itself (WHATSAPP_IDENTITY.md §4). WhatsApp puts a private id (a LID) on most group
+ * messages, and nothing WhatsApp exposes here links it to the phone number a person was entered
+ * with, so a colleague typed in by phone number is processed as a customer until somebody says who
+ * they are. Offered from the contact panel in WhatsApp Chat, where the evidence (their messages,
+ * their WhatsApp name) is on screen.
+ *
+ * Fills `whatsappId` only, and only when the member has none: replacing one already recorded is an
+ * edit of who somebody is, and belongs on their edit page, with the old value in front of you. The
+ * same conflict checks as the form apply, and the change is a System Log entry.
+ */
+export async function linkWhatsAppSender(senderId: string, _prev: LinkSenderState, formData: FormData): Promise<LinkSenderState> {
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  if (!memberId) return { error: "Pick the team member this person is." };
+
+  const parsed = parseWhatsAppId(senderId);
+  if (!parsed || parsed.kind === "GROUP" || parsed.kind === "BROADCAST" || parsed.kind === "NEWSLETTER") {
+    return { error: "That is not a person's WhatsApp ID, so it cannot be linked to anyone." };
+  }
+  const key = whatsappIdKey(senderId);
+  if (!key || !/^\d{6,}$/.test(key)) return { error: "That WhatsApp ID is not in a form that can be stored. Nothing was changed." };
+
+  const member = await prisma.internalTeamMember.findUnique({
+    where: { id: memberId },
+    select: { id: true, name: true, phoneNumber: true, whatsappId: true },
+  });
+  if (!member) return { error: "That team member no longer exists." };
+  if (whatsappIdKey(member.whatsappId) === key) return { linked: member.name };
+  // A stored "WhatsApp ID" that is only the member's own phone number (added from a group before
+  // the kind was recorded) is not an identity anybody chose, so linking their real WhatsApp ID
+  // replaces it. A genuinely different id still belongs on the edit page.
+  const placeholderId =
+    Boolean(member.whatsappId) && normalizePhoneNumber(whatsappIdKey(member.whatsappId) ?? "") === normalizePhoneNumber(member.phoneNumber);
+  if (member.whatsappId && !placeholderId) {
+    return { error: `${member.name} already has WhatsApp ID ${member.whatsappId}. Change it on their edit page if this is really them.` };
+  }
+  const idConflict = await findWhatsAppIdConflict(key, member.id);
+  if (idConflict) return { error: `${idConflict.name} already has that WhatsApp ID, so it cannot also be ${member.name}'s.` };
+
+  try {
+    await prisma.internalTeamMember.update({ where: { id: member.id }, data: { whatsappId: key } });
+  } catch (err) {
+    if (isUniqueViolation(err)) return { error: "Someone already has that WhatsApp ID." };
+    throw err;
+  }
+  await logIdentityChange(
+    granted.session.userId,
+    member.id,
+    member.name,
+    { phoneNumber: member.phoneNumber, whatsappId: member.whatsappId },
+    { phoneNumber: member.phoneNumber, whatsappId: key },
+    "chat-link",
+    readPreviewRecord(formData),
+  );
+  await queueReattribution({
+    reason: `WhatsApp ID linked to team member ${member.name}`,
+    memberIds: [member.id],
+    identifiers: [key, member.whatsappId, member.phoneNumber],
+    userId: granted.session.userId,
+  });
+  revalidatePath(await projectPath("/team-members"));
+  revalidatePath(await projectPath("/chat"), "layout");
+  return { linked: member.name };
 }
 
 export async function toggleTeamMemberStatus(id: string): Promise<void> {
@@ -485,6 +696,8 @@ export async function toggleTeamMemberStatus(id: string): Promise<void> {
 export interface DeleteTeamMemberResult {
   /** True when the row was kept and deactivated instead of removed, because it has history. */
   deactivated: boolean;
+  /** Set when nothing was changed, with what to do about it. */
+  error?: string;
 }
 
 /**
@@ -502,19 +715,58 @@ export interface DeleteTeamMemberResult {
  * ever would be its own kind of mess.
  */
 export async function deleteTeamMember(id: string): Promise<DeleteTeamMemberResult> {
-  await requireAccess("whatsapp.manage");
+  const session = await requireAccess("whatsapp.manage");
 
-  const activityCount = await prisma.supportActivity.count({ where: { teamMemberId: id } });
-  if (activityCount > 0) {
-    await prisma.internalTeamMember.update({ where: { id }, data: { status: "INACTIVE" } });
+  try {
+    const member = await prisma.internalTeamMember.findUnique({ where: { id }, select: { id: true, userId: true } });
+    if (!member) return { deactivated: false, error: "That team member no longer exists. Refresh the page." };
+
+    // History is any message of theirs as well, not only Support Activity rows (which are off by
+    // default). Reports resolve a sender at read time, so deleting somebody who has written in a
+    // group moved every one of their messages to "customer" — opening waits and Missed against the
+    // group for what was in fact staff work — while each message's stored team-member stamp said
+    // the opposite.
+    const resolver = createSenderResolver(
+      await prisma.internalTeamMember.findMany({ select: { id: true, phoneNumber: true, whatsappId: true } }),
+    );
+    const identifiers = resolver.identifiersFor(id);
+    const [activityCount, attendanceDays, ownMessage, dashboardReply] = await Promise.all([
+      prisma.supportActivity.count({ where: { teamMemberId: id } }),
+      prisma.teamAttendanceDay.count({ where: { teamMemberId: id } }),
+      identifiers.length
+        ? prisma.message.findFirst({ where: { direction: "INCOMING", senderPhone: { in: identifiers } }, select: { id: true } })
+        : null,
+      // A reply typed in the dashboard through the member's linked login is their work too: the reports credit it to
+      // them, and deleting them would turn it back into the business number's.
+      member.userId
+        ? prisma.outboundMessage.findFirst({ where: { createdById: member.userId, actionType: "MANUAL_REPLY" }, select: { id: true } })
+        : null,
+    ]);
+    if (activityCount > 0 || attendanceDays > 0 || ownMessage || dashboardReply) {
+      await prisma.internalTeamMember.update({ where: { id }, data: { status: "INACTIVE" } });
+      revalidatePath(await projectPath("/team-members"));
+      revalidatePath(await projectPath("/support-activity"));
+      return { deactivated: true };
+    }
+
+    // The groups assigned to them lose their assignee through the foreign key (SetNull). That is a change of who
+    // owns the group, so it is recorded like any reassignment (GroupResponsibilityChange): without the row, every
+    // earlier Missed wait of those groups would be charged to "Unassigned" from then on.
+    await prisma.$transaction(async (tx) => {
+      const assigned = await tx.whatsAppGroup.findMany({ where: { assignedTeamMemberId: id }, select: { whatsappGroupId: true }, distinct: ["whatsappGroupId"] });
+      const before = new Map<string, Awaited<ReturnType<typeof mergedGroupResponsibility>>>();
+      for (const { whatsappGroupId } of assigned) before.set(whatsappGroupId, await mergedGroupResponsibility(tx, whatsappGroupId));
+      await tx.internalTeamMember.delete({ where: { id } });
+      for (const [whatsappGroupId, was] of before) {
+        await recordResponsibilityChange(tx, whatsappGroupId, was, await mergedGroupResponsibility(tx, whatsappGroupId), session.userId);
+      }
+    });
     revalidatePath(await projectPath("/team-members"));
-    revalidatePath(await projectPath("/support-activity"));
-    return { deactivated: true };
+    return { deactivated: false };
+  } catch (err) {
+    console.error("deleteTeamMember failed", err);
+    return { deactivated: false, error: "The team member could not be deleted. Nothing was changed; try again, and tell an administrator if it keeps failing." };
   }
-
-  await prisma.internalTeamMember.delete({ where: { id } });
-  revalidatePath(await projectPath("/team-members"));
-  return { deactivated: false };
 }
 
 export interface LoginLinkState {
@@ -523,24 +775,80 @@ export interface LoginLinkState {
 }
 
 /**
- * Link a roster member to the dashboard login they use (SUPPORT_ASSIGNMENT.md). Only Support
- * Assignment's "My assignments" reads it: it grants nothing, and matching messages to people never
- * looks at it. A login can be linked to one member per project; the login must be able to enter it.
+ * Link a roster member to the dashboard login they use (SUPPORT_ASSIGNMENT.md, GOOGLE_SHEETS.md §5).
+ * Support Assignment's "My assignments" reads it, and Google Sheets attributes work done through the
+ * app to the team member linked to the login that did it. It grants nothing, and matching WhatsApp
+ * messages to people never looks at it. A login can be linked to one member per project; the login
+ * must be able to enter it. Every change is recorded in System Logs, since attribution follows it.
  */
 export async function linkTeamMemberLogin(memberId: string, _prev: LoginLinkState, formData: FormData): Promise<LoginLinkState> {
   const granted = await checkPermission("whatsapp.manage");
   if ("denied" in granted) return { error: granted.denied };
   const userId = String(formData.get("userId") ?? "").trim() || null;
 
-  const member = await prisma.internalTeamMember.findUnique({ where: { id: memberId }, select: { id: true, name: true } });
+  const member = await prisma.internalTeamMember.findUnique({ where: { id: memberId }, select: { id: true, name: true, userId: true } });
   if (!member) return { error: "That team member no longer exists." };
+  if (member.userId === userId) return { saved: true };
+  let loginName: string | null = null;
   if (userId) {
-    const allowed = (await loginsForProject()).some((u) => u.id === userId);
-    if (!allowed) return { error: "That login cannot enter this project, or is deactivated. Nothing was changed." };
+    const login = (await loginsForProject()).find((u) => u.id === userId);
+    if (!login) return { error: "That login cannot enter this project, or is deactivated. Nothing was changed." };
+    loginName = login.username;
     const other = await prisma.internalTeamMember.findFirst({ where: { userId, id: { not: memberId } }, select: { name: true } });
     if (other) return { error: `That login is already linked to ${other.name}. Unlink it there first.` };
   }
   await prisma.internalTeamMember.update({ where: { id: memberId }, data: { userId } });
+  await logSystemEvent(
+    "INFO",
+    "team-members",
+    userId ? `Team member ${member.name} linked to login ${loginName}` : `Team member ${member.name} unlinked from their login`,
+    { previousUserId: member.userId, userId },
+    { actorUserId: granted.session.userId, targetType: "InternalTeamMember", targetId: member.id },
+  );
   revalidatePath(await projectPath(`/team-members/${memberId}/edit`));
   return { saved: true };
+}
+
+export interface AddSenderState {
+  error?: string;
+  added?: string;
+}
+
+/**
+ * Adds a sender the Identity check found writing in several groups — very likely a colleague who was
+ * already supporting customers before anybody put them on the roster (report accuracy audit, 19 Oct
+ * 2026). The identifier is the one WhatsApp delivered on their messages, so the match is exact; the
+ * kind (phone number or private WhatsApp ID) is read from a stored message, never from the browser.
+ * Their earlier history is then collected into every report (queueReattribution).
+ */
+export async function addTeamMemberFromSender(senderId: string, _prev: AddSenderState, formData: FormData): Promise<AddSenderState> {
+  const granted = await checkPermission("whatsapp.manage");
+  if ("denied" in granted) return { error: granted.denied };
+  const name = String(formData.get("name") ?? "").trim();
+  const role = String(formData.get("role") ?? "").trim() || "Support";
+  if (!name) return { error: "Enter their name." };
+  const key = whatsappIdKey(senderId);
+  if (!key || !/^\d{6,}$/.test(key)) return { error: "That sender cannot be added. Nothing was changed." };
+
+  const seen = await prisma.message.findFirst({
+    where: { senderPhone: key, direction: "INCOMING", senderJid: { not: null } },
+    orderBy: { timestampWa: "desc" },
+    select: { senderJid: true },
+  });
+  const kind = parseWhatsAppId(seen?.senderJid)?.kind;
+  const entry = rosterEntryFromGroup(name, key, kind === "LID" ? "LID" : kind === "PHONE" ? "PHONE" : null);
+  const conflict = (await findPhoneConflict(entry.phoneNumber)) ?? (await findWhatsAppIdConflict(entry.whatsappId));
+  if (conflict) return { error: `${conflict.name} already has that number or WhatsApp ID.` };
+
+  let createdId: string;
+  try {
+    createdId = (await prisma.internalTeamMember.create({ data: { ...entry, role, status: "ACTIVE" }, select: { id: true } })).id;
+  } catch (err) {
+    if (isUniqueViolation(err)) return { error: "Someone already has that number." };
+    throw err;
+  }
+  await logIdentityChange(granted.session.userId, createdId, name, null, { phoneNumber: entry.phoneNumber, whatsappId: entry.whatsappId }, "form");
+  await queueReattribution({ reason: `Team member ${name} added from the identity check`, memberIds: [createdId], identifiers: memberIdentifiers(entry), userId: granted.session.userId });
+  revalidatePath(await projectPath("/team-members"));
+  return { added: name };
 }

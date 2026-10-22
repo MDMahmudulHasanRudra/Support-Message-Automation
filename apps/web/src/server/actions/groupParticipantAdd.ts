@@ -9,6 +9,13 @@ import { normalizePhoneNumber, randomDelayMs } from "@support-automation/shared"
 import { requireAccess } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
+/**
+ * The page these actions belong to (PROJECT_ROLES.md, "Pages"). A member whose project role selects
+ * pages needs THIS page at Full to change anything here — holding the same key through a sibling page
+ * is not enough. Ignored for everybody else (global roles, Leads, Main Admins).
+ */
+const ADD_TO_GROUPS_PAGE = { sections: ["/group-member-adder"] };
+
 export interface ParticipantAddTargetInput {
   groupId: string;
   groupName: string;
@@ -49,7 +56,7 @@ export async function createGroupParticipantAddJob(
   // Enforced on the server, not by hiding a button: this queues real WhatsApp operations against
   // the number that also serves every customer. requireAccess adds the project steps (access,
   // read-only project, the Bulk Messaging entitlement) in front of the same permission check.
-  const session = await requireAccess("bulk_messaging.manage");
+  const session = await requireAccess("bulk_messaging.manage", ADD_TO_GROUPS_PAGE);
 
   const account = await prisma.whatsAppAccount.findUnique({ where: { id: input.accountId } });
   if (!account) return { error: "WhatsApp account not found." };
@@ -231,7 +238,7 @@ export async function confirmParticipantAddSelection(
   jobId: string,
   itemIds: string[],
 ): Promise<ConfirmParticipantAddResult> {
-  const session = await requireAccess("bulk_messaging.manage");
+  const session = await requireAccess("bulk_messaging.manage", ADD_TO_GROUPS_PAGE);
 
   const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: jobId } });
   if (!job) return { queued: 0, skipped: 0, error: "That job no longer exists." };
@@ -302,7 +309,7 @@ export async function confirmParticipantAddSelection(
  * WhatsApp call at all.
  */
 export async function recheckParticipantAddItems(jobId: string): Promise<{ rechecked: number; error?: string }> {
-  const session = await requireAccess("bulk_messaging.manage");
+  const session = await requireAccess("bulk_messaging.manage", ADD_TO_GROUPS_PAGE);
 
   const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: jobId } });
   if (!job) return { rechecked: 0, error: "That job no longer exists." };
@@ -337,7 +344,7 @@ export async function recheckParticipantAddItems(jobId: string): Promise<{ reche
 
 /** Cancels a job's still-PENDING items (an in-flight PROCESSING add is left to finish naturally). */
 export async function cancelParticipantAddJob(jobId: string): Promise<void> {
-  await requireAccess("bulk_messaging.manage");
+  await requireAccess("bulk_messaging.manage", ADD_TO_GROUPS_PAGE);
   await prisma.groupParticipantAddItem.updateMany({
     where: { jobId, status: "PENDING" },
     data: { status: "CANCELLED", failureReason: "Cancelled by user." },
@@ -356,7 +363,7 @@ export async function cancelParticipantAddJob(jobId: string): Promise<void> {
  * retryFailedBroadcastMessages.
  */
 export async function retryFailedParticipantAddItems(jobId: string): Promise<void> {
-  await requireAccess("bulk_messaging.manage");
+  await requireAccess("bulk_messaging.manage", ADD_TO_GROUPS_PAGE);
   const job = await prisma.groupParticipantAddJob.findUnique({ where: { id: jobId } });
   if (!job || job.status === "CANCELLED" || job.status === "STOPPED_KILL_SWITCH") {
     return;

@@ -2,7 +2,7 @@
 
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, FolderKanban, LayoutDashboard, LogOut, ShieldCheck } from "lucide-react";
+import { Building2, ChevronRight, FolderKanban, LayoutDashboard, LogOut, Palette, ShieldCheck } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
@@ -24,6 +24,8 @@ interface AdminNavItem {
   label: string;
   icon: NavLink["icon"];
   exact: boolean;
+  /** Drawn indented under the item above it. */
+  sub?: boolean;
 }
 
 /** Support is shown page by page (WhatsApp Chat, Messages, Escalations); every other module is one entry. */
@@ -40,7 +42,14 @@ function buildSections(granted: ReadonlySet<string>): Array<{ title: string; ite
         { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
         { href: "/admin/projects", label: "Projects", icon: FolderKanban, exact: false },
         ...(granted.has("configuration.view") ? [{ href: "/admin/configuration", label: "Configuration", icon: Building2, exact: false }] : []),
+        // Users & Permissions: the overview, then App Users and Permission Modules (the same in every
+        // project, opened without project tabs) — one place for every login and every role.
         ...(granted.has("users.view") ? [{ href: "/admin/users", label: "Users & Permissions", icon: ShieldCheck, exact: false }] : []),
+        ...groups
+          .filter((g) => g.label === "Users & Permissions")
+          .flatMap((g) => g.links.map((link) => ({ ...open(link), sub: true }))),
+        // White labeling (BRANDING.md): anyone in the portal can see it; saving needs projects.manage.
+        { href: "/admin/branding", label: "Branding", icon: Palette, exact: false },
         // The other global modules (Release Notes) are the project portal's own pages, opened without tabs.
         ...groups
           .filter((g) => isGlobal(g.links) && g.label !== "Users & Permissions")
@@ -105,7 +114,7 @@ export function AdminShell({
                     key={item.href}
                     href={item.href}
                     aria-current={active ? "page" : undefined}
-                    className={`group relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2.5 pl-3 text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
+                    className={`group relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2.5 ${item.sub ? "pl-3 lg:ml-[1.1rem] lg:pl-2.5" : "pl-3"} text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
                       active
                         ? "bg-[var(--color-neutral-bg)] font-medium text-[color:var(--color-foreground)]"
                         : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]/60 hover:text-[color:var(--color-foreground)]"

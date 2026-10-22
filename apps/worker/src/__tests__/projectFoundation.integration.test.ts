@@ -79,8 +79,20 @@ describe("the constraints later phases depend on", () => {
     // + MessageMedia, MediaStorageSettings and MediaCleanupJob (Message & Media Storage),
     // + SupportResponseEpisode (Unanswered Groups / Response Time),
     // + CollectionGap (reporting data health), + WhatsAppOperationDismissal (Clear / Hide),
-    // + the four Mood Detection tables, + the three Support Assignment tables.
-    expect(refusing).toHaveLength(85);
+    // + the four Mood Detection tables, + the three Support Assignment tables,
+    // + PersonalChatReview (WhatsApp Chat's Personal filter),
+    // + GoogleIntegrationAccount (Google Sheets, Phase 1),
+    // + GoogleSpreadsheet and GoogleSpreadsheetAccess (Google Sheets, Phase 2),
+    // + GoogleSpreadsheetMember (Google Sheets, Phase 5),
+    // + GoogleSheetActivity (Phase 6), GoogleSheetWorkSession, GoogleSheetWorkSessionEvent and
+    //   GoogleSheetsSettings (Phase 7), + GoogleIntegrationConfig (the project's own OAuth client),
+    // + the four Messaging Channels tables (OMNICHANNEL.md)
+    // + the five Client Management tables (CLIENT_CENTER.md) + the three client billing tables + the chat-link table + the two email tables
+    // + ProjectRole and ProjectMemberRole (PROJECT_ROLES.md)
+    // + the seven Clients v3 tables (ClientModuleSettings, ClientPayment, ClientPaymentAllocation,
+    //   ClientPhoto, ClientSubscription, ClientWhatsAppGroupLink, ListViewPreference — migration
+    //   20261017100000_clients_v3).
+    expect(refusing).toHaveLength(121);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -102,11 +114,13 @@ describe("the constraints later phases depend on", () => {
       SELECT conrelid::regclass::text AS table, convalidated AS validated
       FROM pg_constraint
       WHERE contype = 'f' AND confrelid = '"Project"'::regclass AND conname LIKE '%\\_projectId\\_fkey'`;
-    // 85 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
+    // 95 project-scoped tables (70 at Phase 1 + the two Groups Admin Maker tables + the three Message
     // & Media Storage tables + SupportResponseEpisode + CollectionGap + WhatsAppOperationDismissal
-    // + the four Mood Detection tables + the three Support Assignment tables) + SystemLog +
-    // ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(88);
+    // + the four Mood Detection tables + the three Support Assignment tables + PersonalChatReview
+    // + the nine Google Sheets tables + the four Messaging Channels tables + the five Client Management
+    // tables + the three client billing tables + the chat-link table + the two email tables + ProjectRole
+    // + ProjectMemberRole + the seven Clients v3 tables) + SystemLog + ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(124);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 
