@@ -2841,6 +2841,17 @@ rmyndharis/OpenWA@078b8aa — `docs/third-party/OPENWA_REFERENCE.md`. Rules wort
   - History loaded on request is STORE-ONLY (`storeHistoryMessages`): no rules, AI, waits, cases,
     escalation or mood, no checkpoint move. Never route it through `persistIncomingMessage`.
 
+- **Sending files (23 Oct 2026, `CHAT_FILE_SENDING.md`)**: photos, videos, audio, voice notes and documents
+  from the composer's attach menu, paste or drop — behind `CHAT_UI_V2` + `messages.reply`. Rules worth not undoing:
+  - Upload is a Route Handler (`/p/<slug>/api/whatsapp/send-file`), not an action: same checks as a typed reply
+    via the shared `server/chatSendTarget.ts`, type read from the BYTES (`planOutgoingFile`, packages/shared),
+    programs/scripts/HTML/SVG never sent. ONE `OutboundMessage` (MANUAL_REPLY, `contentType MEDIA`), idempotency
+    key from the browser's per-file upload id; a refused duplicate deletes its stored copy.
+  - The file lives at `outbound/<projectId>/…` on the media volume until sent; the worker re-checks the row
+    (`validateOutgoingFileContent`, own project's prefix only) AND re-sniffs the bytes, sends through
+    `provider.sendFile` with a `data:` URL only (never a URL/path — OpenWA would fetch it), and DELETES the upload
+    once sent so a recovered row cannot send twice. The echo is stored and its media downloaded the normal way.
+
 ### WhatsApp profile pictures and phone identity (`WHATSAPP_AVATARS.md`)
 
 Feature `WHATSAPP_AVATARS`, **off by default and never switched by a plan** (`manualOnly`); emergency stop

@@ -440,10 +440,27 @@ export interface WhatsAppProvider {
   sendLocation?(chatId: string, location: LocationContent): Promise<SendResult>;
   /** A WebP sticker as it is — no conversion, no third-party service. */
   sendSticker?(chatId: string, webpBase64: string, animated: boolean): Promise<SendResult>;
+  /**
+   * A photo, video, audio file, voice note or document a person sent from WhatsApp Chat
+   * (CHAT_FILE_SENDING.md). The bytes are handed over in memory; the provider never fetches anything.
+   */
+  sendFile?(chatId: string, file: OutgoingFile): Promise<SendResult>;
   /** Forwards one message this session holds to another chat of the same account. */
   forwardMessage?(chatId: string, whatsappMessageId: string): Promise<SendResult>;
   setMessageStarred?(whatsappMessageId: string, star: boolean): Promise<SendResult>;
   /** Pin / archive on the phone. `changed: false` = it already was in that state. */
   setChatPinned?(chatId: string, pin: boolean): Promise<SendResult & { changed?: boolean }>;
   setChatArchived?(chatId: string, archive: boolean): Promise<SendResult & { changed?: boolean }>;
+}
+
+/** A file to send, already checked by the outbound queue (`validateOutgoingFileContent`). */
+export interface OutgoingFile {
+  base64: string;
+  mimeType: string;
+  fileName: string;
+  caption: string;
+  /** Sent as a file with no preview (a photo or video as a document, or any document). */
+  asDocument: boolean;
+  /** Sent as a recorded voice note rather than an audio file. */
+  voiceNote: boolean;
 }

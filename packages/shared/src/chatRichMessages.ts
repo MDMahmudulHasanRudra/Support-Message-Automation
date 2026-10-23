@@ -232,7 +232,7 @@ function validatePollShape(value: unknown): PollContent | null {
 // ---- What we send ---------------------------------------------------------------------------------
 
 /** Mirrors the Prisma enum `OutboundContentType`. */
-export type OutboundContentKind = "TEXT" | "POLL" | "LOCATION" | "STICKER" | "FORWARD";
+export type OutboundContentKind = "TEXT" | "POLL" | "LOCATION" | "STICKER" | "FORWARD" | "MEDIA";
 
 /**
  * The readable summary an outbound row carries in `body` for a poll, location, sticker or forward —
@@ -240,7 +240,7 @@ export type OutboundContentKind = "TEXT" | "POLL" | "LOCATION" | "STICKER" | "FO
  * writes for a received one, so a poll we sent and a poll we received read alike.
  */
 export function outboundSummary(
-  kind: Exclude<OutboundContentKind, "TEXT">,
+  kind: Exclude<OutboundContentKind, "TEXT" | "MEDIA">,
   content: { poll?: PollContent; location?: LocationContent; forwardedBody?: string },
 ): string {
   switch (kind) {

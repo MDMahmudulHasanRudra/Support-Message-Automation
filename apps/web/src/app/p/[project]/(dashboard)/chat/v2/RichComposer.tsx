@@ -1,16 +1,18 @@
 "use client";
 
-import { BarChart3, Loader2, MapPin, Paperclip, Plus, Sticker, Trash2 } from "lucide-react";
+import { BarChart3, FileAudio, FileText, ImageIcon, Loader2, MapPin, Paperclip, Plus, Sticker, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { locationMapUrl, parseCoordinates, POLL_LIMITS, validateLocation, validatePoll } from "@support-automation/shared";
 import { Alert, Button, Checkbox, Dialog, Field, Input } from "@/components/ui";
 import { useProjectHref } from "@/components/ProjectLink";
 import { listStickerChoices, sendChatLocation, sendChatPoll, sendChatSticker, type StickerChoice } from "@/server/actions/chatRich";
 import type { ConversationRef } from "@/server/chatThreadV2";
+import { FileSendDialog } from "./FileSendDialog";
 
 /**
- * The composer's attach menu (CHAT_RICH_MESSAGING.md §5): a poll (groups only — WhatsApp's own rule),
- * a location, or a sticker this project already holds. Each sends one queued message through the same
+ * The composer's attach menu (CHAT_RICH_MESSAGING.md §5): photos and videos, documents and audio
+ * (CHAT_FILE_SENDING.md — also by pasting or dropping a file onto the conversation), a poll (groups only —
+ * WhatsApp's own rule), a location, or a sticker this project already holds. Each sends one queued message through the same
  * outbound queue as typed text; the browser checks the form for a friendly answer, the server and the
  * worker check it again.
  */
@@ -20,7 +22,58 @@ type Panel = "POLL" | "LOCATION" | "STICKER" | null;
 export function RichComposer({ conversation, isGroup, onSent }: { conversation: ConversationRef; isGroup: boolean; onSent: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
+  const [files, setFiles] = useState<{ list: File[]; asDocument: boolean } | null>(null);
+  const [dragging, setDragging] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const mediaInput = useRef<HTMLInputElement>(null);
+  const documentInput = useRef<HTMLInputElement>(null);
+  const audioInput = useRef<HTMLInputElement>(null);
+
+  const chooseFiles = (list: FileList | File[] | null, asDocument: boolean) => {
+    const chosen = list ? Array.from(list) : [];
+    if (chosen.length) {
+      setPanel(null);
+      setFiles({ list: chosen, asDocument });
+    }
+  };
+
+  // A file pasted into the message box, or dropped anywhere on the conversation, opens the same
+  // dialog — never sends by itself. Text pastes and drags of anything but files are left alone.
+  useEffect(() => {
+    const busy = () => files !== null || panel !== null;
+    const onPaste = (event: ClipboardEvent) => {
+      if (busy() || (document.activeElement as HTMLElement | null)?.id !== "chat-body-v2") return;
+      const pasted = Array.from(event.clipboardData?.files ?? []);
+      if (!pasted.length) return;
+      event.preventDefault();
+      chooseFiles(pasted, false);
+    };
+    const hasFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+    const onDragOver = (event: DragEvent) => {
+      if (busy() || !hasFiles(event)) return;
+      event.preventDefault();
+      setDragging(true);
+    };
+    const onDragLeave = (event: DragEvent) => {
+      if (!event.relatedTarget) setDragging(false);
+    };
+    const onDrop = (event: DragEvent) => {
+      setDragging(false);
+      if (busy() || !hasFiles(event)) return;
+      event.preventDefault();
+      chooseFiles(event.dataTransfer?.files ?? null, false);
+    };
+    document.addEventListener("paste", onPaste);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      document.removeEventListener("paste", onPaste);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [files, panel]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -44,7 +97,15 @@ export function RichComposer({ conversation, isGroup, onSent }: { conversation: 
   };
   const done = () => {
     setPanel(null);
+    setFiles(null);
     onSent();
+  };
+  const pick = (input: HTMLInputElement | null) => {
+    setMenuOpen(false);
+    if (input) {
+      input.value = "";
+      input.click();
+    }
   };
 
   const item =
@@ -55,7 +116,7 @@ export function RichComposer({ conversation, isGroup, onSent }: { conversation: 
       <button
         type="button"
         onClick={() => setMenuOpen((v) => !v)}
-        aria-label="Attach a poll, location or sticker"
+        aria-label="Attach a photo, video, document, audio, poll, location or sticker"
         aria-expanded={menuOpen}
         aria-haspopup="menu"
         className="flex size-11 items-center justify-center rounded-full text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] active:bg-[var(--color-neutral-bg)] sm:size-11 sm:border sm:border-[var(--color-border)] sm:bg-[var(--color-surface)] sm:hover:border-[var(--color-border-strong)]"
@@ -64,6 +125,19 @@ export function RichComposer({ conversation, isGroup, onSent }: { conversation: 
       </button>
       {menuOpen ? (
         <div role="menu" className="absolute bottom-full left-0 z-30 mb-2 w-60 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-1.5 shadow-[var(--shadow-lg)] animate-scale-in">
+          <button type="button" role="menuitem" className={item} onClick={() => pick(mediaInput.current)}>
+            <ImageIcon className="size-4 text-[color:var(--color-accent)]" aria-hidden />
+            Photos &amp; videos
+          </button>
+          <button type="button" role="menuitem" className={item} onClick={() => pick(documentInput.current)}>
+            <FileText className="size-4 text-[color:var(--color-info,var(--color-accent))]" aria-hidden />
+            Document
+          </button>
+          <button type="button" role="menuitem" className={item} onClick={() => pick(audioInput.current)}>
+            <FileAudio className="size-4 text-[color:var(--color-success)]" aria-hidden />
+            Audio
+          </button>
+          <div className="my-1 border-t border-[var(--color-border)]" role="separator" />
           <button type="button" role="menuitem" className={item} onClick={() => open("POLL")} disabled={!isGroup} title={isGroup ? undefined : "WhatsApp allows polls in groups only"}>
             <BarChart3 className="size-4 text-[color:var(--color-accent)]" aria-hidden />
             <span>
@@ -82,6 +156,27 @@ export function RichComposer({ conversation, isGroup, onSent }: { conversation: 
         </div>
       ) : null}
 
+      {/* Hidden pickers: the browser's own file chooser, filtered to what can be sent. */}
+      <input ref={mediaInput} type="file" multiple hidden accept="image/jpeg,image/png,image/webp,video/mp4,video/3gpp,video/quicktime" onChange={(e) => chooseFiles(e.target.files, false)} />
+      <input
+        ref={documentInput}
+        type="file"
+        multiple
+        hidden
+        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.rtf,.zip,image/*,video/mp4,audio/*"
+        onChange={(e) => chooseFiles(e.target.files, true)}
+      />
+      <input ref={audioInput} type="file" multiple hidden accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg,audio/opus,audio/wav,.mp3,.m4a,.ogg,.opus,.wav" onChange={(e) => chooseFiles(e.target.files, false)} />
+
+      {dragging ? (
+        <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-[var(--color-background)]/70 backdrop-blur-[1px]">
+          <p className="rounded-[var(--radius-lg)] border-2 border-dashed border-[var(--color-accent)] bg-[var(--color-surface-raised)] px-6 py-4 text-[14px] font-medium shadow-[var(--shadow-lg)]">
+            Drop to choose files to send — nothing goes until you press Send
+          </p>
+        </div>
+      ) : null}
+
+      {files ? <FileSendDialog conversation={conversation} files={files.list} startAsDocument={files.asDocument} onClose={() => setFiles(null)} onSent={done} /> : null}
       {panel === "POLL" ? <PollDialog conversation={conversation} onClose={() => setPanel(null)} onSent={done} /> : null}
       {panel === "LOCATION" ? <LocationDialog conversation={conversation} onClose={() => setPanel(null)} onSent={done} /> : null}
       {panel === "STICKER" ? <StickerDialog conversation={conversation} onClose={() => setPanel(null)} onSent={done} /> : null}

@@ -1,4 +1,5 @@
 import type {
+  OutgoingFile,
   ChatHistoryRead,
   CollectionProbe,
   ConnectionStatus,
@@ -262,7 +263,7 @@ export class MockProvider implements WhatsAppProvider {
   }
 
   // ---- Chat v2 rich messaging (CHAT_RICH_MESSAGING.md) ----
-  public richSends: Array<{ kind: "POLL" | "LOCATION" | "STICKER" | "FORWARD"; chatId: string; detail: unknown }> = [];
+  public richSends: Array<{ kind: "POLL" | "LOCATION" | "STICKER" | "FORWARD" | "MEDIA"; chatId: string; detail: unknown }> = [];
   public nextRichResult: SendResult = { success: true, providerMessageId: "mock-rich-id" };
   async sendPoll(chatId: string, poll: PollContent): Promise<SendResult> {
     this.richSends.push({ kind: "POLL", chatId, detail: poll });
@@ -274,6 +275,10 @@ export class MockProvider implements WhatsAppProvider {
   }
   async sendSticker(chatId: string, webpBase64: string, animated: boolean): Promise<SendResult> {
     this.richSends.push({ kind: "STICKER", chatId, detail: { webpBase64, animated } });
+    return this.nextRichResult;
+  }
+  async sendFile(chatId: string, file: OutgoingFile): Promise<SendResult> {
+    this.richSends.push({ kind: "MEDIA", chatId, detail: file });
     return this.nextRichResult;
   }
   async forwardMessage(chatId: string, whatsappMessageId: string): Promise<SendResult> {

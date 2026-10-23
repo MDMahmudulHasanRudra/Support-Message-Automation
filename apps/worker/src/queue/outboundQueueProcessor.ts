@@ -8,6 +8,8 @@ import { isCooldownActive } from "./cooldown.js";
 import {
   forwardRefusal,
   isSendableSticker,
+  planOutgoingFile,
+  validateOutgoingFileContent,
   MOOD_CUSTOMER_MESSAGE_VARIANT,
   STICKER_MAX_BYTES,
   validateLocation,
@@ -515,8 +517,8 @@ async function sendRichContent(message: OutboundMessage, provider: WhatsAppProvi
   };
   // Only a person composes these, in Chat v2. Anything else carrying one is a row nothing should
   // have written, and is never sent.
-  if (!isManualReply) return refuse("Only a message typed in WhatsApp Chat can be a poll, location, sticker or forward. Nothing was sent.");
-  if (message.replyToMessageId || message.mentions.length) return refuse("A poll, location, sticker or forward cannot also quote or tag. Nothing was sent.");
+  if (!isManualReply) return refuse("Only a message typed in WhatsApp Chat can be a poll, location, sticker, forward or file. Nothing was sent.");
+  if (message.replyToMessageId || message.mentions.length) return refuse("A poll, location, sticker, forward or file cannot also quote or tag. Nothing was sent.");
   const content = (message.content ?? {}) as Record<string, unknown>;
 
   switch (message.contentType) {
@@ -558,13 +560,36 @@ async function sendRichContent(message: OutboundMessage, provider: WhatsAppProvi
       if (!provider.forwardMessage) return refuse("This WhatsApp connection cannot forward messages. Nothing was sent.");
       return provider.forwardMessage(message.chatId, source!.whatsappMessageId);
     }
+    case "MEDIA": {
+      const file = validateOutgoingFileContent(content, currentProjectId());
+      if (!file.ok) return refuse(`${file.error} Nothing was sent.`);
+      if (!provider.sendFile) return refuse("This WhatsApp connection cannot send files. Nothing was sent.");
+      const bytes = await readStoredFile(file.value.storageKey, file.value.sizeBytes);
+      if (!bytes || bytes.length !== file.value.sizeBytes) return refuse("The file could not be read from storage, so nothing was sent. Send it again from WhatsApp Chat.");
+      // The bytes are read again, not trusted from the row: what is sent must still be what was checked.
+      const kind = file.value.kind;
+      const recheck = planOutgoingFile({ head: bytes.subarray(0, 64), fileName: file.value.fileName, size: bytes.length, mode: kind === "DOCUMENT" ? "DOCUMENT" : kind === "VOICE" ? "VOICE" : "AUTO" });
+      if (!recheck.ok || recheck.kind !== kind || recheck.mimeType !== file.value.mimeType) return refuse("The stored file is not the file that was checked, so nothing was sent.");
+      const result = await provider.sendFile(message.chatId, {
+        base64: bytes.toString("base64"),
+        mimeType: file.value.mimeType,
+        fileName: file.value.fileName,
+        caption: file.value.caption,
+        asDocument: file.value.kind === "DOCUMENT",
+        voiceNote: file.value.kind === "VOICE",
+      });
+      // Sent: WhatsApp's echo is stored as an ordinary message with its own media copy, so the
+      // upload is no longer needed — and removing it means a recovered row can never send it twice.
+      if (result.success) await deleteStoredFile(file.value.storageKey);
+      return result;
+    }
     default:
       return refuse("This message has a content type this worker does not know, so nothing was sent.");
   }
 }
 
 /** A stored media file, whole — a sticker is under a megabyte by `isSendableSticker`. */
-async function readStoredFile(key: string): Promise<Buffer | null> {
+async function readStoredFile(key: string, maxBytes: number = STICKER_MAX_BYTES): Promise<Buffer | null> {
   try {
     const storage = createMediaStorageFromEnv();
     if (!storage) return null; // media storage is not configured in this worker
@@ -574,13 +599,21 @@ async function readStoredFile(key: string): Promise<Buffer | null> {
     for await (const chunk of stream) {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
       size += buf.length;
-      if (size > STICKER_MAX_BYTES) return null;
+      if (size > maxBytes) return null;
       chunks.push(buf);
     }
     return Buffer.concat(chunks);
   } catch (err) {
-    console.error("[outbound] could not read a stored sticker", err);
+    console.error("[outbound] could not read a stored file", err);
     return null;
+  }
+}
+
+async function deleteStoredFile(key: string): Promise<void> {
+  try {
+    await createMediaStorageFromEnv()?.delete(key);
+  } catch (err) {
+    console.error("[outbound] could not remove a sent file from storage", err);
   }
 }
 

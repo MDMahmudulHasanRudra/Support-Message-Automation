@@ -16,7 +16,8 @@ import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { projectPath } from "@/server/projectPaths";
-import { isChatUiV2Enabled, resolveConversation, type ConversationRef, type ResolvedConversation } from "@/server/chatThreadV2";
+import { isChatUiV2Enabled, resolveConversation, type ConversationRef } from "@/server/chatThreadV2";
+import { CONVERSATION_NOT_FOUND as NOT_FOUND, sendTarget } from "@/server/chatSendTarget";
 
 /**
  * Chat v2 rich messaging (CHAT_RICH_MESSAGING.md) — the dashboard side of polls, locations, stickers,
@@ -40,7 +41,6 @@ export interface RichActionResult {
 }
 
 const OFF = "The new conversation view is not switched on for this project, so nothing was done.";
-const NOT_FOUND = "This conversation could not be found on the selected account. Nothing was sent.";
 const IDEMPOTENCY_WINDOW_MS = 10_000;
 
 async function gate(key: "messages.view" | "messages.reply"): Promise<{ userId: string } | { error: string }> {
@@ -48,33 +48,6 @@ async function gate(key: "messages.view" | "messages.reply"): Promise<{ userId: 
   if ("denied" in granted) return { error: granted.denied };
   if (!(await isChatUiV2Enabled())) return { error: OFF };
   return { userId: granted.session.userId };
-}
-
-/**
- * Everything a send into this conversation needs, checked: the account connected, a group still
- * joined, a personal chat one the account already has (a reply, never a first message).
- */
-async function sendTarget(
-  conversation: ResolvedConversation,
-): Promise<{ ok: true; accountLabel: string; name: string; groupRowId: string | null } | { ok: false; error: string }> {
-  const account = await prisma.whatsAppAccount.findUnique({ where: { id: conversation.accountId }, select: { label: true, status: true } });
-  if (!account) return { ok: false, error: NOT_FOUND };
-  if (account.status !== "CONNECTED") {
-    return { ok: false, error: `${account.label} is ${account.status.toLowerCase()}, so nothing was sent. Reconnect it on WhatsApp Accounts.` };
-  }
-  if (conversation.kind === "GROUP") {
-    const group = await prisma.whatsAppGroup.findUnique({ where: { id: conversation.groupRowId }, select: { name: true, isActive: true } });
-    if (!group) return { ok: false, error: NOT_FOUND };
-    if (!group.isActive) return { ok: false, error: `This account is no longer a member of ${group.name}, so nothing was sent.` };
-    return { ok: true, accountLabel: account.label, name: group.name, groupRowId: conversation.groupRowId };
-  }
-  const existing = await prisma.message.findFirst({
-    where: { accountId: conversation.accountId, chatId: conversation.chatId, groupId: null },
-    orderBy: { timestampWa: "desc" },
-    select: { senderName: true },
-  });
-  if (!existing) return { ok: false, error: `${account.label} has no conversation with this number, so nothing was sent. Replies continue an existing chat; they never start one.` };
-  return { ok: true, accountLabel: account.label, name: existing.senderName || conversation.chatId.split("@")[0]!, groupRowId: null };
 }
 
 type RichSend =
