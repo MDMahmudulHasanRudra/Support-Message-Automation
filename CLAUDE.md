@@ -646,7 +646,8 @@ Three rules worth not undoing:
   `groupSyncBasis.ts`), printed after the count. Never a "verified complete"; every other status
   clears it.
   Persistence is batched (500 / 5,000) and a failed batch is retried row by row, so one bad group
-  costs only itself. A sync writes only name, `isActive` and `lastSyncedAt`.
+  costs only itself. A sync writes only name, `isActive`, `lastSyncedAt` and the group description
+  (only when the read carried one and it changed; never cleared — WHATSAPP_AVATARS.md §7).
 - **A slow first read is "still loading", never FAILED** (8 Oct 2026, second number timing out at
   150 s). The post-connect read is bounded by `GROUP_ARRIVAL_SETTINGS.readTimeoutMs`. Past it, it
   throws `GroupListStillLoadingError`: no retry, status stays RUNNING, and the arrival passes take
@@ -2852,6 +2853,9 @@ Feature `WHATSAPP_AVATARS`, **off by default and never switched by a plan** (`ma
 - **Every address is re-checked** (`isAllowedPictureUrl`: https, `*.whatsapp.net`, no redirects), every image
   sniffed and capped (`prepareClientPhoto`, 100 KB, CHECK in the database), served only by
   `/p/<slug>/api/whatsapp/avatar/<id>` through the scoped client. `WhatsAppPicture` is per project AND account.
+- **Group descriptions** come from `groupMetadata.desc` in the same single group-list read (no request to
+  WhatsApp), saved by the sync only when present and changed, shown in Group info. A person's "About" text is
+  NOT collected: it needs a request per contact (`getStatus`), the same risk class as active picture lookups.
 - **A LID is never a phone number.** `resolveContactPhone` shows a number only from WhatsApp (`@c.us`), the
   Team Members record (roster viewers) or a linked client (`clients.view`), with its source; otherwise
   "Phone number unavailable".

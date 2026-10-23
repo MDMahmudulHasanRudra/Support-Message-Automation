@@ -39,6 +39,8 @@ export type NumberCheckResult =
 export interface GroupInfo {
   whatsappGroupId: string;
   name: string;
+  /** The group description WhatsApp Web already holds; absent when it holds none or did not say. */
+  description?: string;
 }
 
 /**

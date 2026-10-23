@@ -92,6 +92,23 @@ describe("the lean path", () => {
     expect(chats).toEqual([{ id: "555-666@g.us", name: "Ops", formattedTitle: null, t: 1_790_000_300 }]);
   });
 
+  it("carries the description WhatsApp Web already holds, and nothing when it holds none", async () => {
+    const described = chat("901-902@g.us", true, { name: "Billing" }) as FakeChat & { groupMetadata?: unknown };
+    described.groupMetadata = { desc: "  Office hours 9-6.\nCall 0170…  " };
+    const blank = chat("903-904@g.us", true, { name: "Blank" }) as FakeChat & { groupMetadata?: unknown };
+    blank.groupMetadata = { desc: "   " };
+    const throwing = chat("905-906@g.us", true, { name: "Odd" }) as FakeChat & { groupMetadata?: unknown };
+    Object.defineProperty(throwing, "groupMetadata", { get: () => { throw new Error("half-built"); } });
+    installStore([described, blank, throwing]);
+    const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups: vi.fn() });
+
+    expect(await provider.getGroups()).toEqual([
+      { whatsappGroupId: "901-902@g.us", name: "Billing", description: "Office hours 9-6.\nCall 0170…" },
+      { whatsappGroupId: "903-904@g.us", name: "Blank" },
+      { whatsappGroupId: "905-906@g.us", name: "Odd" },
+    ]);
+  });
+
   it("falls back to the group id when a group has neither name nor title", async () => {
     installStore([chat("777-888@g.us", true, {})]);
     const provider = await providerWith({ getPage: () => evaluatingPage, getAllGroups: vi.fn() });

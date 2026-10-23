@@ -104,6 +104,32 @@ describe("2,000 groups per account", () => {
     await prisma.internalTeamMember.delete({ where: { id: member.id } });
   });
 
+  it("saves a group's description, follows a change, and never clears it from a read that did not carry one", async () => {
+    const id = await newAccount();
+    const tag = randomUUID().slice(0, 6);
+    let groups: Array<{ whatsappGroupId: string; name: string; description?: string }> = [
+      { whatsappGroupId: `${tag}-a@g.us`, name: "A", description: "First words" },
+      { whatsappGroupId: `${tag}-b@g.us`, name: "B" },
+    ];
+    const provider = new MockProvider();
+    provider.getGroups = async () => groups;
+    await syncGroups(id, provider);
+    const read = async () =>
+      Object.fromEntries((await prisma.whatsAppGroup.findMany({ where: { accountId: id }, select: { whatsappGroupId: true, description: true } })).map((g) => [g.whatsappGroupId, g.description]));
+    expect(await read()).toEqual({ [`${tag}-a@g.us`]: "First words", [`${tag}-b@g.us`]: null });
+
+    groups = [
+      { whatsappGroupId: `${tag}-a@g.us`, name: "A" }, // this read did not include it
+      { whatsappGroupId: `${tag}-b@g.us`, name: "B", description: "Now described" },
+    ];
+    await syncGroups(id, provider);
+    expect(await read()).toEqual({ [`${tag}-a@g.us`]: "First words", [`${tag}-b@g.us`]: "Now described" });
+
+    groups = [{ whatsappGroupId: `${tag}-a@g.us`, name: "A", description: "Changed on WhatsApp" }, groups[1]!];
+    await syncGroups(id, provider);
+    expect((await read())[`${tag}-a@g.us`]).toBe("Changed on WhatsApp");
+  });
+
   it("a group is account + WhatsApp id: the same group and the same name on two accounts are two rows, and one account's sync never touches the other's", async () => {
     const a = await newAccount();
     const b = await newAccount();
