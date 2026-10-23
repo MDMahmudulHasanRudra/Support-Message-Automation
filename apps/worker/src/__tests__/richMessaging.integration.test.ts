@@ -72,7 +72,7 @@ async function storedOutgoing(body = "Checking now") {
   });
 }
 
-async function queue(contentType: "POLL" | "LOCATION" | "STICKER" | "FORWARD", content: object, overrides: Record<string, unknown> = {}) {
+async function queue(contentType: "POLL" | "LOCATION" | "STICKER" | "FORWARD" | "MEDIA", content: object, overrides: Record<string, unknown> = {}) {
   return prisma.outboundMessage.create({
     data: {
       projectId: ISP_DIGITAL,
@@ -337,6 +337,81 @@ describe("rich sends leave through the one queue", () => {
       expect((await drain(provider, (await queue("FORWARD", { sourceMessageId })).id)).status).toBe("FAILED");
     }
     expect(provider.richSends).toHaveLength(1);
+  });
+
+  it("a file goes once, exactly as stored and re-checked, and its upload is removed after sending", async () => {
+    const bytes = Buffer.concat([Buffer.from("%PDF-1.7 "), Buffer.from(`bill-${RUN}`)]);
+    const key = `outbound/${ISP_DIGITAL}/${account.id}/2026/10/${randomUUID()}`;
+    const storage = new LocalMediaStorage(mediaDir);
+    await storage.put(key, bytes);
+    const content = { storageKey: key, fileName: "bill.pdf", mimeType: "application/pdf", sizeBytes: bytes.length, kind: "DOCUMENT", caption: "Your bill" };
+    const provider = new MockProvider();
+    expect((await drain(provider, (await queue("MEDIA", content)).id)).status).toBe("SENT");
+    expect(provider.richSends).toEqual([
+      {
+        kind: "MEDIA",
+        chatId: group.whatsappGroupId,
+        detail: { base64: bytes.toString("base64"), mimeType: "application/pdf", fileName: "bill.pdf", caption: "Your bill", asDocument: true, voiceNote: false },
+      },
+    ]);
+    // Gone after sending: a row recovered later cannot send it a second time.
+    expect(await storage.exists(key)).toBe(false);
+    const again = await drain(provider, (await queue("MEDIA", content)).id);
+    expect(again.status).toBe("FAILED");
+    expect(again.failureReason).toMatch(/could not be read from storage/);
+    expect(provider.richSends).toHaveLength(1);
+  });
+
+  it("a file is refused unless the row and the stored bytes still pass every check", async () => {
+    const storage = new LocalMediaStorage(mediaDir);
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(100, 1)]);
+    const exe = Buffer.concat([Buffer.from("MZ"), Buffer.alloc(100, 1)]);
+    const put = async (bytes: Buffer, projectId = ISP_DIGITAL) => {
+      const key = `outbound/${projectId}/${account.id}/2026/10/${randomUUID()}`;
+      await storage.put(key, bytes);
+      return key;
+    };
+    const base = { fileName: "a.jpg", mimeType: "image/jpeg", kind: "IMAGE", caption: "" };
+    const provider = new MockProvider();
+    const cases: Array<[object, RegExp]> = [
+      // Another project's upload, even one that really exists.
+      [{ ...base, storageKey: await put(jpeg, "proj_other"), sizeBytes: jpeg.length }, /not this project's/],
+      // The bytes changed after the check: a program in place of the photo.
+      [{ ...base, storageKey: await put(exe), sizeBytes: exe.length }, /not the file that was checked/],
+      // The row's size disagrees with the stored file.
+      [{ ...base, storageKey: await put(jpeg), sizeBytes: jpeg.length + 5 }, /could not be read/],
+      [{ ...base, storageKey: await put(jpeg), sizeBytes: jpeg.length, fileName: "a.exe" }, /name is not allowed/],
+    ];
+    for (const [content, reason] of cases) {
+      const row = await drain(provider, (await queue("MEDIA", content)).id);
+      expect(row.status).toBe("FAILED");
+      expect(row.failureReason).toMatch(reason);
+    }
+    // Only a person composes a file.
+    const automated = await drain(provider, (await queue("MEDIA", { ...base, storageKey: await put(jpeg), sizeBytes: jpeg.length }, { actionType: "AUTO_REPLY" })).id);
+    expect(automated.status).not.toBe("SENT");
+    expect(provider.richSends).toHaveLength(0);
+  });
+
+  it("a voice note and a photo go in their own form", async () => {
+    const storage = new LocalMediaStorage(mediaDir);
+    const ogg = Buffer.alloc(120, 0);
+    ogg.write("OggS", 0, "latin1");
+    ogg.write("OpusHead", 28, "latin1");
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(100, 2)]);
+    const provider = new MockProvider();
+    for (const [bytes, meta] of [
+      [ogg, { fileName: "v.ogg", mimeType: "audio/ogg", kind: "VOICE", caption: "" }],
+      [jpeg, { fileName: "p.jpg", mimeType: "image/jpeg", kind: "IMAGE", caption: "Router photo" }],
+    ] as const) {
+      const key = `outbound/${ISP_DIGITAL}/${account.id}/2026/10/${randomUUID()}`;
+      await storage.put(key, bytes);
+      expect((await drain(provider, (await queue("MEDIA", { ...meta, storageKey: key, sizeBytes: bytes.length })).id)).status).toBe("SENT");
+    }
+    expect(provider.richSends.map((s) => s.detail)).toMatchObject([
+      { voiceNote: true, asDocument: false, mimeType: "audio/ogg" },
+      { voiceNote: false, asDocument: false, caption: "Router photo" },
+    ]);
   });
 
   it("a plain text reply is untouched by all of this", async () => {

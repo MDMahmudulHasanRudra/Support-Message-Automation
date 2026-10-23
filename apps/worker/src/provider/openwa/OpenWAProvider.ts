@@ -30,6 +30,7 @@ import {
   type RichContent,
 } from "@support-automation/shared";
 import type {
+  OutgoingFile,
   AccountInfo,
   CollectionProbe,
   ConnectionStatus,
@@ -2870,6 +2871,33 @@ export class OpenWAProvider implements WhatsAppProvider {
       const id = await this.client.sendRawWebpAsSticker(chatId as ChatId, webpBase64, animated);
       const providerMessageId = typeof id === "boolean" ? null : serializeMessageId(id);
       return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the sticker." };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  async sendFile(chatId: string, file: OutgoingFile): Promise<SendResult> {
+    if (!this.client) return { success: false, error: "Provider is not connected." };
+    try {
+      // Always a data URL built from bytes already in memory: given a URL, the library would fetch
+      // it itself, and a path would read the disk. The file is uploaded inside WhatsApp Web exactly
+      // as if attached by hand; nothing goes to a third party. Caption tagging (Insiders) is not used.
+      const dataUrl = `data:${file.mimeType};base64,${file.base64}`;
+      const id = await this.client.sendFile(
+        chatId as ChatId,
+        dataUrl as never,
+        file.fileName,
+        file.caption as Content,
+        undefined,
+        true,
+        file.voiceNote,
+        file.asDocument,
+      );
+      if (id === false) return { success: false, error: "WhatsApp did not accept the file." };
+      // `true` = the library stopped waiting for an id; the file went, and its echo will be stored.
+      // Calling that a failure would invite a second send of the same file.
+      const providerMessageId = typeof id === "boolean" ? null : serializeMessageId(id);
+      return { success: true, providerMessageId: providerMessageId ?? undefined };
     } catch (err) {
       return { success: false, error: (err as Error).message };
     }

@@ -19,6 +19,9 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: "8mb",
     },
+    // A file sent from WhatsApp Chat (CHAT_FILE_SENDING.md) is up to 16 MB, posted to a route the
+    // proxy runs in front of; the proxy's default 10 MB would cut a video short.
+    proxyClientMaxBodySize: "17mb",
   },
 };
 

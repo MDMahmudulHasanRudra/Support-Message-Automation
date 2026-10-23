@@ -59,6 +59,7 @@ export * from "./groupSyncBasis.js";
 export * from "./whatsappChats.js";
 export * from "./teamReportReliability.js";
 export * from "./chatRichMessages.js";
+export * from "./chatFileSend.js";
 export * from "./clientSubscriptions.js";
 export * from "./clientPayments.js";
 export * from "./clientColumns.js";

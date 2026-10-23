@@ -424,6 +424,9 @@ enum OutboundContentType {
   STICKER
   /// payload: { sourceMessageId } — a stored message of the same account, forwarded.
   FORWARD
+  /// payload: OutgoingFileContent — a photo, video, audio file, voice note or document a person
+  /// uploaded in WhatsApp Chat, held in media storage until sent (CHAT_FILE_SENDING.md).
+  MEDIA
 }
 
 enum WorkerCommandStatus {
