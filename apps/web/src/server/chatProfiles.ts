@@ -265,6 +265,8 @@ export interface GroupProfile {
     id: string;
     name: string;
     whatsappGroupId: string;
+    /** As WhatsApp Web holds it, saved by the group sync; null when none is known. */
+    description: string | null;
     accountLabel: string;
     isActive: boolean;
     isMonitored: boolean;
@@ -296,6 +298,7 @@ export async function getGroupProfile(session: Session, groupId: string): Promis
       id: true,
       name: true,
       whatsappGroupId: true,
+      description: true,
       isActive: true,
       isMonitored: true,
       aiAutomationEnabled: true,
@@ -391,6 +394,7 @@ export async function getGroupProfile(session: Session, groupId: string): Promis
       id: group.id,
       name: group.name,
       whatsappGroupId: group.whatsappGroupId,
+      description: group.description,
       accountLabel: group.account.label,
       isActive: group.isActive,
       isMonitored: group.isMonitored,

@@ -86,3 +86,25 @@ Results decide whether active fetching is worth proposing. It stays out of the r
   returned; nothing with the feature off or the kill switch on.
 
 Each protection was removed in turn and its test went red.
+
+## 7. Group descriptions (23 Oct 2026)
+
+WhatsApp Web keeps each group's description in its local chat model (`groupMetadata.desc`). The group sync
+already reads every group in ONE in-page pass; it now takes the description from the same pass
+(`readGroupChats`, trimmed, at most 2,000 characters). No request goes to WhatsApp, so there is no added
+risk. Saved like a rename — only when the read carried a description and it differs; a read that did not
+include one never clears a stored one, so a description removed on WhatsApp stays until a new one is set.
+Shown in WhatsApp Chat → Group info. Column `WhatsAppGroup.description`, migration
+`20261023120000_whatsapp_group_description` (additive, nullable). No feature switch: it is the group's own
+public information, read the same way as its name.
+
+**Not built, on purpose:** a person's "About" text (`getStatus`) and any other per-contact data. Each needs
+one request to WhatsApp's servers per contact, often blocked by the person's privacy settings — the same
+risk class as active profile-picture lookups.
+
+## 8. Field result (23 Oct 2026, production, passive pictures switched on)
+
+First 4 incoming messages after switching on (3 group, 1 personal, Test): none carried a picture, no
+errors. WhatsApp Web running without a screen does not appear to load profile thumbnails by itself, so
+passive pictures may stay empty. To be re-checked after more traffic.
+

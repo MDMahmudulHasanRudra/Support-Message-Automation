@@ -268,6 +268,12 @@ export function GroupPanel({ profile, contactHref, closeHref, picturePath }: { p
         </div>
       </div>
 
+      {group.description ? (
+        <Section title="Description" note="As WhatsApp shows it. Updated when the group list is synced.">
+          <p className="whitespace-pre-wrap break-words text-[13px] text-[color:var(--color-foreground)]">{group.description}</p>
+        </Section>
+      ) : null}
+
       <Section title="Details">
         <Row icon={Hash} label="Group ID">
           <span className="font-mono text-[11px]">{group.whatsappGroupId}</span>

@@ -250,7 +250,7 @@ async function syncGroupsInProject(
   // worked out in memory rather than asked of the database group by group.
   const existing = await prisma.whatsAppGroup.findMany({
     where: { accountId },
-    select: { whatsappGroupId: true, name: true, isActive: true },
+    select: { whatsappGroupId: true, name: true, isActive: true, description: true },
   });
   const known = new Map(existing.map((row) => [row.whatsappGroupId, row]));
 
@@ -259,12 +259,16 @@ async function syncGroupsInProject(
   // current names first is what turns "1,848 updates" into "however many were actually renamed",
   // which in a steady state is none.
   const renamed: typeof groups = [];
+  // A description is written only when the read carried one and it differs: a read that did not
+  // include it never clears a stored one (WHATSAPP_AVATARS.md §7).
+  const redescribed: typeof groups = [];
   let reactivated = 0;
   for (const group of groups) {
     const row = known.get(group.whatsappGroupId);
     if (!row) fresh.push(group);
     else {
       if (row.name !== group.name) renamed.push(group);
+      if (group.description && row.description !== group.description) redescribed.push(group);
       if (!row.isActive) reactivated += 1;
     }
   }
@@ -278,7 +282,7 @@ async function syncGroupsInProject(
       // skipDuplicates because a partially-applied earlier attempt (or a group registered by an
       // arriving message a moment ago) may already have the row — the unique constraint decides.
       const result = await prisma.whatsAppGroup.createMany({
-        data: batch.map((group) => ({ accountId, whatsappGroupId: group.whatsappGroupId, name: group.name, lastSyncedAt: syncedAt })),
+        data: batch.map((group) => ({ accountId, whatsappGroupId: group.whatsappGroupId, name: group.name, description: group.description ?? null, lastSyncedAt: syncedAt })),
         skipDuplicates: true,
       });
       created += result.count;
@@ -289,7 +293,7 @@ async function syncGroupsInProject(
       for (const group of batch) {
         try {
           const result = await prisma.whatsAppGroup.createMany({
-            data: [{ accountId, whatsappGroupId: group.whatsappGroupId, name: group.name, lastSyncedAt: syncedAt }],
+            data: [{ accountId, whatsappGroupId: group.whatsappGroupId, name: group.name, description: group.description ?? null, lastSyncedAt: syncedAt }],
             skipDuplicates: true,
           });
           created += result.count;
@@ -316,6 +320,23 @@ async function syncGroupsInProject(
     }
   }
   if (renamed.length > 0) console.log(`[groupsync] GROUP_SYNC_RENAMED ${renamed.length} group(s)`);
+
+  // Description changes, per row like renames (rare; none in a steady state). A failure here is
+  // logged and never fails the sync: a description is display only.
+  let redescribedCount = 0;
+  for (const group of redescribed) {
+    checkpoint();
+    try {
+      await prisma.whatsAppGroup.update({
+        where: { accountId_whatsappGroupId: { accountId, whatsappGroupId: group.whatsappGroupId } },
+        data: { description: group.description },
+      });
+      redescribedCount += 1;
+    } catch (err) {
+      console.warn(`[groupsync] could not save the description of group ${group.whatsappGroupId}: ${(err as Error).message.slice(0, 200)}`);
+    }
+  }
+  if (redescribedCount > 0) console.log(`[groupsync] GROUP_SYNC_DESCRIBED ${redescribedCount} group(s)`);
 
   const seenIds = groups.map((group) => group.whatsappGroupId).filter((id) => !failedIds.has(id));
   checkpoint();

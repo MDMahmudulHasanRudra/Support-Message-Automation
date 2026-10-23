@@ -568,6 +568,8 @@ interface LeanGroupChat {
   formattedTitle: string | null;
   /** Seconds since the epoch of the chat's last interaction, as WhatsApp Web records it. */
   t: number | null;
+  /** The group description WhatsApp Web already holds locally, when it holds one. */
+  description?: string;
 }
 
 /**
@@ -1841,6 +1843,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     return chats.map((chat) => ({
       whatsappGroupId: chat.id,
       name: chat.name || chat.formattedTitle || chat.id,
+      ...(chat.description ? { description: chat.description } : {}),
     }));
   }
 
@@ -1926,6 +1929,7 @@ export class OpenWAProvider implements WhatsAppProvider {
           id?: { _serialized?: string; server?: string };
           formattedTitle?: string;
           toJSON?: () => { name?: string; t?: number };
+          groupMetadata?: { desc?: unknown } | null;
         }
         const store = (
           globalThis as unknown as {
@@ -1959,11 +1963,21 @@ export class OpenWAProvider implements WhatsAppProvider {
           } catch {
             json = {};
           }
+          // The description WhatsApp Web already holds for the group (group metadata is part of the
+          // chat model): local, no request to WhatsApp. Kept short, and only when there is one.
+          let description: string | undefined;
+          try {
+            const desc = chat.groupMetadata?.desc;
+            if (typeof desc === "string" && desc.trim()) description = desc.trim().slice(0, 2000);
+          } catch {
+            description = undefined;
+          }
           return {
             id: chat.id?._serialized ?? null,
             name: typeof json.name === "string" ? json.name : null,
             formattedTitle: typeof chat.formattedTitle === "string" ? chat.formattedTitle : null,
             t: typeof json.t === "number" ? json.t : null,
+            ...(description ? { description } : {}),
           };
         });
       });
@@ -1999,12 +2013,16 @@ export class OpenWAProvider implements WhatsAppProvider {
         `WhatsApp Web returned no group list (got ${chats === null ? "null" : typeof chats}). The session may still be loading — try the sync again in a minute, and reconnect the account if it keeps failing.`,
       );
     }
-    return (chats as Awaited<ReturnType<typeof client.getAllGroups>>).map((chat) => ({
-      id: chat.id,
-      name: chat.name ?? null,
-      formattedTitle: chat.formattedTitle ?? null,
-      t: typeof chat.t === "number" ? chat.t : null,
-    }));
+    return (chats as Awaited<ReturnType<typeof client.getAllGroups>>).map((chat) => {
+      const desc = (chat as { groupMetadata?: { desc?: unknown } | null }).groupMetadata?.desc;
+      return {
+        id: chat.id,
+        name: chat.name ?? null,
+        formattedTitle: chat.formattedTitle ?? null,
+        t: typeof chat.t === "number" ? chat.t : null,
+        ...(typeof desc === "string" && desc.trim() ? { description: desc.trim().slice(0, 2000) } : {}),
+      };
+    });
   }
 
   /**
