@@ -78,7 +78,7 @@ async function send(fields: Record<string, string>, file: { bytes: Buffer; name:
   const form = new FormData();
   form.set("uploadId", fields.uploadId ?? randomUUID());
   for (const [k, v] of Object.entries(fields)) if (k !== "uploadId") form.set(k, v);
-  if (file) form.set("file", new File([file.bytes], file.name));
+  if (file) form.set("file", new File([new Uint8Array(file.bytes)], file.name));
   const request = new NextRequest("http://localhost/p/isp-digital/api/whatsapp/send-file", { method: "POST", body: form });
   const response = await runWithProject(isp, () => POST(request));
   return { status: response.status, body: (await response.json()) as { ok: boolean; error?: string } };
