@@ -2964,6 +2964,11 @@ original import, untouched. Up to 5,000 rows / 15 MB from any file. Rules worth 
   claim with a 60 s lease, batches of 25, and each row ONE transaction — sorted advisory locks on its identifiers, the
   existing client re-read inside them, the write, and the row's outcome conditional on it still being PENDING. Never
   replace that with a stored plan of matches or an unconditional outcome update: both were break-tested.
+- **Expiry (§11, `clientSmartExpiry.ts`)**: one exact date per row from a full date, year/month/day parts, start +
+  duration (`addDuration`) or month + year (a missing day only with the explicit LAST_DAY policy). A disagreeing
+  explicit expiry and start + duration is an error unless the mapping chooses SOURCE or CALCULATED. An expiry with
+  NO start date becomes `Client.recordedExpiryDate` ("Expiry on record"), never a term — never invent a start date.
+  Problems are structured `FieldIssue`s on their own cell; the review always shows every field in `SMART_REVIEW_ORDER`.
 - Cancel stops between batches and never undoes; retry re-runs only FAILED and never-attempted rows. Drafts expire
   after 7 days; finished imports' staged rows are deleted after 7 days. The upload checks the zip directory before
   parsing (`inspectXlsxZip`).

@@ -12,9 +12,12 @@ import {
   SMART_IDENTITY_FIELDS,
   SMART_ROSTER_FIELDS,
   type ClientImportFieldKey,
+  type SmartExpiryOptions,
   type SmartFieldRule,
   type SmartMapping,
+  type SmartRuleKey,
 } from "@support-automation/shared";
+import { ExpiryPanel } from "./ExpiryPanel";
 import { Alert, Badge, Button, Card, Checkbox, Input, Select } from "@/components/ui";
 import {
   applySmartPreset,
@@ -48,7 +51,7 @@ const FIELD_HINTS: Partial<Record<ClientImportFieldKey, string>> = {
   phone: "Several numbers in one cell can be separated by ; — the first is primary.",
   code: "Leave empty for new clients: a code is made for each one.",
   startDate: "2026-10-17, 17/10/2026 or 17 Oct 2026 (day first).",
-  expiryDate: "Used when there is no Duration.",
+  expiryDate: "A full date. For separate year / month / day columns, or month + year, use the Expiry panel below.",
   team: "Must match a team in this project.",
   soldBy: "A team member's name or phone number.",
   assignedTo: "A team member's name or phone number.",
@@ -108,13 +111,18 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
     );
   }
 
-  const setRule = (field: ClientImportFieldKey, rule: SmartFieldRule | undefined) => {
+  const setRule = (field: SmartRuleKey, rule: SmartFieldRule | undefined) => {
     setMapping((m) => {
       const fields = { ...m.fields };
       if (rule) fields[field] = rule;
       else delete fields[field];
-      return { version: 2, fields };
+      return { ...m, version: 2, fields };
     });
+    setDirty(true);
+    setMessage(null);
+  };
+  const setOptions = (options: SmartExpiryOptions) => {
+    setMapping((m) => ({ ...m, options }));
     setDirty(true);
     setMessage(null);
   };
@@ -131,19 +139,20 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
     if (!ctx) return false;
     // A "From file" rule with no column chosen yet means nothing: send it as empty, never as a guess.
     const fields: SmartMapping["fields"] = {};
-    for (const [k, rule] of Object.entries(mapping.fields) as Array<[ClientImportFieldKey, SmartFieldRule]>) {
+    for (const [k, rule] of Object.entries(mapping.fields) as Array<[SmartRuleKey, SmartFieldRule]>) {
       if (rule.mode === "source" && !rule.column) continue;
       fields[k] = rule;
     }
+    const next: SmartMapping = { version: 2, fields, ...(mapping.options ? { options: mapping.options } : {}) };
     setSaving(true);
-    const r = await saveSmartMapping(jobId, ctx.revision, { version: 2, fields });
+    const r = await saveSmartMapping(jobId, ctx.revision, next);
     setSaving(false);
     if (!r.ok) {
       setMessage({ tone: "danger", text: r.message });
       return false;
     }
-    setCtx({ ...ctx, revision: r.revision ?? ctx.revision + 1, mapping: { version: 2, fields } });
-    setMapping({ version: 2, fields });
+    setCtx({ ...ctx, revision: r.revision ?? ctx.revision + 1, mapping: next });
+    setMapping(next);
     setDirty(false);
     return true;
   }
@@ -333,6 +342,8 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
             </ul>
           </Card>
         ))}
+
+        <ExpiryPanel mapping={mapping} headers={ctx.headers} preview={ctx.columnPreview} setRule={setRule} setOptions={setOptions} />
 
         <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]/95 p-3 shadow-[var(--shadow-lg)] backdrop-blur">
           <div className="min-w-0 text-[12.5px]" aria-live="polite">

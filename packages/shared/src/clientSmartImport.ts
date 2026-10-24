@@ -9,6 +9,20 @@
  */
 
 import { buildImportRows, CLIENT_IMPORT_FIELDS, type ClientImportFieldKey, type ImportedClientRow, type ImportRowError } from "./clients.js";
+import { parseDurationUnit, parseImportDate, parseSubscriptionKind } from "./clientImportExtras.js";
+import {
+  EXPIRY_CONFLICT_RULES,
+  EXPIRY_MODES,
+  EXPIRY_PART_KEYS,
+  EXPIRY_PART_LABELS,
+  EXPIRY_PART_SYNONYMS,
+  MONTH_YEAR_POLICIES,
+  resolveSmartExpiry,
+  type ExpiryPartKey,
+  type ExpiryParts,
+  type FieldIssue,
+  type SmartExpiryOptions,
+} from "./clientSmartExpiry.js";
 
 // ── Limits ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -39,14 +53,30 @@ export type SmartFieldRule =
   | { mode: "sample" }
   | { mode: "empty" };
 
+/** A client field, or one of the expiry parts (year / month / day) that compose the Expiry date. */
+export type SmartRuleKey = ClientImportFieldKey | ExpiryPartKey;
+
 export interface SmartMapping {
   version: 2;
-  fields: Partial<Record<ClientImportFieldKey, SmartFieldRule>>;
+  fields: Partial<Record<SmartRuleKey, SmartFieldRule>>;
+  /** How the expiry is entered and how its gaps and conflicts are resolved (clientSmartExpiry.ts). */
+  options?: SmartExpiryOptions;
 }
 
 export const SMART_FIELD_KEYS = CLIENT_IMPORT_FIELDS.map((f) => f.key) as ClientImportFieldKey[];
 const FIELD_KEY_SET = new Set<string>(SMART_FIELD_KEYS);
 export const isSmartFieldKey = (key: unknown): key is ClientImportFieldKey => typeof key === "string" && FIELD_KEY_SET.has(key);
+export const isExpiryPartKey = (key: unknown): key is ExpiryPartKey => typeof key === "string" && (EXPIRY_PART_KEYS as readonly string[]).includes(key);
+
+/**
+ * The review grid's column order: the official import template's order (clientImportTemplate.ts), every
+ * field always present. A test pins it against the template.
+ */
+export const SMART_REVIEW_ORDER: readonly ClientImportFieldKey[] = [
+  "name", "company", "code", "phone", "whatsapp", "email", "country", "currency", "address", "category", "tags", "status", "language",
+  "team", "assignedTo", "soldBy", "service", "subscriptionType", "startDate", "duration", "durationUnit", "expiryDate",
+  "facebook", "instagram", "telegram", "note",
+];
 
 /**
  * Fields that identify a client. The same value on every row makes every row the same client, so a
@@ -116,7 +146,8 @@ const SYNONYMS: Record<ClientImportFieldKey, string[]> = Object.fromEntries(
   CLIENT_IMPORT_FIELDS.map((f) => [f.key, [...new Set([...(f.synonyms as readonly string[]), ...(EXTRA_SYNONYMS[f.key] ?? [])].map(headerKey))]]),
 ) as Record<ClientImportFieldKey, string[]>;
 
-const SUBSCRIPTION_DETAIL_FIELDS: readonly ClientImportFieldKey[] = ["subscriptionType", "startDate", "duration", "durationUnit", "expiryDate"];
+// The expiry is not here: an expiry alone is legitimate (recorded on the client, clientSmartExpiry.ts).
+const SUBSCRIPTION_DETAIL_FIELDS: readonly ClientImportFieldKey[] = ["subscriptionType", "startDate", "duration", "durationUnit"];
 
 export interface MappingSuggestion {
   field: ClientImportFieldKey;
@@ -137,6 +168,14 @@ export function autoMapSmart(headers: readonly string[]): { mapping: SmartMappin
     const hit = headers.find((h) => !used.has(h) && SYNONYMS[field].includes(headerKey(h)));
     if (hit) {
       fields[field] = { mode: "source", column: hit };
+      used.add(hit);
+    }
+  }
+  for (const part of EXPIRY_PART_KEYS) {
+    const synonyms = EXPIRY_PART_SYNONYMS[part].map(headerKey);
+    const hit = headers.find((h) => !used.has(h) && synonyms.includes(headerKey(h)));
+    if (hit) {
+      fields[part] = { mode: "source", column: hit };
       used.add(hit);
     }
   }
@@ -162,14 +201,16 @@ export function autoMapSmart(headers: readonly string[]): { mapping: SmartMappin
   return { mapping: { version: 2, fields }, suggestions };
 }
 
-export function labelOf(field: ClientImportFieldKey): string {
+export function labelOf(field: SmartRuleKey): string {
+  if (isExpiryPartKey(field)) return EXPIRY_PART_LABELS[field];
   return CLIENT_IMPORT_FIELDS.find((f) => f.key === field)?.label ?? field;
 }
 
 /** An old (v1: field → column) or v2 mapping, as v2. Anything unreadable becomes an empty mapping. */
 export function upgradeMapping(raw: unknown): SmartMapping {
   if (raw && typeof raw === "object" && (raw as { version?: unknown }).version === 2 && typeof (raw as { fields?: unknown }).fields === "object") {
-    return { version: 2, fields: { ...((raw as SmartMapping).fields ?? {}) } };
+    const m = raw as SmartMapping;
+    return { version: 2, fields: { ...(m.fields ?? {}) }, ...(m.options ? { options: { ...m.options } } : {}) };
   }
   const fields: SmartMapping["fields"] = {};
   if (raw && typeof raw === "object") {
@@ -236,6 +277,17 @@ export function materializeRow(
   return out;
 }
 
+/** The expiry parts a row gives (year / month / day columns or fixed values), before they are composed. */
+export function materializeParts(source: Readonly<Record<string, string>>, mapping: SmartMapping): ExpiryParts {
+  const read = (key: ExpiryPartKey) => {
+    const rule = mapping.fields[key];
+    if (rule?.mode === "source") return (source[rule.column] ?? "").trim() || (rule.fallback ? (source[rule.fallback] ?? "").trim() : "");
+    if (rule?.mode === "constant") return rule.value.trim();
+    return "";
+  };
+  return { year: read("expiryYear"), month: read("expiryMonth"), day: read("expiryDay"), mapped: EXPIRY_PART_KEYS.some((k) => Boolean(mapping.fields[k])) };
+}
+
 export interface StagedRow {
   rowNumber: number;
   source: Readonly<Record<string, string>>;
@@ -251,14 +303,23 @@ export interface SmartBuildResult {
   /** Rows with nothing in them at all (no cell, no correction) — skipped, as the old import skips a blank line. */
   blank: number[];
   outputs: Map<number, Record<ClientImportFieldKey, string>>;
+  /** Per row: the problems and notes attached to the field they concern (the review grid colours that cell). */
+  issues: Map<number, FieldIssue[]>;
+  /** Per row: the exact expiry it will have and how it was reached — for display. */
+  expiry: Map<number, { finalExpiry: string | null; basis: string | null }>;
 }
 
 /** Staged rows → the existing import's valid/invalid rows, keeping each row's own number. */
 export function buildSmartRows(rows: readonly StagedRow[], mapping: SmartMapping, samples: SmartSamples): SmartBuildResult {
-  const result: SmartBuildResult = { valid: [], invalid: [], ignored: [], blank: [], outputs: new Map() };
+  const result: SmartBuildResult = { valid: [], invalid: [], ignored: [], blank: [], outputs: new Map(), issues: new Map(), expiry: new Map() };
   for (const row of rows) {
-    const output = materializeRow(row.source, mapping, samples, row.edits ?? {});
-    result.outputs.set(row.rowNumber, output);
+    const raw = materializeRow(row.source, mapping, samples, row.edits ?? {});
+    const expiryEdited = Object.prototype.hasOwnProperty.call(row.edits ?? {}, "expiryDate");
+    const resolution = resolveSmartExpiry(raw, materializeParts(row.source, mapping), mapping.options ?? {}, expiryEdited);
+    const output = resolution.output;
+    // The review shows what the row says, with the expiry in its exact form — not what is passed on.
+    result.outputs.set(row.rowNumber, { ...raw, expiryDate: resolution.finalExpiry ?? (resolution.output.expiryDate || raw.expiryDate) });
+    result.expiry.set(row.rowNumber, { finalExpiry: resolution.finalExpiry, basis: resolution.basis });
     if (row.ignored) {
       result.ignored.push(row.rowNumber);
       continue;
@@ -276,9 +337,12 @@ export function buildSmartRows(rows: readonly StagedRow[], mapping: SmartMapping
     }
     const unsafe = unsafeTextIssues(output);
     const built = buildImportRows([output], IDENTITY_MAPPING);
-    const errors = [...(built.invalid[0]?.errors ?? []), ...unsafe];
+    const expiryErrors = resolution.issues.filter((i) => i.severity === "error").map((i) => i.message);
+    const errors = [...new Set([...expiryErrors, ...(built.invalid[0]?.errors ?? []), ...unsafe])];
+    // Judged on what the row says WITH its expiry composed (parts → one date), or a valid row would show a red cell.
+    result.issues.set(row.rowNumber, fieldIssues({ ...raw, expiryDate: resolution.finalExpiry ?? raw.expiryDate }, resolution.issues, errors));
     if (errors.length || !built.valid[0]) result.invalid.push({ rowNumber: row.rowNumber, errors: errors.length ? errors : ["The row could not be read."] });
-    else result.valid.push({ ...built.valid[0], rowNumber: row.rowNumber });
+    else result.valid.push({ ...built.valid[0], rowNumber: row.rowNumber, recordedExpiry: resolution.recordedExpiry });
   }
   return result;
 }
@@ -294,9 +358,27 @@ export function sanitizeSmartMapping(raw: unknown, headers: readonly string[]): 
   const headerSet = new Set(headers);
   const fields: SmartMapping["fields"] = {};
   for (const [field, ruleIn] of Object.entries(fieldsIn as Record<string, unknown>)) {
-    if (!isSmartFieldKey(field)) return { ok: false, error: `"${String(field).slice(0, 40)}" is not a client field.` };
+    if (!isSmartFieldKey(field) && !isExpiryPartKey(field)) return { ok: false, error: `"${String(field).slice(0, 40)}" is not a client field.` };
     const rule = (ruleIn ?? {}) as Record<string, unknown>;
     const label = labelOf(field);
+    if (isExpiryPartKey(field)) {
+      // A part is a column or one fixed number for every row; a sample date would be fiction.
+      if (rule.mode === "empty") continue;
+      if (rule.mode === "source") {
+        if (typeof rule.column !== "string" || !headerSet.has(rule.column)) return { ok: false, error: `${label}: the file has no column called "${String(rule.column ?? "").slice(0, 40)}".` };
+        fields[field] = { mode: "source", column: rule.column };
+        continue;
+      }
+      if (rule.mode === "constant") {
+        const value = typeof rule.value === "string" ? rule.value.trim() : "";
+        const max = field === "expiryMonth" ? 12 : 31;
+        const okValue = field === "expiryYear" ? /^\d{4}$/.test(value) : /^\d{1,2}$/.test(value) && Number(value) >= 1 && Number(value) <= max;
+        if (!okValue) return { ok: false, error: `${label}: "${value.slice(0, 20)}" is not a valid ${field === "expiryYear" ? "four-digit year" : field === "expiryMonth" ? "month (1–12)" : "day (1–31)"}.` };
+        fields[field] = { mode: "constant", value };
+        continue;
+      }
+      return { ok: false, error: `${label}: choose a column or a fixed value.` };
+    }
     switch (rule.mode) {
       case "source": {
         if (typeof rule.column !== "string" || !headerSet.has(rule.column)) return { ok: false, error: `${label}: the file has no column called "${String(rule.column ?? "").slice(0, 40)}".` };
@@ -322,7 +404,21 @@ export function sanitizeSmartMapping(raw: unknown, headers: readonly string[]): 
         return { ok: false, error: `${label}: choose where the value comes from.` };
     }
   }
-  return { ok: true, mapping: { version: 2, fields } };
+  const optionsIn = ((raw as { options?: unknown }).options ?? {}) as Record<string, unknown>;
+  const options: SmartExpiryOptions = {};
+  if (optionsIn.expiryMode !== undefined) {
+    if (!(EXPIRY_MODES as readonly unknown[]).includes(optionsIn.expiryMode)) return { ok: false, error: "Choose how the expiry is entered." };
+    options.expiryMode = optionsIn.expiryMode as SmartExpiryOptions["expiryMode"];
+  }
+  if (optionsIn.monthYearPolicy !== undefined) {
+    if (!(MONTH_YEAR_POLICIES as readonly unknown[]).includes(optionsIn.monthYearPolicy)) return { ok: false, error: "Choose what to do when an expiry has no day." };
+    options.monthYearPolicy = optionsIn.monthYearPolicy as SmartExpiryOptions["monthYearPolicy"];
+  }
+  if (optionsIn.expiryConflict !== undefined) {
+    if (!(EXPIRY_CONFLICT_RULES as readonly unknown[]).includes(optionsIn.expiryConflict)) return { ok: false, error: "Choose what to do when the expiry and the duration disagree." };
+    options.expiryConflict = optionsIn.expiryConflict as SmartExpiryOptions["expiryConflict"];
+  }
+  return { ok: true, mapping: { version: 2, fields, ...(Object.keys(options).length ? { options } : {}) } };
 }
 
 /** A mapping with every "sample" rule replaced by the sample's value, so the import does not depend on the day it runs. */
@@ -334,13 +430,14 @@ export function freezeSamples(mapping: SmartMapping, samples: SmartSamples): Sma
     if (rule.mode !== "sample") fields[field] = rule;
     else if (samples[field]) fields[field] = { mode: "constant", value: samples[field], sample: true };
   }
-  return { version: 2, fields };
+  for (const part of EXPIRY_PART_KEYS) if (mapping.fields[part]) fields[part] = mapping.fields[part];
+  return { version: 2, fields, ...(mapping.options ? { options: mapping.options } : {}) };
 }
 
 /** The columns each field reads — for showing one column feeding several fields. */
-export function columnUsage(mapping: SmartMapping): Map<string, ClientImportFieldKey[]> {
-  const usage = new Map<string, ClientImportFieldKey[]>();
-  for (const field of SMART_FIELD_KEYS) {
+export function columnUsage(mapping: SmartMapping): Map<string, SmartRuleKey[]> {
+  const usage = new Map<string, SmartRuleKey[]>();
+  for (const field of [...SMART_FIELD_KEYS, ...EXPIRY_PART_KEYS] as SmartRuleKey[]) {
     const rule = mapping.fields[field];
     if (rule?.mode !== "source") continue;
     for (const column of [rule.column, rule.fallback]) {
@@ -348,6 +445,50 @@ export function columnUsage(mapping: SmartMapping): Map<string, ClientImportFiel
     }
   }
   return usage;
+}
+
+// ── Field-level issues ─────────────────────────────────────────────────────────────────────────
+
+const SUBSCRIPTION_FIELDS = new Set<ClientImportFieldKey>(["service", "subscriptionType", "startDate", "duration", "durationUnit", "expiryDate"]);
+/** Resolved on the server against the project's own lists. */
+const ROSTER_RESOLVED = new Set<ClientImportFieldKey>(["country", "currency", "team", "soldBy", "assignedTo"]);
+
+/**
+ * Which field each problem concerns, decided by checking each field on its own with the import's own
+ * rules — never by reading field names out of error sentences. The import's verdict on the whole row
+ * stays the authority: a refusal no single field explains is still shown, so a row is never silently fine.
+ */
+export function fieldIssues(output: Record<ClientImportFieldKey, string>, expiryIssues: readonly FieldIssue[], rowErrors: readonly string[]): FieldIssue[] {
+  const issues: FieldIssue[] = [...expiryIssues];
+  const add = (field: ClientImportFieldKey, message: string, severity: FieldIssue["severity"] = "error") => {
+    if (!issues.some((i) => i.field === field && i.message === message)) issues.push({ field, severity, message });
+  };
+  if (!output.name.trim()) add("name", "A client needs a name.");
+  for (const field of SMART_FIELD_KEYS) {
+    const value = output[field];
+    if (!value || SUBSCRIPTION_FIELDS.has(field) || ROSTER_RESOLVED.has(field)) continue;
+    for (const problem of checkFieldValue(field, value)) add(field, problem);
+  }
+  const subscription = Boolean(output.startDate.trim() || output.duration.trim() || (output.service.trim() && !expiryIssues.some((i) => i.severity === "warning" && /recorded on the client/.test(i.message))));
+  if (subscription) {
+    const start = output.startDate.trim() ? parseImportDate(output.startDate) : null;
+    if (output.startDate.trim() && !start) add("startDate", `Start date "${output.startDate}" is not a date. Use 2026-10-17 or 17/10/2026.`);
+    if (!output.startDate.trim()) add("startDate", "A subscription needs its start date. Add it, or clear the service and duration.");
+    if (!output.service.trim()) add("service", "A subscription needs its service or plan.");
+    if (output.subscriptionType.trim() && parseSubscriptionKind(output.subscriptionType) === "INVALID") add("subscriptionType", `"${output.subscriptionType}" is not Paid, Trial, Demo or Complimentary.`);
+    const d = output.duration.trim();
+    if (d && !(Number.isInteger(Number(d)) && Number(d) >= 1)) add("duration", `Duration "${d}" must be a whole number of at least 1.`);
+    if (output.durationUnit.trim() && parseDurationUnit(output.durationUnit) === "INVALID") add("durationUnit", `"${output.durationUnit}" is not Days, Weeks, Months or Years.`);
+    // An expiry that could not be read is already the problem; asking for a duration too would be noise.
+    if (!d && !output.expiryDate.trim() && !expiryIssues.some((i) => i.field === "expiryDate" && i.severity === "error")) add("duration", "Give a duration, or an expiry date.");
+  }
+  if (rowErrors.length && !issues.some((i) => i.severity === "error")) {
+    for (const e of rowErrors) {
+      const field: ClientImportFieldKey = /expir|single term/i.test(e) ? "expiryDate" : /start date/i.test(e) ? "startDate" : /duration|at most \d+ (days|weeks|months|years)/i.test(e) ? "duration" : /service|plan/i.test(e) ? "service" : "name";
+      add(field, e);
+    }
+  }
+  return issues;
 }
 
 // ── Is this the right file? ────────────────────────────────────────────────────────────────────

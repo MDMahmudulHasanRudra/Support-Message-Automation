@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, Ban, Check, ChevronLeft, ChevronRight, Download, EyeOff, Loader2, RotateCcw, Search, ShieldAlert, Undo2, Wand2 } from "lucide-react";
-import { CLIENT_DUPLICATE_POLICY_LABELS, labelOf, SMART_IDENTITY_FIELDS, SMART_FIELD_KEYS, type ClientDuplicatePolicy, type ClientImportFieldKey } from "@support-automation/shared";
+import { AlertTriangle, ArrowLeft, Ban, Check, ChevronLeft, ChevronRight, Columns3, Download, EyeOff, Info, Loader2, RotateCcw, Search, ShieldAlert, Undo2, Wand2 } from "lucide-react";
+import { CLIENT_DUPLICATE_POLICY_LABELS, labelOf, SMART_IDENTITY_FIELDS, SMART_FIELD_KEYS, type ClientDuplicatePolicy, type ClientImportFieldKey, type FieldIssue } from "@support-automation/shared";
 import Link, { useProjectHref } from "@/components/ProjectLink";
 import { Alert, Badge, Button, Card, Checkbox, Dialog, Field, Input, Select } from "@/components/ui";
 import {
@@ -10,6 +10,7 @@ import {
   confirmSmartImport,
   editSmartRow,
   loadSmartReview,
+  resetSmartCell,
   resetSmartRow,
   setSmartRowsIgnored,
   type SmartReview,
@@ -55,6 +56,8 @@ export function ReviewGrid({ jobId, onBackToMapping, onQueued }: { jobId: string
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [hidden, setHidden] = useState<Set<ClientImportFieldKey>>(() => readHiddenColumns());
+  const [columnsOpen, setColumnsOpen] = useState(false);
   const requestId = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -95,6 +98,14 @@ export function ReviewGrid({ jobId, onBackToMapping, onQueued }: { jobId: string
   }
 
   const { summary } = data;
+  const fields = data.shownFields.filter((f) => !hidden.has(f));
+  const setColumnHidden = (field: ClientImportFieldKey, hide: boolean) => {
+    const next = new Set(hidden);
+    if (hide) next.add(field);
+    else next.delete(field);
+    setHidden(next);
+    writeHiddenColumns(next);
+  };
   const pages = Math.max(1, Math.ceil(data.filteredCount / data.pageSize));
   const pageIds = data.rows.map((r) => r.id);
   const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
@@ -160,6 +171,28 @@ export function ReviewGrid({ jobId, onBackToMapping, onQueued }: { jobId: string
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[color:var(--color-muted-foreground)]" aria-hidden />
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, phone, row…" className="w-full pl-8" />
             </label>
+            <div className="relative">
+              <Button size="sm" variant="secondary" onClick={() => setColumnsOpen((v) => !v)} aria-expanded={columnsOpen}>
+                <Columns3 className="size-3.5" aria-hidden />
+                Columns{hidden.size ? ` (${data.shownFields.length - hidden.size}/${data.shownFields.length})` : ""}
+              </Button>
+              {columnsOpen ? (
+                <div className="absolute right-0 top-full z-20 mt-1 max-h-80 w-60 overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-raised,var(--color-surface))] p-2 shadow-[var(--shadow-lg)]">
+                  <p className="px-1.5 pb-1.5 text-[11.5px] text-[color:var(--color-muted-foreground)]">Every field is imported whether shown or not. Hiding only tidies this view.</p>
+                  {data.shownFields.map((f) => (
+                    <label key={f} className="flex items-center gap-2 rounded px-1.5 py-1 text-[12.5px] hover:bg-[var(--color-neutral-bg)]">
+                      <Checkbox checked={!hidden.has(f)} onChange={(e) => setColumnHidden(f, !e.target.checked)} />
+                      {labelOf(f)}
+                    </label>
+                  ))}
+                  {hidden.size ? (
+                    <button type="button" className="mt-1 w-full rounded px-1.5 py-1 text-left text-[12px] font-medium text-[color:var(--color-accent-fg,var(--color-accent))] hover:underline" onClick={() => (setHidden(new Set()), writeHiddenColumns(new Set()))}>
+                      Show every column
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             {loading ? <Loader2 className="size-4 animate-spin text-[color:var(--color-muted-foreground)]" aria-label="Loading" /> : null}
           </div>
         </div>
@@ -181,21 +214,21 @@ export function ReviewGrid({ jobId, onBackToMapping, onQueued }: { jobId: string
           </div>
         ) : null}
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-[13px]">
-            <thead className="sticky top-0 z-[1] bg-[var(--color-surface)]">
-              <tr className="border-b border-[var(--color-border)] text-left text-[11.5px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                <th className="w-10 px-3 py-2">
+        <div className="max-h-[70vh] overflow-auto" data-review-grid>
+          <table className="w-max min-w-full border-separate border-spacing-0 text-[13px]">
+            <thead className="sticky top-0 z-[3] bg-[var(--color-surface)]">
+              <tr className="text-left text-[11.5px] uppercase tracking-wide text-[color:var(--color-muted-foreground)] [&>th]:border-b [&>th]:border-[var(--color-border)] [&>th]:bg-[var(--color-surface)]">
+                <th className="sticky left-0 z-[2] w-10 px-3 py-2">
                   <Checkbox
                     aria-label="Select the rows on this page"
                     checked={allOnPage}
                     onChange={(e) => setSelected((s) => new Set(e.target.checked ? [...s, ...pageIds] : [...s].filter((id) => !pageIds.includes(id))))}
                   />
                 </th>
-                <th className="w-16 px-2 py-2 font-semibold">Row</th>
-                <th className="w-32 px-2 py-2 font-semibold">Result</th>
-                {data.shownFields.map((f) => (
-                  <th key={f} className="min-w-36 px-2 py-2 font-semibold">
+                <th className="sticky left-10 z-[2] w-14 px-2 py-2 font-semibold">Row</th>
+                <th className="sticky left-24 z-[2] w-32 px-2 py-2 font-semibold shadow-[1px_0_0_var(--color-border)]">Result</th>
+                {fields.map((f) => (
+                  <th key={f} className={`px-2 py-2 font-semibold ${WIDE.has(f) ? "min-w-56" : "min-w-36"}`}>
                     {labelOf(f)}
                   </th>
                 ))}
@@ -205,17 +238,18 @@ export function ReviewGrid({ jobId, onBackToMapping, onQueued }: { jobId: string
             <tbody>
               {data.rows.length === 0 ? (
                 <tr>
-                  <td colSpan={data.shownFields.length + 4} className="px-4 py-10 text-center text-[color:var(--color-muted-foreground)]">
+                  <td colSpan={fields.length + 4} className="px-4 py-10 text-center text-[color:var(--color-muted-foreground)]">
                     No rows here.
                   </td>
                 </tr>
               ) : (
-                data.rows.map((row) => (
+                data.rows.map((row, index) => (
                   <ReviewRow
                     key={row.id}
+                    index={index}
                     jobId={jobId}
                     row={row}
-                    fields={data.shownFields}
+                    fields={fields}
                     selected={selected.has(row.id)}
                     onSelect={(on) => setSelected((s) => (on ? new Set([...s, row.id]) : new Set([...s].filter((id) => id !== row.id))))}
                     onChanged={refresh}
@@ -302,17 +336,53 @@ function Tile({ label, value, tone, onClick }: { label: string; value: number; t
   );
 }
 
-function ReviewRow({ jobId, row, fields, selected, onSelect, onChanged }: { jobId: string; row: SmartReviewRow; fields: ClientImportFieldKey[]; selected: boolean; onSelect: (on: boolean) => void; onChanged: () => Promise<void> }) {
+const WIDE = new Set<ClientImportFieldKey>(["name", "company", "email", "address", "note", "service"]);
+const DATE_FIELDS = new Set<ClientImportFieldKey>(["startDate", "expiryDate"]);
+const HIDDEN_KEY = "smart-import-hidden-columns";
+
+function readHiddenColumns(): Set<ClientImportFieldKey> {
+  try {
+    if (typeof window === "undefined") return new Set();
+    const raw = JSON.parse(window.localStorage.getItem(HIDDEN_KEY) ?? "[]") as unknown;
+    return new Set(Array.isArray(raw) ? (raw.filter((k) => (SMART_FIELD_KEYS as readonly string[]).includes(k)) as ClientImportFieldKey[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+function writeHiddenColumns(hidden: Set<ClientImportFieldKey>) {
+  try {
+    window.localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden]));
+  } catch {
+    // a private window: the choice simply is not remembered
+  }
+}
+
+/** Moves focus between cells with the arrow keys (the grid is a table of buttons). */
+function moveFocus(from: HTMLElement, key: string) {
+  const [r, c] = (from.dataset.cell ?? "").split(":").map(Number) as [number, number];
+  const target = key === "ArrowRight" ? [r, c + 1] : key === "ArrowLeft" ? [r, c - 1] : key === "ArrowDown" ? [r + 1, c] : [r - 1, c];
+  const next = from.closest("[data-review-grid]")?.querySelector<HTMLElement>(`[data-cell="${target[0]}:${target[1]}"]`);
+  if (next) {
+    next.focus();
+    next.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+}
+
+function ReviewRow({ index, jobId, row, fields, selected, onSelect, onChanged }: { index: number; jobId: string; row: SmartReviewRow; fields: ClientImportFieldKey[]; selected: boolean; onSelect: (on: boolean) => void; onChanged: () => Promise<void> }) {
   const badge = STATUS_BADGE[row.status];
   const muted = row.status === "IGNORED" || row.status === "REPEAT";
+  const errors = row.issues.filter((i) => i.severity === "error");
+  // Problems on a column that is hidden still need to be seen: they are listed under the row.
+  const listed = row.status === "INVALID" ? (errors.length ? errors : row.errors.map((message) => ({ field: "name" as ClientImportFieldKey, severity: "error" as const, message }))) : [];
+  const sticky = "sticky z-[1] bg-[var(--color-surface)]";
   return (
     <>
-      <tr className={`border-b border-[var(--color-border)] align-top ${row.status === "INVALID" ? "bg-[var(--color-danger-bg)]/40" : ""} ${muted ? "opacity-70" : ""}`}>
-        <td className="px-3 py-2">
+      <tr className={`align-top [&>td]:border-b [&>td]:border-[var(--color-border)] ${muted ? "opacity-70" : ""}`}>
+        <td className={`${sticky} left-0 px-3 py-2`}>
           <Checkbox aria-label={`Select row ${row.rowNumber}`} checked={selected} onChange={(e) => onSelect(e.target.checked)} />
         </td>
-        <td className="px-2 py-2 tabular text-[color:var(--color-muted-foreground)]">{row.rowNumber}</td>
-        <td className="px-2 py-2">
+        <td className={`${sticky} left-10 px-2 py-2 tabular text-[color:var(--color-muted-foreground)]`}>{row.rowNumber}</td>
+        <td className={`${sticky} left-24 px-2 py-2 shadow-[1px_0_0_var(--color-border)]`}>
           <Badge color={badge.color}>{badge.label}</Badge>
           {row.status === "MATCH" && row.matchedClientId ? (
             <Link href={`/clients/${row.matchedClientId}`} className="mt-1 block text-[11px] underline underline-offset-2" target="_blank">
@@ -321,8 +391,20 @@ function ReviewRow({ jobId, row, fields, selected, onSelect, onChanged }: { jobI
           ) : null}
           {row.status === "REPEAT" ? <span className="mt-1 block text-[11px] text-[color:var(--color-muted-foreground)]">Same client as row {row.repeatsRow}</span> : null}
         </td>
-        {fields.map((f) => (
-          <EditableCell key={f} jobId={jobId} rowId={row.id} field={f} value={row.values[f] ?? ""} edited={row.edited.includes(f)} disabled={row.status === "IGNORED"} onSaved={onChanged} />
+        {fields.map((f, col) => (
+          <EditableCell
+            key={f}
+            cell={`${index}:${col}`}
+            jobId={jobId}
+            rowId={row.id}
+            field={f}
+            value={row.values[f] ?? ""}
+            edited={row.edited.includes(f)}
+            issues={row.issues.filter((i) => i.field === f)}
+            note={f === "expiryDate" ? (row.expiryBasis ?? null) : null}
+            disabled={row.status === "IGNORED"}
+            onSaved={onChanged}
+          />
         ))}
         <td className="whitespace-nowrap px-2 py-2 text-right">
           {row.status === "IGNORED" ? (
@@ -341,15 +423,17 @@ function ReviewRow({ jobId, row, fields, selected, onSelect, onChanged }: { jobI
           ) : null}
         </td>
       </tr>
-      {row.errors.length ? (
-        <tr className="border-b border-[var(--color-border)] bg-[var(--color-danger-bg)]/40">
-          <td />
+      {listed.length ? (
+        <tr className="[&>td]:border-b [&>td]:border-[var(--color-border)]">
+          <td className={`${sticky} left-0`} />
           <td colSpan={fields.length + 3} className="px-2 pb-2.5 pt-0">
-            <ul className="space-y-0.5 text-[12px] text-[color:var(--color-danger-fg)]">
-              {row.errors.map((e, i) => (
+            <ul className="sticky left-24 w-fit max-w-[min(42rem,calc(100vw-8rem))] space-y-0.5 text-[12px] text-[color:var(--color-danger-fg)]">
+              {listed.map((e, i) => (
                 <li key={i} className="flex gap-1.5">
                   <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
-                  {e}
+                  <span>
+                    <strong className="font-medium">{labelOf(e.field)}:</strong> {e.message}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -357,6 +441,149 @@ function ReviewRow({ jobId, row, fields, selected, onSelect, onChanged }: { jobI
         </tr>
       ) : null}
     </>
+  );
+}
+
+const ISSUE_STYLE: Record<FieldIssue["severity"], string> = {
+  error: "bg-[var(--color-danger-bg)] ring-1 ring-inset ring-[var(--color-danger-border)]",
+  warning: "bg-[var(--color-warning-bg)] ring-1 ring-inset ring-[var(--color-warning-border)]",
+  info: "",
+};
+
+/**
+ * One field of one row. Click or Enter edits; Enter or leaving the box saves; Escape cancels; the arrow
+ * keys move between cells. Only THIS cell is coloured by its own problem: red for an error, amber for a
+ * warning, nothing for an empty optional field.
+ */
+function EditableCell({
+  cell,
+  jobId,
+  rowId,
+  field,
+  value,
+  edited,
+  issues,
+  note,
+  disabled,
+  onSaved,
+}: {
+  cell: string;
+  jobId: string;
+  rowId: string;
+  field: ClientImportFieldKey;
+  value: string;
+  edited: boolean;
+  issues: FieldIssue[];
+  note: string | null;
+  disabled: boolean;
+  onSaved: () => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [state, setState] = useState<"idle" | "saving" | "error">("idle");
+  const [problem, setProblem] = useState<string | null>(null);
+  const cancelled = useRef(false);
+  const severity: FieldIssue["severity"] | null = issues.some((i) => i.severity === "error") ? "error" : issues.some((i) => i.severity === "warning") ? "warning" : null;
+  const tooltip = [...issues.map((i) => i.message), note && !issues.length ? note : null, disabled ? null : "Click or press Enter to correct"].filter(Boolean).join("\n");
+  const asDate = DATE_FIELDS.has(field) && (!draft || /^\d{4}-\d{2}-\d{2}$/.test(draft));
+
+  async function commit() {
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
+    setEditing(false);
+    if (draft === value) return;
+    setState("saving");
+    const r = await editSmartRow(jobId, rowId, field, draft);
+    if (!r.ok) {
+      setState("error");
+      setProblem(r.message);
+      return;
+    }
+    setState("idle");
+    setProblem(r.message !== "Saved." ? r.message : null);
+    await onSaved();
+  }
+
+  if (editing) {
+    return (
+      <td className="px-1.5 py-1.5">
+        <div className="flex items-center gap-1">
+          <Input
+            autoFocus
+            type={asDate ? "date" : "text"}
+            value={draft}
+            dir="auto"
+            aria-label={`${labelOf(field)}, row value`}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => void commit()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              } else if (e.key === "Escape") {
+                cancelled.current = true;
+                setDraft(value);
+                setEditing(false);
+              }
+            }}
+            className="h-8 w-full min-w-32 text-[13px]"
+          />
+          {edited ? (
+            <button
+              type="button"
+              title="Back to the mapped value"
+              aria-label={`Undo the correction to ${labelOf(field)}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={async () => {
+                cancelled.current = true;
+                setEditing(false);
+                setState("saving");
+                await resetSmartCell(jobId, rowId, field);
+                setState("idle");
+                await onSaved();
+              }}
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]"
+            >
+              <Undo2 className="size-3.5" aria-hidden />
+            </button>
+          ) : null}
+        </div>
+      </td>
+    );
+  }
+  return (
+    <td className="px-1 py-1">
+      <button
+        type="button"
+        data-cell={cell}
+        disabled={disabled}
+        onClick={() => {
+          setDraft(value);
+          setEditing(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key.startsWith("Arrow")) {
+            e.preventDefault();
+            moveFocus(e.currentTarget, e.key);
+          }
+        }}
+        title={tooltip}
+        aria-invalid={severity === "error" || undefined}
+        className={`group flex min-h-8 w-full items-center gap-1.5 rounded-[var(--radius-sm)] px-1.5 py-1 text-left transition-colors hover:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:cursor-default ${severity ? ISSUE_STYLE[severity] : "hover:bg-[var(--color-neutral-bg)]"} ${state === "error" ? "ring-1 ring-[var(--color-danger)]" : ""}`}
+      >
+        <span className={`min-w-0 flex-1 truncate ${value ? (severity === "error" ? "text-[color:var(--color-danger-fg)]" : "") : "text-[color:var(--color-muted-foreground)]/60"}`} dir="auto">
+          {value || "—"}
+        </span>
+        {severity === "error" ? <AlertTriangle className="size-3 shrink-0 text-[color:var(--color-danger-fg)]" aria-hidden /> : null}
+        {severity === "warning" ? <Info className="size-3 shrink-0 text-[color:var(--color-warning-fg)]" aria-hidden /> : null}
+        {state === "saving" ? <Loader2 className="size-3 shrink-0 animate-spin" aria-label="Saving" /> : null}
+        {edited && state !== "saving" ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" aria-label="Corrected" title="Corrected on this screen" /> : null}
+      </button>
+      {note && field === "expiryDate" && value ? <span className="block max-w-56 truncate px-1.5 text-[10.5px] text-[color:var(--color-muted-foreground)]" title={note}>{note}</span> : null}
+      {problem ? <span className="block max-w-56 px-1.5 text-[11px] text-[color:var(--color-warning-fg)]">{problem}</span> : null}
+    </td>
   );
 }
 
@@ -380,81 +607,6 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
     >
       {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : children}
     </button>
-  );
-}
-
-/** A cell that becomes a text box on click or Enter. Enter / leaving the box saves; Escape cancels. */
-function EditableCell({ jobId, rowId, field, value, edited, disabled, onSaved }: { jobId: string; rowId: string; field: ClientImportFieldKey; value: string; edited: boolean; disabled: boolean; onSaved: () => Promise<void> }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-  const [state, setState] = useState<"idle" | "saving" | "error">("idle");
-  const [problem, setProblem] = useState<string | null>(null);
-  const cancelled = useRef(false);
-
-  async function commit() {
-    if (cancelled.current) {
-      cancelled.current = false;
-      return;
-    }
-    setEditing(false);
-    if (draft === value) return;
-    setState("saving");
-    const r = await editSmartRow(jobId, rowId, field, draft);
-    if (!r.ok) {
-      setState("error");
-      setProblem(r.message);
-      return;
-    }
-    setState("idle");
-    setProblem(r.errors?.[0] ?? null);
-    await onSaved();
-  }
-
-  if (editing) {
-    return (
-      <td className="px-1.5 py-1.5">
-        <Input
-          autoFocus
-          value={draft}
-          dir="auto"
-          aria-label={`${labelOf(field)}, row value`}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => void commit()}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              (e.target as HTMLInputElement).blur();
-            } else if (e.key === "Escape") {
-              cancelled.current = true;
-              setDraft(value);
-              setEditing(false);
-            }
-          }}
-          className="h-8 w-full min-w-32 text-[13px]"
-        />
-      </td>
-    );
-  }
-  return (
-    <td className="px-1 py-1">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => {
-          setDraft(value);
-          setEditing(true);
-        }}
-        title={problem ?? (disabled ? undefined : "Click to correct")}
-        className={`group flex min-h-8 w-full items-center gap-1.5 rounded-[var(--radius-sm)] px-1.5 py-1 text-left transition-colors hover:bg-[var(--color-neutral-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:cursor-default disabled:hover:bg-transparent ${state === "error" ? "ring-1 ring-[var(--color-danger)]" : ""}`}
-      >
-        <span className={`min-w-0 flex-1 truncate ${value ? "" : "text-[color:var(--color-muted-foreground)]"}`} dir="auto">
-          {value || "—"}
-        </span>
-        {state === "saving" ? <Loader2 className="size-3 shrink-0 animate-spin" aria-label="Saving" /> : null}
-        {edited && state !== "saving" ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" aria-label="Corrected" title="Corrected on this screen" /> : null}
-      </button>
-      {problem ? <span className="block px-1.5 text-[11px] text-[color:var(--color-danger-fg)]">{problem}</span> : null}
-    </td>
   );
 }
 

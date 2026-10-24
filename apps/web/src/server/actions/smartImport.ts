@@ -6,6 +6,7 @@ import {
   autoMapSmart,
   checkFieldValue,
   CLIENT_DUPLICATE_POLICIES,
+  EXPIRY_PART_KEYS,
   freezeSamples,
   isSmartFieldKey,
   labelOf,
@@ -16,9 +17,11 @@ import {
   upgradeMapping,
   type ClientDuplicatePolicy,
   type ClientImportFieldKey,
+  type FieldIssue,
   type FileAssessment,
   type MappingSuggestion,
   type SmartMapping,
+  type SmartRuleKey,
   type SmartSamples,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
@@ -96,6 +99,9 @@ export interface SmartReviewRow {
   repeatsRow?: number;
   values: Partial<Record<ClientImportFieldKey, string>>;
   edited: ClientImportFieldKey[];
+  issues: FieldIssue[];
+  expiryBasis: string | null;
+  recordedExpiry: boolean;
   /** The file's own cells for the mapped columns, so a correction can be compared with the source. */
   source: Record<string, string>;
 }
@@ -125,7 +131,7 @@ export async function loadSmartReview(jobId: string, query: { filter?: string; s
   const slice = filtered.slice((page - 1) * pageSize, page * pageSize);
   const mapping = upgradeMapping(job.mapping);
   const columns = new Set<string>();
-  for (const f of SMART_FIELD_KEYS) {
+  for (const f of [...SMART_FIELD_KEYS, ...EXPIRY_PART_KEYS] as SmartRuleKey[]) {
     const rule = mapping.fields[f];
     if (rule?.mode === "source") {
       columns.add(rule.column);
@@ -153,6 +159,9 @@ export async function loadSmartReview(jobId: string, query: { filter?: string; s
         repeatsRow: r.repeatsRow,
         values: Object.fromEntries(analysis.shownFields.map((f) => [f, r.output[f]])),
         edited: r.edited,
+        issues: r.issues,
+        expiryBasis: r.expiryBasis,
+        recordedExpiry: r.recordedExpiry,
         source: Object.fromEntries([...columns].map((c) => [c, src[c] ?? ""])),
       };
     }),
@@ -251,11 +260,42 @@ export async function editSmartRow(jobId: string, rowId: string, field: string, 
   if (job.status !== "PREVIEW") return { ok: false, message: LOCKED };
   const row = await prisma.clientImportRow.findFirst({ where: { id: rowId, jobId }, select: { edits: true } });
   if (!row) return { ok: false, message: "That row is not part of this import." };
-  const edits = { ...(row.edits as Record<string, string>), [field]: value.trim() };
+  const edits: Record<string, string> = { ...(row.edits as Record<string, string>), [field]: value.trim() };
+  let message = "Saved.";
+  // Typing an exact expiry on a row that also has a duration would make two expiries disagree: the
+  // typed one is what the person means, so the duration is cleared — and the reply says so.
+  if (field === "expiryDate" && value.trim()) {
+    const analysis = await analyzeSmartJob(job);
+    const current = analysis.rows.find((r) => r.id === rowId);
+    if (current?.output.duration) {
+      edits.duration = "";
+      edits.durationUnit = "";
+      message = "Saved. The duration on this row was cleared, so the expiry you typed is the one used.";
+    }
+  }
   await prisma.clientImportRow.update({ where: { id: rowId }, data: { edits } });
   await prisma.clientImportJob.updateMany({ where: { id: jobId, status: "PREVIEW" }, data: { revision: { increment: 1 } } });
   forgetSmartAnalysis(jobId);
-  return { ok: true, message: "Saved.", errors: checkFieldValue(field, value.trim()) };
+  return { ok: true, message, errors: checkFieldValue(field, value.trim()) };
+}
+
+/** Takes back one correction, so the cell shows the mapped value again. */
+export async function resetSmartCell(jobId: string, rowId: string, field: string): Promise<SmartActionResult> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, message: g.error };
+  if (!isSmartFieldKey(field)) return { ok: false, message: "That is not a client field." };
+  const job = await draft(jobId);
+  if (!job) return { ok: false, message: NOT_FOUND };
+  if (job.status !== "PREVIEW") return { ok: false, message: LOCKED };
+  const row = await prisma.clientImportRow.findFirst({ where: { id: rowId, jobId }, select: { edits: true } });
+  if (!row) return { ok: false, message: "That row is not part of this import." };
+  const edits = { ...(row.edits as Record<string, string>) };
+  if (!(field in edits)) return { ok: true, message: "Nothing to undo." };
+  delete edits[field];
+  await prisma.clientImportRow.update({ where: { id: rowId }, data: { edits } });
+  await prisma.clientImportJob.updateMany({ where: { id: jobId, status: "PREVIEW" }, data: { revision: { increment: 1 } } });
+  forgetSmartAnalysis(jobId);
+  return { ok: true, message: "Back to the mapped value." };
 }
 
 /** Forgets every correction on a row, so it reads the file (and the mapping) again. */
@@ -350,9 +390,9 @@ export async function chooseSmartSheet(jobId: string, sheet: string, headerRow: 
   const { records } = parsed;
   // Rules whose columns still exist are kept; the rest are reported, never silently re-pointed.
   const old = upgradeMapping(job.mapping);
-  const kept: SmartMapping = { version: 2, fields: {} };
+  const kept: SmartMapping = { version: 2, fields: {}, ...(old.options ? { options: old.options } : {}) };
   const dropped: string[] = [];
-  for (const f of SMART_FIELD_KEYS) {
+  for (const f of [...SMART_FIELD_KEYS, ...EXPIRY_PART_KEYS] as SmartRuleKey[]) {
     const rule = old.fields[f];
     if (!rule) continue;
     if (rule.mode === "source" && (!records.headers.includes(rule.column) || (rule.fallback && !records.headers.includes(rule.fallback)))) dropped.push(labelOf(f));
@@ -596,14 +636,14 @@ export async function applySmartPreset(jobId: string, revision: number, presetId
   const wanted = upgradeMapping(preset.mapping);
   const fields: SmartMapping["fields"] = {};
   const missing: string[] = [];
-  for (const f of SMART_FIELD_KEYS) {
+  for (const f of [...SMART_FIELD_KEYS, ...EXPIRY_PART_KEYS] as SmartRuleKey[]) {
     const rule = wanted.fields[f];
     if (!rule) continue;
     if (rule.mode === "source" && !job.headers.includes(rule.column)) missing.push(`${labelOf(f)} ("${rule.column}")`);
     else if (rule.mode === "source" && rule.fallback && !job.headers.includes(rule.fallback)) fields[f] = { mode: "source", column: rule.column };
     else fields[f] = rule;
   }
-  const clean = sanitizeSmartMapping({ fields }, job.headers);
+  const clean = sanitizeSmartMapping({ fields, options: wanted.options }, job.headers);
   if (!clean.ok) return { ok: false, message: `The preset "${preset.name}" no longer fits: ${clean.error}` };
   if (!(await bump(jobId, revision, { mapping: clean.mapping as unknown as Prisma.InputJsonValue }))) {
     return { ok: false, message: "This import was changed in another tab. Reload to see the latest version." };

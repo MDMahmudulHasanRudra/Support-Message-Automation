@@ -6508,6 +6508,11 @@ model Client {
   currentSubscription   ClientSubscription? @relation("ClientCurrentSubscription", fields: [currentSubscriptionId], references: [id], onDelete: SetNull)
   /// Set when a profile photo is saved or removed; the avatar URL carries it so a new photo is fetched at once.
   photoUpdatedAt        DateTime?
+  /// An expiry a file gave with NO start date (Smart Bulk Import, SMART_IMPORT.md §11): recorded as a
+  /// fact about the client, never a subscription term — no start date is ever invented for it.
+  recordedExpiryDate    DateTime?           @db.Date
+  recordedExpiryService String?
+  recordedExpiryAt      DateTime?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
