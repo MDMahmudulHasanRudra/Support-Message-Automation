@@ -79,14 +79,37 @@ is B in practice.**
 
 - **Automated replies must disclose automation where the law requires it** (Meta names California
   and Germany). They must disclose it at the start of a conversation, after a long gap, and when a
-  person hands back to automation. The current AI on channels does not say it is automated. This is
-  an **owner decision**. It would be a text change in the channel AI path; nothing was changed
-  silently.
+  person hands back to automation. Meta requires it only where the law does and gives no number for
+  the "lapse of time". **Built as a Messenger / Instagram per-connection setting, off by default**
+  (`08-ai-disclosure.md`, branch `feat/ai-disclosure`).
 - **Bots must answer within 30 seconds.** The channel AI answers within its own pipeline, usually a
   few seconds after the worker picks the message up. Under load or with a slow model it could take
   longer. Live testing must measure this.
 - **`HUMAN_AGENT` is for people only.** It is enforced in code (`decideReplyWindow`); AI never uses
   it.
+
+## Priority order (decided 25 Oct 2026)
+
+**Nothing below is built until the current one-click integration has passed real Meta testing**
+(`META_DEVELOPER_SETUP.md` §8), by the owner's decision.
+
+Ranked by value to a support team, cost, and how much new approval each needs:
+
+| # | Capability | Why this rank | New approval | Meta fee |
+|---|---|---|---|---|
+| 1 | **Live verification of what is built** (Messenger + Instagram DM, receipts, echoes, Human Agent) | Everything else rests on it | App Review for the five messaging permissions, Business Verification | None |
+| 2 | **Sending attachments** (images, files) in replies | The most-asked inbox gap; no new permission | None beyond #1 | None |
+| 3 | **Quick replies and postbacks** (buttons in replies) | Faster answers, with the same permissions; AI and rules can offer choices | None beyond #1 | None |
+| 4 | **Instagram story replies and mentions**, shown properly | They already arrive as messages; this is display only | None beyond #1 | None |
+| 5 | **Instagram comments + private replies** | Comments are where many customers ask first; a private reply moves the question to DM | `instagram_manage_comments`, `pages_read_engagement` (App Review) | None |
+| 6 | **Facebook Page comments and replies** | The same for Pages | `pages_read_engagement`, `pages_manage_engagement` (App Review) | None |
+| 7 | **Get Started, persistent menu, ice breakers** | A better first contact; set once per Page | None beyond #1 | None |
+| 8 | **Lead Ads → Clients** | Valuable for sales, but leads come only from **paid ads**, and it needs the most approval | `leads_retrieval`, `pages_manage_ads`, ads permissions + Business Verification | API none; ads paid |
+| — | Instagram Login (accounts without a Page) | Only if customers ask; adds a second token type and a refresh job | Its own App Review | None |
+| ✕ | Marketing Messages, Sponsored Messages, other message tags for automation | Paid, or not allowed for automated use | — | Paid |
+
+Items 2–4 and 7 need no new App Review once #1 is approved, so they are the cheapest next steps.
+Items 5–6 need one more review round, and item 8 the most.
 
 ## Sources
 

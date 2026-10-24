@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { CHANNELS, metaPlatformAppSecret, type ChannelType } from "@support-automation/shared";
+import { CHANNELS, isAiDisclosureChannel, metaPlatformAppSecret, validateAiDisclosureIdleHours, validateAiDisclosureText, type ChannelType } from "@support-automation/shared";
 import { decryptSecret, encryptSecret } from "@support-automation/db";
 import type { ChannelAuthMode, ChannelConnectionStatus } from "@prisma/client";
 import { platformPrisma, prisma } from "@/server/db";
@@ -66,6 +66,9 @@ export interface ChannelConnectionView {
   hasCredentials: boolean;
   aiAutomationEnabled: boolean;
   humanAgentEnabled: boolean;
+  aiDisclosureEnabled: boolean;
+  aiDisclosureText: string | null;
+  aiDisclosureIdleHours: number;
   webhookUrl: string | null;
   webhookVerifiedAt: Date | null;
   lastEventAt: Date | null;
@@ -99,6 +102,9 @@ const VIEW_SELECT = {
   accessTokenCiphertext: true,
   aiAutomationEnabled: true,
   humanAgentEnabled: true,
+  aiDisclosureEnabled: true,
+  aiDisclosureText: true,
+  aiDisclosureIdleHours: true,
   webhookVerifiedAt: true,
   lastEventAt: true,
   lastCheckedAt: true,
@@ -141,6 +147,9 @@ function toView(row: ViewRow, revealVerifyToken: boolean): ChannelConnectionView
     hasCredentials: Boolean(row.accessTokenCiphertext),
     aiAutomationEnabled: row.aiAutomationEnabled,
     humanAgentEnabled: row.humanAgentEnabled,
+    aiDisclosureEnabled: row.aiDisclosureEnabled,
+    aiDisclosureText: row.aiDisclosureText,
+    aiDisclosureIdleHours: row.aiDisclosureIdleHours,
     // A one-click connection uses the platform app's single webhook, which the customer never configures.
     webhookUrl: row.status === "DISCONNECTED" || row.authMode === "PLATFORM" ? null : webhookUrlFor(row.type, row.webhookKey),
     webhookVerifiedAt: row.webhookVerifiedAt,
@@ -466,7 +475,10 @@ function readSecret(ciphertext: string): string {
 
 // ─── Switches ──────────────────────────────────────────────────────────────────────────────────
 
-export async function setConnectionFlags(id: string, flags: { enabled?: boolean; aiAutomationEnabled?: boolean; humanAgentEnabled?: boolean; name?: string }): Promise<void> {
+export async function setConnectionFlags(
+  id: string,
+  flags: { enabled?: boolean; aiAutomationEnabled?: boolean; humanAgentEnabled?: boolean; aiDisclosureEnabled?: boolean; aiDisclosureText?: string; aiDisclosureIdleHours?: number; name?: string },
+): Promise<void> {
   const row = await prisma.channelConnection.findUnique({ where: { id }, select: { type: true, status: true } });
   if (!row) throw new ChannelConnectionError("That connection no longer exists.");
   if (row.status === "DISCONNECTED" && (flags.enabled || flags.aiAutomationEnabled)) {
@@ -474,6 +486,18 @@ export async function setConnectionFlags(id: string, flags: { enabled?: boolean;
   }
   if (flags.humanAgentEnabled !== undefined && CHANNELS[row.type].replyWindow === null) {
     throw new ChannelConnectionError("Telegram has no reply window, so the Human Agent setting does not apply.");
+  }
+  const disclosureFlags = flags.aiDisclosureEnabled !== undefined || flags.aiDisclosureText !== undefined || flags.aiDisclosureIdleHours !== undefined;
+  if (disclosureFlags && !isAiDisclosureChannel(row.type)) {
+    throw new ChannelConnectionError("The automated-reply disclosure applies to Facebook Messenger and Instagram only.");
+  }
+  if (flags.aiDisclosureText !== undefined) {
+    const problem = validateAiDisclosureText(flags.aiDisclosureText);
+    if (problem) throw new ChannelConnectionError(problem);
+  }
+  if (flags.aiDisclosureIdleHours !== undefined) {
+    const problem = validateAiDisclosureIdleHours(flags.aiDisclosureIdleHours);
+    if (problem) throw new ChannelConnectionError(problem);
   }
   const name = flags.name?.trim();
   if (flags.name !== undefined && (!name || name.length > 80)) throw new ChannelConnectionError("Give the connection a name of 1–80 characters.");
@@ -483,6 +507,10 @@ export async function setConnectionFlags(id: string, flags: { enabled?: boolean;
       ...(flags.enabled !== undefined ? { enabled: flags.enabled } : {}),
       ...(flags.aiAutomationEnabled !== undefined ? { aiAutomationEnabled: flags.aiAutomationEnabled } : {}),
       ...(flags.humanAgentEnabled !== undefined ? { humanAgentEnabled: flags.humanAgentEnabled } : {}),
+      ...(flags.aiDisclosureEnabled !== undefined ? { aiDisclosureEnabled: flags.aiDisclosureEnabled } : {}),
+      // Empty means "the built-in wording", stored as null so it follows any later improvement to it.
+      ...(flags.aiDisclosureText !== undefined ? { aiDisclosureText: flags.aiDisclosureText.trim() || null } : {}),
+      ...(flags.aiDisclosureIdleHours !== undefined ? { aiDisclosureIdleHours: flags.aiDisclosureIdleHours } : {}),
       ...(name ? { name } : {}),
     },
   });

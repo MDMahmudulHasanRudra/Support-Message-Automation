@@ -97,7 +97,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
         <div className="space-y-6">
           <Card>
             <SectionHeader title="Settings" />
-            <ConnectionSwitches id={c.id} type={c.type} enabled={c.enabled} aiAutomationEnabled={c.aiAutomationEnabled} humanAgentEnabled={c.humanAgentEnabled} disconnected={disconnected} canManage={canManage} />
+            <ConnectionSwitches id={c.id} type={c.type} enabled={c.enabled} aiAutomationEnabled={c.aiAutomationEnabled} humanAgentEnabled={c.humanAgentEnabled} aiDisclosureEnabled={c.aiDisclosureEnabled} aiDisclosureText={c.aiDisclosureText} aiDisclosureIdleHours={c.aiDisclosureIdleHours} disconnected={disconnected} canManage={canManage} />
             <div className="mt-4 border-t border-[var(--color-border)] pt-4">
               <p className="mb-1.5 text-[12.5px] font-medium text-[color:var(--color-foreground)]">Name in this app</p>
               <RenameConnection id={c.id} name={c.name} canManage={canManage && !disconnected} />

@@ -8,6 +8,7 @@ import { processChannelEvent, runChannelInboundTick } from "../channels/inboundP
 import { sendNextQueued, STUCK_SENDING_MS } from "../channels/outboundProcessor.js";
 import { AI_SETTLE_MS, answerChannelMessage } from "../channels/aiReply.js";
 import { MockAiClient } from "./mockAiClient.js";
+import { DEFAULT_AI_DISCLOSURE_TEXT } from "@support-automation/shared";
 
 /**
  * The worker's half of Messenger / Instagram / Telegram (OMNICHANNEL.md): turning recorded webhook
@@ -381,5 +382,160 @@ describe("4. AI replies", () => {
       await rawPrisma.aiSettings.update({ where: { projectId }, data: { aiResponseMode: "STRICT_KNOWLEDGE_ONLY" } });
       await rawPrisma.aiKnowledgeItem.update({ where: { id: knowledgeId }, data: { status: "ACTIVE" } });
     }
+  });
+
+  describe("saying a reply is automated: Messenger and Instagram only (docs/meta-integration/08)", () => {
+    const RESPONSE = "Please restart the router; if the red light stays, we will send a technician.";
+    const say = async (thread: string, text: string, kind: "MESSENGER" | "INSTAGRAM") => {
+      const connectionId = kind === "MESSENGER" ? conn.messenger : conn.instagram;
+      const mid = `m.dsc.${randomUUID()}`;
+      await process_(await event(connectionId, metaEvent(inbound(thread, mid, text), kind)));
+      const row = await rawPrisma.channelMessage.findFirstOrThrow({ where: { externalMessageId: mid } });
+      await rawPrisma.channelMessage.update({ where: { id: row.id }, data: { createdAt: new Date(Date.now() - AI_SETTLE_MS - 1000) } });
+      return row.id;
+    };
+    const answer = async (thread: string, kind: "MESSENGER" | "INSTAGRAM" = "MESSENGER", text = "router light is red what should I do", reply = ANSWER) => {
+      const id = await say(thread, text, kind);
+      const client = new MockAiClient();
+      client.queuedTexts = [reply, reply, reply];
+      const outcome = await run(() => answerChannelMessage(id, new Date(), client));
+      return { id, outcome, reply: await rawPrisma.channelMessage.findFirst({ where: { idempotencyKey: `ai:${id}` } }), client };
+    };
+    const set = (id: string, data: Record<string, unknown>) => rawPrisma.channelConnection.update({ where: { id }, data });
+    const reset = async () => {
+      for (const id of [conn.messenger, conn.instagram, conn.telegram]) {
+        await set(id, { aiAutomationEnabled: true, aiDisclosureEnabled: false, aiDisclosureText: null, aiDisclosureIdleHours: 24 });
+      }
+      await rawPrisma.aiSettings.update({ where: { projectId }, data: { aiReplyCooldownSeconds: 0 } });
+    };
+    beforeEach(reset);
+    afterAll(reset);
+
+    it("adds nothing while the switch is off: the exact original reply", async () => {
+      const { reply } = await answer(`DSC0${tag}`);
+      expect(reply).toMatchObject({ aiDisclosed: false, text: RESPONSE });
+    });
+
+    it("Messenger with AI off: no AI reply and no disclosure, even with the disclosure switched on", async () => {
+      await set(conn.messenger, { aiAutomationEnabled: false, aiDisclosureEnabled: true });
+      const { outcome, reply, client } = await answer(`DSCM0${tag}`);
+      expect(outcome).toMatchObject({ outcome: "SKIPPED", reason: "AI is switched off for this connection." });
+      expect(reply).toBeNull();
+      expect(client.requests).toHaveLength(0);
+      expect(await rawPrisma.channelMessage.count({ where: { aiDisclosed: true, connectionId: conn.messenger, conversation: { externalThreadId: `DSCM0${tag}` } } })).toBe(0);
+    });
+
+    it("Instagram with AI off: no AI reply and no disclosure", async () => {
+      await set(conn.instagram, { aiAutomationEnabled: false, aiDisclosureEnabled: true });
+      const { outcome, reply } = await answer(`DSCI0${tag}`, "INSTAGRAM");
+      expect(outcome).toMatchObject({ outcome: "SKIPPED", reason: "AI is switched off for this connection." });
+      expect(reply).toBeNull();
+    });
+
+    it("Messenger with AI on: first reply discloses, the next does not, and again once a person replied", async () => {
+      await set(conn.messenger, { aiDisclosureEnabled: true });
+      const thread = `DSC1${tag}`;
+      const first = await answer(thread);
+      expect(first.reply).toMatchObject({ aiDisclosed: true, text: `${DEFAULT_AI_DISCLOSURE_TEXT}\n\n${RESPONSE}` });
+      const second = await answer(thread, "MESSENGER", "router light is still red");
+      expect(second.reply).toMatchObject({ aiDisclosed: false, text: RESPONSE });
+      const c = await conversationOf(conn.messenger, thread);
+      await rawPrisma.channelMessage.create({
+        data: { projectId, conversationId: c.id, connectionId: conn.messenger, type: "MESSENGER", direction: "OUTBOUND", senderType: "AGENT", text: "Let me check", occurredAt: new Date(), deliveryStatus: "SENT", idempotencyKey: `t-${randomUUID()}` },
+      });
+      const third = await answer(thread, "MESSENGER", "router light is red again");
+      expect(third.reply).toMatchObject({ aiDisclosed: true });
+    });
+
+    it("Instagram with AI on: the custom wording, in the customer's language, on the first reply", async () => {
+      await set(conn.instagram, { aiDisclosureEnabled: true, aiDisclosureText: "এটি একটি স্বয়ংক্রিয় উত্তর।" });
+      const { reply } = await answer(`DSCI1${tag}`, "INSTAGRAM");
+      expect(reply).toMatchObject({ aiDisclosed: true, type: "INSTAGRAM", text: `এটি একটি স্বয়ংক্রিয় উত্তর।\n\n${RESPONSE}` });
+    });
+
+    it("Telegram never gets the disclosure, even if the database says it should", async () => {
+      await set(conn.telegram, { aiDisclosureEnabled: true });
+      const chatId = 900000 + Math.floor(Math.random() * 99999);
+      await process_(await event(conn.telegram, { provider: "TELEGRAM", update: { update_id: chatId, message: { message_id: 3, date: Math.floor(Date.now() / 1000), chat: { id: chatId, type: "private", first_name: "Rana" }, from: { id: chatId, is_bot: false, first_name: "Rana" }, text: "router light is red what should I do" } } }));
+      const row = await rawPrisma.channelMessage.findFirstOrThrow({ where: { externalMessageId: `${chatId}:3` } });
+      await rawPrisma.channelMessage.update({ where: { id: row.id }, data: { createdAt: new Date(Date.now() - AI_SETTLE_MS - 1000) } });
+      const client = new MockAiClient();
+      client.queuedTexts = [ANSWER, ANSWER, ANSWER];
+      expect(await run(() => answerChannelMessage(row.id, new Date(), client))).toMatchObject({ outcome: "REPLIED" });
+      expect(await rawPrisma.channelMessage.findFirstOrThrow({ where: { idempotencyKey: `ai:${row.id}` } })).toMatchObject({ aiDisclosed: false, text: RESPONSE });
+    });
+
+    it("the quiet-spell rule follows the connection's setting, 0 turns it off, and a FAILED disclosure never counts", async () => {
+      await set(conn.messenger, { aiDisclosureEnabled: true });
+      const thread = `DSC2${tag}`;
+      await answer(thread);
+      const c = await conversationOf(conn.messenger, thread);
+      await rawPrisma.channelMessage.updateMany({ where: { conversationId: c.id }, data: { occurredAt: new Date(Date.now() - 25 * 3_600_000) } });
+      await set(conn.messenger, { aiDisclosureIdleHours: 0 });
+      expect((await answer(thread, "MESSENGER", "router light is red again today")).reply).toMatchObject({ aiDisclosed: false });
+      await rawPrisma.channelMessage.updateMany({ where: { conversationId: c.id }, data: { occurredAt: new Date(Date.now() - 25 * 3_600_000) } });
+      await set(conn.messenger, { aiDisclosureIdleHours: 24 });
+      expect((await answer(thread, "MESSENGER", "router light is red once more")).reply).toMatchObject({ aiDisclosed: true });
+
+      const failedThread = `DSC3${tag}`;
+      const failed = await answer(failedThread);
+      await rawPrisma.channelMessage.update({ where: { id: failed.reply!.id }, data: { deliveryStatus: "FAILED" } });
+      expect((await answer(failedThread, "MESSENGER", "router light is still red")).reply).toMatchObject({ aiDisclosed: true });
+    });
+
+    it("keeps confidence, cooldown, idempotency and human takeover exactly as they were", async () => {
+      await set(conn.messenger, { aiDisclosureEnabled: true });
+      const low = await answer(`DSC5${tag}`, "MESSENGER", "router light is red what should I do", ANSWER.replace("CONFIDENCE: 95", "CONFIDENCE: 40"));
+      expect(low.outcome).toMatchObject({ outcome: "HANDED_OVER", reason: "LOW_CONFIDENCE" });
+      expect(low.reply).toBeNull();
+
+      const once = await answer(`DSC6${tag}`);
+      expect(await run(() => answerChannelMessage(once.id, new Date(), once.client))).toBeNull();
+      expect(await rawPrisma.channelMessage.count({ where: { idempotencyKey: `ai:${once.id}` } })).toBe(1);
+
+      await rawPrisma.aiSettings.update({ where: { projectId }, data: { aiReplyCooldownSeconds: 3600 } });
+      const cooled = await answer(`DSC6${tag}`, "MESSENGER", "router light is red still");
+      expect(cooled.outcome).toMatchObject({ outcome: "HANDED_OVER", reason: "SAFETY_BLOCKED: AI reply cooldown" });
+      expect(cooled.reply).toBeNull();
+      await rawPrisma.aiSettings.update({ where: { projectId }, data: { aiReplyCooldownSeconds: 0 } });
+
+      const thread = `DSC7${tag}`;
+      await say(thread, "hello", "MESSENGER");
+      const c = await conversationOf(conn.messenger, thread);
+      await rawPrisma.channelConversation.update({ where: { id: c.id }, data: { aiSuppressedUntil: new Date(Date.now() + 600_000) } });
+      const taken = await answer(thread, "MESSENGER", "router light is red");
+      expect(taken.outcome).toMatchObject({ outcome: "SKIPPED", reason: "A person is handling this conversation." });
+      expect(taken.reply).toBeNull();
+    });
+
+    it("never sends outside Meta's window: the disclosure cannot open one", async () => {
+      await set(conn.messenger, { aiDisclosureEnabled: true });
+      const thread = `DSC8${tag}`;
+      const id = await say(thread, "router light is red what should I do", "MESSENGER");
+      const c = await conversationOf(conn.messenger, thread);
+      await rawPrisma.channelConversation.update({ where: { id: c.id }, data: { lastInboundAt: new Date(Date.now() - 30 * 3_600_000) } });
+      const client = new MockAiClient();
+      client.queuedTexts = [ANSWER, ANSWER, ANSWER];
+      const outcome = await run(() => answerChannelMessage(id, new Date(), client));
+      expect(outcome?.outcome).toBe("SKIPPED");
+      expect(await rawPrisma.channelMessage.count({ where: { conversationId: c.id, direction: "OUTBOUND" } })).toBe(0);
+    });
+
+    it("respects the channel's length limit: too long with the disclosure → a person answers, nothing is queued", async () => {
+      await set(conn.messenger, { aiDisclosureEnabled: true, aiDisclosureText: "x".repeat(290) });
+      const long = Array.from({ length: 22 }, () => RESPONSE).join(" ");
+      const tooLong = await answer(`DSC4${tag}`, "MESSENGER", "router light is red what should I do", ANSWER.replace(`RESPONSE: ${RESPONSE}`, `RESPONSE: ${long}`));
+      expect(tooLong.outcome).toMatchObject({ outcome: "HANDED_OVER", reason: "REPLY_TOO_LONG_WITH_DISCLOSURE" });
+      expect(tooLong.reply).toBeNull();
+
+      // Instagram counts BYTES (1,000): a Bangla answer that fits alone but not with the line above it.
+      await set(conn.instagram, { aiDisclosureEnabled: true, aiDisclosureText: "এটি একটি স্বয়ংক্রিয় উত্তর, আমাদের দল যেকোনো সময় যোগ দিতে পারে।" });
+      let bangla = RESPONSE;
+      while (Buffer.byteLength(`${bangla} রাউটার আবার চালু করুন।`, "utf8") <= 960) bangla = `${bangla} রাউটার আবার চালু করুন।`;
+      expect(Buffer.byteLength(bangla, "utf8")).toBeLessThanOrEqual(1000);
+      const ig = await answer(`DSCI4${tag}`, "INSTAGRAM", "router light is red what should I do", ANSWER.replace(`RESPONSE: ${RESPONSE}`, `RESPONSE: ${bangla}`));
+      expect(ig.outcome).toMatchObject({ outcome: "HANDED_OVER", reason: "REPLY_TOO_LONG_WITH_DISCLOSURE" });
+      expect(ig.reply).toBeNull();
+    });
   });
 });

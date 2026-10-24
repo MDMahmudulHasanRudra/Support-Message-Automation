@@ -2927,6 +2927,12 @@ Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.vi
   - **There is no refresh job**, deliberately (Page tokens from a long-lived user token do not expire). The
     health loop marks dead tokens NEEDS_RECONNECT, and the deauthorize / data-deletion callbacks do the same
     for that person's connections.
+  - **AI disclosure (`08-ai-disclosure.md`)**: Messenger and Instagram ONLY, per connection, off by default, shown
+    only while that connection's AI is on. One line above the AI answer in the SAME message, only on the first AI
+    reply, after a person replied, or after the connection's quiet spell (`aiDisclosureIdleHours`, 0 = never; Meta
+    gives no number). It lives only in `channels/aiReply.ts` behind `isAiDisclosureChannel(type)` —
+    `aiDisclosureIsolation.test.ts` fails if WhatsApp, Telegram or any other module starts using it. If it would
+    not fit the channel, hand over; never send an automated reply without it.
 
 ### Client Management (`CLIENT_CENTER.md`)
 

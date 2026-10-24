@@ -6334,6 +6334,16 @@ model ChannelConnection {
   aiAutomationEnabled          Boolean                 @default(false)
   /// Meta: the admin says the app has the Human Agent permission, so a PERSON may reply for 7 days.
   humanAgentEnabled            Boolean                 @default(false)
+  /// Messenger / Instagram only: AI replies say they are automated (Meta's automated-experience
+  /// disclosure) on the first AI reply of a conversation, after a person replied, and after the quiet
+  /// spell below. Off by default, the original behaviour (docs/meta-integration/08-ai-disclosure.md).
+  /// No effect on Telegram, and nothing outside the Meta channel AI path reads it.
+  aiDisclosureEnabled          Boolean                 @default(false)
+  /// The disclosure line; null = the built-in wording (packages/shared `DEFAULT_AI_DISCLOSURE_TEXT`).
+  aiDisclosureText             String?
+  /// Disclose again after this many quiet hours; 0 = never. Meta asks for disclosure "after a
+  /// significant lapse of time" without a number: this is the connection's choice, default 24.
+  aiDisclosureIdleHours        Int                     @default(24)
   webhookVerifiedAt            DateTime?
   lastEventAt                  DateTime?
   lastCheckedAt                DateTime?
@@ -6457,6 +6467,8 @@ model ChannelMessage {
   createdBy        User?                  @relation("ChannelMessageCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   // ─ inbound: the AI decision, claimed once ─
+  /// An AI reply that carried the automated-reply disclosure — the record the next decision reads.
+  aiDisclosed      Boolean           @default(false)
   aiClaimedAt      DateTime?
   aiOutcome        ChannelAiOutcome?
   aiReason         String?

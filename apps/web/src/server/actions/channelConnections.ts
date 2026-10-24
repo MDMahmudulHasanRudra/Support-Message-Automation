@@ -93,7 +93,10 @@ export async function updateChannelCredentialsAction(_prev: ChannelActionResult,
   }
 }
 
-export async function setChannelFlagsAction(id: string, flags: { enabled?: boolean; aiAutomationEnabled?: boolean; humanAgentEnabled?: boolean; name?: string }): Promise<ChannelActionResult> {
+export async function setChannelFlagsAction(
+  id: string,
+  flags: { enabled?: boolean; aiAutomationEnabled?: boolean; humanAgentEnabled?: boolean; aiDisclosureEnabled?: boolean; aiDisclosureText?: string; aiDisclosureIdleHours?: number; name?: string },
+): Promise<ChannelActionResult> {
   const access = await checkPermission("channels.manage");
   if ("denied" in access) return { error: access.denied };
   try {

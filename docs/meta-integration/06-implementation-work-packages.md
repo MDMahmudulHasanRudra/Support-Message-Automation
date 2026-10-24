@@ -24,6 +24,7 @@ or deployed. Status words:
 | 12 Security and regression | `05-…`, `07-…` | mock-tested |
 | 13 Live Meta testing | `META_DEVELOPER_SETUP.md` §8 | **not done**: needs the platform Meta app, which does not exist yet |
 | 14 Production readiness | after live testing and App Review | not done |
+| 15 AI disclosure (separate) | Messenger / Instagram only, per connection, off by default: first AI reply / after a person / after the connection's quiet spell, same message, never sent undisclosed; WhatsApp and Telegram untouched (`08-…`) | implemented, mock-tested, branch `feat/ai-disclosure` |
 
 ## Files
 
@@ -50,8 +51,7 @@ or deployed. Status words:
   Messaging Channels and in the System Log. An alert needs a new `NotificationEvent` (an enum
   migration and a template), which is left for a decision.
 - Instagram Login (accounts without a Page) is not built.
-- Automated-reply disclosure (Meta policy, some jurisdictions) is not added to AI replies; this is
-  an owner decision (`02-…`).
+- Automated-reply disclosure: built separately for Messenger / Instagram only, off by default (`08-ai-disclosure.md`, branch `feat/ai-disclosure`).
 - More than 500 Pages for one person: only the first 500 are offered.
 - A Page can be one-click connected in only one workspace at a time (by design, `01-…` §4).
 

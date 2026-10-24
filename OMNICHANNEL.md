@@ -143,7 +143,9 @@ of these hold; otherwise the message is recorded SKIPPED with the reason:
   earlier lines as context.
 
 On top of these, the per-customer AI cooldown and the hourly per-customer ceiling apply as on
-WhatsApp. A handover raises the usual "AI assistance required" alert through `enqueueNotification`.
+WhatsApp. A **Messenger or Instagram** connection can also **say that AI replies are automated** (off
+by default; never Telegram, never WhatsApp): one line above the answer, on the first AI reply, after a
+person replied, and after the connection's quiet spell (`docs/meta-integration/08-ai-disclosure.md`). A handover raises the usual "AI assistance required" alert through `enqueueNotification`.
 Each customer message is claimed exactly once (`aiClaimedAt`, set by a conditional update), and the
 reply carries the idempotency key `ai:<message id>`.
 
