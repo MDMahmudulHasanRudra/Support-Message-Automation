@@ -2,7 +2,7 @@ import "./helpers/requireTestDatabase";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createProjectWithDefaults, ensureDefaultRoles, PLATFORM_LOG_CUSTOMER, prisma as rawPrisma } from "@support-automation/db";
-import { PERMISSIONS } from "@support-automation/shared";
+import { PERMISSIONS, PROJECT_FEATURES } from "@support-automation/shared";
 
 /**
  * The two administration layers (SAAS_PLATFORM_PLAN.md §12), through the REAL sign-ins, sessions,
@@ -384,8 +384,9 @@ describe("onboarding a new customer from the platform", () => {
     const sub = await rawPrisma.subscription.findFirstOrThrow({ where: { customerId: c, endedAt: null } });
     expect(sub).toMatchObject({ planName: "All Access", allModules: true, priceMinor: BigInt(250000), status: "ACTIVE" });
     const features = await rawPrisma.projectFeature.findMany({ where: { projectId: cProject.id } });
-    // Every module — except a switch that needs its own approval (WHATSAPP_AVATARS), which no plan turns on.
-    expect(features.filter((f) => !f.enabled).map((f) => f.key)).toEqual(features.some((f) => f.key === "WHATSAPP_AVATARS") ? ["WHATSAPP_AVATARS"] : []);
+    // Every module — except the switches that need their own approval (`manualOnly`), which no plan turns on.
+    const manualOnly = new Set<string>(PROJECT_FEATURES.filter((f) => "manualOnly" in f && f.manualOnly).map((f) => f.key));
+    expect(features.filter((f) => !f.enabled).map((f) => f.key).sort()).toEqual(features.filter((f) => manualOnly.has(f.key)).map((f) => f.key).sort());
     const owner = await rawPrisma.user.findUniqueOrThrow({ where: { username: `cowner_${tag}` }, include: { permissionModule: true } });
     expect(owner.customerId).toBe(c);
     expect(owner.permissionModule?.customerId).toBe(c);

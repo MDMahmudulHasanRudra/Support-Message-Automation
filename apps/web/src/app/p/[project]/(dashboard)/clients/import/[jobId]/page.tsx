@@ -12,24 +12,32 @@ import { ClearImports } from "../ImportHistoryActions";
 import { clientViewerCaps } from "@/server/clientModule";
 import { ButtonLink } from "@/components/ui";
 import { Download } from "lucide-react";
+import { upgradeMapping } from "@support-automation/shared";
+import { smartImportEnabled } from "@/server/smartImport";
+import { readSmartCounts } from "@/server/smartImportJobs";
+import { getMediaStorage } from "@/server/mediaStorage";
+import { SmartImportJob } from "../smart/SmartImportJob";
+
+const SMART_STATUS_WORDS: Record<string, string> = { PREVIEW: "draft — nothing imported yet", QUEUED: "queued", PROCESSING: "importing", PARTIAL: "partly imported", EXPIRED: "expired" };
 
 /** Over ten minutes since it started: the same bound `abandonClientImport` enforces on the server. */
 function isStale(startedAt: Date | null): boolean {
   return startedAt !== null && Date.now() - startedAt.getTime() > 10 * 60_000;
 }
 
-export default async function ClientImportJobPage({ params }: { params: Promise<{ jobId: string }> }) {
+export default async function ClientImportJobPage({ params, searchParams }: { params: Promise<{ jobId: string }>; searchParams: Promise<{ step?: string }> }) {
   const session = await requireAccess("clients.import");
   const { jobId } = await params;
+  const { step } = await searchParams;
   const job = await prisma.clientImportJob.findFirst({ where: { id: jobId }, include: { createdBy: { select: { name: true } } } });
   if (!job) notFound();
   const caps = await clientViewerCaps(session);
-  const canClear = caps.canDelete && job.status !== "PROCESSING" && job.status !== "PREVIEW";
+  const canClear = caps.canDelete && job.status !== "PROCESSING" && job.status !== "PREVIEW" && job.status !== "QUEUED";
 
   const header = (
     <PageHeader
       title={job.fileName}
-      description={`${job.status.toLowerCase()} · started ${formatDateTime(job.createdAt)}${job.createdBy ? ` by ${job.createdBy.name}` : ""}`}
+      description={`${job.engine === "SMART" ? (SMART_STATUS_WORDS[job.status] ?? job.status.toLowerCase()) : job.status.toLowerCase()} · started ${formatDateTime(job.createdAt)}${job.createdBy ? ` by ${job.createdBy.name}` : ""}`}
       actions={
         <>
           {canClear ? <ClearImports id={job.id} afterClear="/clients/import" /> : null}
@@ -40,6 +48,57 @@ export default async function ClientImportJobPage({ params }: { params: Promise<
       }
     />
   );
+
+  // Smart Bulk Import (SMART_IMPORT.md): its own wizard. Older imports render exactly as before, below.
+  if (job.engine === "SMART" && (await smartImportEnabled())) {
+    if (job.status === "EXPIRED") {
+      return (
+        <div className="space-y-6">
+          {header}
+          <Alert tone="info">This draft was not confirmed within 7 days, so its rows were deleted. Nothing was imported. Upload the file again to start over.</Alert>
+        </div>
+      );
+    }
+    const counts = await readSmartCounts(job.id);
+    const nameSet = Boolean(upgradeMapping(job.mapping).fields.name);
+    return (
+      <div className="space-y-6">
+        {header}
+        <SmartImportJob
+          job={{
+            id: job.id,
+            fileName: job.fileName,
+            fileSize: job.fileSize,
+            status: job.status,
+            sheetName: job.sheetName,
+            sheetNames: job.sheetNames,
+            headerRow: job.headerRow,
+            totalRows: job.totalRows,
+            canChooseSheet: Boolean(job.stagingKey && getMediaStorage()),
+            rowsKept: counts.total > 0,
+          }}
+          initialStep={step === "map" || step === "review" ? step : nameSet ? "review" : "map"}
+          initialStatus={{
+            status: job.status,
+            counts,
+            cancelRequested: Boolean(job.cancelRequestedAt),
+            queuedAt: job.queuedAt?.toISOString() ?? null,
+            startedAt: job.startedAt?.toISOString() ?? null,
+            completedAt: job.completedAt?.toISOString() ?? null,
+            readAt: new Date().toISOString(),
+          }}
+        />
+      </div>
+    );
+  }
+  if (job.engine === "SMART" && job.status === "PREVIEW") {
+    return (
+      <div className="space-y-6">
+        {header}
+        <Alert tone="warning">Smart Bulk Import has been switched off for this project, so this draft cannot be continued. Nothing from it was imported.</Alert>
+      </div>
+    );
+  }
 
   if (job.status === "PREVIEW") {
     const rows = job.rows as unknown as RawImportRow[];

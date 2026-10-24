@@ -225,6 +225,19 @@ export const PROJECT_FEATURES = [
     workerEffect:
       "Stops recording pictures from incoming messages and stops fetching them. Pictures already saved stay in the database but are no longer shown.",
   },
+  {
+    key: "CLIENT_SMART_IMPORT",
+    label: "Clients — Smart Bulk Import",
+    description:
+      "Import up to 5,000 clients from any Excel or CSV file: map each field to a column, a fixed value or a sample, correct rows before saving, and import in the background (SMART_IMPORT.md). Needs Client Management. Off = the original import.",
+    defaultEnabled: false,
+    // A new way of writing many client records at once: switched on by a person, never by a plan.
+    manualOnly: true,
+    routes: [],
+    permissionKeys: [],
+    workerEffect:
+      "Nothing runs in the WhatsApp worker. Off stops new smart imports; one already running finishes in the app's background processor, and the original import is used again.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];
