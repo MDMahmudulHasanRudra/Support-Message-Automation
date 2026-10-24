@@ -392,6 +392,15 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                       {caps.canManageSubscriptions && !archived ? <CardLink href={tabHref("subscriptions")}>Add subscription</CardLink> : null}
                     </div>
                   )}
+                  {client.recordedExpiryDate ? (
+                    <div className="mt-3 rounded-[var(--radius-md)] border border-dashed border-[var(--color-border-strong)] px-3 py-2 text-sm">
+                      <p className="font-medium">
+                        Expiry on record: {client.recordedExpiryDate.toISOString().slice(0, 10)}
+                        {client.recordedExpiryService ? ` · ${client.recordedExpiryService}` : ""}
+                      </p>
+                      <p className={`text-xs ${muted}`}>From an import that gave an expiry but no start date — kept as a note, not a subscription term. Add a subscription with its start date to track it.</p>
+                    </div>
+                  ) : null}
                 </SectionCard>
               ) : null}
 

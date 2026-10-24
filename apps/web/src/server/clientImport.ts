@@ -123,6 +123,20 @@ export interface ImportRunResult {
   errors: Array<{ rowNumber: number; errors: string[] }>;
 }
 
+/**
+ * Smart Bulk Import's "expiry on record": an exact expiry the file gave with no start date. A fact about
+ * the client, never a subscription term (SMART_IMPORT.md §11). Like a subscription, written only for a
+ * person allowed to manage subscriptions. Nothing when the row has none (every other import).
+ */
+function recordedExpiryData(row: ResolvedImportRow, options: ImportOptions) {
+  if (!options.subscriptions || !row.recordedExpiry) return {};
+  return {
+    recordedExpiryDate: new Date(`${row.recordedExpiry.date}T00:00:00.000Z`),
+    recordedExpiryService: row.recordedExpiry.service?.slice(0, 120) ?? null,
+    recordedExpiryAt: new Date(),
+  };
+}
+
 /** Adds the row's subscription unless the client already has the same term (a re-imported file adds nothing twice). */
 async function addImportedTerm(tx: Prisma.TransactionClient, clientId: string, row: ResolvedImportRow, actorUserId: string | null): Promise<boolean> {
   const term = row.resolved.subscription;
@@ -179,6 +193,7 @@ export async function createImportedClient(tx: Prisma.TransactionClient, row: Re
         soldByMemberId: row.resolved.soldByMemberId,
         source: "IMPORT",
         sourceDetail: fileName.slice(0, 200),
+        ...recordedExpiryData(row, options),
         createdById: actorUserId,
         channels: { create: row.channels.map((c) => channelFields(c, "import")) },
       },
@@ -186,6 +201,9 @@ export async function createImportedClient(tx: Prisma.TransactionClient, row: Re
     });
     await recordClientActivity(tx, created.id, actorUserId, { type: "IMPORTED", summary: `Imported from ${fileName.slice(0, 80)} (row ${row.rowNumber})` });
     if (row.note) await tx.clientNote.create({ data: { clientId: created.id, body: row.note, authorId: actorUserId } });
+    if (options.subscriptions && row.recordedExpiry) {
+      await recordClientActivity(tx, created.id, actorUserId, { type: "EXPIRY_RECORDED", summary: `Expiry on record from the import: ${row.recordedExpiry.date}${row.recordedExpiry.service ? ` (${row.recordedExpiry.service})` : ""} — no start date, so not a subscription term` });
+    }
     if (options.subscriptions && (await addImportedTerm(tx, created.id, row, actorUserId))) {
       await recordClientActivity(tx, created.id, actorUserId, { type: "SUBSCRIPTION_ADDED", summary: `Subscription imported: ${row.resolved.subscription!.service} (${row.resolved.subscription!.startDate} → ${row.resolved.subscription!.endDate})` });
     }
@@ -248,6 +266,13 @@ export async function updateImportedClient(tx: Prisma.TransactionClient, clientI
     }
     if (Object.keys(data).length) await tx.client.update({ where: { id: clientId }, data });
     if (options.subscriptions && (await addImportedTerm(tx, clientId, row, actorUserId))) changed.push("subscription");
+    if (options.subscriptions && row.recordedExpiry) {
+      const same = current.recordedExpiryDate?.toISOString().slice(0, 10) === row.recordedExpiry.date && (current.recordedExpiryService ?? null) === row.recordedExpiry.service;
+      if (!same) {
+        await tx.client.update({ where: { id: clientId }, data: recordedExpiryData(row, options) });
+        changed.push("expiry on record");
+      }
+    }
     // The same note is never added twice: re-importing a file must not stack copies of it.
     if (row.note && !(await tx.clientNote.findFirst({ where: { clientId, body: row.note }, select: { id: true } }))) {
       await tx.clientNote.create({ data: { clientId, body: row.note, authorId: actorUserId } });

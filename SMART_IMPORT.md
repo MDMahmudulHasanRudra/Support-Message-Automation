@@ -155,3 +155,56 @@ Client Management). No plan switches it on.
 
 Switch `CLIENT_SMART_IMPORT` off: the old import is back, nothing else changes. The migration is additive (two
 enum values, columns with defaults, two tables); the old code never reads them.
+
+## 11. Review grid and flexible expiry (24 Oct 2026)
+
+**Root cause of what was missing.** The review showed only fields that were mapped or corrected, so an empty
+field could not be filled; errors were row-level sentences, so a whole row looked wrong for one cell; and the
+import's own subscription rule (`validateSubscription`) silently prefers a duration over an explicit expiry, needs
+a start date, and has no notion of separate year/month/day columns or a month without a day.
+
+**Review grid.** Every import field is always a column, in the official template's order (`SMART_REVIEW_ORDER`,
+pinned against `IMPORT_TEMPLATE_COLUMNS` by a test). Every cell is editable (click or Enter; Enter saves, Escape
+cancels; the arrow keys move between cells; a date picker for the two date fields; "back to the mapped value" per
+cell, "undo every correction" per row). Each problem is a structured `FieldIssue` on the field it concerns
+(`fieldIssues`, `clientSmartImport.ts`; team / staff / seller / country / currency by `rosterFieldIssues` on the
+server): red for an error, amber for a warning, nothing for an empty optional cell — only that cell, never the row.
+The import's verdict on the whole row stays the authority, and a refusal no single field explains is still shown.
+A row that needs fixing also lists its problems under it (visible when a column is hidden or scrolled away).
+Sticky header and first columns, horizontal scrolling inside the grid, a "Columns" picker (all shown by default,
+the choice kept per browser). Server paging is unchanged (25 / 50 / 100 rows).
+
+**Expiry (`packages/shared/src/clientSmartExpiry.ts`).** Every row ends with ONE exact `YYYY-MM-DD` or a problem:
+
+| Method | Input | Result |
+|---|---|---|
+| A — complete date | 2027-07-24 · 24/07/2027 · 24 Jul 2027 · an Excel serial | that date (the import's own `parseImportDate`, day first, month-first never guessed) |
+| B — separate parts | Expire Year / Month / Day columns (synonyms auto-matched; a month may be a name) | composed; leap years checked; a missing or two-digit year, a month outside 1–12 and a day the month does not have are cell errors |
+| C — start + duration | Start date, Duration, Duration unit | the subscriptions' own calendar-aware `addDuration` (31 Jan + 1 month = 28/29 Feb); shown with "Calculated from Start date + 9 months" |
+| D — expiry, no duration | an exact expiry and a start date | the term ends on that date |
+| D — expiry, no start | an exact expiry and NO start date | **"Expiry on record"** on the client (`Client.recordedExpiryDate` / `recordedExpiryService` / `recordedExpiryAt`, migration `20261024120000_client_recorded_expiry`): shown on the profile under Current subscription, labelled as not a term. No start date is invented and no subscription, state, renewal or due is created. Written only for a person allowed to manage subscriptions, like a term. |
+| E — month + year | July 2027 · Jul-2027 · 2027-07 · 07/2027, or year + month parts | kept in review until the day is given, unless "Use the last calendar day of the month" is explicitly chosen in the mapping |
+
+**Conflicts.** An explicit expiry that equals Start date + Duration is accepted. One that differs is an error on
+both the Expiry date and Duration cells unless the mapping explicitly says "use the file's expiry" (the duration
+is dropped, so the stored term has no contradicting duration) or "use the calculated expiry". Typing an expiry on
+the review screen for a row that has a duration clears that row's duration and says so. The original import
+(`validateSubscription`'s precedence) is unchanged.
+
+**Mapping editor.** An "Expiry date — how your file gives it" panel: Complete date / Separate year-month-day /
+Start date + duration / Month + year, auto-detected from the mapped columns and changeable; the part columns, the
+day policy and the conflict rule appear only where they apply. Mapping v2 gains the three part keys and
+`options` (`expiryMode`, `monthYearPolicy`, `expiryConflict`); old mappings read unchanged.
+
+**Tests (throwaway database).** `clientSmartExpiry.test.ts` (42: every method, leap years, month ends, year
+transitions, ambiguous and impossible dates, conflicts, expiry-only, field attribution, mapping);
+`smartImportExpiry.integration.test.ts` (9: column order against the template, empty cells editable, cell-level
+issues, correction + undo revalidated, 1 / 9 / 12-month terms imported with the right end dates, parts, impossible
+day, expiry-only recorded with no term and no due, no right → nothing written, conflict blocked then resolved,
+typed expiry clears duration, month+year last-day policy, no duplicate term on re-import). Break-tests: a
+conflict resolved by default, a day invented by default, the expiry-only path removed, and the composed-expiry
+issue check — each removed → its test failed. A browser walkthrough (desktop, dark, 390 px) on a mixed file.
+
+**Known limits.** A recorded expiry is shown on the client profile only (not on lists or reports, by design — it
+is not a term). Choosing a conflict rule applies to every row; a single row is resolved by correcting a cell.
+

@@ -10,9 +10,12 @@ import {
   looksLikeText,
   SMART_FIELD_KEYS,
   SMART_IMPORT_LIMITS,
+  SMART_REVIEW_ORDER,
   SMART_SAMPLE_VALUES,
   upgradeMapping,
   type ClientImportFieldKey,
+  type FieldIssue,
+  type ImportedClientRow,
   type FileAssessment,
   type SheetRecords,
   type SmartMapping,
@@ -21,7 +24,7 @@ import {
 import { prisma } from "@/server/db";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { loadExistingMatches } from "@/server/clientRecords";
-import { loadImportLookups, resolveRows } from "@/server/clientImportExtras";
+import { loadImportLookups, resolveImportExtras, resolveRows } from "@/server/clientImportExtras";
 import { matchOf } from "@/server/clientImport";
 
 /**
@@ -152,6 +155,12 @@ export interface RowAnalysis {
   output: Record<ClientImportFieldKey, string>;
   edited: ClientImportFieldKey[];
   hasSubscription: boolean;
+  /** Problems and notes, each on the field it concerns — the grid colours that cell, not the row. */
+  issues: FieldIssue[];
+  /** How the row's expiry was reached ("Calculated from Start date + 9 months"), when it has one. */
+  expiryBasis: string | null;
+  /** An expiry with no start date, recorded on the client rather than as a subscription. */
+  recordedExpiry: boolean;
 }
 
 export interface SmartSummary {
@@ -171,7 +180,7 @@ export interface SmartAnalysis {
   rows: RowAnalysis[];
   summary: SmartSummary;
   assessment: FileAssessment;
-  /** Fields worth showing as columns on the review: mapped, or corrected on some row. */
+  /** Every import field, in the official template's order — mapped or not, filled or not. */
   shownFields: ClientImportFieldKey[];
 }
 
@@ -224,7 +233,7 @@ async function analyzeRows(
   job: Pick<SmartJobForAnalysis, "revision" | "headers" | "blankHeaders" | "duplicateHeaders">,
 ): Promise<SmartAnalysis> {
   const built = buildSmartRows(staged, mapping, samples);
-  const resolved = resolveRows(built.valid, lookups);
+  const resolved = { ...resolveRows(built.valid, lookups), validBefore: new Map(built.valid.map((r) => [r.rowNumber, r])) };
   const repeats = findInFileDuplicates(resolved.valid);
   const { byKey, byCode } = await loadExistingMatches(
     resolved.valid.flatMap((r) => r.matchKeys),
@@ -236,13 +245,23 @@ async function analyzeRows(
   const blank = new Set(built.blank);
 
   const summary: SmartSummary = { total: staged.length, ready: 0, willCreate: 0, matchExisting: 0, repeats: 0, invalid: 0, ignored: 0, blank: 0, subscriptionRows: 0 };
-  const shown = new Set<ClientImportFieldKey>(["name"]);
-  for (const field of SMART_FIELD_KEYS) if (mapping.fields[field]) shown.add(field);
+  const rosterIssues = new Map(resolved.invalid.map((i) => [i.rowNumber, rosterFieldIssues(resolved.validBefore.get(i.rowNumber), lookups)]));
   const rows: RowAnalysis[] = staged.map((row) => {
     const output = built.outputs.get(row.rowNumber)!;
     const edited = SMART_FIELD_KEYS.filter((f) => Object.prototype.hasOwnProperty.call(row.edits ?? {}, f));
-    for (const f of edited) shown.add(f);
-    const base = { id: row.id, rowNumber: row.rowNumber, output, edited, errors: [] as string[], hasSubscription: false };
+    const issues = [...(built.issues.get(row.rowNumber) ?? []), ...(rosterIssues.get(row.rowNumber) ?? [])];
+    const expiryInfo = built.expiry.get(row.rowNumber);
+    const base = {
+      id: row.id,
+      rowNumber: row.rowNumber,
+      output,
+      edited,
+      errors: [] as string[],
+      hasSubscription: false,
+      issues,
+      expiryBasis: expiryInfo?.basis ?? null,
+      recordedExpiry: Boolean(validByRow.get(row.rowNumber)?.recordedExpiry),
+    };
     if (ignored.has(row.rowNumber)) {
       summary.ignored += 1;
       return { ...base, status: "IGNORED" };
@@ -257,7 +276,7 @@ async function analyzeRows(
       summary.invalid += 1;
       return { ...base, status: "INVALID", errors: errors ?? ["The row could not be read."] };
     }
-    const hasSubscription = Boolean(valid.resolved.subscription);
+    const hasSubscription = Boolean(valid.resolved.subscription || valid.recordedExpiry);
     if (hasSubscription) summary.subscriptionRows += 1;
     const first = repeats.get(row.rowNumber);
     if (first !== undefined) {
@@ -284,7 +303,22 @@ async function analyzeRows(
     readyRows: summary.ready,
     invalidRows: summary.invalid,
   });
-  return { revision: job.revision, rows, summary, assessment, shownFields: SMART_FIELD_KEYS.filter((f) => shown.has(f)) };
+  return { revision: job.revision, rows, summary, assessment, shownFields: [...SMART_REVIEW_ORDER] };
+}
+
+/** A row's team / staff / seller / country / currency problems, each on its own field (the same resolver, one field at a time). */
+function rosterFieldIssues(row: ImportedClientRow | undefined, lookups: Awaited<ReturnType<typeof loadImportLookups>>): FieldIssue[] {
+  if (!row) return [];
+  const empty = { country: null, currency: null, team: null, soldBy: null, assignedTo: null, subscription: null };
+  const issues: FieldIssue[] = [];
+  for (const field of ["country", "currency", "team", "assignedTo", "soldBy"] as const) {
+    if (!row.extras[field]) continue;
+    // Staff is checked against the team only when both are given, as the import itself does.
+    const extras = field === "assignedTo" ? { ...empty, assignedTo: row.extras.assignedTo, team: row.extras.team } : { ...empty, [field]: row.extras[field] };
+    const r = resolveImportExtras(extras, lookups);
+    if (!r.ok) for (const message of r.errors) if (field !== "assignedTo" || !/^Team /.test(message)) issues.push({ field, severity: "error", message });
+  }
+  return issues;
 }
 
 export const ROW_FILTERS = ["all", "ready", "new", "match", "repeat", "invalid", "ignored", "edited"] as const;

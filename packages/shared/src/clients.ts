@@ -441,6 +441,11 @@ export interface ImportedClientRow {
   note: string | null;
   channels: NormalizedChannel[];
   matchKeys: string[];
+  /**
+   * Smart Bulk Import only: an exact expiry with no start date, recorded on the client ("Expiry on
+   * record") rather than invented into a subscription term. Absent on every other import.
+   */
+  recordedExpiry?: { date: string; service: string | null } | null;
 }
 
 export interface ImportRowError {

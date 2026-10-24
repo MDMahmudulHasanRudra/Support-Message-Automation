@@ -61,6 +61,7 @@ export * from "./teamReportReliability.js";
 export * from "./chatRichMessages.js";
 export * from "./chatFileSend.js";
 export * from "./clientSmartImport.js";
+export * from "./clientSmartExpiry.js";
 export * from "./clientSubscriptions.js";
 export * from "./clientPayments.js";
 export * from "./clientColumns.js";
