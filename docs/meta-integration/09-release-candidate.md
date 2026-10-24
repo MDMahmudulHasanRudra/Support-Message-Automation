@@ -16,7 +16,7 @@ off per project, as before. The disclosure is off per connection.
 
 | Gate | Meaning | Status |
 |---|---|---|
-| **A** | All local tests pass (shared, engine, web, worker), plus typecheck, lint and builds | see §6 |
+| **A** | All local tests pass (shared, engine, web, worker), plus typecheck, lint and builds | **passed** (25 Oct 2026, isolated DB): shared 1,125 · engine 79 · web 1,040 (7 skipped) · worker 1,407 (6 skipped) · tsc clean · lint 0 errors · web + worker builds OK. The release branch's code tree is identical to the tested one; only docs were added after. |
 | **B** | Real Meta OAuth and messaging pass, in Development mode with an app-role tester (§2) | **not started**: needs the platform Meta app |
 | **C** | Advanced Access approved for the messaging permissions, and Business Verification done (§3) | **not started** |
 | **D** | A controlled pilot with one real customer passes (§5) | **not started** |
