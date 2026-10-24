@@ -110,7 +110,7 @@ Instagram app: Settings → Messages → Connected tools → **Allow access to m
 | 5 | From another (app-role) account, message the Page and the Instagram account | Both appear in All Conversations within seconds |
 | 6 | Reply from the inbox | It arrives. Messenger shows the delivered/read ticks. |
 | 7 | Reply from Meta Business Suite | It appears in the thread as the business, and AI is paused |
-| 8 | Switch AI on for the connection, ask a question the knowledge base covers | The AI answers within about 30 s (Meta requires bots to answer within 30 seconds) |
+| 8 | Switch AI on for the connection, ask a question the knowledge base covers | The AI answers; record the time with the §6a query |
 | 9 | Switch the disclosure on, then start a new conversation | The first AI reply starts with the disclosure line; the next does not |
 | 10 | Wait 24 h without a customer message, then message again | Messenger refuses the AI reply ("outside the window"); a person can still reply with Human Agent if approved |
 | 11 | Facebook → Settings → Business integrations → remove the app | Within about a minute the connection shows "Reconnect with Facebook" and nothing is sent |
@@ -202,16 +202,71 @@ The worker restart reconnects WhatsApp sessions for a few minutes, so pick a qui
 | Health monitoring | Worker loop `meta-connection-health` (every 5 min, each connection at most every 6 h) is in the per-loop liveness on `/health` and `/metrics`. Each connection shows its status and last error on Settings. Every transition goes to the System Log. A Main Admin sees what is missing in the configuration (variable names only). |
 | Operational diagnostics | `docker compose logs app worker \| grep "\[channels\]\|\[meta\]"`; Settings → a connection → **Test connection**; `/api/meta/webhook` GET with the verify token answers the challenge. |
 
+## 6a. Meta's 30-second rule, verified against the official policy, and how to measure it
+
+**What Meta's Messenger Platform policy overview says** (read 25 Oct 2026; the page shows no date):
+
+- "Automated bots must respond to user input within 30 seconds."
+- "Any input" is defined as "freeform text, quick replies, CTA buttons, and persistent menu clicks";
+  the Get Started button is excluded.
+- It "applies to all bots that are identified as 'automated'" (the bot type declared for the app);
+  **bots typed "hybrid" or "human" are not covered**.
+
+**What that means for this product.** AI here answers only some messages: it hands everything it
+cannot answer with verified knowledge to a person, and it stays silent while a person handles a
+conversation. That is a **hybrid** experience. When Meta asks for the experience type (App Review or
+the app's messaging settings), declare it as **hybrid**, truthfully. If it were declared "automated",
+every handover would break the 30-second rule. This is a declaration for you to make; nothing in the
+code depends on it.
+
+**The latency budget, from the code:**
+
+| Step | Time |
+|---|---|
+| Webhook recorded | under 1 s |
+| Event processing (`channel-inbound`, every 2 s) | up to 2 s |
+| `AI_SETTLE_MS` (a deliberate wait so a burst of lines gets one answer) | 3 s |
+| `channel-ai` loop (every 3 s) | up to 3 s |
+| Model call(s): optional query expansion + the answer | each capped at 30 s, typically a few seconds |
+| Outbound queue (every 2 s) | up to 2 s |
+
+Typical is roughly 8–15 s. The worst case (a slow model) can pass 30 s, which is another reason to
+declare the bot hybrid.
+
+**Measure it in gate B** with this query, run read-only on the test installation. It gives the time
+from the customer's message (Meta's own timestamp) to Meta accepting the AI reply:
+
+```sql
+SELECT c.type,
+       count(*)                                                                  AS ai_replies,
+       percentile_cont(0.5)  WITHIN GROUP (ORDER BY extract(epoch FROM r."sentAt" - m."occurredAt")) AS median_s,
+       percentile_cont(0.95) WITHIN GROUP (ORDER BY extract(epoch FROM r."sentAt" - m."occurredAt")) AS p95_s,
+       max(extract(epoch FROM r."sentAt" - m."occurredAt"))                      AS max_s
+FROM "ChannelMessage" m
+JOIN "ChannelMessage" r ON r.id = m."aiReplyMessageId"
+JOIN "ChannelConnection" c ON c.id = m."connectionId"
+WHERE m."aiOutcome" = 'REPLIED' AND r."sentAt" IS NOT NULL AND m."occurredAt" > now() - interval '7 days'
+GROUP BY c.type;
+```
+
+Record the result here before App Review:
+
+| Date | Channel | AI replies | Median | p95 | Max | Model |
+|---|---|---|---|---|---|---|
+| (gate B) | | | | | | |
+
 ## 7. Remaining blockers (by gate)
 
 1. **Gate B:** the platform Meta app does not exist yet (§1). This is the critical path.
 2. **Gate C:** App Review and Business Verification. Meta's timeline, typically days to weeks.
-3. **Not built, deliberately:**
+3. **The bot type** must be declared to Meta as **hybrid** (§6a), and AI latency measured and
+   recorded in gate B.
+4. **Not built, deliberately:**
    - a Notification Center alert when a connection needs reconnecting (it is visible on Settings and
      in the System Log);
    - sending attachments;
    - Instagram Login (accounts without a Page).
-4. **Known limits:**
+5. **Known limits:**
    - one workspace per Page;
    - more than 500 Pages per person are not all listed;
    - the AI answer time against Meta's 30-second bot rule must be measured in gate B.
