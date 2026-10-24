@@ -3,8 +3,10 @@ import { prisma } from "@/server/db";
 import { formatDateTime } from "@/lib/date";
 import Link from "@/components/ProjectLink";
 import { Alert, Badge, ButtonLink, Card, EmptyState, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
-import { MAX_CLIENT_IMPORT_BYTES, MAX_CLIENT_IMPORT_ROWS } from "@support-automation/shared";
-import { Download, FileSpreadsheet, ListChecks, Upload, Users } from "lucide-react";
+import { MAX_CLIENT_IMPORT_BYTES, MAX_CLIENT_IMPORT_ROWS, SMART_IMPORT_LIMITS } from "@support-automation/shared";
+import { CheckCircle2, Download, FileSpreadsheet, ListChecks, Loader2, PencilLine, ShieldCheck, Upload, Users, Wand2 } from "lucide-react";
+import { smartImportEnabled } from "@/server/smartImport";
+import { SmartUpload } from "./smart/SmartUpload";
 import { hasPermission } from "@/server/permissions";
 import { IMPORT_TEMPLATE_COLUMNS } from "@/server/clientImportTemplate";
 import { ImportUpload } from "./ImportUpload";
@@ -26,21 +28,92 @@ function Step({ n, title, icon: Icon, children }: { n: number; title: string; ic
   );
 }
 
-const STATUS_COLOR: Record<string, "green" | "yellow" | "red" | "gray" | "blue"> = { PREVIEW: "blue", PROCESSING: "yellow", COMPLETED: "green", PARTIAL: "yellow", FAILED: "red", CANCELLED: "gray" };
+const STATUS_COLOR: Record<string, "green" | "yellow" | "red" | "gray" | "blue"> = { PREVIEW: "blue", QUEUED: "yellow", PROCESSING: "yellow", COMPLETED: "green", PARTIAL: "yellow", FAILED: "red", CANCELLED: "gray", EXPIRED: "gray" };
+const STATUS_LABEL: Record<string, string> = { PREVIEW: "draft", QUEUED: "queued", PROCESSING: "importing", COMPLETED: "completed", PARTIAL: "partly imported", FAILED: "failed", CANCELLED: "cancelled", EXPIRED: "expired" };
 
 /** The rule clearClientImports applies: never a running import, never a preview from the last day. */
 function clearable(j: { status: string; createdAt: Date }): boolean {
-  return j.status !== "PROCESSING" && !(j.status === "PREVIEW" && Date.now() - j.createdAt.getTime() < 24 * 60 * 60_000);
+  return j.status !== "PROCESSING" && j.status !== "QUEUED" && !(j.status === "PREVIEW" && Date.now() - j.createdAt.getTime() < 24 * 60 * 60_000);
 }
 
 export default async function ClientImportPage() {
   const session = await requireAccess("clients.import");
   const [canExport, caps] = await Promise.all([hasPermission(session, "clients.export"), clientViewerCaps(session)]);
+  const smart = await smartImportEnabled();
   const jobs = await prisma.clientImportJob.findMany({
     orderBy: { createdAt: "desc" },
     take: 30,
     select: { id: true, fileName: true, status: true, createdAt: true, totalRows: true, importedCount: true, updatedCount: true, skippedCount: true, failedCount: true, createdBy: { select: { name: true } } },
   });
+  const history = (note?: React.ReactNode) => <ImportHistory jobs={jobs} canDelete={caps.canDelete} note={note} />;
+  if (smart) {
+    const running = jobs.filter((j) => j.status === "QUEUED" || j.status === "PROCESSING");
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Smart Bulk Import"
+          description={`Bring in up to ${SMART_IMPORT_LIMITS.maxRows.toLocaleString()} clients from any Excel or CSV file — your own columns, no template needed. Nothing is saved until you have checked every row.`}
+        />
+        {running.length ? (
+          <div className="space-y-2">
+            {running.map((j) => (
+              <Link key={j.id} href={`/clients/import/${j.id}`} className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-info-border)] bg-[var(--color-info-bg)] px-4 py-3 text-[13px] hover:border-[var(--color-accent)]">
+                <Loader2 className="size-4 shrink-0 animate-spin text-[color:var(--color-info-fg)]" aria-hidden />
+                <span className="min-w-0 flex-1 truncate">
+                  <strong>{j.fileName}</strong> is {j.status === "QUEUED" ? "waiting to start" : "importing"} in the background
+                </span>
+                <span className="shrink-0 font-medium underline underline-offset-2">See progress</span>
+              </Link>
+            ))}
+          </div>
+        ) : null}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <Card className="p-5! sm:p-6!">
+            <SmartUpload maxMb={SMART_IMPORT_LIMITS.maxBytes / 1024 / 1024} maxRows={SMART_IMPORT_LIMITS.maxRows} />
+          </Card>
+          <Card className="flex flex-col gap-4 p-5! sm:p-6!">
+            <h2 className="text-[15px] font-semibold">How it works</h2>
+            <ol className="space-y-3.5">
+              {[
+                { icon: Upload, title: "Upload your file", text: "Any Excel or CSV export. Pick the sheet and the header row if the file has a title above the table." },
+                { icon: Wand2, title: "Match the columns", text: "Recognised columns are matched for you. One column can fill several fields; use a fixed value, a sample value, or leave a field empty." },
+                { icon: PencilLine, title: "Check and correct", text: "Every row shows whether it is new, an existing client, a repeat or needs fixing — correct it right there." },
+                { icon: ShieldCheck, title: "Import safely", text: "It runs in the background. Leave the page, come back, stop it — imported clients are never imported twice." },
+              ].map((s, i) => (
+                <li key={s.title} className="flex gap-3">
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)]/10 text-[color:var(--color-accent)]">
+                    <s.icon className="size-4" aria-hidden />
+                  </span>
+                  <span>
+                    <span className="block text-[13.5px] font-medium">
+                      {i + 1}. {s.title}
+                    </span>
+                    <span className="block text-[12.5px] leading-snug text-[color:var(--color-muted-foreground)]">{s.text}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+            <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] pt-4 text-[12.5px] text-[color:var(--color-muted-foreground)]">
+              <CheckCircle2 className="size-3.5 text-[color:var(--color-success)]" aria-hidden />
+              Prefer a ready-made sheet?
+              <ButtonLink href="/api/clients/import/template" size="sm" download>
+                <FileSpreadsheet className="size-3.5" aria-hidden />
+                Download the template
+              </ButtonLink>
+              {canExport ? (
+                <ButtonLink href="/api/clients/import/template?data=current" size="sm" download>
+                  <Users className="size-3.5" aria-hidden />
+                  With my clients
+                </ButtonLink>
+              ) : null}
+            </div>
+          </Card>
+        </div>
+        {history()}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader title="Import clients" description="Download the template, fill one client per row, upload it. You see a preview and every problem row before anything is saved." />
@@ -112,15 +185,38 @@ export default async function ClientImportPage() {
         </div>
       </details>
 
-      <div>
-        <SectionHeader
-          title="Import history"
-          description={caps.canDelete ? "Clearing removes only the record of an import — never the clients it brought in." : undefined}
-          action={caps.canDelete && jobs.length ? <ClearImports count={jobs.filter(clearable).length} /> : undefined}
-        />
-        {jobs.length === 0 ? (
-          <EmptyState>No imports yet.</EmptyState>
-        ) : (
+      {history(
+        <Alert tone="info">Imports run inside the request, up to {MAX_CLIENT_IMPORT_ROWS.toLocaleString()} rows at a time. For a bigger file, split it. An import interrupted by a restart can be closed from its page.</Alert>,
+      )}
+    </div>
+  );
+}
+
+type HistoryJob = {
+  id: string;
+  fileName: string;
+  status: string;
+  createdAt: Date;
+  totalRows: number;
+  importedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  createdBy: { name: string } | null;
+};
+
+function ImportHistory({ jobs, canDelete, note }: { jobs: HistoryJob[]; canDelete: boolean; note?: React.ReactNode }) {
+  return (
+    <div>
+      <SectionHeader
+        title="Import history"
+        description={canDelete ? "Clearing removes only the record of an import — never the clients it brought in." : undefined}
+        action={canDelete && jobs.length ? <ClearImports count={jobs.filter(clearable).length} /> : undefined}
+      />
+      {jobs.length === 0 ? (
+        <EmptyState>No imports yet.</EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
           <Table>
             <thead>
               <tr>
@@ -133,7 +229,7 @@ export default async function ClientImportPage() {
                 <Th>Updated</Th>
                 <Th>Skipped</Th>
                 <Th>Failed</Th>
-                {caps.canDelete ? <Th>Actions</Th> : null}
+                {canDelete ? <Th>Actions</Th> : null}
               </tr>
             </thead>
             <tbody>
@@ -147,23 +243,21 @@ export default async function ClientImportPage() {
                   <Td>{formatDateTime(j.createdAt)}</Td>
                   <Td>{j.createdBy?.name ?? "—"}</Td>
                   <Td>
-                    <Badge color={STATUS_COLOR[j.status] ?? "gray"}>{j.status.toLowerCase()}</Badge>
+                    <Badge color={STATUS_COLOR[j.status] ?? "gray"}>{STATUS_LABEL[j.status] ?? j.status.toLowerCase()}</Badge>
                   </Td>
                   <Td className="tabular">{j.totalRows.toLocaleString()}</Td>
                   <Td className="tabular">{j.importedCount.toLocaleString()}</Td>
                   <Td className="tabular">{j.updatedCount.toLocaleString()}</Td>
                   <Td className="tabular">{j.skippedCount.toLocaleString()}</Td>
                   <Td className="tabular">{j.failedCount.toLocaleString()}</Td>
-                  {caps.canDelete ? <Td className="text-right">{clearable(j) ? <ClearImports id={j.id} /> : null}</Td> : null}
+                  {canDelete ? <Td className="text-right">{clearable(j) ? <ClearImports id={j.id} /> : null}</Td> : null}
                 </tr>
               ))}
             </tbody>
           </Table>
-        )}
-        <div className="mt-3">
-          <Alert tone="info">Imports run inside the request, up to {MAX_CLIENT_IMPORT_ROWS.toLocaleString()} rows at a time. For a bigger file, split it. An import interrupted by a restart can be closed from its page.</Alert>
         </div>
-      </div>
+      )}
+      {note ? <div className="mt-3">{note}</div> : null}
     </div>
   );
 }

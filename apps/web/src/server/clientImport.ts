@@ -66,7 +66,7 @@ export interface ImportPreview {
 }
 
 /** The existing client a row matches, by any of its identifiers or its typed code. */
-function matchOf(row: ImportedClientRow, byKey: Map<string, string>, byCode: Map<string, string>): string | undefined {
+export function matchOf(row: ImportedClientRow, byKey: Map<string, string>, byCode: Map<string, string>): string | undefined {
   for (const key of row.matchKeys) {
     const id = byKey.get(key);
     if (id) return id;
@@ -152,7 +152,15 @@ async function addImportedTerm(tx: Prisma.TransactionClient, clientId: string, r
 }
 
 async function createRow(row: ResolvedImportRow, fileName: string, actorUserId: string | null, options: ImportOptions): Promise<void> {
-  await prisma.$transaction(async (tx) => {
+  await prisma.$transaction((tx) => createImportedClient(tx, row, fileName, actorUserId, options));
+}
+
+/**
+ * Creates the client a row describes, inside the caller's transaction — so Smart Bulk Import can record
+ * the row's outcome in the same commit (SMART_IMPORT.md §2.5). Returns the new client's id.
+ */
+export async function createImportedClient(tx: Prisma.TransactionClient, row: ResolvedImportRow, fileName: string, actorUserId: string | null, options: ImportOptions): Promise<string> {
+  {
     const code = row.fields.code ?? (await nextClientCode(tx));
     const created = await tx.client.create({
       data: {
@@ -181,12 +189,18 @@ async function createRow(row: ResolvedImportRow, fileName: string, actorUserId: 
     if (options.subscriptions && (await addImportedTerm(tx, created.id, row, actorUserId))) {
       await recordClientActivity(tx, created.id, actorUserId, { type: "SUBSCRIPTION_ADDED", summary: `Subscription imported: ${row.resolved.subscription!.service} (${row.resolved.subscription!.startDate} → ${row.resolved.subscription!.endDate})` });
     }
-  });
+    return created.id;
+  }
 }
 
 /** Applies the file's non-empty values to a client that already exists. Never un-archives, never resets a status the file did not give. */
 async function updateRow(clientId: string, row: ResolvedImportRow, fileName: string, actorUserId: string | null, options: ImportOptions): Promise<"UPDATED" | "ARCHIVED"> {
-  return prisma.$transaction(async (tx) => {
+  return prisma.$transaction((tx) => updateImportedClient(tx, clientId, row, fileName, actorUserId, options));
+}
+
+/** `updateRow`'s work inside the caller's transaction (see `createImportedClient`). */
+export async function updateImportedClient(tx: Prisma.TransactionClient, clientId: string, row: ResolvedImportRow, fileName: string, actorUserId: string | null, options: ImportOptions): Promise<"UPDATED" | "ARCHIVED"> {
+  {
     const current = await tx.client.findFirst({ where: { id: clientId }, include: { channels: { select: { kind: true, normalizedValue: true } } } });
     if (!current || current.status === "ARCHIVED") return "ARCHIVED" as const;
     const data: Prisma.ClientUpdateInput = {};
@@ -241,7 +255,7 @@ async function updateRow(clientId: string, row: ResolvedImportRow, fileName: str
     }
     if (changed.length) await recordClientActivity(tx, clientId, actorUserId, { type: "IMPORT_UPDATED", summary: `Updated from ${fileName.slice(0, 80)}: ${changed.join(", ")}` });
     return "UPDATED" as const;
-  });
+  }
 }
 
 /**

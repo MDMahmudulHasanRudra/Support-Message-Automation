@@ -2952,6 +2952,22 @@ records, CRUD, duplicates, list/details, import/export, timeline, per-channel co
   - **Billing figures are never selected for a viewer without `clients.view_billing`**, and a billing filter from one is
     ignored. Column preferences are re-sanitized on every read. Photos are stripped, bounded thumbnails in `ClientPhoto`.
 
+**Smart Bulk Import (`SMART_IMPORT.md`, 24 Oct 2026)** — feature `CLIENT_SMART_IMPORT`, off and `manualOnly`; off = the
+original import, untouched. Up to 5,000 rows / 15 MB from any file. Rules worth not undoing:
+- **Mapping v2 decides only each field's TEXT** (`packages/shared/src/clientSmartImport.ts`: from file + fallback, same
+  value, sample, empty; one column may feed several fields). Every rule after that is the old import's `buildImportRows`
+  / `resolveRows`, unchanged. Sample values are opt-in, frozen into constants at confirmation. A "looks like" header
+  match is a suggestion, never applied; subscription dates are not auto-applied without a Service column.
+- **Rows are staged in `ClientImportRow`**; validation is derived on every read (cached per `revision`), never stored.
+  Every change bumps `revision`, and a confirmation must name the current one.
+- **The processor runs in the APP process** (`instrumentation.ts` → `server/smartImportProcessor.ts`): a conditional
+  claim with a 60 s lease, batches of 25, and each row ONE transaction — sorted advisory locks on its identifiers, the
+  existing client re-read inside them, the write, and the row's outcome conditional on it still being PENDING. Never
+  replace that with a stored plan of matches or an unconditional outcome update: both were break-tested.
+- Cancel stops between batches and never undoes; retry re-runs only FAILED and never-attempted rows. Drafts expire
+  after 7 days; finished imports' staged rows are deleted after 7 days. The upload checks the zip directory before
+  parsing (`inspectXlsxZip`).
+
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 
 On the platform (Layer 1). Rules worth not undoing:

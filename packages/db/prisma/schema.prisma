@@ -642,6 +642,8 @@ model Project {
   clientNotes                          ClientNote[]
   clientActivities                     ClientActivity[]
   clientImportJobs                     ClientImportJob[]
+  clientImportRows                     ClientImportRow[]
+  clientImportPresets                  ClientImportPreset[]
   clientDues                           ClientDue[]
   clientDueEvents                      ClientDueEvent[]
   clientBillingCurrencies              ClientBillingCurrency[]
@@ -863,6 +865,7 @@ model User {
   clientNotesWritten             ClientNote[]              @relation("ClientNoteAuthor")
   clientActivitiesDone           ClientActivity[]          @relation("ClientActivityActor")
   clientImportsStarted           ClientImportJob[]         @relation("ClientImportCreatedBy")
+  clientImportPresets            ClientImportPreset[]      @relation("ClientImportPresetCreatedBy")
   clientDuesCreated              ClientDue[]               @relation("ClientDueCreatedBy")
   clientDuesUpdated              ClientDue[]               @relation("ClientDueUpdatedBy")
   clientDueEventsDone            ClientDueEvent[]          @relation("ClientDueEventActor")
@@ -6445,6 +6448,10 @@ enum ClientImportStatus {
   PARTIAL
   FAILED
   CANCELLED
+  /// Smart Bulk Import (SMART_IMPORT.md): confirmed, waiting for the background processor.
+  QUEUED
+  /// Smart Bulk Import: a draft nobody confirmed within 7 days; its staged rows were deleted.
+  EXPIRED
 }
 
 enum ClientDuplicatePolicy {
@@ -6514,6 +6521,7 @@ model Client {
   photo         ClientPhoto?
   payments      ClientPayment[]
   groupLinks    ClientWhatsAppGroupLink[]
+  importRows    ClientImportRow[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -6619,7 +6627,81 @@ model ClientImportJob {
   startedAt       DateTime?
   completedAt     DateTime?
 
+  // ── Smart Bulk Import (SMART_IMPORT.md). Defaults leave every older job exactly as it was. ──
+  /// LEGACY = the original in-request import (rows in `rows`); SMART = staged rows + background processor.
+  engine             String    @default("LEGACY")
+  /// Bumped by every change to the mapping, a row or the sheet. A confirmation must name the current one.
+  revision           Int       @default(0)
+  confirmedRevision  Int?
+  fileSize           Int       @default(0)
+  sheetName          String?
+  sheetNames         String[]  @default([])
+  headerRow          Int       @default(1)
+  headers            String[]  @default([])
+  blankHeaders       Int       @default(0)
+  duplicateHeaders   Int       @default(0)
+  /// The uploaded file on the media volume (private, never served), kept only to re-read another
+  /// sheet or header row. Deleted when the import is confirmed, discarded or expires.
+  stagingKey         String?
+  /// Whether this import may add subscriptions — decided from the confirming person's rights.
+  allowSubscriptions Boolean   @default(false)
+  acknowledgedWarnings String[] @default([])
+  queuedAt           DateTime?
+  cancelRequestedAt  DateTime?
+  /// The processor holding this job until then; a later claim may take it over (a restart).
+  leaseUntil         DateTime?
+  /// After this, the staged rows (and an unconfirmed draft) are deleted.
+  expiresAt          DateTime?
+
+  stagedRows ClientImportRow[]
+
   @@index([projectId, createdAt])
+  @@index([engine, status, leaseUntil])
+}
+
+/// One row of a Smart Bulk Import file (SMART_IMPORT.md): the file's cells, the person's corrections,
+/// and — once processed — what happened to it. A row's client write and its outcome commit together,
+/// so a row is never written twice.
+model ClientImportRow {
+  id          String          @id @default(cuid())
+  projectId   String          @default(dbgenerated("project_id_required()"))
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  jobId       String
+  job         ClientImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  /// The row's place in the sheet as a person counts it.
+  rowNumber   Int
+  /// { header: text } — the file's own cells, as read.
+  source      Json
+  /// { fieldKey: text } — corrections made on the review screen. A key present overrides the mapping.
+  edits       Json            @default("{}")
+  ignored     Boolean         @default(false)
+  /// null until confirmed; then PENDING → CREATED | UPDATED | SKIPPED | INVALID | FAILED, or IGNORED.
+  outcome     String?
+  message     String?
+  clientId    String?
+  client      Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  processedAt DateTime?
+
+  @@unique([jobId, rowNumber])
+  @@index([jobId, outcome])
+}
+
+/// A saved mapping (SMART_IMPORT.md). Never holds a client's data: field rules and column names only.
+model ClientImportPreset {
+  id          String   @id @default(cuid())
+  projectId   String   @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name        String
+  /// Shared presets are offered to everybody who may import in this project; personal ones only to their creator.
+  shared      Boolean  @default(false)
+  mapping     Json
+  version     Int      @default(1)
+  createdById String?
+  createdBy   User?    @relation("ClientImportPresetCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, name])
 }
 
 // ─── Client billing (CLIENT_CENTER_PLAN.md §2) — manual records, never a ledger ─────────────────────
