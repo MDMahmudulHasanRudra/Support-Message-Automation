@@ -414,7 +414,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
             exportBase="/api/clients/export"
             today={ctx.today}
           />
-          <p className={`mt-2 hidden text-xs md:block ${mutedText}`}>Scroll sideways for more columns · Customize columns to choose what you see · Open a client for the complete history</p>
+          <p className={`mt-2 hidden text-xs md:block ${mutedText}`}>Scroll inside the table, down for more clients and sideways for more columns · Customize columns to choose what you see · Open a client for the complete history</p>
           <Pagination
             page={page}
             pageSize={pageSize}

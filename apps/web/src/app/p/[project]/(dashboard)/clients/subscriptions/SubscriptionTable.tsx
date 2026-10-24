@@ -13,6 +13,7 @@ import { ClientAvatar } from "../ClientAvatar";
 import { RenewDialog } from "../Client360Panels";
 import { daysBetween, DaysLeftBar, flag } from "../ModuleKit";
 import { RowMenu } from "../RowMenu";
+import { LIST_SCROLL_BOX } from "@/lib/listPageSizes";
 
 const muted = "text-[color:var(--color-muted-foreground)]";
 
@@ -69,7 +70,7 @@ export function SubscriptionTable({
       if (r.ok) router.refresh();
     });
 
-  const th = "whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
+  const th = "sticky top-0 z-[2] whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
   const td = "border-b border-[var(--color-border)] px-4 py-3 align-middle text-[13px]";
   return (
     <>
@@ -84,7 +85,7 @@ export function SubscriptionTable({
           </Button>
         </div>
       ) : null}
-      <div className="overflow-x-auto rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs)]">
+      <div className={`${LIST_SCROLL_BOX} rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs)]`} data-list-scroll>
         <table className="w-full border-separate border-spacing-0 text-left">
           <thead>
             <tr>

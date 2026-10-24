@@ -117,6 +117,9 @@ export interface SmartReview {
   pageSize: number;
 }
 
+/** Every row of the page is an editable cell per field, so the review stops at 1,000 rows a page. */
+const REVIEW_PAGE_SIZES = [25, 50, 100, 250, 500, 1000];
+
 export async function loadSmartReview(jobId: string, query: { filter?: string; search?: string; page?: number; pageSize?: number }): Promise<SmartReview | { error: string }> {
   const g = await gate();
   if ("error" in g) return g;
@@ -124,7 +127,7 @@ export async function loadSmartReview(jobId: string, query: { filter?: string; s
   if (!job) return { error: NOT_FOUND };
   const analysis = await analyzeSmartJob(job);
   const filter: RowFilter = (ROW_FILTERS as readonly string[]).includes(query.filter ?? "") ? (query.filter as RowFilter) : "all";
-  const pageSize = [25, 50, 100].includes(Number(query.pageSize)) ? Number(query.pageSize) : 50;
+  const pageSize = REVIEW_PAGE_SIZES.includes(Number(query.pageSize)) ? Number(query.pageSize) : 50;
   const filtered = filterRows(analysis.rows, filter, String(query.search ?? "").slice(0, 100));
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const page = Math.min(Math.max(1, Math.floor(Number(query.page) || 1)), pages);

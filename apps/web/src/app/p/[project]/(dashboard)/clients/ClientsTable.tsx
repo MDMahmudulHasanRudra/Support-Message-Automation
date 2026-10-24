@@ -17,6 +17,7 @@ import {
   type BulkClientResult,
 } from "@/server/actions/clients";
 import type { ClientListRow } from "@/server/clients";
+import { LIST_SCROLL_BOX } from "@/lib/listPageSizes";
 import {
   clientDisplayName,
   CLIENT_SOURCE_LABELS,
@@ -471,7 +472,7 @@ export function ClientsTable({
     tags: { title: `Update tags on ${count} client(s)?`, description: pending?.kind === "tags" ? `${pending.add ? `Add: ${pending.add}. ` : ""}${pending.remove ? `Remove: ${pending.remove}. ` : ""}Archived clients are skipped.` : "", label: "Update tags", tone: "primary" },
   };
 
-  const th = "whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
+  const th = "sticky top-0 whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
   const td = "border-b border-[var(--color-border)] px-4 py-3.5 align-middle text-[13px]";
   const sticky = "sticky z-[1] bg-[var(--color-surface)] group-hover:bg-[var(--color-surface-sunken)]";
 
@@ -576,22 +577,22 @@ export function ClientsTable({
       ) : null}
 
       {/* Desktop and tablet: the register. */}
-      <div className="hidden overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] md:block">
+      <div className={`hidden ${LIST_SCROLL_BOX} rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] md:block`} data-list-scroll>
         <table className="w-full border-separate border-spacing-0 text-left">
           <thead>
             <tr>
               {showBulk ? (
-                <th className={`${th} sticky left-0 z-[2] w-10`}>
+                <th className={`${th} left-0 z-[3] w-10`}>
                   <Checkbox checked={allVisible} indeterminate={!allVisible && anyVisible} onChange={togglePage} aria-label="Select this page" />
                 </th>
               ) : null}
-              <th className={`${th} sticky z-[2] ${showBulk ? "left-10" : "left-0"} border-r`}>Client / ID</th>
+              <th className={`${th} z-[3] ${showBulk ? "left-10" : "left-0"} border-r`}>Client / ID</th>
               {dataColumns.map((k) => (
-                <th key={k} className={th}>
+                <th key={k} className={`${th} z-[2]`}>
                   {columnLabels[k] ?? k}
                 </th>
               ))}
-              <th className={`${th} text-right`}>
+              <th className={`${th} z-[2] text-right`}>
                 <span className="sr-only">Actions</span>
               </th>
             </tr>

@@ -266,9 +266,9 @@ export function ReviewGrid({ jobId, onBackToMapping, onQueued }: { jobId: string
               {data.filteredCount.toLocaleString()} row{data.filteredCount === 1 ? "" : "s"}
             </span>
             <Select value={String(pageSize)} onChange={(e) => (setPageSize(Number(e.target.value)), setPage(1))} aria-label="Rows per page" className="h-8 w-auto text-[12.5px]">
-              {[25, 50, 100].map((n) => (
+              {[25, 50, 100, 250, 500, 1000].map((n) => (
                 <option key={n} value={n}>
-                  {n} per page
+                  {n.toLocaleString("en-US")} per page
                 </option>
               ))}
             </Select>

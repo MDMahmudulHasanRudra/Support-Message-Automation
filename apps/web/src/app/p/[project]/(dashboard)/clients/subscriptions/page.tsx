@@ -1,3 +1,4 @@
+import { LARGE_LIST_PAGE_SIZES, pickPageSize } from "@/lib/listPageSizes";
 import { CalendarCheck2, CalendarClock, CalendarX2, CirclePause, CirclePlay, FlaskConical, Plus, Search } from "lucide-react";
 import { pageAccess } from "@/server/authorize";
 import { hasPermission } from "@/server/permissions";
@@ -25,7 +26,7 @@ const VIEWS = [
   { key: "paused", label: "Paused", state: "PAUSED", hint: "On hold by staff." },
 ] as const;
 
-const PAGE_SIZES = [10, 25, 50, 100];
+const PAGE_SIZES = [...LARGE_LIST_PAGE_SIZES];
 /** A client with a current term — what "a subscription" means on this page. */
 const HAS_TERM = { currentSubscriptionId: { not: null } } as const;
 
@@ -40,7 +41,7 @@ export default async function SubscriptionsPage({ searchParams }: { searchParams
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
   const view = VIEWS.find((v) => v.key === one(params.view)) ?? VIEWS[0];
   const page = Math.max(1, Number(one(params.page)) || 1);
-  const pageSize = PAGE_SIZES.includes(Number(one(params.pageSize))) ? Number(one(params.pageSize)) : 25;
+  const pageSize = pickPageSize(one(params.pageSize), 25, PAGE_SIZES);
   const caps = await clientViewerCaps(session);
   if (!caps.settings.subscriptions) {
     return (

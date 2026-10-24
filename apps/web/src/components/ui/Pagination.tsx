@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import type { ReactNode } from "react";
+import { pageSizeLabel } from "@/lib/listPageSizes";
 
 export function Pagination({
   page,
@@ -55,10 +56,10 @@ export function Pagination({
       </p>
 
       {pageSizeOptions && buildPageSizeHref ? (
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs">Show</span>
+        <div className="flex max-w-full items-center gap-1.5 overflow-x-auto">
+          <span className="shrink-0 text-xs">Show</span>
           {pageSizeOptions.map((size) => (
-            <PageSizeLink key={size} href={buildPageSizeHref(size)} active={size === pageSize} label={String(size)} />
+            <PageSizeLink key={size} href={buildPageSizeHref(size)} active={size === pageSize} label={pageSizeLabel(size)} />
           ))}
         </div>
       ) : null}
@@ -85,7 +86,7 @@ function PageSizeLink({ href, active, label }: { href: string; active: boolean; 
     <Link
       href={href}
       aria-current={active ? "true" : undefined}
-      className={`rounded-full px-2.5 py-1 text-xs tabular transition-colors ${
+      className={`shrink-0 rounded-full px-2.5 py-1 text-xs tabular transition-colors ${
         active
           ? "bg-[var(--color-primary)] text-[var(--color-on-primary)]"
           : "bg-[var(--color-neutral-bg)] text-[color:var(--color-neutral-fg)] hover:bg-[var(--color-border)]"
