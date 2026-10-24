@@ -13,6 +13,12 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Connect with Facebook** (one-click Messenger / Instagram through the platform's own Meta app; off unless
+  `META_INTEGRATION_ENABLED=true`; migration `20261025090000_meta_platform_oauth`). Built on branch `feat/meta-oauth`,
+  **mock-tested only** — not pushed, not deployed, not yet tried against a real Meta app (which needs App Review and
+  Business Verification to serve customers' Pages). Manual connections are unchanged.
+  - Reference: `docs/meta-integration/` (setup for the operator: `META_DEVELOPER_SETUP.md`).
+
 - **Unified messaging reporting** (`UNIFIED_REPORTING`, off by default; no migration, no worker change). Built on `rudra`; not deployed.
   - **Team Report**: personal and combined scopes, run information, customer-specific replies, and per employee: a ranking
     on each measure (no blended score, small samples shown as not enough data), daily engagement by group, and a

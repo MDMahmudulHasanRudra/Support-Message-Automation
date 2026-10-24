@@ -661,6 +661,7 @@ model Project {
   emailSettings                        EmailSettings?
   emailOutbox                          EmailOutbox[]
   channelInboundEvents                 ChannelInboundEvent[]
+  metaOAuthSessions                    MetaOAuthSession[]
   messageDropCounterRows               MessageDropCounter[]
   groupBroadcastJobRows                GroupBroadcastJob[]
   groupParticipantAddJobRows           GroupParticipantAddJob[]
@@ -6142,6 +6143,85 @@ enum ChannelType {
   TELEGRAM
 }
 
+enum ChannelAuthMode {
+  MANUAL
+  PLATFORM
+}
+
+enum MetaOAuthPurpose {
+  CONNECT
+  RECONNECT
+}
+
+enum MetaOAuthStatus {
+  /// Sent to Meta; waiting for Meta to send the person back.
+  STARTED
+  /// Meta sent them back and the code was redeemed; waiting for them to choose Pages.
+  AUTHORIZED
+  /// Pages chosen and saved. The user token is wiped.
+  COMPLETED
+  /// The person declined at Meta, or cancelled the choice.
+  CANCELLED
+  /// The code could not be redeemed or Meta refused a step.
+  FAILED
+  EXPIRED
+}
+
+/// One "Connect with Facebook" attempt, from the button to the saved Pages (docs/meta-integration/05).
+/// The state, browser binding and claim are stored only as SHA-256 hashes; the user token only as an
+/// `encryptSecret` envelope, and only between Meta's answer and the choice (wiped when it ends).
+model MetaOAuthSession {
+  id                  String           @id @default(cuid())
+  projectId           String           @default(dbgenerated("project_id_required()"))
+  project             Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// The signed-in person who pressed the button. Only they can finish it.
+  userId              String
+  purpose             MetaOAuthPurpose
+  /// What they asked for (Messenger or Instagram); both are offered on the choice screen.
+  channelType         ChannelType?
+  /// RECONNECT: the connection being reconnected (same project; checked on use).
+  connectionId        String?
+  status              MetaOAuthStatus  @default(STARTED)
+  stateHash           String           @unique
+  /// Hash of a random value in an HTTP-only cookie set on the browser that pressed the button.
+  browserBindingHash  String
+  /// Hash of the one-time code the callback hands back to the customer's address.
+  claimHash           String?          @unique
+  claimedAt           DateTime?
+  /// The address the person started from; the callback sends them back there and nowhere else.
+  returnOrigin        String
+  /// The project part of the path to come back to (`/p/<slug>`); a slug never changes.
+  returnPath          String
+  metaUserId          String?
+  metaUserName        String?
+  userTokenCiphertext String?
+  userTokenExpiresAt  DateTime?
+  grantedScopes       String[]         @default([])
+  declinedScopes      String[]         @default([])
+  /// Why it failed or was cancelled, in words. Never a token or Meta's raw error.
+  failureReason       String?
+  expiresAt           DateTime
+  completedAt         DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  connections ChannelConnection[]
+
+  @@index([projectId, userId, createdAt])
+  @@index([status, expiresAt])
+}
+
+/// A Meta data-deletion request (App Dashboard → Data Deletion Request URL). Platform-level: the
+/// request names a Facebook user, not a project. Only a hash of the user id is kept.
+model MetaDataDeletionRequest {
+  id                  String    @id @default(cuid())
+  confirmationCode    String    @unique
+  metaUserIdHash      String
+  connectionsAffected Int       @default(0)
+  receivedAt          DateTime  @default(now())
+  completedAt         DateTime?
+}
+
 enum ChannelConnectionStatus {
   /// Credentials not entered (or not yet checked).
   SETUP_REQUIRED
@@ -6263,6 +6343,22 @@ model ChannelConnection {
   credentialsUpdatedByUsername String?
   createdByUsername            String?
   disconnectedAt               DateTime?
+  /// MANUAL: the project's own Meta app and token, pasted in (the original mode, unchanged).
+  /// PLATFORM: connected with "Connect with Facebook" through the platform's Meta app
+  /// (docs/meta-integration). A PLATFORM row stores no app secret — the platform's comes from the
+  /// environment — and is routed by its account id, so at most one live PLATFORM row may name an
+  /// account across the whole installation (a partial unique index in the migration).
+  authMode                     ChannelAuthMode         @default(MANUAL)
+  /// PLATFORM: the authorisation it was last connected or reconnected through.
+  metaOAuthSessionId           String?
+  metaOAuthSession             MetaOAuthSession?       @relation(fields: [metaOAuthSessionId], references: [id], onDelete: SetNull)
+  /// PLATFORM: the app-scoped id of the Facebook user who authorised it. Meta's deauthorize and
+  /// data-deletion callbacks name this id.
+  metaUserId                   String?
+  /// PLATFORM: the permissions Meta reported as granted when it was connected.
+  grantedScopes                String[]                @default([])
+  /// PLATFORM: what the authorising person may do on the Page (MESSAGING, MODERATE…), as Meta reported.
+  pageTasks                    String[]                @default([])
   createdAt                    DateTime                @default(now())
   updatedAt                    DateTime                @updatedAt
 
@@ -6634,29 +6730,29 @@ model ClientImportJob {
 
   // ── Smart Bulk Import (SMART_IMPORT.md). Defaults leave every older job exactly as it was. ──
   /// LEGACY = the original in-request import (rows in `rows`); SMART = staged rows + background processor.
-  engine             String    @default("LEGACY")
+  engine               String    @default("LEGACY")
   /// Bumped by every change to the mapping, a row or the sheet. A confirmation must name the current one.
-  revision           Int       @default(0)
-  confirmedRevision  Int?
-  fileSize           Int       @default(0)
-  sheetName          String?
-  sheetNames         String[]  @default([])
-  headerRow          Int       @default(1)
-  headers            String[]  @default([])
-  blankHeaders       Int       @default(0)
-  duplicateHeaders   Int       @default(0)
+  revision             Int       @default(0)
+  confirmedRevision    Int?
+  fileSize             Int       @default(0)
+  sheetName            String?
+  sheetNames           String[]  @default([])
+  headerRow            Int       @default(1)
+  headers              String[]  @default([])
+  blankHeaders         Int       @default(0)
+  duplicateHeaders     Int       @default(0)
   /// The uploaded file on the media volume (private, never served), kept only to re-read another
   /// sheet or header row. Deleted when the import is confirmed, discarded or expires.
-  stagingKey         String?
+  stagingKey           String?
   /// Whether this import may add subscriptions — decided from the confirming person's rights.
-  allowSubscriptions Boolean   @default(false)
-  acknowledgedWarnings String[] @default([])
-  queuedAt           DateTime?
-  cancelRequestedAt  DateTime?
+  allowSubscriptions   Boolean   @default(false)
+  acknowledgedWarnings String[]  @default([])
+  queuedAt             DateTime?
+  cancelRequestedAt    DateTime?
   /// The processor holding this job until then; a later claim may take it over (a restart).
-  leaseUntil         DateTime?
+  leaseUntil           DateTime?
   /// After this, the staged rows (and an unconfirmed draft) are deleted.
-  expiresAt          DateTime?
+  expiresAt            DateTime?
 
   stagedRows ClientImportRow[]
 

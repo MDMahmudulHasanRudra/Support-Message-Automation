@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
-import { readMetaError, readTelegramError, type ProviderErrorReading } from "@support-automation/shared";
+import { decryptSecret } from "@support-automation/db";
+import { metaPlatformAppSecret, readMetaError, readTelegramError, type ProviderErrorReading } from "@support-automation/shared";
 
 /**
  * The provider calls the WORKER makes for Messenger, Instagram and Telegram: sending a reply and
@@ -44,6 +45,45 @@ function readThrown(err: unknown, provider: string): SendOutcome {
 
 function appSecretProof(token: string, appSecret: string): string {
   return createHmac("sha256", appSecret).update(token).digest("hex");
+}
+
+/**
+ * The app secret a Meta connection's calls are signed with: its own (MANUAL, stored encrypted on the
+ * row) or the platform app's (PLATFORM, "Connect with Facebook" — never stored per connection, read
+ * from META_APP_SECRET). Null when there is none, and the caller then sends nothing.
+ */
+export function metaAppSecretFor(connection: { authMode: "MANUAL" | "PLATFORM"; appSecretCiphertext: string | null }): string | null {
+  if (connection.authMode === "PLATFORM") return metaPlatformAppSecret(process.env);
+  return connection.appSecretCiphertext ? decryptSecret(connection.appSecretCiphertext) : null;
+}
+
+export type GraphResult<T> = { ok: true; data: T } | { ok: false; error: ProviderErrorReading };
+
+/** A plain Graph call with a token and its `appsecret_proof` (the health check's reads and resubscribe). */
+export async function metaGraph<T>(
+  method: "GET" | "POST",
+  path: string,
+  params: Record<string, string>,
+  auth: { token: string; appSecret: string },
+  fetchImpl: FetchImpl = fetch,
+): Promise<GraphResult<T>> {
+  const url = new URL(`${graphBase()}${path}`);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  url.searchParams.set("appsecret_proof", appSecretProof(auth.token, auth.appSecret));
+  let response: Response;
+  try {
+    response = await fetchImpl(url, { method, headers: { Authorization: `Bearer ${auth.token}` }, signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS * 3) });
+  } catch {
+    return { ok: false, error: { retryable: true, needsReauth: false, message: "Meta could not be reached from this server (network error or timeout)." } };
+  }
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!response.ok) return { ok: false, error: readMetaError(response.status, body) };
+  return { ok: true, data: body as T };
 }
 
 /**

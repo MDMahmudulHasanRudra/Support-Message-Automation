@@ -10,6 +10,12 @@ database. **Not yet tested with live credentials.** The feature is off by defaul
 
 ---
 
+> **Connect with Facebook (25 Oct 2026).** A Messenger or Instagram connection can now also be made
+> through the PLATFORM's own Meta app: the customer signs in at Facebook and picks Pages, with no
+> app, secret or token of their own (`authMode = PLATFORM`). Such connections use one platform
+> webhook, `/api/meta/webhook`, routed by account id. Everything below, the per-connection "manual"
+> mode, is unchanged. Reference: `docs/meta-integration/` (start with `03-architecture-and-data-flow.md`).
+
 ## 1. Audit — what existed (Phase 1)
 
 | Area | Finding |

@@ -1,11 +1,14 @@
 import { ArrowRight, PlugZap } from "lucide-react";
 import { CHANNEL_TYPES, CHANNELS, UNAVAILABLE_CHANNELS } from "@support-automation/shared";
 import Link from "@/components/ProjectLink";
-import { Badge, ButtonLink, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
+import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { pageAccess } from "@/server/authorize";
+import { hasPermission } from "@/server/permissions";
+import { META_ERROR_TEXT, metaPlatformConfig, type MetaOAuthErrorCode } from "@/server/channels/metaOAuth";
 import { listChannelConnections } from "@/server/channels/connections";
 import { ChannelMark } from "../../conversations/ChannelMark";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
+import { OneClickPanel } from "./OneClickPanel";
 
 export const metadata = { title: "Messaging Channels" };
 
@@ -14,9 +17,13 @@ export const metadata = { title: "Messaging Channels" };
  * and Telegram bot, and what can be connected. WhatsApp numbers are managed where they always were
  * (WhatsApp Accounts) and linked from here. No credential is ever sent to this page.
  */
-export default async function ChannelsPage() {
-  const { canManage } = await pageAccess("channels.view", "channels.manage", "OMNICHANNEL");
-  const connections = await listChannelConnections();
+export default async function ChannelsPage({ searchParams }: { searchParams: Promise<{ meta_error?: string }> }) {
+  const { session, canManage } = await pageAccess("channels.view", "channels.manage", "OMNICHANNEL");
+  const [connections, query] = await Promise.all([listChannelConnections(), searchParams]);
+  const oneClick = metaPlatformConfig();
+  // What is missing on the server is the platform administrator's business; only a Main Admin sees it.
+  const problems = !oneClick.ok && (await hasPermission(session, "projects.manage")) ? oneClick.problems : null;
+  const metaError = query.meta_error && query.meta_error in META_ERROR_TEXT ? META_ERROR_TEXT[query.meta_error as MetaOAuthErrorCode] : null;
 
   return (
     <div>
@@ -30,7 +37,17 @@ export default async function ChannelsPage() {
         </div>
       )}
 
+      {metaError ? (
+        <div className="mb-6">
+          <Alert tone="warning" title="Facebook connection not completed">
+            {metaError}
+          </Alert>
+        </div>
+      ) : null}
+
       <div className="space-y-8">
+        <OneClickPanel available={oneClick.ok} canManage={canManage} problems={problems} />
+
         {CHANNEL_TYPES.map((type) => {
           const def = CHANNELS[type];
           const rows = connections.filter((c) => c.type === type);
@@ -47,7 +64,7 @@ export default async function ChannelsPage() {
                 {canManage ? (
                   <ButtonLink href={`/settings/channels/new?type=${type}`} variant="secondary" size="sm">
                     <PlugZap className="size-3.5" aria-hidden />
-                    Connect {rows.length ? "another" : def.label}
+                    {def.webhookKind === "META" && oneClick.ok ? "Connect with your own Meta app" : `Connect ${rows.length ? "another" : def.label}`}
                   </ButtonLink>
                 ) : null}
               </div>
@@ -63,6 +80,7 @@ export default async function ChannelsPage() {
                             <span className="truncate text-[13.5px] font-medium text-[color:var(--color-foreground)]">{c.name}</span>
                             <ConnectionStatusBadge connection={c} />
                             {c.aiAutomationEnabled ? <Badge color="blue">AI on</Badge> : null}
+                            {c.authMode === "PLATFORM" ? <Badge color="gray">Connected with Facebook</Badge> : null}
                           </span>
                           <span className="mt-0.5 block truncate text-[12px] text-[color:var(--color-muted-foreground)]">
                             {c.externalAccountName ?? "—"} · {c.conversationCount} conversation{c.conversationCount === 1 ? "" : "s"}

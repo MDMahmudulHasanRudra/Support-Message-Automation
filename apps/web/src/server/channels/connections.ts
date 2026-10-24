@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { CHANNELS, type ChannelType } from "@support-automation/shared";
+import { CHANNELS, metaPlatformAppSecret, type ChannelType } from "@support-automation/shared";
 import { decryptSecret, encryptSecret } from "@support-automation/db";
-import type { ChannelConnectionStatus } from "@prisma/client";
+import type { ChannelAuthMode, ChannelConnectionStatus } from "@prisma/client";
 import { platformPrisma, prisma } from "@/server/db";
 import { publicOrigin } from "@/server/google/oauth";
 import {
@@ -59,6 +59,10 @@ export interface ChannelConnectionView {
   externalUsername: string | null;
   pageId: string | null;
   appId: string | null;
+  /** MANUAL: the project's own app and token. PLATFORM: connected with "Connect with Facebook". */
+  authMode: ChannelAuthMode;
+  /** PLATFORM: the permissions Meta reported as granted. */
+  grantedScopes: string[];
   hasCredentials: boolean;
   aiAutomationEnabled: boolean;
   humanAgentEnabled: boolean;
@@ -90,6 +94,8 @@ const VIEW_SELECT = {
   externalUsername: true,
   pageId: true,
   appId: true,
+  authMode: true,
+  grantedScopes: true,
   accessTokenCiphertext: true,
   aiAutomationEnabled: true,
   humanAgentEnabled: true,
@@ -112,7 +118,7 @@ const readViewRow = (id: string) => prisma.channelConnection.findUnique({ where:
 
 function toView(row: ViewRow, revealVerifyToken: boolean): ChannelConnectionView {
   let verifyToken: string | null | undefined;
-  if (revealVerifyToken && CHANNELS[row.type].webhookKind === "META") {
+  if (revealVerifyToken && CHANNELS[row.type].webhookKind === "META" && row.authMode === "MANUAL") {
     try {
       verifyToken = row.verifyTokenCiphertext ? decryptSecret(row.verifyTokenCiphertext) : null;
     } catch {
@@ -130,10 +136,13 @@ function toView(row: ViewRow, revealVerifyToken: boolean): ChannelConnectionView
     externalUsername: row.externalUsername,
     pageId: row.pageId,
     appId: row.appId,
+    authMode: row.authMode,
+    grantedScopes: row.grantedScopes,
     hasCredentials: Boolean(row.accessTokenCiphertext),
     aiAutomationEnabled: row.aiAutomationEnabled,
     humanAgentEnabled: row.humanAgentEnabled,
-    webhookUrl: row.status === "DISCONNECTED" ? null : webhookUrlFor(row.type, row.webhookKey),
+    // A one-click connection uses the platform app's single webhook, which the customer never configures.
+    webhookUrl: row.status === "DISCONNECTED" || row.authMode === "PLATFORM" ? null : webhookUrlFor(row.type, row.webhookKey),
     webhookVerifiedAt: row.webhookVerifiedAt,
     lastEventAt: row.lastEventAt,
     lastCheckedAt: row.lastCheckedAt,
@@ -288,10 +297,10 @@ export async function connectMeta(input: MetaCredentialsInput & { username: stri
 export async function updateMetaCredentials(id: string, input: Omit<MetaCredentialsInput, "type"> & { username: string; fetchImpl?: FetchImpl; now?: Date }): Promise<ConnectResult> {
   const fetchImpl = input.fetchImpl ?? fetch;
   const now = input.now ?? new Date();
-  const row = await prisma.channelConnection.findUnique({ where: { id }, select: { id: true, type: true, status: true, externalAccountId: true, externalAccountName: true, verifyTokenCiphertext: true } });
+  const row = await prisma.channelConnection.findUnique({ where: { id }, select: { id: true, type: true, status: true, authMode: true, externalAccountId: true, externalAccountName: true, verifyTokenCiphertext: true } });
   if (!row || row.type === "TELEGRAM") throw new ChannelConnectionError("That connection no longer exists.");
-  // Reconnecting after a disconnect: the old webhook address and verify token died with it.
-  const freshWebhook = row.status === "DISCONNECTED" || !row.verifyTokenCiphertext ? { webhookKey: newKey(), verifyTokenCiphertext: encryptSecret(newKey(18)), webhookVerifiedAt: null } : {};
+  // Reconnecting after a disconnect (or leaving one-click): the old webhook address and verify token no longer apply.
+  const freshWebhook = row.status === "DISCONNECTED" || row.authMode === "PLATFORM" || !row.verifyTokenCiphertext ? { webhookKey: newKey(), verifyTokenCiphertext: encryptSecret(newKey(18)), webhookVerifiedAt: null } : {};
   const identity = await identifyMeta({ ...input, type: row.type }, fetchImpl);
   if (identity.externalAccountId !== row.externalAccountId) {
     throw new ChannelConnectionError(
@@ -312,6 +321,12 @@ export async function updateMetaCredentials(id: string, input: Omit<MetaCredenti
       externalUsername: identity.externalUsername,
       accessTokenCiphertext: encryptSecret(input.pageAccessToken.trim()),
       appSecretCiphertext: encryptSecret(input.appSecret.trim()),
+      // Credentials typed in here are the project's own app: whatever it was before, it is MANUAL now.
+      authMode: "MANUAL",
+      metaOAuthSessionId: null,
+      metaUserId: null,
+      grantedScopes: [],
+      pageTasks: [],
       lastCheckedAt: now,
       lastError: warning,
       lastErrorAt: warning ? now : null,
@@ -432,6 +447,15 @@ export async function updateTelegramToken(id: string, input: { botToken: string 
   return { id, status, warning };
 }
 
+/**
+ * The app secret for a Meta connection's calls: its own (MANUAL) or the platform app's from the
+ * environment (PLATFORM, never stored per connection). Null when there is none.
+ */
+function metaAppSecretOf(row: { authMode: ChannelAuthMode; appSecretCiphertext: string | null }): string | null {
+  if (row.authMode === "PLATFORM") return metaPlatformAppSecret(process.env);
+  return row.appSecretCiphertext ? readSecret(row.appSecretCiphertext) : null;
+}
+
 function readSecret(ciphertext: string): string {
   try {
     return decryptSecret(ciphertext);
@@ -474,10 +498,17 @@ export async function disconnectConnection(id: string, input: { fetchImpl?: Fetc
   const now = input.now ?? new Date();
   const row = await prisma.channelConnection.findUnique({
     where: { id },
-    select: { id: true, type: true, status: true, pageId: true, accessTokenCiphertext: true, appSecretCiphertext: true },
+    select: { id: true, type: true, status: true, authMode: true, pageId: true, accessTokenCiphertext: true, appSecretCiphertext: true },
   });
   if (!row) throw new ChannelConnectionError("That connection no longer exists.");
   if (row.status === "DISCONNECTED") return { providerNotified: false };
+  // One-click: Messenger and Instagram on one Page share ONE subscription of the Page to the platform
+  // app — and they may even be in different workspaces. The Page is unsubscribed only when no other
+  // live one-click connection still rides on it.
+  const pageStillUsed =
+    row.authMode === "PLATFORM" && row.pageId
+      ? (await platformPrisma.channelConnection.count({ where: { id: { not: row.id }, authMode: "PLATFORM", pageId: row.pageId, status: { not: "DISCONNECTED" } } })) > 0
+      : false;
 
   let providerNotified = false;
   try {
@@ -485,6 +516,9 @@ export async function disconnectConnection(id: string, input: { fetchImpl?: Fetc
       const token = decryptSecret(row.accessTokenCiphertext);
       if (row.type === "TELEGRAM") {
         providerNotified = (await telegramDeleteWebhook(token, fetchImpl)).ok;
+      } else if (row.authMode === "PLATFORM") {
+        const appSecret = metaAppSecretOf(row);
+        if (row.pageId && appSecret && !pageStillUsed) providerNotified = (await unsubscribeMetaPage(row.pageId, token, appSecret, fetchImpl)).ok;
       } else if (row.pageId && row.appSecretCiphertext && row.type === "MESSENGER") {
         // Instagram rides on the same Page subscription a Messenger connection may still need, so only
         // a Messenger disconnect unsubscribes the Page.
@@ -534,9 +568,12 @@ export async function testConnection(id: string, input: { fetchImpl?: FetchImpl;
   const now = input.now ?? new Date();
   const row = await prisma.channelConnection.findUnique({
     where: { id },
-    select: { id: true, type: true, status: true, appId: true, pageId: true, webhookKey: true, externalAccountId: true, webhookVerifiedAt: true, lastEventAt: true, accessTokenCiphertext: true, appSecretCiphertext: true },
+    select: { id: true, type: true, status: true, authMode: true, appId: true, pageId: true, webhookKey: true, externalAccountId: true, webhookVerifiedAt: true, lastEventAt: true, accessTokenCiphertext: true, appSecretCiphertext: true },
   });
   if (!row) throw new ChannelConnectionError("That connection no longer exists.");
+  if (row.authMode === "PLATFORM" && !row.accessTokenCiphertext && row.status !== "DISCONNECTED") {
+    throw new ChannelConnectionError("Facebook no longer gives this connection access. Use Reconnect with Facebook.");
+  }
   if (row.status === "DISCONNECTED" || !row.accessTokenCiphertext) throw new ChannelConnectionError("This connection is disconnected. Enter its credentials again to reconnect it.");
   const token = readSecret(row.accessTokenCiphertext);
   const checks: ConnectionCheck[] = [];
@@ -567,11 +604,16 @@ export async function testConnection(id: string, input: { fetchImpl?: FetchImpl;
       checks.push({ label: "Webhook points to this server", ok: null, detail: info.error.message });
     }
   } else {
-    if (!row.appSecretCiphertext || !row.pageId) throw new ChannelConnectionError("This connection's credentials are incomplete. Enter them again.");
-    const appSecret = readSecret(row.appSecretCiphertext);
+    const appSecret = metaAppSecretOf(row);
+    if (!appSecret || !row.pageId) {
+      throw new ChannelConnectionError(
+        row.authMode === "PLATFORM" ? "Connecting with Facebook is not configured on this server any more. Ask your platform administrator." : "This connection's credentials are incomplete. Enter them again.",
+      );
+    }
     const page = await readMetaPage(token, appSecret, fetchImpl);
-    checks.push({ label: "Page access token accepted", ok: page.ok, detail: page.ok ? page.data.name : page.error.message });
-    if (!page.ok) fail(page.error.needsReauth ? "NEEDS_RECONNECT" : "ERROR", page.error.message);
+    const pageError = !page.ok && page.error.needsReauth && row.authMode === "PLATFORM" ? "Facebook no longer accepts this connection's access (it was removed or a password changed). Reconnect with Facebook." : page.ok ? null : page.error.message;
+    checks.push({ label: "Page access token accepted", ok: page.ok, detail: page.ok ? page.data.name : pageError! });
+    if (!page.ok) fail(page.error.needsReauth ? "NEEDS_RECONNECT" : "ERROR", pageError!);
     if (page.ok && row.type === "INSTAGRAM") {
       const ig = await readLinkedInstagram(row.pageId, token, appSecret, fetchImpl);
       const linked = ig.ok && ig.data.instagram_business_account?.id === row.externalAccountId;
@@ -588,11 +630,13 @@ export async function testConnection(id: string, input: { fetchImpl?: FetchImpl;
       });
       if (subs.ok && !ours) fail("ERROR", "The Page is not subscribed to the app, so Meta sends it no messages.");
     }
-    checks.push({
-      label: "Meta verified the webhook address",
-      ok: row.webhookVerifiedAt ? true : null,
-      detail: row.webhookVerifiedAt ? `Verified ${row.webhookVerifiedAt.toISOString().slice(0, 16).replace("T", " ")} UTC` : "Not yet — paste the callback URL and verify token into the app's Webhooks settings.",
-    });
+    if (row.authMode === "MANUAL") {
+      checks.push({
+        label: "Meta verified the webhook address",
+        ok: row.webhookVerifiedAt ? true : null,
+        detail: row.webhookVerifiedAt ? `Verified ${row.webhookVerifiedAt.toISOString().slice(0, 16).replace("T", " ")} UTC` : "Not yet — paste the callback URL and verify token into the app's Webhooks settings.",
+      });
+    }
   }
   checks.push({ label: "Last event received", ok: row.lastEventAt ? true : null, detail: row.lastEventAt ? row.lastEventAt.toISOString().slice(0, 16).replace("T", " ") + " UTC" : "Nothing received yet." });
 

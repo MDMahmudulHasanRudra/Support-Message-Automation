@@ -100,7 +100,9 @@ describe("the constraints later phases depend on", () => {
     //   ClientPhoto, ClientSubscription, ClientWhatsAppGroupLink, ListViewPreference — migration
     //   20261017100000_clients_v3).
     // + WhatsAppPicture (WHATSAPP_AVATARS.md, 20261023090000_whatsapp_pictures).
-    expect(refusing).toHaveLength(122);
+    // + ClientImportRow and ClientImportPreset (SMART_IMPORT.md, 20261024090000_client_smart_import).
+    // + MetaOAuthSession (docs/meta-integration, 20261025090000_meta_platform_oauth).
+    expect(refusing).toHaveLength(125);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -127,8 +129,9 @@ describe("the constraints later phases depend on", () => {
     // + the four Mood Detection tables + the three Support Assignment tables + PersonalChatReview
     // + the nine Google Sheets tables + the four Messaging Channels tables + the five Client Management
     // tables + the three client billing tables + the chat-link table + the two email tables + ProjectRole
-    // + ProjectMemberRole + the seven Clients v3 tables + WhatsAppPicture) + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(125);
+    // + ProjectMemberRole + the seven Clients v3 tables + WhatsAppPicture + ClientImportRow + ClientImportPreset
+    // + MetaOAuthSession) + SystemLog + ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(128);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

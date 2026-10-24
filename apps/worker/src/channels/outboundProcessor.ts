@@ -6,7 +6,7 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
-import { sendMetaText, sendTelegramText, type FetchImpl, type SendOutcome } from "./providerApi.js";
+import { metaAppSecretFor, sendMetaText, sendTelegramText, type FetchImpl, type SendOutcome } from "./providerApi.js";
 
 /**
  * The send queue for Messenger, Instagram and Telegram (OMNICHANNEL.md §8) — the channels' one
@@ -92,7 +92,7 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
       messagingTag: true,
       conversation: { select: { id: true, externalThreadId: true, lastInboundAt: true, kind: true } },
       connection: {
-        select: { id: true, name: true, enabled: true, status: true, pageId: true, humanAgentEnabled: true, accessTokenCiphertext: true, appSecretCiphertext: true },
+        select: { id: true, name: true, enabled: true, status: true, authMode: true, pageId: true, humanAgentEnabled: true, accessTokenCiphertext: true, appSecretCiphertext: true },
       },
     },
   });
@@ -104,7 +104,11 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
     return true;
   }
   if (connection.status === "NEEDS_RECONNECT" || !connection.accessTokenCiphertext) {
-    await fail(`Not sent: ${connection.name} needs new credentials (Settings → Messaging Channels).`);
+    await fail(
+      connection.authMode === "PLATFORM"
+        ? `Not sent: ${connection.name} needs reconnecting (Settings → Messaging Channels → Reconnect with Facebook).`
+        : `Not sent: ${connection.name} needs new credentials (Settings → Messaging Channels).`,
+    );
     return true;
   }
   if (!message.text?.trim()) {
@@ -133,14 +137,19 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
     if (message.type === "TELEGRAM") {
       outcome = await sendTelegramText({ token, chatId: conversation.externalThreadId, text: message.text, replyToMessageId: null, fetchImpl });
     } else {
-      if (!connection.pageId || !connection.appSecretCiphertext) {
-        await fail(`Not sent: ${connection.name}'s credentials are incomplete. Enter them again.`);
+      const appSecret = metaAppSecretFor(connection);
+      if (!connection.pageId || !appSecret) {
+        await fail(
+          connection.authMode === "PLATFORM"
+            ? `Not sent: Connect with Facebook is not configured on this server any more (no platform app secret). Ask the platform administrator.`
+            : `Not sent: ${connection.name}'s credentials are incomplete. Enter them again.`,
+        );
         return true;
       }
       outcome = await sendMetaText({
         pageId: connection.pageId,
         token,
-        appSecret: decryptSecret(connection.appSecretCiphertext),
+        appSecret,
         recipientId: conversation.externalThreadId,
         text: message.text,
         messagingType: window.messagingType === "MESSAGE_TAG" ? "MESSAGE_TAG" : "RESPONSE",

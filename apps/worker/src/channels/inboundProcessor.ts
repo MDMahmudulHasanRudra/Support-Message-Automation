@@ -13,7 +13,7 @@ import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
 import { getAiSettings } from "../ai/settings.js";
-import { fetchMetaProfileName, type FetchImpl } from "./providerApi.js";
+import { metaAppSecretFor, fetchMetaProfileName, type FetchImpl } from "./providerApi.js";
 
 /**
  * Turns recorded webhook events into conversations and messages (OMNICHANNEL.md §7).
@@ -92,6 +92,7 @@ type Connection = {
   type: "MESSENGER" | "INSTAGRAM" | "TELEGRAM";
   externalAccountId: string | null;
   appId: string | null;
+  authMode: "MANUAL" | "PLATFORM";
   accessTokenCiphertext: string | null;
   appSecretCiphertext: string | null;
 };
@@ -101,7 +102,7 @@ export async function processChannelEvent(event: ChannelInboundEvent, now: Date 
   try {
     const connection = await prisma.channelConnection.findUnique({
       where: { id: event.connectionId },
-      select: { id: true, type: true, externalAccountId: true, appId: true, accessTokenCiphertext: true, appSecretCiphertext: true },
+      select: { id: true, type: true, externalAccountId: true, appId: true, authMode: true, accessTokenCiphertext: true, appSecretCiphertext: true },
     });
     if (!connection) return settle(event.id, "IGNORED", "The connection no longer exists.");
     const payload = event.payload as { provider?: string; item?: unknown; update?: unknown };
@@ -198,13 +199,15 @@ async function findOrOpenConversation(connection: Connection, event: Extract<Nor
 
   let customerName = inbound && event.threadKind === "DIRECT" ? event.senderName : null;
   let customerUsername = inbound ? event.senderUsername : null;
-  if (!customerName && connection.type !== "TELEGRAM" && connection.accessTokenCiphertext && connection.appSecretCiphertext) {
+  if (!customerName && connection.type !== "TELEGRAM" && connection.accessTokenCiphertext) {
     try {
+      const appSecret = metaAppSecretFor(connection);
+      if (!appSecret) throw new Error("no app secret");
       const profile = await fetchMetaProfileName({
         type: connection.type,
         userId: event.threadId,
         token: decryptSecret(connection.accessTokenCiphertext),
-        appSecret: decryptSecret(connection.appSecretCiphertext),
+        appSecret,
         fetchImpl,
       });
       customerName = profile.name;

@@ -2910,6 +2910,23 @@ Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.vi
   revives the same row with a new webhook key.
 - TikTok is NOT built (beta API, regional, needs approval) and is shown as unavailable, never as a
   channel. Instagram uses the Page-linked (Facebook Login) flow; Instagram Login is not built.
+- **Connect with Facebook (`docs/meta-integration/`, 25 Oct 2026)**: `ChannelConnection.authMode` MANUAL (the
+  project's own app, unchanged) or PLATFORM (the platform's one Meta app from `META_*` env, off unless
+  `META_INTEGRATION_ENABLED=true`). Rules worth not undoing:
+  - **A PLATFORM row stores no app secret**; web `connections.ts` and worker `metaAppSecretFor` read `META_APP_SECRET`.
+  - **Routing is by account id, never by anything the payload says about a project** (`/api/meta/webhook`,
+    `ingestPlatformMetaWebhook`). A partial unique index allows ONE live PLATFORM row per account across the
+    whole installation; never relax it, or two projects would receive one Page's events.
+  - **The OAuth result is handed over only with session + one-time claim + HTTP-only binding cookie**
+    (`metaOAuth.ts`). The callback is one fixed address that needs no session; the state is single-use by a
+    conditional update. State, binding and claim are stored only as SHA-256 hashes.
+  - **The user token is wiped when the attempt ends** (and by the worker's `meta-connection-health` loop for
+    abandoned ones). Page tokens are fetched from Meta only at the moment of connecting.
+  - **CONNECTED only after Meta subscribed the Page**; otherwise ERROR with the reason.
+  - **Unsubscribe a Page only when no other live PLATFORM row uses it** (Messenger and Instagram share it).
+  - **There is no refresh job**, deliberately (Page tokens from a long-lived user token do not expire). The
+    health loop marks dead tokens NEEDS_RECONNECT, and the deauthorize / data-deletion callbacks do the same
+    for that person's connections.
 
 ### Client Management (`CLIENT_CENTER.md`)
 
