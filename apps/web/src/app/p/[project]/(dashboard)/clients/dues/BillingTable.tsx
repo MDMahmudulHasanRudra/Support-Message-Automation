@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
+import { LIST_SCROLL_BOX } from "@/lib/listPageSizes";
 import { Eye, Plus, Search, Trash2, Wallet } from "lucide-react";
 import Link, { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Badge, Button, Checkbox, ConfirmDialog, Dialog, Input, useToast } from "@/components/ui";
@@ -137,7 +138,7 @@ export function BillingTable({ rows, columns, labels, canPay, canDelete = false,
     </div>
   );
   const data = columns.filter((k) => k !== "invoice");
-  const th = "whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
+  const th = "sticky top-0 whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
   const td = "border-b border-[var(--color-border)] px-4 py-3 align-middle text-[13px] group-hover:bg-[var(--color-surface-sunken)]";
 
   const invoiceCell = (r: BillingRow) => (
@@ -165,22 +166,22 @@ export function BillingTable({ rows, columns, labels, canPay, canDelete = false,
         </div>
       ) : null}
 
-      <div className="hidden overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs)] md:block">
+      <div className={`hidden ${LIST_SCROLL_BOX} rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs)] md:block`} data-list-scroll>
         <table className="w-full border-separate border-spacing-0 text-left">
           <thead>
             <tr>
               {canSelect ? (
-                <th className={`${th} w-10`}>
+                <th className={`${th} z-[2] w-10`}>
                   <Checkbox checked={allSelected} indeterminate={!allSelected && picked.length > 0} onChange={() => setSelected(allSelected ? new Set() : new Set(selectable.map((r) => r.id)))} aria-label="Select every invoice on this page" />
                 </th>
               ) : null}
-              <th className={`${th} sticky left-0 z-[2] border-r`}>{labels.invoice ?? "Invoice"}</th>
+              <th className={`${th} left-0 z-[3] border-r`}>{labels.invoice ?? "Invoice"}</th>
               {data.map((k) => (
-                <th key={k} className={th}>
+                <th key={k} className={`${th} z-[2]`}>
                   {labels[k] ?? k}
                 </th>
               ))}
-              <th className={`${th} text-right`}>Actions</th>
+              <th className={`${th} z-[2] text-right`}>Actions</th>
             </tr>
           </thead>
           <tbody>

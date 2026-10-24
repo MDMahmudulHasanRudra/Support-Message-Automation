@@ -1,3 +1,4 @@
+import { LARGE_LIST_PAGE_SIZES } from "@/lib/listPageSizes";
 import { Prisma } from "@prisma/client";
 import { decimalToMinor, dhakaToday, fromMinor, invoiceState, payableRefusal, remainingOn, summarizeDues, type BillingSummary, type InvoiceState } from "@support-automation/shared";
 import { prisma } from "@/server/db";
@@ -125,7 +126,8 @@ export async function listDues(filters: DueFilters) {
 
 // ── The Billing List (CLIENTS_V3.md §4) ─────────────────────────────────────────────────────────
 
-export const BILLING_PAGE_SIZES = [25, 50, 100, 200] as const;
+/** The large-list sizes (`lib/listPageSizes.ts`), so a billing list of thousands can be read on one page. */
+export const BILLING_PAGE_SIZES = LARGE_LIST_PAGE_SIZES;
 export const BILLING_VIEWS = ["open", "overdue", "partial", "paid", "waived", "cancelled", "all"] as const;
 export const BILLING_SORTS = ["due", "issued", "invoice", "client", "amount"] as const;
 

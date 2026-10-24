@@ -1,3 +1,4 @@
+import { LARGE_LIST_PAGE_SIZES, pickPageSize } from "@/lib/listPageSizes";
 import { Banknote, ReceiptText, Search, Undo2, Wallet } from "lucide-react";
 import { pageAccess } from "@/server/authorize";
 import { listPayments } from "@/server/clientBilling";
@@ -10,7 +11,7 @@ import { ChipTabs, KpiCard, mutedText, surface, type Chip } from "../ModuleKit";
 import { PaymentsTable } from "./PaymentsTable";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
-const PAGE_SIZES = [25, 50, 100];
+const PAGE_SIZES = [...LARGE_LIST_PAGE_SIZES];
 const SHOWS = [
   ["active", "Recorded"],
   ["reversed", "Reversed"],
@@ -33,7 +34,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Sea
   const from = /^\d{4}-\d{2}-\d{2}$/.test(one(params.from)) ? one(params.from) : "";
   const to = /^\d{4}-\d{2}-\d{2}$/.test(one(params.to)) ? one(params.to) : "";
   const page = Math.max(1, Number(one(params.page)) || 1);
-  const pageSize = PAGE_SIZES.includes(Number(one(params.pageSize))) ? Number(one(params.pageSize)) : 25;
+  const pageSize = pickPageSize(one(params.pageSize), 25, PAGE_SIZES);
   const caps = await clientViewerCaps(session);
   if (!caps.settings.payments) {
     return (

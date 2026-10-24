@@ -1,3 +1,4 @@
+import { LARGE_LIST_PAGE_SIZES } from "./listPageSizes";
 import type { Prisma } from "@prisma/client";
 import {
   addCalendarDays,
@@ -24,7 +25,7 @@ import {
  * "use server" files may only export async functions, which is why this is not in the actions file.
  */
 
-export const CLIENT_PAGE_SIZES = [25, 50, 100, 250] as const;
+export const CLIENT_PAGE_SIZES = LARGE_LIST_PAGE_SIZES;
 export const DEFAULT_CLIENT_PAGE_SIZE = 50;
 /** Ceiling on one bulk action or one export. Stated before the click, not discovered as a refusal. */
 export const MAX_CLIENT_BULK = 5000;
