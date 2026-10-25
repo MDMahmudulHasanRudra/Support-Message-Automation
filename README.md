@@ -1,9 +1,9 @@
-# Softify Assist
+#  RELQIVO
 
 Rule-based WhatsApp support automation: a Next.js dashboard, a dedicated
 OpenWA worker, and a PostgreSQL/Prisma backend, run via Docker Compose.
 
-Runs in production at **https://assist.softifybd.com**.
+Runs in production at **(https://zoventio.udboy.com/)**.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the durable system design, and
 [PROJECT_REFERENCE.md](./PROJECT_REFERENCE.md) for an exhaustive, page-by-page reference of every
