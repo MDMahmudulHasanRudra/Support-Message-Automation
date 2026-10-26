@@ -97,6 +97,15 @@ services:
       # Google Sheets (GOOGLE_SHEETS.md): the server's own OAuth client. Unset = not set up yet.
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      # Connect with Facebook — the platform's Meta app (docs/meta-integration/META_DEVELOPER_SETUP.md).
+      # Off unless META_INTEGRATION_ENABLED=true. The worker needs the secret too (appsecret_proof).
+      META_INTEGRATION_ENABLED: ${META_INTEGRATION_ENABLED:-}
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+      META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-}
+      META_LOGIN_CONFIG_ID: ${META_LOGIN_CONFIG_ID:-}
+      META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-}
     volumes:
       - whatsapp_media:/app/media
     ports:
@@ -180,6 +189,15 @@ services:
       # to read changes made in Google directly. The same OAuth client as the app. Unset = nothing runs.
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      # Connect with Facebook — the platform's Meta app (docs/meta-integration/META_DEVELOPER_SETUP.md).
+      # Off unless META_INTEGRATION_ENABLED=true. The worker needs the secret too (appsecret_proof).
+      META_INTEGRATION_ENABLED: ${META_INTEGRATION_ENABLED:-}
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+      META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-}
+      META_LOGIN_CONFIG_ID: ${META_LOGIN_CONFIG_ID:-}
+      META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-}
     # No `ports:` here on purpose: the worker's health endpoint binds to
     # 127.0.0.1 inside the container only, for its own HEALTHCHECK to use.
     # The dashboard never talks to the worker over HTTP (see ARCHITECTURE.md).

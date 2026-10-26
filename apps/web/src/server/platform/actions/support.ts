@@ -23,7 +23,7 @@ export async function startSupportAccess(customerId: string, formData: FormData)
   if (!(await confirmOperatorPassword(operator, formData.get("operatorPassword")))) return { error: "Your platform password is not correct." };
 
   const customer = await globalPrisma.customer.findUnique({
-    where: { id: customerId },
+    where: { id: customerId, removedAt: null },
     select: { name: true, domains: { where: { status: { in: ["ACTIVE", "VERIFIED"] } }, orderBy: { verifiedAt: "asc" }, select: { hostname: true, status: true } } },
   });
   if (!customer) return { error: "This customer no longer exists." };

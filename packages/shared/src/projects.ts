@@ -114,16 +114,16 @@ export function validateProjectSlug(slug: string): string | null {
     return `A slug is 2 to ${PROJECT_SLUG_MAX} characters.`;
   }
   if (!SLUG_PATTERN.test(slug)) {
-    return "Use lower-case letters, digits and single hyphens between them — for example relqivo-project-2.";
+    return "Use lower-case letters, digits and single hyphens between them — for example get-assist-project-2.";
   }
   return null;
 }
 
-/** The built-in name new projects are offered (BRANDING.md §Defaults): "RELQIVO Project 1", 2, 3… */
-export const DEFAULT_PROJECT_NAME_PREFIX = "RELQIVO Project";
+/** The built-in name new projects are offered (BRANDING.md §Defaults): "Get Assist Project 1", 2, 3… */
+export const DEFAULT_PROJECT_NAME_PREFIX = "Get Assist Project";
 
 /**
- * The name the Create project form starts with: the first "RELQIVO Project N" whose name and slug no
+ * The name the Create project form starts with: the first "Get Assist Project N" whose name and slug no
  * project already uses. Only a suggestion: the admin can type anything, and the action still checks
  * uniqueness itself.
  */
@@ -136,7 +136,7 @@ export function nextDefaultProjectName(existing: ReadonlyArray<{ name: string; s
   }
 }
 
-/** "RELQIVO Project 2" → "relqivo-project-2": the slug the form offers for a name, which the admin can change. */
+/** "Get Assist Project 2" → "get-assist-project-2": the slug the form offers for a name, which the admin can change. */
 export function suggestProjectSlug(name: string): string {
   return name
     .normalize("NFKD")

@@ -97,7 +97,7 @@ export async function customersHealth(now = new Date()): Promise<CustomerHealth[
   const since = new Date(now.getTime() - DAY);
   const week = new Date(now.getTime() - 7 * DAY);
   const [customers, projects, subscriptions, users, accounts, messages, failedSends, failedNotifications, gaps, media] = await Promise.all([
-    globalPrisma.customer.findMany({ select: { id: true, name: true, isFounding: true, domains: { select: { status: true } } }, orderBy: { createdAt: "asc" } }),
+    globalPrisma.customer.findMany({ where: { removedAt: null }, select: { id: true, name: true, isFounding: true, domains: { select: { status: true } } }, orderBy: { createdAt: "asc" } }),
     globalPrisma.project.findMany({ where: { status: { not: "ARCHIVED" } }, select: { id: true, customerId: true } }),
     globalPrisma.subscription.findMany({ where: { endedAt: null } }),
     globalPrisma.user.groupBy({ by: ["customerId"], where: { supportOperatorId: null, isActive: true }, _count: { _all: true } }),

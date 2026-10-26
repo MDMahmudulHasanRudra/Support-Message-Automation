@@ -439,6 +439,30 @@ describe("3. the unified inbox", () => {
     expect(needs.items).toEqual([]);
   });
 
+  it("a person's reply never gets the automated-reply disclosure, even with AI and the disclosure on", async () => {
+    await rawPrisma.channelConnection.update({ where: { id: state.messengerId }, data: { aiAutomationEnabled: true, aiDisclosureEnabled: true } });
+    try {
+      const sent = await as(people.agent, A, () => inboxActions.sendChannelReplyAction(conv.messenger, "A person typed this.", `nonce-${tag}-human`));
+      expect(sent.error).toBeUndefined();
+      expect(await rawPrisma.channelMessage.findUniqueOrThrow({ where: { id: sent.messageId! } })).toMatchObject({ text: "A person typed this.", senderType: "AGENT", aiDisclosed: false });
+    } finally {
+      await rawPrisma.channelConnection.update({ where: { id: state.messengerId }, data: { aiAutomationEnabled: false, aiDisclosureEnabled: false } });
+    }
+  });
+
+  it("saves the automated-reply disclosure switch and wording, refuses a viewer and an over-long wording, and empty means the built-in text", async () => {
+    expect((await as(people.viewer, A, () => connectionActions.setChannelFlagsAction(state.messengerId, { aiDisclosureEnabled: true }))).error).toBeTruthy();
+    expect((await as(people.manager, A, () => connectionActions.setChannelFlagsAction(state.messengerId, { aiDisclosureEnabled: true, aiDisclosureText: "  এটি একটি স্বয়ংক্রিয় উত্তর।  " }))).success).toBe("Saved.");
+    expect(await rawPrisma.channelConnection.findUniqueOrThrow({ where: { id: state.messengerId } })).toMatchObject({ aiDisclosureEnabled: true, aiDisclosureText: "এটি একটি স্বয়ংক্রিয় উত্তর।" });
+    expect((await as(people.manager, A, () => connectionActions.setChannelFlagsAction(state.messengerId, { aiDisclosureText: "x".repeat(301) }))).error).toMatch(/under 300/);
+    await as(people.manager, A, () => connectionActions.setChannelFlagsAction(state.messengerId, { aiDisclosureEnabled: false, aiDisclosureText: "" }));
+    expect(await rawPrisma.channelConnection.findUniqueOrThrow({ where: { id: state.messengerId } })).toMatchObject({ aiDisclosureEnabled: false, aiDisclosureText: null });
+    // Telegram has no such policy: its connection refuses the setting, and nothing is stored.
+    expect((await as(people.manager, A, () => connectionActions.setChannelFlagsAction(state.telegramId, { aiDisclosureEnabled: true }))).error).toMatch(/Messenger and Instagram only/);
+    expect(await rawPrisma.channelConnection.findUniqueOrThrow({ where: { id: state.telegramId } })).toMatchObject({ aiDisclosureEnabled: false });
+    expect((await as(people.manager, A, () => connectionActions.setChannelFlagsAction(state.messengerId, { aiDisclosureIdleHours: 721 }))).error).toMatch(/to 720/);
+  });
+
   it("refuses a reply past Meta's 24 hours, and tags it HUMAN_AGENT once the permission is switched on", async () => {
     const late = await as(people.agent, A, () => inboxActions.sendChannelReplyAction(conv.instagram, "Sorry for the wait", `nonce-${tag}-late`));
     expect(late.error).toMatch(/Human Agent/);

@@ -88,6 +88,7 @@ export async function ingestMetaWebhook(input: { key: string; rawBody: Buffer; s
       projectId: connection.projectId,
       type,
       status: { not: "DISCONNECTED" },
+      authMode: "MANUAL",
       OR: [{ id: connection.id }, ...(connection.appId ? [{ appId: connection.appId }] : [])],
     },
     select: { id: true, externalAccountId: true },
@@ -106,6 +107,61 @@ export async function ingestMetaWebhook(input: { key: string; rawBody: Buffer; s
       receivedAt,
     });
   }
+  await record(rows, receivedAt);
+  return OK;
+}
+
+/** Meta batches up to 1,000 updates in one POST to the platform app's single webhook. */
+export const MAX_PLATFORM_WEBHOOK_BYTES = 8_000_000;
+
+/**
+ * The PLATFORM app's webhook (docs/meta-integration/05): one URL, one app secret, every customer's
+ * Pages. Signed with the platform's app secret, and each event is routed by the ACCOUNT it names to
+ * the one live one-click connection holding that account — the database allows at most one across the
+ * installation. Nothing in the body can choose a project; an account no one-click connection holds is
+ * dropped. Manual connections are never matched here, and this route is never matched for them.
+ */
+export async function ingestPlatformMetaWebhook(input: { rawBody: Buffer; signature: string | null; appSecret: string; receivedAt?: Date }): Promise<WebhookAnswer> {
+  const receivedAt = input.receivedAt ?? new Date();
+  if (!metaSignatureValid(input.rawBody, input.signature, input.appSecret)) {
+    console.warn("[channels] platform Meta webhook with a missing or wrong signature; refused.");
+    return { status: 401, body: "Invalid signature" };
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(input.rawBody.toString("utf8"));
+  } catch {
+    return { status: 400, body: "Body is not JSON" };
+  }
+  const object = typeof body === "object" && body !== null ? (body as { object?: unknown }).object : null;
+  const type = typeof object === "string" ? META_TYPE_BY_OBJECT[object] : undefined;
+  if (!type) return OK;
+  const events = splitMetaWebhook(body, type, receivedAt) ?? [];
+  const accountIds = [...new Set(events.map((e) => e.accountId).filter((id): id is string => Boolean(id)))];
+  if (accountIds.length === 0) return OK;
+
+  const targets = await platformPrisma.channelConnection.findMany({
+    where: { authMode: "PLATFORM", type, status: { not: "DISCONNECTED" }, externalAccountId: { in: accountIds } },
+    select: { id: true, projectId: true, externalAccountId: true },
+  });
+  const byAccount = new Map(targets.map((t) => [t.externalAccountId!, t]));
+  const rows: Prisma.ChannelInboundEventCreateManyInput[] = [];
+  let dropped = 0;
+  for (const event of events) {
+    const target = event.accountId ? byAccount.get(event.accountId) : undefined;
+    if (!target) {
+      dropped++;
+      continue;
+    }
+    rows.push({
+      projectId: target.projectId,
+      connectionId: target.id,
+      dedupKey: event.dedupKey,
+      payload: { provider: "META", type, accountId: event.accountId, item: event.item } as Prisma.InputJsonValue,
+      receivedAt,
+    });
+  }
+  if (dropped > 0) console.warn(`[channels] platform Meta webhook: ${dropped} event(s) for accounts no one-click connection holds; dropped.`);
   await record(rows, receivedAt);
   return OK;
 }

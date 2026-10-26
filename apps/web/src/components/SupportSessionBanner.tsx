@@ -24,7 +24,7 @@ export function SupportSessionBanner({ info }: { info: SupportSessionBannerInfo 
   return (
     <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] px-4 py-2 text-[13px] text-[color:var(--color-warning-fg)]">
       <LifeBuoy className="size-4 shrink-0" aria-hidden />
-      <span className="font-medium">RELQIVO support session — {info.operatorUsername}</span>
+      <span className="font-medium">Get Assist support session — {info.operatorUsername}</span>
       <span className="min-w-0 flex-1 truncate opacity-80">{info.reason}</span>
       <span className="shrink-0">{minutes > 0 ? `ends in ${minutes} min` : "ending"}</span>
       <form action={endSupportSession}>

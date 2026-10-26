@@ -54,7 +54,7 @@ export function EmailSettingsForm({ initial }: { initial: Initial }) {
             <Input id="pe-from" name="fromAddress" type="email" defaultValue={initial.fromAddress} />
           </Field>
           <Field label="From name" htmlFor="pe-name">
-            <Input id="pe-name" name="fromName" defaultValue={initial.fromName} placeholder="RELQIVO Billing" />
+            <Input id="pe-name" name="fromName" defaultValue={initial.fromName} placeholder="Get Assist Billing" />
           </Field>
         </div>
         <Field label="Your platform password" htmlFor="pe-confirm">

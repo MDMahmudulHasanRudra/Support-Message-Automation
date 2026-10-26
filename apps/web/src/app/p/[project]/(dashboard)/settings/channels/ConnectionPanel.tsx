@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { CheckCircle2, CircleDashed, Copy, Stethoscope, XCircle } from "lucide-react";
-import type { ChannelType } from "@support-automation/shared";
+import { AI_DISCLOSURE_TEXT_MAX, DEFAULT_AI_DISCLOSURE_TEXT, isAiDisclosureChannel, MAX_AI_DISCLOSURE_IDLE_HOURS, type ChannelType } from "@support-automation/shared";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Alert, Button, ConfirmDialog, Input, Switch, useToast } from "@/components/ui";
 import { disconnectChannelAction, setChannelFlagsAction, testChannelAction, type ChannelActionResult } from "@/server/actions/channelConnections";
@@ -41,6 +41,9 @@ export function ConnectionSwitches({
   enabled,
   aiAutomationEnabled,
   humanAgentEnabled,
+  aiDisclosureEnabled,
+  aiDisclosureText,
+  aiDisclosureIdleHours,
   disconnected,
   canManage,
 }: {
@@ -49,9 +52,16 @@ export function ConnectionSwitches({
   enabled: boolean;
   aiAutomationEnabled: boolean;
   humanAgentEnabled: boolean;
+  aiDisclosureEnabled: boolean;
+  aiDisclosureText: string | null;
+  aiDisclosureIdleHours: number;
   disconnected: boolean;
   canManage: boolean;
 }) {
+  const [wording, setWording] = useState(aiDisclosureText ?? "");
+  const [idle, setIdle] = useState(String(aiDisclosureIdleHours));
+  // Facebook Messenger and Instagram DM only: Telegram has no such policy and shows nothing here.
+  const meta = isAiDisclosureChannel(type);
   const router = useRouter();
   const { showToast } = useToast();
   const [pending, startTransition] = useTransition();
@@ -88,6 +98,48 @@ export function ConnectionSwitches({
             (v) => set({ humanAgentEnabled: v }),
           )
         : null}
+      {meta && aiAutomationEnabled ? (
+        <div className="py-3">
+          <Alert tone="info" title="AI replies on this connection may need to say they are automated">
+            Meta&apos;s Messenger Platform policy requires automated replies to disclose that they are automated where the law requires it (Meta names California and Germany). The setting below adds that line to AI replies on this {type === "INSTAGRAM" ? "Instagram account" : "Facebook Page"} only. Replies typed by your team never get it, and WhatsApp and Telegram are not affected.
+          </Alert>
+        </div>
+      ) : null}
+      {meta && aiAutomationEnabled
+        ? row(
+            "Say that AI replies are automated",
+            "Adds one line above an AI reply, in the same message: on the first AI reply of a conversation, when AI answers again after a person replied, and after the quiet spell below. Never on every message, never on a person's reply. If the line would make a reply too long for the channel, a person answers instead.",
+            aiDisclosureEnabled,
+            (v) => set({ aiDisclosureEnabled: v }),
+          )
+        : null}
+      {meta && aiAutomationEnabled && aiDisclosureEnabled ? (
+        <div className="space-y-3 py-3">
+          <div className="space-y-2">
+            <p className="text-[12.5px] font-medium text-[color:var(--color-foreground)]">Disclosure wording</p>
+            <Input value={wording} onChange={(e) => setWording(e.target.value)} placeholder={DEFAULT_AI_DISCLOSURE_TEXT} maxLength={AI_DISCLOSURE_TEXT_MAX} disabled={disabled} aria-label="Disclosure wording" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="secondary" disabled={disabled || wording.trim() === (aiDisclosureText ?? "").trim()} onClick={() => set({ aiDisclosureText: wording })}>
+                Save wording
+              </Button>
+              <span className="text-[12px] text-[color:var(--color-muted-foreground)]">Leave empty for the built-in wording. Write it in your customers&apos; language.</span>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <p className="text-[12.5px] font-medium text-[color:var(--color-foreground)]">Disclose again after a quiet spell of</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input type="number" min={0} max={MAX_AI_DISCLOSURE_IDLE_HOURS} step={1} value={idle} onChange={(e) => setIdle(e.target.value)} disabled={disabled} className="w-24" aria-label="Quiet spell in hours" />
+              <span className="text-[12.5px] text-[color:var(--color-muted-foreground)]">hours</span>
+              <Button size="sm" variant="secondary" disabled={disabled || idle === String(aiDisclosureIdleHours)} onClick={() => set({ aiDisclosureIdleHours: Number(idle) })}>
+                Save
+              </Button>
+            </div>
+            <p className="text-[12px] text-[color:var(--color-muted-foreground)]">
+              Meta asks for the disclosure again &quot;after a significant lapse of time&quot; without giving a number. 24 hours is this app&apos;s default; 0 turns the quiet-spell rule off.
+            </p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

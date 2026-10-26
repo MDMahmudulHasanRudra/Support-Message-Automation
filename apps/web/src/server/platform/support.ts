@@ -75,13 +75,13 @@ export async function supportIdentity(operator: { operatorId: string; username: 
   const existing = await globalPrisma.user.findFirst({ where: { supportOperatorId: operator.operatorId, customerId: tenant }, select: { id: true, isActive: true } });
   if (existing) {
     // The customer's own decision wins: a support identity their Main Admin deactivated stays off.
-    if (!existing.isActive) return { error: "This customer has turned RELQIVO support access off (their Main Admin deactivated the support user)." };
+    if (!existing.isActive) return { error: "This customer has turned Get Assist support access off (their Main Admin deactivated the support user)." };
     return { id: existing.id };
   }
   const user = await globalPrisma.user.create({
     data: {
       username: `relqivo-support-${operator.username}-${randomBytes(3).toString("hex")}`,
-      name: `RELQIVO Support (${operator.name})`,
+      name: `Get Assist Support (${operator.name})`,
       passwordHash: hashPassword(randomBytes(32).toString("base64url")),
       permissionModuleId: role.id,
       customerId: tenant,

@@ -12,6 +12,7 @@ import { CustomerDetailsForm } from "./CustomerDetailsForm";
 import { CustomerHealthPanel } from "./CustomerHealthPanel";
 import { SupportAccessPanel } from "./SupportAccessPanel";
 import { CopyText } from "./CopyText";
+import { CustomerRemovalPanel, RemovedCustomerPanel } from "./CustomerRemovalPanel";
 
 export const metadata = { title: "Customer" };
 
@@ -34,6 +35,42 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
   const scheme = (process.env.NEXTAUTH_URL ?? "").startsWith("http://") ? "http" : "https";
   const address = customer.domains.find((d) => d.status === "ACTIVE") ?? customer.domains.find((d) => d.status === "VERIFIED");
   const loginLink = address ? `${scheme}://${address.hostname}/login` : null;
+  const when = (iso: string, by: string | null) => `${new Date(iso).toLocaleString()}${by ? ` by ${by}` : ""}`;
+
+  // Deleted permanently: only the record and the platform's own billing history remain (CUSTOMER_REMOVAL.md).
+  if (customer.purgedAt) {
+    return (
+      <div className="max-w-4xl space-y-6">
+        <PageHeader title={customer.name} actions={<Badge color="red">Deleted permanently</Badge>} />
+        <Alert tone="neutral">
+          Deleted permanently {when(customer.purgedAt, customer.purgedByUsername)}. Its workspaces, data, logins and addresses are gone; the invoices and payments below are kept as the platform&apos;s own record.
+        </Alert>
+        <Card>
+          <SectionHeader title="Subscription history" />
+          <BillingPanel customerId={customer.id} billing={billing} plans={plans} defaultGraceDays={billingSettings.defaultGraceDays} canManage={false} />
+        </Card>
+      </div>
+    );
+  }
+
+  if (customer.removedAt) {
+    return (
+      <div className="max-w-4xl space-y-6">
+        <PageHeader title={customer.name} actions={<Badge color="yellow">Removed</Badge>} />
+        <Alert tone="warning">
+          Removed {when(customer.removedAt, customer.removedByUsername)}. Its workspaces are archived and its addresses and logins are switched off; all of its data is kept.
+        </Alert>
+        <Card>
+          <SectionHeader title="Restore or delete" description="Both need your platform password." />
+          <RemovedCustomerPanel customerId={customer.id} customerName={customer.name} />
+        </Card>
+        <Card>
+          <SectionHeader title="Subscription" description="Not billed or reminded while removed." />
+          <BillingPanel customerId={customer.id} billing={billing} plans={plans} defaultGraceDays={billingSettings.defaultGraceDays} canManage={false} />
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -128,6 +165,16 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
           {customer.createdByUsername ? ` by ${customer.createdByUsername}` : ""}.
         </p>
       </Card>
+
+      {customer.isFounding ? null : (
+        <Card>
+          <SectionHeader
+            title="Remove or delete this customer"
+            description="Choose what happens. Both need the customer's name typed and your platform password, and both are recorded on the platform's Activity page."
+          />
+          <CustomerRemovalPanel customerId={customer.id} customerName={customer.name} />
+        </Card>
+      )}
     </div>
   );
 }

@@ -54,6 +54,7 @@ import { startBillingProcessor } from "./billing/billingProcessor.js";
 import { startPictureProcessor } from "./avatars/whatsappPictures.js";
 import { startIdentityReattributionProcessor } from "./teamManagement/reattribution.js";
 import { startChannelAiProcessor } from "./channels/aiReply.js";
+import { startMetaConnectionHealthProcessor } from "./channels/metaHealth.js";
 
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT ?? 4100);
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -199,6 +200,7 @@ async function main() {
     startChannelInboundProcessor(),
     startChannelOutboundProcessor(),
     startChannelAiProcessor(),
+    startMetaConnectionHealthProcessor(),
     // Email (CLIENT_CENTER_PLAN.md §3.1): the SMTP send queue. A no-op for a project without the Client
     // Management feature or without a configured, enabled Email setup; nothing is queued by default.
     startEmailOutboxProcessor(),

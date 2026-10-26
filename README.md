@@ -13,6 +13,14 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Connect with Facebook** (one-click Messenger / Instagram through the platform's own Meta app; off unless
+  `META_INTEGRATION_ENABLED=true`; migrations `20261025090000_meta_platform_oauth`, `20261025100000_channel_ai_disclosure`),
+  plus an AI disclosure for Messenger / Instagram AI replies only (off per connection). Release candidate
+  `release/meta-rc1`: **mock-tested only (launch gate A)** — not merged, not deployed, not yet tried against a real
+  Meta app (gates B–D in `docs/meta-integration/09-release-candidate.md`). Manual connections, WhatsApp and Telegram
+  are unchanged.
+  - Reference: `docs/meta-integration/` (operator checklist and gates: `09-release-candidate.md`).
+
 - **Unified messaging reporting** (`UNIFIED_REPORTING`, off by default; no migration, no worker change). Built on `rudra`; not deployed.
   - **Team Report**: personal and combined scopes, run information, customer-specific replies, and per employee: a ranking
     on each measure (no blended score, small samples shown as not enough data), daily engagement by group, and a

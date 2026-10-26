@@ -113,6 +113,96 @@ export function readMetaPageSubscriptions(pageId: string, token: string, appSecr
   );
 }
 
+// ─── "Connect with Facebook" (the platform's app; docs/meta-integration/05) ──────────────────────
+
+export interface MetaUserToken {
+  accessToken: string;
+  /** Seconds, when Meta says. A long-lived user token is about 60 days; Page tokens taken from one do not expire. */
+  expiresIn: number | null;
+}
+
+/**
+ * The OAuth token endpoint. The app secret goes in the query of a server-to-server call, which is how
+ * Meta defines it; it never reaches a browser, and the URL is never logged.
+ */
+async function oauthToken(params: Record<string, string>, fetchImpl: FetchImpl): Promise<ProviderResult<MetaUserToken>> {
+  const url = new URL(`${graphBase()}/oauth/access_token`);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  let response: Response;
+  try {
+    response = await fetchImpl(url, { method: "GET", signal: AbortSignal.timeout(TIMEOUT_MS) });
+  } catch {
+    return { ok: false, error: networkError("Meta"), status: 0 };
+  }
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!response.ok) return { ok: false, error: readMetaError(response.status, body), status: response.status };
+  const token = typeof body === "object" && body !== null ? (body as { access_token?: unknown; expires_in?: unknown }) : {};
+  if (typeof token.access_token !== "string" || token.access_token.length < 20) {
+    return { ok: false, error: { retryable: false, needsReauth: false, message: "Meta answered without an access token. Try connecting again." }, status: response.status };
+  }
+  return { ok: true, data: { accessToken: token.access_token, expiresIn: typeof token.expires_in === "number" ? token.expires_in : null } };
+}
+
+/** Redeem the code Meta put on the callback. `redirectUri` must be exactly the one the dialog used. */
+export function exchangeMetaCode(input: { appId: string; appSecret: string; redirectUri: string; code: string }, fetchImpl: FetchImpl = fetch) {
+  return oauthToken({ client_id: input.appId, client_secret: input.appSecret, redirect_uri: input.redirectUri, code: input.code }, fetchImpl);
+}
+
+/** A short-lived user token → a long-lived one (about 60 days). */
+export function exchangeLongLivedUserToken(input: { appId: string; appSecret: string; token: string }, fetchImpl: FetchImpl = fetch) {
+  return oauthToken({ grant_type: "fb_exchange_token", client_id: input.appId, client_secret: input.appSecret, fb_exchange_token: input.token }, fetchImpl);
+}
+
+/** Who authorised: their app-scoped id and name. */
+export function readMetaUser(token: string, appSecret: string, fetchImpl: FetchImpl = fetch) {
+  return graph<{ id: string; name?: string }>("GET", "/me", { fields: "id,name" }, { token, appSecret }, fetchImpl);
+}
+
+/** What they granted and declined (packages/shared `readGrantedScopes` reads the body). */
+export function readMetaPermissions(token: string, appSecret: string, fetchImpl: FetchImpl = fetch) {
+  return graph<unknown>("GET", "/me/permissions", {}, { token, appSecret }, fetchImpl);
+}
+
+export interface MetaAccountRow {
+  id: string;
+  name?: string;
+  tasks?: string[];
+  /** Only when asked for (connecting), never for listing. */
+  access_token?: string;
+  instagram_business_account?: { id: string; username?: string; name?: string };
+}
+
+/** At most this many Pages are read (500); a person with more is told so rather than given a partial list silently. */
+const MAX_ACCOUNT_PAGES = 5;
+
+/**
+ * The Pages the person chose in Meta's dialog, with their role and the linked Instagram account.
+ * Page tokens are requested only when `withTokens` (the moment of connecting), so listing them on the
+ * choice screen never handles a token. Paging follows Meta's cursor, never Meta's `next` URL (which
+ * carries the token in its query).
+ */
+export async function listMetaAccounts(token: string, appSecret: string, opts: { withTokens: boolean }, fetchImpl: FetchImpl = fetch): Promise<ProviderResult<{ accounts: MetaAccountRow[]; truncated: boolean }>> {
+  const fields = ["id", "name", "tasks", "instagram_business_account{id,username,name}", ...(opts.withTokens ? ["access_token"] : [])].join(",");
+  const accounts: MetaAccountRow[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < MAX_ACCOUNT_PAGES; page++) {
+    const params: Record<string, string> = { fields, limit: "100" };
+    if (after) params.after = after;
+    const result = await graph<{ data?: MetaAccountRow[]; paging?: { cursors?: { after?: string }; next?: string } }>("GET", "/me/accounts", params, { token, appSecret }, fetchImpl);
+    if (!result.ok) return result;
+    for (const row of result.data.data ?? []) if (row && typeof row.id === "string") accounts.push(row);
+    const next = result.data.paging?.next ? (result.data.paging.cursors?.after ?? null) : null;
+    if (!next) return { ok: true, data: { accounts, truncated: false } };
+    after = next;
+  }
+  return { ok: true, data: { accounts, truncated: true } };
+}
+
 // ─── Telegram ──────────────────────────────────────────────────────────────────────────────────
 
 const TELEGRAM_API = "https://api.telegram.org";

@@ -77,7 +77,7 @@ export async function requireOperatorPage(): Promise<PlatformOperatorSession> {
 
 /** For a platform Server Action (a public endpoint): the operator, or a refusal to show. */
 export async function requireOperatorAction(): Promise<{ operator: PlatformOperatorSession } | { denied: string }> {
-  if (!hostServesPlatform(await currentHostScope())) return { denied: "The RELQIVO platform is not available on this address." };
+  if (!hostServesPlatform(await currentHostScope())) return { denied: "The Get Assist platform is not available on this address." };
   const operator = await getOperator();
   return operator ? { operator } : { denied: "Your platform session has ended. Sign in again." };
 }

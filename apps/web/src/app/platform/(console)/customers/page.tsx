@@ -10,10 +10,14 @@ import { DomainStatusBadge } from "../DomainStatusBadge";
 
 export const metadata = { title: "Customers" };
 
-export default async function CustomersPage() {
+export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ show?: string }> }) {
   await requireOperatorPage();
   const canManage = true;
-  const [customers, subscriptions] = await Promise.all([listCustomers(), listCustomerSubscriptions()]);
+  const showRemoved = (await searchParams).show === "removed";
+  const [all, subscriptions] = await Promise.all([listCustomers(), listCustomerSubscriptions()]);
+  // Removed and permanently deleted customers leave the list (CUSTOMER_REMOVAL.md); "Removed" shows only them.
+  const customers = all.filter((c) => (c.removedAt !== null) === showRemoved);
+  const removedCount = all.filter((c) => c.removedAt !== null).length;
   return (
     <div>
       <PageHeader
@@ -28,7 +32,23 @@ export default async function CustomersPage() {
           ) : null
         }
       />
-      {customers.length === 0 ? (
+      <div className="mb-4 flex gap-2 text-sm">
+        <NextLink
+          href="/platform/customers"
+          className={`rounded-[var(--radius-md)] px-3 py-1.5 ${showRemoved ? "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]" : "bg-[var(--color-neutral-bg)] font-medium"}`}
+        >
+          In use ({all.length - removedCount})
+        </NextLink>
+        <NextLink
+          href="/platform/customers?show=removed"
+          className={`rounded-[var(--radius-md)] px-3 py-1.5 ${showRemoved ? "bg-[var(--color-neutral-bg)] font-medium" : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]"}`}
+        >
+          Removed ({removedCount})
+        </NextLink>
+      </div>
+      {showRemoved && customers.length === 0 ? (
+        <EmptyState>No removed customers.</EmptyState>
+      ) : customers.length === 0 ? (
         <EmptyState>
           No customers yet. Start by adding your existing installation as the first customer — choose “The original installation” so its data, people
           and addresses stay exactly as they are.
@@ -51,6 +71,15 @@ export default async function CustomersPage() {
                   <NextLink href={`/platform/customers/${c.id}`} className="font-medium hover:underline">
                     {c.name}
                   </NextLink>
+                  {c.purgedAt ? (
+                    <span className="mt-1 block">
+                      <Badge color="red">Deleted permanently</Badge>
+                    </span>
+                  ) : c.removedAt ? (
+                    <span className="mt-1 block">
+                      <Badge color="yellow">Removed {c.removedAt.slice(0, 10)}</Badge>
+                    </span>
+                  ) : null}
                 </Td>
                 <Td>
                   {c.projects.length === 0 ? (

@@ -292,9 +292,12 @@ the same. Kill switch for the page side only: `PROJECT_ROLE_PAGES_DISABLED=true`
 
 **White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
 `projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the
-built-in default (`lib/branding.ts`: **RELQIVO** since 21 Oct 2026; existing installs had their old name stored by
+built-in default (`lib/branding.ts`: **Get Assist** since 26 Oct 2026, RELQIVO 21–26 Oct; existing installs had their old name stored by
 migration `20261021090000_relqivo_white_label_defaults`, so they look unchanged — BRANDING.md §Defaults). A fresh
-install's first project is "RELQIVO Project 1", and new projects are offered "RELQIVO Project N". Never hard-code the product
+install's first project is "RELQIVO Project 1" (set by an applied migration, so unchanged), and new projects are offered "Get Assist Project N".
+Internal identifiers that still say relqivo (cookie `relqivo_platform_session`, header `x-relqivo-host`, hash salts, System Log
+message keys `RELQIVO_SUPPORT_*`, support usernames) are deliberately NOT renamed: changing them signs everyone out, breaks
+stored hashes and splits log history. Never hard-code the product
 name again: server code reads `getBranding()`, client code `useBranding()` (root-layout provider),
 and the mark is `BrandMark`, which follows the uploaded icon. Saving needs `projects.manage`. The
 colour moves only the accent tokens, never the ink primary. Images are sniffed from their bytes,
@@ -2910,6 +2913,29 @@ Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.vi
   revives the same row with a new webhook key.
 - TikTok is NOT built (beta API, regional, needs approval) and is shown as unavailable, never as a
   channel. Instagram uses the Page-linked (Facebook Login) flow; Instagram Login is not built.
+- **Connect with Facebook (`docs/meta-integration/`, 25 Oct 2026)**: `ChannelConnection.authMode` MANUAL (the
+  project's own app, unchanged) or PLATFORM (the platform's one Meta app from `META_*` env, off unless
+  `META_INTEGRATION_ENABLED=true`). Rules worth not undoing:
+  - **A PLATFORM row stores no app secret**; web `connections.ts` and worker `metaAppSecretFor` read `META_APP_SECRET`.
+  - **Routing is by account id, never by anything the payload says about a project** (`/api/meta/webhook`,
+    `ingestPlatformMetaWebhook`). A partial unique index allows ONE live PLATFORM row per account across the
+    whole installation; never relax it, or two projects would receive one Page's events.
+  - **The OAuth result is handed over only with session + one-time claim + HTTP-only binding cookie**
+    (`metaOAuth.ts`). The callback is one fixed address that needs no session; the state is single-use by a
+    conditional update. State, binding and claim are stored only as SHA-256 hashes.
+  - **The user token is wiped when the attempt ends** (and by the worker's `meta-connection-health` loop for
+    abandoned ones). Page tokens are fetched from Meta only at the moment of connecting.
+  - **CONNECTED only after Meta subscribed the Page**; otherwise ERROR with the reason.
+  - **Unsubscribe a Page only when no other live PLATFORM row uses it** (Messenger and Instagram share it).
+  - **There is no refresh job**, deliberately (Page tokens from a long-lived user token do not expire). The
+    health loop marks dead tokens NEEDS_RECONNECT, and the deauthorize / data-deletion callbacks do the same
+    for that person's connections.
+  - **AI disclosure (`08-ai-disclosure.md`)**: Messenger and Instagram ONLY, per connection, off by default, shown
+    only while that connection's AI is on. One line above the AI answer in the SAME message, only on the first AI
+    reply, after a person replied, or after the connection's quiet spell (`aiDisclosureIdleHours`, 0 = never; Meta
+    gives no number). It lives only in `channels/aiReply.ts` behind `isAiDisclosureChannel(type)` —
+    `aiDisclosureIsolation.test.ts` fails if WhatsApp, Telegram or any other module starts using it. If it would
+    not fit the channel, hand over; never send an automated reply without it.
 
 ### Client Management (`CLIENT_CENTER.md`)
 
@@ -2976,8 +3002,8 @@ original import, untouched. Up to 5,000 rows / 15 MB from any file. Rules worth 
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 
 On the platform (Layer 1). Rules worth not undoing:
-- **An address is the platform's OR one customer's, never both** (`classifyHost`). `admin.udboy.com` is the platform;
-  `zoventio.udboy.com` is Customer #1's. Routing ships OFF.
+- **An address is the platform's OR one customer's, never both** (`classifyHost`). `admin.getassist.pro` is the platform;
+  `noorvip.getassist.pro` is Customer #1's (moved from admin/zoventio.udboy.com on 26 Oct 2026, which still answer). Routing ships OFF.
 - **A customer with no subscription is never held or limited, and a subscription suspends by itself only
   with `autoEnforce` ticked** (default off). This is Customer #1's protection; never default either.
 - **The billing hold IS the SUSPENDED rule** (`Project.billingHoldAt` on every project of the customer, written only by
@@ -2989,6 +3015,11 @@ On the platform (Layer 1). Rules worth not undoing:
   price, payment, address, owner as ITS Main Admin. "The original installation" mode only marks the founding customer.
 - **Change plan starts from the current terms** (paid-through, enforcement, no new trial).
 - Billing email: the worker's `platformMailer()` — Platform → Settings when enabled, else `PLATFORM_SMTP_*`.
+- **Removing / deleting a customer** (`CUSTOMER_REMOVAL.md`): the operator picks Remove (archive, disable, deactivate,
+  snapshot, Restore puts back exactly the snapshot) or Delete permanently (removes first, then empties every
+  `"projectId"` table in catalogue-derived foreign-key order, `deletionOrder`). Name typed + operator password; never
+  the founding customer (CHECK). The Customer row and the platform's billing stay. A removed customer is skipped by the
+  billing loop and Monitoring and refused by plan/owner/address/support actions.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

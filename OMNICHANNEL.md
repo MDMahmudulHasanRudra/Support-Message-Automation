@@ -10,6 +10,12 @@ database. **Not yet tested with live credentials.** The feature is off by defaul
 
 ---
 
+> **Connect with Facebook (25 Oct 2026).** A Messenger or Instagram connection can now also be made
+> through the PLATFORM's own Meta app: the customer signs in at Facebook and picks Pages, with no
+> app, secret or token of their own (`authMode = PLATFORM`). Such connections use one platform
+> webhook, `/api/meta/webhook`, routed by account id. Everything below, the per-connection "manual"
+> mode, is unchanged. Reference: `docs/meta-integration/` (start with `03-architecture-and-data-flow.md`).
+
 ## 1. Audit — what existed (Phase 1)
 
 | Area | Finding |
@@ -137,7 +143,9 @@ of these hold; otherwise the message is recorded SKIPPED with the reason:
   earlier lines as context.
 
 On top of these, the per-customer AI cooldown and the hourly per-customer ceiling apply as on
-WhatsApp. A handover raises the usual "AI assistance required" alert through `enqueueNotification`.
+WhatsApp. A **Messenger or Instagram** connection can also **say that AI replies are automated** (off
+by default; never Telegram, never WhatsApp): one line above the answer, on the first AI reply, after a
+person replied, and after the connection's quiet spell (`docs/meta-integration/08-ai-disclosure.md`). A handover raises the usual "AI assistance required" alert through `enqueueNotification`.
 Each customer message is claimed exactly once (`aiClaimedAt`, set by a conditional update), and the
 reply carries the idempotency key `ai:<message id>`.
 

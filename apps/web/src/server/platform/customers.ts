@@ -87,6 +87,9 @@ export interface CustomerSummary {
   contactName: string | null;
   contactEmail: string | null;
   isFounding: boolean;
+  /** CUSTOMER_REMOVAL.md: removed (data kept, restorable) and, when also purged, deleted permanently. */
+  removedAt: string | null;
+  purgedAt: string | null;
   projects: Array<{ id: string; name: string; slug: string; status: string }>;
   domains: Array<{ hostname: string; status: DomainStatus }>;
   createdAt: string;
@@ -101,6 +104,8 @@ export async function listCustomers(): Promise<CustomerSummary[]> {
       contactEmail: true,
       isFounding: true,
       createdAt: true,
+      removedAt: true,
+      purgedAt: true,
       projects: { select: { id: true, name: true, slug: true, status: true }, orderBy: { createdAt: "asc" } },
       domains: { select: { hostname: true, status: true }, orderBy: { hostname: "asc" } },
     },
@@ -114,6 +119,8 @@ export async function listCustomers(): Promise<CustomerSummary[]> {
     ...row,
     projects: row.isFounding ? [...original, ...row.projects] : row.projects,
     createdAt: row.createdAt.toISOString(),
+    removedAt: row.removedAt?.toISOString() ?? null,
+    purgedAt: row.purgedAt?.toISOString() ?? null,
     domains: row.domains.map((d) => ({ hostname: d.hostname, status: isDomainStatus(d.status) ? d.status : "PENDING" })),
   }));
 }
@@ -128,6 +135,10 @@ export interface CustomerDetail {
   createdByUsername: string | null;
   createdAt: string;
   isFounding: boolean;
+  removedAt: string | null;
+  removedByUsername: string | null;
+  purgedAt: string | null;
+  purgedByUsername: string | null;
   projects: Array<{ id: string; name: string; slug: string; status: string; whatsappNumbers: number }>;
   /** People with a login in this customer's software (RELQIVO support identities not counted). */
   people: number;
@@ -158,6 +169,10 @@ export async function getCustomer(id: string): Promise<CustomerDetail | null> {
     createdByUsername: row.createdByUsername,
     createdAt: row.createdAt.toISOString(),
     isFounding: row.isFounding,
+    removedAt: row.removedAt?.toISOString() ?? null,
+    removedByUsername: row.removedByUsername,
+    purgedAt: row.purgedAt?.toISOString() ?? null,
+    purgedByUsername: row.purgedByUsername,
     projects: projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug, status: p.status, whatsappNumbers: p._count.whatsAppAccountRows })),
     people,
     domains: row.domains.map((d) => toDomainView({ ...d, customer: { name: row.name } }, settings)),

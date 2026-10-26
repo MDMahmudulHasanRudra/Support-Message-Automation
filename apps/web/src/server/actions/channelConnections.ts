@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { checkPermission } from "@/server/authorize";
 import { projectPath } from "@/server/projectPaths";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -15,6 +16,7 @@ import {
   updateTelegramToken,
   type ConnectionCheck,
 } from "@/server/channels/connections";
+import { cancelMetaSession, connectMetaAssets, MetaOAuthError, type MetaConnectOutcome } from "@/server/channels/metaOAuth";
 
 /**
  * Settings → Messaging Channels (OMNICHANNEL.md §11). Every action needs `channels.manage`, which
@@ -91,7 +93,10 @@ export async function updateChannelCredentialsAction(_prev: ChannelActionResult,
   }
 }
 
-export async function setChannelFlagsAction(id: string, flags: { enabled?: boolean; aiAutomationEnabled?: boolean; humanAgentEnabled?: boolean; name?: string }): Promise<ChannelActionResult> {
+export async function setChannelFlagsAction(
+  id: string,
+  flags: { enabled?: boolean; aiAutomationEnabled?: boolean; humanAgentEnabled?: boolean; aiDisclosureEnabled?: boolean; aiDisclosureText?: string; aiDisclosureIdleHours?: number; name?: string },
+): Promise<ChannelActionResult> {
   const access = await checkPermission("channels.manage");
   if ("denied" in access) return { error: access.denied };
   try {
@@ -131,4 +136,43 @@ export async function testChannelAction(id: string): Promise<ChannelActionResult
   } catch (err) {
     return failure(err, "The check");
   }
+}
+
+// ─── Connect with Facebook (docs/meta-integration) ─────────────────────────────────────────────
+
+/**
+ * Save the Pages and Instagram accounts the person ticked on the choice screen. Everything is checked
+ * again on the server — the session is theirs, claimed, unexpired; each account is still listed by
+ * Meta and connectable — so a ticked box that has gone stale is refused with its reason, not saved.
+ */
+export async function connectMetaAssetsAction(sessionId: string, keys: string[]): Promise<{ error?: string; outcomes?: MetaConnectOutcome[] }> {
+  const access = await checkPermission("channels.manage");
+  if ("denied" in access) return { error: access.denied };
+  if (typeof sessionId !== "string" || !Array.isArray(keys) || keys.some((k) => typeof k !== "string" || k.length > 120)) return { error: "Choose at least one account." };
+  try {
+    const outcomes = await connectMetaAssets({ sessionId, userId: access.session.userId, username: access.session.username, keys });
+    for (const o of outcomes) {
+      await logSystemEvent(o.outcome === "CONNECTED" ? "INFO" : "WARN", "channels", o.outcome === "CONNECTED" ? "Channel connected with Facebook" : "Channel not connected with Facebook", { account: o.name, outcome: o.outcome, reason: o.outcome === "CONNECTED" ? null : o.message }, {
+        actorUserId: access.session.userId,
+        targetType: "ChannelConnection",
+        targetId: o.connectionId ?? undefined,
+      });
+    }
+    // No revalidatePath here: it would re-render the choice screen under the person's feet, and the
+    // finished attempt can no longer be opened — the results would vanish. The lists are dynamic pages.
+    return { outcomes };
+  } catch (err) {
+    if (err instanceof MetaOAuthError) return { error: err.message };
+    console.error("[channels] connecting with Facebook failed", err);
+    return { error: "Connecting failed because of a server error. Nothing more was changed. Check System Logs and try again." };
+  }
+}
+
+export async function cancelMetaChoiceAction(sessionId: string): Promise<void> {
+  const access = await checkPermission("channels.manage");
+  if (!("denied" in access) && typeof sessionId === "string") {
+    await cancelMetaSession({ sessionId, userId: access.session.userId });
+    await logSystemEvent("INFO", "channels", "Facebook connection cancelled on the choice screen", {}, { actorUserId: access.session.userId });
+  }
+  redirect(await projectPath("/settings/channels"));
 }

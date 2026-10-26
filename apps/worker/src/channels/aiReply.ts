@@ -1,5 +1,5 @@
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
-import { CHANNELS, decideReplyWindow, channelMessagePreview, validateChannelText, type ChannelType } from "@support-automation/shared";
+import { aiDisclosureText, CHANNELS, decideAiDisclosure, decideReplyWindow, channelMessagePreview, isAiDisclosureChannel, validateChannelText, withAiDisclosure, type AiDisclosureReason, type ChannelType } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
@@ -143,7 +143,7 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
       occurredAt: true,
       conversationId: true,
       conversation: { select: { customerName: true, customerUsername: true, title: true, externalThreadId: true } },
-      connection: { select: { id: true, name: true, enabled: true, status: true, aiAutomationEnabled: true, humanAgentEnabled: true } },
+      connection: { select: { id: true, name: true, enabled: true, status: true, aiAutomationEnabled: true, humanAgentEnabled: true, aiDisclosureEnabled: true, aiDisclosureText: true, aiDisclosureIdleHours: true } },
     },
   });
   const type = message.type as ChannelType;
@@ -246,6 +246,15 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
   const tooLong = validateChannelText(type, parsed.responseText);
   if (tooLong) return handOver("REPLY_TOO_LONG_FOR_CHANNEL", extra);
 
+  // Facebook Messenger and Instagram DM only (Meta's Messenger Platform policy, docs/meta-integration/08):
+  // saying the reply is automated, when the connection asks for it. Telegram never gets here — the
+  // provider check is explicit. The answer itself is untouched: the line goes above it, in the same
+  // message, after every gate above has passed. If the two together no longer fit the channel, a
+  // person answers instead: an automated reply missing its disclosure is never sent.
+  const disclosure = isAiDisclosureChannel(type) ? await disclosureFor(message) : null;
+  const replyText = disclosure ? withAiDisclosure(aiDisclosureText(message.connection.aiDisclosureText), parsed.responseText) : parsed.responseText;
+  if (disclosure && validateChannelText(type, replyText)) return handOver("REPLY_TOO_LONG_WITH_DISCLOSURE", extra);
+
   // Everything is re-checked after the model's latency: a person may have replied, or the kill switch
   // been pressed, while it was thinking.
   const fresh = { automation: await getAutomationSettings(), ai: await getAiSettings() };
@@ -261,7 +270,8 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
       type,
       direction: "OUTBOUND",
       senderType: "AI",
-      text: parsed.responseText,
+      text: replyText,
+      aiDisclosed: disclosure !== null,
       contentType: "TEXT",
       occurredAt: queuedAt,
       deliveryStatus: "QUEUED",
@@ -273,7 +283,41 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
   });
   await prisma.channelConversation.update({
     where: { id: message.conversationId },
-    data: { lastMessageAt: queuedAt, lastMessagePreview: channelMessagePreview(parsed.responseText, "TEXT"), lastMessageDirection: "OUTBOUND" },
+    data: { lastMessageAt: queuedAt, lastMessagePreview: channelMessagePreview(replyText, "TEXT"), lastMessageDirection: "OUTBOUND" },
   });
   return { outcome: "REPLIED", reason: null, ...extra, replyId: reply.id };
+}
+
+/**
+ * Whether this AI reply must say it is automated (packages/shared `decideAiDisclosure`): read from the
+ * conversation's own history, so a restart or a second worker reaches the same answer. A disclosing
+ * reply that FAILED was never seen by the customer and does not count.
+ */
+async function disclosureFor(
+  message: { id: string; conversationId: string; occurredAt: Date; connection: { aiDisclosureEnabled: boolean; aiDisclosureIdleHours: number } },
+): Promise<AiDisclosureReason | null> {
+  if (!message.connection.aiDisclosureEnabled) return null;
+  const last = await prisma.channelMessage.findFirst({
+    where: { conversationId: message.conversationId, senderType: "AI", aiDisclosed: true, deliveryStatus: { not: "FAILED" } },
+    orderBy: { occurredAt: "desc" },
+    select: { occurredAt: true },
+  });
+  const humanSince = last
+    ? await prisma.channelMessage.count({
+        where: { conversationId: message.conversationId, direction: "OUTBOUND", senderType: { in: ["AGENT", "BUSINESS"] }, occurredAt: { gt: last.occurredAt }, deliveryStatus: { not: "FAILED" } },
+      })
+    : 0;
+  const previous = await prisma.channelMessage.findFirst({
+    where: { conversationId: message.conversationId, id: { not: message.id }, occurredAt: { lt: message.occurredAt } },
+    orderBy: { occurredAt: "desc" },
+    select: { occurredAt: true },
+  });
+  return decideAiDisclosure({
+    enabled: true,
+    lastDisclosedAt: last?.occurredAt ?? null,
+    humanRepliedSince: humanSince > 0,
+    previousMessageAt: previous?.occurredAt ?? null,
+    answeringAt: message.occurredAt,
+    idleHours: message.connection.aiDisclosureIdleHours,
+  });
 }
