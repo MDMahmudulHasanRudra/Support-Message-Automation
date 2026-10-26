@@ -85,7 +85,7 @@ async function customerWithData(label: string): Promise<Fixture> {
   const domain = await rawPrisma.customerDomain.create({ data: { customerId: customer.id, hostname: `${label.toLowerCase()}-${tag}.remove.test`, status: "ACTIVE", verificationToken: randomUUID() } });
   await rawPrisma.userInvitation.create({ data: { customerId: customer.id, projectId: project.id, name: "Invited", tokenHash: randomUUID(), expiresAt: new Date(Date.now() + 86_400_000) } });
   await rawPrisma.subscription.create({
-    data: { customerId: customer.id, planName: "Plan", currency: "BDT", priceMinor: 1000n, interval: "MONTHLY", startsAt: new Date(), paidThrough: new Date(Date.now() + 86_400_000) } as never,
+    data: { customerId: customer.id, planName: "Plan", currency: "BDT", priceMinor: BigInt(1000), interval: "MONTHLY", startsAt: new Date(), paidThrough: new Date(Date.now() + 86_400_000) } as never,
   });
 
   // The workspace: WhatsApp, messages (one quoting another), a team member, support activity, an AI
@@ -128,7 +128,7 @@ async function projectRowCounts(projectId: string): Promise<Record<string, numbe
   const counts: Record<string, number> = {};
   for (const { table_name } of tables) {
     const [{ n }] = await rawPrisma.$queryRawUnsafe<Array<{ n: bigint }>>(`SELECT count(*) AS n FROM "${table_name}" WHERE "projectId" = $1`, projectId);
-    if (n > 0n) counts[table_name] = Number(n);
+    if (Number(n) > 0) counts[table_name] = Number(n);
   }
   return counts;
 }
