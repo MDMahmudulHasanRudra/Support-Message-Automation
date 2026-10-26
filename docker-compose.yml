@@ -106,6 +106,8 @@ services:
       META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-}
       META_LOGIN_CONFIG_ID: ${META_LOGIN_CONFIG_ID:-}
       META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-}
+      # Workspaces allowed to use it (project ids, "*" = all). Empty = none: it fails closed.
+      META_ALLOWED_PROJECT_IDS: ${META_ALLOWED_PROJECT_IDS:-}
     volumes:
       - whatsapp_media:/app/media
     ports:
@@ -198,6 +200,8 @@ services:
       META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-}
       META_LOGIN_CONFIG_ID: ${META_LOGIN_CONFIG_ID:-}
       META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-}
+      # Workspaces allowed to use it (project ids, "*" = all). Empty = none: it fails closed.
+      META_ALLOWED_PROJECT_IDS: ${META_ALLOWED_PROJECT_IDS:-}
     # No `ports:` here on purpose: the worker's health endpoint binds to
     # 127.0.0.1 inside the container only, for its own HEALTHCHECK to use.
     # The dashboard never talks to the worker over HTTP (see ARCHITECTURE.md).

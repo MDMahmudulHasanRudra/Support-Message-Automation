@@ -4,6 +4,7 @@ import {
   classifyMetaAssets,
   META_REQUESTED_SCOPES,
   readGrantedScopes,
+  metaProjectAllowed,
   readMetaPlatformConfig,
   type ClassifiedAsset,
   type DiscoveredPage,
@@ -68,6 +69,7 @@ export class MetaOAuthError extends Error {
 
 export type MetaOAuthErrorCode =
   | "not_configured"
+  | "not_allowed"
   | "too_many"
   | "expired"
   | "denied"
@@ -80,6 +82,7 @@ export type MetaOAuthErrorCode =
 /** Every refusal code the callback or claim can put in a URL, with the sentence the page shows. */
 export const META_ERROR_TEXT: Record<MetaOAuthErrorCode, string> = {
   not_configured: "Connecting with Facebook is not available on this server yet. Ask your platform administrator, or connect with your own app's credentials below.",
+  not_allowed: "Connecting with Facebook is not available in this workspace yet. Ask your platform administrator, or connect with your own app's credentials below.",
   too_many: "Too many connection attempts in the last hour. Wait a little and try again.",
   expired: "That Facebook connection attempt expired or was already used. Start again.",
   denied: "Facebook was not authorised, so nothing was connected. Start again when you are ready.",
@@ -118,6 +121,18 @@ function requireConfig(): MetaPlatformConfig {
   const reading = metaPlatformConfig();
   if (!reading.ok) throw new MetaOAuthError("not_configured", META_ERROR_TEXT.not_configured);
   return reading.config;
+}
+
+/** Whether one-click Meta may be used in this project (`META_ALLOWED_PROJECT_IDS`, fails closed). */
+export function metaAllowedForProject(projectId: string | null | undefined): boolean {
+  return metaProjectAllowed(process.env, projectId);
+}
+
+/** Inside a project: the configuration, and this project on the allowlist — or a refusal. */
+async function requireProjectConfig(): Promise<MetaPlatformConfig> {
+  const config = requireConfig();
+  if (!metaAllowedForProject(await activeProjectId())) throw new MetaOAuthError("not_allowed", META_ERROR_TEXT.not_allowed);
+  return config;
 }
 
 const HOST_RE = /^[a-z0-9.-]+(:\d{1,5})?$/;
@@ -177,7 +192,7 @@ export async function startMetaOAuth(input: {
   returnPath: string;
   now?: Date;
 }): Promise<StartedMetaOAuth> {
-  const config = requireConfig();
+  const config = await requireProjectConfig();
   const now = input.now ?? new Date();
   const recent = await prisma.metaOAuthSession.count({ where: { userId: input.userId, createdAt: { gt: new Date(now.getTime() - 60 * 60_000) } } });
   if (recent >= MAX_STARTS_PER_HOUR) throw new MetaOAuthError("too_many", META_ERROR_TEXT.too_many);
@@ -218,7 +233,7 @@ export async function completeMetaCallback(input: { params: URLSearchParams; fet
   };
   const state = input.params.get("state") ?? "";
   if (!/^[A-Za-z0-9_-]{20,100}$/.test(state)) return fallback("expired");
-  const row = await platformPrisma.metaOAuthSession.findUnique({ where: { stateHash: sha256(state) }, select: { id: true, status: true, expiresAt: true, returnOrigin: true, returnPath: true } });
+  const row = await platformPrisma.metaOAuthSession.findUnique({ where: { stateHash: sha256(state) }, select: { id: true, projectId: true, status: true, expiresAt: true, returnOrigin: true, returnPath: true } });
   if (!row) return fallback("expired");
   const back = (query: string) => ({ redirect: `${row.returnOrigin}${row.returnPath}/settings/channels?${query}` });
 
@@ -244,6 +259,8 @@ export async function completeMetaCallback(input: { params: URLSearchParams; fet
   } catch {
     return fail("FAILED", "not_configured", "Meta integration was switched off before the code could be redeemed.");
   }
+  // The workspace may have been taken off the allowlist while its person was at Meta.
+  if (!metaAllowedForProject(row.projectId)) return fail("FAILED", "not_allowed", "This workspace is not allowed to use one-click Meta (META_ALLOWED_PROJECT_IDS).");
   const short = await exchangeMetaCode({ appId: config.appId, appSecret: config.appSecret, redirectUri: config.redirectUri, code }, fetchImpl);
   if (!short.ok) return fail("FAILED", "exchange_failed", `The authorisation code could not be redeemed: ${short.error.message}`);
   // Meta sometimes hands back a long-lived token already; exchanging is still harmless, and keeps the
@@ -276,6 +293,7 @@ export async function completeMetaCallback(input: { params: URLSearchParams; fet
 /** Inside the project. Returns the session id to open the choice screen with. */
 export async function claimMetaSession(input: { claim: string; binding: string | null | undefined; userId: string; now?: Date }): Promise<string> {
   const now = input.now ?? new Date();
+  await requireProjectConfig();
   if (!/^[A-Za-z0-9_-]{20,100}$/.test(input.claim)) throw new MetaOAuthError("expired", META_ERROR_TEXT.expired);
   // Scoped client: a claim of another project's session is simply not found here.
   const row = await prisma.metaOAuthSession.findUnique({
@@ -377,7 +395,7 @@ export interface MetaChoice {
 
 export async function loadMetaChoice(input: { sessionId: string; userId: string; fetchImpl?: FetchImpl; now?: Date }): Promise<MetaChoice> {
   const now = input.now ?? new Date();
-  const config = requireConfig();
+  const config = await requireProjectConfig();
   const { row, token } = await openSession(input.sessionId, input.userId, now);
   const listed = await listMetaAccounts(token, config.appSecret, { withTokens: false }, input.fetchImpl ?? fetch);
   if (!listed.ok) throw new MetaOAuthError("exchange_failed", `Facebook would not list your Pages: ${listed.error.message}`);
@@ -410,7 +428,7 @@ const TAKEN_ELSEWHERE = "This account was connected in another workspace a momen
 export async function connectMetaAssets(input: { sessionId: string; userId: string; username: string; keys: string[]; fetchImpl?: FetchImpl; now?: Date }): Promise<MetaConnectOutcome[]> {
   const fetchImpl = input.fetchImpl ?? fetch;
   const now = input.now ?? new Date();
-  const config = requireConfig();
+  const config = await requireProjectConfig();
   const wanted = [...new Set(input.keys)].slice(0, 100);
   if (wanted.length === 0) throw new MetaOAuthError("not_found", "Choose at least one Page or Instagram account to connect.");
   const { row, token } = await openSession(input.sessionId, input.userId, now);

@@ -4,7 +4,8 @@ import Link from "@/components/ProjectLink";
 import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { pageAccess } from "@/server/authorize";
 import { hasPermission } from "@/server/permissions";
-import { META_ERROR_TEXT, metaPlatformConfig, type MetaOAuthErrorCode } from "@/server/channels/metaOAuth";
+import { META_ERROR_TEXT, metaAllowedForProject, metaPlatformConfig, type MetaOAuthErrorCode } from "@/server/channels/metaOAuth";
+import { activeProjectId } from "@/server/projectContext";
 import { listChannelConnections } from "@/server/channels/connections";
 import { ChannelMark } from "../../conversations/ChannelMark";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
@@ -20,7 +21,10 @@ export const metadata = { title: "Messaging Channels" };
 export default async function ChannelsPage({ searchParams }: { searchParams: Promise<{ meta_error?: string }> }) {
   const { session, canManage } = await pageAccess("channels.view", "channels.manage", "OMNICHANNEL");
   const [connections, query] = await Promise.all([listChannelConnections(), searchParams]);
-  const oneClick = metaPlatformConfig();
+  const config = metaPlatformConfig();
+  // One-click needs the server configured AND this workspace on META_ALLOWED_PROJECT_IDS (fails closed).
+  const allowed = metaAllowedForProject(await activeProjectId());
+  const oneClick = { ok: config.ok && allowed, problems: config.ok ? (allowed ? [] : ["This workspace is not on META_ALLOWED_PROJECT_IDS."]) : config.problems };
   // What is missing on the server is the platform administrator's business; only a Main Admin sees it.
   const problems = !oneClick.ok && (await hasPermission(session, "projects.manage")) ? oneClick.problems : null;
   const metaError = query.meta_error && query.meta_error in META_ERROR_TEXT ? META_ERROR_TEXT[query.meta_error as MetaOAuthErrorCode] : null;

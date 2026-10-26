@@ -155,7 +155,10 @@ const ENV = {
 };
 function enable(on = true) {
   for (const [k, v] of Object.entries(ENV)) vi.stubEnv(k, on ? v : "");
+  // The workspace allowlist fails closed; every test project is on it unless a test says otherwise.
+  vi.stubEnv("META_ALLOWED_PROJECT_IDS", on ? [A, B, C].map((p) => p.id).join(",") : "");
 }
+const allowOnly = (...projects: Project[]) => vi.stubEnv("META_ALLOWED_PROJECT_IDS", projects.map((p) => p.id).join(" "));
 
 /** Start a connection from a customer's address the way the button does, and return the pieces. */
 async function start(person: Session, project: Project, query = "type=MESSENGER") {
@@ -256,6 +259,39 @@ describe("1. off means off", () => {
     expect((await platformWebhook.POST(new NextRequest("https://hub.example.test/api/meta/webhook", { method: "POST", body: "{}" }))).status).toBe(404);
     expect((await platformWebhook.GET(new NextRequest(`https://hub.example.test/api/meta/webhook?hub.mode=subscribe&hub.verify_token=${VERIFY}&hub.challenge=123`))).status).toBe(404);
     expect(await rawPrisma.metaOAuthSession.count({ where: { projectId: A.id } })).toBe(0);
+  });
+
+  it("fails closed: configured but with no workspace allowlist, nothing starts and nothing is stored", async () => {
+    vi.stubEnv("META_ALLOWED_PROJECT_IDS", "");
+    const s = await start(people.manager, A);
+    expect(s.location).toContain("meta_error=not_allowed");
+    expect(s.binding).toBeNull();
+    expect(await rawPrisma.metaOAuthSession.count({ where: { projectId: A.id } })).toBe(0);
+  });
+
+  it("only workspaces on the allowlist can start; \"*\" means every workspace", async () => {
+    allowOnly(B);
+    expect((await start(people.manager, A)).location).toContain("meta_error=not_allowed");
+    expect(await rawPrisma.metaOAuthSession.count({ where: { projectId: A.id } })).toBe(0);
+    vi.stubEnv("META_ALLOWED_PROJECT_IDS", "*");
+    expect((await start(people.manager, A)).location.startsWith("https://www.facebook.com/")).toBe(true);
+    await rawPrisma.metaOAuthSession.deleteMany({ where: { projectId: A.id } });
+  });
+
+  it("a workspace taken off the list while its person is at Meta: the callback stores no token, the claim is refused", async () => {
+    const atCallback = await start(people.manager, A);
+    allowOnly(B, C);
+    expect(await callback(`state=${atCallback.state}&code=GOOD`)).toBe(`https://shop.customer.test/p/${A.slug}/settings/channels?meta_error=not_allowed`);
+    const failed = await rawPrisma.metaOAuthSession.findFirstOrThrow({ where: { projectId: A.id }, orderBy: { createdAt: "desc" } });
+    expect(failed).toMatchObject({ status: "FAILED", userTokenCiphertext: null, claimHash: null, metaUserId: null });
+
+    enable(true);
+    const atClaim = await start(people.manager, A);
+    const claimUrl = await callback(`state=${atClaim.state}&code=GOOD`);
+    allowOnly(B, C);
+    expect(await claimVia(people.manager, A, claimUrl, atClaim.binding)).toContain("meta_error=not_allowed");
+    expect((await rawPrisma.metaOAuthSession.findFirstOrThrow({ where: { projectId: A.id }, orderBy: { createdAt: "desc" } })).claimedAt).toBeNull();
+    await rawPrisma.metaOAuthSession.deleteMany({ where: { projectId: A.id } });
   });
 
   it("refuses a person without channels.manage", async () => {
@@ -490,6 +526,13 @@ describe("4. the platform webhook", () => {
     expect(await rawPrisma.channelInboundEvent.count({ where: { dedupKey: `msg:m.u.${tag}` } })).toBe(0);
     // C's MANUAL connection of P1 is never fed from the platform app.
     expect(await rawPrisma.channelInboundEvent.count({ where: { projectId: C.id } })).toBe(0);
+  });
+
+  it("a workspace off the allowlist receives nothing, while the others keep receiving", async () => {
+    allowOnly(B, C);
+    expect((await postPlatform(pageBody([{ id: P1, mid: `m.off.a.${tag}` }, { id: PX, mid: `m.off.b.${tag}` }]))).status).toBe(200);
+    expect(await rawPrisma.channelInboundEvent.count({ where: { dedupKey: `msg:m.off.a.${tag}` } })).toBe(0);
+    expect((await rawPrisma.channelInboundEvent.findMany({ where: { dedupKey: `msg:m.off.b.${tag}` } })).map((e) => e.projectId)).toEqual([B.id]);
   });
 
   it("a manual connection's own URL never feeds a one-click connection, even one naming the same app id", async () => {
