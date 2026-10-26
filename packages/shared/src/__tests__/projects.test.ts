@@ -178,21 +178,21 @@ describe("which feature a page or action belongs to", () => {
 });
 
 describe("nextDefaultProjectName", () => {
-  it("offers RELQIVO Project 1 on an install with no RELQIVO projects", () => {
-    expect(nextDefaultProjectName([])).toBe("RELQIVO Project 1");
-    expect(nextDefaultProjectName([{ name: "ISP Digital", slug: "isp-digital" }])).toBe("RELQIVO Project 1");
+  it("offers Get Assist Project 1 on an install with no Get Assist projects", () => {
+    expect(nextDefaultProjectName([])).toBe("Get Assist Project 1");
+    expect(nextDefaultProjectName([{ name: "ISP Digital", slug: "isp-digital" }])).toBe("Get Assist Project 1");
   });
   it("offers the next free number, skipping a name or a slug already used", () => {
-    expect(nextDefaultProjectName([{ name: "RELQIVO Project 1", slug: "relqivo-project-1" }])).toBe("RELQIVO Project 2");
+    expect(nextDefaultProjectName([{ name: "Get Assist Project 1", slug: "get-assist-project-1" }])).toBe("Get Assist Project 2");
     expect(
       nextDefaultProjectName([
-        { name: "RELQIVO Project 1", slug: "relqivo-project-1" },
-        { name: "relqivo project 2", slug: "custom" },
-        { name: "Something", slug: "relqivo-project-3" },
+        { name: "Get Assist Project 1", slug: "get-assist-project-1" },
+        { name: "get assist project 2", slug: "custom" },
+        { name: "Something", slug: "get-assist-project-3" },
       ]),
-    ).toBe("RELQIVO Project 4");
+    ).toBe("Get Assist Project 4");
   });
   it("fills a gap rather than always counting up", () => {
-    expect(nextDefaultProjectName([{ name: "RELQIVO Project 2", slug: "relqivo-project-2" }])).toBe("RELQIVO Project 1");
+    expect(nextDefaultProjectName([{ name: "Get Assist Project 2", slug: "get-assist-project-2" }])).toBe("Get Assist Project 1");
   });
 });

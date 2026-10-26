@@ -292,9 +292,12 @@ the same. Kill switch for the page side only: `PROJECT_ROLE_PAGES_DISABLED=true`
 
 **White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
 `projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the
-built-in default (`lib/branding.ts`: **RELQIVO** since 21 Oct 2026; existing installs had their old name stored by
+built-in default (`lib/branding.ts`: **Get Assist** since 26 Oct 2026, RELQIVO 21–26 Oct; existing installs had their old name stored by
 migration `20261021090000_relqivo_white_label_defaults`, so they look unchanged — BRANDING.md §Defaults). A fresh
-install's first project is "RELQIVO Project 1", and new projects are offered "RELQIVO Project N". Never hard-code the product
+install's first project is "RELQIVO Project 1" (set by an applied migration, so unchanged), and new projects are offered "Get Assist Project N".
+Internal identifiers that still say relqivo (cookie `relqivo_platform_session`, header `x-relqivo-host`, hash salts, System Log
+message keys `RELQIVO_SUPPORT_*`, support usernames) are deliberately NOT renamed: changing them signs everyone out, breaks
+stored hashes and splits log history. Never hard-code the product
 name again: server code reads `getBranding()`, client code `useBranding()` (root-layout provider),
 and the mark is `BrandMark`, which follows the uploaded icon. Saving needs `projects.manage`. The
 colour moves only the accent tokens, never the ink primary. Images are sniffed from their bytes,
@@ -2999,8 +3002,8 @@ original import, untouched. Up to 5,000 rows / 15 MB from any file. Rules worth 
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 
 On the platform (Layer 1). Rules worth not undoing:
-- **An address is the platform's OR one customer's, never both** (`classifyHost`). `admin.udboy.com` is the platform;
-  `zoventio.udboy.com` is Customer #1's. Routing ships OFF.
+- **An address is the platform's OR one customer's, never both** (`classifyHost`). `admin.getassist.pro` is the platform;
+  `noorvip.getassist.pro` is Customer #1's (moved from admin/zoventio.udboy.com on 26 Oct 2026, which still answer). Routing ships OFF.
 - **A customer with no subscription is never held or limited, and a subscription suspends by itself only
   with `autoEnforce` ticked** (default off). This is Customer #1's protection; never default either.
 - **The billing hold IS the SUSPENDED rule** (`Project.billingHoldAt` on every project of the customer, written only by

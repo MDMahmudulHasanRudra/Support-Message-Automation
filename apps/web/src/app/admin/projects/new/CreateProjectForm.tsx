@@ -37,7 +37,7 @@ export function CreateProjectForm({ defaultName = "" }: { defaultName?: string }
           name="name"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="e.g. RELQIVO Project 2"
+          placeholder="e.g. Get Assist Project 2"
           maxLength={PROJECT_NAME_MAX}
           required
           autoComplete="off"
@@ -59,7 +59,7 @@ export function CreateProjectForm({ defaultName = "" }: { defaultName?: string }
             setSlugEdited(true);
             setSlug(event.target.value);
           }}
-          placeholder="e.g. relqivo-project-2"
+          placeholder="e.g. get-assist-project-2"
           maxLength={PROJECT_SLUG_MAX}
           required
           autoComplete="off"

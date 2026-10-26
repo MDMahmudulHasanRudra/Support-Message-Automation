@@ -458,7 +458,7 @@ describe("support access — audited, time-limited, on the customer's own addres
     expect(await signIn({ username: identity.username }, host.b)).toBe(false);
     await rawPrisma.user.update({ where: { id: identity.id }, data: { isActive: false } });
     expect(await operatorSignIn(host.admin)).toBe(true);
-    expect((await supportActions.startSupportAccess(customer.b, form({ reason: "Investigating missing messages", minutes: "15", operatorPassword: PASSWORD }))).error).toMatch(/turned RELQIVO support access off/);
+    expect((await supportActions.startSupportAccess(customer.b, form({ reason: "Investigating missing messages", minutes: "15", operatorPassword: PASSWORD }))).error).toMatch(/turned Get Assist support access off/);
   });
 });
 

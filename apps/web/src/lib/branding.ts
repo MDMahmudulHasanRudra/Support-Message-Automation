@@ -5,8 +5,9 @@
  *
  * A NULL stored value means "use the default below", the same shape as Notification Templates, and
  * Reset is forgetting the edit rather than copying today's default into the database. The default
- * is "RELQIVO" (21 Oct 2026). An install that existed before then had "Softify Assist" stored for it
- * by the 20261021090000_relqivo_white_label_defaults migration, so only a NEW install shows RELQIVO.
+ * is "Get Assist" (26 Oct 2026; "RELQIVO" from 21 Oct). An install that existed before 21 Oct had
+ * "Softify Assist" stored for it by the 20261021090000_relqivo_white_label_defaults migration, and a
+ * customer with a stored name keeps it, so only a customer with no stored name shows the default.
  */
 
 import { DEFAULT_PRODUCT_NAME } from "@support-automation/shared";
