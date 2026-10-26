@@ -3015,6 +3015,11 @@ On the platform (Layer 1). Rules worth not undoing:
   price, payment, address, owner as ITS Main Admin. "The original installation" mode only marks the founding customer.
 - **Change plan starts from the current terms** (paid-through, enforcement, no new trial).
 - Billing email: the worker's `platformMailer()` — Platform → Settings when enabled, else `PLATFORM_SMTP_*`.
+- **Removing / deleting a customer** (`CUSTOMER_REMOVAL.md`): the operator picks Remove (archive, disable, deactivate,
+  snapshot, Restore puts back exactly the snapshot) or Delete permanently (removes first, then empties every
+  `"projectId"` table in catalogue-derived foreign-key order, `deletionOrder`). Name typed + operator password; never
+  the founding customer (CHECK). The Customer row and the platform's billing stay. A removed customer is skipped by the
+  billing loop and Monitoring and refused by plan/owner/address/support actions.
 
 ## Engineering standards (condensed from `ENGINEERING_STANDARDS.md` — read the full file for
 anything safety/UI/DB related; this is the subset most likely to bite an unfamiliar change)

@@ -111,7 +111,9 @@ export function startBillingProcessor(intervalMs = BILLING_INTERVAL_MS): NodeJS.
 
 export async function runBillingTick(now: Date = new Date(), given?: BillingDeps): Promise<void> {
   const deps: BillingDeps = given ?? { mailer: await platformMailer(), send: sendWithNodemailer, resolve: resolveHostAddresses };
-  const current = await platformPrisma.subscription.findMany({ where: { endedAt: null }, select: { customerId: true } });
+  // A removed customer (CUSTOMER_REMOVAL.md) is neither recomputed nor reminded: its workspaces are
+  // archived already, and nobody should be emailed about a customer the platform took away.
+  const current = await platformPrisma.subscription.findMany({ where: { endedAt: null, customer: { removedAt: null } }, select: { customerId: true } });
   for (const { customerId } of current) {
     try {
       await recomputeCustomerBilling(platformPrisma, customerId, now);
@@ -170,7 +172,7 @@ export async function sendDueReminders(now: Date, deps: BillingDeps): Promise<vo
   const settings = await platformPrisma.platformBillingSettings.findFirst();
   const reminderDays = settings?.reminderDaysBefore?.length ? settings.reminderDaysBefore : DEFAULT_REMINDER_DAYS;
   const subs = await platformPrisma.subscription.findMany({
-    where: { endedAt: null },
+    where: { endedAt: null, customer: { removedAt: null } },
     include: { customer: { select: { id: true, isFounding: true, name: true, contactEmail: true } } },
   });
   let name: string | null = null;

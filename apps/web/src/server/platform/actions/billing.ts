@@ -159,11 +159,11 @@ export async function assignPlan(customerId: string, _prev: BillingActionResult,
   if ("denied" in access) return { error: access.denied };
   const actor = access.session.username;
   const [customer, plan, settings] = await Promise.all([
-    globalPrisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true } }),
+    globalPrisma.customer.findUnique({ where: { id: customerId, removedAt: null }, select: { id: true, name: true } }),
     globalPrisma.plan.findUnique({ where: { id: String(formData.get("planId") ?? "") } }),
     getBillingSettings(),
   ]);
-  if (!customer) return { error: "This customer no longer exists." };
+  if (!customer) return { error: "This customer is removed or no longer exists." };
   if (!plan || !plan.isActive) return { fieldErrors: { planId: "Choose an active plan." } };
 
   const startsAt = dateField(formData.get("startsAt")) ?? new Date();
@@ -507,8 +507,8 @@ export async function reversePayment(paymentId: string, _prev: BillingActionResu
  * customer's Main Admin role) and its first project.
  */
 async function customerSoftware(customerId: string): Promise<{ tenant: string | null; administratorId: string; firstProjectId: string } | { error: string }> {
-  const customer = await globalPrisma.customer.findUnique({ where: { id: customerId }, select: { id: true } });
-  if (!customer) return { error: "This customer no longer exists." };
+  const customer = await globalPrisma.customer.findUnique({ where: { id: customerId, removedAt: null }, select: { id: true } });
+  if (!customer) return { error: "This customer is removed or no longer exists." };
   const tenant = await tenantOfCustomer(customerId);
   const [role, project] = await Promise.all([
     globalPrisma.permissionModule.findFirst({ where: { customerId: tenant, name: "Administrator", isSystem: true }, select: { id: true } }),

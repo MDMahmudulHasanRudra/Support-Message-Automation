@@ -18,7 +18,8 @@ import {
 import { forgetProjectAccessDecisions } from "@/server/projectContext";
 import { forgetHostScopes, requestHostname } from "@/server/hostScope";
 import { forgetFoundingCustomer } from "@/server/tenant";
-import { requireOperatorAction } from "@/server/platform/auth";
+import { confirmOperatorPassword, requireOperatorAction } from "@/server/platform/auth";
+import { purgeCustomerData, removeCustomerData, restoreCustomerData } from "@/server/platform/customerRemoval";
 import { logPlatformEvent } from "@/server/platform/log";
 import { assignPlan, createOwnerLogin, inviteOwner, recordPayment } from "@/server/platform/actions/billing";
 import { checkDomainBase, checkDomainHttps, domainNetwork } from "@/server/domainVerification";
@@ -315,11 +316,84 @@ export async function updateCustomer(customerId: string, _prev: CustomerFormStat
   const fieldErrors: NonNullable<CustomerFormState["fieldErrors"]> = {};
   const fields = customerFields(formData, fieldErrors);
   if (Object.keys(fieldErrors).length > 0) return { fieldErrors };
-  const result = await globalPrisma.customer.updateMany({ where: { id: customerId }, data: fields });
-  if (result.count === 0) return { error: "This customer no longer exists." };
+  const result = await globalPrisma.customer.updateMany({ where: { id: customerId, removedAt: null }, data: fields });
+  if (result.count === 0) return { error: "This customer is removed or no longer exists." };
   await logPlatformEvent("INFO", `Customer "${fields.name}" updated`, { customerId, changedBy: access.session.username });
   changed();
   return { savedAt: Date.now() };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Remove / restore / delete permanently (CUSTOMER_REMOVAL.md)
+// ---------------------------------------------------------------------------------------------
+
+export interface CustomerRemovalState {
+  error?: string;
+  fieldErrors?: Partial<Record<"mode" | "confirmName" | "operatorPassword", string>>;
+  done?: string;
+}
+
+/**
+ * Remove (keep the data) or delete permanently — the operator picks `mode`. Both need the customer's
+ * exact name typed and the operator's own platform password; the founding customer is refused.
+ */
+export async function removeOrDeleteCustomer(customerId: string, _prev: CustomerRemovalState, formData: FormData): Promise<CustomerRemovalState> {
+  const access = await requireOperatorAction();
+  if ("denied" in access) return { error: access.denied };
+  const mode = String(formData.get("mode") ?? "");
+  const fieldErrors: NonNullable<CustomerRemovalState["fieldErrors"]> = {};
+  if (mode !== "remove" && mode !== "delete") fieldErrors.mode = "Choose Remove or Delete permanently.";
+  const customer = await globalPrisma.customer.findUnique({ where: { id: customerId }, select: { name: true, isFounding: true, purgedAt: true } });
+  if (!customer) return { error: "This customer no longer exists." };
+  if (customer.isFounding) return { error: "The original installation can be neither removed nor deleted." };
+  if (String(formData.get("confirmName") ?? "").trim() !== customer.name.trim()) fieldErrors.confirmName = `Type the customer's name exactly: ${customer.name}`;
+  if (Object.keys(fieldErrors).length > 0) return { fieldErrors };
+  if (!(await confirmOperatorPassword(access.operator, formData.get("operatorPassword")))) {
+    return { fieldErrors: { operatorPassword: "Your platform password is not correct." } };
+  }
+  const actor = access.operator.username;
+
+  if (mode === "remove") {
+    const removed = await removeCustomerData(customerId, actor);
+    if ("error" in removed) return { error: removed.error };
+    await logPlatformEvent(
+      "WARN",
+      `Customer "${removed.name}" removed (data kept)`,
+      { customerId, removedBy: actor, workspaces: removed.snapshot.projects.length, addresses: removed.snapshot.domains.length, logins: removed.snapshot.userIds.length },
+      { type: "Customer", id: customerId },
+    );
+    changed();
+    return { done: `${removed.name} was removed. Its data is kept, and it can be restored.` };
+  }
+
+  const purged = await purgeCustomerData(customerId, actor);
+  if ("error" in purged) return { error: purged.error };
+  await logPlatformEvent(
+    "WARN",
+    `Customer "${purged.name}" deleted permanently`,
+    { customerId, deletedBy: actor, workspaces: purged.projectIds, rows: purged.deleted, mediaRemoved: purged.mediaRemoved },
+    { type: "Customer", id: customerId },
+  );
+  changed();
+  return {
+    done: purged.mediaRemoved
+      ? `${purged.name} was deleted permanently.`
+      : `${purged.name} was deleted permanently. Some media files could not be removed from storage; they are no longer linked to anything.`,
+  };
+}
+
+/** Undo Remove: needs the operator's password. A permanently deleted customer cannot come back. */
+export async function restoreCustomer(customerId: string, _prev: CustomerRemovalState, formData: FormData): Promise<CustomerRemovalState> {
+  const access = await requireOperatorAction();
+  if ("denied" in access) return { error: access.denied };
+  if (!(await confirmOperatorPassword(access.operator, formData.get("operatorPassword")))) {
+    return { fieldErrors: { operatorPassword: "Your platform password is not correct." } };
+  }
+  const restored = await restoreCustomerData(customerId);
+  if ("error" in restored) return { error: restored.error };
+  await logPlatformEvent("WARN", `Customer "${restored.name}" restored`, { customerId, restoredBy: access.operator.username, ...restored.restored }, { type: "Customer", id: customerId });
+  changed();
+  return { done: `${restored.name} is back: ${restored.restored.projects} workspace(s), ${restored.restored.domains} address(es) and ${restored.restored.users} login(s) restored. Pending invitations stay cancelled; send new ones.` };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -345,7 +419,7 @@ async function domainSettingsView() {
 export async function addCustomerDomain(customerId: string, _prev: DomainActionResult, formData: FormData): Promise<DomainActionResult> {
   const access = await requireManage();
   if ("denied" in access) return { error: access.denied };
-  const customer = await globalPrisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true } });
+  const customer = await globalPrisma.customer.findUnique({ where: { id: customerId, removedAt: null }, select: { id: true, name: true } });
   if (!customer) return { error: "This customer no longer exists." };
   const valid = validateCustomerHostname(formData.get("hostname"), await domainSettingsView());
   if ("error" in valid) return { error: valid.error };

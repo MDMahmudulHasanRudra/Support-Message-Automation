@@ -7315,6 +7315,19 @@ model Customer {
   /// The original installation adopted as a customer (Customer #1): rows with no customer belong to
   /// it. At most one (partial unique index in SQL). Set by "Adopt the original installation".
   isFounding            Boolean                @default(false)
+  /// Removed from the platform (CUSTOMER_REMOVAL.md): every workspace archived, logins, sessions and
+  /// addresses switched off, data kept. Restore puts back what `removalSnapshot` recorded. Never the
+  /// founding customer.
+  removedAt             DateTime?
+  removedByUsername     String?
+  /// What Remove changed, so Restore can put exactly that back: { projects: [{id, status}],
+  /// domains: [{id, status}], userIds: [...] }. Cleared by Restore and by a permanent delete.
+  removalSnapshot       Json?
+  /// Deleted permanently: every workspace and all of its data, its logins, roles and addresses are
+  /// gone. This row stays only as the record that the platform's own invoices and payments (kept,
+  /// append-only) belong to.
+  purgedAt              DateTime?
+  purgedByUsername      String?
   users                 User[]                 @relation("CustomerUsers")
   roles                 PermissionModule[]     @relation("CustomerRoles")
   departments           Department[]           @relation("CustomerDepartments")

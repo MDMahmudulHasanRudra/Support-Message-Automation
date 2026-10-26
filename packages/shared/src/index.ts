@@ -74,4 +74,5 @@ export * from "./clientImportExtras.js";
 export * from "./unifiedReporting/index.js";
 export * from "./saasDomains.js";
 export * from "./saasBilling.js";
+export * from "./deletionOrder.js";
 export * from "./whatsappPictures.js";
