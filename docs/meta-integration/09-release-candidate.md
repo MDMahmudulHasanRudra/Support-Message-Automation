@@ -25,9 +25,13 @@ off per project, as before. The disclosure is off per connection.
 
 ## 1. Operator checklist: what you can do NOW, before any Meta approval
 
-Use the address this installation is served on over https as **HOST**: the value of `NEXTAUTH_URL`
-on the server. Production on Zoventio is `https://zoventio.udboy.com`; confirm it on the server
-before using it.
+**HOST is `https://admin.getassist.pro`** (decided 26 Oct 2026): the platform address, which belongs to
+no customer. One Meta app serves every customer, so its callback, webhook, deauthorize and
+data-deletion addresses must not sit on one customer's address. These four routes read only Meta's own
+tables (`MetaOAuthSession`, `ChannelConnection`, `ChannelInboundEvent`), which the customer-scoped
+client does not narrow, so they work on the platform address. The callback then sends the person back
+to the customer address they started from (`returnOrigin`), where the claim needs their own session
+and binding cookie. In Meta's **App Domains**, enter `getassist.pro`.
 
 ### 1a. Meta for Developers (developers.facebook.com)
 

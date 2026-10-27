@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  metaProjectAllowed,
   assetKey,
   classifyMetaAssets,
   hasPageRoleFor,
@@ -132,5 +133,24 @@ describe("readMetaSignedRequest", () => {
     expect(readMetaSignedRequest(sign({ algorithm: "none", user_id: "4242" }), SECRET)).toBeNull();
     expect(readMetaSignedRequest("not-a-request", SECRET)).toBeNull();
     expect(readMetaSignedRequest(null, SECRET)).toBeNull();
+  });
+});
+
+describe("metaProjectAllowed (META_ALLOWED_PROJECT_IDS)", () => {
+  it("fails closed: unset, empty or blank allows no workspace", () => {
+    expect(metaProjectAllowed({}, "p1")).toBe(false);
+    expect(metaProjectAllowed({ META_ALLOWED_PROJECT_IDS: "" }, "p1")).toBe(false);
+    expect(metaProjectAllowed({ META_ALLOWED_PROJECT_IDS: "  ,  " }, "p1")).toBe(false);
+  });
+  it("allows exactly the listed ids, comma- or space-separated, and never a missing id", () => {
+    const env = { META_ALLOWED_PROJECT_IDS: " p1, p2  p3 " };
+    expect(["p1", "p2", "p3"].map((id) => metaProjectAllowed(env, id))).toEqual([true, true, true]);
+    expect(metaProjectAllowed(env, "p")).toBe(false);
+    expect(metaProjectAllowed(env, "p12")).toBe(false);
+    expect(metaProjectAllowed(env, null)).toBe(false);
+    expect(metaProjectAllowed({ META_ALLOWED_PROJECT_IDS: "*" }, undefined)).toBe(false);
+  });
+  it("\"*\" allows every workspace", () => {
+    expect(metaProjectAllowed({ META_ALLOWED_PROJECT_IDS: "*" }, "anything")).toBe(true);
   });
 });

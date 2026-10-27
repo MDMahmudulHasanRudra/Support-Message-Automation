@@ -5,7 +5,8 @@ import Link from "@/components/ProjectLink";
 import { Alert, ButtonLink, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { pageAccess } from "@/server/authorize";
 import { getChannelConnection } from "@/server/channels/connections";
-import { metaPlatformConfig } from "@/server/channels/metaOAuth";
+import { metaAllowedForProject, metaPlatformConfig } from "@/server/channels/metaOAuth";
+import { activeProjectId } from "@/server/projectContext";
 import { ChannelMark } from "../../../conversations/ChannelMark";
 import { ConnectionStatusBadge } from "../ConnectionStatusBadge";
 import { SetupGuide } from "../SetupGuide";
@@ -32,7 +33,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
   const meta = def.webhookKind === "META";
   // Connected with "Connect with Facebook": the platform's app, no webhook or secret for anyone to paste.
   const oneClick = c.authMode === "PLATFORM";
-  const canOneClick = meta && metaPlatformConfig().ok;
+  const canOneClick = meta && metaPlatformConfig().ok && metaAllowedForProject(await activeProjectId());
   const reconnectHref = `/api/meta/connect?reconnect=${c.id}&type=${c.type}`;
 
   return (

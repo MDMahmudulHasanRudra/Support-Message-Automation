@@ -86,6 +86,21 @@ export function readMetaPlatformConfig(env: Env, publicOrigin: string | null): M
   return { ok: true, config: { appId, appSecret, graphVersion, redirectUri, webhookVerifyToken, loginConfigId } };
 }
 
+/**
+ * Which workspaces may use one-click Meta (`META_ALLOWED_PROJECT_IDS`, comma- or space-separated
+ * project ids; `*` = every workspace). It FAILS CLOSED: unset or empty means no workspace at all, so
+ * switching the integration on never reaches a customer's workspace by itself. Gate B names only the
+ * internal test workspace (docs/meta-integration/09 §2); `*` is the general-availability decision.
+ * Ids, never slugs or names: a slug is a project's address, not its identity.
+ */
+export function metaProjectAllowed(env: Env, projectId: string | null | undefined): boolean {
+  if (!projectId) return false;
+  const raw = env.META_ALLOWED_PROJECT_IDS?.trim() ?? "";
+  if (!raw) return false;
+  const ids = raw.split(/[\s,]+/).filter(Boolean);
+  return ids.includes("*") || ids.includes(projectId);
+}
+
 /** The platform's app secret for the worker, which only needs it for `appsecret_proof`. */
 export function metaPlatformAppSecret(env: Env): string | null {
   const secret = env.META_APP_SECRET?.trim() ?? "";

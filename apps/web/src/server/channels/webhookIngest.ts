@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { splitMetaWebhook, telegramDedupKey, type ChannelType } from "@support-automation/shared";
+import { metaProjectAllowed, splitMetaWebhook, telegramDedupKey, type ChannelType } from "@support-automation/shared";
 import type { Prisma } from "@prisma/client";
 import { platformPrisma } from "@/server/db";
 import { loadWebhookConnection, secretsEqual } from "@/server/channels/connections";
@@ -144,7 +144,9 @@ export async function ingestPlatformMetaWebhook(input: { rawBody: Buffer; signat
     where: { authMode: "PLATFORM", type, status: { not: "DISCONNECTED" }, externalAccountId: { in: accountIds } },
     select: { id: true, projectId: true, externalAccountId: true },
   });
-  const byAccount = new Map(targets.map((t) => [t.externalAccountId!, t]));
+  // Only workspaces on META_ALLOWED_PROJECT_IDS receive anything: a workspace taken off the list stops
+  // here, before a single event is recorded for the worker.
+  const byAccount = new Map(targets.filter((t) => metaProjectAllowed(process.env, t.projectId)).map((t) => [t.externalAccountId!, t]));
   const rows: Prisma.ChannelInboundEventCreateManyInput[] = [];
   let dropped = 0;
   for (const event of events) {
