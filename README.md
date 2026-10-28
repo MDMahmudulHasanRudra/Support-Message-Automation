@@ -1,4 +1,4 @@
-#  RELQIVO
+# Get Assist
 
 Rule-based WhatsApp support automation: a Next.js dashboard, a dedicated
 OpenWA worker, and a PostgreSQL/Prisma backend, run via Docker Compose.
