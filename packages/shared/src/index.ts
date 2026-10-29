@@ -23,6 +23,7 @@ export * from "./sandboxWorkflow.js";
 export * from "./projects.js";
 export * from "./projectFeatures.js";
 export * from "./projectModules.js";
+export * from "./commerce.js";
 export * from "./rawSqlGuard.js";
 export * from "./projectAccessLevels.js";
 export * from "./projectRoles.js";

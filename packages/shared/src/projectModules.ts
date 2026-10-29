@@ -312,6 +312,45 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: [],
     documentation: "INBOX_WORKSPACE.md",
   },
+  PRODUCT_CATALOG: {
+    category: "Commerce",
+    benefits: ["One catalogue of products, variants and prices", "Stock that moves with every order, with its history"],
+    defaultForTypes: ["ECOMMERCE"],
+    dependencies: [],
+    conflicts: [],
+    aiCapabilities: ["Look up products, prices and stock"],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Products and stock history are kept. " + KEPT,
+    setupSteps: ["Add categories and products, or import them"],
+    documentation: "COMMERCE.md",
+  },
+  ORDERS: {
+    category: "Commerce",
+    benefits: ["Orders from any channel in one list", "Totals, payments, stock and returns handled exactly"],
+    defaultForTypes: ["ECOMMERCE"],
+    dependencies: [
+      { kind: "HARD", anyOf: ["PRODUCT_CATALOG"], why: "An order line is a catalogue product." },
+      { kind: "RECOMMENDED", anyOf: ["CLIENT_CENTER"], why: "An order can then belong to a client, with its whole history." },
+    ],
+    conflicts: [],
+    aiCapabilities: ["Answer order-status questions for a verified customer"],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Orders and their history are kept. " + KEPT,
+    setupSteps: ["Add products to the catalogue"],
+    documentation: "COMMERCE.md",
+  },
+  SALES_PIPELINE: {
+    category: "Commerce",
+    benefits: ["Every enquiry as a lead with a stage and a follow-up date", "Won leads become clients and orders"],
+    defaultForTypes: ["ECOMMERCE"],
+    dependencies: [{ kind: "RECOMMENDED", anyOf: ["CLIENT_CENTER"], why: "A won lead becomes a client." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Leads and their history are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "COMMERCE.md",
+  },
   AI_COPILOT: {
     category: "AI",
     benefits: ["Conversation summaries and suggested replies for agents", "Nothing is sent without the agent"],
@@ -334,14 +373,6 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
  * feature. Each becomes AVAILABLE only together with its feature entry and its real implementation.
  */
 const PLANNED_MODULES: readonly ModuleDefinition[] = [
-  planned("PRODUCT_CATALOG", "Product Catalog", "Commerce", "Products, variants, SKUs, prices and stock.", [], ["Look up products, prices and stock"]),
-  planned("ORDERS", "Order Management", "Commerce", "Draft, confirm and track orders with their items and payment state.", [
-    { kind: "HARD", anyOf: ["PRODUCT_CATALOG"], why: "An order line is a catalogue product." },
-    { kind: "HARD", anyOf: ["CLIENT_CENTER"], why: "An order belongs to a client." },
-  ], ["Answer order-status questions for a verified customer"]),
-  planned("SALES_PIPELINE", "Leads & Sales Pipeline", "Commerce", "Leads, stages, follow-ups and conversions.", [
-    { kind: "HARD", anyOf: ["CLIENT_CENTER"], why: "A lead becomes a client." },
-  ], []),
   planned("COURIER", "Courier Management", "Commerce", "Book and track shipments with Steadfast, Pathao and RedX.", [
     { kind: "HARD", anyOf: ["ORDERS"], why: "A shipment is for an order." },
   ], ["Tell a verified customer where their delivery is"]),
@@ -408,7 +439,7 @@ export function templateModules(type: ProjectBaseType): string[] {
 
 /** The PLANNED modules a base type will add once they ship (shown, never selected). */
 export function plannedModulesFor(type: ProjectBaseType): string[] {
-  const commerce = new Set(["PRODUCT_CATALOG", "ORDERS", "SALES_PIPELINE", "COURIER"]);
+  const commerce = new Set(["COURIER", "WOOCOMMERCE", "SHOPIFY"]);
   return type === "ECOMMERCE" ? PLANNED_MODULES.filter((m) => commerce.has(m.key)).map((m) => m.key) : [];
 }
 
@@ -453,9 +484,9 @@ const BUILT_IN_TEMPLATE_SOURCES: readonly BuiltInModuleTemplate[] = [
   {
     key: "builtin:SALES_CRM",
     name: "Sales & CRM",
-    description: "Every channel with a client database, notes, tags and the AI Copilot.",
+    description: "Every channel with a client database, the sales pipeline, notes, tags and the AI Copilot.",
     baseType: "ECOMMERCE",
-    modules: ["AI_COPILOT", "AI_LEARNING", "CLIENT_CENTER", "INBOX_COLLABORATION", "OMNICHANNEL", "WHATSAPP_CHAT"],
+    modules: ["AI_COPILOT", "AI_LEARNING", "CLIENT_CENTER", "INBOX_COLLABORATION", "OMNICHANNEL", "SALES_PIPELINE", "WHATSAPP_CHAT"],
   },
 ];
 

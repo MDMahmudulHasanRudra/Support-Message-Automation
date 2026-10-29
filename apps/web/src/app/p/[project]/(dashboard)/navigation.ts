@@ -11,6 +11,9 @@ import {
   CalendarDays,
   Camera,
   Globe,
+  KanbanSquare,
+  Package,
+  ShoppingCart,
   CheckCheck,
   ClipboardCheck,
   ClipboardList,
@@ -385,6 +388,17 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Commerce (COMMERCE.md): catalogue and stock, orders, the sales pipeline. Each is its own project
+    // feature, off by default and on for the E-commerce business type.
+    label: "Commerce",
+    icon: ShoppingCart,
+    links: [
+      { href: "/commerce/orders", label: "Orders", icon: ShoppingCart },
+      { href: "/commerce/products", label: "Products", icon: Package },
+      { href: "/sales", label: "Sales Pipeline", icon: KanbanSquare },
+    ],
+  },
+  {
     // Support Activity's two people-pages joined Team Management's three: both answer "what is the
     // team doing" — one from the schedule, one from the messages.
     label: "Team",
@@ -570,6 +584,12 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/clients/import", "clients.import"],
   ["/clients/new", "clients.create"],
   ["/clients", "clients.view"],
+  ["/commerce/products/new", "commerce.manage"],
+  ["/commerce/products", "commerce.view"],
+  ["/commerce/orders/new", "orders.manage"],
+  ["/commerce/orders", "orders.view"],
+  ["/sales/new", "sales.manage"],
+  ["/sales", "sales.view"],
   ["/messages", "messages.view"],
   ["/support-escalation", "escalations.view"],
   ["/support-activity", "support_activity.view"],

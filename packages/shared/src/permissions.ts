@@ -147,6 +147,13 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "clients.manage_settings", label: "Manage Client Module Settings", category: "Clients" },
   // SMTP settings hold a credential and decide where mail leaves from: an authorized admin's key.
   { key: "communications.manage_email", label: "Manage Email Settings", category: "Communications" },
+  // Commerce (COMMERCE.md): catalogue and stock, orders, and the sales pipeline, each a view/manage pair.
+  { key: "commerce.view", label: "View Products and Stock", category: "Commerce" },
+  { key: "commerce.manage", label: "Manage Products, Categories and Stock", category: "Commerce" },
+  { key: "orders.view", label: "View Orders", category: "Commerce" },
+  { key: "orders.manage", label: "Create and Update Orders", category: "Commerce" },
+  { key: "sales.view", label: "View Sales Pipeline", category: "Commerce" },
+  { key: "sales.manage", label: "Manage Leads and the Sales Pipeline", category: "Commerce" },
 
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },

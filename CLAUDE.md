@@ -3015,6 +3015,14 @@ original import, untouched. Up to 5,000 rows / 15 MB from any file. Rules worth 
   after 7 days; finished imports' staged rows are deleted after 7 days. The upload checks the zip directory before
   parsing (`inspectXlsxZip`).
 
+### Commerce — products, stock, orders, sales pipeline (`COMMERCE.md`)
+
+Features `PRODUCT_CATALOG`, `ORDERS`, `SALES_PIPELINE`, all **off by default** (on in the E-commerce type). The
+customer's own selling, never the platform's billing; nothing here sends a message. Rules worth not undoing: one
+currency per order, BigInt minor units; stock changes only through `orderStockEffect` inside the status move's
+transaction, conditional (`stockQuantity >= qty`), each with an `InventoryMovement`; items editable only on a
+draft and re-priced on the server; order and lead histories are append-only (trigger).
+
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 
 On the platform (Layer 1). Rules worth not undoing:

@@ -716,6 +716,15 @@ model Project {
   inboxMentions                        InboxMention[]
   conversationEvents                   ConversationEvent[]
   webChatVisitors                      WebChatVisitor[]
+  productCategories                    ProductCategory[]
+  products                             Product[]
+  productVariants                      ProductVariant[]
+  inventoryMovements                   InventoryMovement[]
+  commerceOrders                       CommerceOrder[]
+  commerceOrderItems                   CommerceOrderItem[]
+  commerceOrderEvents                  CommerceOrderEvent[]
+  salesLeads                           SalesLead[]
+  salesLeadEvents                      SalesLeadEvent[]
 
   @@index([customerId])
 }
@@ -6684,6 +6693,8 @@ model Client {
   @@index([projectId, country])
   @@index([currentSubscriptionId])
   @@index([tags], type: Gin)
+  commerceOrders        CommerceOrder[]
+  salesLeads            SalesLead[]
 }
 
 /// One way to reach a client: a phone, an email, a WhatsApp number or group, a Messenger / Instagram /
@@ -8006,4 +8017,256 @@ model ModuleTemplate {
   updatedAt         DateTime     @updatedAt
 
   @@index([customerId])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Commerce core (COMMERCE.md): catalogue and stock, orders, sales pipeline. Every table is
+// project-owned. Money is BigInt minor units, one currency per order; never the SaaS billing.
+// ---------------------------------------------------------------------------------------------
+
+enum ProductStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+enum CommerceOrderStatus {
+  DRAFT
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum CommercePaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  REFUNDED
+}
+
+enum SalesLeadStage {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  WON
+  LOST
+}
+
+model ProductCategory {
+  id        String            @id @default(cuid())
+  projectId String            @default(dbgenerated("project_id_required()"))
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name      String
+  parentId  String?
+  parent    ProductCategory?  @relation("ProductCategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  ProductCategory[] @relation("ProductCategoryTree")
+  position  Int               @default(0)
+  products  Product[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@unique([projectId, name])
+}
+
+model Product {
+  id                String              @id @default(cuid())
+  projectId         String              @default(dbgenerated("project_id_required()"))
+  project           Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  categoryId        String?
+  category          ProductCategory?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  name              String
+  description       String?
+  /// Unique within the project when given (partial unique index in SQL).
+  sku               String?
+  status            ProductStatus       @default(ACTIVE)
+  currency          String
+  priceMinor        BigInt
+  compareAtMinor    BigInt?
+  /// When false, stock is not counted (services, made to order).
+  trackInventory    Boolean             @default(true)
+  stockQuantity     Int                 @default(0)
+  imageUrl          String?
+  /// Set when the product came from an external shop (WooCommerce / Shopify), for re-syncing.
+  externalSource    String?
+  externalId        String?
+  createdByUsername String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  variants          ProductVariant[]
+  movements         InventoryMovement[]
+  orderItems        CommerceOrderItem[]
+
+  @@index([projectId, status])
+  @@index([projectId, name])
+}
+
+model ProductVariant {
+  id            String              @id @default(cuid())
+  projectId     String              @default(dbgenerated("project_id_required()"))
+  project       Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  productId     String
+  product       Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// "Red / XL".
+  name          String
+  sku           String?
+  /// Null = the product's price.
+  priceMinor    BigInt?
+  stockQuantity Int                 @default(0)
+  isActive      Boolean             @default(true)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  movements     InventoryMovement[]
+  orderItems    CommerceOrderItem[]
+
+  @@index([productId])
+}
+
+/// Every change of stock, append-only: the stock figure is explained by its movements.
+model InventoryMovement {
+  id            String          @id @default(cuid())
+  projectId     String          @default(dbgenerated("project_id_required()"))
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  productId     String
+  product       Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId     String?
+  variant       ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  /// Positive adds stock, negative removes it.
+  delta         Int
+  /// ADJUSTMENT | ORDER | RETURN | CANCEL | SYNC
+  reason        String
+  orderId       String?
+  order         CommerceOrder?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  note          String?
+  balanceAfter  Int
+  actorUsername String
+  createdAt     DateTime        @default(now())
+
+  @@index([productId, createdAt])
+}
+
+model CommerceOrder {
+  id                String                @id @default(cuid())
+  projectId         String                @default(dbgenerated("project_id_required()"))
+  project           Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// "ORD-000042" from `commerce_order_seq`.
+  number            String
+  clientId          String?
+  client            Client?               @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  customerName      String
+  customerPhone     String?
+  customerEmail     String?
+  shippingAddress   String?
+  /// Where the order came from: WHATSAPP, MESSENGER, WEBSITE, PHONE and so on.
+  channel           String?
+  status            CommerceOrderStatus   @default(DRAFT)
+  paymentStatus     CommercePaymentStatus @default(UNPAID)
+  currency          String
+  subtotalMinor     BigInt
+  discountMinor     BigInt                @default(0)
+  shippingMinor     BigInt                @default(0)
+  totalMinor        BigInt
+  paidMinor         BigInt                @default(0)
+  notes             String?
+  externalSource    String?
+  externalId        String?
+  createdByUsername String
+  confirmedAt       DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  items             CommerceOrderItem[]
+  events            CommerceOrderEvent[]
+  movements         InventoryMovement[]
+  wonLeads          SalesLead[]
+
+  @@unique([projectId, number])
+  @@index([projectId, status, createdAt])
+  @@index([clientId])
+}
+
+model CommerceOrderItem {
+  id             String          @id @default(cuid())
+  projectId      String          @default(dbgenerated("project_id_required()"))
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  orderId        String
+  order          CommerceOrder   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId      String?
+  product        Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variantId      String?
+  variant        ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  /// Snapshots: what was sold, as it was when ordered.
+  name           String
+  sku            String?
+  quantity       Int
+  unitPriceMinor BigInt
+  totalMinor     BigInt
+
+  @@index([orderId])
+}
+
+/// The order's audit trail, append-only: every status move, payment and edit, with who and when.
+model CommerceOrderEvent {
+  id            String               @id @default(cuid())
+  projectId     String               @default(dbgenerated("project_id_required()"))
+  project       Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  orderId       String
+  order         CommerceOrder        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  kind          String
+  fromStatus    CommerceOrderStatus?
+  toStatus      CommerceOrderStatus?
+  detail        Json?
+  actorUsername String
+  createdAt     DateTime             @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model SalesLead {
+  id                String           @id @default(cuid())
+  projectId         String           @default(dbgenerated("project_id_required()"))
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId          String?
+  client            Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  name              String
+  phone             String?
+  email             String?
+  company           String?
+  source            String           @default("OTHER")
+  stage             SalesLeadStage   @default(NEW)
+  currency          String?
+  valueMinor        BigInt?
+  assignedUserId    String?
+  nextFollowUpAt    DateTime?
+  notes             String?
+  lostReason        String?
+  wonOrderId        String?
+  wonOrder          CommerceOrder?   @relation(fields: [wonOrderId], references: [id], onDelete: SetNull)
+  closedAt          DateTime?
+  createdByUsername String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  events            SalesLeadEvent[]
+
+  @@index([projectId, stage])
+  @@index([projectId, nextFollowUpAt])
+}
+
+model SalesLeadEvent {
+  id            String          @id @default(cuid())
+  projectId     String          @default(dbgenerated("project_id_required()"))
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  leadId        String
+  lead          SalesLead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  kind          String
+  fromStage     SalesLeadStage?
+  toStage       SalesLeadStage?
+  note          String?
+  actorUsername String
+  createdAt     DateTime        @default(now())
+
+  @@index([leadId, createdAt])
 }

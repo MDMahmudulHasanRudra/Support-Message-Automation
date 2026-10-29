@@ -116,6 +116,10 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/clients/dues": { write: ["clients.edit_billing"] },
   "/clients/payments": { write: ["clients.edit_billing"] },
   "/clients/import": { fullOnly: true, also: ["/api/clients/import"] },
+  // Commerce
+  "/commerce/orders": { write: ["orders.manage"] },
+  "/commerce/products": { write: ["commerce.manage"] },
+  "/sales": { write: ["sales.manage"] },
   // Team
   "/team-management": { write: ["team_management.manage"], also: ["/api/team-management/export"] },
   "/team-management/schedule": { write: ["team_management.manage"] },

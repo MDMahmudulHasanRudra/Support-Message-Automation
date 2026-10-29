@@ -259,6 +259,34 @@ export const PROJECT_FEATURES = [
     permissionKeys: [],
     workerEffect: "Stops answering Copilot requests; requests already waiting stay unanswered until it is on again.",
   },
+  {
+    key: "PRODUCT_CATALOG",
+    label: "Product Catalog",
+    description: "Products, categories, variants, SKUs, prices and stock (COMMERCE.md).",
+    // Additive and new: no project gets it until it is chosen in the Module Builder.
+    defaultEnabled: false,
+    routes: ["/commerce/products"],
+    permissionKeys: ["commerce.view", "commerce.manage"],
+    workerEffect: "Nothing runs in the background for it. Products and stock history are kept; AI stops looking products up.",
+  },
+  {
+    key: "ORDERS",
+    label: "Order Management",
+    description: "Draft, confirm and track orders: items, totals, payment state, stock, cancellations and returns (COMMERCE.md).",
+    defaultEnabled: false,
+    routes: ["/commerce/orders"],
+    permissionKeys: ["orders.view", "orders.manage"],
+    workerEffect: "Nothing runs in the background for it. Orders and their history are kept; no new order can be created or moved.",
+  },
+  {
+    key: "SALES_PIPELINE",
+    label: "Leads & Sales Pipeline",
+    description: "Leads, stages, follow-ups and conversion to clients and orders (COMMERCE.md).",
+    defaultEnabled: false,
+    routes: ["/sales"],
+    permissionKeys: ["sales.view", "sales.manage"],
+    workerEffect: "Nothing runs in the background for it. Leads and their history are kept.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];

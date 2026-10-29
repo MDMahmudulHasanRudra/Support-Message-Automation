@@ -161,7 +161,7 @@ describe("applying", () => {
   it("refuses unknown and planned modules", async () => {
     current = admin;
     const s = (await state(projectA))!;
-    const r = await inA(() => applyProjectModules(projectA, { modules: [...s.enabled, "ORDERS", "NOPE"], declined: [], baseType: null, expectedVersion: s.version, reason: "" }));
+    const r = await inA(() => applyProjectModules(projectA, { modules: [...s.enabled, "COURIER", "NOPE"], declined: [], baseType: null, expectedVersion: s.version, reason: "" }));
     expect(r.issues?.map((i) => i.code).sort()).toEqual(["NOT_AVAILABLE", "UNKNOWN_MODULE"]);
   });
 
@@ -217,7 +217,7 @@ describe("templates", () => {
     // Same name again (any case): refused while the first is in use.
     expect((await inA(() => templates.saveModuleTemplate(null, { name: "shop", description: "", baseType: "DEFAULT", modules: ["WHATSAPP_CHAT"], declined: [] }))).fieldErrors?.name).toBeTruthy();
     // A planned module cannot be in a template.
-    expect((await inA(() => templates.saveModuleTemplate(null, { name: "Orders", description: "", baseType: "ECOMMERCE", modules: ["ORDERS"], declined: [] }))).issues?.[0]?.code).toBe("NOT_AVAILABLE");
+    expect((await inA(() => templates.saveModuleTemplate(null, { name: "Couriers", description: "", baseType: "ECOMMERCE", modules: ["COURIER"], declined: [] }))).issues?.[0]?.code).toBe("NOT_AVAILABLE");
   });
 
   it("another customer can neither see nor change it", async () => {
@@ -270,7 +270,7 @@ describe("creating a project with a business type", () => {
     current = admin;
     const { id } = await createVia("crm", "builtin:SALES_CRM");
     const s = (await state(id))!;
-    expect(s.enabled).toEqual(["AI_COPILOT", "AI_LEARNING", "CLIENT_CENTER", "INBOX_COLLABORATION", "OMNICHANNEL", "WHATSAPP_CHAT"]);
+    expect(s.enabled).toEqual(["AI_COPILOT", "AI_LEARNING", "CLIENT_CENTER", "INBOX_COLLABORATION", "OMNICHANNEL", "SALES_PIPELINE", "WHATSAPP_CHAT"]);
     expect(s).toMatchObject({ projectType: "CUSTOM_MIX", projectBaseType: "ECOMMERCE", version: 1 });
     expect(s.history[0]).toMatchObject({ templateKey: "builtin:SALES_CRM", templateVersion: 1, actorUsername: admin.username });
   });

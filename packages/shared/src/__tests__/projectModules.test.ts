@@ -81,7 +81,7 @@ describe("resolveModuleSelection", () => {
   });
 
   it("refuses unknown and planned modules", () => {
-    const r = resolveModuleSelection({ requested: ["NOPE", "ORDERS"], entitlement: OPEN });
+    const r = resolveModuleSelection({ requested: ["NOPE", "COURIER"], entitlement: OPEN });
     expect(r.ok).toBe(false);
     expect(r.issues.map((i) => i.code).sort()).toEqual(["NOT_AVAILABLE", "UNKNOWN_MODULE"]);
     expect(r.selected).toEqual([]);
@@ -153,8 +153,8 @@ describe("project types", () => {
   it("AI capabilities follow what is on, never the type label", () => {
     expect(enabledAiCapabilities(["WHATSAPP_CHAT"])).toEqual([]);
     expect(enabledAiCapabilities(["AI_COPILOT", "AI_REPLY"])).toContain("Draft a reply");
-    // Orders is planned: no project can claim order assistance today.
-    expect(enabledAiCapabilities(templateModules("ECOMMERCE")).some((c) => /order/i.test(c))).toBe(false);
+    // Courier is planned: no project can claim delivery tracking today.
+    expect(enabledAiCapabilities(templateModules("ECOMMERCE")).some((c) => /delivery/i.test(c))).toBe(false);
   });
 });
 
