@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { PROJECT_FEATURES } from "../projectFeatures.js";
 import {
+  BUILT_IN_MODULE_TEMPLATES,
+  builtInModuleTemplate,
   enabledAiCapabilities,
   moduleDefinition,
   moduleDependencyCycles,
@@ -153,5 +155,22 @@ describe("project types", () => {
     expect(enabledAiCapabilities(["AI_COPILOT", "AI_REPLY"])).toContain("Draft a reply");
     // Orders is planned: no project can claim order assistance today.
     expect(enabledAiCapabilities(templateModules("ECOMMERCE")).some((c) => /order/i.test(c))).toBe(false);
+  });
+});
+
+describe("built-in templates", () => {
+  it("every built-in resolves exactly as written: nothing added, nothing unavailable, nothing unknown", () => {
+    for (const t of BUILT_IN_MODULE_TEMPLATES) {
+      const r = resolveModuleSelection({ requested: t.modules, entitlement: OPEN });
+      expect(r.ok, t.key).toBe(true);
+      expect(r.autoAdded, t.key).toEqual([]);
+      expect(r.selected, t.key).toEqual([...t.modules].sort());
+    }
+  });
+
+  it("the Default and E-commerce built-ins are the type templates, and keys are unique", () => {
+    expect(builtInModuleTemplate("builtin:DEFAULT")!.modules).toEqual(templateModules("DEFAULT"));
+    expect(builtInModuleTemplate("builtin:ECOMMERCE")!.modules).toEqual(templateModules("ECOMMERCE"));
+    expect(new Set(BUILT_IN_MODULE_TEMPLATES.map((t) => t.key)).size).toBe(BUILT_IN_MODULE_TEMPLATES.length);
   });
 });

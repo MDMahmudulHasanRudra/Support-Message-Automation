@@ -413,6 +413,62 @@ export function plannedModulesFor(type: ProjectBaseType): string[] {
 }
 
 /**
+ * Built-in module templates (PROJECT_MODULES.md §8): global, read-only, in code. Each names a base type
+ * so a selection made from it is recorded as that type or as "Custom Mix (<base> base)". Customers'
+ * own templates are rows (`ModuleTemplate`), private to the customer. A test keeps every built-in
+ * self-consistent: it resolves with nothing added and nothing unavailable.
+ */
+export interface BuiltInModuleTemplate {
+  key: string;
+  name: string;
+  description: string;
+  baseType: ProjectBaseType;
+  modules: readonly string[];
+}
+
+const BUILT_IN_TEMPLATE_SOURCES: readonly BuiltInModuleTemplate[] = [
+  { key: "builtin:DEFAULT", name: "Default", description: PROJECT_TYPE_DESCRIPTIONS.DEFAULT, baseType: "DEFAULT", modules: [] },
+  { key: "builtin:ECOMMERCE", name: "E-commerce", description: PROJECT_TYPE_DESCRIPTIONS.ECOMMERCE, baseType: "ECOMMERCE", modules: [] },
+  {
+    key: "builtin:MESSAGING_ESSENTIALS",
+    name: "Messaging Essentials",
+    description: "WhatsApp and the other channels in one inbox, with notes and tags. No AI, no reports.",
+    baseType: "DEFAULT",
+    modules: ["INBOX_COLLABORATION", "OMNICHANNEL", "WHATSAPP_CHAT"],
+  },
+  {
+    key: "builtin:CUSTOMER_SUPPORT",
+    name: "Customer Support",
+    description: "WhatsApp support with AI answers, assignment, escalations and team reports.",
+    baseType: "DEFAULT",
+    modules: ["AI_LEARNING", "AI_REPLY", "ESCALATIONS", "INBOX_COLLABORATION", "SUPPORT_ACTIVITY", "SUPPORT_ASSIGNMENT", "TEAM_REPORTS", "WHATSAPP_CHAT"],
+  },
+  {
+    key: "builtin:AI_FIRST_SUPPORT",
+    name: "AI-First Support",
+    description: "Every channel answered by AI from verified knowledge, with the Copilot for agents.",
+    baseType: "DEFAULT",
+    modules: ["AI_COPILOT", "AI_LEARNING", "AI_REPLY", "CONVERSATION_LEARNING", "INBOX_COLLABORATION", "OMNICHANNEL", "WHATSAPP_CHAT"],
+  },
+  {
+    key: "builtin:SALES_CRM",
+    name: "Sales & CRM",
+    description: "Every channel with a client database, notes, tags and the AI Copilot.",
+    baseType: "ECOMMERCE",
+    modules: ["AI_COPILOT", "AI_LEARNING", "CLIENT_CENTER", "INBOX_COLLABORATION", "OMNICHANNEL", "WHATSAPP_CHAT"],
+  },
+];
+
+/** An empty `modules` list means "the base type's own template", filled in here. */
+export const BUILT_IN_MODULE_TEMPLATES: readonly BuiltInModuleTemplate[] = BUILT_IN_TEMPLATE_SOURCES.map((t) =>
+  t.modules.length === 0 ? { ...t, modules: templateModules(t.baseType) } : t,
+);
+
+export function builtInModuleTemplate(key: string): BuiltInModuleTemplate | undefined {
+  return BUILT_IN_MODULE_TEMPLATES.find((t) => t.key === key);
+}
+
+/**
  * The type to record for a selection: a base type when the selection is exactly its template,
  * otherwise CUSTOM_MIX with the base it started from ("Custom Mix (E-commerce base)").
  */

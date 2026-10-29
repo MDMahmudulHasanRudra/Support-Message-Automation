@@ -25,10 +25,38 @@ vi.mock("next/headers", async (importOriginal) => ({
   cookies: async () => ({ get: () => undefined, set: () => undefined, delete: () => undefined }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+vi.mock("next/navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/navigation")>()),
+  redirect: (to: string) => {
+    throw Object.assign(new Error(`REDIRECT ${to}`), { redirectTo: to });
+  },
+}));
 
 const { runWithTenant } = await import("@/server/tenant");
 const { applyProjectModules, restoreProjectModules } = await import("@/server/actions/projectModules");
 const { getProjectModuleState } = await import("@/server/projectModules");
+const templates = await import("@/server/actions/moduleTemplates");
+const { createProject } = await import("@/server/actions/projects");
+
+const form = (fields: Record<string, string>) => {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
+};
+
+/** Create a project through the real action; returns its id (the action redirects on success). */
+async function createVia(label: string, moduleSetup: string): Promise<{ id: string; redirect: string }> {
+  try {
+    const r = await inA(() => createProject({}, form({ name: `Mod ${label} ${tag}`, slug: `mod-${label}-${tag}`, status: "SETUP", moduleSetup })));
+    throw new Error(`createProject returned instead of redirecting: ${JSON.stringify(r)}`);
+  } catch (err) {
+    const to = (err as { redirectTo?: string }).redirectTo;
+    if (!to) throw err;
+    const id = /\/admin\/projects\/([a-z0-9]+)/.exec(to)![1]!;
+    created.projects.push(id);
+    return { id, redirect: to };
+  }
+}
 
 const created = { customers: [] as string[], projects: [] as string[], users: [] as string[], roles: [] as string[] };
 let customerA = "";
@@ -73,6 +101,7 @@ afterAll(async () => {
     await rawPrisma.$executeRawUnsafe('ALTER TABLE "ProjectModuleConfigChange" ENABLE TRIGGER "ProjectModuleConfigChange_append_only"');
   }
   await rawPrisma.subscription.deleteMany({ where: { customerId: { in: created.customers } } });
+  await rawPrisma.moduleTemplate.deleteMany({ where: { customerId: { in: created.customers } } });
   await rawPrisma.projectFeature.deleteMany({ where: { projectId: { in: created.projects } } });
   await rawPrisma.projectAccess.deleteMany({ where: { projectId: { in: created.projects } } });
   await rawPrisma.user.deleteMany({ where: { id: { in: created.users } } });
@@ -170,5 +199,99 @@ describe("applying", () => {
     const r = await inA(() => applyProjectModules(projectB, { modules: ["WHATSAPP_CHAT"], declined: [], baseType: null, expectedVersion: 0, reason: "" }));
     expect(r.error).toMatch(/no longer exists/);
     expect(await featureRows(projectB)).toEqual([]);
+  });
+});
+
+describe("templates", () => {
+  let templateId = "";
+
+  it("a customer's template is saved under that customer, resolved, and refused to a viewer", async () => {
+    current = viewer;
+    expect((await inA(() => templates.saveModuleTemplate(null, { name: "Shop", description: "", baseType: "ECOMMERCE", modules: ["CLIENT_SMART_IMPORT"], declined: [] }))).error).toMatch(/Manage Projects/);
+    current = admin;
+    const r = await inA(() => templates.saveModuleTemplate(null, { name: "Shop", description: "Our shop setup", baseType: "ECOMMERCE", modules: ["CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"], declined: [] }));
+    expect(r.error).toBeUndefined();
+    templateId = r.id!;
+    const row = await rawPrisma.moduleTemplate.findUniqueOrThrow({ where: { id: templateId } });
+    expect(row).toMatchObject({ customerId: customerA, version: 1, modules: ["CLIENT_CENTER", "CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"] });
+    // Same name again (any case): refused while the first is in use.
+    expect((await inA(() => templates.saveModuleTemplate(null, { name: "shop", description: "", baseType: "DEFAULT", modules: ["WHATSAPP_CHAT"], declined: [] }))).fieldErrors?.name).toBeTruthy();
+    // A planned module cannot be in a template.
+    expect((await inA(() => templates.saveModuleTemplate(null, { name: "Orders", description: "", baseType: "ECOMMERCE", modules: ["ORDERS"], declined: [] }))).issues?.[0]?.code).toBe("NOT_AVAILABLE");
+  });
+
+  it("another customer can neither see nor change it", async () => {
+    current = admin;
+    const inB = <T,>(fn: () => Promise<T>) => runWithTenant(customerB, fn);
+    expect((await inB(() => templates.saveModuleTemplate(templateId, { name: "Hijack", description: "", baseType: "DEFAULT", modules: ["WHATSAPP_CHAT"], declined: [], expectedVersion: 1 }))).error).toBeTruthy();
+    expect((await inB(() => templates.setModuleTemplateArchived(templateId, true))).error).toBeTruthy();
+    expect((await inB(() => templates.duplicateModuleTemplate(templateId))).error).toMatch(/no longer exists/);
+    expect((await rawPrisma.moduleTemplate.findUniqueOrThrow({ where: { id: templateId } })).name).toBe("Shop");
+  });
+
+  it("applying it records the template and its version; editing it later never changes the project", async () => {
+    current = admin;
+    const s = (await state(projectA))!;
+    expect(s.templates.map((t) => t.key)).toContain(templateId);
+    const r = await inA(() => applyProjectModules(projectA, { modules: ["CLIENT_CENTER", "CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"], declined: [], baseType: "ECOMMERCE", expectedVersion: s.version, reason: "", templateKey: templateId }));
+    expect(r.error).toBeUndefined();
+    const applied = (await state(projectA))!;
+    expect(applied.history[0]).toMatchObject({ templateKey: templateId, templateVersion: 1 });
+    expect(applied.enabled).toEqual(["CLIENT_CENTER", "CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"]);
+
+    const edited = await inA(() => templates.saveModuleTemplate(templateId, { name: "Shop", description: "", baseType: "ECOMMERCE", modules: ["WHATSAPP_CHAT", "OMNICHANNEL"], declined: [], expectedVersion: 1 }));
+    expect(edited.error).toBeUndefined();
+    expect((await rawPrisma.moduleTemplate.findUniqueOrThrow({ where: { id: templateId } })).version).toBe(2);
+    expect((await state(projectA))!.enabled).toEqual(["CLIENT_CENTER", "CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"]);
+    // A stale editor is refused.
+    expect((await inA(() => templates.saveModuleTemplate(templateId, { name: "Shop", description: "", baseType: "ECOMMERCE", modules: ["WHATSAPP_CHAT"], declined: [], expectedVersion: 1 }))).error).toMatch(/changed or archived/);
+  });
+
+  it("a built-in can be duplicated into the customer's own; archiving frees the name", async () => {
+    current = admin;
+    const copy = await inA(() => templates.duplicateModuleTemplate("builtin:SALES_CRM"));
+    expect(copy.error).toBeUndefined();
+    expect(await rawPrisma.moduleTemplate.findUniqueOrThrow({ where: { id: copy.id! } })).toMatchObject({ customerId: customerA, name: "Sales & CRM (copy)" });
+    expect((await inA(() => templates.setModuleTemplateArchived(templateId, true))).error).toBeUndefined();
+    expect((await state(projectA))!.templates.map((t) => t.key)).not.toContain(templateId);
+    expect((await inA(() => templates.saveModuleTemplate(null, { name: "Shop", description: "", baseType: "DEFAULT", modules: ["WHATSAPP_CHAT"], declined: [] }))).error).toBeUndefined();
+  });
+});
+
+describe("creating a project with a business type", () => {
+  it("the plan's modules keeps today's behaviour exactly", async () => {
+    current = admin;
+    const { id, redirect } = await createVia("plan", "PLAN");
+    expect(redirect).toBe(`/admin/projects/${id}?created=1`);
+    expect(await state(id)).toMatchObject({ projectType: "DEFAULT", version: 0, history: [] });
+  });
+
+  it("a built-in template is applied on top of the plan and recorded", async () => {
+    current = admin;
+    const { id } = await createVia("crm", "builtin:SALES_CRM");
+    const s = (await state(id))!;
+    expect(s.enabled).toEqual(["AI_COPILOT", "AI_LEARNING", "CLIENT_CENTER", "INBOX_COLLABORATION", "OMNICHANNEL", "WHATSAPP_CHAT"]);
+    expect(s).toMatchObject({ projectType: "CUSTOM_MIX", projectBaseType: "ECOMMERCE", version: 1 });
+    expect(s.history[0]).toMatchObject({ templateKey: "builtin:SALES_CRM", templateVersion: 1, actorUsername: admin.username });
+  });
+
+  it("a template larger than the plan is fitted to it, never a failed creation", async () => {
+    current = admin;
+    await rawPrisma.subscription.create({ data: { customerId: customerA, planName: "Basic", currency: "BDT", priceMinor: BigInt(100), startsAt: new Date(), features: ["WHATSAPP_CHAT", "OMNICHANNEL"], allModules: false } });
+    try {
+      const { id } = await createVia("fit", "builtin:SALES_CRM");
+      const s = (await state(id))!;
+      // The plan's own application switched everything else off; the template could add nothing more.
+      expect(s.enabled).toEqual(["OMNICHANNEL", "WHATSAPP_CHAT"]);
+      expect(s.history[0]!.reason).toMatch(/left out: .*CLIENT_CENTER/);
+    } finally {
+      await rawPrisma.subscription.deleteMany({ where: { customerId: customerA } });
+    }
+  });
+
+  it("Custom Mix opens the Module Builder next", async () => {
+    current = admin;
+    const { id, redirect } = await createVia("custom", "CUSTOM");
+    expect(redirect).toBe(`/admin/projects/${id}/modules?created=1`);
   });
 });

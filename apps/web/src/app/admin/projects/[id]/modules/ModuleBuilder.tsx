@@ -24,7 +24,7 @@ import {
 } from "@support-automation/shared";
 import { Alert, Badge, Button, ConfirmDialog, Dialog, Switch, Textarea, useToast } from "@/components/ui";
 import { applyProjectModules, restoreProjectModules } from "@/server/actions/projectModules";
-import type { ProjectModuleChangeView } from "@/server/projectModules";
+import type { ModuleTemplateOption, ProjectModuleChangeView } from "@/server/projectModules";
 
 interface Props {
   projectId: string;
@@ -36,6 +36,7 @@ interface Props {
   planName: string | null;
   canManage: boolean;
   history: ProjectModuleChangeView[];
+  templates: ModuleTemplateOption[];
 }
 
 const names = (keys: readonly string[]) => keys.map((k) => moduleDefinition(k)?.name ?? k);
@@ -57,6 +58,7 @@ export function ModuleBuilder(props: Props) {
   const [reason, setReason] = useState("");
   const [serverIssues, setServerIssues] = useState<ModuleIssue[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [templateKey, setTemplateKey] = useState<string>("");
 
   const resolved = useMemo(
     () => resolveModuleSelection({ requested, declined, entitlement: props.entitlement, currentlyEnabled: props.enabled }),
@@ -68,8 +70,20 @@ export function ModuleBuilder(props: Props) {
   const dirty = diff.added.length > 0 || diff.removed.length > 0 || type.projectType !== props.projectType || type.baseType !== props.projectBaseType;
   const requiredBy = useMemo(() => new Map(resolved.autoAdded.map((a) => [a.key, a.requiredBy])), [resolved.autoAdded]);
 
+  const template = props.templates.find((t) => t.key === templateKey) ?? null;
+  // Recorded only when what is applied IS the template; edited afterwards, it is a plain selection.
+  const appliesTemplate = template !== null && [...template.modules].sort().join(",") === resolved.selected.join(",");
   const visible = PROJECT_MODULES.filter((m) => category === "All" || m.category === category);
   const planned = base ? plannedModulesFor(base) : [];
+
+  function chooseSavedTemplate(key: string) {
+    setTemplateKey(key);
+    const t = props.templates.find((x) => x.key === key);
+    if (!t) return;
+    setBase(t.baseType);
+    setRequested(t.modules);
+    setDeclined(t.declined);
+  }
 
   function chooseTemplate(next: ProjectBaseType | "CUSTOM_MIX") {
     if (next === "CUSTOM_MIX") {
@@ -105,7 +119,14 @@ export function ModuleBuilder(props: Props) {
     setError(null);
     setServerIssues([]);
     startTransition(async () => {
-      const result = await applyProjectModules(props.projectId, { modules: resolved.selected, declined: resolved.declined, baseType: type.baseType, expectedVersion: props.version, reason });
+      const result = await applyProjectModules(props.projectId, {
+        modules: resolved.selected,
+        declined: resolved.declined,
+        baseType: type.baseType,
+        expectedVersion: props.version,
+        reason,
+        templateKey: appliesTemplate ? template!.key : null,
+      });
       if (result.error) {
         setError(result.error);
         setServerIssues(result.issues ?? []);
@@ -113,6 +134,7 @@ export function ModuleBuilder(props: Props) {
       }
       showToast({ title: result.success ?? "Applied.", tone: "success" });
       setReason("");
+      setTemplateKey("");
       router.refresh();
     });
   }
@@ -163,6 +185,46 @@ export function ModuleBuilder(props: Props) {
             );
           })}
         </div>
+        {props.templates.length > 0 && props.canManage ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <label htmlFor="module-template" className="text-[color:var(--color-muted-foreground)]">
+              Or start from a template:
+            </label>
+            <select
+              id="module-template"
+              value={templateKey}
+              onChange={(e) => chooseSavedTemplate(e.target.value)}
+              className="rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
+            >
+              <option value="">Choose a template…</option>
+              <optgroup label="Built-in">
+                {props.templates
+                  .filter((t) => t.builtIn)
+                  .map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.name}
+                    </option>
+                  ))}
+              </optgroup>
+              {props.templates.some((t) => !t.builtIn) ? (
+                <optgroup label="Your templates">
+                  {props.templates
+                    .filter((t) => !t.builtIn)
+                    .map((t) => (
+                      <option key={t.key} value={t.key}>
+                        {t.name} (v{t.version})
+                      </option>
+                    ))}
+                </optgroup>
+              ) : null}
+            </select>
+            {template ? (
+              <span className="text-xs text-[color:var(--color-muted-foreground)]">
+                {appliesTemplate ? "The changes below show what this template changes here." : "Edited after choosing the template: it will be saved as your own selection."}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <div className="grid gap-6 lg:grid-cols-[180px_minmax(0,1fr)_300px]">
@@ -365,6 +427,12 @@ export function ModuleBuilder(props: Props) {
                       </p>
                       {d.added.length ? <p>On: {names(d.added).join(", ")}</p> : null}
                       {d.removed.length ? <p>Off: {names(d.removed).join(", ")}</p> : null}
+                      {h.templateKey ? (
+                        <p>
+                          Template: {props.templates.find((t) => t.key === h.templateKey)?.name ?? "a template no longer offered"}
+                          {h.templateVersion ? ` v${h.templateVersion}` : ""}
+                        </p>
+                      ) : null}
                       {h.reason ? <p className="italic">{h.reason}</p> : null}
                       {props.canManage && h.version !== props.version ? (
                         <Button size="sm" variant="ghost" className="mt-1" disabled={pending} onClick={() => restore(h)}>

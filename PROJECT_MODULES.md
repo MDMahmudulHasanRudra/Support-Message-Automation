@@ -12,8 +12,10 @@ Get Assist is one application. Each project chooses a business type and a set of
 | Dependency resolver: hard, one-of, recommended, conflicts, plan, removal impact, cycles | Built, unit-tested |
 | Module Builder page | Built (`/admin/projects/<id>/modules`) |
 | Apply with version check, history, restore | Built |
+| Business type when creating a project (Main Admin) and a customer's first workspace (platform) | Built (§5.1) |
+| Reusable module templates: built-in and customer-owned, versioned | Built (§8) |
 | Commerce modules: catalogue, orders, pipeline, courier, WooCommerce, Shopify | **Not built.** Listed as "Coming soon" and cannot be selected |
-| Reusable customer templates, Create-project type step, read-only archive of a switched-off module, AI tool policy per module | **Not built yet** |
+| Read-only archive of a switched-off module, AI tool policy per module | **Not built yet** |
 
 ## §2 Layers, and why they are separate
 
@@ -84,6 +86,19 @@ runs one transaction:
 **The old single-feature switch** (`setProjectFeature`) now goes through the same action. It refuses
 to remove a module that others need, and names them.
 
+### §5.1 Creating a project with a business type
+
+Main Admin → Create project → **Business type and modules**:
+
+- **The plan's modules** (the default): exactly the behaviour before types existed.
+- **A built-in or customer template**: applied on top of the plan through the same `applyModuleSelection`,
+  in `fitToPlan` mode. Anything the plan does not include is left out and named in the history; creating
+  the project never fails because a template is larger than the plan.
+- **Custom Mix**: the plan's modules, then the Module Builder opens.
+
+The platform's **Add customer** offers the built-in templates for the first workspace, applied the same
+way after the plan is assigned.
+
 ## §6 Switching off ("freeze")
 
 A switched-off module behaves exactly as a switched-off feature always has:
@@ -110,3 +125,23 @@ Switching any module, or the type, never touches a WhatsApp session.
   - the plan;
   - Restore;
   - another customer's project.
+
+## §8 Module templates
+
+Main Admin → **Module templates**.
+
+- **Built-in templates** live in code (`BUILT_IN_MODULE_TEMPLATES`): Default, E-commerce, Messaging
+  Essentials, Customer Support, AI-First Support, Sales & CRM. A test keeps each one self-consistent:
+  it resolves with nothing added and nothing unavailable. They can be duplicated, never edited.
+- **A customer's own templates** are `ModuleTemplate` rows. They are customer-scoped through
+  `TENANT_SCOPED_MODELS`, so one customer never sees, edits or applies another's. They are deleted with
+  the customer on a permanent delete.
+- **Saving.** A template is checked against the module rules (no planned or unknown module; hard
+  dependencies are included), but not against a plan. The plan applies when the template is applied to
+  a project.
+- **Editing** bumps `version`, and refuses a stale editor. A project records the template key and
+  version it applied (`ProjectModuleConfigChange.templateKey` / `templateVersion`). A later edit never
+  changes that project.
+- **Applying from the builder** shows the diff first. The template is recorded only when what is
+  applied is exactly the template; edited after choosing, it is saved as the admin's own selection.
+- **Archiving** stops offering a template, frees its name, and never changes a project that used it.

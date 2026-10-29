@@ -7377,6 +7377,7 @@ model Customer {
   securitySettings      SecuritySettings?      @relation("CustomerSecurity")
   branding              PlatformBranding?      @relation("CustomerBranding")
   supportAccessSessions SupportAccessSession[]
+  moduleTemplates       ModuleTemplate[]       @relation("CustomerModuleTemplates")
 }
 
 /// A hostname that opens one customer's workspace. Status flow (packages/shared/src/saasDomains.ts):
@@ -7973,8 +7974,36 @@ model ProjectModuleConfigChange {
   declined        String[]
   reason          String?
   actorUsername   String
+  /// The template the selection was taken from ("builtin:<KEY>" or a ModuleTemplate id) and that
+  /// template's version at the time. A later edit of the template never changes this project.
+  templateKey     String?
+  templateVersion Int?
   createdAt       DateTime     @default(now())
 
   @@unique([projectId, version])
   @@index([projectId, createdAt])
+}
+
+/// A customer's own reusable module selection (PROJECT_MODULES.md §8). Private to the customer (the
+/// customer-scoped client confines it); built-in templates live in code. Editing bumps `version`;
+/// projects that applied an earlier version keep what they applied (their history records which).
+model ModuleTemplate {
+  id                String       @id @default(cuid())
+  /// NULL = the original installation (the founding customer), like every customer-owned row.
+  customerId        String?
+  customer          Customer?    @relation("CustomerModuleTemplates", fields: [customerId], references: [id], onDelete: Restrict)
+  /// Unique per customer among templates in use (partial unique indexes in SQL).
+  name              String
+  description       String?
+  baseType          ProjectType
+  modules           String[]
+  declined          String[]
+  version           Int          @default(1)
+  archivedAt        DateTime?
+  createdByUsername String
+  updatedByUsername String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([customerId])
 }

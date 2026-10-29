@@ -22,7 +22,8 @@ import { forgetProjectAccessDecisions } from "@/server/projectContext";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { applyProjectModules } from "@/server/actions/projectModules";
-import { getProjectModuleState } from "@/server/projectModules";
+import { applyModuleSelection, findModuleTemplate, getProjectModuleState } from "@/server/projectModules";
+import { forgetProjectFeatureStates } from "@/server/projectFeatures";
 
 /**
  * Main Admin Portal actions (MULTI_PROJECT_PLAN.md §7–§8). Every one requires `projects.manage` —
@@ -85,15 +86,43 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
   // A customer's new project gets the modules of its plan (every module on All Access, SAAS §12).
   await applyCustomerPlanToNewProject(globalPrisma, created.id);
 
+  // Business type / template (PROJECT_MODULES.md §5.1). "PLAN" keeps exactly the behaviour above;
+  // "CUSTOM" keeps it too and opens the Module Builder next. A template is applied on top of the plan
+  // through the one apply path, fitted to the plan: anything the plan does not include is left out
+  // and named in the history, never a reason for creating the project to fail.
+  const setup = String(formData.get("moduleSetup") ?? "PLAN");
+  let setupNote: string | null = null;
+  if (setup !== "PLAN" && setup !== "CUSTOM") {
+    const owner = (await platformPrisma.project.findUnique({ where: { id: created.id }, select: { customerId: true } }))?.customerId ?? null;
+    const template = await findModuleTemplate(setup, owner);
+    if (template) {
+      const applied = await applyModuleSelection(platformPrisma, {
+        projectId: created.id,
+        modules: template.modules,
+        declined: template.declined,
+        baseType: template.baseType,
+        expectedVersion: 0,
+        reason: `Created with the "${template.name}" template`,
+        actor: access.session.username,
+        template: { key: template.key, version: template.version },
+        mode: "fitToPlan",
+      });
+      setupNote = applied.error ? `Template not applied: ${applied.error}` : applied.leftOut?.length ? `Left out (not in the plan): ${applied.leftOut.join(", ")}` : null;
+      forgetProjectFeatureStates();
+    } else setupNote = "Template not found; the plan's modules were kept.";
+  }
+
   forgetProjectAccessDecisions();
   await logSystemEvent("INFO", "projects", `Project "${name}" created`, {
     projectId: created.id,
     slug,
     status,
+    moduleSetup: setup,
+    moduleSetupNote: setupNote,
     createdBy: access.session.username,
   });
   revalidatePath("/admin", "layout");
-  redirect(`/admin/projects/${created.id}?created=1`);
+  redirect(setup === "CUSTOM" ? `/admin/projects/${created.id}/modules?created=1` : `/admin/projects/${created.id}?created=1`);
 }
 
 export interface ProjectActionResult {

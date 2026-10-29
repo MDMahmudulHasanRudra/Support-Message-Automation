@@ -478,6 +478,8 @@ export function createProjectScopedPrisma(base: PrismaClient, resolveProjectId: 
  */
 export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "User", "PermissionModule", "Department", "JobTitle", "Employee", "SecuritySettings", "PlatformBranding", "Project",
+  // A customer's own module templates (PROJECT_MODULES.md §8).
+  "ModuleTemplate",
 ]);
 
 /** Rows reached through a tenant-scoped parent: filtered by that parent's customer. */

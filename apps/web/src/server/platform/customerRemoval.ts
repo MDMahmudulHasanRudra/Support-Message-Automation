@@ -36,6 +36,7 @@ const CUSTOMER_TABLES = [
   "SupportAccessSession",
   "SecuritySettings",
   "PlatformBranding",
+  "ModuleTemplate",
   "SystemLog",
 ] as const;
 

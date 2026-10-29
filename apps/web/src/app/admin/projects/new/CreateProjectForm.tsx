@@ -18,12 +18,22 @@ import { createProject, type ProjectFormState } from "@/server/actions/projects"
  * The same validators run here and in the action — this copy is a convenience; the action's is the
  * one that counts.
  */
-export function CreateProjectForm({ defaultName = "" }: { defaultName?: string }) {
+export interface ModuleSetupOption {
+  key: string;
+  name: string;
+  description: string | null;
+  builtIn: boolean;
+  moduleCount: number;
+}
+
+export function CreateProjectForm({ defaultName = "", templates = [], planName = null }: { defaultName?: string; templates?: ModuleSetupOption[]; planName?: string | null }) {
   const [state, formAction, pending] = useActionState<ProjectFormState, FormData>(createProject, {});
   const [name, setName] = useState(defaultName);
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
   const [status, setStatus] = useState<"SETUP" | "ACTIVE">("SETUP");
+  const [setup, setSetup] = useState("PLAN");
+  const chosen = templates.find((t) => t.key === setup);
 
   const shownSlug = slugEdited ? slug : suggestProjectSlug(name);
   const nameError = state.fieldErrors?.name ?? (name ? validateProjectName(name.trim()) : null);
@@ -81,6 +91,43 @@ export function CreateProjectForm({ defaultName = "" }: { defaultName?: string }
         >
           <option value="SETUP">Setting up</option>
           <option value="ACTIVE">Active</option>
+        </Select>
+      </Field>
+
+      <Field
+        label="Business type and modules"
+        htmlFor="project-setup"
+        hint={
+          setup === "PLAN"
+            ? `The modules of the customer's plan${planName ? ` (${planName})` : ""}, exactly as before.`
+            : setup === "CUSTOM"
+              ? "Starts with the plan's modules and opens the Module Builder next, to choose each one."
+              : `${chosen?.description ?? ""} ${chosen ? `${chosen.moduleCount} modules; anything the plan does not include is left out and noted.` : ""}`.trim()
+        }
+      >
+        <Select id="project-setup" name="moduleSetup" value={setup} onChange={(event) => setSetup(event.target.value)}>
+          <option value="PLAN">The plan&apos;s modules</option>
+          <optgroup label="Business types and templates">
+            {templates
+              .filter((t) => t.builtIn)
+              .map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.name}
+                </option>
+              ))}
+          </optgroup>
+          {templates.some((t) => !t.builtIn) ? (
+            <optgroup label="Your templates">
+              {templates
+                .filter((t) => !t.builtIn)
+                .map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.name}
+                  </option>
+                ))}
+            </optgroup>
+          ) : null}
+          <option value="CUSTOM">Custom Mix — choose modules next</option>
         </Select>
       </Field>
 
