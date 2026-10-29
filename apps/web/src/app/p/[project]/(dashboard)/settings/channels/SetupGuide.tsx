@@ -5,6 +5,19 @@ import type { ChannelType } from "@support-automation/shared";
  * words for its screens. Kept beside the form that needs the results, so nobody has to find a wiki.
  */
 export function SetupGuide({ type }: { type: ChannelType }) {
+  if (type === "WEBCHAT") {
+    return (
+      <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+        <li>Create the widget here with every website address it will run on.</li>
+        <li>
+          Copy the one-line script from the widget&apos;s page and paste it before <code>&lt;/body&gt;</code> on your site (WordPress: Appearance → Theme File Editor → footer, or any &quot;insert footer
+          code&quot; plugin; Shopify: Online Store → Themes → Edit code → theme.liquid).
+        </li>
+        <li>Optional: let signed-in customers chat as themselves — your server signs their user id with the widget&apos;s identity secret (instructions on the widget page).</li>
+        <li>Turn AI on for the widget to let it answer from your verified knowledge; people take over from the inbox like any other channel.</li>
+      </ol>
+    );
+  }
   if (type === "TELEGRAM") {
     return (
       <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">

@@ -103,6 +103,23 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
     await fail(`Not sent: ${connection.name} is switched off or disconnected.`);
     return true;
   }
+  // Website chat has no provider: a stored reply IS delivered — the visitor's widget reads it from
+  // here. The same empty-text and kill-switch rules apply as for every other channel.
+  if (message.type === "WEBCHAT") {
+    if (!message.text?.trim()) {
+      await fail("Not sent: the message is empty.");
+      return true;
+    }
+    if (message.senderType === "AI") {
+      const settings = await getAutomationSettings();
+      if (!settings.automationEnabled || settings.mode === "MANUAL_ONLY") {
+        await fail("Not sent: automation was switched off before this AI reply went out.");
+        return true;
+      }
+    }
+    await markSent(message.id, `webchat-${message.id}`, now, null, null);
+    return true;
+  }
   if (connection.status === "NEEDS_RECONNECT" || !connection.accessTokenCiphertext) {
     await fail(
       connection.authMode === "PLATFORM"

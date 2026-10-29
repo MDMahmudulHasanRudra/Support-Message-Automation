@@ -76,6 +76,7 @@ const SCOPES: Array<{ scope: InboxScope; channel: InboxChannel | null; label: st
   { scope: "messenger", channel: "MESSENGER", label: "Messenger" },
   { scope: "instagram", channel: "INSTAGRAM", label: "Instagram" },
   { scope: "telegram", channel: "TELEGRAM", label: "Telegram" },
+  { scope: "website", channel: "WEBCHAT", label: "Website" },
 ];
 
 const VIEWS: Array<{ view: InboxViewKey; label: string; count?: keyof Omit<InboxCounts, "byChannel">; collaboration?: boolean }> = [

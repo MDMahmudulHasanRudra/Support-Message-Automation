@@ -2875,6 +2875,13 @@ Feature `WHATSAPP_AVATARS`, **off by default and never switched by a plan** (`ma
   Team Members record (roster viewers) or a linked client (`clients.view`), with its source; otherwise
   "Phone number unavailable".
 
+### Website live chat (`WEBSITE_CHAT.md`)
+
+`ChannelType.WEBCHAT`: our own widget as a fourth channel. The public API (`/api/webchat/<key>`) checks the
+listed Origin (fails closed) and a hashed visitor token, and only RECORDS a `ChannelInboundEvent`; the
+worker's inbound processor makes the conversation and the send queue marks a WEBCHAT reply SENT on store.
+Never trust a visitor identity without the site's HMAC signature; never render visitor or agent text as HTML.
+
 ### Inbox workspace — notes, priority, tags, AI Copilot (`INBOX_WORKSPACE.md`)
 
 A side panel on every WhatsApp Chat and All Conversations conversation, behind `INBOX_COLLABORATION` and

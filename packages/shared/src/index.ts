@@ -78,3 +78,4 @@ export * from "./deletionOrder.js";
 export * from "./whatsappPictures.js";
 export * from "./inboxWorkspace.js";
 export * from "./inboxFilters.js";
+export * from "./webchat.js";

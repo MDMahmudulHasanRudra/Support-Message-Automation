@@ -23,7 +23,16 @@ export function ConnectChannelForm({ type, connectionId }: { type: ChannelType; 
     <form action={formAction} className="space-y-4" autoComplete="off">
       <input type="hidden" name="type" value={type} />
       {connectionId ? <input type="hidden" name="connectionId" value={connectionId} /> : null}
-      {type === "TELEGRAM" ? (
+      {type === "WEBCHAT" ? (
+        <>
+          <Field label="Name" htmlFor="name" hint="Shown in the inbox, e.g. the website's name.">
+            <Input id="name" name="name" maxLength={60} placeholder="Main website" />
+          </Field>
+          <Field label="Websites it runs on" htmlFor="origins" required hint="One address per line, with https:// (http:// only for localhost). The widget refuses every other site.">
+            <textarea id="origins" name="origins" rows={3} placeholder={"https://www.example.com\nhttps://shop.example.com"} className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px]" />
+          </Field>
+        </>
+      ) : type === "TELEGRAM" ? (
         <Field
           label="Bot token"
           htmlFor="botToken"
@@ -49,7 +58,7 @@ export function ConnectChannelForm({ type, connectionId }: { type: ChannelType; 
       {state.warning && connectionId ? <Alert tone="warning" title={state.warning} /> : null}
       {state.success && connectionId ? <Alert tone="success" title={state.success} /> : null}
       <Button type="submit" loading={pending}>
-        {connectionId ? (type === "TELEGRAM" ? "Save and register webhook" : "Check and save") : "Check and connect"}
+        {type === "WEBCHAT" ? "Create widget" : connectionId ? (type === "TELEGRAM" ? "Save and register webhook" : "Check and save") : "Check and connect"}
       </Button>
     </form>
   );

@@ -45,7 +45,10 @@ const newKey = (bytes = 24) => randomBytes(bytes).toString("base64url");
 export function webhookUrlFor(type: ChannelType, webhookKey: string): string | null {
   const origin = publicOrigin();
   if (!origin) return null;
-  return `${origin}/api/channels/${CHANNELS[type].webhookKind === "META" ? "meta" : "telegram"}/${webhookKey}`;
+  const kind = CHANNELS[type].webhookKind;
+  // Website chat has no webhook: its "address" is the widget's own API base.
+  if (kind === "WEBCHAT") return `${origin}/api/webchat/${webhookKey}`;
+  return `${origin}/api/channels/${kind === "META" ? "meta" : "telegram"}/${webhookKey}`;
 }
 
 export interface ChannelConnectionView {
@@ -307,7 +310,7 @@ export async function updateMetaCredentials(id: string, input: Omit<MetaCredenti
   const fetchImpl = input.fetchImpl ?? fetch;
   const now = input.now ?? new Date();
   const row = await prisma.channelConnection.findUnique({ where: { id }, select: { id: true, type: true, status: true, authMode: true, externalAccountId: true, externalAccountName: true, verifyTokenCiphertext: true } });
-  if (!row || row.type === "TELEGRAM") throw new ChannelConnectionError("That connection no longer exists.");
+  if (!row || (row.type !== "MESSENGER" && row.type !== "INSTAGRAM")) throw new ChannelConnectionError("That connection no longer exists.");
   // Reconnecting after a disconnect (or leaving one-click): the old webhook address and verify token no longer apply.
   const freshWebhook = row.status === "DISCONNECTED" || row.authMode === "PLATFORM" || !row.verifyTokenCiphertext ? { webhookKey: newKey(), verifyTokenCiphertext: encryptSecret(newKey(18)), webhookVerifiedAt: null } : {};
   const identity = await identifyMeta({ ...input, type: row.type }, fetchImpl);

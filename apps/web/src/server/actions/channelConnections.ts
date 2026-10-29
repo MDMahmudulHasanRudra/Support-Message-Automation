@@ -17,6 +17,8 @@ import {
   type ConnectionCheck,
 } from "@/server/channels/connections";
 import { cancelMetaSession, connectMetaAssets, MetaOAuthError, type MetaConnectOutcome } from "@/server/channels/metaOAuth";
+import { connectWebchat } from "@/server/channels/webchat";
+import { parseAllowedOrigins } from "@support-automation/shared";
 
 /**
  * Settings → Messaging Channels (OMNICHANNEL.md §11). Every action needs `channels.manage`, which
@@ -48,6 +50,17 @@ export async function connectChannelAction(_prev: ChannelActionResult, form: For
   const access = await checkPermission("channels.manage");
   if ("denied" in access) return { error: access.denied };
   const type = field(form, "type");
+  if (type === "WEBCHAT") {
+    // Website chat has no provider to check: name and the websites it may run on (WEBSITE_CHAT.md).
+    const name = field(form, "name").slice(0, 60) || "Website chat";
+    const { origins, invalid } = parseAllowedOrigins(field(form, "origins"));
+    if (invalid.length) return { error: `Not a website address: ${invalid.slice(0, 3).join(", ")}. Use the full address, like https://www.example.com.` };
+    if (origins.length === 0) return { error: "Add at least one website address the chat will run on." };
+    const created = await connectWebchat({ name, origins, username: access.session.username });
+    await logSystemEvent("INFO", "channels", "WEBCHAT channel connected", { origins }, { actorUserId: access.session.userId, targetType: "ChannelConnection", targetId: created.id });
+    await revalidate(created.id);
+    return { success: "Created.", connectionId: created.id };
+  }
   try {
     const result =
       type === "TELEGRAM"

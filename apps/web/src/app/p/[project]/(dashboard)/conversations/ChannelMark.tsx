@@ -1,4 +1,4 @@
-import { Camera, MessageCircle, MessagesSquare, Send, type LucideIcon } from "lucide-react";
+import { Camera, Globe, MessageCircle, MessagesSquare, Send, type LucideIcon } from "lucide-react";
 import type { InboxChannel } from "@/server/channels/inbox";
 
 /**
@@ -14,6 +14,7 @@ export const CHANNEL_PRESENTATION: Record<InboxChannel, { label: string; short: 
   MESSENGER: { label: "Facebook Messenger", short: "Messenger", icon: MessagesSquare, tint: "var(--chart-1)" },
   INSTAGRAM: { label: "Instagram DM", short: "Instagram", icon: Camera, tint: "var(--chart-5)" },
   TELEGRAM: { label: "Telegram", short: "Telegram", icon: Send, tint: "var(--chart-2)" },
+  WEBCHAT: { label: "Website chat", short: "Website", icon: Globe, tint: "var(--chart-4)" },
 };
 
 export function ChannelMark({ channel, size = "sm", withLabel = false }: { channel: InboxChannel; size?: "xs" | "sm" | "md"; withLabel?: boolean }) {

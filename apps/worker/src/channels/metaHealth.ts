@@ -59,6 +59,7 @@ export async function runMetaHealthTick(now: Date = new Date(), fetchImpl: Fetch
     const due = await prisma.channelConnection.findMany({
       where: {
         authMode: "PLATFORM",
+        type: { in: ["MESSENGER", "INSTAGRAM"] },
         status: { in: ["CONNECTED", "ERROR"] },
         accessTokenCiphertext: { not: null },
         OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: new Date(now.getTime() - CHECK_EVERY_MS) } }],
@@ -67,7 +68,7 @@ export async function runMetaHealthTick(now: Date = new Date(), fetchImpl: Fetch
       take: CHECKS_PER_PROJECT_PER_TICK,
       select: { id: true, type: true, name: true, status: true, appId: true, pageId: true, externalAccountId: true, accessTokenCiphertext: true },
     });
-    for (const connection of due) await checkConnection(connection, appSecret, now, fetchImpl);
+    for (const connection of due) await checkConnection(connection as DueConnection, appSecret, now, fetchImpl);
   });
 }
 

@@ -431,7 +431,7 @@ export async function loadInbox(opts: { scope: InboxScope; filters?: InboxFilter
   const filters = opts.filters ?? EMPTY_INBOX_FILTERS;
   const now = opts.now ?? new Date();
   const scopedType = channelBySlug(opts.scope);
-  const types: ChannelType[] = opts.scope === "all" ? ["MESSENGER", "INSTAGRAM", "TELEGRAM"] : scopedType ? [scopedType] : [];
+  const types: ChannelType[] = opts.scope === "all" ? ["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT"] : scopedType ? [scopedType] : [];
   const includeWhatsApp = opts.scope === "all" || opts.scope === "whatsapp";
 
   const [rows, chCounts, wa] = await Promise.all([
@@ -443,7 +443,7 @@ export async function loadInbox(opts: { scope: InboxScope; filters?: InboxFilter
   const merged = [...rows.map((r) => fromChannelRow(r, opts.scope, opts.viewerId)), ...(wa?.items ?? [])].sort(
     (a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "") || a.key.localeCompare(b.key),
   );
-  const byChannel: Record<InboxChannel, number> = { WHATSAPP: 0, MESSENGER: 0, INSTAGRAM: 0, TELEGRAM: 0 };
+  const byChannel: Record<InboxChannel, number> = { WHATSAPP: 0, MESSENGER: 0, INSTAGRAM: 0, TELEGRAM: 0, WEBCHAT: 0 };
   for (const [k, v] of Object.entries({ ...chCounts.byChannel, ...(wa?.counts.byChannel ?? {}) })) byChannel[k as InboxChannel] = v ?? 0;
   const counts: InboxCounts = {
     all: chCounts.all + (wa?.counts.all ?? 0),
@@ -610,6 +610,7 @@ export async function connectionSummary(): Promise<Record<ChannelType, { total: 
     MESSENGER: { total: 0, working: 0 },
     INSTAGRAM: { total: 0, working: 0 },
     TELEGRAM: { total: 0, working: 0 },
+    WEBCHAT: { total: 0, working: 0 },
   };
   for (const r of rows) {
     if (r.status === "DISCONNECTED") continue;

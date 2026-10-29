@@ -10,6 +10,7 @@ import {
   CalendarClock,
   CalendarDays,
   Camera,
+  Globe,
   CheckCheck,
   ClipboardCheck,
   ClipboardList,
@@ -343,6 +344,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/conversations/messenger", label: "Facebook Messenger", icon: MessagesSquare },
       { href: "/conversations/instagram", label: "Instagram DM", icon: Camera },
       { href: "/conversations/telegram", label: "Telegram", icon: Send },
+      { href: "/conversations/website", label: "Website Chat", icon: Globe },
       {
         href: "/messages",
         label: "Messages",

@@ -11,7 +11,7 @@
  * semantics; the unified inbox reads it from there instead of copying it (see OMNICHANNEL.md §4).
  */
 
-export const CHANNEL_TYPES = ["MESSENGER", "INSTAGRAM", "TELEGRAM"] as const;
+export const CHANNEL_TYPES = ["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT"] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
 
 export function isChannelType(value: unknown): value is ChannelType {
@@ -19,7 +19,7 @@ export function isChannelType(value: unknown): value is ChannelType {
 }
 
 /** Which webhook dialect a channel speaks. Messenger and Instagram share Meta's. */
-export type ChannelWebhookKind = "META" | "TELEGRAM";
+export type ChannelWebhookKind = "META" | "TELEGRAM" | "WEBCHAT";
 
 export interface ChannelDefinition {
   type: ChannelType;
@@ -96,6 +96,24 @@ export const CHANNELS: Record<ChannelType, ChannelDefinition> = {
       "Telegram tells bots nothing about delivery or reading, so a reply shows as Sent, never Delivered or Read.",
     ],
   },
+  WEBCHAT: {
+    type: "WEBCHAT",
+    label: "Website chat",
+    slug: "website",
+    webhookKind: "WEBCHAT",
+    maxText: 2000,
+    maxTextUnit: "characters",
+    deliveryReceipts: false,
+    readReceipts: false,
+    replyWindow: null,
+    accountNoun: "chat widget on your website",
+    limitations: [
+      "The widget works only on the website addresses you list. Add every address it is installed on (with https://).",
+      "Visitors are anonymous unless your site signs their user id with this widget's identity secret; a name or email they type is shown as unverified.",
+      "A reply shows as Sent once it is stored; the visitor sees it the next time their widget checks (every few seconds while it is open).",
+      "Visitors cannot send files yet.",
+    ],
+  },
 };
 
 export function channelDefinition(type: ChannelType): ChannelDefinition {
@@ -123,7 +141,7 @@ export const UNAVAILABLE_CHANNELS = [
 
 /** The inbox views: every channel together, WhatsApp, or one of the channels above. */
 export const INBOX_SCOPES = ["all", "whatsapp", ...CHANNEL_TYPES.map((t) => CHANNELS[t].slug)] as const;
-export type InboxScope = "all" | "whatsapp" | "messenger" | "instagram" | "telegram";
+export type InboxScope = "all" | "whatsapp" | "messenger" | "instagram" | "telegram" | "website";
 
 export function isInboxScope(value: unknown): value is InboxScope {
   return typeof value === "string" && (INBOX_SCOPES as readonly string[]).includes(value);
