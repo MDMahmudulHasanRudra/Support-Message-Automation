@@ -554,27 +554,36 @@ enum ProjectStatus {
 /// `proj_isp_digital`) and any created later. Everything project-scoped carries its `projectId`.
 /// See MULTI_PROJECT_PLAN.md. A status change never deletes data.
 model Project {
-  id            String        @id @default(cuid())
-  name          String
-  slug          String        @unique
-  description   String?
-  status        ProjectStatus @default(SETUP)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id                  String        @id @default(cuid())
+  name                String
+  slug                String        @unique
+  description         String?
+  status              ProjectStatus @default(SETUP)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
   /// The SaaS customer this project belongs to (SAAS_PLATFORM_PLAN.md). NULL = the original
   /// installation (the founding customer). A customer has as many projects as its Main Admin creates.
-  customerId    String?
-  customer      Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId          String?
+  customer            Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
   /// Set while the customer's SaaS subscription holds this project (suspended or cancelled -
   /// SAAS_PLATFORM_PLAN.md section 10). Held = treated exactly like a SUSPENDED project: read-only,
   /// no automation or outbound, incoming messages still stored. Never set for a project with no
   /// subscription, and never by anything but recomputeCustomerBilling (packages/db).
-  billingHoldAt DateTime?
+  billingHoldAt       DateTime?
+  /// The business profile (PROJECT_MODULES.md): a label and the template it started from. It never
+  /// grants anything by itself — the modules are the `ProjectFeature` rows, which every check reads.
+  projectType         ProjectType   @default(DEFAULT)
+  /// The template a CUSTOM_MIX started from ("Custom Mix (E-commerce base)"); null = none.
+  projectBaseType     ProjectType?
+  /// Bumped by every module configuration change; a change names the version it was made from, so
+  /// two admins cannot overwrite each other unseen.
+  moduleConfigVersion Int           @default(0)
 
-  access             ProjectAccess[]
-  projectRoles       ProjectRole[]
-  projectMemberRoles ProjectMemberRole[]
-  features           ProjectFeature[]
+  access              ProjectAccess[]
+  moduleConfigChanges ProjectModuleConfigChange[]
+  projectRoles        ProjectRole[]
+  projectMemberRoles  ProjectMemberRole[]
+  features            ProjectFeature[]
 
   whatsAppAccountRows                  WhatsAppAccount[]
   whatsAppServiceRouteRows             WhatsAppServiceRoute[]
@@ -7936,4 +7945,36 @@ model WebChatVisitor {
 
   @@index([connectionId, createdAt])
   @@index([ipHash, createdAt])
+}
+
+/// The business profile of a project (PROJECT_MODULES.md). Kept in sync with PROJECT_TYPES in
+/// packages/shared/src/projectModules.ts by convention.
+enum ProjectType {
+  DEFAULT
+  ECOMMERCE
+  CUSTOM_MIX
+}
+
+/// One applied module configuration (PROJECT_MODULES.md §7): what the modules were before and after,
+/// who changed them and why. Append-only (a database trigger refuses updates); "Restore" re-applies a
+/// row's `modules` through the same validation, never by writing feature rows directly.
+model ProjectModuleConfigChange {
+  id              String       @id @default(cuid())
+  projectId       String       @default(dbgenerated("project_id_required()"))
+  project         Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// The project's moduleConfigVersion this change produced.
+  version         Int
+  projectType     ProjectType
+  projectBaseType ProjectType?
+  previousModules String[]
+  modules         String[]
+  /// Hard dependencies the resolver added, and recommended modules the admin declined.
+  autoAdded       String[]
+  declined        String[]
+  reason          String?
+  actorUsername   String
+  createdAt       DateTime     @default(now())
+
+  @@unique([projectId, version])
+  @@index([projectId, createdAt])
 }

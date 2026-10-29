@@ -102,7 +102,10 @@ describe("the constraints later phases depend on", () => {
     // + WhatsAppPicture (WHATSAPP_AVATARS.md, 20261023090000_whatsapp_pictures).
     // + ClientImportRow and ClientImportPreset (SMART_IMPORT.md, 20261024090000_client_smart_import).
     // + MetaOAuthSession (docs/meta-integration, 20261025090000_meta_platform_oauth).
-    expect(refusing).toHaveLength(125);
+    // + ConversationLabel, ConversationNote, AiDraft (20261029090000_inbox_workspace), InboxSavedView,
+    //   InboxMention, ConversationEvent (20261029110000_inbox_views_mentions), WebChatVisitor
+    //   (20261029120000_website_chat) and ProjectModuleConfigChange (20261029130000_project_modules).
+    expect(refusing).toHaveLength(133);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -130,8 +133,9 @@ describe("the constraints later phases depend on", () => {
     // + the nine Google Sheets tables + the four Messaging Channels tables + the five Client Management
     // tables + the three client billing tables + the chat-link table + the two email tables + ProjectRole
     // + ProjectMemberRole + the seven Clients v3 tables + WhatsAppPicture + ClientImportRow + ClientImportPreset
-    // + MetaOAuthSession) + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(128);
+    // + MetaOAuthSession + the three inbox workspace tables + the three inbox views/mentions tables
+    // + WebChatVisitor + ProjectModuleConfigChange) + SystemLog + ProjectAccess + ProjectFeature.
+    expect(rows).toHaveLength(136);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

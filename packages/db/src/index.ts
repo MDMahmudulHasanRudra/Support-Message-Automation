@@ -155,6 +155,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "TeamAttendanceGroup",
   "GroupResponsibilityChange", "IdentityReattribution",
   "ConversationLabel", "ConversationNote", "AiDraft", "InboxSavedView", "InboxMention", "ConversationEvent", "WebChatVisitor",
+  "ProjectModuleConfigChange",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([

@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation";
 import { ArrowRight, CheckCircle2, Circle } from "lucide-react";
-import { PROJECT_STATUS_DESCRIPTIONS } from "@support-automation/shared";
+import { moduleDefinition, PROJECT_STATUS_DESCRIPTIONS, PROJECT_TYPE_LABELS } from "@support-automation/shared";
 import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader } from "@/components/ui";
 import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
 import { getProjectDetail, requireMainAdminPage } from "@/server/mainAdmin";
 import { whatsappLine } from "../../ProjectCard";
-import { ProjectAccessList, ProjectDetailsForm, ProjectFeatureList, ProjectStatusControl } from "./ProjectControls";
+import { getProjectModuleState } from "@/server/projectModules";
+import { ProjectAccessList, ProjectDetailsForm, ProjectStatusControl } from "./ProjectControls";
 
 export const metadata = { title: "Project" };
 
@@ -24,7 +25,8 @@ export default async function ProjectDetailPage({
   const { id } = await params;
   const detail = await getProjectDetail(session.userId, id);
   if (!detail) notFound();
-  const { project, features, users, configuration } = detail;
+  const { project, users, configuration } = detail;
+  const modules = await getProjectModuleState(id);
   const created = (await searchParams).created === "1";
   const wa = whatsappLine(project.whatsapp);
 
@@ -112,14 +114,34 @@ export default async function ProjectDetailPage({
 
       <div className="mt-8">
         <SectionHeader
-          title="Features"
-          description="What this project is entitled to use. Off means the module is hidden and refused in this project, whatever anyone's role allows; its own settings are kept for when it is switched back on."
+          title="Type & modules"
+          description="What this project runs. A module that is off is hidden and refused in this project, whatever anyone's role allows; its data and settings are kept for when it is switched back on."
+          action={
+            <ButtonLink href={`/admin/projects/${project.id}/modules`} variant="secondary">
+              {canManage ? "Open Module Builder" : "View modules"}
+              <ArrowRight className="size-3.5" aria-hidden />
+            </ButtonLink>
+          }
         />
-        <ProjectFeatureList
-          projectId={project.id}
-          canManage={canManage}
-          features={features.map(({ key, label, description, workerEffect, enabled }) => ({ key, label, description, workerEffect, enabled }))}
-        />
+        {modules ? (
+          <Card>
+            <p className="text-sm">
+              <span className="font-semibold">
+                {modules.projectType === "CUSTOM_MIX" && modules.projectBaseType
+                  ? `Custom Mix (${PROJECT_TYPE_LABELS[modules.projectBaseType]} base)`
+                  : PROJECT_TYPE_LABELS[modules.projectType]}
+              </span>{" "}
+              · {modules.enabled.length} modules on · configuration v{modules.version}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {modules.enabled.map((key) => (
+                <Badge key={key} color="gray">
+                  {moduleDefinition(key)?.name ?? key}
+                </Badge>
+              ))}
+            </div>
+          </Card>
+        ) : null}
       </div>
 
       <div className="mt-8">
