@@ -1,0 +1,132 @@
+# Continuous integration — checks only. This workflow never deploys, never reads a secret and never
+# reaches any database but the throwaway Postgres service it starts itself (docs/get-assist-ultimate/13-test-and-quality-plan.md).
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The worker's Chromium comes from the OS in its image; tests use a mock provider and need none.
+  PUPPETEER_SKIP_DOWNLOAD: "true"
+  PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+  # Never a real database: unit tests must not touch one, and integration files refuse anything that
+  # is not a local throwaway host (helpers/requireTestDatabase.ts).
+  DATABASE_URL: postgresql://ci:ci@localhost:5999/none?schema=public
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  fast:
+    name: Typecheck, lint, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - name: Build shared packages (typecheck and tests resolve their dist)
+        run: pnpm build:packages
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - name: Unit tests — packages
+        run: pnpm --filter "./packages/**" --if-present run test --reporter=default --reporter=junit --outputFile.junit=test-results/junit.xml
+      - name: Unit tests — web (integration files excluded; they run in the integration job)
+        run: pnpm --filter @support-automation/web exec vitest run --exclude "**/*.integration.test.ts" --reporter=default --reporter=junit --outputFile.junit=test-results/junit.xml
+      - name: Unit tests — worker (integration files excluded; they run in the integration job)
+        run: pnpm --filter @support-automation/worker exec vitest run --exclude "**/*.integration.test.ts" --reporter=default --reporter=junit --outputFile.junit=test-results/junit.xml
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: "**/test-results/junit.xml"
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------------------------
+  build:
+    name: Build
+    needs: fast
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm build:packages
+      - name: Build worker
+        run: pnpm --filter @support-automation/worker build
+      - name: Build web
+        run: pnpm --filter @support-automation/web build
+
+  # ---------------------------------------------------------------------------------------------
+  integration:
+    name: Migrations and integration tests (throwaway Postgres)
+    needs: fast
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      # Same image, credentials and host port as docker-compose.test.yml, so the packages'
+      # existing `test:isolated` scripts run unchanged.
+      postgres-test:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: support_automation_test
+          POSTGRES_PASSWORD: support_automation_test
+          POSTGRES_DB: support_automation_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U support_automation_test -d support_automation_test"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://support_automation_test:support_automation_test@localhost:5433/support_automation_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm build:packages
+      - name: Apply every migration to an empty database
+        id: migrate
+        run: pnpm db:migrate:deploy
+      - name: Confirm no migration is pending or failed
+        working-directory: packages/db
+        run: pnpm exec prisma migrate status
+      - name: Integration tests — web
+        if: ${{ !cancelled() && steps.migrate.outcome == 'success' }}
+        run: pnpm --filter @support-automation/web run test:isolated --reporter=default --reporter=junit --outputFile.junit=test-results/junit.xml
+      - name: Integration tests — worker
+        # Runs even when the web suite failed, so one red suite never hides the other's result.
+        if: ${{ !cancelled() && steps.migrate.outcome == 'success' }}
+        run: pnpm --filter @support-automation/worker run test:isolated --reporter=default --reporter=junit --outputFile.junit=test-results/junit.xml
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: "**/test-results/junit.xml"
+          if-no-files-found: ignore

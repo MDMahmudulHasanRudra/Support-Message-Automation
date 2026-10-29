@@ -39,3 +39,6 @@ coverage/
 **.node-persist**
 **_IGNORE_**
 # end managed
+
+# CI test reports
+test-results/

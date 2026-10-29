@@ -21,7 +21,7 @@ WhatsApp sessions, money or tenancy.
 
 | ID | Package | Risk |
 |---|---|---|
-| P1-1 | CI: GitHub Actions running typecheck, lint, unit tests, and `test:isolated` for web + worker with a Postgres service | L |
+| P1-1 | CI: GitHub Actions running typecheck, lint, unit tests, and `test:isolated` for web + worker with a Postgres service — **written, awaiting first run** | L |
 | P1-2 | Remove dead `packages/teams-client` reference from `build:packages`; delete the 7 consumerless AI settings fields from the form (columns stay) | L |
 | P1-3 | Bind web port to `127.0.0.1` in compose (only after P0-4 confirms Caddy is the only client) | M |
 | P1-4 | Scheduled `pg_dump` + media volume backup with retention, and a documented, **rehearsed** restore into the test stack | L |

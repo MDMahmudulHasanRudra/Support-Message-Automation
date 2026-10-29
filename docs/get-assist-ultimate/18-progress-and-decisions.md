@@ -2,6 +2,15 @@
 
 Newest first. A decision is recorded only when it was made, with who made it.
 
+## 29 Oct 2026 — P1-1 CI pipeline
+
+- Added `.github/workflows/ci.yml` (fast / build / integration jobs, see `13`).
+- `build:packages` no longer builds the removed `teams-client` (it had no source, so the script failed); it now
+  builds forge-client and media-storage like the Dockerfiles do.
+- `.gitattributes` keeps `*.sh` LF in Windows checkouts (the baseline script is copied to Linux).
+- `.gitignore`: `test-results/`.
+- Not yet run on GitHub; first-run results to be recorded here.
+
 ## 29 Oct 2026 — Owner decisions on Phase 0
 
 Rudra approved Option A, conditionally approved the baseline script (review first, explicit go-ahead before any
