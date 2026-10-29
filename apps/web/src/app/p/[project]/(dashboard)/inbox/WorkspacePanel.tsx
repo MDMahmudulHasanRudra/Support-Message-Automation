@@ -9,6 +9,7 @@ import {
   ChevronsRight,
   Copy,
   Flag,
+  History,
   Loader2,
   NotebookPen,
   PanelRightOpen,
@@ -19,6 +20,7 @@ import {
   ThumbsUp,
   Trash2,
   TriangleAlert,
+  UserRound,
   Users,
   Wand2,
   X,
@@ -31,6 +33,7 @@ import {
   type CopilotRewriteInstruction,
 } from "@support-automation/shared";
 import { useToast } from "@/components/ui";
+import Link from "@/components/ProjectLink";
 import { fillComposer, readComposer } from "@/lib/composerBridge";
 import type { WorkspaceData, WorkspaceDraft, WorkspaceNote } from "@/server/inboxWorkspace";
 import {
@@ -41,6 +44,7 @@ import {
   rateCopilotDraft,
   readCopilotDrafts,
   requestCopilot,
+  setChannelAssignee,
   setChannelConversationTeam,
   setConversationPriority,
   setConversationTags,
@@ -191,6 +195,8 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
   const [priority, setPriority] = useState<ConversationPriorityValue | null>(null);
   const [tags, setTags] = useState<string[] | null>(null);
   const [team, setTeam] = useState<string | null | undefined>(undefined);
+  const [assignee, setAssignee] = useState<string | null | undefined>(undefined);
+  const shownAssignee = assignee === undefined ? data.assignedUserId : assignee;
   const [draftTag, setDraftTag] = useState("");
   const [pending, start] = useTransition();
   const shownPriority = priority ?? data.priority;
@@ -333,7 +339,72 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
               </option>
             ))}
           </select>
-          <p className="mt-1.5 text-[11px] text-[color:var(--color-subtle-foreground)]">The person handling it is set with Assign in the header.</p>
+        </section>
+      ) : null}
+
+      {data.teams ? (
+        <section>
+          <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
+            <UserRound className="size-3.5" aria-hidden />
+            Assigned to
+          </h3>
+          <select
+            value={shownAssignee ?? ""}
+            disabled={ro || pending}
+            onChange={(e) => {
+              const next = e.target.value || null;
+              setAssignee(next);
+              start(async () => {
+                const r = await setChannelAssignee((data.ref as { conversationId: string }).conversationId, next);
+                if ("error" in r) {
+                  setAssignee(undefined);
+                  fail(r.error);
+                }
+              });
+            }}
+            className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12.5px]"
+          >
+            <option value="">Nobody</option>
+            {data.people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.id === data.viewerId ? `${p.name} (you)` : p.name}
+              </option>
+            ))}
+          </select>
+        </section>
+      ) : null}
+
+      {data.groupOwner ? (
+        <section>
+          <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
+            <UserRound className="size-3.5" aria-hidden />
+            Group owner
+          </h3>
+          <p className="text-[12.5px]">{data.groupOwner.name || <span className="text-[color:var(--color-muted-foreground)]">Nobody</span>}</p>
+          <p className="mt-1 text-[11px] text-[color:var(--color-subtle-foreground)]">
+            Set per group on the{" "}
+            <Link href={`/groups?search=${encodeURIComponent(data.groupOwner.groupName)}`} className="link">
+              Groups page
+            </Link>{" "}
+            — it also decides who a missed reply is charged to in the Team Report.
+          </p>
+        </section>
+      ) : null}
+
+      {data.history.length ? (
+        <section>
+          <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
+            <History className="size-3.5" aria-hidden />
+            History
+          </h3>
+          <ol className="space-y-1.5 text-[12px] text-[color:var(--color-muted-foreground)]">
+            {data.history.map((h) => (
+              <li key={h.id}>
+                <span className="text-[color:var(--color-foreground)]">{h.actorName ?? "Someone"}</span>{" "}
+                {h.kind === "STATUS" ? (h.to === "Closed" ? "closed it" : "reopened it") : h.kind === "TEAM" ? (h.to ? `moved it to ${h.to}` : "removed the Team") : h.to ? `assigned it to ${h.to}` : "unassigned it"} · <RelTime iso={h.at} />
+              </li>
+            ))}
+          </ol>
         </section>
       ) : null}
 

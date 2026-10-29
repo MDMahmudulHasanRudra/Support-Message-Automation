@@ -283,7 +283,9 @@ export function ChatWorkspace({
           : // Categories file group conversations only.
             type === "personal"
             ? 0
-            : (categoryById.get(f.id)?.count ?? 0);
+            : f.kind === "category"
+              ? (categoryById.get(f.id)?.count ?? 0)
+              : 0;
 
   const loadedMatches = useMemo(
     () => conversations.filter((c) => kindMatchesType(c.kind, type) && matchesFilter(c, filter)),

@@ -67,3 +67,30 @@ Off = the pages render exactly as before; saved rows are kept.
   already in flight finishes. The web refuses new requests while it is off.
 - Ungrounded business-specific drafts carry a red "Not verified" badge and alert; grounded ones say
   "based on verified knowledge — still review". A person always sends.
+
+## Inbox (All Conversations) — views, filters, saved views, bulk, mentions
+
+Migration `20261029110000_inbox_views_mentions` (InboxSavedView, InboxMention, ConversationEvent).
+
+- **Views**: Open, My inbox, Unassigned, Unread, Needs reply, High priority, Urgent (both need
+  INBOX_COLLABORATION), Closed. **Filters** (combinable): account, last activity, assigned person, Team, tag,
+  search. One validated shape (`parseInboxFilterSet`, packages/shared) serves the list, saved views and bulk.
+- **Full dataset, never the loaded 300**: channel conversations filter in SQL; for WhatsApp the label /
+  owner filters are first resolved to chat ids over the whole project, then handed to WhatsApp Chat's own
+  ranker as a `{ kind: "chats" }` view, so its window applies after filtering.
+- **WhatsApp ownership is the group's owner** (`WhatsAppGroup.assignedTeamMember`, Groups page,
+  GroupResponsibilityChange). The inbox only reads it (My inbox / Assigned to / Team / Unassigned); bulk
+  assign / Team / status skip WhatsApp rows and say why. Personal chats have no owner (Unassigned).
+- **Rows** show priority flag, owner/assignee, Team, up to two tags, AI on, closed, "Not sent" when the newest
+  reply failed or its outcome is unknown, and the unread/needs-reply dots. Compact / comfortable density per
+  browser.
+- **Saved views**: personal (creator only) or shared (needs `channels.manage` to share or change a shared
+  one); pin and default per person (`ListViewPreference` key `inbox-saved-views`). Filters are re-validated on
+  every read; a view never grants access.
+- **Bulk** (≤200): priority, add tag, assign, Team, close / reopen — per-conversation permission and
+  project checks, counts of changed / already so / skipped / failed.
+- **Assignment history** for channel conversations: `ConversationEvent` (ASSIGNEE / TEAM / STATUS, actor,
+  time), written by every assign / Team / close path, shown under Details.
+- **@mentions**: saving a note creates one `InboxMention` per mentioned person (unique per note+person, same
+  transaction). Only people with project access whose role holds `messages.view` can be mentioned. The @
+  button in the inbox header lists them with unread state and links to the conversation.

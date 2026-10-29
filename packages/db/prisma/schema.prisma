@@ -703,6 +703,9 @@ model Project {
   conversationLabels                   ConversationLabel[]
   conversationNotes                    ConversationNote[]
   aiDrafts                             AiDraft[]
+  inboxSavedViews                      InboxSavedView[]
+  inboxMentions                        InboxMention[]
+  conversationEvents                   ConversationEvent[]
 
   @@index([customerId])
 }
@@ -910,6 +913,9 @@ model User {
   conversationNotes         ConversationNote[]         @relation("ConversationNoteAuthor")
   aiDraftsRequested         AiDraft[]                  @relation("AiDraftRequester")
   conversationLabelsUpdated ConversationLabel[]        @relation("ConversationLabelUpdater")
+  inboxSavedViews           InboxSavedView[]           @relation("InboxSavedViewOwner")
+  inboxMentions             InboxMention[]             @relation("InboxMentionUser")
+  conversationEvents        ConversationEvent[]        @relation("ConversationEventActor")
 
   @@index([customerId])
 }
@@ -6431,6 +6437,7 @@ model ChannelConversation {
   conversationLabel ConversationLabel?
   notes             ConversationNote[]
   aiDrafts          AiDraft[]
+  events            ConversationEvent[]
 
   @@unique([projectId, connectionId, externalThreadId])
   @@index([projectId, lastMessageAt])
@@ -7759,6 +7766,7 @@ model ConversationNote {
   /// Soft delete: gone from the panel, kept for the audit trail.
   deletedAt             DateTime?
   deletedById           String?
+  mentions              InboxMention[]
 
   @@index([projectId, accountId, chatId, createdAt])
   @@index([channelConversationId, createdAt])
@@ -7839,4 +7847,62 @@ model AiDraft {
   @@index([projectId, accountId, chatId, createdAt])
   @@index([channelConversationId, createdAt])
   @@index([requestedById, createdAt])
+}
+
+/// A named set of unified-inbox filters (INBOX_WORKSPACE.md § Saved views). `filters` holds only what
+/// parseInboxFilterSet accepts and is re-validated on every read; a view never grants access.
+model InboxSavedView {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// The creator. A personal view is theirs alone; a shared one is visible to everyone who can read the inbox.
+  ownerId   String?
+  owner     User?    @relation("InboxSavedViewOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  name      String
+  shared    Boolean  @default(false)
+  /// `all` or one channel slug (InboxScope).
+  scope     String   @default("all")
+  filters   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, ownerId])
+  @@index([projectId, shared])
+}
+
+/// "You were mentioned" for one person and one internal note. Unique per note and person, so saving
+/// can never notify twice; the note text itself is read only through the conversation's own checks.
+model InboxMention {
+  id        String           @id @default(cuid())
+  projectId String           @default(dbgenerated("project_id_required()"))
+  project   Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  noteId    String
+  note      ConversationNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation("InboxMentionUser", fields: [userId], references: [id], onDelete: Cascade)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@unique([noteId, userId])
+  @@index([projectId, userId, readAt])
+}
+
+/// What happened to a Messenger / Instagram / Telegram conversation's ownership and state: the
+/// assignment history. WhatsApp group ownership history stays in GroupResponsibilityChange.
+model ConversationEvent {
+  id                    String              @id @default(cuid())
+  projectId             String              @default(dbgenerated("project_id_required()"))
+  project               Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  channelConversationId String
+  channelConversation   ChannelConversation @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  /// ASSIGNEE | TEAM | STATUS
+  kind                  String
+  /// User id / Team id / status before and after (null = none).
+  fromValue             String?
+  toValue               String?
+  actorId               String?
+  actor                 User?               @relation("ConversationEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt             DateTime            @default(now())
+
+  @@index([channelConversationId, createdAt])
 }

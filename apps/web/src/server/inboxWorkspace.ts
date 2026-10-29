@@ -1,7 +1,7 @@
 import { prisma } from "@/server/db";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { activeProjectId } from "@/server/projectContext";
-import { hasPermission } from "@/server/permissions";
+import { hasPermission, userHoldsKey } from "@/server/permissions";
 import type { Session } from "@/server/auth";
 import {
   conversationRefColumns,
@@ -108,6 +108,12 @@ export interface WorkspaceData {
   /** Channel conversations only: Teams and the current Team / person. */
   teams: { id: string; name: string }[] | null;
   assignedTeamId: string | null;
+  /** Channel conversations: the person handling it. */
+  assignedUserId: string | null;
+  /** Channel conversations: assignment / status history, newest first. */
+  history: { id: string; kind: string; from: string | null; to: string | null; actorName: string | null; at: string }[];
+  /** WhatsApp groups: the owner set on the Groups page (read here, changed there). */
+  groupOwner: { name: string; groupName: string } | null;
   viewerId: string;
 }
 
@@ -164,18 +170,23 @@ export async function loadDrafts(ref: ConversationRef): Promise<WorkspaceDraft[]
   return rows.map(toWorkspaceDraft);
 }
 
-/** Who may be @mentioned: the people given access to this project, plus the viewer. */
-export async function mentionablePeople(viewerId: string): Promise<{ id: string; username: string; name: string }[]> {
+/**
+ * Who may be @mentioned or assigned: active people given access to this project whose role can read
+ * conversations (`messages.view`), plus the viewer — so a mention can never notify somebody who could
+ * not open the conversation it points to.
+ */
+export async function mentionablePeople(viewer: Pick<Session, "userId" | "tenant">): Promise<{ id: string; username: string; name: string }[]> {
   const projectId = await activeProjectId();
   const access = await prisma.projectAccess.findMany({ where: { projectId }, select: { userId: true } });
-  const ids = [...new Set([viewerId, ...access.map((a) => a.userId)])];
+  const ids = [...new Set([viewer.userId, ...access.map((a) => a.userId)])];
   const users = await prisma.user.findMany({
     where: { id: { in: ids }, isActive: true, supportOperatorId: null },
     select: { id: true, username: true, name: true },
     orderBy: { name: "asc" },
     take: 300,
   });
-  return users;
+  const allowed = await Promise.all(users.map((u) => (u.id === viewer.userId ? true : userHoldsKey(u.id, viewer.tenant, "messages.view"))));
+  return users.filter((_, i) => allowed[i]);
 }
 
 export async function loadWorkspace(session: Session, ref: ConversationRef): Promise<WorkspaceData | null> {
@@ -193,7 +204,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
         })
       : [],
     access.copilot ? loadDrafts(ref) : [],
-    access.collaboration ? mentionablePeople(session.userId) : [],
+    access.collaboration ? mentionablePeople(session) : [],
     access.collaboration
       ? prisma.$queryRaw<{ tag: string }[]>`
           SELECT tag FROM "ConversationLabel", unnest("tags") AS tag
@@ -201,10 +212,26 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
           GROUP BY tag ORDER BY count(*) DESC, tag LIMIT 40`
       : [],
     ref.kind === "channel" && access.collaboration
-      ? prisma.channelConversation.findFirst({ where: { id: ref.conversationId }, select: { assignedTeamId: true } })
+      ? prisma.channelConversation.findFirst({ where: { id: ref.conversationId }, select: { assignedTeamId: true, assignedUserId: true } })
       : null,
     ref.kind === "channel" && access.collaboration ? prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }) : null,
   ]);
+  const [events, group] = await Promise.all([
+    ref.kind === "channel" && access.collaboration
+      ? prisma.conversationEvent.findMany({
+          where: { channelConversationId: ref.conversationId },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+          select: { id: true, kind: true, fromValue: true, toValue: true, createdAt: true, actor: { select: { name: true } } },
+        })
+      : [],
+    ref.kind === "whatsapp" && ref.chatId.endsWith("@g.us") && access.collaboration
+      ? prisma.whatsAppGroup.findFirst({ where: { accountId: ref.accountId, whatsappGroupId: ref.chatId }, select: { id: true, name: true, assignedTeamMember: { select: { name: true } } } })
+      : null,
+  ]);
+  // Names for the ids history refers to (people and Teams of this project).
+  const names = new Map<string, string>([...people.map((p) => [p.id, p.name] as const), ...(teams ?? []).map((t) => [t.id, t.name] as const)]);
+  const nameOf = (kind: string, v: string | null) => (v === null ? null : kind === "STATUS" ? (v === "CLOSED" ? "Closed" : "Open") : (names.get(v) ?? "someone no longer here"));
 
   return {
     access: { canRead: access.canRead, canWrite: access.canWrite, collaboration: access.collaboration, copilot: access.copilot },
@@ -224,6 +251,9 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     people,
     teams,
     assignedTeamId: channel?.assignedTeamId ?? null,
+    assignedUserId: channel?.assignedUserId ?? null,
+    history: events.map((e) => ({ id: e.id, kind: e.kind, from: nameOf(e.kind, e.fromValue), to: nameOf(e.kind, e.toValue), actorName: e.actor?.name ?? null, at: e.createdAt.toISOString() })),
+    groupOwner: group ? { name: group.assignedTeamMember?.name ?? "", groupName: group.name } : null,
     viewerId: session.userId,
   };
 }

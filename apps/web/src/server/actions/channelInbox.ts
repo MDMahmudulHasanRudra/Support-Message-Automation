@@ -1,9 +1,9 @@
 "use server";
 
-import { isInboxScope } from "@support-automation/shared";
+import { isInboxScope, parseInboxFilterSet } from "@support-automation/shared";
 import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
-import { isInboxView, isInboxWithin, loadInbox, type InboxResult } from "@/server/channels/inbox";
+import { loadInbox, type InboxResult } from "@/server/channels/inbox";
 import {
   assignChannelConversation,
   ChannelReplyError,
@@ -33,17 +33,13 @@ const refuse = (err: unknown): InboxActionResult => {
 };
 
 /** The list for a filter or a search the loaded list cannot answer. Refuses as an empty list (it is polled). */
-export async function listInboxAction(input: { scope: string; view?: string; search?: string; within?: string | null }): Promise<InboxResult | null> {
+export async function listInboxAction(input: { scope: string; filters?: unknown }): Promise<InboxResult | null> {
   const access = await checkPermission("messages.view", "OMNICHANNEL");
   if ("denied" in access) return null;
   if (!isInboxScope(input.scope)) return null;
-  return loadInbox({
-    scope: input.scope,
-    view: isInboxView(input.view) ? input.view : "all",
-    search: input.search?.slice(0, 120),
-    within: isInboxWithin(input.within) ? input.within : null,
-    viewerId: access.session.userId,
-  });
+  // Validated to the one accepted shape (packages/shared inboxFilters.ts): a filter narrows what the
+  // viewer can already read and is never trusted as anything else.
+  return loadInbox({ scope: input.scope, filters: parseInboxFilterSet(input.filters), viewerId: access.session.userId });
 }
 
 export async function sendChannelReplyAction(conversationId: string, text: string, nonce: string): Promise<InboxActionResult & { messageId?: string }> {
@@ -81,7 +77,7 @@ export async function setChannelConversationStatusAction(conversationId: string,
   if ("denied" in access) return { error: access.denied };
   if (status !== "OPEN" && status !== "CLOSED") return { error: "Unknown status." };
   try {
-    await setChannelConversationStatus(conversationId, status);
+    await setChannelConversationStatus(conversationId, status, new Date(), access.session.userId);
     return { success: status === "CLOSED" ? "Closed. A new message from the customer reopens it." : "Reopened." };
   } catch (err) {
     return refuse(err);
@@ -92,7 +88,7 @@ export async function assignChannelConversationAction(conversationId: string, to
   const access = await checkPermission("conversations.reply");
   if ("denied" in access) return { error: access.denied };
   try {
-    await assignChannelConversation(conversationId, toMe ? access.session.userId : null);
+    await assignChannelConversation(conversationId, toMe ? access.session.userId : null, access.session.userId);
     return { success: toMe ? "Assigned to you." : "Unassigned." };
   } catch (err) {
     return refuse(err);

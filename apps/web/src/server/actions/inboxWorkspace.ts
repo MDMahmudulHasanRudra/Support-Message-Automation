@@ -15,6 +15,7 @@ import {
   type WorkspaceNote,
 } from "@/server/inboxWorkspace";
 import type { Session } from "@/server/auth";
+import { assignChannelConversation, assignChannelConversationTeam } from "@/server/channels/replies";
 import {
   conversationRefColumns,
   extractNoteMentions,
@@ -69,11 +70,20 @@ export async function addConversationNote(refInput: unknown, bodyInput: string):
   const body = String(bodyInput ?? "").trim();
   if (!body) return { error: "Write the note first." };
   if (body.length > MAX_NOTE_LENGTH) return { error: `A note can be at most ${MAX_NOTE_LENGTH.toLocaleString()} characters.` };
-  const people = await mentionablePeople(w.session.userId);
+  const people = await mentionablePeople(w.session);
   const mentionedUserIds = extractNoteMentions(body, people).filter((id) => id !== w.session.userId);
-  const created = await prisma.conversationNote.create({
-    data: { projectId: await activeProjectId(), ...conversationRefColumns(w.ref), body, mentionedUserIds, authorId: w.session.userId },
-    select: { id: true, body: true, authorId: true, mentionedUserIds: true, createdAt: true },
+  const projectId = await activeProjectId();
+  // The note and its mention notifications land together; (noteId, userId) is unique, so a retried
+  // save can never notify anyone twice.
+  const created = await prisma.$transaction(async (tx) => {
+    const note = await tx.conversationNote.create({
+      data: { projectId, ...conversationRefColumns(w.ref), body, mentionedUserIds, authorId: w.session.userId },
+      select: { id: true, body: true, authorId: true, mentionedUserIds: true, createdAt: true },
+    });
+    if (mentionedUserIds.length) {
+      await tx.inboxMention.createMany({ data: mentionedUserIds.map((userId) => ({ projectId, noteId: note.id, userId })), skipDuplicates: true });
+    }
+    return note;
   });
   return { note: { ...created, authorName: w.session.name, createdAt: created.createdAt.toISOString() } };
 }
@@ -140,7 +150,24 @@ export async function setChannelConversationTeam(conversationId: string, teamId:
     const team = await prisma.team.findFirst({ where: { id: String(teamId) }, select: { id: true } });
     if (!team) return { error: "That Team no longer exists." };
   }
-  await prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { assignedTeamId: teamId || null } });
+  await assignChannelConversationTeam(conversationId, teamId || null, w.session.userId);
+  return { ok: true };
+}
+
+/**
+ * Messenger / Instagram / Telegram only: the person handling it (null = nobody). Only someone who may
+ * enter this project can be chosen; the change is recorded in the conversation's history.
+ * WhatsApp conversations are owned per group on the Groups page (GroupResponsibilityChange) — the inbox
+ * does not add a second, competing owner for them.
+ */
+export async function setChannelAssignee(conversationId: string, userId: string | null): Promise<{ ok: true } | Fail> {
+  const w = await forWrite({ kind: "channel", conversationId }, "collaboration");
+  if ("error" in w) return w;
+  if (userId) {
+    const people = await mentionablePeople(w.session);
+    if (!people.some((p) => p.id === userId)) return { error: "That person cannot be assigned in this project." };
+  }
+  await assignChannelConversation(conversationId, userId || null, w.session.userId);
   return { ok: true };
 }
 

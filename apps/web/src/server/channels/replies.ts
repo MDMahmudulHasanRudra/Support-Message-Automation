@@ -124,14 +124,36 @@ export async function markChannelConversationRead(conversationId: string, now: D
   await prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { reviewedAt: now } });
 }
 
-export async function setChannelConversationStatus(conversationId: string, status: "OPEN" | "CLOSED", now: Date = new Date()): Promise<void> {
-  const updated = await prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { status, closedAt: status === "CLOSED" ? now : null } });
-  if (updated.count === 0) throw new ChannelReplyError("That conversation no longer exists.");
+export async function setChannelConversationStatus(conversationId: string, status: "OPEN" | "CLOSED", now: Date = new Date(), actorId: string | null = null): Promise<void> {
+  const before = await prisma.channelConversation.findFirst({ where: { id: conversationId }, select: { status: true, projectId: true } });
+  if (!before) throw new ChannelReplyError("That conversation no longer exists.");
+  if (before.status === status) return;
+  await prisma.$transaction([
+    prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { status, closedAt: status === "CLOSED" ? now : null } }),
+    // The conversation's history (INBOX_WORKSPACE.md): who closed or reopened it, and when.
+    prisma.conversationEvent.create({ data: { projectId: before.projectId, channelConversationId: conversationId, kind: "STATUS", fromValue: before.status, toValue: status, actorId } }),
+  ]);
 }
 
-export async function assignChannelConversation(conversationId: string, userId: string | null): Promise<void> {
-  const updated = await prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { assignedUserId: userId } });
-  if (updated.count === 0) throw new ChannelReplyError("That conversation no longer exists.");
+export async function assignChannelConversation(conversationId: string, userId: string | null, actorId: string | null = null): Promise<void> {
+  const before = await prisma.channelConversation.findFirst({ where: { id: conversationId }, select: { assignedUserId: true, projectId: true } });
+  if (!before) throw new ChannelReplyError("That conversation no longer exists.");
+  if (before.assignedUserId === userId) return;
+  await prisma.$transaction([
+    prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { assignedUserId: userId } }),
+    prisma.conversationEvent.create({ data: { projectId: before.projectId, channelConversationId: conversationId, kind: "ASSIGNEE", fromValue: before.assignedUserId, toValue: userId, actorId } }),
+  ]);
+}
+
+/** Team ownership of a channel conversation (null = none), with its history row. */
+export async function assignChannelConversationTeam(conversationId: string, teamId: string | null, actorId: string | null = null): Promise<void> {
+  const before = await prisma.channelConversation.findFirst({ where: { id: conversationId }, select: { assignedTeamId: true, projectId: true } });
+  if (!before) throw new ChannelReplyError("That conversation no longer exists.");
+  if (before.assignedTeamId === teamId) return;
+  await prisma.$transaction([
+    prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { assignedTeamId: teamId } }),
+    prisma.conversationEvent.create({ data: { projectId: before.projectId, channelConversationId: conversationId, kind: "TEAM", fromValue: before.assignedTeamId, toValue: teamId, actorId } }),
+  ]);
 }
 
 /** Hand the conversation back to AI now, instead of waiting for the takeover period to pass. */
