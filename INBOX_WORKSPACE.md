@@ -94,3 +94,13 @@ Migration `20261029110000_inbox_views_mentions` (InboxSavedView, InboxMention, C
 - **@mentions**: saving a note creates one `InboxMention` per mentioned person (unique per note+person, same
   transaction). Only people with project access whose role holds `messages.view` can be mentioned. The @
   button in the inbox header lists them with unread state and links to the conversation.
+
+## Polish (WP-V3.2E)
+
+- WhatsApp Chat's own list shows the priority flag, group owner and up to two tags per row
+  (`chatListLabels`, two queries for the whole list; empty with INBOX_COLLABORATION off, so the list is unchanged).
+  Rows reached only through search / "load the rest" show no labels.
+- Saving / renaming / sharing a view and bulk-tagging use proper dialogs; deleting a view needs a second press.
+- The side panel is resizable on desktop (drag or arrow keys on its edge, 280–480 px, remembered per browser).
+  Alt+1/2/3 open Details / Notes / Copilot (the sheet on smaller screens); Escape closes the sheet, which takes
+  focus when it opens.

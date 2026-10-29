@@ -3,6 +3,7 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { getChatAccounts, getChatCategories, getChatInbox } from "@/server/chatInbox";
 import { picturePaths } from "@/server/whatsappPictures";
 import { isChatUiV2Enabled } from "@/server/chatThreadV2";
+import { chatListLabels } from "@/server/inboxWorkspace";
 import { ChatWorkspace } from "../../ConversationList";
 
 /**
@@ -37,7 +38,11 @@ export default async function ChatAccountLayout({
 
   const [inbox, categories, v2] = await Promise.all([getChatInbox(account.id), getChatCategories(account.id), isChatUiV2Enabled()]);
   // Profile pictures saved from incoming messages (WHATSAPP_AVATARS.md); empty when the feature is off.
-  const pictures = await picturePaths(account.id, inbox.conversations.map((c) => c.chatId));
+  const [pictures, labels] = await Promise.all([
+    picturePaths(account.id, inbox.conversations.map((c) => c.chatId)),
+    // Priority, tags and group owner (INBOX_WORKSPACE.md); empty unless INBOX_COLLABORATION is on.
+    chatListLabels(account.id, inbox.conversations),
+  ]);
 
   return (
     // `data-v2` marks the container only when CHAT_UI_V2 is on; the list's v2 styling keys off it
@@ -56,6 +61,7 @@ export default async function ChatAccountLayout({
         categories={categories}
         v2={v2}
         pictures={pictures}
+        labels={labels}
       >
         {children}
       </ChatWorkspace>

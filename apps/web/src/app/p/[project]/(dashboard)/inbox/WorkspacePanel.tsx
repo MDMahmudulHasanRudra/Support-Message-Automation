@@ -83,6 +83,27 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
+// Desktop width, dragged by the panel's left edge and remembered per browser (280–480 px).
+const WIDTH_KEY = "inbox-workspace-width";
+const MIN_WIDTH = 280;
+const MAX_WIDTH = 480;
+function readWidth(): number {
+  try {
+    const n = Number(window.localStorage.getItem(WIDTH_KEY));
+    return n >= MIN_WIDTH && n <= MAX_WIDTH ? n : 340;
+  } catch {
+    return 340;
+  }
+}
+function writeWidth(value: number) {
+  try {
+    window.localStorage.setItem(WIDTH_KEY, String(Math.round(value)));
+  } catch {
+    /* private mode */
+  }
+  listeners.forEach((l) => l());
+}
+
 /**
  * The inbox workspace side panel (INBOX_WORKSPACE.md). Desktop (xl): a 340 px column beside the
  * thread that collapses to a rail. Smaller screens: a button opens it as a sheet over the thread.
@@ -96,12 +117,52 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const firstTab: TabKey = data.access.collaboration ? "details" : "copilot";
   const [tab, setTab] = useState<TabKey>(firstTab);
+  const width = useSyncExternalStore(subscribe, readWidth, () => 340);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   const tabs = [
     data.access.collaboration ? { key: "details" as const, label: "Details", icon: Tag } : null,
     data.access.collaboration ? { key: "notes" as const, label: "Notes", icon: StickyNote, count: data.notes.length } : null,
     data.access.copilot ? { key: "copilot" as const, label: "Copilot", icon: Sparkles } : null,
   ].filter((t): t is NonNullable<typeof t> => t !== null);
+
+  // Keyboard: Alt+1/2/3 switch tabs (opening the panel or sheet), Escape closes the sheet.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && sheetOpen) {
+        setSheetOpen(false);
+        return;
+      }
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const index = ["1", "2", "3"].indexOf(e.key);
+      const target = tabs[index];
+      if (!target) return;
+      e.preventDefault();
+      setTab(target.key);
+      if (window.matchMedia("(min-width: 1280px)").matches) writeCollapsed(false);
+      else setSheetOpen(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // The sheet takes focus when it opens, so a keyboard or screen-reader user lands inside it.
+  useEffect(() => {
+    if (sheetOpen) sheetRef.current?.querySelector<HTMLElement>("[role=tab][aria-selected=true]")?.focus();
+  }, [sheetOpen]);
+
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = width;
+    const move = (ev: PointerEvent) => writeWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + (startX - ev.clientX))));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   const body = (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -112,6 +173,8 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
             role="tab"
             type="button"
             aria-selected={tab === t.key}
+            aria-keyshortcuts={`Alt+${tabs.indexOf(t) + 1}`}
+            title={`${t.label} (Alt+${tabs.indexOf(t) + 1})`}
             onClick={() => setTab(t.key)}
             className={`inline-flex items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1.5 text-[12.5px] font-medium transition-colors ${
               tab === t.key
@@ -164,7 +227,22 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
           ))}
         </div>
       ) : (
-        <aside aria-label="Conversation workspace" className="hidden w-[340px] shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)] xl:flex">
+        <aside aria-label="Conversation workspace" style={{ width }} className="relative hidden shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)] xl:flex">
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize panel"
+            aria-valuemin={MIN_WIDTH}
+            aria-valuemax={MAX_WIDTH}
+            aria-valuenow={width}
+            tabIndex={0}
+            onPointerDown={startResize}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowLeft") writeWidth(Math.min(MAX_WIDTH, width + 20));
+              if (e.key === "ArrowRight") writeWidth(Math.max(MIN_WIDTH, width - 20));
+            }}
+            className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize outline-none hover:bg-[var(--color-border-strong)]/40 focus-visible:bg-[var(--color-focus-ring)]/40"
+          />
           {body}
         </aside>
       )}
@@ -181,7 +259,9 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
       {sheetOpen ? (
         <div className="fixed inset-0 z-50 xl:hidden" role="dialog" aria-modal="true" aria-label="Conversation workspace">
           <button type="button" aria-label="Close" className="absolute inset-0 bg-black/30" onClick={() => setSheetOpen(false)} />
-          <div className="absolute inset-y-0 right-0 flex w-full max-w-[400px] flex-col bg-[var(--color-surface)] pb-[env(safe-area-inset-bottom)] shadow-[var(--shadow-lg)]">{body}</div>
+          <div ref={sheetRef} className="absolute inset-y-0 right-0 flex w-full max-w-[400px] flex-col bg-[var(--color-surface)] pb-[env(safe-area-inset-bottom)] shadow-[var(--shadow-lg)]">
+            {body}
+          </div>
         </div>
       ) : null}
     </>

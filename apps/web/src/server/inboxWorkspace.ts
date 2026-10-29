@@ -257,3 +257,35 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     viewerId: session.userId,
   };
 }
+
+/**
+ * Priority, tags and group owner for one account's listed chats (WhatsApp Chat list), keyed by chat id.
+ * Empty unless INBOX_COLLABORATION is on, so the list is byte-for-byte the old one when it is off. Two
+ * queries for the whole list, never one per row.
+ */
+export async function chatListLabels(
+  accountId: string,
+  conversations: { id: string; kind: string; chatId: string }[],
+): Promise<Record<string, { priority: ConversationPriorityValue; tags: string[]; owner: string | null }>> {
+  if ((await activeDisabledFeatures()).has("INBOX_COLLABORATION") || conversations.length === 0) return {};
+  const groupIds = conversations.filter((c) => c.kind === "GROUP").map((c) => c.id);
+  const [labels, groups] = await Promise.all([
+    prisma.conversationLabel.findMany({
+      where: { accountId, channelConversationId: null, chatId: { in: conversations.map((c) => c.chatId) } },
+      select: { chatId: true, priority: true, tags: true },
+    }),
+    groupIds.length
+      ? prisma.whatsAppGroup.findMany({
+          where: { id: { in: groupIds }, assignedTeamMemberId: { not: null } },
+          select: { whatsappGroupId: true, assignedTeamMember: { select: { name: true } } },
+        })
+      : [],
+  ]);
+  const out: Record<string, { priority: ConversationPriorityValue; tags: string[]; owner: string | null }> = {};
+  for (const l of labels) if (l.chatId) out[l.chatId] = { priority: l.priority, tags: l.tags, owner: null };
+  for (const g of groups) {
+    const owner = g.assignedTeamMember?.name ?? null;
+    out[g.whatsappGroupId] = { ...(out[g.whatsappGroupId] ?? { priority: "NONE", tags: [] }), owner };
+  }
+  return out;
+}

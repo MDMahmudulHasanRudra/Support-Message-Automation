@@ -13,6 +13,8 @@ import {
   Loader2,
   MailOpen,
   Pin,
+  Flag,
+  UserRound,
   PinOff,
   Rows3,
   Rows4,
@@ -196,6 +198,17 @@ function writeDensity(compact: boolean): void {
 /** Stored profile pictures for the listed chats, by WhatsApp id (WHATSAPP_AVATARS.md); empty when off. */
 const PicturesContext = createContext<Record<string, string>>({});
 
+/**
+ * Inbox workspace labels per chat id (INBOX_WORKSPACE.md): priority, tags and the group's owner. Empty
+ * — and the rows exactly as before — unless the project has INBOX_COLLABORATION on.
+ */
+export interface ChatRowLabels {
+  priority: "NONE" | "LOW" | "NORMAL" | "HIGH" | "URGENT";
+  tags: string[];
+  owner: string | null;
+}
+const LabelsContext = createContext<Record<string, ChatRowLabels>>({});
+
 export function ChatWorkspace({
   account,
   accounts,
@@ -204,6 +217,7 @@ export function ChatWorkspace({
   categories,
   v2 = false,
   pictures = {},
+  labels = {},
   children,
 }: {
   account: ChatAccountOption;
@@ -214,6 +228,7 @@ export function ChatWorkspace({
   /** CHAT_UI_V2 is on: the WhatsApp-style look (CHAT_UI_V2.md §13). Off renders exactly what v1 always did. */
   v2?: boolean;
   pictures?: Record<string, string>;
+  labels?: Record<string, ChatRowLabels>;
   children: React.ReactNode;
 }) {
   const pathname = stripProjectPrefix(usePathname());
@@ -506,6 +521,7 @@ export function ChatWorkspace({
 
   return (
     <PicturesContext.Provider value={pictures}>
+    <LabelsContext.Provider value={labels}>
     <div className="flex min-h-0 flex-1 flex-col">
       {/* ── Account, search, filters ─────────────────────────────────────────────────────────── */}
       <div
@@ -874,6 +890,7 @@ export function ChatWorkspace({
 
       <CategoryManager open={managingCategories} onClose={() => setManagingCategories(false)} categories={categories} />
     </div>
+    </LabelsContext.Provider>
     </PicturesContext.Provider>
   );
 }
@@ -1178,6 +1195,7 @@ function Row({
 }) {
   const avatar = conversationAvatar(conversation.id, conversation.name);
   const pictures = useContext(PicturesContext);
+  const label = useContext(LabelsContext)[conversation.chatId];
   // Weight carries the unread state, not just a dot: an unanswered customer should be legible from
   // the far end of the list at a glance, the way an unread mail is.
   const unread = conversation.awaitingReply;
@@ -1234,6 +1252,12 @@ function Row({
           <span className="flex min-w-0 items-center gap-1.5">
             {conversation.isPinned ? (
               <Pin className="size-3 shrink-0 text-[color:var(--color-muted-foreground)]" aria-label="Pinned" />
+            ) : null}
+            {label?.priority === "URGENT" || label?.priority === "HIGH" ? (
+              <Flag
+                className={`size-3 shrink-0 ${label.priority === "URGENT" ? "text-[color:var(--color-danger-fg)]" : "text-[color:var(--color-warning-fg)]"}`}
+                aria-label={label.priority === "URGENT" ? "Urgent priority" : "High priority"}
+              />
             ) : null}
             {/* Marks the 1:1 chats among groups under All — by type, never guessed from the name. */}
             {conversation.kind === "PERSONAL" ? (
@@ -1306,6 +1330,18 @@ function Row({
                 <span aria-hidden>{MOOD_EMOJI[conversation.mood]}</span> {MOOD_LABELS[conversation.mood]}
               </span>
             ) : null}
+            {label?.owner ? (
+              <span className="inline-flex items-center gap-0.5 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px text-[10px] text-[color:var(--color-neutral-fg)]" title="Group owner">
+                <UserRound className="size-2.5" aria-hidden />
+                {label.owner}
+              </span>
+            ) : null}
+            {label?.tags.slice(0, 2).map((t) => (
+              <span key={t} className="rounded-[var(--radius-xs)] bg-[var(--color-info-bg)] px-1.5 py-px text-[10px] text-[color:var(--color-info-fg)]">
+                #{t}
+              </span>
+            ))}
+            {label && label.tags.length > 2 ? <span className="text-[10px] text-[color:var(--color-subtle-foreground)]">+{label.tags.length - 2}</span> : null}
             {conversation.aiAutomationEnabled ? (
               <span className="rounded-[var(--radius-xs)] bg-[var(--color-info-bg)] px-1.5 py-px text-[10px] font-medium text-[color:var(--color-info-fg)]">
                 AI on

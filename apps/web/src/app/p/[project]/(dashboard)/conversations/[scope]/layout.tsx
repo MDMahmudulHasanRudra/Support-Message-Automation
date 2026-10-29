@@ -5,6 +5,7 @@ import { requireAccess } from "@/server/authorize";
 import { inboxFilterOptions, loadInbox } from "@/server/channels/inbox";
 import { mentionablePeople } from "@/server/inboxWorkspace";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
+import { hasPermission } from "@/server/permissions";
 import { InboxWorkspace } from "../InboxWorkspace";
 
 /**
@@ -20,13 +21,14 @@ export default async function InboxLayout({ children, params }: { children: Reac
   const session = await requireAccess("messages.view", "OMNICHANNEL");
   const { scope } = await params;
   if (!isInboxScope(scope)) notFound();
-  const [inbox, filterOptions, people, disabled] = await Promise.all([
+  const [inbox, filterOptions, people, disabled, canShare] = await Promise.all([
     loadInbox({ scope, viewerId: session.userId }),
     inboxFilterOptions(),
     mentionablePeople(session),
     activeDisabledFeatures(),
+    hasPermission(session, "channels.manage"),
   ]);
-  const options = { ...filterOptions, people: people.map((p) => ({ id: p.id, name: p.name })), collaboration: !disabled.has("INBOX_COLLABORATION") };
+  const options = { ...filterOptions, people: people.map((p) => ({ id: p.id, name: p.name })), collaboration: !disabled.has("INBOX_COLLABORATION"), canShare };
 
   return (
     <div className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] min-h-[30rem] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] max-sm:min-h-0 max-sm:rounded-none max-sm:border-0 max-sm:shadow-none sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">

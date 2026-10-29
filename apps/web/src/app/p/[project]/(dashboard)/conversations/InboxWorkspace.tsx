@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "@/components/ProjectLink";
-import { useToast } from "@/components/ui";
+import { Button, Dialog, useToast } from "@/components/ui";
 import { listInboxAction } from "@/server/actions/channelInbox";
 import {
   bulkUpdateConversations,
@@ -66,6 +66,8 @@ export interface InboxOptions {
   people: { id: string; name: string }[];
   /** Notes / tags / priority (INBOX_COLLABORATION) are on for this project. */
   collaboration: boolean;
+  /** May share views with the team (channels.manage). */
+  canShare: boolean;
 }
 
 const SCOPES: Array<{ scope: InboxScope; channel: InboxChannel | null; label: string }> = [
@@ -155,6 +157,8 @@ export function InboxWorkspace({
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [mentions, setMentions] = useState<{ unread: number; items: InboxMentionItem[] } | null>(null);
   const [mentionsOpen, setMentionsOpen] = useState(false);
+  const [viewDialog, setViewDialog] = useState<null | { asNew: boolean }>(null);
+  const [tagDialog, setTagDialog] = useState(false);
   const density = useSyncExternalStore(
     (l) => {
       densityListeners.add(l);
@@ -243,21 +247,20 @@ export function InboxWorkspace({
     setActiveViewId(v.id);
   };
 
-  const saveCurrent = (asNew: boolean) => {
+  const saveCurrent = (asNew: boolean, name: string, share: boolean) => {
     const current = views?.find((v) => v.id === activeViewId);
-    const name = window.prompt(asNew || !current ? "Name this view" : "Rename this view", asNew ? "" : (current?.name ?? ""))?.trim();
-    if (!name) return;
-    const share = options.collaboration && window.confirm("Share this view with the whole team? (Cancel keeps it personal.)");
     startTransition(async () => {
       const r = await saveInboxView({ id: asNew ? null : (current?.id ?? null), name, shared: share, scope, filters });
       if ("error" in r) showToast({ tone: "danger", title: r.error });
       else {
+        setViewDialog(null);
         setActiveViewId(r.id);
         setRefreshTick((t) => t + 1);
         showToast({ tone: "success", title: `Saved “${name}”.` });
       }
     });
   };
+  const currentView = views?.find((v) => v.id === activeViewId) ?? null;
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -412,12 +415,12 @@ export function InboxWorkspace({
                 </label>
               ) : null}
               <div className="col-span-2 flex flex-wrap items-center gap-1.5 pt-1">
-                <button type="button" onClick={() => saveCurrent(true)} disabled={!filtered || pending} className="rounded-[var(--radius-sm)] px-2 py-1 text-[11.5px] font-medium ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
+                <button type="button" onClick={() => setViewDialog({ asNew: true })} disabled={!filtered || pending} className="rounded-[var(--radius-sm)] px-2 py-1 text-[11.5px] font-medium ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
                   Save as view…
                 </button>
-                {activeViewId && views?.find((v) => v.id === activeViewId)?.mine ? (
+                {currentView && (currentView.mine || (currentView.shared && options.canShare)) ? (
                   <>
-                    <button type="button" onClick={() => saveCurrent(false)} disabled={pending} className="rounded-[var(--radius-sm)] px-2 py-1 text-[11.5px] ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)]">
+                    <button type="button" onClick={() => setViewDialog({ asNew: false })} disabled={pending} className="rounded-[var(--radius-sm)] px-2 py-1 text-[11.5px] ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)]">
                       Update view
                     </button>
                   </>
@@ -449,6 +452,7 @@ export function InboxWorkspace({
               onAll={() => setSelected(new Set((shown?.items ?? []).map((i) => i.key)))}
               onNone={() => setSelected(new Set())}
               onRun={runBulk}
+              onAddTag={() => setTagDialog(true)}
               options={options}
               disabled={pending}
             />
@@ -499,9 +503,144 @@ export function InboxWorkspace({
       </aside>
 
       <section className={`flex min-w-0 flex-1 flex-col bg-[var(--color-surface)] ${threadOpen ? "" : "max-md:hidden"}`}>{children}</section>
+
+      {viewDialog ? (
+        <SaveViewDialog
+          key={`${viewDialog.asNew}-${activeViewId}`}
+          asNew={viewDialog.asNew}
+          initial={viewDialog.asNew ? null : currentView}
+          canShare={options.canShare}
+          pending={pending}
+          onClose={() => setViewDialog(null)}
+          onSave={(name, share) => saveCurrent(viewDialog.asNew, name, share)}
+        />
+      ) : null}
+      {tagDialog ? (
+        <TagDialog
+          count={selected.size}
+          onClose={() => setTagDialog(false)}
+          onSave={(tag) => {
+            setTagDialog(false);
+            runBulk({ op: "addTag", tag });
+          }}
+        />
+      ) : null}
     </div>
   );
 }
+
+function SaveViewDialog({
+  asNew,
+  initial,
+  canShare,
+  pending,
+  onClose,
+  onSave,
+}: {
+  asNew: boolean;
+  initial: SavedInboxView | null;
+  canShare: boolean;
+  pending: boolean;
+  onClose: () => void;
+  onSave: (name: string, share: boolean) => void;
+}) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [share, setShare] = useState(initial?.shared ?? false);
+  const submit = () => {
+    if (name.trim()) onSave(name.trim(), share);
+  };
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={asNew ? "Save as a view" : "Update this view"}
+      description="Saves the current channel, view and filters. A view only narrows what each person can already see."
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" loading={pending} disabled={!name.trim()} onClick={submit}>
+            Save view
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <label className="block text-[12.5px] font-medium">
+          Name
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={60}
+            placeholder="e.g. Urgent billing"
+            className="mt-1 h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[13px] font-normal"
+          />
+        </label>
+        {canShare ? (
+          <label className="flex items-start gap-2 text-[12.5px]">
+            <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} className="mt-0.5" />
+            <span>
+              Share with the team
+              <span className="block text-[11.5px] text-[color:var(--color-muted-foreground)]">Everyone who can read the inbox sees it; only managers can change it.</span>
+            </span>
+          </label>
+        ) : (
+          <p className="text-[11.5px] text-[color:var(--color-muted-foreground)]">Only you will see this view.</p>
+        )}
+      </form>
+    </Dialog>
+  );
+}
+
+function TagDialog({ count, onClose, onSave }: { count: number; onClose: () => void; onSave: (tag: string) => void }) {
+  const [tag, setTag] = useState("");
+  const submit = () => {
+    if (tag.trim()) onSave(tag.trim());
+  };
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Add a tag to ${count} conversation${count === 1 ? "" : "s"}`}
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" disabled={!tag.trim()} onClick={submit}>
+            Add tag
+          </Button>
+        </>
+      }
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <input
+          autoFocus
+          value={tag}
+          onChange={(e) => setTag(e.target.value)}
+          maxLength={40}
+          placeholder="e.g. billing"
+          aria-label="Tag"
+          className="h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[13px]"
+        />
+      </form>
+    </Dialog>
+  );
+}
+
 
 function IconToggle({ label, active, onClick, badge, children }: { label: string; active: boolean; onClick: () => void; badge?: number | null; children: React.ReactNode }) {
   return (
@@ -539,6 +678,7 @@ function FilterSelect({ label, value, onChange, options }: { label: string; valu
 
 function ViewMenu({ view, onChanged, onDeleted }: { view: SavedInboxView | null; onChanged: () => void; onDeleted: () => void }) {
   const { showToast } = useToast();
+  const [confirming, setConfirming] = useState(false);
   if (!view) return null;
   const act = (p: Promise<{ ok: true } | { error: string }>, after: () => void) =>
     void p.then((r) => {
@@ -553,14 +693,14 @@ function ViewMenu({ view, onChanged, onDeleted }: { view: SavedInboxView | null;
       <button type="button" onClick={() => act(setInboxViewPreference({ viewId: view.id, isDefault: !view.isDefault }), onChanged)} className="rounded-[var(--radius-sm)] px-2 py-1 text-[11.5px] ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)]">
         {view.isDefault ? "Not my default" : "Make default"}
       </button>
+      {/* Two presses instead of a browser confirm: the second says exactly what it does. */}
       <button
         type="button"
-        onClick={() => {
-          if (window.confirm(`Delete the view “${view.name}”? Conversations are not affected.`)) act(deleteInboxView(view.id), onDeleted);
-        }}
+        onClick={() => (confirming ? act(deleteInboxView(view.id), onDeleted) : setConfirming(true))}
+        onBlur={() => setConfirming(false)}
         className="rounded-[var(--radius-sm)] px-2 py-1 text-[11.5px] text-[color:var(--color-danger-fg)] ring-1 ring-[var(--color-border)] hover:bg-[var(--color-danger-bg)]"
       >
-        Delete
+        {confirming ? "Delete this view (conversations stay)" : "Delete"}
       </button>
     </>
   );
@@ -572,6 +712,7 @@ function BulkBar({
   onAll,
   onNone,
   onRun,
+  onAddTag,
   options,
   disabled,
 }: {
@@ -580,6 +721,7 @@ function BulkBar({
   onAll: () => void;
   onNone: () => void;
   onRun: (op: BulkOp) => void;
+  onAddTag: () => void;
   options: InboxOptions;
   disabled: boolean;
 }) {
@@ -615,10 +757,7 @@ function BulkBar({
           <button
             type="button"
             disabled={none}
-            onClick={() => {
-              const tag = window.prompt("Tag to add to the selected conversations")?.trim();
-              if (tag) onRun({ op: "addTag", tag });
-            }}
+            onClick={onAddTag}
             className="rounded-[var(--radius-sm)] px-2 ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50"
           >
             + Tag
