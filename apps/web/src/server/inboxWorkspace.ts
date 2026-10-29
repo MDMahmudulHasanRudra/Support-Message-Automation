@@ -76,8 +76,9 @@ export interface WorkspaceDraft {
   id: string;
   mode: "ASSIST" | "DRAFT" | "REWRITE";
   instruction: string | null;
-  status: "PENDING" | "PROCESSING" | "COMPLETE" | "FAILED";
+  status: "PENDING" | "PROCESSING" | "COMPLETE" | "FAILED" | "CANCELLED";
   responseText: string | null;
+  scope: string | null;
   summary: string | null;
   intent: string | null;
   nextSteps: string[];
@@ -89,6 +90,7 @@ export interface WorkspaceDraft {
   error: string | null;
   feedback: string | null;
   usedAt: string | null;
+  requestedById: string | null;
   requestedByName: string | null;
   createdAt: string;
 }
@@ -109,12 +111,13 @@ export interface WorkspaceData {
   viewerId: string;
 }
 
-const DRAFT_SELECT = {
+export const DRAFT_SELECT = {
   id: true,
   mode: true,
   instruction: true,
   status: true,
   responseText: true,
+  scope: true,
   summary: true,
   intent: true,
   nextSteps: true,
@@ -127,6 +130,7 @@ const DRAFT_SELECT = {
   feedback: true,
   usedAt: true,
   createdAt: true,
+  requestedById: true,
   requestedBy: { select: { name: true } },
 } as const;
 
@@ -136,6 +140,7 @@ export function toWorkspaceDraft(d: {
   instruction: string | null;
   status: WorkspaceDraft["status"];
   responseText: string | null;
+  scope: string | null;
   summary: string | null;
   intent: string | null;
   nextSteps: string[];
@@ -148,6 +153,7 @@ export function toWorkspaceDraft(d: {
   feedback: string | null;
   usedAt: Date | null;
   createdAt: Date;
+  requestedById: string | null;
   requestedBy: { name: string } | null;
 }): WorkspaceDraft {
   return { ...d, usedAt: d.usedAt?.toISOString() ?? null, createdAt: d.createdAt.toISOString(), requestedByName: d.requestedBy?.name ?? null };

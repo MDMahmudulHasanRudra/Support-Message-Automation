@@ -35,6 +35,7 @@ import { fillComposer, readComposer } from "@/lib/composerBridge";
 import type { WorkspaceData, WorkspaceDraft, WorkspaceNote } from "@/server/inboxWorkspace";
 import {
   addConversationNote,
+  cancelCopilotRequest,
   deleteConversationNote,
   markCopilotDraftUsed,
   rateCopilotDraft,
@@ -579,7 +580,7 @@ function CopilotTab({ data }: { data: WorkspaceData }) {
           </li>
         ) : null}
         {drafts.map((d) => (
-          <DraftCard key={d.id} draft={d} disabled={pending || working} onRewrite={(instruction, baseText) => ask("REWRITE", { instruction, baseText })} onChange={(next) => setLocal((prev) => ({ ...prev, [next.id]: next }))} />
+          <DraftCard key={d.id} draft={d} mine={d.requestedById === data.viewerId} disabled={pending || working} onRewrite={(instruction, baseText) => ask("REWRITE", { instruction, baseText })} onChange={(next) => setLocal((prev) => ({ ...prev, [next.id]: next }))} />
         ))}
       </ol>
     </div>
@@ -587,7 +588,7 @@ function CopilotTab({ data }: { data: WorkspaceData }) {
 }
 
 function rank(d: WorkspaceDraft): number {
-  return d.status === "COMPLETE" || d.status === "FAILED" ? 2 : d.status === "PROCESSING" ? 1 : 0;
+  return d.status === "COMPLETE" || d.status === "FAILED" || d.status === "CANCELLED" ? 2 : d.status === "PROCESSING" ? 1 : 0;
 }
 
 function RewriteRow({ disabled, onPick, label }: { disabled: boolean; onPick: (i: CopilotRewriteInstruction) => void; label: string }) {
@@ -618,11 +619,13 @@ const MODE_LABEL = { ASSIST: "Summary", DRAFT: "Suggested reply", REWRITE: "Rewr
 
 function DraftCard({
   draft: d,
+  mine,
   disabled,
   onRewrite,
   onChange,
 }: {
   draft: WorkspaceDraft;
+  mine: boolean;
   disabled: boolean;
   onRewrite: (i: CopilotRewriteInstruction, text: string) => void;
   onChange: (d: WorkspaceDraft) => void;
@@ -664,8 +667,22 @@ function DraftCard({
           <p className="flex items-center gap-2 text-[color:var(--color-muted-foreground)]">
             <Loader2 className="size-4 animate-spin" aria-hidden />
             {d.mode === "ASSIST" ? "Reading the conversation…" : "Writing…"}
+            {mine ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  const r = await cancelCopilotRequest(d.id);
+                  if ("error" in r) showToast({ tone: "info", title: r.error });
+                  else onChange({ ...d, status: "CANCELLED", reason: "Cancelled by you." });
+                }}
+                className="ml-auto text-[12px] underline-offset-2 hover:underline"
+              >
+                Cancel
+              </button>
+            ) : null}
           </p>
         ) : null}
+        {d.status === "CANCELLED" ? <p className="text-[color:var(--color-muted-foreground)]">{d.reason ?? "Cancelled."}</p> : null}
         {d.status === "FAILED" ? <p className="text-[color:var(--color-danger-fg)]">The Copilot could not finish: {d.error ?? "unknown error"}. Try again.</p> : null}
         {d.status === "COMPLETE" && !d.responseText && !d.summary && d.reason ? <p className="text-[color:var(--color-muted-foreground)]">{explainReason(d.reason)}</p> : null}
 
@@ -686,8 +703,28 @@ function DraftCard({
           </div>
         ) : null}
 
+        {d.responseText && d.mode === "DRAFT" ? (
+          d.grounded ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-bg)] px-2 py-0.5 text-[11px] font-medium text-[color:var(--color-success-fg)]">
+              <BookOpenCheck className="size-3" aria-hidden />
+              Based on verified knowledge — still review before sending
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-danger-bg)] px-2 py-0.5 text-[11px] font-semibold text-[color:var(--color-danger-fg)]">
+              <TriangleAlert className="size-3" aria-hidden />
+              Not verified
+            </span>
+          )
+        ) : null}
         {d.warning ? (
-          <p className="flex gap-1.5 rounded-[var(--radius-md)] bg-[var(--color-warning-bg)] px-2.5 py-2 text-[12px] text-[color:var(--color-warning-fg)]">
+          <p
+            role="alert"
+            className={`flex gap-1.5 rounded-[var(--radius-md)] px-2.5 py-2 text-[12px] ${
+              d.scope === "BUSINESS_SPECIFIC" && !d.grounded
+                ? "border border-[var(--color-danger-border)] bg-[var(--color-danger-bg)] font-medium text-[color:var(--color-danger-fg)]"
+                : "bg-[var(--color-warning-bg)] text-[color:var(--color-warning-fg)]"
+            }`}
+          >
             <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
             {d.warning}
           </p>

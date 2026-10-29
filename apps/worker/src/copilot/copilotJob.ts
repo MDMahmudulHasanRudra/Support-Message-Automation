@@ -27,28 +27,67 @@ import { getApprovedStyleGuidance } from "../knowledge/communicationStyleJob.js"
  *
  * Never throws: a failure is recorded on the row as FAILED with its message.
  */
-export async function processOneCopilotRequest(): Promise<void> {
-  // Entitlement: requests wait, untouched, while the feature is off for this project.
-  if (!(await projectHasFeature("AI_COPILOT"))) return;
-  const pending = await prisma.aiDraft.findFirst({
-    where: { status: "PENDING" },
-    orderBy: { createdAt: "asc" },
-    select: { id: true },
-  });
+/** How long one claim may run before it is considered abandoned (a provider call is far shorter). */
+export const COPILOT_LEASE_MS = 3 * 60_000;
+/** Claims per request. The second covers a worker restart mid-call; there is never a third. */
+export const COPILOT_MAX_ATTEMPTS = 2;
+
+/**
+ * One tick for the current project.
+ *
+ * Policy when AI_COPILOT is off for the project: nothing is sent to a provider. Requests still
+ * waiting are CANCELLED with the reason (so the agent sees why, and the "one active request" slot
+ * is released); a request already mid-call finishes that one call.
+ */
+export async function processOneCopilotRequest(clientOverride?: AiClient): Promise<void> {
+  const now = new Date();
+  if (!(await projectHasFeature("AI_COPILOT"))) {
+    await prisma.aiDraft.updateMany({
+      where: { status: "PENDING" },
+      data: { status: "CANCELLED", reason: "AI Copilot was switched off for this project before this request ran.", completedAt: now },
+    });
+    return;
+  }
+  await recoverStaleCopilotRequests(now);
+
+  const pending = await prisma.aiDraft.findFirst({ where: { status: "PENDING" }, orderBy: { createdAt: "asc" }, select: { id: true } });
   if (!pending) return;
-  const claimed = await prisma.aiDraft.updateMany({ where: { id: pending.id, status: "PENDING" }, data: { status: "PROCESSING" } });
+  // The claim is conditional on PENDING: of two ticks (or two workers) only one moves the row.
+  const claimed = await prisma.aiDraft.updateMany({
+    where: { id: pending.id, status: "PENDING" },
+    data: { status: "PROCESSING", attempts: { increment: 1 }, leaseExpiresAt: new Date(now.getTime() + COPILOT_LEASE_MS) },
+  });
   if (claimed.count === 0) return;
+  const { attempts } = await prisma.aiDraft.findUniqueOrThrow({ where: { id: pending.id }, select: { attempts: true } });
 
   try {
-    await answer(pending.id);
+    await answer(pending.id, attempts, clientOverride);
   } catch (err) {
     console.error("[copilot] request failed", err);
     await prisma.aiDraft
-      .update({ where: { id: pending.id }, data: { status: "FAILED", error: (err as Error).message.slice(0, 500), completedAt: new Date() } })
+      .updateMany({
+        where: { id: pending.id, status: "PROCESSING", attempts },
+        data: { status: "FAILED", error: (err as Error).message.slice(0, 500), completedAt: new Date(), leaseExpiresAt: null },
+      })
       .catch(() => {
         /* the conversation (and its drafts) went away mid-run */
       });
   }
+}
+
+/**
+ * Crash recovery: a claim whose lease ran out belongs to a worker that died (or hung) mid-call.
+ * With attempts left it goes back to PENDING — the provider may already have answered the lost call,
+ * so this can cost one more call, bounded by COPILOT_MAX_ATTEMPTS. Otherwise it is FAILED with a
+ * sentence the agent can act on. A PROCESSING row with no lease predates leases and is stale too.
+ */
+export async function recoverStaleCopilotRequests(now: Date = new Date()): Promise<void> {
+  const stale = { status: "PROCESSING" as const, OR: [{ leaseExpiresAt: { lt: now } }, { leaseExpiresAt: null }] };
+  await prisma.aiDraft.updateMany({
+    where: { ...stale, attempts: { gte: COPILOT_MAX_ATTEMPTS } },
+    data: { status: "FAILED", error: "The Copilot stopped while working on this (the server restarted). Ask again.", completedAt: now, leaseExpiresAt: null },
+  });
+  await prisma.aiDraft.updateMany({ where: { ...stale, attempts: { lt: COPILOT_MAX_ATTEMPTS } }, data: { status: "PENDING", leaseExpiresAt: null } });
 }
 
 type Result = {
@@ -65,13 +104,16 @@ type Result = {
   completion?: AiCompletionResult;
 };
 
-async function answer(draftId: string): Promise<void> {
+async function answer(draftId: string, attempt: number, clientOverride?: AiClient): Promise<void> {
   const draft = await prisma.aiDraft.findUniqueOrThrow({ where: { id: draftId } });
+  // Written only while THIS claim still holds the row: a late answer from an abandoned attempt, or one
+  // the agent cancelled meanwhile, is dropped rather than overwriting what replaced it.
   const finish = async (r: Result) => {
-    await prisma.aiDraft.update({
-      where: { id: draftId },
+    await prisma.aiDraft.updateMany({
+      where: { id: draftId, status: "PROCESSING", attempts: attempt },
       data: {
         status: "COMPLETE",
+        leaseExpiresAt: null,
         responseText: r.responseText ?? null,
         summary: r.summary ?? null,
         intent: r.intent ?? null,
@@ -94,7 +136,7 @@ async function answer(draftId: string): Promise<void> {
   if (!settings.aiEngineEnabled) return finish({ reason: "AI_UNAVAILABLE: the AI Engine master switch is off." });
   let client: AiClient | null;
   try {
-    client = await resolveAiClient("RESPONSE", prisma);
+    client = clientOverride ?? (await resolveAiClient("RESPONSE", prisma));
   } catch (err) {
     return finish({ reason: `AI_UNAVAILABLE: ${(err as Error).message}` });
   }

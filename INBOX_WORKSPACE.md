@@ -51,3 +51,19 @@ Off = the pages render exactly as before; saved rows are kept.
 | Summarise & suggest (ASSIST) | summary, intent, up to five next steps, matched verified knowledge |
 | Draft a reply (DRAFT) | a reply to the latest customer message, sources, warning when not grounded / low confidence |
 | Rewrite (REWRITE) | the agent's typed text or a draft: shorter, more detail, friendlier, formal, grammar, English, বাংলা, Banglish — no new facts |
+
+## Reliability (migration `20261029100000_copilot_reliability`)
+
+- **One active request per person per conversation is a database rule** (partial unique indexes
+  `AiDraft_one_active_*` on PENDING/PROCESSING). Concurrent requests: one row is inserted, the others get
+  "still working". Finished requests are unlimited history.
+- **Lease + bounded retry.** A claim sets `attempts += 1` and a 3-minute `leaseExpiresAt`. Every tick first
+  re-queues expired claims while `attempts < 2`, and FAILS them after that ("the server restarted — ask
+  again"). The provider may already have answered a lost call, so a retry can cost one more call; never more.
+- **Only the live claim writes a result** (`status = PROCESSING AND attempts = <this claim>`): a late answer from
+  an abandoned attempt, or one the agent cancelled, is dropped.
+- **Cancel** (the asker, while PENDING/PROCESSING) → CANCELLED. A call already sent may still be billed.
+- **AI_COPILOT switched off**: no provider call; waiting requests become CANCELLED with the reason; a call
+  already in flight finishes. The web refuses new requests while it is off.
+- Ungrounded business-specific drafts carry a red "Not verified" badge and alert; grounded ones say
+  "based on verified knowledge — still review". A person always sends.

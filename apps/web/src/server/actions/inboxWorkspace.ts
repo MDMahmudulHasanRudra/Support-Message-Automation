@@ -5,6 +5,7 @@ import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { activeProjectId } from "@/server/projectContext";
 import {
+  DRAFT_SELECT,
   loadDrafts,
   mentionablePeople,
   refWhere,
@@ -177,15 +178,35 @@ export async function requestCopilot(
   const lastHour = await prisma.aiDraft.count({ where: { requestedById: w.session.userId, createdAt: { gte: new Date(Date.now() - 3_600_000) } } });
   if (lastHour >= COPILOT_HOURLY_LIMIT) return { error: `You have used the Copilot ${COPILOT_HOURLY_LIMIT} times in the last hour. Try again a little later.` };
 
-  const created = await prisma.aiDraft.create({
-    data: { projectId: await activeProjectId(), ...conversationRefColumns(w.ref), mode, instruction, baseText, requestedById: w.session.userId },
-    select: {
-      id: true, mode: true, instruction: true, status: true, responseText: true, summary: true, intent: true, nextSteps: true,
-      knowledgeTitles: true, grounded: true, confidence: true, warning: true, reason: true, error: true, feedback: true,
-      usedAt: true, createdAt: true, requestedBy: { select: { name: true } },
-    },
-  });
+  // The database decides "one active request per person per conversation" (partial unique index
+  // AiDraft_one_active_*): of two concurrent requests exactly one is inserted, so a double click never
+  // pays for two AI calls. The findFirst above is only the friendly fast path.
+  let created;
+  try {
+    created = await prisma.aiDraft.create({
+      data: { projectId: await activeProjectId(), ...conversationRefColumns(w.ref), mode, instruction, baseText, requestedById: w.session.userId },
+      select: DRAFT_SELECT,
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code === "P2002") return { error: "The Copilot is still working on your last request." };
+    throw err;
+  }
   return { draft: toWorkspaceDraft(created) };
+}
+
+/** Stops the asker's own request that has not finished. A call already sent to the provider may still
+ *  be billed; its answer is discarded (the worker writes a result only while the row is PROCESSING). */
+export async function cancelCopilotRequest(draftId: string): Promise<{ ok: true } | Fail> {
+  const draft = await ownDraft(draftId);
+  if (!draft) return { error: "That request is gone." };
+  const granted = await checkPermission("messages.view");
+  if ("denied" in granted) return { error: granted.denied };
+  const done = await prisma.aiDraft.updateMany({
+    where: { id: draft.id, requestedById: granted.session.userId, status: { in: ["PENDING", "PROCESSING"] } },
+    data: { status: "CANCELLED", reason: "Cancelled by you.", completedAt: new Date(), leaseExpiresAt: null },
+  });
+  if (done.count === 0) return { error: "It already finished, or it is someone else's request." };
+  return { ok: true };
 }
 
 /** Polled by the panel while a request is in flight. */

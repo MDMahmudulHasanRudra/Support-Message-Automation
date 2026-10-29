@@ -7778,6 +7778,8 @@ enum AiDraftStatus {
   PROCESSING
   COMPLETE
   FAILED
+  /// Stopped by the person who asked, or because AI Copilot was switched off before it ran.
+  CANCELLED
 }
 
 /// One AI Copilot request and its result. Nothing ever sends it: the agent puts the text into the
@@ -7798,6 +7800,12 @@ model AiDraft {
   /// REWRITE only: the agent's text being rewritten.
   baseText              String?
   status                AiDraftStatus        @default(PENDING)
+  /// Claims so far. A claim whose lease expired (worker died mid-call) is re-queued while
+  /// attempts < COPILOT_MAX_ATTEMPTS, then FAILED. The provider may have answered the lost attempt,
+  /// so a retry can cost a second call — bounded, never unbounded.
+  attempts              Int                  @default(0)
+  /// While PROCESSING: when the claim is considered abandoned.
+  leaseExpiresAt        DateTime?
   responseText          String?
   summary               String?
   intent                String?
@@ -7826,7 +7834,9 @@ model AiDraft {
   completedAt           DateTime?
 
   @@index([status, createdAt])
+  @@index([status, leaseExpiresAt])
   @@index([projectId, createdAt])
   @@index([projectId, accountId, chatId, createdAt])
   @@index([channelConversationId, createdAt])
+  @@index([requestedById, createdAt])
 }
