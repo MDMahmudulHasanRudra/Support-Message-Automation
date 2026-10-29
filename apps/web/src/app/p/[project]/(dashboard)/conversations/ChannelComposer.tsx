@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { registerComposer } from "@/lib/composerBridge";
 import { Lock, SendHorizontal } from "lucide-react";
 import { CHANNELS, validateChannelText, type ChannelType } from "@support-automation/shared";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
@@ -62,6 +63,19 @@ export function ChannelComposer({
   const [nonce, setNonce] = useState(newNonce);
   const [pending, startTransition] = useTransition();
   const box = useRef<HTMLTextAreaElement>(null);
+  const latest = useRef(text);
+  // The inbox workspace's Copilot can fill this box (lib/composerBridge.ts); sending stays the Send button.
+  useEffect(() => {
+    latest.current = text;
+    return registerComposer({
+      fill(next) {
+        setText(next);
+        writeDraft(conversationId, next);
+        box.current?.focus();
+      },
+      read: () => latest.current,
+    });
+  });
 
   const def = CHANNELS[type];
   const size = def.maxTextUnit === "bytes" ? new TextEncoder().encode(text.trim()).length : [...text.trim()].length;

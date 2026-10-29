@@ -700,6 +700,9 @@ model Project {
   teamManagementSettings               TeamManagementSettings?
   mediaStorageSettings                 MediaStorageSettings?
   communicationStyleProfile            CommunicationStyleProfile?
+  conversationLabels                   ConversationLabel[]
+  conversationNotes                    ConversationNote[]
+  aiDrafts                             AiDraft[]
 
   @@index([customerId])
 }
@@ -883,27 +886,30 @@ model User {
   listViewPreferences            ListViewPreference[]
   emailsQueued                   EmailOutbox[]             @relation("EmailQueuedBy")
 
-  projectAccess           ProjectAccess[]
-  projectMemberRoles      ProjectMemberRole[]
+  projectAccess             ProjectAccess[]
+  projectMemberRoles        ProjectMemberRole[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
-  employee                Employee?
+  employee                  Employee?
   /// Google accounts this person connected (GOOGLE_SHEETS.md). Audit only; grants nothing.
-  googleAccountsConnected GoogleIntegrationAccount[] @relation("GoogleAccountConnectedBy")
-  googleSheetMemberships  GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberUser")
-  googleSheetMembersAdded GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberAddedBy")
-  googleSheetMembersEnded GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberEndedBy")
+  googleAccountsConnected   GoogleIntegrationAccount[] @relation("GoogleAccountConnectedBy")
+  googleSheetMemberships    GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberUser")
+  googleSheetMembersAdded   GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberAddedBy")
+  googleSheetMembersEnded   GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberEndedBy")
   /// Google identities this person proved are theirs by signing in with Google (Phase 4).
-  googleIdentities        UserGoogleIdentity[]
-  googleSheetActivities   GoogleSheetActivity[]      @relation("GoogleSheetActivityUser")
-  googleSheetWorkSessions GoogleSheetWorkSession[]   @relation("GoogleSheetWorkSessionUser")
+  googleIdentities          UserGoogleIdentity[]
+  googleSheetActivities     GoogleSheetActivity[]      @relation("GoogleSheetActivityUser")
+  googleSheetWorkSessions   GoogleSheetWorkSession[]   @relation("GoogleSheetWorkSessionUser")
   /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
   /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
-  customerId              String?
-  customer                Customer?                  @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
+  customerId                String?
+  customer                  Customer?                  @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
   /// Set on the support identity a RELQIVO operator uses inside this customer's workspace (never a
   /// person's account; no password works for it; shown as "RELQIVO Support").
-  supportOperatorId       String?
-  supportOperator         PlatformOperator?          @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
+  supportOperatorId         String?
+  supportOperator           PlatformOperator?          @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
+  conversationNotes         ConversationNote[]         @relation("ConversationNoteAuthor")
+  aiDraftsRequested         AiDraft[]                  @relation("AiDraftRequester")
+  conversationLabelsUpdated ConversationLabel[]        @relation("ConversationLabelUpdater")
 
   @@index([customerId])
 }
@@ -1136,6 +1142,9 @@ model WhatsAppAccount {
   personalChatReviews  PersonalChatReview[]
   pictures             WhatsAppPicture[]
   scopedKnowledge      AiKnowledgeItem[]         @relation("AiKnowledgeScopeAccount")
+  conversationLabels   ConversationLabel[]
+  conversationNotes    ConversationNote[]
+  aiDrafts             AiDraft[]
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -1505,11 +1514,12 @@ model Team {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  members           InternalTeamMember[]
-  memberships       TeamMembership[]
-  supportEpisodes   SupportResponseEpisode[]
-  assignedClients   Client[]
-  soldSubscriptions ClientSubscription[]
+  members                      InternalTeamMember[]
+  memberships                  TeamMembership[]
+  supportEpisodes              SupportResponseEpisode[]
+  assignedClients              Client[]
+  soldSubscriptions            ClientSubscription[]
+  assignedChannelConversations ChannelConversation[]    @relation("ChannelConversationTeam")
 
   @@unique([projectId, name])
   @@unique([projectId, code])
@@ -6399,6 +6409,10 @@ model ChannelConversation {
   status               ChannelConversationStatus @default(OPEN)
   assignedUserId       String?
   assignedUser         User?                     @relation("ChannelConversationAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  /// Team-level ownership (Inbox workspace, INBOX_COLLABORATION). Independent of `assignedUserId`:
+  /// a conversation can sit with a Team before any one person picks it up.
+  assignedTeamId       String?
+  assignedTeam         Team?                     @relation("ChannelConversationTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
   lastMessageAt        DateTime?
   lastMessagePreview   String?
   lastMessageDirection ChannelMessageDirection?
@@ -6413,7 +6427,10 @@ model ChannelConversation {
   createdAt            DateTime                  @default(now())
   updatedAt            DateTime                  @updatedAt
 
-  messages ChannelMessage[]
+  messages          ChannelMessage[]
+  conversationLabel ConversationLabel?
+  notes             ConversationNote[]
+  aiDrafts          AiDraft[]
 
   @@unique([projectId, connectionId, externalThreadId])
   @@index([projectId, lastMessageAt])
@@ -7683,4 +7700,133 @@ model WhatsAppPicture {
 
   @@unique([projectId, accountId, jid])
   @@index([state, nextAttemptAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inbox workspace: internal notes, priority/tags, AI Copilot drafts (INBOX_WORKSPACE.md).
+// Every row names exactly ONE conversation: a WhatsApp chat (accountId + chatId, the same pair
+// Message rows carry) or a ChannelConversation. A CHECK in the migration enforces that, and partial
+// unique indexes keep one label row per conversation. No send path reads any of these tables.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ConversationPriority {
+  NONE
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// Priority and tags for one conversation. Triage only: never read by automation.
+model ConversationLabel {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// WhatsApp chat id with its domain (`…@g.us`, `…@c.us`, `…@lid`), as on Message.chatId.
+  chatId                String?
+  channelConversationId String?              @unique
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  priority              ConversationPriority @default(NONE)
+  /// Lowercase, unique, at most 12 (normaliseConversationTags in packages/shared).
+  tags                  String[]             @default([])
+  updatedById           String?
+  updatedBy             User?                @relation("ConversationLabelUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([projectId, priority])
+  @@index([projectId, accountId, chatId])
+}
+
+/// An internal note on a conversation. Seen only by the team; no send path reads this table.
+model ConversationNote {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  body                  String
+  /// Dashboard users @mentioned in the note (validated against who may enter the project).
+  mentionedUserIds      String[]             @default([])
+  authorId              String?
+  author                User?                @relation("ConversationNoteAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt             DateTime             @default(now())
+  /// Soft delete: gone from the panel, kept for the audit trail.
+  deletedAt             DateTime?
+  deletedById           String?
+
+  @@index([projectId, accountId, chatId, createdAt])
+  @@index([channelConversationId, createdAt])
+}
+
+enum AiDraftMode {
+  /// Read the conversation: summary, intent, verified knowledge, suggested next steps. No reply text.
+  ASSIST
+  /// A complete suggested reply, through the production fallback prompt and its gates.
+  DRAFT
+  /// Rewrite text the agent supplies (shorter, friendlier, more formal, translate, fix grammar).
+  REWRITE
+}
+
+enum AiDraftStatus {
+  PENDING
+  PROCESSING
+  COMPLETE
+  FAILED
+}
+
+/// One AI Copilot request and its result. Nothing ever sends it: the agent puts the text into the
+/// composer and sends it through the ordinary reply path. Also the copilot's usage ledger
+/// (provider, model, tokens per request).
+model AiDraft {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  mode                  AiDraftMode
+  /// REWRITE only, one of COPILOT_REWRITE_INSTRUCTIONS (packages/shared).
+  instruction           String?
+  /// REWRITE only: the agent's text being rewritten.
+  baseText              String?
+  status                AiDraftStatus        @default(PENDING)
+  responseText          String?
+  summary               String?
+  intent                String?
+  /// BUSINESS_SPECIFIC | GENERAL, from the production parser.
+  scope                 String?
+  confidence            Int?
+  /// True when at least one verified knowledge entry grounded the answer.
+  grounded              Boolean              @default(false)
+  knowledgeTitles       String[]             @default([])
+  nextSteps             String[]             @default([])
+  /// Shown above the text, e.g. business-specific but not grounded in verified knowledge.
+  warning               String?
+  /// Why no text was produced (AI_UNAVAILABLE, NO_CUSTOMER_MESSAGE, AI_DECLINED…).
+  reason                String?
+  error                 String?
+  providerId            String?
+  modelId               String?
+  tokensUsed            Int?
+  requestedById         String?
+  requestedBy           User?                @relation("AiDraftRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  /// Set when the agent put the text into the composer.
+  usedAt                DateTime?
+  /// UP | DOWN — the agent's rating.
+  feedback              String?
+  createdAt             DateTime             @default(now())
+  completedAt           DateTime?
+
+  @@index([status, createdAt])
+  @@index([projectId, createdAt])
+  @@index([projectId, accountId, chatId, createdAt])
+  @@index([channelConversationId, createdAt])
 }

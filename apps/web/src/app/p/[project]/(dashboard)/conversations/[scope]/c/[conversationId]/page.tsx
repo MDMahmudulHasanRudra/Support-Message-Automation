@@ -1,3 +1,4 @@
+import { ConversationWorkspace } from "../../../../inbox/ConversationWorkspace";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
 import { AlertTriangle, ArrowLeft, Bot, Check, CheckCheck, Clock, Paperclip, Settings2, Users } from "lucide-react";
@@ -41,7 +42,8 @@ export default async function ChannelConversationPage({ params }: { params: Prom
   const def = CHANNELS[conversation.type];
 
   return (
-    <>
+    <div className="relative flex min-h-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 sm:px-6">
         <Link
           href={`/conversations/${scope}`}
@@ -115,7 +117,10 @@ export default async function ChannelConversationPage({ params }: { params: Prom
           </Link>
         </p>
       ) : null}
-    </>
+      </div>
+      {/* INBOX_WORKSPACE.md: notes, priority, tags, Team and the AI Copilot. */}
+      <ConversationWorkspace conversation={{ kind: "channel", conversationId: conversation.id }} />
+    </div>
   );
 }
 

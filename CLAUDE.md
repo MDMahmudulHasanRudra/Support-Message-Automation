@@ -381,6 +381,7 @@ since `setInterval` doesn't await its callback)
 | `startChannelInboundProcessor` | 2s | Messenger / Instagram / Telegram: recorded webhook events → conversations, echoes, receipts (no-op unless the project has `OMNICHANNEL`; `OMNICHANNEL.md`) |
 | `startChannelOutboundProcessor` | 2s | the channels' send queue (`ChannelMessage` QUEUED → SENT), retries, UNKNOWN on an unknowable outcome |
 | `startChannelAiProcessor` | 3s | AI replies on the channels — the WhatsApp answering logic and gates, 1:1 only, ≤15 min old |
+| `startCopilotProcessor` | 2s | AI Copilot: answers agents' `AiDraft` requests (summary, reply draft, rewrite) through the production AI path; never sends (`INBOX_WORKSPACE.md`, feature `AI_COPILOT`) |
 | `startGroupRecoveryProcessor` | 60s | re-reads (ADD_ONLY, never deactivates) the group list of a CONNECTED account a sync left FAILED/PARTIAL (RETRY, 2 min → 6 h), one connected in the last 24 h whose phone may still be sending chats (FOLLOW, 2 → 30 min, never touches the status — `GROUP_SYNC.md` §10), a COMPLETED one holding inactive groups (VERIFY, bounded, never touches the status), or any other connected account once a day (DAILY, 17 Oct 2026, ADD_ONLY, never touches the status, `WHATSAPP_GROUP_DAILY_CHECK_HOURS=0` turns it off — catches a list shown as 500 of 1,800 after the FOLLOW window); an unavailable or empty read is unknown and writes nothing (`GROUP_SYNC.md` §8) |
 | `startIdentityReattributionProcessor` | 30s | after a Team Members identity change, re-decides the stored `isFromTeamMember` stamp (every member, "count from" date at the message's time), `SupportActivity.teamMemberId`, and Duty History days (last 120) for the identifiers involved — one `IdentityReattribution` request per project per tick (`teamManagement/reattribution.ts`) |
 | heartbeat | 15s | health state + DB connectivity log |
@@ -2873,6 +2874,14 @@ Feature `WHATSAPP_AVATARS`, **off by default and never switched by a plan** (`ma
 - **A LID is never a phone number.** `resolveContactPhone` shows a number only from WhatsApp (`@c.us`), the
   Team Members record (roster viewers) or a linked client (`clients.view`), with its source; otherwise
   "Phone number unavailable".
+
+### Inbox workspace — notes, priority, tags, AI Copilot (`INBOX_WORKSPACE.md`)
+
+A side panel on every WhatsApp Chat and All Conversations conversation, behind `INBOX_COLLABORATION` and
+`AI_COPILOT` (both off). A conversation is a WhatsApp chat (`accountId` + `chatId`) or a `ChannelConversation`
+(`ConversationRef`, packages/shared `inboxWorkspace.ts`). Notes and Copilot drafts are never sent by
+anything: "Use in reply" only fills the composer through `lib/composerBridge.ts`. The Copilot reuses the
+production prompt/parser and verified-only retrieval in the worker; never add a second AI path for it.
 
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 

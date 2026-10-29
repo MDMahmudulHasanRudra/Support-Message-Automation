@@ -238,6 +238,27 @@ export const PROJECT_FEATURES = [
     workerEffect:
       "Nothing runs in the WhatsApp worker. Off stops new smart imports; one already running finishes in the app's background processor, and the original import is used again.",
   },
+  {
+    key: "INBOX_COLLABORATION",
+    label: "Inbox workspace — notes, priority, tags",
+    description:
+      "A side panel in WhatsApp Chat and All Conversations: internal notes with @mentions, priority, tags and Team assignment (INBOX_WORKSPACE.md). Notes are never sent to a customer. Off = the conversation views exactly as before; saved notes and tags are kept.",
+    // A presentation switch over existing pages (messages.view to read, the reply keys to write).
+    defaultEnabled: false,
+    routes: [],
+    permissionKeys: [],
+    workerEffect: "Nothing runs in the background for it.",
+  },
+  {
+    key: "AI_COPILOT",
+    label: "AI Copilot for agents",
+    description:
+      "The Copilot tab in the conversation side panel: a summary with verified knowledge and next steps, a suggested reply, and rewrites of the agent's own text (INBOX_WORKSPACE.md). Nothing is ever sent by it — the agent edits and sends. Needs the AI Engine and a Response model.",
+    defaultEnabled: false,
+    routes: [],
+    permissionKeys: [],
+    workerEffect: "Stops answering Copilot requests; requests already waiting stay unanswered until it is on again.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];

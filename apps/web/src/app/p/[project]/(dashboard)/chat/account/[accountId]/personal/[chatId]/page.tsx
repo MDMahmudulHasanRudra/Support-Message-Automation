@@ -1,3 +1,4 @@
+import { ConversationWorkspace } from "../../../../../inbox/ConversationWorkspace";
 import { requireProjectPage } from "@/server/authorize";
 import { runWithProject } from "@/server/projectContext";
 import { ArrowLeft, Smartphone, User } from "lucide-react";
@@ -174,6 +175,7 @@ export default async function PersonalChatPage({
           emptyText="No messages stored for this chat yet."
         />
         {contactProfile ? <ContactPanel profile={contactProfile} accountId={chat.accountId} closeHref={basePath} picturePath={pictures[chat.chatId]} /> : null}
+        {!contactProfile ? <ConversationWorkspace conversation={{ kind: "whatsapp", accountId: chat.accountId, chatId: chat.chatId }} /> : null}
       </div>
     );
   }
@@ -208,6 +210,7 @@ export default async function PersonalChatPage({
       </div>
 
       {contactProfile ? <ContactPanel profile={contactProfile} accountId={chat.accountId} closeHref={basePath} picturePath={pictures[chat.chatId]} /> : null}
+        {!contactProfile ? <ConversationWorkspace conversation={{ kind: "whatsapp", accountId: chat.accountId, chatId: chat.chatId }} /> : null}
     </div>
   );
 }

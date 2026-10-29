@@ -4,6 +4,7 @@ import { ArrowRight, SendHorizontal, Smartphone } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { useActionState, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, Button, Textarea } from "@/components/ui";
+import { registerComposer } from "@/lib/composerBridge";
 import { sendChatMessage, sendPersonalChatMessage, type ChatSendState } from "@/server/actions/chat";
 import { SavedReplyManager } from "./SavedReplyManager";
 import { SavedReplyPicker, type SavedReplyOption } from "./SavedReplyPicker";
@@ -115,6 +116,22 @@ export function Composer({
   useEffect(() => {
     autoGrow();
   }, [phone, autoGrow]);
+
+  // The inbox workspace's Copilot can fill this box (lib/composerBridge.ts). Re-registered each render
+  // so it always holds the current draft helpers; sending stays this composer's own Send button.
+  useEffect(() =>
+    registerComposer({
+      fill(text) {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.value = text;
+        textarea.focus();
+        autoGrow();
+        rememberDraft(text);
+      },
+      read: () => textareaRef.current?.value ?? "",
+    }),
+  );
 
   // Restore on arrival. Keyed by group, so switching conversations swaps drafts rather than
   // carrying one into the wrong chat — the worst possible failure for this feature.
