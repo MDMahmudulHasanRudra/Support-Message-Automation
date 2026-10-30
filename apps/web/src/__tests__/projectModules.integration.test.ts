@@ -64,6 +64,7 @@ let customerB = "";
 let projectA = "";
 let projectB = "";
 let admin: Session;
+let adminB: Session;
 let viewer: Session;
 
 async function person(name: string, keys: string[], customerId: string): Promise<Session> {
@@ -85,6 +86,7 @@ beforeAll(async () => {
   created.customers.push(customerA, customerB);
   admin = await person("modadmin", ["projects.view", "projects.manage"], customerA);
   viewer = await person("modviewer", ["projects.view"], customerA);
+  adminB = await person("modadminb", ["projects.view", "projects.manage"], customerB);
   projectA = (await createProjectWithDefaults({ name: `Modules A ${tag}`, slug: `mod-a-${tag}`, status: "ACTIVE", creatorUserId: null, customerId: customerA }, rawPrisma)).id;
   projectB = (await createProjectWithDefaults({ name: `Modules B ${tag}`, slug: `mod-b-${tag}`, status: "ACTIVE", creatorUserId: null, customerId: customerB }, rawPrisma)).id;
   created.projects.push(projectA, projectB);
@@ -221,8 +223,12 @@ describe("templates", () => {
   });
 
   it("another customer can neither see nor change it", async () => {
-    current = admin;
     const inB = <T,>(fn: () => Promise<T>) => runWithTenant(customerB, fn);
+    // Customer A's admin has no permissions in customer B's software at all: refused before any lookup.
+    current = admin;
+    expect((await inB(() => templates.duplicateModuleTemplate(templateId))).error).toMatch(/Manage Projects/);
+    // Customer B's own admin passes the permission check and still cannot reach A's template.
+    current = adminB;
     expect((await inB(() => templates.saveModuleTemplate(templateId, { name: "Hijack", description: "", baseType: "DEFAULT", modules: ["WHATSAPP_CHAT"], declined: [], expectedVersion: 1 }))).error).toBeTruthy();
     expect((await inB(() => templates.setModuleTemplateArchived(templateId, true))).error).toBeTruthy();
     expect((await inB(() => templates.duplicateModuleTemplate(templateId))).error).toMatch(/no longer exists/);
