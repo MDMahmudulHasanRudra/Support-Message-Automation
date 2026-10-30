@@ -86,6 +86,7 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
       id: true,
       type: true,
       text: true,
+      attachments: true,
       attempts: true,
       senderType: true,
       messagingType: true,
@@ -106,7 +107,9 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
   // Website chat has no provider: a stored reply IS delivered — the visitor's widget reads it from
   // here. The same empty-text and kill-switch rules apply as for every other channel.
   if (message.type === "WEBCHAT") {
-    if (!message.text?.trim()) {
+    // A photo the team sent (Website Chat V3) is already stored; the visitor reads it with their own token.
+    const hasPhoto = Array.isArray(message.attachments) && message.attachments.length > 0;
+    if (!message.text?.trim() && !hasPhoto) {
       await fail("Not sent: the message is empty.");
       return true;
     }

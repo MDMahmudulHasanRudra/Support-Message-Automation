@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { corsFor, loadPublicWidget, WebchatError, type PublicWidget } from "@/server/channels/webchat";
+import { corsFor, loadPublicWidget, recordWidgetRefused, WebchatError, type PublicWidget } from "@/server/channels/webchat";
 
 /**
  * Shared plumbing for the public website chat API (WEBSITE_CHAT.md): load the widget a key names,
@@ -20,7 +20,11 @@ export async function withWidget(
   const widget = await loadPublicWidget(key);
   if (!widget) return json({ error: "Chat is not available." }, 404, null);
   const cors = corsFor(widget, request.headers.get("origin"));
-  if (!cors) return json({ error: "This website may not use this chat." }, 403, null);
+  if (!cors) {
+    // Remembered for the install page ("tried to start on https://x, which is not listed"); nothing else.
+    await recordWidgetRefused(widget, request.headers.get("origin"));
+    return json({ error: "This website may not use this chat." }, 403, null);
+  }
   try {
     return await run(widget, cors);
   } catch (err) {

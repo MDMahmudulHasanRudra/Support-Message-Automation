@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { registerComposer } from "@/lib/composerBridge";
-import { Lock, SendHorizontal } from "lucide-react";
+import { ImagePlus, Lock, SendHorizontal, X } from "lucide-react";
 import { CHANNELS, validateChannelText, type ChannelType } from "@support-automation/shared";
-import { useProjectRouter as useRouter } from "@/components/ProjectLink";
+import { useProjectHref, useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Button, useToast } from "@/components/ui";
 import { sendChannelReplyAction } from "@/server/actions/channelInbox";
 import { markAgentTyping } from "@/server/actions/webchatAgent";
@@ -83,11 +83,51 @@ export function ChannelComposer({
   const def = CHANNELS[type];
   const size = def.maxTextUnit === "bytes" ? new TextEncoder().encode(text.trim()).length : [...text.trim()].length;
   const problem = text.trim() ? validateChannelText(type, text) : null;
+  // Website chat only (V3): one photo per reply, the text becoming its caption. The server reads the type from the bytes.
+  const toProject = useProjectHref();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [photo, setPhoto] = useState<{ file: File; preview: string } | null>(null);
+  const pickPhoto = (file: File | null | undefined) => {
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
+      showToast({ tone: "danger", title: "Only photos (JPEG, PNG or WebP) can be sent here." });
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      showToast({ tone: "danger", title: "Photos can be at most 10 MB." });
+      return;
+    }
+    if (photo) URL.revokeObjectURL(photo.preview);
+    setPhoto({ file, preview: URL.createObjectURL(file) });
+  };
+  const clearPhoto = () => {
+    if (photo) URL.revokeObjectURL(photo.preview);
+    setPhoto(null);
+  };
 
   const send = () => {
-    if (pending || disabledReason || !text.trim() || problem) return;
+    if (pending || disabledReason || problem || (!text.trim() && !photo)) return;
     const body = text;
     startTransition(async () => {
+      if (photo) {
+        const form = new FormData();
+        form.append("file", photo.file);
+        form.append("text", body);
+        form.append("nonce", nonce);
+        const response = await fetch(toProject(`/api/channels/webchat-photo/${conversationId}`), { method: "POST", body: form }).catch(() => null);
+        const answer = (await response?.json().catch(() => null)) as { error?: string } | null;
+        if (!response?.ok) {
+          showToast({ tone: "danger", title: answer?.error ?? "The photo was not sent. Check the connection and try again." });
+          return;
+        }
+        clearPhoto();
+        setText("");
+        writeDraft(conversationId, "");
+        setNonce(newNonce());
+        router.refresh();
+        box.current?.focus();
+        return;
+      }
       const result = await sendChannelReplyAction(conversationId, body, nonce);
       if (result.error) {
         showToast({ tone: "danger", title: result.error });
@@ -123,7 +163,34 @@ export function ChannelComposer({
           More than 24 hours have passed, so this reply goes out tagged as a person&apos;s (Meta&apos;s Human Agent tag). Only a person may send it.
         </p>
       ) : null}
+      {photo ? (
+        <div className="mb-2 flex items-center gap-2.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] p-2">
+          {/* eslint-disable-next-line @next/next/no-img-element -- a local preview of the chosen file */}
+          <img src={photo.preview} alt="" className="size-12 rounded-[var(--radius-sm)] object-cover" />
+          <span className="min-w-0 flex-1 truncate text-[12px] text-[color:var(--color-muted-foreground)]">{photo.file.name} · the text becomes its caption</span>
+          <button type="button" onClick={clearPhoto} className="rounded p-1 text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]" aria-label="Remove the photo">
+            <X className="size-4" aria-hidden />
+          </button>
+        </div>
+      ) : null}
       <div className="flex items-end gap-2">
+        {type === "WEBCHAT" ? (
+          <>
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                pickPhoto(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+            <Button type="button" variant="ghost" size="md" disabled={pending} onClick={() => fileInput.current?.click()} aria-label="Send a photo">
+              <ImagePlus className="size-4" aria-hidden />
+            </Button>
+          </>
+        ) : null}
         <label className="min-w-0 flex-1">
           <span className="sr-only">Reply on {def.label}</span>
           <textarea
@@ -145,11 +212,19 @@ export function ChannelComposer({
                 send();
               }
             }}
-            placeholder={`Reply on ${def.label} as ${via}…`}
+            onPaste={(e) => {
+              if (type !== "WEBCHAT") return;
+              const item = Array.from(e.clipboardData.files).find((f) => f.type.startsWith("image/"));
+              if (item) {
+                e.preventDefault();
+                pickPhoto(item);
+              }
+            }}
+            placeholder={photo ? "Add a caption (optional)…" : `Reply on ${def.label} as ${via}…`}
             className="block max-h-48 min-h-[2.75rem] w-full resize-y rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13.5px] leading-relaxed text-[color:var(--color-foreground)] placeholder:text-[color:var(--color-subtle-foreground)] focus:border-[var(--color-focus-ring)] focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)]/30 disabled:opacity-60"
           />
         </label>
-        <Button type="submit" size="md" disabled={!text.trim() || Boolean(problem)} loading={pending} aria-label="Send reply">
+        <Button type="submit" size="md" disabled={(!text.trim() && !photo) || Boolean(problem)} loading={pending} aria-label="Send reply">
           {pending ? null : <SendHorizontal className="size-4" aria-hidden />}
           Send
         </Button>

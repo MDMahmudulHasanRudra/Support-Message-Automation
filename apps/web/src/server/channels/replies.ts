@@ -1,4 +1,5 @@
-import { channelMessagePreview, decideReplyWindow, validateChannelText } from "@support-automation/shared";
+import { Prisma } from "@prisma/client";
+import { channelMessagePreview, decideReplyWindow, validateChannelText, type ChannelAttachment } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
 import { connectionProblem } from "@/server/channels/inbox";
@@ -26,7 +27,7 @@ const NONCE = /^[A-Za-z0-9_-]{8,64}$/;
  * a retried request or a network hiccup that re-submits finds the same row (`idempotencyKey`) and
  * never queues it twice.
  */
-export async function queueChannelReply(input: { conversationId: string; text: string; nonce: string; userId: string; now?: Date }): Promise<{ messageId: string; duplicate: boolean }> {
+export async function queueChannelReply(input: { conversationId: string; text: string; nonce: string; userId: string; attachments?: ChannelAttachment[]; now?: Date }): Promise<{ messageId: string; duplicate: boolean }> {
   const now = input.now ?? new Date();
   if (!NONCE.test(input.nonce)) throw new ChannelReplyError("This reply could not be identified. Reload the page and send it again.");
   const conversation = await prisma.channelConversation.findUnique({
@@ -43,8 +44,12 @@ export async function queueChannelReply(input: { conversationId: string; text: s
   const problem = connectionProblem({ connectionStatus: conversation.connection.status, connectionEnabled: conversation.connection.enabled, connectionName: conversation.connection.name });
   if (problem) throw new ChannelReplyError(problem);
   const text = input.text.trim();
-  const invalid = validateChannelText(conversation.type, text);
+  // A photo reply exists only for website chat (V3), where the file is ours to store and serve; the caption is optional.
+  const attachments = input.attachments ?? [];
+  if (attachments.length > 0 && conversation.type !== "WEBCHAT") throw new ChannelReplyError("Photos can be sent only in website chat conversations.");
+  const invalid = attachments.length > 0 && !text ? null : validateChannelText(conversation.type, text);
   if (invalid) throw new ChannelReplyError(invalid);
+  const contentType = attachments.length > 0 ? "IMAGE" : "TEXT";
   const window = decideReplyWindow({ type: conversation.type, lastInboundAt: conversation.lastInboundAt, now, humanAgentEnabled: conversation.connection.humanAgentEnabled, automated: false });
   if (!window.allowed) throw new ChannelReplyError(window.reason);
 
@@ -61,8 +66,9 @@ export async function queueChannelReply(input: { conversationId: string; text: s
         type: conversation.type,
         direction: "OUTBOUND",
         senderType: "AGENT",
-        text,
-        contentType: "TEXT",
+        text: text || null,
+        contentType,
+        ...(attachments.length > 0 ? { attachments: attachments as unknown as Prisma.InputJsonValue } : {}),
         occurredAt: now,
         deliveryStatus: "QUEUED",
         idempotencyKey,
@@ -87,7 +93,7 @@ export async function queueChannelReply(input: { conversationId: string; text: s
     where: { id: conversation.id },
     data: {
       lastMessageAt: now,
-      lastMessagePreview: channelMessagePreview(text, "TEXT"),
+      lastMessagePreview: channelMessagePreview(text || null, contentType),
       lastMessageDirection: "OUTBOUND",
       reviewedAt: now,
       aiSuppressedUntil: until,

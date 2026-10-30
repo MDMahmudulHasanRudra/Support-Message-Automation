@@ -5,7 +5,7 @@ import { parseAllowedOrigins } from "@support-automation/shared";
 import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { projectPath } from "@/server/projectPaths";
-import { rotateWebchatIdentitySecret, saveWebchatSettings, WebchatError } from "@/server/channels/webchat";
+import { removeWidgetAsset, rotateWebchatIdentitySecret, saveWebchatSettings, WebchatError } from "@/server/channels/webchat";
 
 /** Website chat widget settings (WEBSITE_CHAT.md). channels.manage, OMNICHANNEL on. */
 
@@ -14,78 +14,58 @@ export interface WebchatSettingsState {
   success?: string;
 }
 
-export async function saveWebchatSettingsAction(_prev: WebchatSettingsState, form: FormData): Promise<WebchatSettingsState> {
+/**
+ * The Widget Builder's save (Website Chat V3): the whole configuration as one JSON value plus the websites. The
+ * server re-reads every field through `parseWidgetSettings` (clamped, defaults for anything unknown), keeps the
+ * uploaded images and team consent from what is stored, and refuses a website list it cannot read rather than
+ * saving part of it.
+ */
+export async function saveWidgetBuilderAction(connectionId: string, settingsJson: string, originsText: string): Promise<WebchatSettingsState> {
   const access = await checkPermission("channels.manage", "OMNICHANNEL");
   if ("denied" in access) return { error: access.denied };
-  const id = String(form.get("connectionId") ?? "");
-  const { origins, invalid } = parseAllowedOrigins(String(form.get("origins") ?? ""));
-  if (invalid.length) return { error: `Not a website address: ${invalid.slice(0, 3).join(", ")}. Use the full address, like https://www.example.com.` };
-  if (origins.length === 0) return { error: "Keep at least one website address, or switch the widget off instead." };
-  const hours = readBusinessHours(form);
-  if ("error" in hours) return { error: hours.error };
-  const offset = Number(form.get("bottomOffset") ?? 20);
-  const settings = {
-    title: String(form.get("title") ?? ""),
-    welcome: String(form.get("welcome") ?? ""),
-    color: String(form.get("color") ?? ""),
-    position: String(form.get("position") ?? ""),
-    replyNote: String(form.get("replyNote") ?? ""),
-    askName: form.get("askName") === "on",
-    askEmail: form.get("askEmail") === "on",
-    launcherLabel: String(form.get("launcherLabel") ?? ""),
-    bottomOffset: Number.isFinite(offset) ? offset : 20,
-    allowAttachments: form.get("allowAttachments") === "on",
-    hours: hours.value,
-    offlineMessage: String(form.get("offlineMessage") ?? ""),
-    offlineAskEmail: form.get("offlineAskEmail") === "on",
-  };
+  if (typeof settingsJson !== "string" || settingsJson.length > 64_000) return { error: "The settings could not be read. Reload the page and try again." };
+  let settings: unknown;
+  try {
+    settings = JSON.parse(settingsJson);
+  } catch {
+    return { error: "The settings could not be read. Reload the page and try again." };
+  }
+  const { origins, invalid } = parseAllowedOrigins(String(originsText ?? ""));
+  if (invalid.length) return { error: `Not a website address: ${invalid.slice(0, 3).join(", ")}. Use a domain like example.com or a full address like https://www.example.com.` };
+  if (origins.length === 0) return { error: "Add at least one website address, or switch the widget off instead." };
+  const hours = (settings as { hours?: { enabled?: boolean; timezone?: unknown } } | null)?.hours;
+  if (hours?.enabled && typeof hours.timezone === "string") {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: hours.timezone });
+    } catch {
+      return { error: `"${hours.timezone.slice(0, 60)}" is not a time zone. Use a name like Asia/Dhaka.` };
+    }
+  }
+  const id = String(connectionId);
   try {
     await saveWebchatSettings(id, { settings, origins });
   } catch (err) {
     if (err instanceof WebchatError) return { error: err.message };
     throw err;
   }
-  await logSystemEvent("INFO", "channels", "Website chat settings saved", { origins }, { actorUserId: access.session.userId, targetType: "ChannelConnection", targetId: id });
+  await logSystemEvent("INFO", "channels", "Website chat widget saved", { origins }, { actorUserId: access.session.userId, targetType: "ChannelConnection", targetId: id });
   revalidatePath(await projectPath(`/settings/channels/${id}`));
-  return { success: "Saved. Open widgets pick it up the next time the page loads." };
+  return { success: "Saved. Websites showing the widget pick it up on their next page load." };
 }
 
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-/**
- * The hours as the form posted them, Sunday-first. A day is closed when ticked so; an open day needs both
- * times with the opening first, and is refused with its name otherwise rather than quietly saved closed.
- * The time zone is checked here too: `parseWidgetSettings` would otherwise fall back to the default in
- * silence and the widget would open at the wrong hour.
- */
-function readBusinessHours(form: FormData): { value: { enabled: boolean; timezone: string; days: Array<{ open: string; close: string } | null> } } | { error: string } {
-  const enabled = form.get("hoursEnabled") === "on";
-  const timezone = String(form.get("hoursTimezone") ?? "").trim() || "Asia/Dhaka";
+/** Removes a brand image (logo, launcher icon or team photo); the public address stops serving it at once. */
+export async function removeWidgetAssetAction(connectionId: string, assetId: string): Promise<WebchatSettingsState> {
+  const access = await checkPermission("channels.manage", "OMNICHANNEL");
+  if ("denied" in access) return { error: access.denied };
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
-  } catch {
-    return { error: `"${timezone.slice(0, 60)}" is not a time zone. Use a name like Asia/Dhaka.` };
+    await removeWidgetAsset(String(connectionId), String(assetId));
+  } catch (err) {
+    if (err instanceof WebchatError) return { error: err.message };
+    throw err;
   }
-  const days: Array<{ open: string; close: string } | null> = [];
-  for (let i = 0; i < 7; i++) {
-    if (form.get(`closed_${i}`) === "on") {
-      days.push(null);
-      continue;
-    }
-    const open = String(form.get(`open_${i}`) ?? "");
-    const close = String(form.get(`close_${i}`) ?? "");
-    if (!HHMM.test(open) || !HHMM.test(close)) {
-      if (!enabled) {
-        days.push(null);
-        continue;
-      }
-      return { error: `${DAY_NAMES[i]}: enter an opening and a closing time, or tick Closed.` };
-    }
-    if (open >= close) return { error: `${DAY_NAMES[i]}: the closing time must be after the opening time (overnight hours are not supported).` };
-    days.push({ open, close });
-  }
-  return { value: { enabled, timezone, days } };
+  await logSystemEvent("INFO", "channels", "Website chat image removed", {}, { actorUserId: access.session.userId, targetType: "ChannelConnection", targetId: String(connectionId) });
+  revalidatePath(await projectPath(`/settings/channels/${connectionId}`));
+  return { success: "Removed." };
 }
 
 /** Creates or replaces the identity secret and returns it ONCE. */

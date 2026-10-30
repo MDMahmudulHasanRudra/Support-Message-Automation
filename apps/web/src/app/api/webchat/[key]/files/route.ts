@@ -29,7 +29,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!(file instanceof File)) throw new WebchatError("Choose a file first.", 400);
     if (file.size > WEBCHAT_ATTACHMENT_MAX_BYTES) throw new WebchatError("Files can be at most 10 MB.", 413);
     const bytes = Buffer.from(await file.arrayBuffer());
-    const result = await recordVisitorFile(widget, visitor, { bytes, fileName: file.name, pageUrl: form.get("pageUrl") });
-    return json({ ok: true, name: result.name }, 202, cors);
+    // V3 widgets send an optional caption and a nonce (a retried upload is the same message, not a copy).
+    const result = await recordVisitorFile(widget, visitor, { bytes, fileName: file.name, pageUrl: form.get("pageUrl"), caption: form.get("text"), nonce: form.get("nonce") });
+    return json({ ok: true, name: result.name, duplicate: result.duplicate }, 202, cors);
   });
 }

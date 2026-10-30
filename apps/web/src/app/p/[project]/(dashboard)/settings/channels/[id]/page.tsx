@@ -12,7 +12,7 @@ import { ChannelMark } from "../../../conversations/ChannelMark";
 import { ConnectionStatusBadge } from "../ConnectionStatusBadge";
 import { SetupGuide } from "../SetupGuide";
 import { ConnectChannelForm } from "../ConnectChannelForm";
-import { WebchatInstall, WebchatSettingsForm } from "../WebchatPanel";
+import { WidgetStudio } from "../WebchatPanel";
 import { getWebchatDetails } from "@/server/channels/webchat";
 import { ConnectionHealth, ConnectionSwitches, CopyValue, DisconnectConnection, RenameConnection } from "../ConnectionPanel";
 
@@ -100,6 +100,45 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
         </div>
       ) : null}
 
+      {wc && !disconnected ? (
+        // Website chat (V3): the Widget Builder — every setting with the real widget beside it.
+        <div className="space-y-6">
+          <WidgetStudio
+            connectionId={c.id}
+            widgetKey={wc.key}
+            widgetName={c.name}
+            canManage={canManage}
+            settings={wc.settings}
+            origins={wc.allowedOrigins}
+            assets={wc.settings.assets.map((a) => ({ id: a.id, kind: a.kind, url: `${wc.scriptUrl ? new URL(wc.scriptUrl).origin : ""}/api/webchat/${encodeURIComponent(wc.key)}/brand/${encodeURIComponent(a.id)}` }))}
+            scriptUrl={wc.scriptUrl}
+            wordpressHref={canManage && wc.scriptUrl ? await projectPath(`/api/webchat/wordpress/${c.id}`) : null}
+            install={wc.install}
+            enabled={wc.enabled}
+            aiEnabled={c.aiAutomationEnabled}
+            hasIdentitySecret={wc.hasIdentitySecret}
+            stats={wc.stats}
+            general={
+              <div className="space-y-4 border-b border-[var(--color-border)] pb-4">
+                <ConnectionSwitches id={c.id} type={c.type} enabled={c.enabled} aiAutomationEnabled={c.aiAutomationEnabled} humanAgentEnabled={c.humanAgentEnabled} aiDisclosureEnabled={c.aiDisclosureEnabled} aiDisclosureText={c.aiDisclosureText} aiDisclosureIdleHours={c.aiDisclosureIdleHours} disconnected={disconnected} canManage={canManage} />
+                <div>
+                  <p className="mb-1.5 text-[12.5px] font-medium text-[color:var(--color-foreground)]">Name in this app</p>
+                  <RenameConnection id={c.id} name={c.name} canManage={canManage} />
+                </div>
+              </div>
+            }
+          />
+          <Card>
+            <SectionHeader title="Record" />
+            <dl className="space-y-1 text-[12.5px] text-[color:var(--color-muted-foreground)]">
+              <div>Created by {c.createdByUsername ?? "—"} · {when(c.createdAt)}</div>
+            </dl>
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <DisconnectConnection id={c.id} name={c.name} canManage={canManage} />
+            </div>
+          </Card>
+        </div>
+      ) : (
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <div className="space-y-6">
           <Card>
@@ -110,37 +149,6 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
               <RenameConnection id={c.id} name={c.name} canManage={canManage && !disconnected} />
             </div>
           </Card>
-
-          {wc && !disconnected ? (
-            <Card>
-              <SectionHeader title="Install on your website" description="One line of code. Every reply, note, assignment and AI answer works exactly as for the other channels." />
-              <WebchatInstall
-                connectionId={c.id}
-                canManage={canManage}
-                hasIdentitySecret={wc.hasIdentitySecret}
-                snippet={wc.scriptUrl ? `<script src="${wc.scriptUrl}" data-key="${wc.key}" async></script>` : null}
-                wordpressHref={canManage && wc.scriptUrl ? await projectPath(`/api/webchat/wordpress/${c.id}`) : null}
-              />
-            </Card>
-          ) : null}
-
-          {wc ? (
-            <Card>
-              <SectionHeader title="Last 7 days" />
-              <dl className="grid grid-cols-3 gap-3 text-center">
-                {[
-                  ["Visitors", wc.stats.visitors7d],
-                  ["Messages", wc.stats.messages7d],
-                  ["Conversations (all time)", wc.stats.conversations],
-                ].map(([label, n]) => (
-                  <div key={label as string} className="rounded-[var(--radius-lg)] bg-[var(--color-surface-sunken)] p-3">
-                    <dt className="text-[11.5px] text-[color:var(--color-muted-foreground)]">{label}</dt>
-                    <dd className="mt-0.5 text-[18px] font-semibold tabular-nums">{n}</dd>
-                  </div>
-                ))}
-              </dl>
-            </Card>
-          ) : null}
 
           {oneClick && !disconnected ? (
             <Card>
@@ -191,12 +199,6 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
               </ButtonLink>
             </Card>
           ) : null}
-          {wc && !disconnected ? (
-            <Card>
-              <SectionHeader title="Widget" />
-              <WebchatSettingsForm connectionId={c.id} settings={wc.settings} origins={wc.allowedOrigins} canManage={canManage} />
-            </Card>
-          ) : null}
           {canManage && !webchat ? (
             <Card>
               <SectionHeader
@@ -234,6 +236,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
           </Card>
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -140,6 +140,7 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
       id: true,
       type: true,
       text: true,
+      attachments: true,
       createdAt: true,
       occurredAt: true,
       conversationId: true,
@@ -180,6 +181,9 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
 
   const text = message.text?.trim();
   if (!text) return handOver("MEDIA_ONLY_MESSAGE");
+  // Website chat (V3): a photo with a caption still goes to a person. The AI cannot see the photo, and answering
+  // the caption alone would read as if it had.
+  if (type === "WEBCHAT" && Array.isArray(message.attachments) && message.attachments.length > 0) return handOver("MEDIA_ONLY_MESSAGE");
 
   // The same per-customer cooldown as WhatsApp's AI replies (AiSettings.aiReplyCooldownSeconds).
   if (settings.ai.aiReplyCooldownSeconds > 0) {

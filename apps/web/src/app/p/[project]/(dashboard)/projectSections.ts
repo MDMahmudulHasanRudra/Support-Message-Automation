@@ -84,12 +84,12 @@ interface SectionRule {
  */
 const SECTION_RULES: Record<string, SectionRule> = {
   // Support
-  "/conversations/all": { write: ["conversations.reply"], also: ["/conversations", "/conversations/whatsapp", "/api/channels/attachment"] },
+  "/conversations/all": { write: ["conversations.reply"], also: ["/conversations", "/conversations/whatsapp", "/api/channels/attachment", "/api/channels/webchat-photo"] },
   "/chat": { write: ["messages.reply"], also: ["/api/whatsapp/media", "/api/whatsapp/avatar", "/api/whatsapp/send-file"] },
   "/conversations/messenger": { write: ["conversations.reply"] },
   "/conversations/instagram": { write: ["conversations.reply"] },
   "/conversations/telegram": { write: ["conversations.reply"] },
-  "/conversations/website": { write: ["conversations.reply"], also: ["/api/channels/attachment"] },
+  "/conversations/website": { write: ["conversations.reply"], also: ["/api/channels/attachment", "/api/channels/webchat-photo"] },
   "/messages": { label: "All messages (needs attention, ignored)", also: ["/ignored", "/needs-attention", "/api/whatsapp/media"] },
   "/messages/unanswered": { write: ["messages.reply"], also: ["/api/messages/support-response"] },
   "/messages/response-time": { also: ["/api/messages/support-response"] },
@@ -200,7 +200,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/support-assignment/settings": { write: ["support_assignment.manage"] },
   "/team-management/shifts": { fullOnly: true, read: ["team_management.view"] },
   "/team-management/settings": { fullOnly: true, read: ["team_management.view"] },
-  "/settings/channels": { write: ["channels.manage"], also: ["/api/meta/connect", "/api/meta/claim", "/api/webchat/wordpress"] },
+  "/settings/channels": { write: ["channels.manage"], also: ["/api/meta/connect", "/api/meta/claim", "/api/webchat/wordpress", "/api/webchat/brand"] },
   "/settings/email": { fullOnly: true },
   "/settings/clients": { fullOnly: true },
   "/settings/google-sheets": { write: ["google_sheets.manage"], also: ["/api/google-sheets/connect"] },

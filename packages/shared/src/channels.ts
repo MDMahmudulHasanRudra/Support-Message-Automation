@@ -108,10 +108,11 @@ export const CHANNELS: Record<ChannelType, ChannelDefinition> = {
     replyWindow: null,
     accountNoun: "chat widget on your website",
     limitations: [
-      "The widget works only on the website addresses you list. Add every address it is installed on (with https://).",
+      "The widget works only on the websites you list (a domain like example.com is enough). Every other site is refused.",
       "Visitors are anonymous unless your site signs their user id with this widget's identity secret; a name or email they type is shown as unverified.",
       "A reply shows as Sent once it is stored; the visitor sees it the next time their widget checks (every few seconds while it is open).",
-      "Visitors cannot send files yet.",
+      "Visitors and your team can send photos (JPEG, PNG, WebP, up to 10 MB). Videos and other files are not accepted.",
+      "AI answers only when you switch it on for the widget, and hands every photo to a person.",
     ],
   },
 };

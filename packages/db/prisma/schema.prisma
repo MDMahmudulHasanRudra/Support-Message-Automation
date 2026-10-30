@@ -6451,6 +6451,13 @@ model ChannelConnection {
   widgetSettings  Json?
   /// WEBCHAT only: the website origins (https://shop.example.com) allowed to use the widget. Empty = none.
   allowedOrigins  String[]              @default([])
+  /// WEBCHAT only (V3 installation check): when the widget last started on a listed website, which one, and the
+  /// script version; and the last website that tried but is not listed. Written at most once a minute.
+  widgetSeenAt        DateTime?
+  widgetSeenOrigin    String?
+  widgetSeenVersion   String?
+  widgetRefusedAt     DateTime?
+  widgetRefusedOrigin String?
   webChatVisitors WebChatVisitor[]
 
   @@unique([projectId, type, externalAccountId])

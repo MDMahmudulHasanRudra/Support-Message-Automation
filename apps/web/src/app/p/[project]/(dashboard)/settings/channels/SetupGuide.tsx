@@ -8,13 +8,11 @@ export function SetupGuide({ type }: { type: ChannelType }) {
   if (type === "WEBCHAT") {
     return (
       <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-        <li>Create the widget here with every website address it will run on.</li>
-        <li>
-          Copy the one-line script from the widget&apos;s page and paste it before <code>&lt;/body&gt;</code> on your site (WordPress: Appearance → Theme File Editor → footer, or any &quot;insert footer
-          code&quot; plugin; Shopify: Online Store → Themes → Edit code → theme.liquid).
-        </li>
-        <li>Optional: let signed-in customers chat as themselves — your server signs their user id with the widget&apos;s identity secret (instructions on the widget page).</li>
-        <li>Turn AI on for the widget to let it answer from your verified knowledge; people take over from the inbox like any other channel.</li>
+        <li>Name the widget and list your website (a domain like example.com is enough).</li>
+        <li>Design it in the Widget Builder: colours, logo, button, team photos, greeting — with a live preview on computer and phone.</li>
+        <li>Copy the one-line install code (or download the WordPress plugin) and add it to your site. Step-by-step guides for WordPress, Shopify, React, Next.js, Webflow and Wix are on the widget page.</li>
+        <li>Press “Verify installation” to confirm the widget started on your site.</li>
+        <li>Optional: switch AI answers on, and let signed-in customers chat as themselves.</li>
       </ol>
     );
   }

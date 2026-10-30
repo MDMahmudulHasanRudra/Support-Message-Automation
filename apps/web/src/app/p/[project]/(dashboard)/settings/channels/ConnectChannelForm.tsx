@@ -1,10 +1,11 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import type { ChannelType } from "@support-automation/shared";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Alert, Button, Field, Input } from "@/components/ui";
 import { connectChannelAction, updateChannelCredentialsAction, type ChannelActionResult } from "@/server/actions/channelConnections";
+import { OriginsEditor } from "./WebchatPanel";
 
 /**
  * The credential form, for connecting (no `connectionId`) or for replacing a connection's credentials.
@@ -14,6 +15,9 @@ import { connectChannelAction, updateChannelCredentialsAction, type ChannelActio
 export function ConnectChannelForm({ type, connectionId }: { type: ChannelType; connectionId?: string }) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState<ChannelActionResult, FormData>(connectionId ? updateChannelCredentialsAction : connectChannelAction, {});
+  // Website chat: the addresses as typed, kept in state so a refused submit does not clear them and the
+  // normalised result ("getassist.pro → https://getassist.pro") shows before saving.
+  const [origins, setOrigins] = useState("");
 
   useEffect(() => {
     if (state.connectionId && !connectionId) router.push(`/settings/channels/${state.connectionId}${state.warning ? "?warning=1" : "?connected=1"}`);
@@ -28,9 +32,8 @@ export function ConnectChannelForm({ type, connectionId }: { type: ChannelType; 
           <Field label="Name" htmlFor="name" hint="Shown in the inbox, e.g. the website's name.">
             <Input id="name" name="name" maxLength={60} placeholder="Main website" />
           </Field>
-          <Field label="Websites it runs on" htmlFor="origins" required hint="One address per line, with https:// (http:// only for localhost). The widget refuses every other site.">
-            <textarea id="origins" name="origins" rows={3} placeholder={"https://www.example.com\nhttps://shop.example.com"} className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px]" />
-          </Field>
+          <OriginsEditor value={origins} onChange={setOrigins} />
+          <input type="hidden" name="origins" value={origins} />
         </>
       ) : type === "TELEGRAM" ? (
         <Field

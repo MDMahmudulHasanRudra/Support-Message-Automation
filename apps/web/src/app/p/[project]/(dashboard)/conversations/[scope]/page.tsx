@@ -49,7 +49,7 @@ export default async function InboxEmptyPane({ params }: { params: Promise<{ sco
         <MessagesSquare className="size-5" aria-hidden />
       </span>
       <p className="max-w-xs text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-        Choose a conversation. WhatsApp conversations open in WhatsApp Chat; Messenger, Instagram and Telegram open here.
+        Choose a conversation. WhatsApp conversations open in WhatsApp Chat; Messenger, Instagram, Telegram and Website chat open here.
       </p>
     </div>
   );
