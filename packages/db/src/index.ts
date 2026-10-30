@@ -160,6 +160,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "CommerceOrderEvent", "SalesLead", "SalesLeadEvent",
   "CourierConnection", "Shipment", "ShipmentEvent", "ShopConnection", "ShopSyncRun",
   "ApiKey", "WebhookEndpoint", "WebhookDelivery",
+  "ListSavedView",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([

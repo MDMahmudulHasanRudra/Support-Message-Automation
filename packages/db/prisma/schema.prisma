@@ -731,6 +731,7 @@ model Project {
   shopConnections                      ShopConnection[]
   shopSyncRuns                         ShopSyncRun[]
   apiKeys                              ApiKey[]
+  listSavedViews                       ListSavedView[]
   webhookEndpoints                     WebhookEndpoint[]
   webhookDeliveries                    WebhookDelivery[]
 
@@ -941,6 +942,7 @@ model User {
   aiDraftsRequested         AiDraft[]                  @relation("AiDraftRequester")
   conversationLabelsUpdated ConversationLabel[]        @relation("ConversationLabelUpdater")
   inboxSavedViews           InboxSavedView[]           @relation("InboxSavedViewOwner")
+  listSavedViews            ListSavedView[]            @relation("ListSavedViewOwner")
   inboxMentions             InboxMention[]             @relation("InboxMentionUser")
   conversationEvents        ConversationEvent[]        @relation("ConversationEventActor")
 
@@ -8523,4 +8525,24 @@ model WebhookDelivery {
   @@unique([endpointId, eventId])
   @@index([status, nextAttemptAt])
   @@index([endpointId, createdAt])
+}
+
+/// A saved filter on a list page (Orders, Products, Shipments, Sales — PROJECT_MODULES.md §Saved views).
+/// Personal unless shared; a shared view is visible to everyone who can open that page.
+model ListSavedView {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  ownerId   String?
+  owner     User?    @relation("ListSavedViewOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  /// The project-relative list page, from a fixed list ("/commerce/orders").
+  path      String
+  name      String
+  /// The page's own query string, reduced to the filters that page understands.
+  query     String
+  shared    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, path, ownerId])
 }

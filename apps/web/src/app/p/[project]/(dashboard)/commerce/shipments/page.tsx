@@ -1,4 +1,7 @@
 import Link from "@/components/ProjectLink";
+import { SavedViewsBar } from "@/components/SavedViewsBar";
+import { loadSavedViews } from "@/server/listSavedViewsReader";
+import { sanitizeViewQuery } from "@/lib/listSavedViews";
 import { COURIER_LABELS, SHIPMENT_STATUS_LABELS, SHIPMENT_STATUSES, type ShipmentStatus } from "@support-automation/shared";
 import { pageAccess } from "@/server/authorize";
 import { listShipments } from "@/server/commerce";
@@ -10,8 +13,10 @@ export const metadata = { title: "Shipments" };
 const when = (iso: string | null) => (iso ? new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dhaka", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "—");
 
 export default async function ShipmentsPage({ searchParams }: { searchParams: Promise<{ search?: string; status?: string }> }) {
-  const { canManage } = await pageAccess("shipments.view", "shipments.manage");
+  const { canManage, session } = await pageAccess("shipments.view", "shipments.manage");
   const sp = await searchParams;
+  const savedViews = await loadSavedViews("/commerce/shipments", session.userId);
+  const currentQuery = sanitizeViewQuery("/commerce/shipments", sp);
   const status = sp.status && (SHIPMENT_STATUSES as readonly string[]).includes(sp.status) ? sp.status : undefined;
   const { rows, counts } = await listShipments({ status, q: sp.search });
   const link = (s?: string) => {
@@ -31,6 +36,7 @@ export default async function ShipmentsPage({ searchParams }: { searchParams: Pr
         actions={<ButtonLink href="/settings/couriers">Couriers</ButtonLink>}
       />
       {canManage ? null : <ViewOnlyNotice />}
+      <SavedViewsBar page="/commerce/shipments" views={savedViews} currentQuery={currentQuery} canShare={canManage} />
       {counts.UNKNOWN ? (
         <p className="mb-4 rounded-[var(--radius-md)] bg-[var(--color-warning-bg)] p-3 text-sm text-[color:var(--color-warning-fg)]">
           {counts.UNKNOWN} booking{counts.UNKNOWN === 1 ? "" : "s"} got no answer from the courier. Open each order, check the courier&apos;s panel, and record what you find.

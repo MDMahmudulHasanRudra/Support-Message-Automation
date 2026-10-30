@@ -37,6 +37,7 @@ import {
 } from "@/components/ui";
 import type { ModuleHealthStatus } from "@/components/ui/DashboardModuleCard";
 import { getGroupsAwaitingReply } from "@/server/supportActivityReports";
+import { getCommerceOverview, getSetupChecklist } from "@/server/moduleOverview";
 import {
   AreaChart,
   BarList,
@@ -150,6 +151,8 @@ export default async function OverviewPage({
     awaiting,
     workerLiveness,
     collectionHealth,
+    commerce,
+    setupChecklist,
   ] = await Promise.all([
     getAccountsRoutingSummary(),
     getAutomationOutboundSummary(nowMs),
@@ -172,6 +175,9 @@ export default async function OverviewPage({
     getGroupsAwaitingReply(new Date(nowMs)),
     getWorkerLivenessSummary(nowMs),
     getCollectionHealthSummary(nowMs),
+    // Module-aware parts (PROJECT_MODULES.md §Dashboard): null / empty whenever the modules are off.
+    getCommerceOverview(new Date(nowMs)),
+    getSetupChecklist(),
   ]);
 
   const disconnectedAccounts = accountsRouting.accounts.filter((a) => a.status !== "CONNECTED");
@@ -392,6 +398,66 @@ export default async function OverviewPage({
             </ul>
           </Alert>
         </div>
+      ) : null}
+
+      {show("dashboard:alerts") && setupChecklist.length > 0 ? (
+        <div className="mb-5">
+          <Alert tone="info" title={setupChecklist.length === 1 ? "1 module needs setting up" : `${setupChecklist.length} modules need setting up`}>
+            <ul className="space-y-1.5">
+              {setupChecklist.map((item) => (
+                <li key={`${item.module}:${item.text}`} className="flex flex-wrap items-baseline gap-x-2">
+                  <span>
+                    <strong>{item.module}:</strong> {item.text}
+                  </span>
+                  {link(item.href) ? (
+                    <Link href={item.href} className="font-medium underline underline-offset-2">
+                      {item.linkLabel}
+                    </Link>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </Alert>
+        </div>
+      ) : null}
+
+      {show("dashboard:tiles") && commerce ? (
+        <section className="mb-5" aria-label="Commerce">
+          <SectionHeader title="Commerce" description="Orders, stock, deliveries and leads. Shown because a commerce module is on for this project." />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
+            {commerce.orders ? (
+              <>
+                <StatTile href={link("/commerce/orders")} label="Orders today" value={commerce.orders.today} />
+                <StatTile href={link("/commerce/orders?status=DRAFT")} label="Drafts to confirm" value={commerce.orders.toConfirm} tone={commerce.orders.toConfirm > 0 ? "warning" : "neutral"} />
+                <StatTile label="Orders not fully paid" value={commerce.orders.unpaid} tone={commerce.orders.unpaid > 0 ? "warning" : "neutral"} />
+              </>
+            ) : null}
+            {commerce.catalog ? (
+              <>
+                <StatTile href={link("/commerce/products")} label="Active products" value={commerce.catalog.active} tone="accent" />
+                <StatTile href={link("/commerce/products")} label="Out of stock" value={commerce.catalog.outOfStock} tone={commerce.catalog.outOfStock > 0 ? "danger" : "neutral"} />
+                <StatTile href={link("/commerce/products")} label="Low stock (5 or fewer)" value={commerce.catalog.lowStock} tone={commerce.catalog.lowStock > 0 ? "warning" : "neutral"} />
+              </>
+            ) : null}
+            {commerce.shipments ? (
+              <>
+                <StatTile href={link("/commerce/shipments")} label="Parcels on the way" value={commerce.shipments.inTransit} />
+                <StatTile
+                  href={link("/commerce/shipments?status=UNKNOWN")}
+                  label="Bookings to check"
+                  value={commerce.shipments.toCheck}
+                  tone={commerce.shipments.toCheck > 0 ? "danger" : "neutral"}
+                />
+              </>
+            ) : null}
+            {commerce.leads ? (
+              <>
+                <StatTile href={link("/sales")} label="Open leads" value={commerce.leads.open} />
+                <StatTile href={link("/sales")} label="Follow-ups overdue" value={commerce.leads.overdue} tone={commerce.leads.overdue > 0 ? "warning" : "neutral"} />
+              </>
+            ) : null}
+          </div>
+        </section>
       ) : null}
 
       {show("dashboard:tiles") ? (

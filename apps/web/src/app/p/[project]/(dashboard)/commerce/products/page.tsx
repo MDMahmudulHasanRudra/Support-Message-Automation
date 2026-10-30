@@ -1,4 +1,7 @@
 import Link from "@/components/ProjectLink";
+import { SavedViewsBar } from "@/components/SavedViewsBar";
+import { loadSavedViews } from "@/server/listSavedViewsReader";
+import { sanitizeViewQuery } from "@/lib/listSavedViews";
 import { Plus } from "lucide-react";
 import { PRODUCT_STATUS_LABELS, type ProductStatus } from "@support-automation/shared";
 import { pageAccess } from "@/server/authorize";
@@ -12,8 +15,10 @@ const STATUS_COLOR = { ACTIVE: "green", DRAFT: "yellow", ARCHIVED: "gray" } as c
 const LOW_STOCK = 5;
 
 export default async function ProductsPage({ searchParams }: { searchParams: Promise<{ search?: string; status?: string; category?: string }> }) {
-  const { canManage } = await pageAccess("commerce.view", "commerce.manage");
+  const { canManage, session } = await pageAccess("commerce.view", "commerce.manage");
   const sp = await searchParams;
+  const savedViews = await loadSavedViews("/commerce/products", session.userId);
+  const currentQuery = sanitizeViewQuery("/commerce/products", sp);
   const status = sp.status && sp.status in STATUS_COLOR ? sp.status : undefined;
   const [products, categories] = await Promise.all([listProducts({ q: sp.search, status, categoryId: sp.category }), listCategories()]);
   const tracked = products.filter((p) => p.trackInventory);
@@ -43,6 +48,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         }
       />
       {canManage ? null : <ViewOnlyNotice />}
+      <SavedViewsBar page="/commerce/products" views={savedViews} currentQuery={currentQuery} canShare={canManage} />
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatTile label="Products shown" value={products.length} />

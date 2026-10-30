@@ -145,3 +145,23 @@ Main Admin → **Module templates**.
 - **Applying from the builder** shows the diff first. The template is recorded only when what is
   applied is exactly the template; edited after choosing, it is saved as the admin's own selection.
 - **Archiving** stops offering a template, frees its name, and never changes a project that used it.
+
+## §9 Dashboard, saved views and archived modules (WP6, 30 Oct 2026)
+
+- **The Overview follows the modules that are on** (`server/moduleOverview.ts`). A Commerce section (orders
+  today, drafts to confirm, orders not fully paid, active / out-of-stock / low-stock products, parcels on the
+  way, bookings to check, open leads, overdue follow-ups) appears only while Product Catalog, Orders, Sales
+  Pipeline or Courier Management is on, inside the "Summary numbers" part, and every tile links only where the
+  viewer may go. A project with none of them on sees exactly the Overview it had.
+- **Setup checklist** ("N modules need setting up", in the "Things that need attention" part): a module that is
+  ON but cannot do its job — no active product, no courier connected or its last test failing, a shop not
+  connected / never imported / failing, no messaging channel, no Google account, and an AI commerce answer
+  switched on while its module is off. Never a module that is off, never a choice made on purpose.
+- **Saved views** on Orders, Products, Shipments and Sales (`ListSavedView`, migration
+  `20261030100000_list_saved_views`, `lib/listSavedViews.ts`): a named filter, personal by default; sharing it
+  with everyone who opens the page needs the page's manage key. The stored query is reduced to the filters that
+  page understands, so a view is exactly a bookmark of the page. At most 20 per person per page. The WhatsApp
+  inbox keeps its own saved views (`InboxSavedView`), untouched.
+- **Archived modules**: the Module Builder shows "Data kept: 124 orders" on every switched-off module that still
+  holds data (`moduleDataCounts`), so off is never read as deleted. Switching it on again shows the same data.
+  A read-only view of a switched-off module's pages is NOT built: its pages stay closed while it is off.

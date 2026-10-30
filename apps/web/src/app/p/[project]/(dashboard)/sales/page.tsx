@@ -1,4 +1,7 @@
 import Link from "@/components/ProjectLink";
+import { SavedViewsBar } from "@/components/SavedViewsBar";
+import { loadSavedViews } from "@/server/listSavedViewsReader";
+import { sanitizeViewQuery } from "@/lib/listSavedViews";
 import { Plus } from "lucide-react";
 import { LEAD_SOURCE_LABELS, LEAD_STAGE_LABELS, LEAD_STAGES, OPEN_LEAD_STAGES, type LeadSource, type LeadStage } from "@support-automation/shared";
 import { pageAccess } from "@/server/authorize";
@@ -11,8 +14,10 @@ const day = (iso: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/
 
 /** The pipeline as columns, one per stage. Won and Lost are shown only on request: they are closed. */
 export default async function SalesPage({ searchParams }: { searchParams: Promise<{ search?: string; closed?: string }> }) {
-  const { canManage } = await pageAccess("sales.view", "sales.manage");
+  const { canManage, session } = await pageAccess("sales.view", "sales.manage");
   const sp = await searchParams;
+  const savedViews = await loadSavedViews("/sales", session.userId);
+  const currentQuery = sanitizeViewQuery("/sales", sp);
   const includeClosed = sp.closed === "1";
   const leads = await listLeads({ q: sp.search, includeClosed });
   const stages: readonly LeadStage[] = includeClosed ? LEAD_STAGES : OPEN_LEAD_STAGES;
@@ -38,6 +43,7 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
         }
       />
       {canManage ? null : <ViewOnlyNotice />}
+      <SavedViewsBar page="/sales" views={savedViews} currentQuery={currentQuery} canShare={canManage} />
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3">
         <StatTile label="Open leads" value={open.length} />

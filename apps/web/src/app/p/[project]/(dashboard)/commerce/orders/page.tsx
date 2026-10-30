@@ -1,4 +1,7 @@
 import Link from "@/components/ProjectLink";
+import { SavedViewsBar } from "@/components/SavedViewsBar";
+import { loadSavedViews } from "@/server/listSavedViewsReader";
+import { sanitizeViewQuery } from "@/lib/listSavedViews";
 import { Plus } from "lucide-react";
 import { ORDER_PAYMENT_LABELS, ORDER_STATUS_LABELS, ORDER_STATUSES, type OrderPaymentStatus } from "@support-automation/shared";
 import { pageAccess } from "@/server/authorize";
@@ -9,8 +12,10 @@ import { ORDER_STATUS_COLOR, orderWhen as when, PAYMENT_COLOR } from "./orderSty
 export const metadata = { title: "Orders" };
 
 export default async function OrdersPage({ searchParams }: { searchParams: Promise<{ search?: string; status?: string }> }) {
-  const { canManage } = await pageAccess("orders.view", "orders.manage");
+  const { canManage, session } = await pageAccess("orders.view", "orders.manage");
   const sp = await searchParams;
+  const savedViews = await loadSavedViews("/commerce/orders", session.userId);
+  const currentQuery = sanitizeViewQuery("/commerce/orders", sp);
   const status = sp.status && (ORDER_STATUSES as readonly string[]).includes(sp.status) ? sp.status : undefined;
   const { rows, counts } = await listOrders({ q: sp.search, status });
   const all = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -36,6 +41,7 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
         }
       />
       {canManage ? null : <ViewOnlyNotice />}
+      <SavedViewsBar page="/commerce/orders" views={savedViews} currentQuery={currentQuery} canShare={canManage} />
 
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">

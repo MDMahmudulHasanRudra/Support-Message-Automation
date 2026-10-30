@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Alert, ButtonLink, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { getProjectDetail, requireMainAdminPage } from "@/server/mainAdmin";
-import { getProjectModuleState } from "@/server/projectModules";
+import { getProjectModuleState, moduleDataCounts } from "@/server/projectModules";
 import { ModuleBuilder } from "./ModuleBuilder";
 
 export const metadata = { title: "Type & modules" };
@@ -20,6 +20,7 @@ export default async function ProjectModulesPage({ params, searchParams }: { par
   if (!detail) notFound();
   const state = await getProjectModuleState(id);
   if (!state) notFound();
+  const dataCounts = await moduleDataCounts(id);
 
   return (
     <div>
@@ -54,6 +55,7 @@ export default async function ProjectModulesPage({ params, searchParams }: { par
         canManage={canManage}
         history={state.history}
         templates={state.templates}
+        dataCounts={dataCounts}
       />
     </div>
   );

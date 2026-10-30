@@ -3043,6 +3043,10 @@ the prompt is byte-identical; order details only for an order whose phone IS the
 `COMMERCE_REQUEST`; a money amount not in the commerce entries hands over as `UNGROUNDED_PRICE`. The eight AI settings
 that nothing read are off the page and no longer written; their columns stay.
 
+The Overview adds a Commerce section and a setup checklist only for modules that are ON (`server/moduleOverview.ts`);
+commerce lists have personal/shared saved views (`ListSavedView`, query reduced to the page's own filters); the Module
+Builder shows "Data kept" on switched-off modules (PROJECT_MODULES.md §9).
+
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 
 On the platform (Layer 1). Rules worth not undoing:

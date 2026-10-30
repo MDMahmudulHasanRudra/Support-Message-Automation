@@ -37,6 +37,8 @@ interface Props {
   canManage: boolean;
   history: ProjectModuleChangeView[];
   templates: ModuleTemplateOption[];
+  /** What each data-holding module keeps for this project, e.g. "124 orders". */
+  dataCounts: Record<string, string>;
 }
 
 const names = (keys: readonly string[]) => keys.map((k) => moduleDefinition(k)?.name ?? k);
@@ -307,6 +309,7 @@ export function ModuleBuilder(props: Props) {
                   {hard > 0 ? <Badge color="gray">{hard} required</Badge> : null}
                   {m.manualOnly ? <Badge color="gray">Manual switch</Badge> : null}
                   {props.enabled.includes(m.key) && !on ? <Badge color="red">Will switch off</Badge> : null}
+                  {!on && props.dataCounts[m.key] ? <Badge color="gray">Data kept: {props.dataCounts[m.key]}</Badge> : null}
                   {!props.enabled.includes(m.key) && on ? <Badge color="green">Will switch on</Badge> : null}
                 </div>
               </div>

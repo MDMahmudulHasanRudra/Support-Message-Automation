@@ -249,3 +249,37 @@ export async function applyModuleSelection(db: Db, input: ApplyModuleSelectionIn
   }
   return { success: "Applied.", version: nextVersion, added: diff.added, removed: diff.removed, autoAdded, leftOut, projectType, projectBaseType: recordedBase };
 }
+
+/**
+ * What each data-holding module still keeps for a project (PROJECT_MODULES.md §Archived modules) — shown
+ * beside a switched-off module, so "Off" is never read as "deleted". Counts only; each failure is skipped.
+ */
+export async function moduleDataCounts(projectId: string, db: Db = platformPrisma): Promise<Record<string, string>> {
+  const where = { projectId };
+  const tally: Array<[string, Promise<number>, string]> = [
+    ["PRODUCT_CATALOG", db.product.count({ where }), "products"],
+    ["ORDERS", db.commerceOrder.count({ where }), "orders"],
+    ["SALES_PIPELINE", db.salesLead.count({ where }), "leads"],
+    ["COURIER", db.shipment.count({ where }), "shipments"],
+    ["WOOCOMMERCE", db.product.count({ where: { projectId, externalSource: "WOOCOMMERCE" } }), "imported products"],
+    ["SHOPIFY", db.product.count({ where: { projectId, externalSource: "SHOPIFY" } }), "imported products"],
+    ["API_ACCESS", db.apiKey.count({ where }), "API keys"],
+    ["CLIENT_CENTER", db.client.count({ where }), "clients"],
+    ["OMNICHANNEL", db.channelConversation.count({ where }), "conversations"],
+    ["GOOGLE_SHEETS", db.googleSpreadsheet.count({ where }), "spreadsheets"],
+    ["INBOX_COLLABORATION", db.conversationNote.count({ where }), "notes"],
+    ["AI_LEARNING", db.aiKnowledgeItem.count({ where }), "knowledge entries"],
+  ];
+  const out: Record<string, string> = {};
+  await Promise.all(
+    tally.map(async ([key, count, noun]) => {
+      try {
+        const n = await count;
+        if (n > 0) out[key] = `${n.toLocaleString("en-US")} ${noun}`;
+      } catch {
+        // A table this deployment has not migrated yet: nothing to say about it.
+      }
+    }),
+  );
+  return out;
+}
