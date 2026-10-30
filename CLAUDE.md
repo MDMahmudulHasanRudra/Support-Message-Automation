@@ -3033,6 +3033,16 @@ project; API keys are stored as SHA-256 only and run inside their project; outbo
 once, and never sent to an address that resolves privately. Background work runs in the APP process
 (`server/integrationsProcessor.ts`, `INTEGRATIONS_PROCESSOR_DISABLED=true`).
 
+### Commerce-aware AI (`AI_COMMERCE.md`)
+
+Five `AiSettings.commerce*` switches, all off by default except the request hand-over; each works only while its module
+is on. Rules worth not undoing: catalogue and order data reach the AI only as GROUNDING (`findCommerceGrounding`, shared
+by the WhatsApp fallback, channel AI, Sandbox and Copilot), never as a reply; with everything off nothing is queried and
+the prompt is byte-identical; order details only for an order whose phone IS the sender's WhatsApp-delivered number
+(`@c.us`, never a LID, never an order number someone typed); buy/cancel/return/change requests hand over as
+`COMMERCE_REQUEST`; a money amount not in the commerce entries hands over as `UNGROUNDED_PRICE`. The eight AI settings
+that nothing read are off the page and no longer written; their columns stay.
+
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 
 On the platform (Layer 1). Rules worth not undoing:

@@ -56,6 +56,12 @@ export interface FallbackPromptInput {
    * to what it was before the planner existed.
    */
   planGuidance?: string;
+  /**
+   * What the AI may and may not do with catalogue and order data (`commercePromptRules`,
+   * AI_COMMERCE.md). Absent or empty whenever commerce answers are off — the default — and the
+   * prompt is then byte-identical to what it was before they existed.
+   */
+  commerceRules?: string[];
 }
 
 export interface FallbackPrompt {
@@ -215,6 +221,7 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
           "confidently is worse for this team than no answer at all.",
         ]
       : []),
+    ...(input.commerceRules ?? []),
   ]
     // Joined on NEWLINES, not spaces.
     //

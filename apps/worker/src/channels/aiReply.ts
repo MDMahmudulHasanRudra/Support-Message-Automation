@@ -1,5 +1,5 @@
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
-import { aiDisclosureText, CHANNELS, decideAiDisclosure, decideReplyWindow, channelMessagePreview, isAiDisclosureChannel, validateChannelText, withAiDisclosure, type AiDisclosureReason, type ChannelType } from "@support-automation/shared";
+import { aiDisclosureText, CHANNELS, decideAiDisclosure, decideReplyWindow, channelMessagePreview, isAiDisclosureChannel, validateChannelText, withAiDisclosure, type AiDisclosureReason, type ChannelType, validateCommerceFigures } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
@@ -9,6 +9,7 @@ import { getAiSettings } from "../ai/settings.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { buildAnswerPlan, renderAnswerPlan, validateGrounding } from "../aiFallback/answerPlan.js";
 import { findRelevantKnowledge } from "../aiFallback/knowledgeContext.js";
+import { findCommerceGrounding } from "../aiFallback/commerceContext.js";
 import { expandQueryTerms } from "../aiFallback/queryExpansion.js";
 import { researchForCustomerQuestion } from "../aiFallback/deepAnswer.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "../aiFallback/prompt.js";
@@ -202,7 +203,12 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
   });
   const conversation: ConversationTurn[] = earlier.reverse().map((m) => ({ role: m.direction === "INBOUND" ? "CUSTOMER" : "SUPPORT", body: m.text ?? "" }));
 
+  // Catalogue answers when commerce answers are on (AI_COMMERCE.md). No order details here: these
+  // channels carry no phone number that proves who the customer is.
+  const commerce = await findCommerceGrounding({ text, switches: settings.ai, customerPhone: null });
+  if (commerce.handoverRequest) return handOver("COMMERCE_REQUEST");
   let knowledge = await findRelevantKnowledge(text, { groupId: null, accountId: null }, undefined, () => expandQueryTerms(client, text, conversation));
+  if (commerce.snippets.length) knowledge = [...commerce.snippets, ...knowledge];
   const mayResearch = settings.ai.aiResponseMode === "KNOWLEDGE_PLUS_FORGE" || settings.ai.aiResponseMode === "KNOWLEDGE_FORGE_GENERAL";
   let researchReason: string | undefined;
   if (knowledge.length === 0 && mayResearch) {
@@ -225,6 +231,7 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
         knowledge,
         conversation,
         planGuidance: renderAnswerPlan(plan),
+        commerceRules: commerce.rules,
       }),
     );
   } catch (err) {
@@ -243,6 +250,7 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
   if (parsed.confidence < required) return handOver(grounded ? "LOW_CONFIDENCE" : "LOW_CONFIDENCE_GENERAL", extra);
   const grounding = validateGrounding(parsed.responseText, plan);
   if (!grounding.ok) return handOver(grounding.reason ?? "UNGROUNDED_RESPONSE", extra);
+  if (commerce.policy?.active && !validateCommerceFigures(parsed.responseText, commerce.groundingText).ok) return handOver("UNGROUNDED_PRICE", extra);
   const tooLong = validateChannelText(type, parsed.responseText);
   if (tooLong) return handOver("REPLY_TOO_LONG_FOR_CHANNEL", extra);
 

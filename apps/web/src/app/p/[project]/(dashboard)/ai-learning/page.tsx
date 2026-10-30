@@ -57,7 +57,6 @@ export default async function AiLearningDashboardPage() {
     { label: "AI Engine", enabled: settings.aiEngineEnabled },
     { label: "Learning", enabled: settings.learningEnabled },
     { label: "Auto Response", enabled: settings.autoResponseEnabled },
-    { label: "Screenshot Response", enabled: settings.screenshotResponseEnabled },
   ];
 
   return (

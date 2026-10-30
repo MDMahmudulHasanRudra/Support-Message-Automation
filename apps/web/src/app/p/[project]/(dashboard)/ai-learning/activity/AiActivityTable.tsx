@@ -57,6 +57,10 @@ const REASON_HELP: Record<string, string> = {
   // understand, and that is the whole reason this map exists.
   UNGROUNDED_RESPONSE:
     "The reply was not supported by the reference material behind it, so it was handed over instead of sent.",
+  COMMERCE_REQUEST:
+    "The customer asked to buy, cancel, return or change an order. AI cannot do that, so it went straight to a person.",
+  UNGROUNDED_PRICE:
+    "The reply named a price that is not in the catalogue or the order it was given, so it was handed over instead of sent.",
 };
 
 function explainReason(reason: string | null): string | null {

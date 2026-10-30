@@ -1,10 +1,11 @@
 import { resolveAiClient, type AiClient, type AiCompletionResult } from "@support-automation/ai-client";
-import { COPILOT_REWRITE_INSTRUCTIONS, isCopilotRewriteInstruction, parseCopilotAssist } from "@support-automation/shared";
+import { COPILOT_REWRITE_INSTRUCTIONS, isCopilotRewriteInstruction, normalizePhoneNumber, parseCopilotAssist } from "@support-automation/shared";
 import { prisma } from "../db.js";
 import { projectHasFeature } from "../project/features.js";
 import { getAiSettings } from "../ai/settings.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "../aiFallback/prompt.js";
 import { findRelevantKnowledge, type KnowledgeSnippet } from "../aiFallback/knowledgeContext.js";
+import { findCommerceGrounding } from "../aiFallback/commerceContext.js";
 import { expandQueryTerms } from "../aiFallback/queryExpansion.js";
 import { buildAnswerPlan, renderAnswerPlan } from "../aiFallback/answerPlan.js";
 import { formatConversationTranscript, type ConversationTurn } from "../aiFallback/conversationContext.js";
@@ -162,12 +163,23 @@ async function answer(draftId: string, attempt: number, clientOverride?: AiClien
   if (!conversation.customerMessage) {
     return finish({ reason: "NO_CUSTOMER_MESSAGE: there is no customer message with text in this conversation yet." });
   }
-  const knowledge: KnowledgeSnippet[] = await findRelevantKnowledge(
-    conversation.customerMessage,
-    { groupId: conversation.groupId, accountId: draft.accountId },
-    undefined,
-    () => expandQueryTerms(client!, conversation.customerMessage!, conversation.turns),
-  );
+  // Catalogue and, in a one-to-one WhatsApp chat, that customer's own orders (AI_COMMERCE.md) — the same
+  // grounding the automatic reply would get. A request to buy or cancel is still drafted: the agent sends it.
+  const personalChat = draft.chatId?.endsWith("@c.us") ? normalizePhoneNumber(draft.chatId.slice(0, -"@c.us".length)) : null;
+  const commerce = await findCommerceGrounding({
+    text: conversation.customerMessage,
+    switches: { ...settings, commerceHandoverRequests: false },
+    customerPhone: personalChat ? async () => personalChat : null,
+  });
+  const knowledge: KnowledgeSnippet[] = [
+    ...commerce.snippets,
+    ...(await findRelevantKnowledge(
+      conversation.customerMessage,
+      { groupId: conversation.groupId, accountId: draft.accountId },
+      undefined,
+      () => expandQueryTerms(client!, conversation.customerMessage!, conversation.turns),
+    )),
+  ];
   const knowledgeTitles = knowledge.map((k) => k.title);
   const grounded = knowledge.length > 0;
 
@@ -217,6 +229,7 @@ async function answer(draftId: string, attempt: number, clientOverride?: AiClien
     // Everything said around the line being answered, that line itself excluded (it is the question).
     conversation: conversation.turns.filter((_, i) => i !== conversation.customerIndex),
     planGuidance: renderAnswerPlan(buildAnswerPlan(conversation.customerMessage, knowledge)),
+    commerceRules: commerce.rules,
   });
   const completion = await client.complete(prompt);
   const parsed = parseFallbackResponse(completion.text);

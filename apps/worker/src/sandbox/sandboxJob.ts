@@ -3,6 +3,8 @@ import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { buildFallbackPrompt, parseFallbackResponse } from "../aiFallback/prompt.js";
 import { findRelevantKnowledge } from "../aiFallback/knowledgeContext.js";
+import { findCommerceGrounding } from "../aiFallback/commerceContext.js";
+import { validateCommerceFigures } from "@support-automation/shared";
 import { expandQueryTerms } from "../aiFallback/queryExpansion.js";
 import type { ConversationTurn } from "../aiFallback/conversationContext.js";
 import { getApprovedStyleGuidance } from "../knowledge/communicationStyleJob.js";
@@ -143,9 +145,17 @@ async function answerTurn(turnId: string): Promise<void> {
   const conversation = await loadSandboxConversation(turn.sessionId, turn.createdAt);
 
   const groupId = turn.session.group?.id ?? null;
-  const knowledge = await findRelevantKnowledge(turn.userMessage, { groupId }, undefined, () =>
-    expandQueryTerms(client!, turn.userMessage, conversation),
-  );
+  // Commerce answers exactly as production gives them (AI_COMMERCE.md), read-only. The sandbox has no
+  // customer number, so it shows what an unverified customer gets: products yes, order details never.
+  const commerce = await findCommerceGrounding({ text: turn.userMessage, switches: aiSettings, customerPhone: null });
+  if (commerce.handoverRequest) {
+    await finish({ outcome: "HUMAN_FALLBACK", reason: "COMMERCE_REQUEST" });
+    return;
+  }
+  const knowledge = [
+    ...commerce.snippets,
+    ...(await findRelevantKnowledge(turn.userMessage, { groupId }, undefined, () => expandQueryTerms(client!, turn.userMessage, conversation))),
+  ];
   const knowledgeTitles = knowledge.map((entry) => entry.title);
 
   // Deep-answer research is deliberately NOT run here. It writes verified AiKnowledgeItem
@@ -170,6 +180,7 @@ async function answerTurn(turnId: string): Promise<void> {
         styleGuidance: await getApprovedStyleGuidance(),
         knowledge,
         conversation,
+        commerceRules: commerce.rules,
       }),
     );
   } catch (err) {
@@ -219,6 +230,11 @@ async function answerTurn(turnId: string): Promise<void> {
       reason: grounded ? "LOW_CONFIDENCE" : "LOW_CONFIDENCE_GENERAL",
       ...common,
     });
+    return;
+  }
+
+  if (commerce.policy?.active && !validateCommerceFigures(parsed.responseText, commerce.groundingText).ok) {
+    await finish({ outcome: "HUMAN_FALLBACK", reason: "UNGROUNDED_PRICE", ...common });
     return;
   }
 

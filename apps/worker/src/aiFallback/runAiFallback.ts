@@ -2,13 +2,14 @@ import { projectHasFeature } from "../project/features.js";
 import { createAiFallbackDecision, createRuleProposalFromAiReply, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
-import { isMediaOnlyBody } from "@support-automation/shared";
+import { isMediaOnlyBody, validateCommerceFigures } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { checkAiFallbackEligibility } from "./eligibility.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { buildAnswerPlan, renderAnswerPlan, validateGrounding } from "./answerPlan.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
+import { findCommerceGrounding, verifiedWhatsAppPhone } from "./commerceContext.js";
 import { buildEvidenceBundle, fingerprintOf, recordEvidenceSnapshot } from "./evidenceSnapshot.js";
 import { expandQueryTerms } from "./queryExpansion.js";
 import { loadConversationContext } from "./conversationContext.js";
@@ -31,7 +32,8 @@ import { getAiSettings } from "../ai/settings.js";
  * to retrieval shipped in between — and there would be no way to tell which. Bumped by hand when
  * the prompt or the retrieval contract changes in a way that could move an answer.
  */
-const PROMPT_VERSION = "2026-09-18.1";
+// 2026-10-30.1: commerce rules and catalogue/order entries, present only when commerce answers are on.
+const PROMPT_VERSION = "2026-10-30.1";
 const RETRIEVAL_VERSION = "bm25f.2026-09-18.1";
 
 export interface RunAiFallbackParams {
@@ -302,6 +304,19 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // The turns before this one, so a follow-up is understood as a follow-up rather than as the
   // first thing anyone ever said. Empty for the first message of a conversation, and empty if the
   // read fails — both leave exactly the behaviour that existed before this.
+  // Catalogue and the customer's own orders, when this project's commerce answers are on
+  // (AI_COMMERCE.md). Off by default, and then nothing here runs and nothing below changes. A request
+  // to buy, cancel, return or change an order goes straight to a person: the AI can never do those.
+  const commerce = await findCommerceGrounding({
+    text: params.message.body,
+    switches: aiSettings,
+    customerPhone: () => verifiedWhatsAppPhone(params.message.id),
+  });
+  if (commerce.handoverRequest) {
+    await recordHumanFallback("COMMERCE_REQUEST");
+    return;
+  }
+
   const conversation = await loadConversationContext({
     accountId: params.accountId,
     chatId: params.chatId,
@@ -326,6 +341,10 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   const mayResearch =
     aiSettings.aiResponseMode === "KNOWLEDGE_PLUS_FORGE" ||
     aiSettings.aiResponseMode === "KNOWLEDGE_FORGE_GENERAL";
+
+  // Catalogue and order entries go first: for a question they match, they are the most specific facts
+  // there are. They are this team's own data, so they ground an answer like verified knowledge does.
+  if (commerce.snippets.length) knowledge = [...commerce.snippets, ...knowledge];
 
   let deepAnswerReason: string | undefined;
   if (knowledge.length === 0 && mayResearch) {
@@ -384,6 +403,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
         knowledge,
         conversation,
         planGuidance: renderAnswerPlan(plan),
+        commerceRules: commerce.rules,
       }),
     );
   } catch (err) {
@@ -478,6 +498,13 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   const grounding = validateGrounding(parsed.responseText, plan);
   if (!grounding.ok) {
     await recordHumanFallback(grounding.reason ?? "UNGROUNDED_RESPONSE", commonFields);
+    return;
+  }
+
+  // "Never invent a price", checked mechanically: with commerce answers on, every money amount in the
+  // reply must be written in the catalogue or order entries it was given (AI_COMMERCE.md).
+  if (commerce.policy?.active && !validateCommerceFigures(parsed.responseText, commerce.groundingText).ok) {
+    await recordHumanFallback("UNGROUNDED_PRICE", commonFields);
     return;
   }
 

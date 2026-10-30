@@ -26,6 +26,7 @@ export * from "./projectModules.js";
 export * from "./commerce.js";
 export * from "./commerceIntegrations.js";
 export * from "./integrationHub.js";
+export * from "./aiCommerce.js";
 export * from "./rawSqlGuard.js";
 export * from "./projectAccessLevels.js";
 export * from "./projectRoles.js";

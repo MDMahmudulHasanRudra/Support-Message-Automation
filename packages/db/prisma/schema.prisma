@@ -3133,18 +3133,31 @@ model AiSettings {
   /// Distinct from knowledgeFromChatEnabled, which learns WHAT the team knows. This learns manner,
   /// not fact, and produces no knowledge entries at all. Off by default, and even when on the
   /// learned guidance does nothing until a person approves it — see CommunicationStyleProfile.
-  communicationStyleLearningEnabled Boolean  @default(false)
-  screenshotResponseEnabled         Boolean  @default(false)
-  chatLearningEnabled               Boolean  @default(false)
-  softwareLearningEnabled           Boolean  @default(false)
-  requirementLearningEnabled        Boolean  @default(false)
-  announcementAiEnabled             Boolean  @default(false)
-  /// Percentage (0-100). Two pieces of knowledge at/above this similarity are treated as duplicates.
-  duplicateSimilarityThreshold      Int      @default(95)
-  learningConfidenceThreshold       Int      @default(90)
-  autoApprovalThreshold             Int      @default(95)
-  humanReviewThreshold              Int      @default(70)
-  updatedAt                         DateTime @updatedAt
+  communicationStyleLearningEnabled Boolean @default(false)
+  /// LIVE: a Conversation Learning pattern scoring below this is not surfaced for review.
+  humanReviewThreshold              Int     @default(70)
+  /// The next eight columns are read by nothing and no longer shown or written (AI_COMMERCE.md
+  /// §Settings review, 30 Oct 2026). Kept so no stored value is lost; a later cleanup may drop them.
+  screenshotResponseEnabled         Boolean @default(false)
+  chatLearningEnabled               Boolean @default(false)
+  softwareLearningEnabled           Boolean @default(false)
+  requirementLearningEnabled        Boolean @default(false)
+  announcementAiEnabled             Boolean @default(false)
+  duplicateSimilarityThreshold      Int     @default(95)
+  learningConfidenceThreshold       Int     @default(90)
+  autoApprovalThreshold             Int     @default(95)
+
+  /// Commerce-aware AI (AI_COMMERCE.md). Each takes effect only while its module is on, so switching a
+  /// project's type never rewrites them. All off by default: a project that never opens these answers
+  /// exactly as before.
+  commerceProductAnswers   Boolean  @default(false)
+  commerceOrderAnswers     Boolean  @default(false)
+  commerceDeliveryAnswers  Boolean  @default(false)
+  /// Say how many are in stock rather than only whether something is.
+  commerceShowStockCount   Boolean  @default(false)
+  /// Hand a request to buy, cancel, return or change an order straight to a person.
+  commerceHandoverRequests Boolean  @default(true)
+  updatedAt                DateTime @updatedAt
 }
 
 /// A configured AI provider account (e.g. one Anthropic API key). apiKeyCiphertext
