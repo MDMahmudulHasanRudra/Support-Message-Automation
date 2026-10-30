@@ -31,21 +31,23 @@ export function FeedForm({ value, accounts, onDone }: { value: FeedValue; accoun
     }
   }, [state.success, router, onDone]);
   const key = value.id ?? "new";
+  // After a refusal the form shows what was submitted: React resets a form to its defaults once its action ran.
+  const shown: FeedValue = state.error && state.values ? { ...value, ...state.values } : value;
   return (
     <form action={action} className="space-y-3">
       {value.id ? <input type="hidden" name="id" value={value.id} /> : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Name" htmlFor={`fname-${key}`}>
-          <Input id={`fname-${key}`} name="name" defaultValue={value.name} maxLength={120} />
+          <Input id={`fname-${key}`} name="name" defaultValue={shown.name} maxLength={120} />
         </Field>
         <Field label="Feed address" htmlFor={`furl-${key}`} hint="An RSS or Atom feed, e.g. https://example.com/feed">
-          <Input id={`furl-${key}`} name="url" type="url" defaultValue={value.url} />
+          <Input id={`furl-${key}`} name="url" type="url" defaultValue={shown.url} />
         </Field>
         <Field label="Line above each item (optional)" htmlFor={`fprefix-${key}`}>
-          <Input id={`fprefix-${key}`} name="prefix" defaultValue={value.prefix} maxLength={300} placeholder="New on our blog:" />
+          <Input id={`fprefix-${key}`} name="prefix" defaultValue={shown.prefix} maxLength={300} placeholder="New on our blog:" />
         </Field>
         <Field label="Check every" htmlFor={`fint-${key}`}>
-          <Select id={`fint-${key}`} name="intervalMinutes" defaultValue={String(value.intervalMinutes)}>
+          <Select id={`fint-${key}`} name="intervalMinutes" defaultValue={String(shown.intervalMinutes)}>
             {[
               [60, "hour"],
               [180, "3 hours"],
@@ -66,17 +68,17 @@ export function FeedForm({ value, accounts, onDone }: { value: FeedValue; accoun
         <div className="flex flex-wrap gap-3 text-sm">
           {accounts.map((a) => (
             <label key={a.id} className="flex items-center gap-1.5">
-              <input type="checkbox" name="account" value={a.id} defaultChecked={value.accountIds.includes(a.id)} /> {a.label}
+              <input type="checkbox" name="account" value={a.id} defaultChecked={shown.accountIds.includes(a.id)} /> {a.label}
             </label>
           ))}
         </div>
       </fieldset>
       <div className="flex flex-wrap gap-4 text-sm">
         <label className="flex items-center gap-1.5">
-          <input type="checkbox" name="includeSummary" defaultChecked={value.includeSummary} /> Include a short summary
+          <input type="checkbox" name="includeSummary" defaultChecked={shown.includeSummary} /> Include a short summary
         </label>
         <label className="flex items-center gap-1.5">
-          <input type="checkbox" name="enabled" defaultChecked={value.enabled} /> On
+          <input type="checkbox" name="enabled" defaultChecked={shown.enabled} /> On
         </label>
       </div>
       {state.error ? <Alert tone="danger" title={state.error} /> : null}

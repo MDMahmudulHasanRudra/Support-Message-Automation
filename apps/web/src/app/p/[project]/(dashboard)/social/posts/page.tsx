@@ -42,8 +42,11 @@ export default async function SocialPostsPage({ searchParams }: { searchParams: 
           ) : null
         }
       />
-      <form className="mb-4 flex flex-wrap items-end gap-3" method="get">
+      {/* Two sibling forms, never one inside the other (a nested form is invalid HTML and broke hydration). */}
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+      <form className="flex flex-wrap items-end gap-3" method="get">
         <input type="hidden" name="view" value={view} />
+        {sp.search ? <input type="hidden" name="search" value={sp.search} /> : null}
         <label className="text-sm">
           <span className="mb-1 block text-xs text-[color:var(--color-muted-foreground)]">Account</span>
           <select name="account" defaultValue={sp.account ?? ""} className="h-9 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm">
@@ -69,10 +72,11 @@ export default async function SocialPostsPage({ searchParams }: { searchParams: 
         <button type="submit" className="h-9 rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-sm">
           Filter
         </button>
+      </form>
         <div className="ml-auto">
           <SearchField placeholder="Name or text" defaultValue={sp.search ?? ""} preserve={{ view, account: sp.account, campaign: sp.campaign }} />
         </div>
-      </form>
+      </div>
       {posts.length === 0 ? (
         <EmptyState>{t.empty}</EmptyState>
       ) : (

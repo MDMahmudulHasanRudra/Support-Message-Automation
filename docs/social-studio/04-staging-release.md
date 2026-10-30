@@ -202,3 +202,41 @@ Use a test Page and a test Instagram professional account owned by the team.
   and the data-deletion callback (`/api/meta/data-deletion`, now covering Social Studio).
 - **Business verification** of the platform's Meta Business account.
 - Until approved, only people with a role on the Meta app can connect (Standard Access).
+
+## 11. Release-gate test record (30 Oct 2026)
+
+Automated, against the isolated PostgreSQL 16 database (all 156 migrations applied in order):
+
+| Suite | Result |
+|---|---|
+| packages/shared | 1209 passed |
+| packages/engine | 79 passed |
+| apps/worker `test:isolated` | 1416 passed, 6 skipped, 0 failed |
+| apps/web `test:isolated` | 1107 passed, 7 skipped, **2 failed** — both also fail on 54fbab4, before this work (module-template permission wording; SaaS owner invitation); tracked separately |
+| `socialStudio.integration.test.ts` | 20 passed (engine races, lease loss, crashes, ambiguous answers, reschedule/cancel, RSS exactly-once, media allowance, signed URLs, tenant isolation, DB triggers, Meta revocation) |
+| `socialRssFetch.test.ts` | 6 passed (DNS rebinding, private answers and literals, redirects, size caps, gzip bomb) |
+
+Every new safety test was run against the code it protects with that protection removed, and failed, except the
+saveContainers fence, which overlaps with `renewLease` (equivalent mutant, documented).
+
+Browser (dev server on the isolated DB, fake accounts, publishing processor OFF, no Meta), desktop 1366×900 and
+mobile 375×812:
+
+| Flow | Result |
+|---|---|
+| Account list and Meta readiness | pass — problems named, never values |
+| Draft → send for approval → approve → schedule | pass — DB: SCHEDULED, DUE at 04:00 UTC for 10:00 Dhaka; history CREATED/SUBMITTED/APPROVED/SCHEDULED |
+| Calendar reschedule (drag) | pass — moved to the new day, RESCHEDULED event; the board redraws only on reload (minor) |
+| Media upload | pass — JPEG accepted; HTML renamed .jpg and empty file refused |
+| Partial / unknown / failed display | pass — "Send again" disabled until "I checked" is ticked; refused when the approval no longer matches; "Mark not published" recorded with the actor |
+| AI request | pass — queued (answered by the worker, not running in this test) |
+| RSS | pass — localhost refused on save; a private IP refused at fetch without connecting |
+| Permissions | pass — Read Only sees posts read-only, is sent away from Create post (`denied=social.edit`), upload API 403 |
+| Tenant isolation | pass — another project's post id is a 404; a project with the module off redirects (`unavailable=SOCIAL_STUDIO`) |
+| Project Type / Custom Mix | pass — Social Studio listed as "Manual switch"; not added by a type |
+| Mobile (9 pages) | pass after fix — no horizontal page overflow |
+
+Fixed during the browser pass: month calendar weekday header misaligned on phones; nested forms on the Posts list
+(hydration error); the RSS feed form emptied every field after a refusal.
+Open, minor: breadcrumb shows "Overview" on Create post and "Drafts" on a post page; the Posts tab strip highlights
+"Drafts" for other `?view=` values; the calendar redraws a moved post only after reload.

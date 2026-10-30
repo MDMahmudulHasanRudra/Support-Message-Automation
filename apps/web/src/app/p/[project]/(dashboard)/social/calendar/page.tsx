@@ -157,15 +157,17 @@ export default async function SocialCalendarPage({ searchParams }: { searchParam
           </button>
         </form>
       </div>
-      {view === "month" ? (
-        <div className="mb-1 grid grid-cols-7 text-center text-xs font-medium text-[color:var(--color-muted-foreground)]">
-          {WEEKDAYS.map((d) => (
-            <span key={d}>{d}</span>
-          ))}
-        </div>
-      ) : null}
+      {/* The weekday header scrolls WITH the grid: outside the scroll box it stayed screen-wide while the
+          grid kept its minimum width, so on a phone each date sat under the wrong weekday. */}
       <div className="overflow-x-auto">
         <div className={view === "month" ? "min-w-[42rem]" : view === "week" ? "min-w-[48rem]" : ""}>
+          {view === "month" ? (
+            <div className="mb-1 grid grid-cols-7 text-center text-xs font-medium text-[color:var(--color-muted-foreground)]">
+              {WEEKDAYS.map((d) => (
+                <span key={d}>{d}</span>
+              ))}
+            </div>
+          ) : null}
           <CalendarBoard days={days} items={items} columns={view === "day" ? 1 : 7} canPublish={canPublish} timezone={tz} canCreate={canCreate} />
         </div>
       </div>
