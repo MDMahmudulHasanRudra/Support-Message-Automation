@@ -744,6 +744,8 @@ model Project {
   socialCampaigns                      SocialCampaign[]
   socialTemplates                      SocialTemplate[]
   socialAiRequests                     SocialAiRequest[]
+  socialRssFeeds                       SocialRssFeed[]
+  socialRssItems                       SocialRssItem[]
 
   @@index([customerId])
 }
@@ -8849,4 +8851,48 @@ model SocialAiRequest {
   completedAt         DateTime?
 
   @@index([projectId, status, createdAt])
+}
+
+/// An RSS / Atom feed whose new items become Social Studio DRAFTS (SOCIAL_STUDIO.md §Automation).
+/// Never publishes: every imported item still needs approval and scheduling.
+model SocialRssFeed {
+  id                String          @id @default(cuid())
+  projectId         String          @default(dbgenerated("project_id_required()"))
+  project           Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name              String
+  url               String
+  /// The accounts each draft is prepared for (checked against this project's accounts when used).
+  accountIds        String[]        @default([])
+  /// A line put above each item's title (optional).
+  prefix            String?
+  includeSummary    Boolean         @default(true)
+  enabled           Boolean         @default(true)
+  intervalMinutes   Int             @default(360)
+  /// Nothing older than this is imported (the moment the feed was added, so its back catalogue is skipped).
+  importFrom        DateTime        @default(now())
+  lastFetchedAt     DateTime?
+  lastError         String?
+  draftsCreated     Int             @default(0)
+  createdByUsername String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  items             SocialRssItem[]
+
+  @@index([projectId, enabled])
+}
+
+/// One feed item seen, kept once (feed + guid), and the draft made from it.
+model SocialRssItem {
+  id        String        @id @default(cuid())
+  projectId String        @default(dbgenerated("project_id_required()"))
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  feedId    String
+  feed      SocialRssFeed @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  guid      String
+  title     String
+  link      String?
+  postId    String?
+  seenAt    DateTime      @default(now())
+
+  @@unique([feedId, guid])
 }

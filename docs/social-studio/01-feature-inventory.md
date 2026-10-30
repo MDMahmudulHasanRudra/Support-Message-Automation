@@ -186,8 +186,9 @@ platform is listed with its requirements and is **not** claimed.
 ## 13. RSS and automation
 
 - **Purpose**: draft posts from a feed; alerts.
-- **Rule**: imported items would be drafts needing approval.
-- **Status**: NOT built.
+- **Rule**: imported items are drafts needing approval.
+- **Status**: RSS / Atom import implemented (`/social/automation`). Failure alerts through the Notification
+  Center are NOT built: failures show on the Overview and in the System Log.
 
 ## 14. Other platforms
 

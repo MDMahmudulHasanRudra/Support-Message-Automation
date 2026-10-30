@@ -3072,6 +3072,8 @@ Owned code, no Postiz or other publishing service. Rules worth not undoing:
   AI system; gated on SOCIAL_STUDIO + the AI Engine, NOT on AI Copilot. Its prompt forbids facts beyond the brief and the chosen
   products; an answer only fills a draft (`aiAssisted`), which still needs approval. Recurring posts are separate scheduled
   copies of the approved material (`repeatTimes`, wall-clock, ≤12), never a hidden repeat.
+- **RSS import only makes DRAFTS** (`server/social/rss.ts`): public addresses only (re-checked per redirect), 2 MB / 15 s caps,
+  one draft per item (the item row is written first, unique per feed), only items newer than the feed.
 
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 

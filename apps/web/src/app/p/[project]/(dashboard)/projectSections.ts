@@ -133,6 +133,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/social/templates": { write: ["social.edit"] },
   "/social/analytics": { also: ["/api/social/export"] },
   "/social/ai": { write: ["social.edit"] },
+  "/social/automation": { write: ["social.manage"] },
   "/social/accounts": { write: ["social.manage"], also: ["/api/social/meta"] },
   "/settings/social": { fullOnly: true },
   // Team

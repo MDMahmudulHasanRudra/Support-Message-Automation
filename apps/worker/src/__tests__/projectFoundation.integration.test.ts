@@ -109,8 +109,9 @@ describe("the constraints later phases depend on", () => {
     // + the five commerce integration tables (20261029160000_commerce_integrations).
     // + the three Integration Hub tables (20261029170000_integration_hub).
     // + ListSavedView (20261030100000_list_saved_views).
-    // + the nine Social Studio tables (20261030120000_social_studio) + SocialAiRequest (20261030130000_social_ai).
-    expect(refusing).toHaveLength(161);
+    // + the nine Social Studio tables (20261030120000_social_studio) + SocialAiRequest (20261030130000_social_ai)
+    //   + SocialRssFeed, SocialRssItem (20261030140000_social_rss).
+    expect(refusing).toHaveLength(163);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -144,8 +145,8 @@ describe("the constraints later phases depend on", () => {
     // + the five commerce integration tables.
     // + the three Integration Hub tables.
     // + ListSavedView.
-    // + the nine Social Studio tables + SocialAiRequest.
-    expect(rows).toHaveLength(164);
+    // + the nine Social Studio tables + SocialAiRequest + the two RSS tables.
+    expect(rows).toHaveLength(166);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

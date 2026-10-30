@@ -2,6 +2,7 @@ import { globalPrisma } from "@/server/db";
 import { runWithProject, type ActiveProject } from "@/server/projectContext";
 import { disabledFeaturesFor } from "@/server/projectFeatures";
 import { publishTarget, reconcileUnknownTarget, recoverExpiredLease, refreshTargetMetrics } from "@/server/social/engine";
+import { runFeed } from "@/server/social/rss";
 
 /**
  * Social Studio's publishing worker (SOCIAL_STUDIO.md §Engine), in the APP process — never in the WhatsApp
@@ -11,7 +12,8 @@ import { publishTarget, reconcileUnknownTarget, recoverExpiredLease, refreshTarg
  *   1. expired leases: re-queued when the request never left, otherwise UNKNOWN (engine.ts);
  *   2. due jobs: up to 25 per tick, oldest due first;
  *   3. unknown outcomes: looked for on the account every 3 minutes for 2 days, then left to a person;
- *   4. statistics of posts published in the last 14 days, refreshed every 6 hours, 20 per tick.
+ *   4. statistics of posts published in the last 14 days, refreshed every 6 hours, 20 per tick;
+ *   5. RSS feeds due by their own interval (at least an hour), at most 10 per tick — they only make DRAFTS.
  * A suspended, archived or billing-held project, or one with Social Studio off, is skipped — its jobs
  * wait. SOCIAL_PROCESSOR_DISABLED=true leaves the worker off.
  */
@@ -41,7 +43,7 @@ async function eachInProject<T extends { id: string; projectId: string }>(rows: 
   return done;
 }
 
-export async function socialTickOnce(now = new Date()): Promise<{ recovered: number; published: number; reconciled: number; metrics: number }> {
+export async function socialTickOnce(now = new Date()): Promise<{ recovered: number; published: number; reconciled: number; metrics: number; feeds: number }> {
   const cache = new Map<string, ActiveProject | null>();
   const expired = await globalPrisma.socialPostTarget.findMany({ where: { status: "PUBLISHING", leaseExpiresAt: { lt: now } }, take: 25, select: { id: true, projectId: true } });
   const recovered = await eachInProject(expired, cache, (id) => recoverExpiredLease(id, now), "lease recovery");
@@ -68,7 +70,16 @@ export async function socialTickOnce(now = new Date()): Promise<{ recovered: num
     select: { id: true, projectId: true },
   });
   const metrics = await eachInProject(stale, cache, (id) => refreshTargetMetrics(id, now), "statistics");
-  return { recovered, published, reconciled, metrics };
+
+  const feedRows = await globalPrisma.socialRssFeed.findMany({
+    where: { enabled: true, OR: [{ lastFetchedAt: null }, { lastFetchedAt: { lt: new Date(now.getTime() - 60 * 60_000) } }] },
+    orderBy: { lastFetchedAt: { sort: "asc", nulls: "first" } },
+    take: 25,
+    select: { id: true, projectId: true, intervalMinutes: true, lastFetchedAt: true },
+  });
+  const dueFeeds = feedRows.filter((f) => !f.lastFetchedAt || f.lastFetchedAt.getTime() <= now.getTime() - f.intervalMinutes * 60_000).slice(0, 10);
+  const feeds = await eachInProject(dueFeeds, cache, (id) => runFeed(id, now), "RSS import");
+  return { recovered, published, reconciled, metrics, feeds };
 }
 
 let running = false;

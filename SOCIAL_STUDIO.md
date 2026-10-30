@@ -147,6 +147,24 @@ Scheduling an approved post can repeat it daily, weekly or monthly, up to 12 mor
 - **Copies**: each occurrence is its own SCHEDULED post with the identical approved material, so the
   approval covers it. It is on the calendar and cancellable on its own. Nothing repeats out of sight.
 
+## Automation: RSS import
+
+`/social/automation`, `social.manage`. An RSS or Atom feed's NEW items become DRAFTS for chosen accounts.
+They are drafts only: each still needs approval and scheduling.
+
+- **Only new items**: only items published after the feed was added (`importFrom`), at most five per run.
+- **One draft per item**: the item is recorded once per feed (`@@unique([feedId, guid])`) BEFORE its draft
+  is made, so a race or retry never makes two drafts.
+- **The fetch** (`server/social/rss.ts`):
+  - only public addresses (every resolved address checked), http(s) on standard ports;
+  - every redirect checked again, at most three;
+  - 15-second deadline, 2 MB cap, feed content types only.
+- **Parsing**: a bounded scanner without an XML library (`packages/shared/src/socialRss.ts`); markup and
+  scripts are stripped, and only http(s) links are kept.
+- **Schedule**: each feed has its own interval (1–24 h), checked by the Social Studio worker.
+- **Status**: implemented, unit-tested (parsing, address rules), not run against a live feed in this build.
+  Migration `20261030140000_social_rss`.
+
 ## Media library
 
 - **What is accepted**: JPEG, PNG, WebP, GIF photos up to 8 MB, and MP4 / MOV videos up to 200 MB. The
@@ -175,7 +193,6 @@ Scheduling an approved post can repeat it daily, weekly or monthly, up to 12 mor
 
 - **Other platforms**: Threads, LinkedIn, YouTube, TikTok and Pinterest adapters. Each needs its own
   developer approval.
-- **RSS import**.
 - **Notifications**: failure alerts through the Notification Center (failures are on the Overview and in
   the System Log).
 - **Live testing**: real-provider verification of everything Meta.

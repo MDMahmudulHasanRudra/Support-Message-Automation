@@ -29,5 +29,5 @@ The honest release boundary. The levels used:
 | AI Content Studio (ideas, captions, hashtags, rewrite, adapt, campaign plan, review; product-aware) | yes | unit (validation, prompt rules, parsing) | not run against a real AI provider | AI Engine on + a Response model configured |
 | Threads, LinkedIn, YouTube, TikTok, Pinterest | **no** | — | — | each network's developer approval + an adapter |
 | Recurring posts (daily / weekly / monthly, up to 12, DST-correct) | yes | unit (times) | n/a | — |
-| RSS import | **no** | — | — | — |
+| RSS / Atom import into drafts | yes | unit (parsing, address rules) | not run against a live feed | — |
 | Failure alerts through the Notification Center | **no** (Overview and System Log only) | — | — | — |
