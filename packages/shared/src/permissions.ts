@@ -160,6 +160,13 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "woocommerce.manage", label: "Manage the WooCommerce Connection", category: "Commerce" },
   { key: "shopify.manage", label: "Manage the Shopify Connection", category: "Commerce" },
   { key: "api.manage", label: "Manage API Keys and Webhooks", category: "System" },
+  // Social Studio (SOCIAL_STUDIO.md): writing, approving and publishing are three different people's
+  // jobs in most teams, so each is its own key; connecting the publishing provider is a fourth.
+  { key: "social.view", label: "View Social Studio Posts and Calendar", category: "Social Studio" },
+  { key: "social.edit", label: "Write and Edit Social Posts", category: "Social Studio" },
+  { key: "social.approve", label: "Approve Social Posts", category: "Social Studio" },
+  { key: "social.publish", label: "Schedule and Publish Approved Social Posts", category: "Social Studio" },
+  { key: "social.manage", label: "Manage the Social Publishing Connection", category: "Social Studio" },
 
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },

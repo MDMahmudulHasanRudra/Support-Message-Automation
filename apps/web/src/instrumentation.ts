@@ -15,4 +15,9 @@ export async function register() {
     const { startIntegrationsProcessor } = await import("./server/integrationsProcessor");
     startIntegrationsProcessor();
   }
+  // Social Studio: sends approved posts to the publishing provider and follows them (SOCIAL_STUDIO.md).
+  if (process.env.SOCIAL_PROCESSOR_DISABLED !== "true") {
+    const { startSocialProcessor } = await import("./server/socialProcessor");
+    startSocialProcessor();
+  }
 }

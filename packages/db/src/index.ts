@@ -161,6 +161,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "CourierConnection", "Shipment", "ShipmentEvent", "ShopConnection", "ShopSyncRun",
   "ApiKey", "WebhookEndpoint", "WebhookDelivery",
   "ListSavedView",
+  "SocialConnection", "SocialAccount", "SocialPost", "SocialPostTarget", "SocialPublishAttempt", "SocialPostEvent", "SocialMediaAsset", "SocialCampaign", "SocialTemplate",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([

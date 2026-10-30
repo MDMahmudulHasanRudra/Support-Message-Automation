@@ -3052,6 +3052,23 @@ The Overview adds a Commerce section and a setup checklist only for modules that
 commerce lists have personal/shared saved views (`ListSavedView`, query reduced to the page's own filters); the Module
 Builder shows "Data kept" on switched-off modules (PROJECT_MODULES.md §9).
 
+### Social Studio — native social publishing (`SOCIAL_STUDIO.md`, `docs/social-studio/`)
+
+Feature `SOCIAL_STUDIO`, **off by default and `manualOnly`**; keys `social.view/edit/approve/publish/manage`.
+Owned code, no Postiz or other publishing service. Rules worth not undoing:
+- **Each account is a durable publish job** (`SocialPostTarget`), claimed `DUE → PUBLISHING` by a conditional update with a lease;
+  every attempt is a `SocialPublishAttempt` written BEFORE sending; the adapter calls `markSent()` right before the request that
+  makes a post public. A safe refusal (rate/quota, never sent) retries with backoff then dead-letters; an unseen answer after
+  `markSent` is UNKNOWN and is NEVER re-sent by the engine — reconciliation (exactly one matching publication) or a person who
+  confirms "not there" settles it. A lost lease re-queues only when `requestSentAt` is null.
+- **An approval covers exact material** (`approvalHash` over text, per-account text and settings, media); any edit clears it and
+  the engine re-checks it when publishing. The engine runs in the APP process (`server/socialProcessor.ts`), never the WhatsApp worker.
+- **Meta publishing is separate from Meta messaging**: own callback `/api/social/meta/callback`, own scopes (`META_SOCIAL_SCOPES`,
+  never `pages_messaging`), own tables; it reuses the platform app env and `META_ALLOWED_PROJECT_IDS`. Tokens are decrypted only in
+  `server/social/accounts.ts`. Platforms fetch media only through 2-hour HMAC-signed URLs (`signedAssetUrl`).
+- **Adapters exist only for Facebook Pages and Instagram** (`socialMetaAdapter.test.ts` keeps the registry and the catalogue in agreement);
+  mock-tested, NOT live-verified, Meta App Review pending. A metric a platform does not return is absent, never 0.
+
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 
 On the platform (Layer 1). Rules worth not undoing:

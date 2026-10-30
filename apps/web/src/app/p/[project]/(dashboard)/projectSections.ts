@@ -125,6 +125,15 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/settings/woocommerce": { fullOnly: true },
   "/settings/shopify": { fullOnly: true },
   "/settings/api": { fullOnly: true },
+  // Social Studio (SOCIAL_STUDIO.md). Writing, approving and publishing are separate keys on one page.
+  "/social/posts": { write: ["social.edit", "social.approve", "social.publish"], also: ["/social/new", "/api/social/assets", "/api/social/upload"] },
+  "/social/calendar": { write: ["social.publish"], also: ["/api/social/assets"] },
+  "/social/media": { write: ["social.edit"], also: ["/api/social/assets", "/api/social/upload"] },
+  "/social/campaigns": { write: ["social.edit"] },
+  "/social/templates": { write: ["social.edit"] },
+  "/social/analytics": { also: ["/api/social/export"] },
+  "/social/accounts": { write: ["social.manage"], also: ["/api/social/meta"] },
+  "/settings/social": { fullOnly: true },
   // Team
   "/team-management": { write: ["team_management.manage"], also: ["/api/team-management/export"] },
   "/team-management/schedule": { write: ["team_management.manage"] },

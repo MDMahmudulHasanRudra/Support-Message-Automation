@@ -734,6 +734,15 @@ model Project {
   listSavedViews                       ListSavedView[]
   webhookEndpoints                     WebhookEndpoint[]
   webhookDeliveries                    WebhookDelivery[]
+  socialConnections                    SocialConnection[]
+  socialAccounts                       SocialAccount[]
+  socialPosts                          SocialPost[]
+  socialPostTargets                    SocialPostTarget[]
+  socialPublishAttempts                SocialPublishAttempt[]
+  socialPostEvents                     SocialPostEvent[]
+  socialMediaAssets                    SocialMediaAsset[]
+  socialCampaigns                      SocialCampaign[]
+  socialTemplates                      SocialTemplate[]
 
   @@index([customerId])
 }
@@ -8284,6 +8293,7 @@ model SalesLead {
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   events            SalesLeadEvent[]
+  socialCampaigns   SocialCampaign[]
 
   @@index([projectId, stage])
   @@index([projectId, nextFollowUpAt])
@@ -8553,4 +8563,262 @@ model ListSavedView {
   updatedAt DateTime @updatedAt
 
   @@index([projectId, path, ownerId])
+}
+
+// ── Social Studio (SOCIAL_STUDIO.md) ─────────────────────────────────────────────────────────────
+// Get Assist's own social publishing. A connection is one person's authorization at a network (Meta);
+// it brings accounts (Pages, Instagram accounts). A post is written and approved once; each chosen
+// account is one publish TARGET — a durable job the engine claims, publishes and records attempts for.
+// Every table is project-owned; disabling the module keeps every row.
+
+/// One authorization at a network, by one person, for this project. The user token is encrypted;
+/// disconnecting wipes it and keeps the row, its accounts and every post.
+model SocialConnection {
+  id                   String          @id @default(cuid())
+  projectId            String          @default(dbgenerated("project_id_required()"))
+  project              Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// META (Facebook Pages + Instagram). Further networks add values; see socialPlatforms.ts.
+  provider             String
+  /// CONNECTED | NEEDS_RECONNECT | ERROR | DISCONNECTED
+  status               String          @default("CONNECTED")
+  /// The network's id for the person who authorised (app-scoped for Meta).
+  externalUserId       String
+  externalUserName     String?
+  /// The long-lived user token, encrypted (encryptSecret). Null once disconnected.
+  credentialCiphertext String?
+  tokenExpiresAt       DateTime?
+  grantedScopes        String[]        @default([])
+  declinedScopes       String[]        @default([])
+  connectedByUsername  String
+  lastCheckedAt        DateTime?
+  lastError            String?
+  disconnectedAt       DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  accounts             SocialAccount[]
+
+  @@unique([projectId, provider, externalUserId])
+}
+
+/// A publishable account (a Facebook Page, an Instagram professional account). One row per account per
+/// project, so the same Page can never be published to twice through two connections.
+model SocialAccount {
+  id               String             @id @default(cuid())
+  projectId        String             @default(dbgenerated("project_id_required()"))
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId     String
+  connection       SocialConnection   @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  /// SOCIAL_PLATFORM_KEYS: FACEBOOK_PAGE | INSTAGRAM | ...
+  platform         String
+  externalId       String
+  /// Instagram: the Facebook Page it is linked to (and published through).
+  parentExternalId String?
+  name             String
+  username         String?
+  pictureUrl       String?
+  /// The account's own token, encrypted (a Page token for both a Page and its Instagram account).
+  tokenCiphertext  String?
+  /// ACTIVE | NEEDS_RECONNECT | REMOVED
+  status           String             @default("ACTIVE")
+  /// The project may switch an account off for publishing without disconnecting it.
+  enabled          Boolean            @default(true)
+  lastError        String?
+  lastSeenAt       DateTime
+  removedAt        DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  targets          SocialPostTarget[]
+
+  @@unique([projectId, platform, externalId])
+  @@index([connectionId])
+}
+
+/// One post, written and approved here, published to one or more accounts.
+model SocialPost {
+  id                  String             @id @default(cuid())
+  projectId           String             @default(dbgenerated("project_id_required()"))
+  project             Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// An internal name for lists and the calendar; never published.
+  title               String?
+  /// The main text; an account may have its own (SocialPostTarget.contentOverride).
+  content             String
+  /// SocialMediaAsset ids, in order (checked against this project's rows on every use).
+  mediaIds            String[]           @default([])
+  /// SOCIAL_POST_STATUSES (packages/shared/src/socialStudio.ts).
+  status              String             @default("DRAFT")
+  /// SCHEDULE | NOW
+  publishMode         String             @default("SCHEDULE")
+  /// The instant it is due (UTC). Shown and entered on the wall clock of `timezone`.
+  scheduledAt         DateTime?
+  timezone            String             @default("Asia/Dhaka")
+  campaignId          String?
+  campaign            SocialCampaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  /// AI wrote or rewrote some of the text (AI Content Studio). It still needs a person's approval.
+  aiAssisted          Boolean            @default(false)
+  /// The reviewer asked to approve it (a username); anyone with social.approve still may.
+  reviewerUsername    String?
+  createdByUsername   String
+  updatedByUsername   String?
+  submittedAt         DateTime?
+  submittedByUsername String?
+  /// SHA-256 of the material the approval covers (socialApprovalMaterial). Any change clears it.
+  approvalHash        String?
+  approvedAt          DateTime?
+  approvedByUsername  String?
+  reviewNote          String?
+  scheduledAtRequest  DateTime?
+  scheduledByUsername String?
+  duplicatedFromId    String?
+  revision            Int                @default(1)
+  lastError           String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  targets             SocialPostTarget[]
+  events              SocialPostEvent[]
+
+  @@index([projectId, status])
+  @@index([projectId, scheduledAt])
+  @@index([campaignId])
+}
+
+/// The post on one account: its own text and settings, and the durable publish job.
+model SocialPostTarget {
+  id                   String                 @id @default(cuid())
+  projectId            String                 @default(dbgenerated("project_id_required()"))
+  project              Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  postId               String
+  post                 SocialPost             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  accountId            String
+  account              SocialAccount          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  /// This account's own text (a channel-specific variant); null = the post's main text.
+  contentOverride      String?
+  /// Platform settings for this account (a JSON object), e.g. {"igMediaType":"REELS"}.
+  settings             Json?
+  /// SOCIAL_TARGET_STATUSES: PENDING | DUE | PUBLISHING | PUBLISHED | FAILED | UNKNOWN | CANCELLED
+  status               String                 @default("PENDING")
+  dueAt                DateTime?
+  /// After a refusal that is safe to repeat (rate limit, unreachable): not before this.
+  nextAttemptAt        DateTime?
+  /// While PUBLISHING: the claim and when it is considered abandoned.
+  claimToken           String?
+  leaseExpiresAt       DateTime?
+  attempts             Int                    @default(0)
+  externalId           String?
+  /// Instagram: the media containers made for this attempt (publishing them is the separate step).
+  externalContainerIds String[]               @default([])
+  permalink            String?
+  error                String?
+  publishedAt          DateTime?
+  lastCheckedAt        DateTime?
+  /// The platform's own counts for the publication (SocialMetricValue[]), as last read, and when.
+  metrics              Json?
+  metricsAt            DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  publishAttempts      SocialPublishAttempt[]
+
+  @@unique([postId, accountId])
+  @@index([status, dueAt])
+  @@index([accountId, publishedAt])
+}
+
+/// Every attempt to publish one target: when it started, whether the publishing request left, and
+/// what came back. `requestSentAt` null = the request never left, so a lost lease may run it again.
+model SocialPublishAttempt {
+  id            String           @id @default(cuid())
+  projectId     String           @default(dbgenerated("project_id_required()"))
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  targetId      String
+  target        SocialPostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  attemptNo     Int
+  claimToken    String
+  startedAt     DateTime
+  requestSentAt DateTime?
+  finishedAt    DateTime?
+  /// PUBLISHED | REFUSED | AUTH | RETRY_LATER | UNKNOWN | REQUEUED (lease lost before sending)
+  outcome       String?
+  message       String?
+  externalId    String?
+
+  @@index([targetId, attemptNo])
+}
+
+/// What happened to a post, and the team's comments on it. Append-only (a trigger refuses changes).
+model SocialPostEvent {
+  id            String     @id @default(cuid())
+  projectId     String     @default(dbgenerated("project_id_required()"))
+  project       Project    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  postId        String
+  post          SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  /// CREATED, EDITED, SUBMITTED, APPROVED, REJECTED, SCHEDULED, CANCELLED, PUBLISHED, FAILED, UNKNOWN,
+  /// RETRY, SEND_AGAIN, MARKED, MATCHED, COMMENT, DUPLICATED, AI
+  kind          String
+  actorUsername String?
+  detail        Json?
+  createdAt     DateTime   @default(now())
+
+  @@index([postId, createdAt])
+}
+
+/// A file in the project's Social Studio media library, kept on the media volume (MEDIA_STORAGE.md).
+/// Platforms fetch it through a short-lived signed address. Deleting marks it; posts keep their history.
+model SocialMediaAsset {
+  id                 String    @id @default(cuid())
+  projectId          String    @default(dbgenerated("project_id_required()"))
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// social/<projectId>/<id>.<ext> — ids only.
+  storageKey         String    @unique
+  name               String
+  /// IMAGE | VIDEO
+  kind               String
+  mimeType           String
+  sizeBytes          Int
+  folder             String?
+  tags               String[]  @default([])
+  altText            String?
+  uploadedByUsername String
+  createdAt          DateTime  @default(now())
+  deletedAt          DateTime?
+
+  @@index([projectId, deletedAt, createdAt])
+}
+
+/// A campaign groups posts (and may be linked to a sales lead).
+model SocialCampaign {
+  id                String       @id @default(cuid())
+  projectId         String       @default(dbgenerated("project_id_required()"))
+  project           Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name              String
+  description       String?
+  /// #rrggbb for the calendar.
+  color             String?
+  startsOn          DateTime?
+  endsOn            DateTime?
+  /// ACTIVE | ARCHIVED
+  status            String       @default("ACTIVE")
+  leadId            String?
+  lead              SalesLead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  createdByUsername String
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  posts             SocialPost[]
+
+  @@index([projectId, status])
+}
+
+/// Reusable text: a post template, a signature added to posts, or a set of hashtags.
+model SocialTemplate {
+  id                String   @id @default(cuid())
+  projectId         String   @default(dbgenerated("project_id_required()"))
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// TEMPLATE | SIGNATURE | HASHTAGS
+  kind              String
+  name              String
+  content           String
+  createdByUsername String
+  updatedByUsername String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([projectId, kind])
 }

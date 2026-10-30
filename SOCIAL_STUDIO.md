@@ -1,0 +1,151 @@
+# Social Studio
+
+Get Assist's own social media publishing module: connect Facebook Pages and Instagram professional
+accounts, write posts once and adjust them per account, review and approve them, schedule them on a
+calendar, publish them through each platform's **official** API, follow every publication, and read
+the counts the platforms report. Feature `SOCIAL_STUDIO`, **off by default and never switched on by a
+plan** (`manualOnly`). Owned code end to end: no Postiz, no third-party publishing service, no new
+runtime dependency (see `docs/social-studio/03-licenses-and-provenance.md`).
+
+Research notes: `docs/social-studio/01-feature-inventory.md` (what a complete product does, per
+capability) and `docs/social-studio/02-capability-status.md` (what is implemented, mock-tested,
+live-verified).
+
+## Architecture
+
+| Piece | Where |
+|---|---|
+| Rules (workflow, jobs, drafts, time zones, reconciliation, media sniffing) | `packages/shared/src/socialStudio.ts` |
+| Platform catalogue (limits, capabilities, required permissions, implemented flag) | `packages/shared/src/socialPlatforms.ts` |
+| Meta specifics, pure (publishing scopes, account discovery, Graph error reading) | `packages/shared/src/socialMeta.ts` |
+| Adapters (one per platform, HTTP only) | `apps/web/src/server/social/adapters/` (`meta.ts`: Facebook Page + Instagram) |
+| Accounts and the only token decryption | `apps/web/src/server/social/accounts.ts` |
+| Meta connection for publishing | `apps/web/src/server/social/metaConnect.ts`, `/p/<slug>/api/social/meta/connect`, `/api/social/meta/callback` |
+| Posts, approval, job actions, comments | `apps/web/src/server/social/posts.ts` |
+| Publishing engine | `apps/web/src/server/social/engine.ts`, run by `server/socialProcessor.ts` |
+| Media library + signed addresses | `apps/web/src/server/social/media.ts`, `/p/<slug>/api/social/upload`, `/p/<slug>/api/social/assets/<id>`, `/api/social/media/<id>` |
+| Campaigns, templates, hashtags | `apps/web/src/server/social/library.ts` |
+| Analytics + CSV | `apps/web/src/server/social/analytics.ts`, `/p/<slug>/api/social/export` |
+| Pages | `(dashboard)/social/*` (Overview, Calendar, Posts with Drafts/Approvals/Scheduled/Published/Failed tabs, Create, post detail, Media Library, Campaigns, Templates, Analytics, Accounts) and `/settings/social` |
+| Tables | migration `20261030120000_social_studio` (9 project-owned tables, below) |
+
+Tables: `SocialConnection` (one person's authorization at a network), `SocialAccount` (a Page or an
+Instagram account; one row per account per project), `SocialPost`, `SocialPostTarget` (the post on one
+account: its own text and settings, AND the durable publish job), `SocialPublishAttempt`,
+`SocialPostEvent` (history and comments, append-only by trigger), `SocialMediaAsset`, `SocialCampaign`
+(optional link to a `SalesLead`), `SocialTemplate` (templates, signatures, hashtag sets). Every table is
+in `PROJECT_SCOPED_MODELS`, has the `projectId` immutable trigger, and every relation between them has its
+`_same_project` trigger.
+
+## Workflow
+
+`DRAFT → IN_REVIEW → APPROVED → SCHEDULED → PUBLISHED | PARTIAL | FAILED | UNKNOWN`, or `CANCELLED`
+(`decideSocialTransition`). Rules worth not undoing:
+
+- **Writing, approving and publishing are three keys**: `social.edit`, `social.approve`, `social.publish`;
+  `social.manage` connects accounts; `social.view` reads. A person holding two of them may do both steps
+  (the history records an approval of one's own post).
+- **An approval covers exact material.** `approvalHash` is SHA-256 of `socialApprovalMaterial`: the main
+  text, each account's own text and settings, and the media in order. Any edit returns the post to DRAFT
+  and clears it. The engine checks the hash again at the moment of publishing. The scheduled time is
+  not part of it: moving a post is the publisher's decision.
+- **Each platform's documented limits** (`validateForPlatform`) are shown while writing, refuse approval
+  and scheduling, and are checked again by the engine.
+- **Accounts and media are loaded through the scoped client**; `planPublishAccounts` refuses the whole
+  post if one account is not this project's, removed, waiting for reconnection, or switched off.
+- **AI-assisted text** (`SocialPost.aiAssisted`) goes through exactly the same approval; nothing an AI
+  writes is ever published by itself.
+
+## Engine (`engine.ts`, `socialProcessor.ts`)
+
+Runs in the APP process every 15 s (never in the WhatsApp worker; `SOCIAL_PROCESSOR_DISABLED=true` turns
+it off). Several app instances may run it at once. Guarantees:
+
+- **Claim**: a due job moves `DUE → PUBLISHING` by a conditional update with a random claim token and a
+  5-minute lease. Only one instance wins.
+- **Attempt record before anything is sent**: `SocialPublishAttempt` is written first. The adapter calls
+  `markSent()` immediately before the request that makes the post public, which stamps `requestSentAt`.
+  Steps that publish nothing come first (an Instagram container, an unpublished Facebook photo).
+- **Never blind**:
+  - A refusal that is safe to repeat (a rate or quota limit, or a request that never left) waits
+    `socialRetryDelayMs` and retries. After `SOCIAL_MAX_ATTEMPTS` (8) it is dead-lettered to FAILED.
+  - An answer not seen after `markSent` is **UNKNOWN**, and the engine never sends it again.
+- **Lease lost** (the process died): re-queued only if the attempt's `requestSentAt` is null; otherwise
+  UNKNOWN.
+- **Reconciliation of UNKNOWN**: every 3 minutes for 2 days, the account's recent publications are read.
+  Exactly one with the same text (`matchRecentPublication`) settles it PUBLISHED. None or several leave it
+  for a person, who either marks it published / not published, or **sends it again only after ticking
+  "I checked the account and it is not there"**.
+- **Instagram**:
+  - The account's own 24-hour publishing quota is read first.
+  - A container still processing is saved and re-used by the next attempt.
+  - A container Meta could not process is refused with Meta's words.
+- **Statistics**: published posts of the last 14 days are re-read every 6 hours (only the counts the
+  adapter supports; a missing metric is absent, never 0).
+- A suspended, archived or billing-held project, or one with the feature off, is skipped: its jobs wait.
+
+## Meta (Facebook Pages, Instagram)
+
+- **Reuses the platform's Meta app** (`META_INTEGRATION_ENABLED`, `META_APP_ID`, `META_APP_SECRET`,
+  `META_GRAPH_API_VERSION`) and the `META_ALLOWED_PROJECT_IDS` gate (fails closed). Also reuses its token
+  helpers (`providerApi.ts`).
+- **Its own flow, callback, permissions and tables.**
+  - Callback: `/api/social/meta/callback`, which must be added to the app's Valid OAuth Redirect URIs.
+  - Permissions: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`,
+    `instagram_content_publish`; optional `META_SOCIAL_LOGIN_CONFIG_ID`.
+  - Rows: `SocialConnection` / `SocialAccount`.
+- **The messaging flow is not touched**: its callback, webhooks, `ChannelConnection` rows and
+  `META_REQUESTED_SCOPES`. A messaging grant never makes an account publishable (a test pins it).
+- **Callback checks**: the state travels in an encrypted HTTP-only cookie scoped to the callback path.
+  The callback checks the state, the same signed-in person, project access and `social.manage`, then
+  redeems the code server-side. The user token is made long-lived and kept encrypted.
+- **Page tokens** (used for both the Page and its Instagram account) are encrypted and decrypted only in
+  `accounts.ts`.
+- **Account rules**: one row per account per project. Found again through another person's authorization,
+  it moves to the newest one. An account whose role or permissions do not allow posting is listed as
+  needing attention, with the reason.
+- **Media URLs**: Meta fetches media by URL. `signedAssetUrl` gives a 2-hour HMAC-signed address on
+  `NEXTAUTH_URL` (which must be public https), served by `/api/social/media/<id>`. Unsigned, expired,
+  altered and deleted all give the same 404.
+- **Endpoints**:
+  - Facebook: `/{page}/feed`, `/{page}/photos`, `/{page}/videos`, `DELETE /{post}`,
+    `/{page}/published_posts`, reactions / comments / shares counts.
+  - Instagram: `/{ig}/media`, `/{ig}/media_publish`, `/{ig}/content_publishing_limit`, `/{ig}/media`,
+    `like_count` / `comments_count`.
+  - Instagram has no delete in its API, so it is not offered.
+
+**Live status: mock-tested only.** Nothing has been published to a real Page or Instagram account from
+this code. Real use needs Meta App Review approval of the publishing permissions on the platform app.
+
+## Media library
+
+- **What is accepted**: JPEG, PNG, WebP, GIF photos up to 8 MB, and MP4 / MOV videos up to 200 MB. The
+  type is read from the bytes (`sniffSocialMedia`).
+- **Storage**: files go to the media volume (`social/<projectId>/<random>.<ext>`). Uploads stop below
+  `MEDIA_MIN_FREE_DISK_MB`. Each project has an allowance of `SOCIAL_MEDIA_PROJECT_MB` (5 GB by default).
+- **Organising**: folders, tags, alt text, and search by name or tag.
+- **Deleting** is refused while a post that is not yet published uses the file.
+- **Backups**: the volume needs its own backup (MEDIA_STORAGE.md).
+
+## Security and isolation
+
+- Every page and action checks its own key, with the feature (`checkPermission`, `pageAccess`).
+- Account actions are bound to the Accounts page (`sections`).
+- Every query goes through the project-scoped client, and the database triggers refuse cross-project rows.
+- Tokens are encrypted at rest (`encryptSecret`) and never sent to a browser. Graph calls carry
+  `appsecret_proof`; error text is stripped of anything that looks like a token.
+- The CSV export neutralises formula-leading cells.
+- System Log records:
+  - connections and disconnections;
+  - approvals, scheduling and cancelling;
+  - sending again, marking published and deleting from a platform;
+  - every failed and unknown publication.
+
+## Not built (see 02-capability-status.md)
+
+- **Other platforms**: Threads, LinkedIn, YouTube, TikTok and Pinterest adapters. Each needs its own
+  developer approval.
+- **Recurring posts and RSS import**.
+- **Notifications**: failure alerts through the Notification Center (failures are on the Overview and in
+  the System Log).
+- **Live testing**: real-provider verification of everything Meta.

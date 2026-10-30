@@ -109,7 +109,8 @@ describe("the constraints later phases depend on", () => {
     // + the five commerce integration tables (20261029160000_commerce_integrations).
     // + the three Integration Hub tables (20261029170000_integration_hub).
     // + ListSavedView (20261030100000_list_saved_views).
-    expect(refusing).toHaveLength(151);
+    // + the nine Social Studio tables (20261030120000_social_studio).
+    expect(refusing).toHaveLength(160);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -143,7 +144,8 @@ describe("the constraints later phases depend on", () => {
     // + the five commerce integration tables.
     // + the three Integration Hub tables.
     // + ListSavedView.
-    expect(rows).toHaveLength(154);
+    // + the nine Social Studio tables.
+    expect(rows).toHaveLength(163);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

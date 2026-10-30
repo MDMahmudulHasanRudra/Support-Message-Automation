@@ -405,6 +405,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: ["Create an API key or a webhook under Settings → API & Webhooks"],
     documentation: "INTEGRATION_HUB.md",
   },
+  SOCIAL_STUDIO: {
+    category: "Integrations",
+    benefits: ["Write, approve and schedule posts for Facebook Pages and Instagram in one place", "A calendar, media library, campaigns and templates"],
+    defaultForTypes: [],
+    dependencies: [],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Drafts, scheduled posts, history and the connection are kept. " + KEPT,
+    setupSteps: ["Connect Facebook / Instagram under Social Studio → Accounts", "Write a post and have it approved"],
+    documentation: "SOCIAL_STUDIO.md",
+  },
   AI_COPILOT: {
     category: "AI",
     benefits: ["Conversation summaries and suggested replies for agents", "Nothing is sent without the agent"],
@@ -427,7 +439,7 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
  * feature. Each becomes AVAILABLE only together with its feature entry and its real implementation.
  */
 const PLANNED_MODULES: readonly ModuleDefinition[] = [
-  planned("SOCIAL_MANAGEMENT", "Social Management", "Integrations", "Facebook and Instagram comments, replies, comment-to-lead and post scheduling.", [
+  planned("SOCIAL_MANAGEMENT", "Social Management", "Integrations", "Facebook and Instagram comments, replies and comment-to-lead. (Post scheduling is Social Studio.)", [
     { kind: "HARD", anyOf: ["OMNICHANNEL"], why: "It uses the project's Meta connections." },
   ], []),
   planned("AUTOMATION_STUDIO", "Automation Studio", "Integrations", "Visual workflows: triggers, conditions, branches, delays and retries across modules.", [], []),

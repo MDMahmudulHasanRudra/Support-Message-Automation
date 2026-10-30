@@ -323,6 +323,19 @@ export const PROJECT_FEATURES = [
     permissionKeys: ["api.manage"],
     workerEffect: "API keys stop working and no webhook is sent. Keys, endpoints and delivery history are kept.",
   },
+  {
+    key: "SOCIAL_STUDIO",
+    label: "Social Studio",
+    description:
+      "Get Assist's own social media publishing: connect Facebook Pages and Instagram accounts, write, approve, schedule and follow posts, with a calendar, media library, campaigns, templates and AI help (SOCIAL_STUDIO.md). Nothing is published without a person's approval.",
+    defaultEnabled: false,
+    // It publishes to a business's public channels: switched on by a person, never by a plan.
+    manualOnly: true,
+    routes: ["/social", "/settings/social"],
+    permissionKeys: ["social.view", "social.edit", "social.approve", "social.publish", "social.manage"],
+    workerEffect:
+      "Nothing is published and nothing is checked: scheduled posts wait, and publish when it is on again only if their time has not passed. Drafts, history, media and connections are kept.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];
