@@ -7,6 +7,7 @@ import { CHANNELS, validateChannelText, type ChannelType } from "@support-automa
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Button, useToast } from "@/components/ui";
 import { sendChannelReplyAction } from "@/server/actions/channelInbox";
+import { markAgentTyping } from "@/server/actions/webchatAgent";
 
 /**
  * The reply box for a Messenger / Instagram / Telegram conversation (OMNICHANNEL.md §8).
@@ -64,6 +65,8 @@ export function ChannelComposer({
   const [pending, startTransition] = useTransition();
   const box = useRef<HTMLTextAreaElement>(null);
   const latest = useRef(text);
+  // Website chat only: the visitor sees "typing…" while somebody writes, pinged at most every 3 seconds.
+  const typingSentAt = useRef(0);
   // The inbox workspace's Copilot can fill this box (lib/composerBridge.ts); sending stays the Send button.
   useEffect(() => {
     latest.current = text;
@@ -131,6 +134,10 @@ export function ChannelComposer({
             onChange={(e) => {
               setText(e.target.value);
               writeDraft(conversationId, e.target.value);
+              if (type === "WEBCHAT" && e.target.value.trim() && Date.now() - typingSentAt.current > 3_000) {
+                typingSentAt.current = Date.now();
+                void markAgentTyping(conversationId).catch(() => undefined);
+              }
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

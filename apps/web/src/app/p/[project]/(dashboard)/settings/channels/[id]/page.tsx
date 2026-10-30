@@ -7,6 +7,7 @@ import { pageAccess } from "@/server/authorize";
 import { getChannelConnection } from "@/server/channels/connections";
 import { metaAllowedForProject, metaPlatformConfig } from "@/server/channels/metaOAuth";
 import { activeProjectId } from "@/server/projectContext";
+import { projectPath } from "@/server/projectPaths";
 import { ChannelMark } from "../../../conversations/ChannelMark";
 import { ConnectionStatusBadge } from "../ConnectionStatusBadge";
 import { SetupGuide } from "../SetupGuide";
@@ -118,6 +119,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
                 canManage={canManage}
                 hasIdentitySecret={wc.hasIdentitySecret}
                 snippet={wc.scriptUrl ? `<script src="${wc.scriptUrl}" data-key="${wc.key}" async></script>` : null}
+                wordpressHref={canManage && wc.scriptUrl ? await projectPath(`/api/webchat/wordpress/${c.id}`) : null}
               />
             </Card>
           ) : null}

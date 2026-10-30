@@ -234,6 +234,10 @@ export interface ChannelAttachment {
   /** Telegram's file id — fetchable through the Bot API with the bot's token, never a public link. */
   fileId?: string;
   name?: string;
+  /** Website chat: the file a visitor uploaded, on the media volume (served only to the project's agents). */
+  storageKey?: string;
+  mimeType?: string;
+  size?: number;
 }
 
 export type NormalizedChannelEvent =

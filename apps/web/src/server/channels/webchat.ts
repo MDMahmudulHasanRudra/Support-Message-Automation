@@ -1,12 +1,20 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import {
+  businessHoursStatus,
   isClientNonce,
+  normalizeOrigin,
+  normalizePhoneNumber,
   originAllowed,
   parseWidgetSettings,
+  planVisitorAttachment,
+  WEBCHAT_ATTACHMENTS_PER_HOUR,
+  WEBCHAT_ATTACHMENT_MAX_BYTES,
   WEBCHAT_MAX_TEXT,
+  type WebchatAttachment,
   type WebchatInboundPayload,
   type WidgetSettings,
 } from "@support-automation/shared";
+import { getMediaStorage } from "@/server/mediaStorage";
 import { decryptSecret, encryptSecret } from "@support-automation/db";
 import { platformPrisma, prisma } from "@/server/db";
 import { disabledFeaturesFor } from "@/server/projectFeatures";
@@ -129,13 +137,20 @@ export async function startVisitor(
     if (secretsEqual(identity.hash.toLowerCase(), expected)) verifiedExternalId = identity.id;
   }
   const name = clean(verifiedExternalId ? identity?.name : input.name, 80);
+  // A phone number counts only with its OWN signature, HMAC-SHA256(secret, "phone:<id>:<phone>"): the user-id
+  // hash says who is signed in, not which number is theirs, and the number is what links them to a client.
+  let phone: string | null = null;
+  if (verifiedExternalId && widget.identitySecret && typeof identity?.phone === "string" && typeof identity.phoneHash === "string" && identity.phone.length <= 40) {
+    const expectedPhone = createHmac("sha256", widget.identitySecret).update(`phone:${verifiedExternalId}:${identity.phone}`).digest("hex");
+    if (secretsEqual(identity.phoneHash.toLowerCase(), expectedPhone)) phone = normalizePhoneNumber(identity.phone);
+  }
   const emailRaw = clean(verifiedExternalId ? identity?.email : input.email, 120);
   const email = emailRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? emailRaw : null;
 
   const visitorId = `v_${randomBytes(18).toString("base64url")}`;
   const token = randomBytes(32).toString("base64url");
   await platformPrisma.webChatVisitor.create({
-    data: { id: visitorId, projectId: widget.projectId, connectionId: widget.connectionId, tokenHash: sha256(token), verifiedExternalId, name, email, ipHash, createdAt: now, lastSeenAt: now },
+    data: { id: visitorId, projectId: widget.projectId, connectionId: widget.connectionId, tokenHash: sha256(token), verifiedExternalId, name, email, phone, ipHash, createdAt: now, lastSeenAt: now },
   });
   return { visitorId, token, verified: Boolean(verifiedExternalId) };
 }
@@ -159,8 +174,26 @@ export async function visitorFromToken(widget: PublicWidget, authorization: stri
   return { id: v.id, name: v.name, email: v.email, verified: Boolean(v.verifiedExternalId) };
 }
 
+/** The page a visitor is on, kept only when it is on one of the widget's listed websites. */
+function pageOn(widget: PublicWidget, raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.length > 1000) return null;
+  try {
+    const url = new URL(raw);
+    if (!widget.allowedOrigins.includes(normalizeOrigin(url.origin) ?? "")) return null;
+    // Path only: a query string can carry a password-reset token or someone's email.
+    return `${url.origin}${url.pathname}`.slice(0, 500);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether the team is answering now, for the widget and for marking messages sent out of hours. */
+export function widgetAvailability(widget: PublicWidget, now: Date = new Date()) {
+  return businessHoursStatus(widget.settings.hours, now);
+}
+
 /** Records one visitor message for the worker. A repeated nonce is the same message (no duplicate). */
-export async function recordVisitorMessage(widget: PublicWidget, visitor: Visitor, input: { text: unknown; nonce: unknown; now?: Date }): Promise<{ duplicate: boolean }> {
+export async function recordVisitorMessage(widget: PublicWidget, visitor: Visitor, input: { text: unknown; nonce: unknown; pageUrl?: unknown; now?: Date }): Promise<{ duplicate: boolean }> {
   const now = input.now ?? new Date();
   if (!widget.enabled) throw new WebchatError("This chat is switched off at the moment.", 409);
   const text = typeof input.text === "string" ? input.text.trim() : "";
@@ -179,12 +212,80 @@ export async function recordVisitorMessage(widget: PublicWidget, visitor: Visito
     name: visitor.name ? (visitor.verified ? visitor.name : `${visitor.name} (unverified)`) : null,
     email: visitor.email,
     occurredAt: now.toISOString(),
+    offHours: !widgetAvailability(widget, now).open || undefined,
   };
   const created = await platformPrisma.channelInboundEvent.createMany({
     data: [{ projectId: widget.projectId, connectionId: widget.connectionId, dedupKey: `${prefix}${input.nonce}`, payload: payload as never, receivedAt: now }],
     skipDuplicates: true,
   });
+  await touchVisitor(visitor, input.pageUrl, widget);
   return { duplicate: created.count === 0 };
+}
+
+async function touchVisitor(visitor: Visitor, pageUrl: unknown, widget: PublicWidget): Promise<void> {
+  const page = pageOn(widget, pageUrl);
+  await platformPrisma.webChatVisitor.update({ where: { id: visitor.id }, data: { typingAt: null, ...(page ? { pageUrl: page } : {}) } }).catch(() => undefined);
+}
+
+/**
+ * A photo or PDF from the visitor (WEBSITE_CHAT.md §Files). The type is read from the bytes, the file is
+ * stored on the media volume under this project and visitor, and ONE inbound event carries it to the
+ * worker like any message. Served afterwards only to the project's own agents, never publicly.
+ */
+export async function recordVisitorFile(widget: PublicWidget, visitor: Visitor, input: { bytes: Buffer; fileName: string; pageUrl?: unknown; now?: Date }): Promise<{ name: string }> {
+  const now = input.now ?? new Date();
+  if (!widget.enabled) throw new WebchatError("This chat is switched off at the moment.", 409);
+  if (!widget.settings.allowAttachments) throw new WebchatError("Files cannot be sent in this chat.", 403);
+  if (input.bytes.length === 0) throw new WebchatError("The file is empty.", 400);
+  if (input.bytes.length > WEBCHAT_ATTACHMENT_MAX_BYTES) throw new WebchatError("Files can be at most 10 MB.", 413);
+  const plan = planVisitorAttachment({ head: new Uint8Array(input.bytes.subarray(0, 64)), fileName: input.fileName || "file", size: input.bytes.length });
+  if (!plan.ok) throw new WebchatError(plan.error, 415);
+  const prefix = `wc:${visitor.id}:file-`;
+  const lastHour = await platformPrisma.channelInboundEvent.count({ where: { connectionId: widget.connectionId, dedupKey: { startsWith: prefix }, receivedAt: { gte: new Date(now.getTime() - 3_600_000) } } });
+  if (lastHour >= WEBCHAT_ATTACHMENTS_PER_HOUR) throw new WebchatError("You have sent a lot of files. Wait a while before sending more.", 429);
+  const storage = getMediaStorage();
+  if (!storage) throw new WebchatError("Files cannot be received right now.", 503);
+  // The media volume is Postgres's disk too: below MEDIA_MIN_FREE_DISK_MB nothing new is written (MEDIA_STORAGE.md).
+  const minFreeMb = Number(process.env.MEDIA_MIN_FREE_DISK_MB ?? 2048);
+  const free = await storage.freeBytes().catch(() => null);
+  if (free !== null && free - input.bytes.length < (Number.isFinite(minFreeMb) && minFreeMb >= 0 ? minFreeMb : 2048) * 1024 * 1024) {
+    throw new WebchatError("Files cannot be received right now. You can still send a message.", 507);
+  }
+
+  const ext = plan.mimeType === "application/pdf" ? "pdf" : plan.mimeType === "image/png" ? "png" : plan.mimeType === "image/webp" ? "webp" : "jpg";
+  const id = randomBytes(18).toString("base64url");
+  const storageKey = `webchat/${widget.projectId}/${visitor.id}/${id}.${ext}`;
+  await storage.put(storageKey, input.bytes, { maxBytes: WEBCHAT_ATTACHMENT_MAX_BYTES });
+  const attachment: WebchatAttachment = { type: plan.type, name: plan.fileName.slice(0, 120), mimeType: plan.mimeType, size: input.bytes.length, storageKey };
+  const payload: WebchatInboundPayload = {
+    provider: "WEBCHAT",
+    visitorId: visitor.id,
+    nonce: `file-${id}`,
+    text: "",
+    name: visitor.name ? (visitor.verified ? visitor.name : `${visitor.name} (unverified)`) : null,
+    email: visitor.email,
+    occurredAt: now.toISOString(),
+    attachments: [attachment],
+    offHours: !widgetAvailability(widget, now).open || undefined,
+  };
+  try {
+    await platformPrisma.channelInboundEvent.create({
+      data: { projectId: widget.projectId, connectionId: widget.connectionId, dedupKey: `${prefix}${id}`, payload: payload as never, receivedAt: now },
+    });
+  } catch (err) {
+    await storage.delete(storageKey).catch(() => undefined);
+    throw err;
+  }
+  await touchVisitor(visitor, input.pageUrl, widget);
+  return { name: attachment.name };
+}
+
+/** The visitor is typing. Written at most every 2 seconds. */
+export async function markVisitorTyping(visitor: Visitor, now: Date = new Date()): Promise<void> {
+  await platformPrisma.webChatVisitor.updateMany({
+    where: { id: visitor.id, OR: [{ typingAt: null }, { typingAt: { lt: new Date(now.getTime() - 2_000) } }] },
+    data: { typingAt: now },
+  });
 }
 
 export interface VisitorMessage {
@@ -195,36 +296,60 @@ export interface VisitorMessage {
   at: string;
   /** The visitor's own nonce, so the widget can swap its optimistic copy for this one. */
   nonce: string | null;
+  /** File names only: a visitor's own files are not served back to the browser. */
+  files: string[];
+  /** The visitor has seen this reply (team / AI messages only). */
+  seen: boolean;
 }
 
-/** The visitor's own conversation, sent messages only, oldest first. */
-export async function visitorMessages(widget: PublicWidget, visitor: Visitor, after: string | null): Promise<VisitorMessage[]> {
+const AGENT_TYPING_MS = 6_000;
+
+/**
+ * The visitor's own conversation, sent messages only, oldest first, plus whether an agent is typing.
+ * With `seen` (the widget is open and in view) the team's replies so far are marked READ, which the
+ * inbox shows as "Seen". Never another conversation, a note, or a queued or failed reply.
+ */
+export async function visitorConversation(widget: PublicWidget, visitor: Visitor, after: string | null, seen: boolean, now: Date = new Date()): Promise<{ messages: VisitorMessage[]; agentTyping: boolean }> {
   const conversation = await platformPrisma.channelConversation.findFirst({
     where: { projectId: widget.projectId, connectionId: widget.connectionId, externalThreadId: visitor.id },
-    select: { id: true },
+    select: { id: true, agentTypingAt: true },
   });
-  if (!conversation) return [];
+  if (!conversation) return { messages: [], agentTyping: false };
+  if (seen) {
+    await platformPrisma.channelMessage.updateMany({
+      where: { projectId: widget.projectId, conversationId: conversation.id, direction: "OUTBOUND", deliveryStatus: { in: ["SENT", "DELIVERED"] } },
+      data: { deliveryStatus: "READ", readAt: now },
+    });
+  }
   const since = after ? new Date(after) : null;
   const rows = await platformPrisma.channelMessage.findMany({
     where: {
       projectId: widget.projectId,
       conversationId: conversation.id,
-      text: { not: null },
       OR: [{ direction: "INBOUND" }, { direction: "OUTBOUND", deliveryStatus: { in: ["SENT", "DELIVERED", "READ"] } }],
       ...(since && !Number.isNaN(since.getTime()) ? { occurredAt: { gt: since } } : {}),
     },
     orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
     take: 200,
-    select: { id: true, direction: true, senderType: true, text: true, occurredAt: true, externalMessageId: true, createdBy: { select: { name: true } } },
+    select: { id: true, direction: true, senderType: true, text: true, attachments: true, deliveryStatus: true, occurredAt: true, externalMessageId: true, createdBy: { select: { name: true } } },
   });
-  return rows.map((m) => ({
-    id: m.id,
-    from: m.direction === "INBOUND" ? "visitor" : m.senderType === "AI" ? "ai" : "team",
-    author: m.direction === "INBOUND" ? null : m.senderType === "AI" ? null : (m.createdBy?.name.split(" ")[0] ?? null),
-    text: m.text!,
-    at: m.occurredAt.toISOString(),
-    nonce: m.externalMessageId?.startsWith("wc-") ? m.externalMessageId.slice(3) : null,
-  }));
+  const messages = rows
+    .map((m) => {
+      const files = Array.isArray(m.attachments) ? (m.attachments as Array<{ name?: string }>).map((a) => (typeof a?.name === "string" ? a.name : "file")).slice(0, 5) : [];
+      return {
+        id: m.id,
+        from: (m.direction === "INBOUND" ? "visitor" : m.senderType === "AI" ? "ai" : "team") as VisitorMessage["from"],
+        author: m.direction === "INBOUND" ? null : m.senderType === "AI" ? null : (m.createdBy?.name.split(" ")[0] ?? null),
+        text: m.text ?? "",
+        at: m.occurredAt.toISOString(),
+        nonce: m.externalMessageId?.startsWith("wc-") ? m.externalMessageId.slice(3) : null,
+        files,
+        seen: m.direction === "OUTBOUND" && (seen || m.deliveryStatus === "READ"),
+      };
+    })
+    .filter((m) => m.text || m.files.length);
+  const agentTyping = Boolean(conversation.agentTypingAt && now.getTime() - conversation.agentTypingAt.getTime() < AGENT_TYPING_MS);
+  return { messages, agentTyping };
 }
 
 // ── Settings (project-scoped; the caller checks channels.manage) ─────────────────────────────────

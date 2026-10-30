@@ -2881,6 +2881,11 @@ Feature `WHATSAPP_AVATARS`, **off by default and never switched by a plan** (`ma
 listed Origin (fails closed) and a hashed visitor token, and only RECORDS a `ChannelInboundEvent`; the
 worker's inbound processor makes the conversation and the send queue marks a WEBCHAT reply SENT on store.
 Never trust a visitor identity without the site's HMAC signature; never render visitor or agent text as HTML.
+WP9 (30 Oct 2026): visitor photos/PDFs (type from the bytes, `webchat/<projectId>/…` on the media volume,
+served to agents ONLY by `/p/<slug>/api/channels/attachment/…`, never a public address), business hours
+(never refuse a visitor while away), typing + seen (`seen=1` only while the panel is open and visible), a
+phone counts only with its own `phoneHash`, the visitor card labels a typed-email match as POSSIBLE, and the
+WordPress plugin zip never contains the identity secret.
 
 ### Inbox workspace — notes, priority, tags, AI Copilot (`INBOX_WORKSPACE.md`)
 

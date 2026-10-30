@@ -6478,6 +6478,8 @@ model ChannelConversation {
   reviewedAt           DateTime?
   /// A person replied: AI stays quiet until this passes (the same rule as WhatsApp's takeover).
   aiSuppressedUntil    DateTime?
+  /// Website chat: when an agent last typed in this conversation; the widget shows "typing…" briefly.
+  agentTypingAt        DateTime?
   closedAt             DateTime?
   createdAt            DateTime                  @default(now())
   updatedAt            DateTime                  @updatedAt
@@ -7975,6 +7977,12 @@ model WebChatVisitor {
   email              String?
   /// SHA-256 of the IP and a server secret, for rate limiting only.
   ipHash             String?
+  /// The site's own signed phone number (only with a valid signature), for linking to a client.
+  phone              String?
+  /// The page the visitor was on when they last wrote (an address on a listed website only).
+  pageUrl            String?
+  /// When the visitor last typed; the inbox shows "typing…" for a few seconds after it.
+  typingAt           DateTime?
   createdAt          DateTime          @default(now())
   lastSeenAt         DateTime          @default(now())
 
