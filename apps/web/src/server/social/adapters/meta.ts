@@ -129,6 +129,7 @@ export const facebookPageAdapter: SocialAdapter = {
     if (images.length > 1) {
       // Uploaded unpublished first (nothing public yet), then attached to one post.
       for (let i = 0; i < images.length; i++) {
+        await ctx.renewLease();
         const r = await graph(ctx, "POST", `/${page}/photos`, { url: images[i]!.url, published: "false" }, token, false);
         if (!r.ok) return r.outcome;
         const photoId = idOf(r.data);
@@ -170,9 +171,10 @@ async function containerStatus(ctx: ReadContext, id: string, token: string) {
   return r.ok ? readIgContainerStatus(r.data) : null;
 }
 
-/** Waits for a container to finish processing, within this attempt's budget. */
+/** Waits for a container to finish processing, within this attempt's budget, holding the job's lease. */
 async function waitFinished(ctx: AdapterContext, id: string, token: string): Promise<"FINISHED" | "IN_PROGRESS" | "ERROR" | "EXPIRED" | "UNREADABLE" | { error: string }> {
   for (let i = 0; i < IG_POLL_TRIES; i++) {
+    await ctx.renewLease();
     const s = await containerStatus(ctx, id, token);
     if (!s) return "UNREADABLE";
     if (s.status === "FINISHED") return "FINISHED";
@@ -221,6 +223,7 @@ export const instagramAdapter: SocialAdapter = {
       } else {
         const children: string[] = [];
         for (const m of media) {
+          await ctx.renewLease();
           const params: Record<string, string> = m.kind === "IMAGE" ? { image_url: m.url, is_carousel_item: "true" } : { media_type: "VIDEO", video_url: m.url, is_carousel_item: "true" };
           const r = await graph(ctx, "POST", `/${ig}/media`, params, token, false);
           if (!r.ok) return r.outcome;

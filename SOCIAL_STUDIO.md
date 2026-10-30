@@ -63,15 +63,31 @@ it off). Several app instances may run it at once. Guarantees:
 
 - **Claim**: a due job moves `DUE → PUBLISHING` by a conditional update with a random claim token and a
   5-minute lease. Only one instance wins.
-- **Attempt record before anything is sent**: `SocialPublishAttempt` is written first. The adapter calls
-  `markSent()` immediately before the request that makes the post public, which stamps `requestSentAt`.
-  Steps that publish nothing come first (an Instagram container, an unpublished Facebook photo).
+- **Attempt record before anything is sent**: `SocialPublishAttempt` is written first. Steps that publish
+  nothing come first (an Instagram container, an unpublished Facebook photo).
+- **The fence** (`markSent`, release hardening 30 Oct 2026): immediately before the request that makes the
+  post public, ONE transaction on the job's row checks that this run still holds the claim token AND its
+  lease has not run out, renews the lease, and stamps `requestSentAt`. A run that lost the job gets
+  `SocialClaimLostError` and sends nothing (the attempt is closed `CLAIM_LOST`). `saveContainers` is fenced
+  the same way, and `renewLease()` runs on every Instagram processing poll and before each upload, so a slow
+  but healthy run keeps its job and a run that lost it stops at once.
+- **Lease recovery** takes the job's row first (same claim, lease still expired) and only then reads the
+  attempt's `requestSentAt`. Because the stamp commits with the fence, the two cannot both win: a job is
+  re-queued only when no request of that claim can ever leave; otherwise it becomes UNKNOWN.
 - **Never blind**:
   - A refusal that is safe to repeat (a rate or quota limit, or a request that never left) waits
     `socialRetryDelayMs` and retries. After `SOCIAL_MAX_ATTEMPTS` (8) it is dead-lettered to FAILED.
-  - An answer not seen after `markSent` is **UNKNOWN**, and the engine never sends it again.
-- **Lease lost** (the process died): re-queued only if the attempt's `requestSentAt` is null; otherwise
-  UNKNOWN.
+  - An answer not seen after `markSent` (network loss, timeout, a 5xx) is **UNKNOWN**, and the engine
+    never sends it again.
+  - The answer arriving after the run's lease ran out (recovery already made it UNKNOWN) still settles it
+    PUBLISHED, but only while it is UNKNOWN and no later attempt started (`settleLatePublication`).
+- **What this is not**: exactly-once delivery. Meta's publishing endpoints take no idempotency key, so a
+  request whose answer is lost cannot be proven either way by the app; it stays UNKNOWN until
+  reconciliation or a person settles it. The guarantee is that the application never sends a post again
+  on its own once it may have been published.
+- **Rescheduling and cancelling a running job**: a calendar move re-checks, inside its own transaction and
+  after locking the jobs, that none started publishing — so a publisher's claim and a reschedule cannot
+  both win. Cancel only ever touches jobs still waiting.
 - **Reconciliation of UNKNOWN**: every 3 minutes for 2 days, the account's recent publications are read.
   Exactly one with the same text (`matchRecentPublication`) settles it PUBLISHED. None or several leave it
   for a person, who either marks it published / not published, or **sends it again only after ticking
@@ -104,6 +120,16 @@ it off). Several app instances may run it at once. Guarantees:
 - **Account rules**: one row per account per project. Found again through another person's authorization,
   it moves to the newest one. An account whose role or permissions do not allow posting is listed as
   needing attention, with the reason.
+- **Meta taking access back**: the platform's deauthorize and data-deletion callbacks
+  (`metaRevocation.ts`) also reach Social Studio: that person's connections and every account they gave
+  are marked NEEDS_RECONNECT and their tokens wiped (a scheduled post then fails with "reconnect", never
+  sent with a dead token); a data-deletion request also replaces their Facebook id with an anonymous
+  marker and removes their name. Messenger / Instagram DM handling is unchanged.
+- **Which address the flow must start from**: the callback is built from `NEXTAUTH_URL`, and the state
+  cookie and the session belong to the address the person is on. Connecting therefore works only from the
+  `NEXTAUTH_URL` address (the same limit as the Google Sheets connection). With host routing on and a
+  customer on its own address, it fails closed ("expired"), it does not misroute. Supporting customer
+  addresses needs the messaging flow's claim hand-over; not built.
 - **Media URLs**: Meta fetches media by URL. `signedAssetUrl` gives a 2-hour HMAC-signed address on
   `NEXTAUTH_URL` (which must be public https), served by `/api/social/media/<id>`. Unsigned, expired,
   altered and deleted all give the same 404.
@@ -153,16 +179,24 @@ Scheduling an approved post can repeat it daily, weekly or monthly, up to 12 mor
 They are drafts only: each still needs approval and scheduling.
 
 - **Only new items**: only items published after the feed was added (`importFrom`), at most five per run.
-- **One draft per item**: the item is recorded once per feed (`@@unique([feedId, guid])`) BEFORE its draft
-  is made, so a race or retry never makes two drafts.
+- **One draft per item**: the item row (`@@unique([feedId, guid])`) and its draft are written in ONE
+  transaction. A failure anywhere (the draft refused, the database failing after the draft was made)
+  leaves nothing, and the item is tried again on the next run. The row is locked while its draft is made,
+  so a second run at the same moment waits and then finds it done. An item an older build left recorded
+  without a draft is picked up the same way.
 - **The fetch** (`server/social/rss.ts`):
-  - only public addresses (every resolved address checked), http(s) on standard ports;
-  - every redirect checked again, at most three;
-  - 15-second deadline, 2 MB cap, feed content types only.
+  - the name is resolved once per connection, INSIDE the connection (a custom `lookup`), every address is
+    checked (`isPrivateAddress`: private, loopback, link-local, shared, documentation, multicast, and IPv6
+    forms carrying such an IPv4 address), and the socket goes to exactly that address — no second
+    resolution a DNS answer could change (rebinding). An address written as a literal is checked without
+    resolving. No connection pool, no proxy;
+  - http(s) on standard ports only; every redirect checked again as a new address, at most three;
+  - 15-second deadline, 2 MB cap after decompression (gzip / deflate / br), feed content types only.
 - **Parsing**: a bounded scanner without an XML library (`packages/shared/src/socialRss.ts`); markup and
   scripts are stripped, and only http(s) links are kept.
 - **Schedule**: each feed has its own interval (1–24 h), checked by the Social Studio worker.
-- **Status**: implemented, unit-tested (parsing, address rules), not run against a live feed in this build.
+- **Status**: implemented; integration-tested against a real database and a local feed server (exactly once
+  after a failure, concurrent runs, rebinding, redirects, size caps). Not run against a live public feed.
   Migration `20261030140000_social_rss`.
 
 ## Media library
@@ -171,6 +205,9 @@ They are drafts only: each still needs approval and scheduling.
   type is read from the bytes (`sniffSocialMedia`).
 - **Storage**: files go to the media volume (`social/<projectId>/<random>.<ext>`). Uploads stop below
   `MEDIA_MIN_FREE_DISK_MB`. Each project has an allowance of `SOCIAL_MEDIA_PROJECT_MB` (5 GB by default).
+- **The allowance under parallel uploads**: the first check is only a quick refusal. The decision is made
+  when the file is recorded, under a per-project advisory lock that counts every recorded file, so
+  uploads at the same moment are counted one after another; a file refused there is deleted.
 - **Organising**: folders, tags, alt text, and search by name or tag.
 - **Deleting** is refused while a post that is not yet published uses the file.
 - **Backups**: the volume needs its own backup (MEDIA_STORAGE.md).

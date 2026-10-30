@@ -5,9 +5,22 @@ import type { PublishOutcome, RecentPublication, SocialMediaKind, SocialMetricVa
  * official publishing API. An adapter does HTTP and nothing else — no database, no project, no retry
  * policy. It reports each attempt as a `PublishOutcome`; the engine decides what that means for the job.
  *
- * The one rule every adapter keeps: call `ctx.markSent()` immediately before the request that makes the
- * post public. Before it, a failure is safe to repeat; after it, an answer not seen is UNKNOWN.
+ * The rules every adapter keeps:
+ *   - call `ctx.markSent()` immediately before the request that makes the post public. Before it, a
+ *     failure is safe to repeat; after it, an answer not seen is UNKNOWN. `markSent` is also the FENCE: it
+ *     throws `SocialClaimLostError` when this run no longer holds the job, and the adapter must then send
+ *     nothing (it lets the error propagate — never catch it);
+ *   - call `ctx.renewLease()` inside any wait that can be long (Instagram processing, several uploads), so
+ *     a slow but healthy run keeps its job and a run that lost it stops early.
  */
+
+/** This run no longer holds the job (its lease ran out and another run took it, or a person moved it). */
+export class SocialClaimLostError extends Error {
+  constructor() {
+    super("This publishing run no longer holds the job; nothing was sent by it.");
+    this.name = "SocialClaimLostError";
+  }
+}
 
 export interface AdapterAccount {
   platform: SocialPlatform;
@@ -36,9 +49,15 @@ export interface PublishInput {
 
 export interface AdapterContext {
   fetch: typeof fetch;
-  /** Immediately before the request that publishes. Records it durably before returning. */
+  /**
+   * Immediately before the request that publishes: checks this run still holds the job and its lease,
+   * renews the lease, and records the request durably — all in one transaction. Throws
+   * `SocialClaimLostError` when the job is no longer this run's; nothing may be sent then.
+   */
   markSent(): Promise<void>;
-  /** Saves intermediate ids (Instagram containers) so a later attempt can continue from them. */
+  /** Extends this run's lease; throws `SocialClaimLostError` when the job is no longer this run's. */
+  renewLease(): Promise<void>;
+  /** Saves intermediate ids (Instagram containers) so a later attempt can continue from them. Fenced like `renewLease`. */
   saveContainers(ids: string[]): Promise<void>;
   sleep(ms: number): Promise<void>;
 }

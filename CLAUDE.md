@@ -3061,6 +3061,13 @@ Owned code, no Postiz or other publishing service. Rules worth not undoing:
   makes a post public. A safe refusal (rate/quota, never sent) retries with backoff then dead-letters; an unseen answer after
   `markSent` is UNKNOWN and is NEVER re-sent by the engine — reconciliation (exactly one matching publication) or a person who
   confirms "not there" settles it. A lost lease re-queues only when `requestSentAt` is null.
+- **`markSent` is a FENCE, not a stamp** (30 Oct 2026): one transaction checks the claim token AND an unexpired lease
+  on the job row, renews the lease and stamps `requestSentAt`; a lost job throws `SocialClaimLostError` and sends
+  nothing. Recovery takes the row FIRST, then reads `requestSentAt`. Long Instagram waits call `renewLease()`. Never
+  claim exactly-once (Meta has no idempotency key). `socialStudio.integration.test.ts` pins all of it.
+- **Background ticks read feature flags INSIDE `runWithProject`** with `tenantOfCustomer(customerId)`:
+  `disabledFeaturesFor` uses the customer-scoped client, which outside a project falls through to `cookies()` and
+  throws — the Social processor did that on every tick until the DB test caught it.
 - **An approval covers exact material** (`approvalHash` over text, per-account text and settings, media); any edit clears it and
   the engine re-checks it when publishing. The engine runs in the APP process (`server/socialProcessor.ts`), never the WhatsApp worker.
 - **Meta publishing is separate from Meta messaging**: own callback `/api/social/meta/callback`, own scopes (`META_SOCIAL_SCOPES`,
@@ -3072,8 +3079,10 @@ Owned code, no Postiz or other publishing service. Rules worth not undoing:
   AI system; gated on SOCIAL_STUDIO + the AI Engine, NOT on AI Copilot. Its prompt forbids facts beyond the brief and the chosen
   products; an answer only fills a draft (`aiAssisted`), which still needs approval. Recurring posts are separate scheduled
   copies of the approved material (`repeatTimes`, wall-clock, ≤12), never a hidden repeat.
-- **RSS import only makes DRAFTS** (`server/social/rss.ts`): public addresses only (re-checked per redirect), 2 MB / 15 s caps,
-  one draft per item (the item row is written first, unique per feed), only items newer than the feed.
+- **RSS import only makes DRAFTS** (`server/social/rss.ts`): the connection resolves the name itself and connects only to
+  the address it checked (DNS rebinding), redirects re-checked, 2 MB (after decompression) / 15 s caps, only items newer
+  than the feed. An item and its draft are ONE transaction (a failure leaves nothing; the next run retries), the
+  (feed, guid) row locked while its draft is made. The media allowance is decided under a per-project advisory lock.
 
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 

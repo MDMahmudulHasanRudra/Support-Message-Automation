@@ -1,6 +1,7 @@
 import { globalPrisma } from "@/server/db";
 import { runWithProject, type ActiveProject } from "@/server/projectContext";
 import { disabledFeaturesFor } from "@/server/projectFeatures";
+import { tenantOfCustomer } from "@/server/tenant";
 import { publishTarget, reconcileUnknownTarget, recoverExpiredLease, refreshTargetMetrics } from "@/server/social/engine";
 import { runFeed } from "@/server/social/rss";
 
@@ -23,7 +24,14 @@ const TICK_MS = 15_000;
 async function operatingProject(projectId: string, cache: Map<string, ActiveProject | null>): Promise<ActiveProject | null> {
   if (cache.has(projectId)) return cache.get(projectId)!;
   const p = await globalPrisma.project.findUnique({ where: { id: projectId }, select: { id: true, slug: true, name: true, status: true, customerId: true, billingHoldAt: true } });
-  const active = p && p.status === "ACTIVE" && !p.billingHoldAt && !(await disabledFeaturesFor(p.id)).has("SOCIAL_STUDIO") ? { id: p.id, slug: p.slug, name: p.name, status: p.status, tenant: p.customerId } : null;
+  let active: ActiveProject | null = null;
+  if (p && p.status === "ACTIVE" && !p.billingHoldAt) {
+    const project: ActiveProject = { id: p.id, slug: p.slug, name: p.name, status: p.status, tenant: await tenantOfCustomer(p.customerId) };
+    // The feature switch is read through the customer-scoped client, so it is read INSIDE the project: a
+    // background tick has no request, session or address that could name the customer.
+    const off = await runWithProject(project, () => disabledFeaturesFor(p.id));
+    if (!off.has("SOCIAL_STUDIO")) active = project;
+  }
   cache.set(projectId, active);
   return active;
 }

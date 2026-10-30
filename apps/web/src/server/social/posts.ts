@@ -241,16 +241,18 @@ export interface SocialDraftWrite {
  * Creates or changes a draft. Every account, file and campaign must be THIS project's (loaded through
  * the scoped client), and any change to an existing post returns it to DRAFT with its approval cleared.
  */
-export async function saveSocialDraft(input: SocialDraftWrite, username: string): Promise<{ id: string; warnings: string[] }> {
+export async function saveSocialDraft(input: SocialDraftWrite, username: string, within?: Tx): Promise<{ id: string; warnings: string[] }> {
+  if (within && input.id) throw new Error("saveSocialDraft: only a new draft can be made inside another transaction.");
+  const db = within ?? prisma;
   const problems = validateSocialDraft({ content: input.content, accountIds: input.accountIds, mediaIds: input.mediaIds, variants: input.variants, settings: input.settings });
   if (problems.length) throw new SocialRefusal(problems.map((p) => p.message).join(" "));
-  const accounts = await prisma.socialAccount.findMany({ where: { id: { in: input.accountIds } }, select: { id: true, platform: true, status: true, enabled: true, name: true } });
+  const accounts = await db.socialAccount.findMany({ where: { id: { in: input.accountIds } }, select: { id: true, platform: true, status: true, enabled: true, name: true } });
   const plan = planPublishAccounts(input.accountIds, accounts);
   if (!plan.ok) throw new SocialRefusal(plan.reason);
   const mediaIds = [...new Set(input.mediaIds)];
-  const media = mediaIds.length ? await prisma.socialMediaAsset.findMany({ where: { id: { in: mediaIds }, deletedAt: null }, select: { id: true, kind: true, mimeType: true, sizeBytes: true } }) : [];
+  const media = mediaIds.length ? await db.socialMediaAsset.findMany({ where: { id: { in: mediaIds }, deletedAt: null }, select: { id: true, kind: true, mimeType: true, sizeBytes: true } }) : [];
   if (media.length !== mediaIds.length) throw new SocialRefusal("A chosen file is not in this project's media library.");
-  if (input.campaignId && !(await prisma.socialCampaign.findFirst({ where: { id: input.campaignId }, select: { id: true } }))) throw new SocialRefusal("That campaign does not exist in this project.");
+  if (input.campaignId && !(await db.socialCampaign.findFirst({ where: { id: input.campaignId }, select: { id: true } }))) throw new SocialRefusal("That campaign does not exist in this project.");
   const accountIds = plan.accounts.map((a) => a.id);
   const byId = new Map(media.map((m) => [m.id, m]));
   const warnings = platformProblems(
@@ -265,7 +267,8 @@ export async function saveSocialDraft(input: SocialDraftWrite, username: string)
   });
 
   if (!input.id) {
-    const created = await prisma.$transaction(async (tx) => {
+    // Inside the caller's transaction when given one (an RSS item and its draft commit together).
+    const create = async (tx: Tx) => {
       const post = await tx.socialPost.create({
         data: {
           title,
@@ -283,7 +286,8 @@ export async function saveSocialDraft(input: SocialDraftWrite, username: string)
       for (const accountId of accountIds) await tx.socialPostTarget.create({ data: { postId: post.id, accountId, ...targetData(accountId) } });
       await addPostEvent(tx, post.id, "CREATED", username, { accounts: accountIds.length, media: mediaIds.length, aiAssisted: input.aiAssisted });
       return post;
-    });
+    };
+    const created = within ? await create(within) : await prisma.$transaction(create);
     return { id: created.id, warnings };
   }
 
@@ -492,7 +496,13 @@ export async function rescheduleSocialPost(id: string, at: Date, username: strin
   await prisma.$transaction(async (tx) => {
     const moved = await tx.socialPost.updateMany({ where: { id, status: "SCHEDULED", revision: post.revision }, data: { scheduledAt: at, publishMode: "SCHEDULE", revision: { increment: 1 } } });
     if (moved.count === 0) throw new SocialRefusal(STALE);
+    // Moving the waiting jobs locks their rows, so a publisher's claim either committed before this (and
+    // is seen just below) or waits and then finds the job no longer due. A job that started publishing
+    // in between refuses the whole move: one account must not post at the old time while the calendar
+    // shows the new one.
     const targets = await tx.socialPostTarget.updateMany({ where: { postId: id, status: "DUE" }, data: { dueAt: at, nextAttemptAt: null } });
+    const started = await tx.socialPostTarget.count({ where: { postId: id, status: { notIn: ["DUE", "CANCELLED"] } } });
+    if (started > 0) throw new SocialRefusal("It started publishing on an account just now, so it was not moved.");
     await addPostEvent(tx, id, "RESCHEDULED", username, { from: post.scheduledAt?.toISOString() ?? null, to: at.toISOString(), accounts: targets.count });
   });
 }

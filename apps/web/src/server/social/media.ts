@@ -71,17 +71,28 @@ export async function uploadSocialAsset(input: { bytes: Buffer; fileName: string
   const storageKey = `social/${projectId}/${randomBytes(16).toString("hex")}.${kind.extension}`;
   await storage.put(storageKey, input.bytes, { maxBytes: limit });
   try {
-    return await prisma.socialMediaAsset.create({
-      data: {
-        storageKey,
-        name: cleanName(input.fileName, kind.extension),
-        kind: kind.kind,
-        mimeType: kind.mimeType,
-        sizeBytes: input.bytes.length,
-        folder: input.folder,
-        uploadedByUsername: input.username,
-      },
-      select: { id: true, name: true, kind: true, mimeType: true, sizeBytes: true },
+    // The check above is only a quick refusal: parallel uploads all pass it together. The allowance is
+    // decided HERE, under a per-project lock, counting every file already recorded — so files recorded at
+    // the same moment are counted one after another and the total can never exceed it. A file refused
+    // here was written first and is deleted (the disk check above bounds that briefly-used space).
+    return await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`social-media-allowance:${projectId}`})::bigint)`;
+      const used = await tx.socialMediaAsset.aggregate({ where: { deletedAt: null }, _sum: { sizeBytes: true } });
+      if ((used._sum.sizeBytes ?? 0) + input.bytes.length > allowanceBytes()) {
+        throw new SocialMediaError("This project's media library is full. Delete files you no longer need, or ask an administrator for more space.");
+      }
+      return tx.socialMediaAsset.create({
+        data: {
+          storageKey,
+          name: cleanName(input.fileName, kind.extension),
+          kind: kind.kind,
+          mimeType: kind.mimeType,
+          sizeBytes: input.bytes.length,
+          folder: input.folder,
+          uploadedByUsername: input.username,
+        },
+        select: { id: true, name: true, kind: true, mimeType: true, sizeBytes: true },
+      });
     });
   } catch (err) {
     await storage.delete(storageKey).catch(() => undefined);

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SOCIAL_PLATFORMS } from "@support-automation/shared";
 import { facebookPageAdapter, instagramAdapter } from "@/server/social/adapters/meta";
 import { adapterFor, implementedAdapterPlatforms } from "@/server/social/adapters";
-import type { AdapterContext, PublishInput } from "@/server/social/adapters/types";
+import { SocialClaimLostError, type AdapterContext, type PublishInput } from "@/server/social/adapters/types";
 
 /**
  * The Facebook Page and Instagram adapters against a fake Graph API (mock-tested only — not live-verified).
@@ -14,9 +14,10 @@ import type { AdapterContext, PublishInput } from "@/server/social/adapters/type
 type Call = { method: string; path: string; params: URLSearchParams; auth: string | null; afterSent: boolean };
 type Route = (call: Call) => { status: number; body: unknown } | "NETWORK";
 
-function fakeGraph(routes: Array<[RegExp, string, Route]>) {
+function fakeGraph(routes: Array<[RegExp, string, Route]>, claim: { lostAtMarkSent?: boolean; lostAfterRenewals?: number } = {}) {
   const calls: Call[] = [];
   let sent = false;
+  let renewals = 0;
   const fetchImpl = (async (input: URL | string, init?: RequestInit) => {
     const url = new URL(String(input));
     const method = init?.method ?? "GET";
@@ -33,14 +34,19 @@ function fakeGraph(routes: Array<[RegExp, string, Route]>) {
   const ctx: AdapterContext = {
     fetch: fetchImpl,
     markSent: async () => {
+      if (claim.lostAtMarkSent) throw new SocialClaimLostError();
       sent = true;
+    },
+    renewLease: async () => {
+      renewals += 1;
+      if (claim.lostAfterRenewals !== undefined && renewals > claim.lostAfterRenewals) throw new SocialClaimLostError();
     },
     saveContainers: async (ids) => {
       saved.push(ids);
     },
     sleep: async () => undefined,
   };
-  return { calls, ctx, saved, wasSent: () => sent };
+  return { calls, ctx, saved, wasSent: () => sent, renewals: () => renewals };
 }
 
 const page = (over: Partial<PublishInput> = {}): PublishInput => ({
@@ -218,6 +224,60 @@ describe("Instagram adapter", () => {
     expect(parent.params.get("children")).toBe("child1,child2");
     expect(parent.afterSent).toBe(false);
     expect(g.saved.at(-1)).toEqual(["child1", "child2", "parent"]);
+  });
+});
+
+describe("the claim fence", () => {
+  const publishPaths = new Set(["/111/feed", "/111/photos", "/111/videos", "/999/media_publish"]);
+  const sentPublish = (g: ReturnType<typeof fakeGraph>) => g.calls.some((c) => c.method === "POST" && publishPaths.has(c.path) && c.params.get("published") !== "false");
+
+  it("a lost claim at markSent stops every adapter before the request that publishes", async () => {
+    const fb = fakeGraph([[/^\/111\/feed$/, "POST", () => ({ status: 200, body: { id: "x" } })]], { lostAtMarkSent: true });
+    await expect(facebookPageAdapter.publish(page(), fb.ctx)).rejects.toBeInstanceOf(SocialClaimLostError);
+    expect(sentPublish(fb)).toBe(false);
+
+    const photo = fakeGraph([[/^\/111\/photos$/, "POST", () => ({ status: 200, body: { id: "x" } })]], { lostAtMarkSent: true });
+    await expect(facebookPageAdapter.publish(page({ media: [{ kind: "IMAGE", mimeType: "image/jpeg", sizeBytes: 1, url: "https://a.example/1" }] }), photo.ctx)).rejects.toBeInstanceOf(SocialClaimLostError);
+    expect(photo.calls).toHaveLength(0);
+
+    const g = fakeGraph(
+      [
+        [/^\/999\/content_publishing_limit$/, "GET", okQuota],
+        [/^\/999\/media$/, "POST", () => ({ status: 200, body: { id: "c1" } })],
+        [/^\/c1$/, "GET", () => ({ status: 200, body: { status_code: "FINISHED" } })],
+        [/^\/999\/media_publish$/, "POST", () => ({ status: 200, body: { id: "m1" } })],
+      ],
+      { lostAtMarkSent: true },
+    );
+    await expect(instagramAdapter.publish(ig(), g.ctx)).rejects.toBeInstanceOf(SocialClaimLostError);
+    expect(sentPublish(g)).toBe(false);
+  });
+
+  it("Instagram renews its lease on every processing poll, and stops there when the job is lost", async () => {
+    let polls = 0;
+    const slow = fakeGraph([
+      [/^\/999\/content_publishing_limit$/, "GET", okQuota],
+      [/^\/999\/media$/, "POST", () => ({ status: 200, body: { id: "c5" } })],
+      [/^\/c5$/, "GET", () => ({ status: 200, body: { status_code: ++polls < 4 ? "IN_PROGRESS" : "FINISHED" } })],
+      [/^\/999\/media_publish$/, "POST", () => ({ status: 200, body: { id: "m5" } })],
+      [/^\/m5$/, "GET", permalink("https://www.instagram.com/p/5/")],
+    ]);
+    expect((await instagramAdapter.publish(ig(), slow.ctx)).kind).toBe("PUBLISHED");
+    expect(slow.renewals()).toBeGreaterThanOrEqual(4);
+
+    polls = 0;
+    const lost = fakeGraph(
+      [
+        [/^\/999\/content_publishing_limit$/, "GET", okQuota],
+        [/^\/999\/media$/, "POST", () => ({ status: 200, body: { id: "c5" } })],
+        [/^\/c5$/, "GET", () => ({ status: 200, body: { status_code: ++polls < 4 ? "IN_PROGRESS" : "FINISHED" } })],
+        [/^\/999\/media_publish$/, "POST", () => ({ status: 200, body: { id: "m5" } })],
+      ],
+      { lostAfterRenewals: 2 },
+    );
+    await expect(instagramAdapter.publish(ig(), lost.ctx)).rejects.toBeInstanceOf(SocialClaimLostError);
+    expect(sentPublish(lost)).toBe(false);
+    expect(lost.calls.filter((c) => c.path === "/c5")).toHaveLength(2);
   });
 });
 
