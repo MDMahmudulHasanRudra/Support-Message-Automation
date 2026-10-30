@@ -500,3 +500,35 @@ export interface SocialMetricValue {
   label: string;
   value: number;
 }
+
+// ── Recurring scheduling ─────────────────────────────────────────────────────────────────────────
+
+export const SOCIAL_REPEAT_EVERY = ["DAY", "WEEK", "MONTH"] as const;
+export type SocialRepeatEvery = (typeof SOCIAL_REPEAT_EVERY)[number];
+export const SOCIAL_MAX_REPEATS = 12;
+
+/**
+ * The later times of a repeating post: `times` further occurrences after `first`, on the post's own wall
+ * clock (so 09:00 stays 09:00 across a daylight-saving change). A month that lacks the day (31 March →
+ * 30 April) uses the month's last day. Each occurrence becomes its own post, scheduled and cancellable
+ * on its own; nothing repeats without being on the calendar.
+ */
+export function repeatTimes(first: Date, tz: string, every: SocialRepeatEvery, times: number): Date[] {
+  const n = Math.min(SOCIAL_MAX_REPEATS, Math.max(0, Math.floor(times)));
+  const local = utcToZonedLocal(first, tz);
+  const [y, m, d] = local.slice(0, 10).split("-").map(Number) as [number, number, number];
+  const clock = local.slice(11, 16);
+  const out: Date[] = [];
+  for (let i = 1; i <= n; i++) {
+    let day: string;
+    if (every === "MONTH") {
+      const lastDay = new Date(Date.UTC(y, m - 1 + i + 1, 0)).getUTCDate();
+      day = new Date(Date.UTC(y, m - 1 + i, Math.min(d, lastDay))).toISOString().slice(0, 10);
+    } else {
+      day = new Date(Date.UTC(y, m - 1, d + i * (every === "WEEK" ? 7 : 1))).toISOString().slice(0, 10);
+    }
+    const at = zonedLocalToUtc(`${day}T${clock}`, tz);
+    if (at) out.push(at);
+  }
+  return out;
+}

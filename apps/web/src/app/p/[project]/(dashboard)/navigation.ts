@@ -452,6 +452,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/social/campaigns", label: "Campaigns", icon: Flag },
       { href: "/social/templates", label: "Templates", icon: FileText },
       { href: "/social/analytics", label: "Analytics", icon: BarChart3 },
+      { href: "/social/ai", label: "AI Content", icon: Sparkles },
       { href: "/social/accounts", label: "Accounts", icon: Share2 },
     ],
   },

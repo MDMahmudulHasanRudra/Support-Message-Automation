@@ -26,7 +26,8 @@ The honest release boundary. The levels used:
 | Campaigns (with optional sales lead) | yes | — | n/a | — |
 | Templates, signatures, hashtag sets | yes | unit (hashtags) | n/a | — |
 | Analytics (reactions / comments / shares; likes / comments) + CSV | yes | mock (reading) | no | App Review; reach / impressions need insights permissions not requested |
-| AI Content Studio | see the AI section of SOCIAL_STUDIO.md | | | |
+| AI Content Studio (ideas, captions, hashtags, rewrite, adapt, campaign plan, review; product-aware) | yes | unit (validation, prompt rules, parsing) | not run against a real AI provider | AI Engine on + a Response model configured |
 | Threads, LinkedIn, YouTube, TikTok, Pinterest | **no** | — | — | each network's developer approval + an adapter |
-| Recurring posts, RSS import | **no** | — | — | — |
+| Recurring posts (daily / weekly / monthly, up to 12, DST-correct) | yes | unit (times) | n/a | — |
+| RSS import | **no** | — | — | — |
 | Failure alerts through the Notification Center | **no** (Overview and System Log only) | — | — | — |

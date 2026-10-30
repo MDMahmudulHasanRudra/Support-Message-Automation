@@ -743,6 +743,7 @@ model Project {
   socialMediaAssets                    SocialMediaAsset[]
   socialCampaigns                      SocialCampaign[]
   socialTemplates                      SocialTemplate[]
+  socialAiRequests                     SocialAiRequest[]
 
   @@index([customerId])
 }
@@ -8821,4 +8822,31 @@ model SocialTemplate {
   updatedAt         DateTime @updatedAt
 
   @@index([projectId, kind])
+}
+
+/// An AI Content Studio request (SOCIAL_STUDIO.md §AI): answered by the worker through the project's
+/// own Response model (resolveAiClient). The answer is only ever a suggestion for a person.
+model SocialAiRequest {
+  id                  String    @id @default(cuid())
+  projectId           String    @default(dbgenerated("project_id_required()"))
+  project             Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// SOCIAL_AI_KINDS (packages/shared/src/socialAi.ts).
+  kind                String
+  /// The validated SocialAiInput.
+  input               Json
+  /// PENDING | PROCESSING | COMPLETE | FAILED | CANCELLED
+  status              String    @default("PENDING")
+  attempts            Int       @default(0)
+  leaseExpiresAt      DateTime?
+  options             String[]  @default([])
+  /// Why there is no answer (AI_UNAVAILABLE, EMPTY_RESPONSE, ...).
+  reason              String?
+  providerId          String?
+  modelId             String?
+  tokensUsed          Int?
+  requestedByUsername String
+  createdAt           DateTime  @default(now())
+  completedAt         DateTime?
+
+  @@index([projectId, status, createdAt])
 }

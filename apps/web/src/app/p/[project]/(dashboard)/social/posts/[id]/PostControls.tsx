@@ -31,6 +31,8 @@ export function PostActions({
   const [mode, setMode] = useState(publishMode);
   const [when, setWhen] = useState(scheduledLocal);
   const [tz, setTz] = useState(timezone);
+  const [repeatEvery, setRepeatEvery] = useState("");
+  const [repeatTimes, setRepeatTimes] = useState(3);
   const run = (action: Parameters<typeof socialPostAction>[1], extra: Parameters<typeof socialPostAction>[2] = {}) =>
     start(async () => {
       const r = await socialPostAction(id, action, { revision, ...extra });
@@ -85,8 +87,27 @@ export function PostActions({
               </datalist>
             </>
           ) : null}
+          {show.schedule && mode === "SCHEDULE" ? (
+            <>
+              <Select aria-label="Repeat" value={repeatEvery} onChange={(e) => setRepeatEvery(e.target.value)} className="w-36">
+                <option value="">Once</option>
+                <option value="DAY">Repeat daily</option>
+                <option value="WEEK">Repeat weekly</option>
+                <option value="MONTH">Repeat monthly</option>
+              </Select>
+              {repeatEvery ? (
+                <Select aria-label="How many more times" value={String(repeatTimes)} onChange={(e) => setRepeatTimes(Number(e.target.value))} className="w-28">
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>
+                      {n} more
+                    </option>
+                  ))}
+                </Select>
+              ) : null}
+            </>
+          ) : null}
           {show.schedule ? (
-            <Button variant="primary" loading={pending} onClick={() => run("SCHEDULE", { publishMode: mode, scheduledLocal: when, timezone: tz })}>
+            <Button variant="primary" loading={pending} onClick={() => run("SCHEDULE", { publishMode: mode, scheduledLocal: when, timezone: tz, repeatEvery: repeatEvery || undefined, repeatTimes })}>
               {mode === "NOW" ? "Publish now" : "Schedule"}
             </Button>
           ) : (

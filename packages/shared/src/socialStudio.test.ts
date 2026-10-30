@@ -158,3 +158,15 @@ describe("media", () => {
     expect(sniffSocialMedia(new TextEncoder().encode("<svg></svg>"))).toBeNull();
   });
 });
+
+describe("recurring scheduling", () => {
+  it("repeats on the wall clock, keeping the time across daylight saving, capped at 12", async () => {
+    const { repeatTimes } = await import("./socialStudio.js");
+    const first = new Date("2026-10-20T08:00:00Z"); // 09:00 London (BST)
+    const weekly = repeatTimes(first, "Europe/London", "WEEK", 2).map((d) => d.toISOString());
+    expect(weekly).toEqual(["2026-10-27T09:00:00.000Z", "2026-11-03T09:00:00.000Z"]); // 09:00 GMT after the change
+    const monthly = repeatTimes(new Date("2026-01-31T04:00:00Z"), "Asia/Dhaka", "MONTH", 2).map((d) => d.toISOString());
+    expect(monthly).toEqual(["2026-02-28T04:00:00.000Z", "2026-03-31T04:00:00.000Z"]);
+    expect(repeatTimes(first, "Asia/Dhaka", "DAY", 99)).toHaveLength(12);
+  });
+});

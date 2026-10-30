@@ -29,6 +29,7 @@ export * from "./integrationHub.js";
 export * from "./socialStudio.js";
 export * from "./socialPlatforms.js";
 export * from "./socialMeta.js";
+export * from "./socialAi.js";
 export * from "./aiCommerce.js";
 export * from "./rawSqlGuard.js";
 export * from "./projectAccessLevels.js";

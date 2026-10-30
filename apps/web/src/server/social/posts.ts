@@ -9,6 +9,7 @@ import {
   overallPostStatus,
   planPublishAccounts,
   platformHas,
+  repeatTimes,
   socialApprovalMaterial,
   validateForPlatform,
   validateSchedule,
@@ -17,6 +18,7 @@ import {
   type SocialMediaKind,
   type SocialPostStatus,
   type SocialPublishMode,
+  type SocialRepeatEvery,
   type SocialTargetAction,
   type SocialTargetStatus,
 } from "@support-automation/shared";
@@ -338,6 +340,8 @@ export interface SocialActionExtra {
   reviewerUsername?: string | null;
   publishMode?: SocialPublishMode;
   scheduledAt?: Date | null;
+  /** SCHEDULE only: also schedule copies of the approved post this many times at this interval. */
+  repeat?: { every: SocialRepeatEvery; times: number } | null;
 }
 
 export async function applySocialAction(id: string, action: SocialAction, username: string, extra: SocialActionExtra = {}, now = new Date()): Promise<{ message: string; id?: string }> {
@@ -392,13 +396,45 @@ export async function applySocialAction(id: string, action: SocialAction, userna
       );
       if (!plan.ok) throw new SocialRefusal(plan.reason);
       for (const t of post.targets) if (!adapterFor(t.account.platform)) throw new SocialRefusal(`${t.account.name}: publishing to this platform is not available.`);
-      await move({ status: "SCHEDULED", publishMode: mode, scheduledAt: when, scheduledAtRequest: now, scheduledByUsername: username, lastError: null }, "SCHEDULED", { mode, at: when?.toISOString() ?? null }, async (tx) => {
+      // Repeats: each later occurrence is its own scheduled post with the SAME approved material (so the
+      // approval covers it), visible on the calendar and cancellable on its own.
+      const repeats = mode === "SCHEDULE" && when && extra.repeat ? repeatTimes(when, post.timezone, extra.repeat.every, extra.repeat.times) : [];
+      await move({ status: "SCHEDULED", publishMode: mode, scheduledAt: when, scheduledAtRequest: now, scheduledByUsername: username, lastError: null }, "SCHEDULED", { mode, at: when?.toISOString() ?? null, repeats: repeats.length }, async (tx) => {
         await tx.socialPostTarget.updateMany({
           where: { postId: id },
           data: { status: "DUE", dueAt: when, nextAttemptAt: null, attempts: 0, claimToken: null, leaseExpiresAt: null, externalId: null, externalContainerIds: [], permalink: null, error: null, publishedAt: null },
         });
+        for (const [i, at] of repeats.entries()) {
+          const copy = await tx.socialPost.create({
+            data: {
+              title: post.title ? `${post.title} (${i + 2})`.slice(0, 120) : null,
+              content: post.content,
+              mediaIds: post.mediaIds,
+              status: "SCHEDULED",
+              publishMode: "SCHEDULE",
+              scheduledAt: at,
+              timezone: post.timezone,
+              campaignId: post.campaignId,
+              aiAssisted: post.aiAssisted,
+              createdByUsername: username,
+              submittedAt: post.submittedAt,
+              submittedByUsername: post.submittedByUsername,
+              approvalHash: post.approvalHash,
+              approvedAt: post.approvedAt,
+              approvedByUsername: post.approvedByUsername,
+              scheduledAtRequest: now,
+              scheduledByUsername: username,
+              duplicatedFromId: post.id,
+            },
+            select: { id: true },
+          });
+          for (const t of post.targets) {
+            await tx.socialPostTarget.create({ data: { postId: copy.id, accountId: t.accountId, contentOverride: t.contentOverride, settings: t.settings ?? Prisma.DbNull, status: "DUE", dueAt: at } });
+          }
+          await addPostEvent(tx, copy.id, "SCHEDULED", username, { repeatOf: post.id, occurrence: i + 2, at: at.toISOString() });
+        }
       });
-      return { message: mode === "NOW" ? "Publishing now." : "Scheduled." };
+      return { message: mode === "NOW" ? "Publishing now." : repeats.length ? `Scheduled, and ${repeats.length} repeat(s) after it.` : "Scheduled." };
     }
     case "CANCEL": {
       await prisma.$transaction(async (tx) => {

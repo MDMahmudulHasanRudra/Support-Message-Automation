@@ -117,6 +117,36 @@ it off). Several app instances may run it at once. Guarantees:
 **Live status: mock-tested only.** Nothing has been published to a real Page or Instagram account from
 this code. Real use needs Meta App Review approval of the publishing permissions on the platform app.
 
+## AI Content Studio
+
+`/social/ai`, `social.edit` to ask, `social.view` to read.
+
+- **Request kinds**: post ideas, captions, hashtags, rewrite, adapt for a platform, campaign plan, and
+  review a draft.
+- **Request inputs**: a tone, a language ("same" keeps Bengali as Bengali and Banglish as Banglish), a
+  platform, and an optional choice of catalogue products.
+- **How it is answered**: requests are `SocialAiRequest` rows, answered by the worker loop `social-ai`.
+  - It uses Get Assist's existing AI path: `resolveAiClient("RESPONSE")`, the project's own provider,
+    model, credentials and usage. There is no second AI system and no new credential.
+  - It is gated on Social Studio and the AI Engine switch. AI Copilot is NOT required.
+  - The prompt forbids any price, offer, date, statistic, link or claim not in the brief or in the chosen
+    products' catalogue facts. Facts come only from products the person picked, only while the catalogue
+    is on and they hold `commerce.view`.
+- **Using an answer**: answers are suggestions. "Start a post with this" opens the composer with the text
+  and marks the post `aiAssisted`; it then needs approval like any other post.
+- **Status**: implemented and unit-tested (prompt and parsing). It has not been run against a real AI
+  provider in this build.
+
+## Recurring posts
+
+Scheduling an approved post can repeat it daily, weekly or monthly, up to 12 more times
+(`repeatTimes`).
+
+- **Wall clock**: times are computed on the post's own wall clock, so 09:00 stays 09:00 across a
+  daylight-saving change. A month without the day uses its last day.
+- **Copies**: each occurrence is its own SCHEDULED post with the identical approved material, so the
+  approval covers it. It is on the calendar and cancellable on its own. Nothing repeats out of sight.
+
 ## Media library
 
 - **What is accepted**: JPEG, PNG, WebP, GIF photos up to 8 MB, and MP4 / MOV videos up to 200 MB. The
@@ -145,7 +175,7 @@ this code. Real use needs Meta App Review approval of the publishing permissions
 
 - **Other platforms**: Threads, LinkedIn, YouTube, TikTok and Pinterest adapters. Each needs its own
   developer approval.
-- **Recurring posts and RSS import**.
+- **RSS import**.
 - **Notifications**: failure alerts through the Notification Center (failures are on the Overview and in
   the System Log).
 - **Live testing**: real-provider verification of everything Meta.

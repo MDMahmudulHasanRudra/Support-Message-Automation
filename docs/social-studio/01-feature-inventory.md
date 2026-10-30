@@ -113,7 +113,8 @@ platform is listed with its requirements and is **not** claimed.
 
 - **Purpose**: repeat evergreen posts.
 - **API**: none needed (our scheduling).
-- **Status**: NOT built (planned: a recurrence rule creating dated copies that still each need approval).
+- **Status**: implemented. Scheduling can repeat daily / weekly / monthly up to 12 times; each occurrence
+  is its own scheduled post with the same approved material.
 
 ## 7. Post sets, templates, signatures, hashtags
 
@@ -158,7 +159,8 @@ platform is listed with its requirements and is **not** claimed.
 - **Dependencies**: Get Assist's AI engine and Response model (the same providers, credentials and
   usage), optional Product Catalog.
 - **Rule**: AI output only ever fills a draft; it is marked AI-assisted and needs approval.
-- **Status**: see `02-capability-status.md`.
+- **Status**: implemented (`/social/ai`, worker loop `social-ai`); unit-tested; not run against a live AI
+  provider.
 
 ## 11. Analytics and reports
 

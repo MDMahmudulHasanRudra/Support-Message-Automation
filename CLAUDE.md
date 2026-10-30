@@ -3068,6 +3068,10 @@ Owned code, no Postiz or other publishing service. Rules worth not undoing:
   `server/social/accounts.ts`. Platforms fetch media only through 2-hour HMAC-signed URLs (`signedAssetUrl`).
 - **Adapters exist only for Facebook Pages and Instagram** (`socialMetaAdapter.test.ts` keeps the registry and the catalogue in agreement);
   mock-tested, NOT live-verified, Meta App Review pending. A metric a platform does not return is absent, never 0.
+- **AI Content Studio** (`SocialAiRequest`, worker loop `social-ai`) answers through `resolveAiClient("RESPONSE")` — never a second
+  AI system; gated on SOCIAL_STUDIO + the AI Engine, NOT on AI Copilot. Its prompt forbids facts beyond the brief and the chosen
+  products; an answer only fills a draft (`aiAssisted`), which still needs approval. Recurring posts are separate scheduled
+  copies of the approved material (`repeatTimes`, wall-clock, ≤12), never a hidden repeat.
 
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 

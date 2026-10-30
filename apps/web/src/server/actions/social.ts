@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 import {
   isValidTimeZone,
   parseAccountSettings,
+  SOCIAL_REPEAT_EVERY,
   zonedLocalToUtc,
   type SocialAction,
   type SocialPublishMode,
+  type SocialRepeatEvery,
   type SocialTargetAction,
 } from "@support-automation/shared";
 import { checkPermission } from "@/server/authorize";
@@ -16,6 +18,7 @@ import { addSocialComment, applySocialAction, applyTargetAction, rescheduleSocia
 import { deleteSocialAsset, cleanFolder, cleanTags, SocialMediaError, updateSocialAsset } from "@/server/social/media";
 import { createCampaign, deleteTemplate, saveTemplate, SOCIAL_TEMPLATE_KINDS, updateCampaign, type CampaignInput, type SocialTemplateKind } from "@/server/social/library";
 import { refreshTargetMetrics } from "@/server/social/engine";
+import { createSocialAiRequest, readSocialAiRequest, type SocialAiRequestView } from "@/server/social/ai";
 
 /**
  * Social Studio's actions (SOCIAL_STUDIO.md). Every one checks its own key with the SOCIAL_STUDIO feature
@@ -120,7 +123,7 @@ const POST_ACTION_KEYS: Record<Exclude<SocialAction, "EDIT">, "social.edit" | "s
 export async function socialPostAction(
   id: string,
   action: Exclude<SocialAction, "EDIT">,
-  extra: { revision?: number; note?: string; reviewer?: string; publishMode?: SocialPublishMode; scheduledLocal?: string; timezone?: string } = {},
+  extra: { revision?: number; note?: string; reviewer?: string; publishMode?: SocialPublishMode; scheduledLocal?: string; timezone?: string; repeatEvery?: string; repeatTimes?: number } = {},
 ): Promise<SocialActionState> {
   const key = POST_ACTION_KEYS[action];
   if (!key) return { error: "Unknown action." };
@@ -139,6 +142,10 @@ export async function socialPostAction(
       reviewerUsername: extra.reviewer ?? null,
       publishMode: extra.publishMode,
       scheduledAt,
+      repeat:
+        extra.repeatEvery && (SOCIAL_REPEAT_EVERY as readonly string[]).includes(extra.repeatEvery) && Number(extra.repeatTimes) > 0
+          ? { every: extra.repeatEvery as SocialRepeatEvery, times: Number(extra.repeatTimes) }
+          : null,
     });
     if (action === "APPROVE" || action === "SCHEDULE" || action === "CANCEL") {
       await logSystemEvent("INFO", "social", `Social post ${action === "APPROVE" ? "approved" : action === "SCHEDULE" ? "scheduled" : "cancelled"}`, { postId: id }, { actorUserId: access.session.userId, targetType: "SocialPost", targetId: String(id) });
@@ -283,4 +290,24 @@ export async function deleteSocialTemplateAction(id: string): Promise<SocialActi
   } catch (err) {
     return refusal(err);
   }
+}
+
+// ── AI Content Studio ───────────────────────────────────────────────────────────────────────────
+
+export async function requestSocialAiAction(input: Record<string, unknown>): Promise<SocialActionState> {
+  const access = await checkPermission("social.edit", FEATURE);
+  if ("denied" in access) return { error: access.denied };
+  try {
+    const created = await createSocialAiRequest(input, access.session.username);
+    return { id: created.id, success: "Asked. The answer usually takes a few seconds." };
+  } catch (err) {
+    return refusal(err);
+  }
+}
+
+/** Polled by the AI page: a refusal reads as "nothing to show", never a redirect. */
+export async function readSocialAiAction(id: string): Promise<SocialAiRequestView | null> {
+  const access = await checkPermission("social.view", FEATURE);
+  if ("denied" in access) return null;
+  return readSocialAiRequest(String(id));
 }
