@@ -57,8 +57,7 @@ Nine project-owned tables, every one with `projectId DEFAULT project_id_required
 
 ## Not built yet (be honest about it)
 
-- Courier booking (Steadfast, Pathao, RedX), WooCommerce and Shopify sync — planned modules (`COURIER`,
-  `WOOCOMMERCE`, `SHOPIFY`), shown as unavailable in the Module Builder.
+- Courier booking and shop sync are built since (COMMERCE_INTEGRATIONS.md), but not verified with a live provider.
 - AI commerce tools (product lookup, order status for a customer) — not built; the AI does not read these
   tables.
 - No new automated tests were written for this package (by request). The pure rules in `commerce.ts`

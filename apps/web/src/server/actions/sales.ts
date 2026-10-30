@@ -12,6 +12,7 @@ import {
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
 import { projectPath } from "@/server/projectPaths";
+import { emitWebhookEvent } from "@/server/integrationHub/webhooks";
 
 /**
  * Sales pipeline actions (COMMERCE.md §Sales). `sales.manage` gates every write. A stage move is
@@ -89,6 +90,7 @@ export async function saveLead(id: string | null, input: LeadInput): Promise<Sal
     return lead;
   });
   await revalidate("/sales");
+  await emitWebhookEvent("lead.created", { leadId: created.id, name, source: data.source, stage: "NEW" });
   return { success: "Lead added.", id: created.id };
 }
 
@@ -114,6 +116,7 @@ export async function moveLeadStage(id: string, toRaw: string, lostReason: strin
     return true;
   });
   if (!moved) return { error: "The lead changed while you were looking. Reload and try again." };
+  await emitWebhookEvent("lead.stage_changed", { leadId: id, from: lead.stage, to: toRaw });
   await revalidate("/sales", `/sales/${id}`);
   return { success: `Moved to ${LEAD_STAGE_LABELS[toRaw]}.` };
 }

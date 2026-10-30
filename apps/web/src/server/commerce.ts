@@ -158,12 +158,34 @@ export async function getOrder(id: string) {
       items: { orderBy: { id: "asc" } },
       events: { orderBy: { createdAt: "desc" }, take: 100 },
       client: { select: { id: true, name: true, code: true } },
+      shipments: { orderBy: { createdAt: "desc" }, include: { events: { orderBy: { createdAt: "desc" }, take: 20 } } },
     },
   });
   if (!o) return null;
+  const pushes = await prisma.shopSyncRun.findMany({ where: { kind: "PUSH_ORDER", orderId: o.id }, orderBy: { startedAt: "desc" }, include: { connection: { select: { provider: true } } } });
   return {
     id: o.id,
     number: o.number,
+    externalSource: o.externalSource,
+    externalId: o.externalId,
+    shipments: o.shipments.map((s) => ({
+      id: s.id,
+      provider: s.provider,
+      status: s.status,
+      providerStatus: s.providerStatus,
+      invoice: s.invoice,
+      consignmentId: s.consignmentId,
+      trackingCode: s.trackingCode,
+      cod: formatMinor(s.codAmountMinor, s.currency),
+      recipientName: s.recipientName,
+      recipientPhone: s.recipientPhone,
+      recipientAddress: s.recipientAddress,
+      error: s.error,
+      lastCheckedAt: s.lastCheckedAt?.toISOString() ?? null,
+      createdAt: s.createdAt.toISOString(),
+      events: s.events.map((e) => ({ id: e.id, status: e.status, providerStatus: e.providerStatus, note: e.note, actorUsername: e.actorUsername, createdAt: e.createdAt.toISOString() })),
+    })),
+    pushes: pushes.map((r) => ({ id: r.id, provider: r.connection.provider, status: r.status, externalId: r.externalId, errors: (r.errors as string[] | null) ?? [], startedAt: r.startedAt.toISOString() })),
     status: o.status as OrderStatus,
     paymentStatus: o.paymentStatus,
     customerName: o.customerName,
@@ -180,6 +202,7 @@ export async function getOrder(id: string) {
     total: formatMinor(o.totalMinor, o.currency),
     paid: formatMinor(o.paidMinor, o.currency),
     due: formatMinor(o.totalMinor > o.paidMinor ? o.totalMinor - o.paidMinor : BigInt(0), o.currency),
+    dueMinor: (o.totalMinor > o.paidMinor ? o.totalMinor - o.paidMinor : BigInt(0)).toString(),
     discountMinor: o.discountMinor.toString(),
     shippingMinor: o.shippingMinor.toString(),
     createdByUsername: o.createdByUsername,
@@ -293,4 +316,95 @@ export async function clientOptions(): Promise<Array<{ id: string; name: string;
   } catch {
     return [];
   }
+}
+
+// ── Integrations (COMMERCE_INTEGRATIONS.md) ───────────────────────────────────────────────────────
+
+export async function listShipments(filter: { status?: string; q?: string }) {
+  const q = filter.q?.trim();
+  const rows = await prisma.shipment.findMany({
+    where: {
+      ...(filter.status ? { status: filter.status as never } : {}),
+      ...(q ? { OR: [{ invoice: { contains: q, mode: "insensitive" } }, { consignmentId: { contains: q } }, { recipientPhone: { contains: q } }, { recipientName: { contains: q, mode: "insensitive" } }] } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 500,
+    include: { order: { select: { id: true, number: true } } },
+  });
+  const grouped = await prisma.shipment.groupBy({ by: ["status"], _count: { _all: true } });
+  const counts: Record<string, number> = {};
+  for (const g of grouped) counts[g.status] = g._count._all;
+  return {
+    counts,
+    rows: rows.map((s) => ({
+      id: s.id,
+      provider: s.provider,
+      status: s.status,
+      providerStatus: s.providerStatus,
+      invoice: s.invoice,
+      consignmentId: s.consignmentId,
+      cod: formatMinor(s.codAmountMinor, s.currency),
+      recipientName: s.recipientName,
+      recipientPhone: s.recipientPhone,
+      order: s.order,
+      error: s.error,
+      lastCheckedAt: s.lastCheckedAt?.toISOString() ?? null,
+      createdAt: s.createdAt.toISOString(),
+    })),
+  };
+}
+
+/** The project's courier connections. Never the credentials. */
+export async function courierConnections() {
+  const rows = await prisma.courierConnection.findMany({ orderBy: { provider: "asc" } });
+  return rows.map((c) => ({
+    id: c.id,
+    provider: c.provider,
+    label: c.label,
+    sandbox: c.sandbox,
+    isActive: c.isActive,
+    settings: (c.settings ?? {}) as { storeId?: string; weight?: string; pickupStoreId?: string },
+    lastCheckedAt: c.lastCheckedAt?.toISOString() ?? null,
+    lastCheckOk: c.lastCheckOk,
+    lastError: c.lastError,
+  }));
+}
+
+/** One shop connection, its webhook address and recent runs. Never the credentials or the secret. */
+export async function shopConnectionView(provider: "WOOCOMMERCE" | "SHOPIFY", origin: string | null) {
+  const c = await prisma.shopConnection.findFirst({ where: { provider }, include: { runs: { orderBy: { startedAt: "desc" }, take: 15 } } });
+  if (!c) return null;
+  const imported = await prisma.product.count({ where: { externalSource: provider } });
+  const importedOrders = await prisma.commerceOrder.count({ where: { externalSource: provider } });
+  return {
+    id: c.id,
+    label: c.label,
+    shopUrl: c.shopUrl,
+    currency: c.currency,
+    isActive: c.isActive,
+    importOrders: c.importOrders,
+    hasWebhookSecret: Boolean(c.webhookSecretCiphertext),
+    webhookUrl: origin ? `${origin}/api/shops/${c.webhookKey}` : null,
+    lastSyncAt: c.lastSyncAt?.toISOString() ?? null,
+    lastSyncOk: c.lastSyncOk,
+    lastError: c.lastError,
+    lastWebhookAt: c.lastWebhookAt?.toISOString() ?? null,
+    imported,
+    importedOrders,
+    runs: c.runs.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      status: r.status,
+      created: r.created,
+      updated: r.updated,
+      unchanged: r.unchanged,
+      skipped: r.skipped,
+      failed: r.failed,
+      errors: (r.errors as string[] | null) ?? [],
+      actorUsername: r.actorUsername,
+      orderId: r.orderId,
+      startedAt: r.startedAt.toISOString(),
+      finishedAt: r.finishedAt?.toISOString() ?? null,
+    })),
+  };
 }

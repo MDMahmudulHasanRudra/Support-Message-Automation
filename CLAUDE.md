@@ -3023,6 +3023,16 @@ currency per order, BigInt minor units; stock changes only through `orderStockEf
 transaction, conditional (`stockQuantity >= qty`), each with an `InventoryMovement`; items editable only on a
 draft and re-priced on the server; order and lead histories are append-only (trigger).
 
+### Couriers, shops, API and webhooks (`COMMERCE_INTEGRATIONS.md`, `INTEGRATION_HUB.md`)
+
+Features `COURIER`, `WOOCOMMERCE`, `SHOPIFY`, `API_ACCESS`, all **off by default**. NOT live-verified with any
+provider. Rules worth not undoing: a booking or shop send is written first (unique invoice / partial unique index)
+and sent once; no answer is UNKNOWN, never retried by itself; no cancellation is offered (no courier documents one);
+imported orders never move our stock; webhooks in are accepted only with the provider's HMAC, the URL key picks the
+project; API keys are stored as SHA-256 only and run inside their project; outbound webhooks are signed, at least
+once, and never sent to an address that resolves privately. Background work runs in the APP process
+(`server/integrationsProcessor.ts`, `INTEGRATIONS_PROCESSOR_DISABLED=true`).
+
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 
 On the platform (Layer 1). Rules worth not undoing:

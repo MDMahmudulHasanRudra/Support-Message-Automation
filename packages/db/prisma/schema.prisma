@@ -725,6 +725,14 @@ model Project {
   commerceOrderEvents                  CommerceOrderEvent[]
   salesLeads                           SalesLead[]
   salesLeadEvents                      SalesLeadEvent[]
+  courierConnections                   CourierConnection[]
+  shipments                            Shipment[]
+  shipmentEvents                       ShipmentEvent[]
+  shopConnections                      ShopConnection[]
+  shopSyncRuns                         ShopSyncRun[]
+  apiKeys                              ApiKey[]
+  webhookEndpoints                     WebhookEndpoint[]
+  webhookDeliveries                    WebhookDelivery[]
 
   @@index([customerId])
 }
@@ -6674,17 +6682,19 @@ model Client {
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
-  channels      ClientChannel[]
-  notes         ClientNote[]
-  activities    ClientActivity[]
-  dues          ClientDue[]
-  dueEvents     ClientDueEvent[]
-  chatLinks     ClientWhatsAppChatLink[]
-  subscriptions ClientSubscription[]      @relation("ClientSubscriptions")
-  photo         ClientPhoto?
-  payments      ClientPayment[]
-  groupLinks    ClientWhatsAppGroupLink[]
-  importRows    ClientImportRow[]
+  channels       ClientChannel[]
+  notes          ClientNote[]
+  activities     ClientActivity[]
+  dues           ClientDue[]
+  dueEvents      ClientDueEvent[]
+  chatLinks      ClientWhatsAppChatLink[]
+  subscriptions  ClientSubscription[]      @relation("ClientSubscriptions")
+  photo          ClientPhoto?
+  payments       ClientPayment[]
+  groupLinks     ClientWhatsAppGroupLink[]
+  importRows     ClientImportRow[]
+  commerceOrders CommerceOrder[]
+  salesLeads     SalesLead[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -6693,8 +6703,6 @@ model Client {
   @@index([projectId, country])
   @@index([currentSubscriptionId])
   @@index([tags], type: Gin)
-  commerceOrders        CommerceOrder[]
-  salesLeads            SalesLead[]
 }
 
 /// One way to reach a client: a phone, an email, a WhatsApp number or group, a Messenger / Instagram /
@@ -7999,22 +8007,22 @@ model ProjectModuleConfigChange {
 /// customer-scoped client confines it); built-in templates live in code. Editing bumps `version`;
 /// projects that applied an earlier version keep what they applied (their history records which).
 model ModuleTemplate {
-  id                String       @id @default(cuid())
+  id                String      @id @default(cuid())
   /// NULL = the original installation (the founding customer), like every customer-owned row.
   customerId        String?
-  customer          Customer?    @relation("CustomerModuleTemplates", fields: [customerId], references: [id], onDelete: Restrict)
+  customer          Customer?   @relation("CustomerModuleTemplates", fields: [customerId], references: [id], onDelete: Restrict)
   /// Unique per customer among templates in use (partial unique indexes in SQL).
   name              String
   description       String?
   baseType          ProjectType
   modules           String[]
   declined          String[]
-  version           Int          @default(1)
+  version           Int         @default(1)
   archivedAt        DateTime?
   createdByUsername String
   updatedByUsername String?
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   @@index([customerId])
 }
@@ -8117,6 +8125,8 @@ model ProductVariant {
   priceMinor    BigInt?
   stockQuantity Int                 @default(0)
   isActive      Boolean             @default(true)
+  /// The shop's variant id when imported (WooCommerce variation / Shopify variant).
+  externalId    String?
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
   movements     InventoryMovement[]
@@ -8182,6 +8192,7 @@ model CommerceOrder {
   events            CommerceOrderEvent[]
   movements         InventoryMovement[]
   wonLeads          SalesLead[]
+  shipments         Shipment[]
 
   @@unique([projectId, number])
   @@index([projectId, status, createdAt])
@@ -8269,4 +8280,234 @@ model SalesLeadEvent {
   createdAt     DateTime        @default(now())
 
   @@index([leadId, createdAt])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Commerce integrations (COMMERCE_INTEGRATIONS.md): couriers and shops. Project-owned; credentials
+// are encryptSecret envelopes, never plaintext.
+// ---------------------------------------------------------------------------------------------
+
+enum CourierProvider {
+  STEADFAST
+  PATHAO
+  REDX
+}
+
+enum ShipmentStatus {
+  BOOKING
+  BOOKED
+  PICKED_UP
+  IN_TRANSIT
+  ON_HOLD
+  DELIVERED
+  PARTIAL_DELIVERED
+  RETURNED
+  CANCELLED
+  FAILED
+  UNKNOWN
+}
+
+enum ShopProvider {
+  WOOCOMMERCE
+  SHOPIFY
+}
+
+/// One courier account per provider per project.
+model CourierConnection {
+  id                    String          @id @default(cuid())
+  projectId             String          @default(dbgenerated("project_id_required()"))
+  project               Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  provider              CourierProvider
+  label                 String
+  /// The provider's sandbox instead of live (Pathao and RedX have one).
+  sandbox               Boolean         @default(false)
+  credentialsCiphertext String
+  /// Provider settings that are not secret: Pathao store id, RedX pickup store, default weight.
+  settings              Json?
+  isActive              Boolean         @default(true)
+  lastCheckedAt         DateTime?
+  lastCheckOk           Boolean?
+  lastError             String?
+  createdByUsername     String
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  shipments             Shipment[]
+
+  @@unique([projectId, provider])
+}
+
+/// A delivery booked with a courier for an order. Provider-neutral status, the provider's own beside it.
+model Shipment {
+  id               String             @id @default(cuid())
+  projectId        String             @default(dbgenerated("project_id_required()"))
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  orderId          String
+  order            CommerceOrder      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  connectionId     String?
+  connection       CourierConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  provider         CourierProvider
+  status           ShipmentStatus     @default(BOOKING)
+  providerStatus   String?
+  /// Our reference sent to the courier as the merchant invoice / order id. Unique per project.
+  invoice          String
+  consignmentId    String?
+  trackingCode     String?
+  codAmountMinor   BigInt
+  currency         String
+  recipientName    String
+  recipientPhone   String
+  recipientAddress String
+  note             String?
+  /// What was sent beyond the basics (area, weight, store) — never a credential.
+  details          Json?
+  error            String?
+  bookedByUsername String
+  bookedAt         DateTime?
+  lastCheckedAt    DateTime?
+  deliveredAt      DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  events           ShipmentEvent[]
+
+  @@unique([projectId, invoice])
+  @@index([projectId, status, lastCheckedAt])
+  @@index([orderId])
+}
+
+/// The shipment's history, append-only.
+model ShipmentEvent {
+  id             String         @id @default(cuid())
+  projectId      String         @default(dbgenerated("project_id_required()"))
+  project        Project        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  shipmentId     String
+  shipment       Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  status         ShipmentStatus
+  providerStatus String?
+  note           String?
+  actorUsername  String?
+  createdAt      DateTime       @default(now())
+
+  @@index([shipmentId, createdAt])
+}
+
+/// One shop per provider per project. The webhook key in the URL selects it.
+model ShopConnection {
+  id                      String        @id @default(cuid())
+  projectId               String        @default(dbgenerated("project_id_required()"))
+  project                 Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  provider                ShopProvider
+  label                   String
+  shopUrl                 String
+  credentialsCiphertext   String
+  webhookSecretCiphertext String?
+  webhookKey              String        @unique
+  currency                String?
+  isActive                Boolean       @default(true)
+  /// Import the shop's orders too (products are always imported).
+  importOrders            Boolean       @default(false)
+  lastSyncAt              DateTime?
+  lastSyncOk              Boolean?
+  lastError               String?
+  lastWebhookAt           DateTime?
+  createdByUsername       String
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  runs                    ShopSyncRun[]
+
+  @@unique([projectId, provider])
+}
+
+/// One import or reconciliation, with its counts and the first errors.
+model ShopSyncRun {
+  id            String         @id @default(cuid())
+  projectId     String         @default(dbgenerated("project_id_required()"))
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId  String
+  connection    ShopConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  /// PRODUCTS | ORDERS | PUSH_ORDER
+  kind          String
+  /// PUSH_ORDER only: the order sent. One live push per order per shop (partial unique index).
+  orderId       String?
+  /// PUSH_ORDER only: the shop's id for the order it created.
+  externalId    String?
+  /// RUNNING | SUCCEEDED | PARTIAL | FAILED
+  status        String
+  created       Int            @default(0)
+  updated       Int            @default(0)
+  unchanged     Int            @default(0)
+  skipped       Int            @default(0)
+  failed        Int            @default(0)
+  errors        Json?
+  actorUsername String?
+  startedAt     DateTime       @default(now())
+  finishedAt    DateTime?
+
+  @@index([connectionId, startedAt])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Integration Hub (INTEGRATION_HUB.md): scoped API keys and signed outbound webhooks. Project-owned.
+// ---------------------------------------------------------------------------------------------
+
+/// A key for the public API. Only its SHA-256 is stored; the key itself is shown once.
+model ApiKey {
+  id                String    @id @default(cuid())
+  projectId         String    @default(dbgenerated("project_id_required()"))
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name              String
+  /// The first characters, to recognise a key in a list ("ga_x7Kp…").
+  prefix            String
+  keyHash           String    @unique
+  scopes            String[]
+  createdByUsername String
+  lastUsedAt        DateTime?
+  expiresAt         DateTime?
+  revokedAt         DateTime?
+  revokedByUsername String?
+  createdAt         DateTime  @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+model WebhookEndpoint {
+  id                String            @id @default(cuid())
+  projectId         String            @default(dbgenerated("project_id_required()"))
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  url               String
+  description       String?
+  events            String[]
+  secretCiphertext  String
+  isActive          Boolean           @default(true)
+  createdByUsername String
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  deliveries        WebhookDelivery[]
+
+  @@index([projectId, isActive])
+}
+
+/// One event to one endpoint, with its retries. PENDING → SUCCEEDED, or DEAD after the last retry.
+model WebhookDelivery {
+  id             String          @id @default(cuid())
+  projectId      String          @default(dbgenerated("project_id_required()"))
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  endpointId     String
+  endpoint       WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event          String
+  /// The event's id, the same for every endpoint and every retry (receivers deduplicate on it).
+  eventId        String
+  payload        Json
+  /// PENDING | SENDING | SUCCEEDED | DEAD
+  status         String          @default("PENDING")
+  attempts       Int             @default(0)
+  nextAttemptAt  DateTime        @default(now())
+  lastStatusCode Int?
+  lastError      String?
+  deliveredAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([endpointId, eventId])
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
 }

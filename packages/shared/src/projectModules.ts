@@ -351,6 +351,60 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: [],
     documentation: "COMMERCE.md",
   },
+  COURIER: {
+    category: "Commerce",
+    benefits: ["Book a delivery from the order in one step", "Delivery status refreshed by itself"],
+    defaultForTypes: ["ECOMMERCE"],
+    dependencies: [{ kind: "HARD", anyOf: ["ORDERS"], why: "A shipment is for an order." }],
+    conflicts: [],
+    aiCapabilities: ["Tell a verified customer where their delivery is"],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Shipments and their history are kept. " + KEPT,
+    setupSteps: ["Connect a courier under Settings → Couriers"],
+    documentation: "COMMERCE_INTEGRATIONS.md",
+  },
+  WOOCOMMERCE: {
+    category: "Integrations",
+    benefits: ["Products, prices and stock imported from the shop", "Shop orders in the same order list"],
+    defaultForTypes: [],
+    dependencies: [
+      { kind: "HARD", anyOf: ["PRODUCT_CATALOG"], why: "Products are imported into the catalogue." },
+      { kind: "RECOMMENDED", anyOf: ["ORDERS"], why: "The shop's orders can then be imported too." },
+    ],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Imported products and orders are kept. " + KEPT,
+    setupSteps: ["Create a REST API key in WooCommerce", "Connect it under Settings → WooCommerce"],
+    documentation: "COMMERCE_INTEGRATIONS.md",
+  },
+  SHOPIFY: {
+    category: "Integrations",
+    benefits: ["Products, prices and stock imported from the store", "Store orders in the same order list"],
+    defaultForTypes: [],
+    dependencies: [
+      { kind: "HARD", anyOf: ["PRODUCT_CATALOG"], why: "Products are imported into the catalogue." },
+      { kind: "RECOMMENDED", anyOf: ["ORDERS"], why: "The store's orders can then be imported too." },
+    ],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Imported products and orders are kept. " + KEPT,
+    setupSteps: ["Create a custom app in the Shopify admin", "Connect it under Settings → Shopify"],
+    documentation: "COMMERCE_INTEGRATIONS.md",
+  },
+  API_ACCESS: {
+    category: "Integrations",
+    benefits: ["Read products and orders, create leads from other systems", "Signed webhooks with retries and a delivery history"],
+    defaultForTypes: [],
+    dependencies: [],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Keys, endpoints and delivery history are kept. " + KEPT,
+    setupSteps: ["Create an API key or a webhook under Settings → API & Webhooks"],
+    documentation: "INTEGRATION_HUB.md",
+  },
   AI_COPILOT: {
     category: "AI",
     benefits: ["Conversation summaries and suggested replies for agents", "Nothing is sent without the agent"],
@@ -373,15 +427,10 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
  * feature. Each becomes AVAILABLE only together with its feature entry and its real implementation.
  */
 const PLANNED_MODULES: readonly ModuleDefinition[] = [
-  planned("COURIER", "Courier Management", "Commerce", "Book and track shipments with Steadfast, Pathao and RedX.", [
-    { kind: "HARD", anyOf: ["ORDERS"], why: "A shipment is for an order." },
-  ], ["Tell a verified customer where their delivery is"]),
-  planned("WOOCOMMERCE", "WooCommerce", "Integrations", "Sync products, stock and orders with a WooCommerce shop.", [
-    { kind: "HARD", anyOf: ["PRODUCT_CATALOG"], why: "Products are synced into the catalogue." },
+  planned("SOCIAL_MANAGEMENT", "Social Management", "Integrations", "Facebook and Instagram comments, replies, comment-to-lead and post scheduling.", [
+    { kind: "HARD", anyOf: ["OMNICHANNEL"], why: "It uses the project's Meta connections." },
   ], []),
-  planned("SHOPIFY", "Shopify", "Integrations", "Sync products, stock and orders with a Shopify store.", [
-    { kind: "HARD", anyOf: ["PRODUCT_CATALOG"], why: "Products are synced into the catalogue." },
-  ], []),
+  planned("AUTOMATION_STUDIO", "Automation Studio", "Integrations", "Visual workflows: triggers, conditions, branches, delays and retries across modules.", [], []),
 ];
 
 function planned(key: string, name: string, category: ModuleCategory, description: string, dependencies: ModuleDependency[], aiCapabilities: string[]): ModuleDefinition {
@@ -406,6 +455,7 @@ function planned(key: string, name: string, category: ModuleCategory, descriptio
     setupSteps: [],
   };
 }
+
 
 export const PROJECT_MODULES: readonly ModuleDefinition[] = [
   ...PROJECT_FEATURES.map((feature): ModuleDefinition => {
@@ -439,8 +489,7 @@ export function templateModules(type: ProjectBaseType): string[] {
 
 /** The PLANNED modules a base type will add once they ship (shown, never selected). */
 export function plannedModulesFor(type: ProjectBaseType): string[] {
-  const commerce = new Set(["COURIER", "WOOCOMMERCE", "SHOPIFY"]);
-  return type === "ECOMMERCE" ? PLANNED_MODULES.filter((m) => commerce.has(m.key)).map((m) => m.key) : [];
+  return PLANNED_MODULES.filter((m) => m.defaultForTypes.includes(type)).map((m) => m.key);
 }
 
 /**

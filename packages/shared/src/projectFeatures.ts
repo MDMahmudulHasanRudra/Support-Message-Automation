@@ -287,6 +287,42 @@ export const PROJECT_FEATURES = [
     permissionKeys: ["sales.view", "sales.manage"],
     workerEffect: "Nothing runs in the background for it. Leads and their history are kept.",
   },
+  {
+    key: "COURIER",
+    label: "Courier Management",
+    description: "Book and track deliveries with Steadfast, Pathao Courier and RedX (COMMERCE_INTEGRATIONS.md).",
+    defaultEnabled: false,
+    routes: ["/commerce/shipments", "/settings/couriers"],
+    permissionKeys: ["shipments.view", "shipments.manage", "couriers.manage"],
+    workerEffect: "Delivery statuses stop being refreshed. Shipments and their history are kept; nothing is booked.",
+  },
+  {
+    key: "WOOCOMMERCE",
+    label: "WooCommerce",
+    description: "Import a WooCommerce shop's products, stock and orders, keep them updated by webhook, and send approved orders to it.",
+    defaultEnabled: false,
+    routes: ["/settings/woocommerce"],
+    permissionKeys: ["woocommerce.manage"],
+    workerEffect: "The shop's webhooks are refused and nothing is imported. Imported products and orders are kept.",
+  },
+  {
+    key: "SHOPIFY",
+    label: "Shopify",
+    description: "Import a Shopify store's products, stock and orders, keep them updated by webhook, and send approved orders to it as drafts.",
+    defaultEnabled: false,
+    routes: ["/settings/shopify"],
+    permissionKeys: ["shopify.manage"],
+    workerEffect: "The store's webhooks are refused and nothing is imported. Imported products and orders are kept.",
+  },
+  {
+    key: "API_ACCESS",
+    label: "API & Webhooks",
+    description: "Scoped API keys for the public API, and signed webhooks to your own systems, n8n or Zapier (INTEGRATION_HUB.md).",
+    defaultEnabled: false,
+    routes: ["/settings/api"],
+    permissionKeys: ["api.manage"],
+    workerEffect: "API keys stop working and no webhook is sent. Keys, endpoints and delivery history are kept.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];

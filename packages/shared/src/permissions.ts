@@ -154,6 +154,12 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "orders.manage", label: "Create and Update Orders", category: "Commerce" },
   { key: "sales.view", label: "View Sales Pipeline", category: "Commerce" },
   { key: "sales.manage", label: "Manage Leads and the Sales Pipeline", category: "Commerce" },
+  { key: "shipments.view", label: "View Shipments", category: "Commerce" },
+  { key: "shipments.manage", label: "Book and Update Shipments", category: "Commerce" },
+  { key: "couriers.manage", label: "Manage Courier Connections", category: "Commerce" },
+  { key: "woocommerce.manage", label: "Manage the WooCommerce Connection", category: "Commerce" },
+  { key: "shopify.manage", label: "Manage the Shopify Connection", category: "Commerce" },
+  { key: "api.manage", label: "Manage API Keys and Webhooks", category: "System" },
 
   { key: "notifications.view", label: "View Notifications", category: "System" },
   { key: "settings.view", label: "View Settings", category: "System" },

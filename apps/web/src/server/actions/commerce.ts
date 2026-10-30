@@ -24,6 +24,7 @@ import { activeProjectId } from "@/server/projectContext";
 import { projectPath } from "@/server/projectPaths";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
+import { emitWebhookEvent, orderEventData } from "@/server/integrationHub/webhooks";
 
 /**
  * Commerce actions (COMMERCE.md). Each checks its own key (commerce.manage / orders.manage), which
@@ -247,6 +248,12 @@ export async function deleteCategory(id: string): Promise<CommerceResult> {
   return removed.count ? { success: "Category removed. Its products are kept, without a category." } : { error: "That category no longer exists." };
 }
 
+/** Raise a webhook event with the order as it is now. */
+async function emitOrderEvent(event: "order.created" | "order.status_changed" | "order.payment_recorded", orderId: string) {
+  const o = await prisma.commerceOrder.findFirst({ where: { id: orderId } });
+  if (o) await emitWebhookEvent(event, orderEventData(o));
+}
+
 // ── Orders ─────────────────────────────────────────────────────────────────────────────────────
 
 export interface OrderLine {
@@ -346,6 +353,7 @@ export async function createOrder(input: OrderInput): Promise<CommerceResult> {
       return created;
     });
     await logSystemEvent("INFO", "commerce", `Order ${order.number} created`, { orderId: order.id, by: access.session.username });
+    await emitOrderEvent("order.created", order.id);
     await revalidate("/commerce/orders", "/sales");
     return { success: `Order ${order.number} created as a draft.`, id: order.id };
   } catch (err) {
@@ -361,8 +369,8 @@ export async function updateDraftOrder(orderId: string, input: OrderInput): Prom
   try {
     await prisma.$transaction(async (tx) => {
       const built = await buildOrder(tx, input);
-      const moved = await tx.commerceOrder.updateMany({ where: { id: orderId, status: "DRAFT" }, data: built.header });
-      if (moved.count !== 1) throw new Refusal("Only a draft order can be edited.");
+      const moved = await tx.commerceOrder.updateMany({ where: { id: orderId, status: "DRAFT", externalSource: null }, data: built.header });
+      if (moved.count !== 1) throw new Refusal("Only a draft order made here can be edited (a shop's order is changed in the shop).");
       await tx.commerceOrderItem.deleteMany({ where: { orderId } });
       for (const line of built.lines) await tx.commerceOrderItem.create({ data: { ...line, orderId } });
       await tx.commerceOrderEvent.create({ data: { orderId, kind: "EDITED", detail: { total: formatMinor(built.header.totalMinor, built.header.currency), items: built.lines.length }, actorUsername: access.session.username } });
@@ -397,7 +405,8 @@ export async function moveOrderStatus(orderId: string, toRaw: string, note: stri
         data: { status: to, ...(to === "CONFIRMED" ? { confirmedAt: now } : {}), ...(to === "CANCELLED" ? { cancelledAt: now } : {}) },
       });
       if (moved.count !== 1) throw new Refusal("The order changed while you were looking. Reload and try again.");
-      const effect = orderStockEffect(from, to);
+      // An order imported from a shop never moves our stock: the shop owns that stock and its own sync reports it.
+      const effect = order.externalSource ? null : orderStockEffect(from, to);
       if (effect) {
         for (const item of order.items) {
           if (!item.productId || !item.product?.trackInventory) continue;
@@ -416,6 +425,7 @@ export async function moveOrderStatus(orderId: string, toRaw: string, note: stri
       return order.number;
     });
     await logSystemEvent("INFO", "commerce", `Order ${number} → ${ORDER_STATUS_LABELS[to]}`, { orderId, to, by: access.session.username });
+    await emitOrderEvent("order.status_changed", orderId);
     await revalidate(`/commerce/orders/${orderId}`, "/commerce/orders", "/commerce/products");
     return { success: `Order is now ${ORDER_STATUS_LABELS[to].toLowerCase()}.` };
   } catch (err) {
@@ -444,6 +454,7 @@ export async function recordOrderPayment(orderId: string, amountRaw: string, met
       return formatMinor(amount, order.currency);
     });
     await revalidate(`/commerce/orders/${orderId}`, "/commerce/orders");
+    await emitOrderEvent("order.payment_recorded", orderId);
     return { success: `${result} recorded.` };
   } catch (err) {
     if (err instanceof Refusal) return { error: err.message };

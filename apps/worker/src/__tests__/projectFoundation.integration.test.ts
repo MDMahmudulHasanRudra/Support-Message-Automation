@@ -106,7 +106,9 @@ describe("the constraints later phases depend on", () => {
     //   InboxMention, ConversationEvent (20261029110000_inbox_views_mentions), WebChatVisitor
     //   (20261029120000_website_chat) and ProjectModuleConfigChange (20261029130000_project_modules).
     // + the nine commerce tables (COMMERCE.md, 20261029150000_commerce_core).
-    expect(refusing).toHaveLength(142);
+    // + the five commerce integration tables (20261029160000_commerce_integrations).
+    // + the three Integration Hub tables (20261029170000_integration_hub).
+    expect(refusing).toHaveLength(150);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -137,7 +139,9 @@ describe("the constraints later phases depend on", () => {
     // + MetaOAuthSession + the three inbox workspace tables + the three inbox views/mentions tables
     // + WebChatVisitor + ProjectModuleConfigChange) + SystemLog + ProjectAccess + ProjectFeature.
     // + the nine commerce tables.
-    expect(rows).toHaveLength(145);
+    // + the five commerce integration tables.
+    // + the three Integration Hub tables.
+    expect(rows).toHaveLength(153);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

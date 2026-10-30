@@ -120,6 +120,11 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/commerce/orders": { write: ["orders.manage"] },
   "/commerce/products": { write: ["commerce.manage"] },
   "/sales": { write: ["sales.manage"] },
+  "/commerce/shipments": { write: ["shipments.manage"] },
+  "/settings/couriers": { write: ["couriers.manage"] },
+  "/settings/woocommerce": { fullOnly: true },
+  "/settings/shopify": { fullOnly: true },
+  "/settings/api": { fullOnly: true },
   // Team
   "/team-management": { write: ["team_management.manage"], also: ["/api/team-management/export"] },
   "/team-management/schedule": { write: ["team_management.manage"] },
