@@ -294,6 +294,29 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
             </span>
           </span>
         </label>
+        {ctx.canChooseCodes && mapping.fields.code?.mode === "source" ? (
+          <label className="flex items-start gap-2 text-[12.5px]">
+            <Checkbox
+              checked={mapping.useFileCodes === true}
+              onChange={(e) => {
+                setMapping((m) => {
+                  const next: SmartMapping = { ...m };
+                  if (e.target.checked) next.useFileCodes = true;
+                  else delete next.useFileCodes;
+                  return next;
+                });
+                setDirty(true);
+                setMessage(null);
+              }}
+            />
+            <span>
+              Use the file&apos;s client codes as the new clients&apos; codes
+              <span className="block text-[11.5px] text-[color:var(--color-muted-foreground)]">
+                Off: new clients get this project&apos;s next codes, and the file&apos;s codes are kept as references that still find them. On: a code already used, or shaped like another project&apos;s codes, fails that row.
+              </span>
+            </span>
+          </label>
+        ) : null}
         <MappingGrid
           groups={SMART_FIELD_GROUPS}
           headers={ctx.headers}

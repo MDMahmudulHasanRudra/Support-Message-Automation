@@ -5,7 +5,16 @@ import type { AiFallbackOutcome, ProjectStatus, WhatsAppServiceKey } from "@pris
 import { derivePatternSignature, validateRegexSafety } from "@support-automation/engine";
 import {
   buildWhatsAppContactId,
+  canonicalPrefix,
+  CLIENT_CODE_DEFAULT_WIDTH,
+  CLIENT_CODE_MAX_LENGTH,
+  codeTenantKey,
   DEFAULT_SHIFT_TEMPLATES,
+  formatClientCode,
+  parseSerial,
+  prefixRefusal,
+  suggestCodePrefix,
+  validateCodeWidth,
   hasReachablePhoneNumber,
   knowledgeContentHash,
   normalizePhoneNumber,
@@ -162,7 +171,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "ApiKey", "WebhookEndpoint", "WebhookDelivery",
   "ListSavedView",
   "SocialConnection", "SocialAccount", "SocialPost", "SocialPostTarget", "SocialPublishAttempt", "SocialPostEvent", "SocialMediaAsset", "SocialCampaign", "SocialTemplate", "SocialAiRequest", "SocialRssFeed", "SocialRssItem",
-  "ClientCatalogEntry", "ClientServicePlan", "ClientCountrySetting",
+  "ClientCatalogEntry", "ClientServicePlan", "ClientCountrySetting", "ProjectClientCodeSeries", "ClientCodeAlias",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
@@ -1512,6 +1521,9 @@ export async function findKnowledgeDuplicates(contentHash: string, db: PrismaCli
 export interface CreateProjectInput {
   name: string;
   slug: string;
+  /** The project's client code series (CLIENT_CODES.md). Omitted: numbers only for a customer's first
+   *  project, otherwise the first free prefix from the slug. A prefix is ignored for the primary project. */
+  clientCode?: ClientCodeSeriesInput | null;
   description?: string | null;
   status: Extract<ProjectStatus, "SETUP" | "ACTIVE">;
   /** Given access to the new project, so whoever created it can go straight in. Null when the RELQIVO
@@ -1573,9 +1585,244 @@ export async function createProjectWithDefaults(input: CreateProjectInput, db: P
       data: DEFAULT_SHIFT_TEMPLATES.map((shift) => ({ ...shift, projectId: project.id })),
     });
     if (input.creatorUserId) await tx.projectAccess.create({ data: { projectId: project.id, userId: input.creatorUserId } });
+    await ensureClientCodeSeries(tx, project.id, input.clientCode);
 
     return project;
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Project client codes (CLIENT_CODES.md)
+// ---------------------------------------------------------------------------------------------
+// Raw SQL on purpose: these run inside whatever client the caller holds (project-scoped, customer-scoped or
+// global), and the series table is read ACROSS a customer's projects to reserve prefixes — which a
+// project-scoped model call would refuse. Every statement names its project or its tenant.
+
+type CodeDb = Pick<Prisma.TransactionClient, "$queryRaw" | "$executeRaw">;
+
+/** A refusal a person can act on ("The prefix N is already reserved by Noor"). */
+export class ClientCodeSeriesError extends Error {
+  constructor(
+    message: string,
+    readonly field: "prefix" | "minWidth" | "nextSerial" | null = null,
+  ) {
+    super(message);
+    this.name = "ClientCodeSeriesError";
+  }
+}
+
+export interface ClientCodeSeriesInput {
+  prefix?: string | null;
+  minWidth?: number | null;
+  startSerial?: string | null;
+}
+
+export interface ClientCodeSeriesRow {
+  id: string;
+  projectId: string;
+  tenantKey: string;
+  prefix: string;
+  isPrimary: boolean;
+  minWidth: number;
+  /** Decimal text: a serial is never a JavaScript number. */
+  nextSerial: string;
+  version: number;
+  retiredAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  updatedById: string | null;
+}
+
+const SERIES_COLUMNS = Prisma.sql`"id", "projectId", "tenantKey", "prefix", "isPrimary", "minWidth", "nextSerial"::text AS "nextSerial", "version", "retiredAt", "createdAt", "updatedAt", "updatedById"`;
+
+async function lockClientCodeTenant(db: CodeDb, tenantKey: string): Promise<void> {
+  await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`client-code-tenant:${tenantKey}`})::bigint)`;
+}
+
+async function projectForCodes(db: CodeDb, projectId: string): Promise<{ name: string; slug: string; tenantKey: string }> {
+  // The founding customer's projects carry no customer, or (if ever stamped) the founding customer's id: one tenant.
+  const rows = await db.$queryRaw<Array<{ name: string; slug: string; customerId: string | null }>>`
+    SELECT p."name", p."slug", CASE WHEN c."isFounding" THEN NULL ELSE p."customerId" END AS "customerId"
+      FROM "Project" p LEFT JOIN "Customer" c ON c."id" = p."customerId"
+     WHERE p."id" = ${projectId}`;
+  const row = rows[0];
+  if (!row) throw new ClientCodeSeriesError("That project does not exist.");
+  return { name: row.name, slug: row.slug, tenantKey: codeTenantKey(row.customerId) };
+}
+
+/** The key a project's codes are reserved under (its customer, the original installation as one). */
+export async function clientCodeTenantKey(db: CodeDb, projectId: string): Promise<string> {
+  return (await projectForCodes(db, projectId)).tenantKey;
+}
+
+/** Every prefix a customer holds (retired ones too — they stay reserved), with the project holding it. */
+export async function reservedClientCodePrefixes(
+  db: CodeDb,
+  tenantKey: string,
+): Promise<Array<{ prefix: string; projectId: string; projectName: string; retired: boolean }>> {
+  return db.$queryRaw<Array<{ prefix: string; projectId: string; projectName: string; retired: boolean }>>`
+    SELECT s."prefix", s."projectId", p."name" AS "projectName", (s."retiredAt" IS NOT NULL) AS "retired"
+      FROM "ProjectClientCodeSeries" s JOIN "Project" p ON p."id" = s."projectId"
+     WHERE s."tenantKey" = ${tenantKey}
+     ORDER BY s."prefix"`;
+}
+
+/** A project's series, the live one first, then every earlier version. */
+export async function readClientCodeSeries(db: CodeDb, projectId: string): Promise<ClientCodeSeriesRow[]> {
+  return db.$queryRaw<ClientCodeSeriesRow[]>`
+    SELECT ${SERIES_COLUMNS} FROM "ProjectClientCodeSeries" WHERE "projectId" = ${projectId}
+     ORDER BY ("retiredAt" IS NULL) DESC, "version" DESC`;
+}
+
+/**
+ * The project's live series, created when it has none. A customer's FIRST series is its primary (numbers only,
+ * whatever prefix was asked for); any other takes the given prefix if it is free, else the first free one from
+ * the project's own letters. Serialised per customer, with the unique (tenantKey, prefix) index as the last word.
+ */
+export async function ensureClientCodeSeries(db: CodeDb, projectId: string, input?: ClientCodeSeriesInput | null): Promise<ClientCodeSeriesRow> {
+  const project = await projectForCodes(db, projectId);
+  await lockClientCodeTenant(db, project.tenantKey);
+  const live = (await readClientCodeSeries(db, projectId)).find((s) => !s.retiredAt);
+  if (live) return live;
+
+  const reservedRows = await reservedClientCodePrefixes(db, project.tenantKey);
+  const reserved = new Map(reservedRows.map((r) => [r.prefix, r.projectName]));
+  let prefix: string;
+  if (!reserved.has("")) prefix = "";
+  else if (input?.prefix && canonicalPrefix(input.prefix)) {
+    prefix = canonicalPrefix(input.prefix);
+    const refusal = prefixRefusal(prefix, reserved);
+    if (refusal) throw new ClientCodeSeriesError(refusal, "prefix");
+  } else {
+    const suggested = suggestCodePrefix(project, new Set(reserved.keys()));
+    if (!suggested) throw new ClientCodeSeriesError("This project's name has no Latin letters to make a code prefix from. Enter one (letters A–Z).", "prefix");
+    prefix = suggested;
+  }
+  const minWidth = input?.minWidth ?? CLIENT_CODE_DEFAULT_WIDTH;
+  const widthError = validateCodeWidth(minWidth);
+  if (widthError) throw new ClientCodeSeriesError(widthError, "minWidth");
+  const start = input?.startSerial ? parseSerial(input.startSerial) : BigInt(1);
+  if (!start) throw new ClientCodeSeriesError("The first number is a whole number of at least 1.", "nextSerial");
+
+  const rows = await db.$queryRaw<ClientCodeSeriesRow[]>`
+    INSERT INTO "ProjectClientCodeSeries" ("id", "projectId", "tenantKey", "prefix", "isPrimary", "minWidth", "nextSerial", "version", "updatedAt")
+    VALUES (${`ccs_${randomBytes(12).toString("hex")}`}, ${projectId}, ${project.tenantKey}, ${prefix}, ${prefix === ""}, ${minWidth}, ${start.toString()}::numeric, 1, now())
+    RETURNING ${SERIES_COLUMNS}`;
+  return rows[0]!;
+}
+
+/** Whether a code is in use in the project, as a client's code or as an alias, whatever its case. */
+export async function clientCodeTaken(db: CodeDb, projectId: string, code: string, exceptClientId?: string | null): Promise<boolean> {
+  const canonical = code.trim().toUpperCase();
+  const except = exceptClientId ?? "";
+  const rows = await db.$queryRaw<Array<{ taken: boolean }>>`
+    SELECT (
+      EXISTS (SELECT 1 FROM "Client" c WHERE c."projectId" = ${projectId} AND upper(c."code") = ${canonical} AND c."id" <> ${except})
+      OR EXISTS (SELECT 1 FROM "ClientCodeAlias" a WHERE a."projectId" = ${projectId} AND a."canonical" = ${canonical} AND a."clientId" <> ${except})
+    ) AS "taken"`;
+  return Boolean(rows[0]?.taken);
+}
+
+/**
+ * The next client code of a project: one atomic UPDATE … RETURNING on its live series (the row lock serialises
+ * concurrent creates until the caller's transaction ends), skipping any code already used or reserved as an alias.
+ * Never MAX()+1, never reused: a serial taken by a create that later fails is simply a gap.
+ */
+export async function allocateClientCode(db: CodeDb, projectId: string): Promise<string> {
+  const take = async () =>
+    (
+      await db.$queryRaw<Array<{ prefix: string; minWidth: number; serial: string }>>`
+        UPDATE "ProjectClientCodeSeries" SET "nextSerial" = "nextSerial" + 1, "updatedAt" = now()
+         WHERE "projectId" = ${projectId} AND "retiredAt" IS NULL
+         RETURNING "prefix", "minWidth", ("nextSerial" - 1)::text AS "serial"`
+    )[0];
+  let row = await take();
+  if (!row) {
+    await ensureClientCodeSeries(db, projectId);
+    row = await take();
+  }
+  for (let attempt = 0; row && attempt < 10_000; attempt++) {
+    const code = formatClientCode(row.prefix, row.serial, row.minWidth);
+    if (code.length > CLIENT_CODE_MAX_LENGTH) {
+      throw new ClientCodeSeriesError(
+        `This project's client codes have reached ${CLIENT_CODE_MAX_LENGTH} characters. A Main Admin can check the prefix and number width under Client codes.`,
+      );
+    }
+    if (!(await clientCodeTaken(db, projectId, code))) return code;
+    row = await take();
+  }
+  throw new ClientCodeSeriesError("No free client code was found. Ask a Main Admin to check this project's client code series.");
+}
+
+/**
+ * The code the next client WOULD get, for a form's preview: the live series' next number, skipping codes in use, as
+ * allocation does. Reads only and reserves nothing — a concurrent create may still take it first.
+ */
+export async function peekNextClientCode(db: CodeDb, projectId: string): Promise<string | null> {
+  const series = (await readClientCodeSeries(db, projectId)).find((s) => !s.retiredAt);
+  if (!series) return null;
+  let serial = BigInt(series.nextSerial);
+  for (let i = 0; i < 1000; i++, serial += BigInt(1)) {
+    const code = formatClientCode(series.prefix, serial, series.minWidth);
+    if (!(await clientCodeTaken(db, projectId, code))) return code;
+  }
+  return null;
+}
+
+/**
+ * A Main Admin's change to a project's series. A new prefix retires the live series and starts the next version
+ * (its own namespace, from 1 unless a first number is given); every earlier prefix stays reserved and every issued
+ * code stays as it is. The width can only grow and the next number only move forward: nothing is ever reissued.
+ */
+export async function changeClientCodeSeries(
+  db: CodeDb,
+  input: { projectId: string; prefix?: string | null; minWidth?: number | null; nextSerial?: string | null; actorUserId: string },
+): Promise<{ changed: string[]; series: ClientCodeSeriesRow }> {
+  const project = await projectForCodes(db, input.projectId);
+  await lockClientCodeTenant(db, project.tenantKey);
+  const current = await ensureClientCodeSeries(db, input.projectId);
+  // Holds the row against a concurrent allocation until this transaction ends.
+  await db.$queryRaw`SELECT "id" FROM "ProjectClientCodeSeries" WHERE "id" = ${current.id} AND "projectId" = ${input.projectId} FOR UPDATE`;
+  const fresh = (await readClientCodeSeries(db, input.projectId)).find((s) => !s.retiredAt)!;
+
+  const changed: string[] = [];
+  const width = input.minWidth ?? fresh.minWidth;
+  const widthError = validateCodeWidth(width);
+  if (widthError) throw new ClientCodeSeriesError(widthError, "minWidth");
+  if (width < fresh.minWidth) throw new ClientCodeSeriesError(`The number width can only grow (it is ${fresh.minWidth}).`, "minWidth");
+
+  const prefix = input.prefix == null ? fresh.prefix : canonicalPrefix(input.prefix);
+  if (prefix !== fresh.prefix) {
+    if (fresh.isPrimary) throw new ClientCodeSeriesError("The primary project's codes are numbers only; its prefix cannot be changed.", "prefix");
+    const reservedRows = await reservedClientCodePrefixes(db, project.tenantKey);
+    const reserved = new Map(reservedRows.map((r) => [r.prefix, r.projectId === input.projectId ? "an earlier series of this project" : r.projectName]));
+    const refusal = prefixRefusal(prefix, reserved);
+    if (refusal) throw new ClientCodeSeriesError(refusal, "prefix");
+    const start = input.nextSerial ? parseSerial(input.nextSerial) : BigInt(1);
+    if (!start) throw new ClientCodeSeriesError("The next number is a whole number of at least 1.", "nextSerial");
+    await db.$executeRaw`UPDATE "ProjectClientCodeSeries" SET "retiredAt" = now(), "updatedAt" = now(), "updatedById" = ${input.actorUserId}
+                          WHERE "id" = ${fresh.id} AND "projectId" = ${input.projectId}`;
+    await db.$executeRaw`
+      INSERT INTO "ProjectClientCodeSeries" ("id", "projectId", "tenantKey", "prefix", "isPrimary", "minWidth", "nextSerial", "version", "updatedAt", "updatedById")
+      VALUES (${`ccs_${randomBytes(12).toString("hex")}`}, ${input.projectId}, ${project.tenantKey}, ${prefix}, false, ${width}, ${start.toString()}::numeric, ${fresh.version + 1}, now(), ${input.actorUserId})`;
+    changed.push(`prefix ${fresh.prefix || "(numbers only)"} → ${prefix}`);
+  } else {
+    let next = BigInt(fresh.nextSerial);
+    if (input.nextSerial) {
+      const wanted = parseSerial(input.nextSerial);
+      if (!wanted) throw new ClientCodeSeriesError("The next number is a whole number of at least 1.", "nextSerial");
+      if (wanted < next) throw new ClientCodeSeriesError(`The next number can only move forward (it is ${fresh.nextSerial}); numbers are never issued twice.`, "nextSerial");
+      if (wanted !== next) changed.push(`next number ${fresh.nextSerial} → ${wanted}`);
+      next = wanted;
+    }
+    if (width !== fresh.minWidth) changed.push(`number width ${fresh.minWidth} → ${width}`);
+    if (changed.length) {
+      await db.$executeRaw`UPDATE "ProjectClientCodeSeries" SET "minWidth" = ${width}, "nextSerial" = ${next.toString()}::numeric, "updatedAt" = now(), "updatedById" = ${input.actorUserId}
+                            WHERE "id" = ${fresh.id} AND "projectId" = ${input.projectId}`;
+    }
+  }
+  const series = (await readClientCodeSeries(db, input.projectId)).find((s) => !s.retiredAt)!;
+  return { changed, series };
 }
 
 // ---------------------------------------------------------------------------------------------

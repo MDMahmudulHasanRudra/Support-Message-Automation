@@ -8,8 +8,11 @@ import {
   type ClientImportMapping,
   type ImportedClientRow,
 } from "@support-automation/shared";
+import { ClientCodeSeriesError, clientCodeTaken } from "@support-automation/db";
 import { prisma } from "@/server/db";
 import { isUniqueViolation } from "@/lib/prismaErrors";
+import { activeProjectId } from "@/server/projectContext";
+import { recordClientCodeAlias, typedClientCodeRefusal } from "@/server/clientCodes";
 import { channelFields, loadExistingMatches, nextClientCode, recordClientActivity } from "@/server/clientRecords";
 import { loadImportLookups, resolveRows, type ResolvedImportRow } from "@/server/clientImportExtras";
 import { lockClient, refreshCurrentSubscription } from "@/server/clientSubscriptionStore";
@@ -27,6 +30,18 @@ function importedAmountRecords(row: ResolvedImportRow, fileName: string): Prisma
 export interface ImportOptions {
   /** The person may sell subscriptions and the sub-module is on: subscription columns are imported. */
   subscriptions: boolean;
+  /**
+   * What a file's own client code becomes on a NEW client (CLIENT_CODES.md §Import). REFERENCE (default): the
+   * client gets the project's next code and the file's code is kept as an alias, so it still finds the client.
+   * AS_CODE: the file's code IS the client's code — chosen explicitly, by someone who manages client settings.
+   */
+  codeMode?: "REFERENCE" | "AS_CODE";
+}
+
+/** What a failed row says: an actionable code refusal as it is, anything else as a plain failure. */
+export function importRowFailure(err: unknown): string {
+  if (err instanceof ClientCodeSeriesError) return err.message;
+  return isUniqueViolation(err) ? "That client code is already used by another client." : "The row could not be saved.";
 }
 
 /** The file's rows, built (shared rules) and then resolved against this project's roster and lists. */
@@ -184,7 +199,14 @@ async function createRow(row: ResolvedImportRow, fileName: string, actorUserId: 
  */
 export async function createImportedClient(tx: Prisma.TransactionClient, row: ResolvedImportRow, fileName: string, actorUserId: string | null, options: ImportOptions): Promise<string> {
   {
-    const code = row.fields.code ?? (await nextClientCode(tx));
+    const projectId = await activeProjectId();
+    const fileCode = row.fields.code?.trim() || null;
+    const asCode = options.codeMode === "AS_CODE" && fileCode !== null;
+    if (asCode) {
+      const refusal = await typedClientCodeRefusal(tx, projectId, fileCode);
+      if (refusal) throw new ClientCodeSeriesError(refusal);
+    }
+    const code = asCode ? fileCode : await nextClientCode(tx);
     const amounts = importedAmountRecords(row, fileName);
     const created = await tx.client.create({
       data: {
@@ -214,6 +236,11 @@ export async function createImportedClient(tx: Prisma.TransactionClient, row: Re
       select: { id: true },
     });
     await recordClientActivity(tx, created.id, actorUserId, { type: "IMPORTED", summary: `Imported from ${fileName.slice(0, 80)} (row ${row.rowNumber})` });
+    // The file's own code stays the client's reference: searchable, and what a later import of the same file matches.
+    // Already naming something in this project, it is left alone rather than made ambiguous.
+    if (fileCode && !asCode && !(await clientCodeTaken(tx, projectId, fileCode, created.id))) {
+      await recordClientCodeAlias(tx, { projectId, clientId: created.id, code: fileCode, reason: "IMPORT_SOURCE", actorUserId });
+    }
     if (row.note) await tx.clientNote.create({ data: { clientId: created.id, body: row.note, authorId: actorUserId } });
     if (options.subscriptions && row.recordedExpiry) {
       await recordClientActivity(tx, created.id, actorUserId, { type: "EXPIRY_RECORDED", summary: `Expiry on record from the import: ${row.recordedExpiry.date}${row.recordedExpiry.service ? ` (${row.recordedExpiry.service})` : ""} — no start date, so not a subscription term` });
@@ -379,7 +406,7 @@ export async function processImportRows(
       }
     } catch (err) {
       result.failed += 1;
-      note(row.rowNumber, isUniqueViolation(err) ? "That client code is already used by another client." : "The row could not be saved.");
+      note(row.rowNumber, importRowFailure(err));
     }
     done += 1;
     if (done % 100 === 0) await onProgress(result);

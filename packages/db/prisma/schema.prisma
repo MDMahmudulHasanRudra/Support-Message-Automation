@@ -667,6 +667,8 @@ model Project {
   clientCatalogEntries                 ClientCatalogEntry[]
   clientServicePlans                   ClientServicePlan[]
   clientCountrySettings                ClientCountrySetting[]
+  clientCodeSeries                     ProjectClientCodeSeries[]
+  clientCodeAliases                    ClientCodeAlias[]
   listViewPreferences                  ListViewPreference[]
   groupResponsibilityChanges           GroupResponsibilityChange[]
   identityReattributions               IdentityReattribution[]
@@ -6447,13 +6449,13 @@ model ChannelConnection {
   createdAt                    DateTime                @default(now())
   updatedAt                    DateTime                @updatedAt
 
-  conversations   ChannelConversation[]
-  messages        ChannelMessage[]
-  events          ChannelInboundEvent[]
+  conversations       ChannelConversation[]
+  messages            ChannelMessage[]
+  events              ChannelInboundEvent[]
   /// WEBCHAT only: the widget's look and wording (parseWidgetSettings, packages/shared webchat.ts).
-  widgetSettings  Json?
+  widgetSettings      Json?
   /// WEBCHAT only: the website origins (https://shop.example.com) allowed to use the widget. Empty = none.
-  allowedOrigins  String[]              @default([])
+  allowedOrigins      String[]              @default([])
   /// WEBCHAT only (V3 installation check): when the widget last started on a listed website, which one, and the
   /// script version; and the last website that tried but is not listed. Written at most once a minute.
   widgetSeenAt        DateTime?
@@ -6461,7 +6463,7 @@ model ChannelConnection {
   widgetSeenVersion   String?
   widgetRefusedAt     DateTime?
   widgetRefusedOrigin String?
-  webChatVisitors WebChatVisitor[]
+  webChatVisitors     WebChatVisitor[]
 
   @@unique([projectId, type, externalAccountId])
   @@index([projectId, type])
@@ -6741,6 +6743,7 @@ model Client {
   importRows     ClientImportRow[]
   commerceOrders CommerceOrder[]
   salesLeads     SalesLead[]
+  codeAliases    ClientCodeAlias[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -7202,6 +7205,60 @@ model ClientCountrySetting {
   updatedAt DateTime @updatedAt
 
   @@unique([projectId, country])
+}
+
+/// Project client codes (CLIENT_CODES.md): the series a project issues human-facing client codes from ("0001",
+/// "N0001"). One live row per project (retiredAt null, a partial unique index); a prefix change retires the row
+/// and starts version + 1. A prefix is reserved for good per customer (tenantKey + prefix is unique across every
+/// version, retired ones included), so no two projects of one customer can ever issue the same code. "" is the
+/// numbers-only prefix of the customer's primary project, and a CHECK ties it to isPrimary.
+model ProjectClientCodeSeries {
+  id          String    @id @default(cuid())
+  projectId   String    @default(dbgenerated("project_id_required()"))
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Project.customerId, or "__founding__" for the original installation (codeTenantKey).
+  tenantKey   String
+  prefix      String
+  isPrimary   Boolean   @default(false)
+  minWidth    Int       @default(4)
+  /// The next serial to issue. NUMERIC(38,0), read as text: a serial is never a JavaScript number.
+  nextSerial  Decimal   @default(1) @db.Decimal(38, 0)
+  version     Int       @default(1)
+  retiredAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  /// Who last changed the series (a User id; null = created with the project or by the migration).
+  updatedById String?
+
+  @@unique([tenantKey, prefix])
+  @@unique([projectId, version])
+}
+
+/// A code a client was known by and no longer is, or a code a file gave it (CLIENT_CODES.md §Aliases).
+/// Append-only. Unique per project whatever the case, so an old code resolves to exactly one client and is
+/// never issued again in that project. Removed only with the client itself.
+model ClientCodeAlias {
+  id          String   @id @default(cuid())
+  projectId   String   @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// As it was written.
+  code        String
+  /// Upper-case, trimmed: what lookups compare.
+  canonical   String
+  /// CONVERSION (a reviewed bulk conversion), MANUAL_CHANGE (a privileged edit), IMPORT_SOURCE (a file's own code).
+  reason      String
+  /// The code the client was given instead; null for IMPORT_SOURCE.
+  replacedBy  String?
+  /// One bulk conversion (CONVERSION rows of one apply share it): what the recovery script reverses.
+  batchId     String?
+  changedById String?
+  createdAt   DateTime @default(now())
+
+  @@unique([projectId, canonical])
+  @@index([clientId])
+  @@index([projectId, batchId])
 }
 
 enum ClientSubscriptionKind {

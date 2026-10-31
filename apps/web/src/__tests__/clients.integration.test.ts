@@ -73,7 +73,8 @@ const create = (person: Session, project: Project, fields: Record<string, string
 const idOf = (r: { clientId?: string }) => r.clientId!;
 
 beforeAll(async () => {
-  const everything = ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export", "messages.view"];
+  // Typing a client's own code needs the client settings key since V6 (CLIENT_CODES.md); these tests type codes.
+  const everything = ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export", "clients.manage_settings", "messages.view"];
   people.manager = await user("Manager", await role("CL manager", everything));
   people.editor = await user("Editor", await role("CL editor", ["clients.view", "clients.create", "clients.update", "messages.view"]));
   people.viewer = await user("Viewer", await role("CL viewer", ["clients.view", "messages.view"]));
@@ -144,7 +145,8 @@ describe("2. create, edit, search and filter", () => {
     expect(r.success).toBe(true);
     const client = await rawPrisma.client.findUniqueOrThrow({ where: { id: idOf(r) }, include: { channels: true, activities: true } });
     expect(client).toMatchObject({ name: "Rahim Traders", status: "ACTIVE", source: "MANUAL", projectId: A.id, tags: ["vip", "dhaka"] });
-    expect(client.code).toMatch(/^CL-\d{6}$/);
+    // The project's own series (CLIENT_CODES.md): a prefix of letters for a non-primary project, then 4+ digits. Never CL-.
+    expect(client.code).toMatch(/^[A-Z]*\d{4,}$/);
     expect(client.channels.map((c) => `${c.kind}:${c.normalizedValue}`).sort()).toEqual(["EMAIL:rahim@example.com", "PHONE:8801894431220", "WHATSAPP:8801894431220"]);
     expect(client.channels.every((c) => c.consentStatus === "UNKNOWN")).toBe(true);
     expect(client.activities.map((a) => a.type)).toEqual(["CREATED"]);

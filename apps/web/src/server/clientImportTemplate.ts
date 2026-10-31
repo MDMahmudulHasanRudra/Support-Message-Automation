@@ -34,7 +34,7 @@ const LIST_COLUMNS = { status: "A", subscriptionType: "B", durationUnit: "C", te
 export const IMPORT_TEMPLATE_COLUMNS: readonly Column[] = [
   { header: "Name", required: true, width: 26, what: "The client's or contact person's name. Every row needs one.", example: "Orchid Networks" },
   { header: "Company", width: 22, what: "Company or business name, if different.", example: "Orchid Networks Ltd" },
-  { header: "Client code", width: 14, format: "text", what: "Leave EMPTY for new clients — a code (CL-000123) is made for you. Fill it only to keep your own codes, or when updating clients from a downloaded file.", example: "" },
+  { header: "Client code", width: 14, format: "text", what: "Leave EMPTY for new clients — the project gives each one its next code (0001, N0001 …). A code you fill in finds an existing client (also by a former code); on a new client it is kept as a reference that still finds it. Keep it as text so leading zeros stay (0007, not 7).", example: "" },
   { header: "Phone", width: 18, format: "text", what: "Mobile number with country code (+8801711000000). A local Bangladeshi 01… number also works. Several? Separate with ;", example: "+8801711122201" },
   { header: "WhatsApp number", width: 18, format: "text", what: "Only if different from Phone. Same format.", example: "" },
   { header: "Email", width: 24, what: "Email address. Several? Separate with ;", example: "billing@orchid.example" },

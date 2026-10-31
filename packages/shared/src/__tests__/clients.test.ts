@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { formatClientCode } from "../clientCodes.js";
 import {
   autoMapColumns,
   buildImportRows,
   CLIENT_LIMITS,
   findDuplicateMatches,
   findInFileDuplicates,
-  formatClientCode,
   matchKeyOf,
   normalizeChannelDrafts,
   normalizeChannelValue,
@@ -130,6 +130,7 @@ describe("import", () => {
   });
 });
 
-it("formats a client code", () => {
-  expect(formatClientCode(42)).toBe("CL-000042");
+it("formats a client code from its project's series, never with the old CL- form", () => {
+  expect(formatClientCode("", 42n, 4)).toBe("0042");
+  expect(formatClientCode("N", "7", 4)).toBe("N0007");
 });

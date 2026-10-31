@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import {
   Activity,
   BadgeCheck,
@@ -37,6 +37,9 @@ import { pageAccess } from "@/server/authorize";
 import { hasPermission } from "@/server/permissions";
 import { prisma } from "@/server/db";
 import { getClientDetail, loadClientFormOptions } from "@/server/clients";
+import { projectPath } from "@/server/projectPaths";
+import { aliasesOf } from "@/server/clientCodes";
+import { activeProjectId } from "@/server/projectContext";
 import { describeDueEvent, getClientBilling } from "@/server/clientBilling";
 import { getClientChatLinks, listLinkableAccounts } from "@/server/clientChatLinks";
 import { formatDateTime } from "@/lib/date";
@@ -60,7 +63,6 @@ import { loadClientFormContext } from "@/server/clientFormContext";
 import { countryName } from "@/lib/clientPhone";
 import { expiryTextClass, formatDay, groupChatHref, money, SUBSCRIPTION_TONE } from "@/lib/clientDisplay";
 import { ClientPaymentsPanel, GroupLinksPanel, PhotoControl, SubscriptionsPanel } from "../Client360Panels";
-import { ClientForm } from "../ClientForm";
 import { ChannelsPanel, ClientLifecycle, NotesPanel } from "../ClientPanels";
 import { BillingPanel } from "../ClientBilling";
 import { ChatLinksPanel } from "../ClientChatLinks";
@@ -98,11 +100,14 @@ export default async function ClientDetailPage({ params, searchParams }: { param
   if (!detail) notFound();
   const { client, notes, activities, groupNames, duplicates } = detail;
   const archived = client.status === "ARCHIVED";
+  // Edit has its own page now; an old "?edit=1#edit-client" link still lands on it.
+  if (query.edit === "1" && canManage && !archived) redirect(await projectPath(`/clients/${client.id}/edit`));
 
   const caps = await clientViewerCaps(session);
   const [view, formContext] = await Promise.all([getClient360(client.id, caps), loadClientFormContext(session)]);
-  const [options, canArchive, canDelete, canViewBilling, canEditBilling, canLinkChats, chatLinks, linkAccounts, groups] = await Promise.all([
+  const [options, formerCodes, canArchive, canDelete, canViewBilling, canEditBilling, canLinkChats, chatLinks, linkAccounts, groups] = await Promise.all([
     loadClientFormOptions(),
+    aliasesOf(prisma, await activeProjectId(), [client.id]).then((m) => (m.get(client.id) ?? []).filter((c) => c !== client.code)),
     hasPermission(session, "clients.archive"),
     // Deleting: an Administrator, or a role an Administrator gave the delete permission (deleteClients re-checks).
     Promise.resolve(caps.canDelete),
@@ -129,7 +134,6 @@ export default async function ClientDetailPage({ params, searchParams }: { param
   tabs.push({ id: "activity", label: "Activity & notes", icon: Activity });
   const requested = typeof query.tab === "string" ? query.tab : "overview";
   const tab = tabs.some((t) => t.id === requested) ? requested : "overview";
-  const editing = query.edit === "1" && canManage && !archived;
   const base = `/clients/${client.id}`;
   const tabHref = (t: string) => (t === "overview" ? base : `${base}?tab=${t}`);
 
@@ -171,6 +175,7 @@ export default async function ClientDetailPage({ params, searchParams }: { param
             <h1 className="text-2xl font-semibold tracking-[-0.02em] sm:text-[28px]">{clientDisplayName(client.name, client.companyName)}</h1>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <CopyCode code={client.code} />
+              {formerCodes.length ? <span className={`text-xs ${muted}`} title="Former codes still find this client">formerly {formerCodes.join(", ")}</span> : null}
               <Badge color={STATUS_COLOR[client.status] ?? "gray"} dot>
                 {CLIENT_STATUS_LABELS[client.status]}
               </Badge>
@@ -196,7 +201,7 @@ export default async function ClientDetailPage({ params, searchParams }: { param
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           {canManage && !archived ? (
-            <ButtonLink href={`${base}?edit=1#edit-client`} size="md">
+            <ButtonLink href={`${base}/edit`} size="md">
               <Pencil className="size-4" aria-hidden /> Edit client
             </ButtonLink>
           ) : null}
@@ -291,7 +296,7 @@ export default async function ClientDetailPage({ params, searchParams }: { param
             <SectionCard
               icon={BookUser}
               title="Client information"
-              action={canManage && !archived ? <CardLink href={`${base}?edit=1#edit-client`} icon={Pencil}>Edit</CardLink> : null}
+              action={canManage && !archived ? <CardLink href={`${base}/edit`} icon={Pencil}>Edit</CardLink> : null}
             >
               <InfoRow icon={User} label="Full name">{client.name}</InfoRow>
               {client.companyName ? <InfoRow icon={Shapes} label="Company">{client.companyName}</InfoRow> : null}
@@ -451,7 +456,7 @@ export default async function ClientDetailPage({ params, searchParams }: { param
             </div>
 
             <div className="flex flex-col gap-6">
-              <SectionCard icon={UserCog} title="Team & ownership" action={canManage && !archived ? <CardLink href={`${base}?edit=1#edit-client`} icon={Pencil}>Edit</CardLink> : null}>
+              <SectionCard icon={UserCog} title="Team & ownership" action={canManage && !archived ? <CardLink href={`${base}/edit`} icon={Pencil}>Edit</CardLink> : null}>
                 <InfoRow icon={BadgeCheck} label="Sold by">
                   {seller ?? <span className={muted}>Not recorded</span>}
                   {sellerTeam ? <span className={`block text-xs ${muted}`}>{sellerTeam} team</span> : null}
@@ -460,7 +465,7 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                 <InfoRow icon={User} label="Assigned staff">
                   <span className="flex items-center justify-between gap-2">
                     <span className={client.assignedMember ? "" : muted}>{client.assignedMember?.name ?? "Not assigned"}</span>
-                    {!client.assignedMember && canManage && !archived ? <CardLink href={`${base}?edit=1#edit-client`}>Assign</CardLink> : null}
+                    {!client.assignedMember && canManage && !archived ? <CardLink href={`${base}/edit`}>Assign</CardLink> : null}
                   </span>
                 </InfoRow>
                 <InfoRow icon={Clock} label="Last handled by">
@@ -590,41 +595,6 @@ export default async function ClientDetailPage({ params, searchParams }: { param
             ) : null}
           </div>
 
-          {canManage && !archived ? (
-            <details id="edit-client" open={editing} className={`${panel} scroll-mt-24 p-5 open:pb-5`}>
-              <summary className="flex cursor-pointer items-center gap-2 text-[15px] font-semibold">
-                <Pencil className={`size-4 ${muted}`} aria-hidden /> Edit client details
-              </summary>
-              <div className="mt-4">
-                <ClientForm
-                  mode="edit"
-                  clientId={client.id}
-                  options={options}
-                  context={formContext}
-                  values={{
-                    name: client.name,
-                    code: client.code,
-                    companyName: client.companyName ?? "",
-                    status: client.status,
-                    category: client.category ?? "",
-                    tags: client.tags.join(", "),
-                    preferredChannel: client.preferredChannel ?? "",
-                    preferredLanguage: client.preferredLanguage ?? "",
-                    address: client.address ?? "",
-                    businessDetails: client.businessDetails ?? "",
-                    followUpInstructions: client.followUpInstructions ?? "",
-                    assignedMemberId: client.assignedMemberId ?? "",
-                    assignedTeamId: client.assignedTeamId ?? "",
-                    country: client.country ?? "",
-                    preferredCurrency: client.preferredCurrency ?? "",
-                    soldByMemberId: client.soldByMemberId ?? "",
-                    businessType: client.businessType ?? "",
-                    additionalLanguages: client.additionalLanguages.join(", "),
-                  }}
-                />
-              </div>
-            </details>
-          ) : null}
           {client.businessDetails || client.followUpInstructions ? (
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
               {client.businessDetails ? (

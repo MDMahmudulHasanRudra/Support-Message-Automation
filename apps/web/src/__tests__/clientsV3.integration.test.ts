@@ -432,7 +432,7 @@ describe("4. the guided Add Client form", () => {
     const saved = await newClient(A, { confirmBlank: "1" });
     const row = await rawPrisma.client.findUniqueOrThrow({ where: { id: idOf(saved) } });
     expect(row.name).toBe("");
-    expect(row.code).toMatch(/^CL-\d{6}$/);
+    expect(row.code).toMatch(/^[A-Z]*\d{4,}$/);
   });
 
   it("reads an international number to E.164, and a local one with the chosen country", async () => {

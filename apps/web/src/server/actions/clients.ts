@@ -23,8 +23,11 @@ import {
   cleanBusinessType,
   parseAdditionalLanguages,
 } from "@support-automation/shared";
+import { ClientCodeSeriesError } from "@support-automation/db";
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
+import { activeProjectId } from "@/server/projectContext";
+import { recordClientCodeAlias, typedClientCodeRefusal } from "@/server/clientCodes";
 import { projectPath } from "@/server/projectPaths";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
@@ -72,6 +75,9 @@ export interface BulkClientResult {
 }
 
 const ARCHIVED_ERROR = "This client is archived. Restore it before changing it.";
+/** Choosing or changing a client's code is privileged (CLIENT_CODES.md §Manual codes): codes are read by people. */
+const CODE_KEY = "clients.manage_settings";
+const CODE_DENIED = "Choosing a client's code needs the Manage Client Module Settings permission. Leave it empty and the project's next code is used.";
 
 const text = (formData: FormData, key: string) => String(formData.get(key) ?? "").trim();
 
@@ -261,9 +267,16 @@ export async function createClient(_prev: ClientFormState, formData: FormData): 
     group = row;
   }
 
+  if (fields.code && !(await hasPermission(granted.session, CODE_KEY))) return { error: CODE_DENIED, values: echo(formData) };
+
   const duplicates = await findDuplicateClients({ channels: channels.channels, code: fields.code });
   if (duplicates.length && formData.get("confirmDuplicate") !== "1") {
     return { error: "This looks like a client you already have. Check the matches below, or create it anyway.", duplicates, values: echo(formData) };
+  }
+  // A typed code must be free in this project (as a code or a former code) and not shaped like another project's.
+  if (fields.code) {
+    const refusal = await typedClientCodeRefusal(prisma, await activeProjectId(), fields.code);
+    if (refusal) return { error: refusal, values: echo(formData) };
   }
 
   try {
@@ -330,6 +343,7 @@ export async function createClient(_prev: ClientFormState, formData: FormData): 
     return { success: true, clientId: result };
   } catch (err) {
     if (err instanceof PhotoRefused) return { error: `Photo: ${err.message}`, values: echo(formData) };
+    if (err instanceof ClientCodeSeriesError) return { error: err.message, values: echo(formData) };
     if (isUniqueViolation(err)) return { error: group ? "That client code is already used, or the WhatsApp group was just linked to another client." : "That client code is already used by another client.", values: echo(formData) };
     throw err;
   }
@@ -398,7 +412,12 @@ export async function updateClient(clientId: string, _prev: ClientFormState, for
   });
   if (missing.length) return { error: missing.join(" "), values: echo(formData) };
 
-  const code = fields.code ?? current.code; // clearing the code keeps the old one: a client always has one
+  // The code is not a form field here: it changes only through changeClientCode, which keeps the old one as an
+  // alias. A form posting the current code (or none) is fine; a different one is refused, never silently applied.
+  if (fields.code && fields.code !== current.code) {
+    return { error: "A client's code is changed on its own, with “Change code”, so the old code stays searchable.", values: echo(formData) };
+  }
+  const code = current.code;
   const next = {
     name: fields.name,
     companyName: fields.companyName,
@@ -529,6 +548,44 @@ export async function removeClientChannel(channelId: string): Promise<BulkClient
   });
   await refresh(channel.clientId);
   return { ok: true, message: "Reference removed." };
+}
+
+/**
+ * Changes one client's code (CLIENT_CODES.md §Manual codes). Privileged and logged: the old code becomes an alias,
+ * so it still finds this client and is never given to another one in this project. The client's id, invoices,
+ * receipts, payments and links are untouched; documents already issued keep the code they were issued with.
+ */
+export async function changeClientCode(clientId: string, newCode: string): Promise<BulkClientResult> {
+  const granted = await checkPermission("clients.update");
+  if ("denied" in granted) return { ok: false, message: granted.denied };
+  if (!(await hasPermission(granted.session, CODE_KEY))) return { ok: false, message: "Changing a client's code needs the Manage Client Module Settings permission." };
+  const code = newCode.trim();
+  const checked = validateClientFields({ code, name: "x" });
+  if (!code || !checked.value) return { ok: false, message: checked.errors.find((e) => /code/i.test(e)) ?? "Enter the new client code." };
+  const client = await prisma.client.findFirst({ where: { id: clientId }, select: { id: true, code: true, status: true } });
+  if (!client) return { ok: false, message: "That client no longer exists." };
+  if (client.status === "ARCHIVED") return { ok: false, message: ARCHIVED_ERROR };
+  if (client.code === code) return { ok: true, message: "That is already the client's code." };
+  const projectId = await activeProjectId();
+  try {
+    await prisma.$transaction(async (tx) => {
+      // The client's own former code may come back (it is this client's alias); anybody else's may not.
+      const refusal = await typedClientCodeRefusal(tx, projectId, code, client.id);
+      if (refusal) throw new ClientCodeSeriesError(refusal);
+      const moved = await tx.client.updateMany({ where: { id: client.id, code: client.code }, data: { code } });
+      if (moved.count !== 1) throw new ClientCodeSeriesError("The client's code changed meanwhile. Reload and try again.");
+      const ownAlias = await tx.clientCodeAlias.findFirst({ where: { clientId: client.id, canonical: client.code.trim().toUpperCase() }, select: { id: true } });
+      if (!ownAlias) await recordClientCodeAlias(tx, { projectId, clientId: client.id, code: client.code, reason: "MANUAL_CHANGE", replacedBy: code, actorUserId: granted.session.userId });
+      await recordClientActivity(tx, client.id, granted.session.userId, { type: "CODE_CHANGED", summary: `Client code changed from ${client.code} to ${code}`, details: { from: client.code, to: code } });
+    });
+  } catch (err) {
+    if (err instanceof ClientCodeSeriesError) return { ok: false, message: err.message };
+    if (isUniqueViolation(err)) return { ok: false, message: "That client code is already used by another client." };
+    throw err;
+  }
+  await logSystemEvent("INFO", "clients", `Client code changed from ${client.code} to ${code}`, { from: client.code, to: code }, { actorUserId: granted.session.userId, targetType: "Client", targetId: client.id });
+  await refresh(client.id);
+  return { ok: true, message: `The client's code is now ${code}. ${client.code} still finds this client.` };
 }
 
 /** Records what a client has said about being contacted on ONE channel. It sends nothing and changes no other channel. */
