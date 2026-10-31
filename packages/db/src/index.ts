@@ -1602,12 +1602,13 @@ type CodeDb = Pick<Prisma.TransactionClient, "$queryRaw" | "$executeRaw">;
 
 /** A refusal a person can act on ("The prefix N is already reserved by Noor"). */
 export class ClientCodeSeriesError extends Error {
-  constructor(
-    message: string,
-    readonly field: "prefix" | "minWidth" | "nextSerial" | null = null,
-  ) {
+  // A plain field, not a constructor parameter property: the worker runs this file through Node's type stripping,
+  // which refuses parameter properties (ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX) and stopped the worker at boot.
+  readonly field: "prefix" | "minWidth" | "nextSerial" | null;
+  constructor(message: string, field: "prefix" | "minWidth" | "nextSerial" | null = null) {
     super(message);
     this.name = "ClientCodeSeriesError";
+    this.field = field;
   }
 }
 
