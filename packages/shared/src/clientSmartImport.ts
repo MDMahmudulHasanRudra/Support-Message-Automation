@@ -89,7 +89,7 @@ export const isExpiryPartKey = (key: unknown): key is ExpiryPartKey => typeof ke
  * field always present. A test pins it against the template.
  */
 export const SMART_REVIEW_ORDER: readonly ClientImportFieldKey[] = [
-  "name", "company", "code", "phone", "whatsapp", "email", "country", "currency", "address", "category", "tags", "status", "language",
+  "name", "company", "code", "phone", "whatsapp", "email", "country", "currency", "address", "category", "businessType", "tags", "status", "language",
   "team", "assignedTo", "soldBy", "service", "subscriptionType", "startDate", "duration", "durationUnit", "expiryDate",
   "facebook", "instagram", "telegram", "note",
 ];
@@ -108,6 +108,7 @@ export const SMART_SAMPLE_VALUES: Record<ClientImportFieldKey, string> = {
   name: "Sample Client",
   code: "SAMPLE-001",
   company: "Sample Company Ltd",
+  businessType: "Retail",
   phone: "+8801700000000",
   email: "client@example.com",
   whatsapp: "+8801700000000",
@@ -136,7 +137,7 @@ export const SMART_SAMPLE_VALUES: Record<ClientImportFieldKey, string> = {
 /** Groups for the mapping editor, most-used first. */
 export const SMART_FIELD_GROUPS: ReadonlyArray<{ title: string; fields: readonly ClientImportFieldKey[] }> = [
   { title: "Essentials", fields: ["name", "phone", "email", "whatsapp", "company"] },
-  { title: "Details", fields: ["code", "status", "category", "tags", "language", "address", "country", "currency", "note"] },
+  { title: "Details", fields: ["code", "status", "category", "businessType", "tags", "language", "address", "country", "currency", "note"] },
   { title: "Other channels", fields: ["facebook", "instagram", "telegram"] },
   { title: "People", fields: ["team", "soldBy", "assignedTo"] },
   { title: "Subscription", fields: ["service", "subscriptionType", "startDate", "duration", "durationUnit", "expiryDate"] },

@@ -189,6 +189,7 @@ export async function createImportedClient(tx: Prisma.TransactionClient, row: Re
     const created = await tx.client.create({
       data: {
         ...(amounts.length ? { importedAmounts: amounts } : {}),
+        ...(row.businessType ? { businessType: row.businessType } : {}),
         // Columns the person chose to keep (V5 §11) arrive as custom fields named after their headers.
         ...(Object.keys(row.fields.customFields ?? {}).length ? { customFields: row.fields.customFields } : {}),
         code,
@@ -282,6 +283,10 @@ export async function updateImportedClient(tx: Prisma.TransactionClient, clientI
       const primaryKinds = new Set((await tx.clientChannel.findMany({ where: { clientId, isPrimary: true }, select: { kind: true } })).map((c) => c.kind));
       await tx.clientChannel.createMany({ data: newChannels.map((c) => ({ clientId, ...channelFields({ ...c, isPrimary: c.isPrimary && !primaryKinds.has(c.kind) }, "import") })), skipDuplicates: true });
       changed.push("channels");
+    }
+    if (row.businessType && row.businessType !== current.businessType) {
+      data.businessType = row.businessType;
+      changed.push("business type");
     }
     // Kept columns: the file's value replaces that one custom field; every other custom field stays.
     const kept = row.fields.customFields ?? {};

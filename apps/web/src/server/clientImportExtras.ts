@@ -1,4 +1,4 @@
-import { matchKeyOf, normalizeCurrencyCode, readCurrencyName, type ImportedClientRow, type ImportExtras, type NormalizedChannel } from "@support-automation/shared";
+import { matchCatalogEntry, matchKeyOf, normalizeCurrencyCode, normalizeTag, readCurrencyName, type ImportedClientRow, type ImportExtras, type NormalizedChannel } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { countryOptions } from "@/lib/clientPhone";
 import { normalizePhone, resolveClientLocale, type PhoneNormalization } from "@/lib/clientLocale";
@@ -19,18 +19,38 @@ export interface ImportLookups {
   countries: Map<string, string>;
   /** Settings → Client Module: the country a number written without a code is read in. Never stored on a client by itself. */
   defaultCountry: string | null;
+  /** V5 Configuration Center: the project's lists, so "Corp" imports as "Corporate" and "20M" as "Home 20". */
+  lists: ImportLists;
 }
+
+export interface ImportLists {
+  tags: Array<{ id: string; name: string; aliases: string[] }>;
+  categories: Array<{ id: string; name: string; aliases: string[] }>;
+  businessTypes: Array<{ id: string; name: string; aliases: string[] }>;
+  plans: Array<{ id: string; name: string; aliases: string[] }>;
+}
+
+const EMPTY_LISTS: ImportLists = { tags: [], categories: [], businessTypes: [], plans: [] };
 
 const key = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 const digits = (s: string) => s.replace(/\D/g, "");
 
 export async function loadImportLookups(): Promise<ImportLookups> {
-  const [teams, members, settings] = await Promise.all([
+  const [teams, members, settings, entries, plans] = await Promise.all([
     prisma.team.findMany({ select: { id: true, name: true, status: true } }),
     prisma.internalTeamMember.findMany({ select: { id: true, name: true, status: true, teamId: true, phoneNumber: true, team: { select: { name: true } } } }),
     getClientModuleSettings(),
+    // Archived entries still match: a client keeps them, and a file naming one should not create a near-duplicate.
+    prisma.clientCatalogEntry.findMany({ select: { id: true, kind: true, name: true, aliases: true } }),
+    prisma.clientServicePlan.findMany({ select: { id: true, name: true, aliases: true } }),
   ]);
-  const lookups: ImportLookups = { teams: new Map(), membersByName: new Map(), membersByPhone: new Map(), countries: new Map(), defaultCountry: settings.defaultCountry };
+  const lists: ImportLists = {
+    tags: entries.filter((e) => e.kind === "TAG"),
+    categories: entries.filter((e) => e.kind === "CATEGORY"),
+    businessTypes: entries.filter((e) => e.kind === "BUSINESS_TYPE"),
+    plans,
+  };
+  const lookups: ImportLookups = { teams: new Map(), membersByName: new Map(), membersByPhone: new Map(), countries: new Map(), defaultCountry: settings.defaultCountry, lists };
   for (const t of teams) lookups.teams.set(key(t.name), { id: t.id, name: t.name, active: t.status === "ACTIVE" });
   for (const m of members) {
     const entry = { id: m.id, name: m.name, active: m.status === "ACTIVE", teamId: m.teamId, teamName: m.team?.name ?? null };
@@ -192,13 +212,34 @@ export function localizeImportRow(row: ResolvedImportRow, lookups: Pick<ImportLo
   return { ...out, resolved, fields, ...(Object.keys(derived).length ? { derived } : {}) };
 }
 
+/**
+ * A value the file gives that names an entry of the project's lists (its name or an alias, any case) is imported
+ * as that entry's name: "Corp" → "Corporate", "20M" → "Home 20", "VIP" → "vip". A value on no list is kept as
+ * written — a list is a convenience, never a gate.
+ */
+export function applyClientLists(row: ResolvedImportRow, lists: ImportLists = EMPTY_LISTS): ResolvedImportRow {
+  const canon = (value: string | null | undefined, list: ImportLists[keyof ImportLists]) => (value ? (matchCatalogEntry(value, list)?.name ?? value) : value);
+  const category = canon(row.fields.category, lists.categories) ?? null;
+  const tags = [...new Set(row.fields.tags.map((t) => normalizeTag(canon(t, lists.tags) ?? t) ?? t))];
+  const businessType = canon(row.businessType, lists.businessTypes);
+  const subscription = row.resolved.subscription ? { ...row.resolved.subscription, service: canon(row.resolved.subscription.service, lists.plans) ?? row.resolved.subscription.service } : row.resolved.subscription;
+  const recordedExpiry = row.recordedExpiry?.service ? { ...row.recordedExpiry, service: canon(row.recordedExpiry.service, lists.plans) ?? row.recordedExpiry.service } : row.recordedExpiry;
+  return {
+    ...row,
+    fields: { ...row.fields, category, tags },
+    ...(businessType ? { businessType } : {}),
+    resolved: { ...row.resolved, subscription },
+    ...(recordedExpiry !== undefined ? { recordedExpiry } : {}),
+  };
+}
+
 /** Splits built rows into resolved ones and rows refused with their reasons. */
 export function resolveRows(rows: readonly ImportedClientRow[], lookups: ImportLookups, locale: ImportLocaleOptions = {}): { valid: ResolvedImportRow[]; invalid: Array<{ rowNumber: number; errors: string[] }> } {
   const valid: ResolvedImportRow[] = [];
   const invalid: Array<{ rowNumber: number; errors: string[] }> = [];
   for (const row of rows) {
     const r = resolveImportExtras(row.extras, lookups);
-    if (r.ok) valid.push(localizeImportRow({ ...row, resolved: r.value }, lookups, locale));
+    if (r.ok) valid.push(applyClientLists(localizeImportRow({ ...row, resolved: r.value }, lookups, locale), lookups.lists));
     else invalid.push({ rowNumber: row.rowNumber, errors: r.errors });
   }
   return { valid, invalid };

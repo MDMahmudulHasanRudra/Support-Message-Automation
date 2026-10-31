@@ -81,7 +81,7 @@ const clientByName = (name: string) =>
 
 beforeAll(async () => {
   const permissions = await Promise.all(
-    ["clients.view", "clients.create", "clients.update", "clients.import"].map((key) => {
+    ["clients.view", "clients.create", "clients.update", "clients.import", "clients.manage_subscriptions"].map((key) => {
       const def = PERMISSIONS.find((p) => p.key === key)!;
       return rawPrisma.permission.upsert({ where: { key }, create: { key, label: def.label, category: def.category }, update: {}, select: { id: true } });
     }),
@@ -103,6 +103,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const where = { projectId: { in: ids.projects } };
+  await rawPrisma.clientCatalogEntry.deleteMany({ where });
+  await rawPrisma.clientServicePlan.deleteMany({ where });
+  await rawPrisma.clientSubscription.deleteMany({ where });
   await rawPrisma.clientImportRow.deleteMany({ where });
   await rawPrisma.clientImportJob.deleteMany({ where });
   await rawPrisma.clientActivity.deleteMany({ where });
@@ -228,5 +231,28 @@ describe("Smart Import V5: amounts in the file (§7)", () => {
     await importAll(id, { ...(j.mapping as object), money });
     expect(await amounts(`Amt A ${tag}`)).toHaveLength(1);
     expect(await amounts(`Amt C ${tag}`)).toHaveLength(2);
+  }, 180_000);
+});
+
+describe("Smart Import V5: the project's lists (§9)", () => {
+  it("imports a value that names a list entry (or one of its spellings) as that entry, and keeps the rest as written", async () => {
+    await rawPrisma.clientCatalogEntry.createMany({
+      data: [
+        { projectId: P.id, kind: "CATEGORY", name: "Corporate", aliases: ["Corp"] },
+        { projectId: P.id, kind: "TAG", name: "vip", aliases: ["VIP Customer"] },
+        { projectId: P.id, kind: "BUSINESS_TYPE", name: "Retail", aliases: ["shop"] },
+      ],
+    });
+    await rawPrisma.clientServicePlan.create({ data: { projectId: P.id, name: "Home 20", aliases: ["20M"], defaultDuration: 1, defaultUnit: "MONTH" } });
+    const id = await uploaded(
+      xlsx([
+        ["Name", "Mobile", "Category", "Tags", "Business type", "Service", "Start date", "Duration"],
+        [`List ${tag}`, "966591234567", "corp", "VIP Customer, newcomer", "Shop", "20M", "2026-10-01", "1"],
+      ]),
+    );
+    await importAll(id);
+    const c = await rawPrisma.client.findFirstOrThrow({ where: { projectId: P.id, name: `List ${tag}` }, include: { subscriptions: true } });
+    expect(c).toMatchObject({ category: "Corporate", tags: ["vip", "newcomer"], businessType: "Retail" });
+    expect(c.subscriptions.map((x) => x.service)).toEqual(["Home 20"]);
   }, 180_000);
 });
