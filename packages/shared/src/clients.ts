@@ -1,5 +1,6 @@
 import { readImportExtras, type ImportExtras } from "./clientImportExtras.js";
 import { normalizePhoneNumber } from "./groupParticipantAdd.js";
+import type { ImportedAmount } from "./clientImportMoney.js";
 
 /**
  * Client Management (CLIENT_CENTER.md): the pure rules, shared by the dashboard, its import and its
@@ -451,6 +452,11 @@ export interface ImportedClientRow {
    * record") rather than invented into a subscription term. Absent on every other import.
    */
   recordedExpiry?: { date: string; service: string | null } | null;
+  /**
+   * Smart Import V5 only: amounts the file states for this client, retained as written (clientImportMoney.ts).
+   * Never an invoice, a receipt or a due.
+   */
+  importedAmounts?: ImportedAmount[];
 }
 
 export interface ImportRowError {

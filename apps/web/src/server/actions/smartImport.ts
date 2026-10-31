@@ -105,6 +105,10 @@ export interface SmartReviewRow {
   recordedExpiry: boolean;
   /** The file's own cells for the mapped columns, so a correction can be compared with the source. */
   source: Record<string, string>;
+  /** V5: the amounts this row states (recorded only), values filled from the phone / country, and unread numbers. */
+  money: RowAnalysis["money"];
+  derived: RowAnalysis["derived"];
+  phoneNotes: RowAnalysis["phoneNotes"];
 }
 
 export interface SmartReview {
@@ -167,6 +171,9 @@ export async function loadSmartReview(jobId: string, query: { filter?: string; s
         expiryBasis: r.expiryBasis,
         recordedExpiry: r.recordedExpiry,
         source: Object.fromEntries([...columns].map((c) => [c, src[c] ?? ""])),
+        money: r.money,
+        derived: r.derived,
+        phoneNotes: r.phoneNotes,
       };
     }),
   };

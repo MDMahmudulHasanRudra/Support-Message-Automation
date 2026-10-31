@@ -19,7 +19,8 @@ import {
 } from "@support-automation/shared";
 import { ExpiryPanel } from "./ExpiryPanel";
 import { MappingGrid } from "./MappingGrid";
-import { readMappingView, subscribeMappingView, writeMappingView, type MappingView } from "./mappingView";
+import { MoneyPanel } from "./MoneyPanel";
+import { mappingToSave, readMappingView, subscribeMappingView, writeMappingView, type MappingView } from "./mappingView";
 import { Alert, Badge, Button, Card, Checkbox, Input, Select } from "@/components/ui";
 import {
   applySmartPreset,
@@ -124,6 +125,26 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
     setDirty(true);
     setMessage(null);
   };
+  const setMoney = (money: SmartMapping["money"]) => {
+    setMapping((m) => {
+      const next: SmartMapping = { ...m };
+      if (money) next.money = money;
+      else delete next.money;
+      return next;
+    });
+    setDirty(true);
+    setMessage(null);
+  };
+  const setKeep = (columns: string[]) => {
+    setMapping((m) => {
+      const next: SmartMapping = { ...m };
+      if (columns.length) next.keepColumns = columns;
+      else delete next.keepColumns;
+      return next;
+    });
+    setDirty(true);
+    setMessage(null);
+  };
   const setOptions = (options: SmartExpiryOptions) => {
     setMapping((m) => ({ ...m, options }));
     setDirty(true);
@@ -140,13 +161,7 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
 
   async function save(): Promise<boolean> {
     if (!ctx) return false;
-    // A "From file" rule with no column chosen yet means nothing: send it as empty, never as a guess.
-    const fields: SmartMapping["fields"] = {};
-    for (const [k, rule] of Object.entries(mapping.fields) as Array<[SmartRuleKey, SmartFieldRule]>) {
-      if (rule.mode === "source" && !rule.column) continue;
-      fields[k] = rule;
-    }
-    const next: SmartMapping = { version: 2, fields, ...(mapping.options ? { options: mapping.options } : {}) };
+    const next = mappingToSave(mapping);
     setSaving(true);
     const r = await saveSmartMapping(jobId, ctx.revision, next);
     setSaving(false);
@@ -170,7 +185,19 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
     const first = ctx.columnPreview[rule.column] ?? [];
     return first.length ? first.slice(0, 3) : rule.fallback ? (ctx.columnPreview[rule.fallback] ?? []).slice(0, 3) : [];
   };
-  const unused = ctx.headers.filter((h) => !usage.has(h));
+  const moneyColumns = new Set(mapping.money?.mode === "MULTI" ? mapping.money.columns.map((c) => c.column) : mapping.money ? [mapping.money.amountColumn, mapping.money.currencyColumn ?? ""] : []);
+  const unused = ctx.headers.filter((h) => !usage.has(h) && !moneyColumns.has(h));
+  const moneyPanel = (
+    <MoneyPanel
+      headers={ctx.headers}
+      unused={unused}
+      previewRows={ctx.previewRows}
+      money={mapping.money}
+      keepColumns={mapping.keepColumns ?? []}
+      onMoney={setMoney}
+      onKeep={setKeep}
+    />
+  );
   const visibleSuggestions = ctx.suggestions.filter((s) => !mapping.fields[s.field]);
 
   const toggle = (
@@ -279,12 +306,7 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
           choices={CHOICES}
           onRule={setRule}
         />
-        {unused.length ? (
-          <p className="text-[12px] text-[color:var(--color-muted-foreground)]">
-            <Columns3 className="mr-1 inline size-3.5" aria-hidden />
-            Not imported: {unused.join(", ")}. Only mapped columns are read; nothing else in the file changes anything.
-          </p>
-        ) : null}
+        {moneyPanel}
         <ExpiryPanel mapping={mapping} headers={ctx.headers} preview={ctx.columnPreview} setRule={setRule} setOptions={setOptions} />
         {saveBar}
       </div>
@@ -456,6 +478,7 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
         ))}
 
         <ExpiryPanel mapping={mapping} headers={ctx.headers} preview={ctx.columnPreview} setRule={setRule} setOptions={setOptions} />
+        {moneyPanel}
 
         {saveBar}
       </div>

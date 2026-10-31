@@ -177,3 +177,56 @@ describe("Smart Import V5: what is stored", () => {
     expect(c).toMatchObject({ country: null, preferredCurrency: null, preferredLanguage: null });
   }, 120_000);
 });
+
+describe("Smart Import V5: amounts in the file (§7)", () => {
+  const rows = [
+    ["Name", "Mobile", "SAR", "AED", "OMR", "KWD", "Notes"],
+    [`Amt A ${tag}`, "966511111111", "SAR30.00", "", "", "", "met at expo"],
+    [`Amt B ${tag}`, "966511111112", "0.00", "0", "", "", ""],
+    [`Amt C ${tag}`, "966511111113", "30", "12.50", "", "", ""],
+    [`Amt D ${tag}`, "966511111114", "paid", "", "", "", ""],
+    [`Amt E ${tag}`, "966511111115", "", "", "Rial4.000", "din2.550", ""],
+  ];
+  const money = { mode: "MULTI", columns: [{ column: "SAR", currency: "SAR" }, { column: "AED", currency: "AED" }, { column: "OMR", currency: "OMR" }, { column: "KWD", currency: "KWD" }] };
+  const amounts = async (name: string) => (await rawPrisma.client.findFirstOrThrow({ where: { projectId: P.id, name } })).importedAmounts as Array<Record<string, string>>;
+
+  it("records each amount exactly as written, in its own currency, creating no financial record", async () => {
+    const before = await Promise.all([rawPrisma.clientDue.count({ where: { projectId: P.id } }), rawPrisma.clientPayment.count({ where: { projectId: P.id } }), rawPrisma.clientSubscription.count({ where: { projectId: P.id } })]);
+    const id = await uploaded(xlsx(rows));
+    const j = await rawPrisma.clientImportJob.findUniqueOrThrow({ where: { id } });
+    const saved = await as(() => actions.saveSmartMapping(id, j.revision, { ...(j.mapping as object), money, keepColumns: ["Notes"] }));
+    expect(saved, saved.message).toMatchObject({ ok: true });
+
+    // Several currencies on a row, and an unreadable amount, must be acknowledged before anything is imported.
+    const review = await as(async () => {
+      const r = await actions.loadSmartReview(id, {});
+      if ("error" in r) throw new Error(r.error);
+      return r;
+    });
+    expect(review.assessment.warnings.map((w) => w.code)).toEqual(expect.arrayContaining(["MONEY_MULTIPLE", "MONEY_PROBLEM"]));
+    const refused = await as(() => actions.confirmSmartImport(id, { revision: review.revision, policy: "UPDATE", acknowledged: [] }));
+    expect(refused.ok).toBe(false);
+    const rowC = review.rows.find((r) => r.values.name === `Amt C ${tag}`)!;
+    expect(rowC.money).toMatchObject({ status: "MULTIPLE" });
+
+    await importAll(id);
+    expect(await amounts(`Amt A ${tag}`)).toEqual([expect.objectContaining({ currency: "SAR", amount: "30.00", original: "SAR30.00", column: "SAR", file: "v5.xlsx" })]);
+    expect(await amounts(`Amt B ${tag}`)).toEqual([]);
+    expect((await amounts(`Amt C ${tag}`)).map((a) => `${a.currency} ${a.amount}`)).toEqual(["SAR 30", "AED 12.50"]);
+    expect(await amounts(`Amt D ${tag}`)).toEqual([expect.objectContaining({ amount: null, original: "paid", problem: expect.any(String) })]);
+    expect((await amounts(`Amt E ${tag}`)).map((a) => `${a.currency} ${a.amount}`)).toEqual(["OMR 4.000", "KWD 2.550"]);
+    expect((await rawPrisma.client.findFirstOrThrow({ where: { projectId: P.id, name: `Amt A ${tag}` } })).customFields).toEqual({ Notes: "met at expo" });
+
+    // No invoice, payment, due or subscription came from "amounts in a spreadsheet".
+    const after = await Promise.all([rawPrisma.clientDue.count({ where: { projectId: P.id } }), rawPrisma.clientPayment.count({ where: { projectId: P.id } }), rawPrisma.clientSubscription.count({ where: { projectId: P.id } })]);
+    expect(after).toEqual(before);
+  }, 180_000);
+
+  it("does not record the same file's amounts twice when it is imported again", async () => {
+    const id = await uploaded(xlsx(rows));
+    const j = await rawPrisma.clientImportJob.findUniqueOrThrow({ where: { id } });
+    await importAll(id, { ...(j.mapping as object), money });
+    expect(await amounts(`Amt A ${tag}`)).toHaveLength(1);
+    expect(await amounts(`Amt C ${tag}`)).toHaveLength(2);
+  }, 180_000);
+});

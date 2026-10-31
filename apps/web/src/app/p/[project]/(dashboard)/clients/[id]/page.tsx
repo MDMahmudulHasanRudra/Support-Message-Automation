@@ -429,6 +429,25 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                   {view.ledger.length > 1 ? <p className={`mt-2 text-[11px] ${muted}`}>Totals are per currency; nothing is converted.</p> : null}
                 </SectionCard>
               ) : null}
+
+              {/* V5 §7: what an imported spreadsheet said, shown only to someone who may see billing figures. */}
+              {caps.billing && Array.isArray(client.importedAmounts) && client.importedAmounts.length ? (
+                <SectionCard icon={ReceiptText} title="Amounts recorded at import">
+                  <p className={`mb-2 text-xs ${muted}`}>As the imported file wrote them — not invoices, payments or dues, and never added together.</p>
+                  <ul className="space-y-1 text-sm">
+                    {(client.importedAmounts as Array<{ currency: string | null; amount: string | null; original: string; column: string; problem?: string; file?: string; at?: string }>).map((a, i) => (
+                      <li key={i} className="flex flex-wrap items-baseline justify-between gap-2">
+                        <span className={a.problem ? "text-[color:var(--color-danger-fg)]" : "tabular-nums font-medium"}>{a.amount && a.currency ? `${a.currency} ${a.amount}` : `“${a.original}”`}</span>
+                        <span className={`text-xs ${muted}`}>
+                          {a.column} column{a.file ? ` · ${a.file}` : ""}
+                          {a.at ? ` · ${formatDay(a.at.slice(0, 10))}` : ""}
+                        </span>
+                        {a.problem ? <span className="basis-full text-xs text-[color:var(--color-danger-fg)]">{a.problem}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </SectionCard>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-6">

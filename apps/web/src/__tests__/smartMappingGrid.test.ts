@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { sanitizeSmartMapping, SMART_FIELD_GROUPS, SMART_SAMPLE_VALUES, upgradeMapping, type SmartMapping } from "@support-automation/shared";
 import { MappingGrid, type MappingGridProps } from "@/app/p/[project]/(dashboard)/clients/import/smart/MappingGrid";
-import { MAPPING_VIEW_KEY, readMappingView } from "@/app/p/[project]/(dashboard)/clients/import/smart/mappingView";
+import { MAPPING_VIEW_KEY, mappingToSave, readMappingView } from "@/app/p/[project]/(dashboard)/clients/import/smart/mappingView";
 import { previewRow, type PreviewSourceRow } from "@/lib/smartMappingPreview";
 
 /**
@@ -132,5 +132,26 @@ describe("the grid is the default view and keeps saved mappings working", () => 
     };
     const clean = sanitizeSmartMapping(fromGrid, headers);
     expect(clean).toEqual({ ok: true, mapping: fromGrid });
+  });
+});
+
+describe("what the editor saves", () => {
+  it("sends every part of the mapping, and never an unchosen column", () => {
+    const edited: SmartMapping = {
+      version: 2,
+      fields: { name: { mode: "source", column: "Customer" }, phone: { mode: "source", column: "" } },
+      fillLocale: false,
+      money: { mode: "MULTI", columns: [{ column: "SAR", currency: "SAR" }, { column: "", currency: "" }] },
+      keepColumns: ["Alt mobile"],
+    };
+    const saved = mappingToSave(edited);
+    expect(saved).toEqual({
+      version: 2,
+      fields: { name: { mode: "source", column: "Customer" } },
+      fillLocale: false,
+      money: { mode: "MULTI", columns: [{ column: "SAR", currency: "SAR" }] },
+      keepColumns: ["Alt mobile"],
+    });
+    expect(sanitizeSmartMapping(saved, headers)).toEqual({ ok: true, mapping: saved });
   });
 });

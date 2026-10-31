@@ -16,6 +16,7 @@ import {
   type ClientImportFieldKey,
   type FieldIssue,
   type ImportedClientRow,
+  type RowMoney,
   type FileAssessment,
   type SheetRecords,
   type SmartMapping,
@@ -24,7 +25,7 @@ import {
 import { prisma } from "@/server/db";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { loadExistingMatches } from "@/server/clientRecords";
-import { loadImportLookups, resolveImportExtras, resolveRows } from "@/server/clientImportExtras";
+import { loadImportLookups, resolveImportExtras, resolveRows, type ResolvedImportRow } from "@/server/clientImportExtras";
 import { matchOf } from "@/server/clientImport";
 
 /**
@@ -194,6 +195,12 @@ export interface RowAnalysis {
   expiryBasis: string | null;
   /** An expiry with no start date, recorded on the client rather than as a subscription. */
   recordedExpiry: boolean;
+  /** V5 §7: the amounts this row states (null = no money mapping). Recorded only, never billed. */
+  money: RowMoney | null;
+  /** V5 §5: values filled from the phone number / country, not the file ("Auto selected"). */
+  derived: Partial<Record<"country" | "currency" | "language", string>>;
+  /** V5 §4: numbers kept as written because they could not be read with certainty. */
+  phoneNotes: Array<{ field: "phone" | "whatsapp"; note: string }>;
 }
 
 export interface SmartSummary {
@@ -294,6 +301,9 @@ async function analyzeRows(
       issues,
       expiryBasis: expiryInfo?.basis ?? null,
       recordedExpiry: Boolean(validByRow.get(row.rowNumber)?.recordedExpiry),
+      money: built.money.get(row.rowNumber) ?? null,
+      derived: derivedValues(validByRow.get(row.rowNumber)),
+      phoneNotes: validByRow.get(row.rowNumber)?.phoneNotes ?? [],
     };
     if (ignored.has(row.rowNumber)) {
       summary.ignored += 1;
@@ -335,8 +345,20 @@ async function analyzeRows(
     totalRows: summary.total - summary.ignored - summary.blank,
     readyRows: summary.ready,
     invalidRows: summary.invalid,
+    moneyMultipleRows: rows.filter((r) => (r.status === "NEW" || r.status === "MATCH") && r.money?.status === "MULTIPLE").length,
+    moneyProblemRows: rows.filter((r) => (r.status === "NEW" || r.status === "MATCH") && r.money?.status === "PROBLEM").length,
   });
   return { revision: job.revision, rows, summary, assessment, shownFields: [...SMART_REVIEW_ORDER] };
+}
+
+/** The values a row did not give but will receive, filled from its phone number or country ("Auto selected"). */
+function derivedValues(row: ResolvedImportRow | undefined): RowAnalysis["derived"] {
+  const out: RowAnalysis["derived"] = {};
+  if (!row?.derived) return out;
+  if (row.derived.country && row.resolved.country) out.country = row.resolved.country;
+  if (row.derived.currency && row.resolved.preferredCurrency) out.currency = row.resolved.preferredCurrency;
+  if (row.derived.language && row.fields.preferredLanguage) out.language = row.fields.preferredLanguage;
+  return out;
 }
 
 /** A row's team / staff / seller / country / currency problems, each on its own field (the same resolver, one field at a time). */

@@ -6722,6 +6722,9 @@ model Client {
   businessType          String?
   /// V5: languages besides `preferredLanguage` (the primary one), by English name.
   additionalLanguages   String[]            @default([])
+  /// V5 §7: amounts a spreadsheet stated for this client, kept exactly as written ([{ currency, amount, original,
+  /// column, problem?, file, at }]). A record of what a file said — never an invoice, receipt, due or payment.
+  importedAmounts       Json                @default("[]")
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
