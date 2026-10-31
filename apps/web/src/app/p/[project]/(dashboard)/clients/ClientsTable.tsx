@@ -305,7 +305,7 @@ function RowActions({ c, caps, onAct }: { c: ClientTableRow; caps: RegisterCaps;
         label={`More actions for ${name}`}
         items={[
           { label: "View profile", icon: <Eye className="size-4" aria-hidden />, href: `/clients/${c.id}` },
-          { label: "Edit client", icon: <Pencil className="size-4" aria-hidden />, href: `/clients/${c.id}?edit=1#edit-client`, hidden: !caps.canUpdate || archived },
+          { label: "Edit client", icon: <Pencil className="size-4" aria-hidden />, href: `/clients/${c.id}/edit`, hidden: !caps.canUpdate || archived },
           { label: c.subscription ? "Renew subscription" : "Add subscription", icon: <RefreshCw className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=subscriptions`, hidden: !caps.canManageSubscriptions || archived },
           { label: "Record payment", icon: <Wallet className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=payments`, hidden: !caps.canRecordPayments || !c.billing?.openInvoices || archived },
           { label: "Open WhatsApp group", icon: <MessageCircle className="size-4" aria-hidden />, href: chat ?? undefined, hidden: !chat },

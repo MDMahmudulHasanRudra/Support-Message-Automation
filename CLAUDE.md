@@ -3005,6 +3005,29 @@ records, CRUD, duplicates, list/details, import/export, timeline, per-channel co
   - **Billing figures are never selected for a viewer without `clients.view_billing`**, and a billing filter from one is
     ignored. Column preferences are re-sanitized on every read. Photos are stripped, bounded thumbnails in `ClientPhoto`.
 
+**Project client codes (`CLIENT_CODES.md`, V6, 31 Oct 2026)** — `0001` in a customer's primary project, `N0001` /
+`NE0001` elsewhere; the installation-wide `CL-` sequence is no longer used. Rules worth not undoing:
+- **A code is a label; `Client.id` (with the project) is the identity.** Nothing financial, no link and no history
+  moves with a code, and issued documents are never rewritten.
+- **One live `ProjectClientCodeSeries` per project.** The primary is stored (`isPrimary`), never inferred. A prefix is
+  reserved per customer for good (unique tenantKey + prefix, retired versions included). The founding customer is one
+  tenant whether its projects carry NULL or its id.
+- **Allocate only through `allocateClientCode`** (packages/db): atomic UPDATE … RETURNING, skips codes and aliases in
+  use, never reuses a number, serials as NUMERIC/bigint text. A prefix change is a new version. Width only grows; the
+  next number only moves forward.
+- **Typing or changing a code needs `clients.manage_settings`.** The general update refuses a different code;
+  `changeClientCode` keeps the old one as an alias. `typedClientCodeRefusal` refuses a code used in the project or
+  shaped like another project's.
+- **`ClientCodeAlias` is append-only** (trigger) and unique per project, case-insensitive. Import matching
+  (`loadExistingMatches`), list search and the profile read it.
+- **Imports:** a new client gets the project's code, and the file's code becomes an IMPORT_SOURCE alias.
+  `useFileCodes` (privileged, checked at confirm) uses the file's code as written. Codes are text: `000007` stays
+  `000007`.
+- **Converting old codes is a Main Admin's previewed step.** It is a hash-checked plan applied in one transaction
+  holding the series row, and apply needs `CLIENT_CODE_CONVERSION_ENABLED=true`.
+  `scripts/revert-client-code-conversion.sql` reverses a batch.
+- **Edit client is its own page** (`/clients/<id>/edit`); the profile is a read view, and `?edit=1` redirects.
+
 **Smart Bulk Import (`SMART_IMPORT.md`, 24 Oct 2026)** — feature `CLIENT_SMART_IMPORT`, off and `manualOnly`; off = the
 original import, untouched. Up to 5,000 rows / 15 MB from any file. Rules worth not undoing:
 - **Mapping v2 decides only each field's TEXT** (`packages/shared/src/clientSmartImport.ts`: from file + fallback, same

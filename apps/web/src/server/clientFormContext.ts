@@ -1,3 +1,4 @@
+import { peekNextClientCode } from "@support-automation/db";
 import { dhakaToday, ISO_CURRENCY_CODES } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import type { Session } from "@/server/auth";
@@ -7,6 +8,7 @@ import { loadClientChoices } from "@/server/clientConfiguration";
 import { hasPermission } from "@/server/permissions";
 import { languageOptions } from "@/lib/clientLocale";
 import { countryOptions } from "@/lib/clientPhone";
+import { activeProjectId } from "@/server/projectContext";
 import type { ClientFormContext } from "@/app/p/[project]/(dashboard)/clients/ClientForm";
 
 /**
@@ -23,6 +25,7 @@ export async function loadClientFormContext(session: Session): Promise<ClientFor
     loadClientChoices(),
     hasPermission(session, "clients.manage_settings"),
   ]);
+  const nextClientCode = await peekNextClientCode(prisma, await activeProjectId());
   return {
     requiredFields: caps.settings.requiredFields,
     defaultCountry: caps.settings.defaultCountry,
@@ -37,6 +40,7 @@ export async function loadClientFormContext(session: Session): Promise<ClientFor
     // Favourites first, then the project's own, then every other ISO currency (V5: no 30-currency list).
     allCurrencies: [...new Set([...choices.favoriteCurrencies, ...currencies.map((c) => c.code), ...ISO_CURRENCY_CODES])],
     countries: countryOptions(),
+    nextClientCode,
     today: dhakaToday(new Date()),
   };
 }

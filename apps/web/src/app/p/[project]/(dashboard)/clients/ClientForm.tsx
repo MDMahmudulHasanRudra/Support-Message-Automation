@@ -25,6 +25,7 @@ import {
   type ClientRequirableField,
 } from "@support-automation/shared";
 import { readPhone, suggestedCurrency, type CountryOption } from "@/lib/clientPhone";
+import { ClientCodeField } from "./ClientCodeField";
 import { languageCodeForCountry, languageName } from "@/lib/clientLocale";
 import type { ClientChoices } from "@/server/clientConfiguration";
 import { OtherLanguages, SourceNote, TagPicker } from "./ClientFormPickers";
@@ -100,11 +101,13 @@ export interface ClientFormContext {
    * ("Falkland Islands" / "Falkland Islands (Islas Malvinas)"), so naming them in the browser broke hydration.
    */
   countries: CountryOption[];
+  /** The code the project would give the next client (a preview, never a reservation). */
+  nextClientCode: string | null;
 }
 
 function Section({ step, title, hint, children, id }: { step: string; title: string; hint?: string; children: ReactNode; id?: string }) {
   return (
-    <section id={id} className="space-y-4">
+    <section id={id} className="scroll-mt-28 space-y-4">
       <div className="flex items-baseline gap-2 border-b border-[var(--color-border)] pb-2">
         <span className="font-[family-name:var(--font-mono)] text-xs text-[color:var(--color-muted-foreground)]">{step}</span>
         <h3 className="text-sm font-semibold">{title}</h3>
@@ -211,12 +214,23 @@ export function ClientForm({
   const [confirmed, setConfirmed] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // Edit: warn before leaving with unsaved changes; "Save & view" returns to the profile once saved.
+  const [dirty, setDirty] = useState(false);
+  const viewAfterSave = useRef(false);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
   useEffect(() => {
     if (!state.success) return;
     showToast({ tone: "success", title: mode === "create" ? "Client created" : "Client saved" });
     if (mode === "create" && state.clientId) router.push(`/clients/${state.clientId}`);
+    else if (viewAfterSave.current) router.push(`/clients/${clientId}`);
     else router.refresh();
-  }, [state, mode, router, showToast]);
+  }, [state, mode, router, showToast, clientId]);
 
   // Look up groups as the person types (debounced); a reader that refuses returns an empty list.
   useEffect(() => {
@@ -278,7 +292,27 @@ export function ClientForm({
   };
 
   return (
-    <form action={formAction} className="space-y-7">
+    <form
+      action={formAction}
+      className="space-y-7"
+      onInput={() => setDirty(true)}
+      onSubmit={() => setDirty(false)}
+    >
+      {mode === "edit" ? (
+        <nav aria-label="Sections of this form" className="sticky top-0 z-[var(--z-sticky)] -mx-6 -mt-6 flex gap-1 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-2">
+          {[
+            ["client-identity", "Identity"],
+            ["client-contact", "Contact & locale"],
+            ["client-team", "Team & seller"],
+            ["client-notes", "Notes"],
+          ].map(([id, label]) => (
+            <a key={id} href={`#${id}`} className="shrink-0 rounded-[var(--radius-sm)] px-2.5 py-1 text-[12.5px] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]">
+              {label}
+            </a>
+          ))}
+          {dirty ? <span className="ml-auto shrink-0 self-center text-[12px] text-[color:var(--color-warning-fg)]">Unsaved changes</span> : null}
+        </nav>
+      ) : null}
       {state.error ? (
         <Alert tone={state.duplicates?.length || state.needsBlankConfirm ? "warning" : "danger"} title={state.duplicates?.length ? "Possible duplicate" : state.needsBlankConfirm ? "Nothing identifies this client" : "Not saved"}>
           {state.error}
@@ -339,7 +373,7 @@ export function ClientForm({
         </div>
       ) : null}
 
-      <Section step="01" title="Client identity" hint="Flexible fields">
+      <Section id="client-identity" step="01" title="Client identity" hint="Flexible fields">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label={label("Client / contact name", "name")}>
             <Input name="name" defaultValue={v("name")} maxLength={200} placeholder="Person or company name" />
@@ -347,9 +381,7 @@ export function ClientForm({
           <Field label={label("Company / business", "companyName")}>
             <Input name="companyName" defaultValue={v("companyName")} maxLength={200} placeholder="Optional" />
           </Field>
-          <Field label="Client code" hint={mode === "create" ? "Leave empty to generate one (CL-000123)." : "Must be unique in this project."}>
-            <Input name="code" defaultValue={v("code")} maxLength={40} placeholder={mode === "create" ? "Automatic if blank" : undefined} />
-          </Field>
+          <ClientCodeField mode={mode} clientId={clientId} code={v("code")} nextCode={context.nextClientCode} canChoose={context.canManageLists} />
           {canEditStatus ? (
             <Field label="Status">
               <Select name="status" defaultValue={v("status")}>
@@ -383,7 +415,7 @@ export function ClientForm({
         </div>
       </Section>
 
-      <Section step="02" title="Worldwide contact & billing currency">
+      <Section id="client-contact" step="02" title="Worldwide contact & billing currency">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {mode === "create" ? (
             <Field
@@ -538,7 +570,7 @@ export function ClientForm({
         </div>
       </Section>
 
-      <Section step="03" title="Team & seller" hint="From your real team roster">
+      <Section id="client-team" step="03" title="Team & seller" hint="From your real team roster">
         {options.roster.length === 0 ? (
           <Alert tone="info">
             No team members yet. Add them under WhatsApp → <Link href="/team-members" className="link">Team Members</Link> and group them under <Link href="/teams" className="link">Teams</Link>; they then appear here.
@@ -801,7 +833,7 @@ export function ClientForm({
         </Section>
       ) : null}
 
-      <Section step={mode === "create" ? "06" : "04"} title="Notes for the team" hint="Internal — never sent to the client">
+      <Section id="client-notes" step={mode === "create" ? "06" : "04"} title="Notes for the team" hint="Internal — never sent to the client">
         <div className="grid grid-cols-1 gap-4">
           <Field label="Business details">
             <Textarea name="businessDetails" defaultValue={v("businessDetails")} rows={2} maxLength={2000} />
@@ -813,9 +845,14 @@ export function ClientForm({
       </Section>
 
       <div className="sticky bottom-0 -mx-6 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
-        <Button type="submit" loading={pending}>
+        <Button type="submit" loading={pending} onClick={() => (viewAfterSave.current = false)}>
           <Check className="size-4" aria-hidden /> {mode === "create" ? "Create client" : "Save changes"}
         </Button>
+        {mode === "edit" ? (
+          <Button type="submit" variant="secondary" loading={pending} onClick={() => (viewAfterSave.current = true)}>
+            Save & view client
+          </Button>
+        ) : null}
         {mode === "create" && state.duplicates?.length ? (
           <Button type="submit" variant="secondary" loading={pending} name="confirmDuplicate" value="1" title="Creates a second client even though an identifier matches. Nothing is merged.">
             Create anyway
@@ -826,7 +863,13 @@ export function ClientForm({
             Create with only a client code
           </Button>
         ) : null}
-        <Link href={mode === "create" ? "/clients" : `/clients/${clientId}`} className="text-sm text-[color:var(--color-muted-foreground)] underline underline-offset-2">
+        <Link
+          href={mode === "create" ? "/clients" : `/clients/${clientId}`}
+          onClick={(event) => {
+            if (dirty && !window.confirm("Leave without saving? Your changes will be lost.")) event.preventDefault();
+          }}
+          className="text-sm text-[color:var(--color-muted-foreground)] underline underline-offset-2"
+        >
           Cancel
         </Link>
       </div>
