@@ -1,7 +1,7 @@
 # Website Chat V3 — release report (31 Oct 2026)
 
 Branch `rudra`. Not merged, not deployed, no production migration run. Commits: `80e357d` (V3 slice 1) and
-`{{SHA2}}` (browser-pass fixes, docs). Audit: `01-audit.md`; browser record: `02-browser-e2e.md`.
+`943ac9d` (browser-pass fixes, docs). Audit: `01-audit.md`; browser record: `02-browser-e2e.md`.
 
 ## Existing features reused (not rebuilt)
 
