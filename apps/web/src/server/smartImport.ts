@@ -201,6 +201,8 @@ export interface RowAnalysis {
   derived: Partial<Record<"country" | "currency" | "language", string>>;
   /** V5 §4: numbers kept as written because they could not be read with certainty. */
   phoneNotes: Array<{ field: "phone" | "whatsapp"; note: string }>;
+  /** V5 §4: the numbers as they will be STORED (E.164 when certain), when the row is importable. */
+  stored: Partial<Record<"phone" | "whatsapp", string>>;
 }
 
 export interface SmartSummary {
@@ -304,6 +306,7 @@ async function analyzeRows(
       money: built.money.get(row.rowNumber) ?? null,
       derived: derivedValues(validByRow.get(row.rowNumber)),
       phoneNotes: validByRow.get(row.rowNumber)?.phoneNotes ?? [],
+      stored: storedNumbers(validByRow.get(row.rowNumber)),
     };
     if (ignored.has(row.rowNumber)) {
       summary.ignored += 1;
@@ -349,6 +352,18 @@ async function analyzeRows(
     moneyProblemRows: rows.filter((r) => (r.status === "NEW" || r.status === "MATCH") && r.money?.status === "PROBLEM").length,
   });
   return { revision: job.revision, rows, summary, assessment, shownFields: [...SMART_REVIEW_ORDER] };
+}
+
+/** The numbers a row will store, as stored ("+966551234567"), so the review shows the result, not only the cell. */
+function storedNumbers(row: ResolvedImportRow | undefined): RowAnalysis["stored"] {
+  if (!row) return {};
+  const join = (kind: "PHONE" | "WHATSAPP") => row.channels.filter((c) => c.kind === kind).map((c) => c.value).join("; ") || undefined;
+  const out: RowAnalysis["stored"] = {};
+  const phone = join("PHONE");
+  const whatsapp = join("WHATSAPP");
+  if (phone) out.phone = phone;
+  if (whatsapp) out.whatsapp = whatsapp;
+  return out;
 }
 
 /** The values a row did not give but will receive, filled from its phone number or country ("Auto selected"). */

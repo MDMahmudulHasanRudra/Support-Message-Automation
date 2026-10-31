@@ -109,6 +109,7 @@ export interface SmartReviewRow {
   money: RowAnalysis["money"];
   derived: RowAnalysis["derived"];
   phoneNotes: RowAnalysis["phoneNotes"];
+  stored: RowAnalysis["stored"];
 }
 
 export interface SmartReview {
@@ -174,6 +175,7 @@ export async function loadSmartReview(jobId: string, query: { filter?: string; s
         money: r.money,
         derived: r.derived,
         phoneNotes: r.phoneNotes,
+        stored: r.stored,
       };
     }),
   };

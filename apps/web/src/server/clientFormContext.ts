@@ -6,6 +6,7 @@ import { listLinkableAccounts } from "@/server/clientChatLinks";
 import { loadClientChoices } from "@/server/clientConfiguration";
 import { hasPermission } from "@/server/permissions";
 import { languageOptions } from "@/lib/clientLocale";
+import { countryOptions } from "@/lib/clientPhone";
 import type { ClientFormContext } from "@/app/p/[project]/(dashboard)/clients/ClientForm";
 
 /**
@@ -35,6 +36,7 @@ export async function loadClientFormContext(session: Session): Promise<ClientFor
     languages: languageOptions().map((l) => l.name),
     // Favourites first, then the project's own, then every other ISO currency (V5: no 30-currency list).
     allCurrencies: [...new Set([...choices.favoriteCurrencies, ...currencies.map((c) => c.code), ...ISO_CURRENCY_CODES])],
+    countries: countryOptions(),
     today: dhakaToday(new Date()),
   };
 }

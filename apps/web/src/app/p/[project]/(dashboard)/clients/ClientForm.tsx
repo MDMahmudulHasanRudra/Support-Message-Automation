@@ -24,7 +24,7 @@ import {
   type ClientChannelKindValue,
   type ClientRequirableField,
 } from "@support-automation/shared";
-import { countryName, countryOptions, readPhone, suggestedCurrency } from "@/lib/clientPhone";
+import { readPhone, suggestedCurrency, type CountryOption } from "@/lib/clientPhone";
 import { languageCodeForCountry, languageName } from "@/lib/clientLocale";
 import type { ClientChoices } from "@/server/clientConfiguration";
 import { OtherLanguages, SourceNote, TagPicker } from "./ClientFormPickers";
@@ -95,6 +95,11 @@ export interface ClientFormContext {
   languages: string[];
   /** Favourite and project currencies first, then every ISO currency. */
   allCurrencies: string[];
+  /**
+   * Every country, named ON THE SERVER. Names come from ICU, and Node's and the browser's disagree
+   * ("Falkland Islands" / "Falkland Islands (Islas Malvinas)"), so naming them in the browser broke hydration.
+   */
+  countries: CountryOption[];
 }
 
 function Section({ step, title, hint, children, id }: { step: string; title: string; hint?: string; children: ReactNode; id?: string }) {
@@ -158,7 +163,8 @@ export function ClientForm({
   const [photoError, setPhotoError] = useState<string | null>(null);
   const photoInput = useRef<HTMLInputElement>(null);
   const photoField = useRef<HTMLInputElement>(null);
-  const countries = useMemo(() => countryOptions(), []);
+  const countries = context.countries;
+  const countryName = (code: string | null | undefined) => (code ? (countries.find((c) => c.code === code)?.name ?? code) : null);
   const reading = readPhone(phone, countryChoice || context.defaultCountry);
   const country = countryTouched ? countryChoice : countryChoice || reading.country || "";
   const countrySource = countryTouched ? (values.country && countryChoice === values.country ? "SAVED" : "MANUAL") : country ? "AUTO" : null;

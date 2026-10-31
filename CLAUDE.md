@@ -3025,6 +3025,22 @@ original import, untouched. Up to 5,000 rows / 15 MB from any file. Rules worth 
 - Cancel stops between batches and never undoes; retry re-runs only FAILED and never-attempted rows. Drafts expire
   after 7 days; finished imports' staged rows are deleted after 7 days. The upload checks the zip directory before
   parsing (`inspectXlsxZip`).
+- **V5 (31 Oct 2026, SMART_IMPORT.md §12, `CLIENT_CONFIGURATION.md`)**. Rules worth not undoing:
+  - The first mapping screen is the horizontal Visual Mapping grid (`MappingGrid.tsx`), previews from staged rows.
+    The vertical view is a secondary toggle over the same state. Both views save through `mappingToSave`.
+  - The best-scoring sheet opens (`scoreSheet`); always opening the first sheet was the "0 rows" bug.
+  - A phone is stored as E.164 only when libphonenumber says it is valid. Otherwise it is kept as written and flagged,
+    never guessed. Matching also tries the old digits form (`legacyMatchKey`).
+  - A country / currency / language derived from a phone only fills an EMPTY field, never an existing client's value
+    (`derivedSkip`).
+  - Imported amounts are RECORDS ONLY (`Client.importedAmounts`, exact text, per currency). Never a due, invoice,
+    receipt, payment or balance, never converted or summed. An ambiguous currency word is confirmed by a person.
+  - Money is stored exactly or refused (string arithmetic). Billing is still 2 decimals: a real third decimal
+    (KWD/OMR/BHD/JOD) is refused, not rounded. Widening the ledger is a separate, unbuilt migration.
+  - Client Lists (`ClientCatalogEntry`, `ClientServicePlan`, `ClientCountrySetting`, key
+    `clients.manage_settings`) never take a value from a client. Renames and merges propagate in one transaction;
+    archive only hides. Every currency is ISO, with no cap. Country names for client components are made on the
+    server (Node and browser ICU differ, which broke hydration).
 
 ### Commerce — products, stock, orders, sales pipeline (`COMMERCE.md`)
 

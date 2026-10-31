@@ -433,6 +433,13 @@ function ReviewRow({
                     : null
             }
             disabled={row.status === "IGNORED"}
+            shown={
+              (f === "country" || f === "currency" || f === "language") && row.derived[f]
+                ? { value: f === "country" ? `${row.derived[f]}` : row.derived[f]!, kind: "auto" }
+                : (f === "phone" || f === "whatsapp") && row.stored[f] && row.stored[f] !== row.values[f]
+                  ? { value: row.stored[f]!, kind: "stored" }
+                  : null
+            }
             onSaved={onChanged}
           />
         ))}
@@ -495,6 +502,7 @@ function EditableCell({
   edited,
   issues,
   note,
+  shown,
   disabled,
   onSaved,
 }: {
@@ -506,6 +514,8 @@ function EditableCell({
   edited: boolean;
   issues: FieldIssue[];
   note: string | null;
+  /** V5: what the client will actually get when it is not the cell itself — a derived value, or a number as stored. */
+  shown?: { value: string; kind: "auto" | "stored" } | null;
   disabled: boolean;
   onSaved: () => Promise<void>;
 }) {
@@ -604,14 +614,25 @@ function EditableCell({
         aria-invalid={severity === "error" || undefined}
         className={`group flex min-h-8 w-full items-center gap-1.5 rounded-[var(--radius-sm)] px-1.5 py-1 text-left transition-colors hover:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:cursor-default ${severity ? ISSUE_STYLE[severity] : "hover:bg-[var(--color-neutral-bg)]"} ${state === "error" ? "ring-1 ring-[var(--color-danger)]" : ""}`}
       >
-        <span className={`min-w-0 flex-1 truncate ${value ? (severity === "error" ? "text-[color:var(--color-danger-fg)]" : "") : "text-[color:var(--color-muted-foreground)]/60"}`} dir="auto">
-          {value || "—"}
-        </span>
+        {!value && shown?.kind === "auto" ? (
+          <span className="min-w-0 flex-1 truncate text-[color:var(--color-info-fg)]" dir="auto" data-auto>
+            {shown.value} <span className="rounded bg-[var(--color-info-bg)] px-1 text-[10px] font-semibold">Auto</span>
+          </span>
+        ) : (
+          <span className={`min-w-0 flex-1 truncate ${value ? (severity === "error" ? "text-[color:var(--color-danger-fg)]" : "") : "text-[color:var(--color-muted-foreground)]/60"}`} dir="auto">
+            {value || "—"}
+          </span>
+        )}
         {severity === "error" ? <AlertTriangle className="size-3 shrink-0 text-[color:var(--color-danger-fg)]" aria-hidden /> : null}
         {severity === "warning" ? <Info className="size-3 shrink-0 text-[color:var(--color-warning-fg)]" aria-hidden /> : null}
         {state === "saving" ? <Loader2 className="size-3 shrink-0 animate-spin" aria-label="Saving" /> : null}
         {edited && state !== "saving" ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" aria-label="Corrected" title="Corrected on this screen" /> : null}
       </button>
+      {shown?.kind === "stored" ? (
+        <span className="block max-w-56 truncate px-1.5 text-[10.5px] text-[color:var(--color-success-fg)]" title="How this number is saved" data-stored>
+          Saved as {shown.value}
+        </span>
+      ) : null}
       {note && field === "expiryDate" && value ? <span className="block max-w-56 truncate px-1.5 text-[10.5px] text-[color:var(--color-muted-foreground)]" title={note}>{note}</span> : null}
       {problem ? <span className="block max-w-56 px-1.5 text-[11px] text-[color:var(--color-warning-fg)]">{problem}</span> : null}
     </td>
