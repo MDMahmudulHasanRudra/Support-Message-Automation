@@ -20,6 +20,8 @@ import {
   type ClientChannelDraft,
   type ClientConsentValue,
   type ClientStatusValue,
+  cleanBusinessType,
+  parseAdditionalLanguages,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
@@ -122,6 +124,15 @@ function readClientForm(formData: FormData) {
   );
 }
 
+/** V5: the business type and the languages besides the primary one, as typed (free text, checked). */
+function readProfileExtras(formData: FormData, primaryLanguage: string | null): { businessType: string | null; additionalLanguages: string[] } | { error: string } {
+  const business = cleanBusinessType(text(formData, "businessType"));
+  if (!business.ok) return { error: business.error };
+  const languages = parseAdditionalLanguages(text(formData, "additionalLanguages"), primaryLanguage);
+  if (!languages.ok) return { error: languages.error };
+  return { businessType: business.value, additionalLanguages: languages.languages };
+}
+
 /** Country and preferred currency as typed; each must be a real code when present. */
 function readLocale(formData: FormData): { country: string | null; preferredCurrency: string | null } | { error: string } {
   const countryRaw = text(formData, "country");
@@ -160,6 +171,8 @@ export async function createClient(_prev: ClientFormState, formData: FormData): 
   if (parsed.value.status === "ARCHIVED") return { error: "A new client cannot start archived.", values: echo(formData) };
   const locale = readLocale(formData);
   if ("error" in locale) return { error: locale.error, values: echo(formData) };
+  const extras = readProfileExtras(formData, parsed.value.preferredLanguage);
+  if ("error" in extras) return { error: extras.error, values: echo(formData) };
   const settings = await getClientModuleSettings();
   const country = locale.country ?? settings.defaultCountry;
 
@@ -265,6 +278,8 @@ export async function createClient(_prev: ClientFormState, formData: FormData): 
           category: fields.category,
           preferredChannel: fields.preferredChannel,
           preferredLanguage: fields.preferredLanguage,
+          additionalLanguages: extras.additionalLanguages,
+          businessType: extras.businessType,
           address: fields.address,
           businessDetails: fields.businessDetails,
           followUpInstructions: fields.followUpInstructions,
@@ -328,6 +343,8 @@ const FIELD_LABELS: Record<string, string> = {
   category: "category",
   preferredChannel: "preferred channel",
   preferredLanguage: "preferred language",
+  businessType: "business type",
+  additionalLanguages: "other languages",
   address: "address",
   businessDetails: "business details",
   followUpInstructions: "follow-up instructions",
@@ -356,6 +373,12 @@ export async function updateClient(clientId: string, _prev: ClientFormState, for
   if ("error" in locale) return { error: locale.error, values: echo(formData) };
   const seller = formData.has("soldByMemberId") ? await readSeller(formData, current.soldByMemberId) : { soldByMemberId: current.soldByMemberId };
   if ("error" in seller) return { error: seller.error, values: echo(formData) };
+  // A form without the V5 fields leaves them as they are.
+  const extras =
+    formData.has("businessType") || formData.has("additionalLanguages")
+      ? readProfileExtras(formData, fields.preferredLanguage)
+      : { businessType: current.businessType, additionalLanguages: current.additionalLanguages };
+  if ("error" in extras) return { error: extras.error, values: echo(formData) };
 
   const settings = await getClientModuleSettings();
   const kinds = new Set(current.channels.map((c) => c.kind));
@@ -382,6 +405,7 @@ export async function updateClient(clientId: string, _prev: ClientFormState, for
     category: fields.category,
     preferredChannel: fields.preferredChannel,
     preferredLanguage: fields.preferredLanguage,
+    businessType: extras.businessType,
     address: fields.address,
     businessDetails: fields.businessDetails,
     followUpInstructions: fields.followUpInstructions,
@@ -392,6 +416,7 @@ export async function updateClient(clientId: string, _prev: ClientFormState, for
   };
   const changed = (Object.keys(next) as Array<keyof typeof next>).filter((k) => (current[k] ?? null) !== (next[k] ?? null));
   const tagsChanged = [...current.tags].sort().join("|") !== [...fields.tags].sort().join("|");
+  if (current.additionalLanguages.join("|") !== extras.additionalLanguages.join("|")) (changed as string[]).push("additionalLanguages");
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -399,6 +424,7 @@ export async function updateClient(clientId: string, _prev: ClientFormState, for
         where: { id: clientId },
         data: {
           ...next,
+          additionalLanguages: extras.additionalLanguages,
           status: fields.status,
           tags: fields.tags,
           customFields: Object.keys(fields.customFields).length ? fields.customFields : (current.customFields as Prisma.InputJsonValue),

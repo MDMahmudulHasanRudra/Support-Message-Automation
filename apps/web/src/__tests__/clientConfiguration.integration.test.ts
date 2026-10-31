@@ -27,12 +27,13 @@ vi.mock("@/server/projectPaths", () => ({ projectPath: async (p: string) => `/p/
 const { runWithProject } = await import("@/server/projectContext");
 const { forgetProjectFeatureStates } = await import("@/server/projectFeatures");
 const actions = await import("@/server/actions/clientConfiguration");
+const clientActions = await import("@/server/actions/clients");
 const { loadClientConfiguration } = await import("@/server/clientConfiguration");
 
 type Project = { id: string; slug: string; name: string; status: "ACTIVE" };
 let A: Project;
 let B: Project;
-const people = {} as Record<"admin" | "staff", Session>;
+const people = {} as Record<"admin" | "staff" | "seller", Session>;
 const as = <T,>(person: Session, fn: () => Promise<T>, project: Project = A) => {
   current = person;
   return runWithProject(project, fn);
@@ -57,6 +58,7 @@ const client = (project: Project, name: string, data: { tags?: string[]; categor
 beforeAll(async () => {
   people.admin = await person("CfgAdmin", ["clients.view", "clients.manage_settings"]);
   people.staff = await person("CfgStaff", ["clients.view", "clients.create", "clients.update"]);
+  people.seller = await person("CfgSeller", ["clients.view", "clients.create", "clients.update", "clients.manage_subscriptions"]);
   for (const label of ["A", "B"]) {
     const p = await createProjectWithDefaults({ name: `Cfg ${label} ${tag}`, slug: `cfg-${label.toLowerCase()}-${tag}`, status: "ACTIVE", creatorUserId: people.admin.userId }, rawPrisma);
     ids.projects.push(p.id);
@@ -71,6 +73,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const where = { projectId: { in: ids.projects } };
+  await rawPrisma.clientActivity.deleteMany({ where });
+  await rawPrisma.clientSubscription.deleteMany({ where });
+  await rawPrisma.clientChannel.deleteMany({ where });
   await rawPrisma.clientCatalogEntry.deleteMany({ where });
   await rawPrisma.clientServicePlan.deleteMany({ where });
   await rawPrisma.clientCountrySetting.deleteMany({ where });
@@ -171,5 +176,56 @@ describe("plans, currencies and countries", () => {
     const logs = await rawPrisma.systemLog.findMany({ where: { projectId: A.id, scope: "clients" }, select: { message: true } });
     const text = logs.map((l) => l.message).join("\n");
     for (const needle of ["Tag changed: gold → premium", "Category merged: Corp → Corporate", "Business type archived: Retail", "Service plan added: Home 20", "Currency offered", "Country setting changed: SA"]) expect(text).toContain(needle);
+  });
+});
+
+describe("Add / Edit Client with the V5 fields", () => {
+  const form = (fields: Record<string, string>) => {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+    return fd;
+  };
+
+  it("stores the business type and other languages, and a paid plan with an exact expiry creates no invoice", async () => {
+    const dues = await rawPrisma.clientDue.count({ where: { projectId: A.id } });
+    const r = await as(people.seller, () =>
+      clientActions.createClient(
+        {},
+        form({
+          name: `Form ${tag}`,
+          phone: "+966551234567",
+          whatsappSame: "1",
+          country: "SA",
+          preferredCurrency: "SAR",
+          preferredLanguage: "Arabic",
+          additionalLanguages: "English, arabic, Urdu",
+          businessType: "Retail",
+          tags: "vip, premium",
+          subService: "Home 20",
+          subKind: "PAID",
+          subStartDate: "2026-01-31",
+          subEndDate: "2026-03-15",
+        }),
+      ),
+    );
+    expect(r.error, r.error).toBeUndefined();
+    const c = await rawPrisma.client.findFirstOrThrow({ where: { projectId: A.id, name: `Form ${tag}` }, include: { subscriptions: true } });
+    expect(c).toMatchObject({ businessType: "Retail", additionalLanguages: ["English", "Urdu"], preferredLanguage: "Arabic", tags: ["vip", "premium"] });
+    expect(c.subscriptions).toHaveLength(1);
+    expect(c.subscriptions[0]).toMatchObject({ service: "Home 20", kind: "PAID" });
+    expect(c.subscriptions[0]!.endDate.toISOString().slice(0, 10)).toBe("2026-03-15");
+    // Choosing a paid plan records the term only: no invoice, no due.
+    expect(await rawPrisma.clientDue.count({ where: { projectId: A.id } })).toBe(dues);
+
+    // An edit from a form without the V5 fields leaves them as they are.
+    const u = await as(people.seller, () => clientActions.updateClient(c.id, {}, form({ name: `Form ${tag}`, status: "ACTIVE" })));
+    expect(u.error, u.error).toBeUndefined();
+    expect(await rawPrisma.client.findUniqueOrThrow({ where: { id: c.id } })).toMatchObject({ businessType: "Retail", additionalLanguages: ["English", "Urdu"] });
+  });
+
+  it("refuses a business type that is a spreadsheet formula, keeping what was typed", async () => {
+    const r = await as(people.seller, () => clientActions.createClient({}, form({ name: `Bad ${tag}`, businessType: "=cmd" })));
+    expect(r.error).toMatch(/business type/);
+    expect(r.values?.name).toBe(`Bad ${tag}`);
   });
 });

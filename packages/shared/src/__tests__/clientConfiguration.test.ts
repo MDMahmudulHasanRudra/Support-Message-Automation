@@ -87,3 +87,17 @@ describe("service plans", () => {
     expect(planDefaults(plan, null).expiry).toBeNull();
   });
 });
+
+describe("a client's business type and languages", () => {
+  it("keeps a business type as typed, and refuses a formula", async () => {
+    const { cleanBusinessType } = await import("../clientConfiguration.js");
+    expect(cleanBusinessType("  Retail   shop ")).toEqual({ ok: true, value: "Retail shop" });
+    expect(cleanBusinessType("")).toEqual({ ok: true, value: null });
+    expect(cleanBusinessType("=1+1")).toMatchObject({ ok: false });
+  });
+  it("keeps extra languages distinct and never repeats the primary one", async () => {
+    const { parseAdditionalLanguages } = await import("../clientConfiguration.js");
+    expect(parseAdditionalLanguages("English, arabic, english, Hindi", "Arabic")).toEqual({ ok: true, languages: ["English", "Hindi"] });
+    expect(parseAdditionalLanguages("a,b,c,d,e,f", null)).toMatchObject({ ok: false });
+  });
+});

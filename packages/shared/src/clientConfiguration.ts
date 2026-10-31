@@ -206,3 +206,32 @@ export function planDefaults(plan: ServicePlanLike, startDate: string | null): {
   const expiry = startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) && plan.defaultDuration && unit ? addDuration(startDate, plan.defaultDuration, unit) : null;
   return { kind: plan.defaultKind, duration: plan.defaultDuration, unit, expiry };
 }
+
+// ── Fields on a client ──────────────────────────────────────────────────────────────────────────
+
+export const CLIENT_LANGUAGE_LIMITS = { additional: 5, name: CLIENT_LIMITS.language } as const;
+
+/** A client's business type as stored: free text (a list entry or not), at most 80 characters, or null. */
+export function cleanBusinessType(raw: unknown): { ok: true; value: string | null } | { ok: false; error: string } {
+  const text = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
+  if (!text) return { ok: true, value: null };
+  if (CONTROL.test(text) || /^[=+\-@]/.test(text)) return { ok: false, error: "The business type cannot start with = + - or @, or contain control characters." };
+  if (text.length > MAX_NAME.BUSINESS_TYPE) return { ok: false, error: `The business type can be at most ${MAX_NAME.BUSINESS_TYPE} characters.` };
+  return { ok: true, value: text };
+}
+
+/**
+ * A client's languages besides the primary one ("Arabic, English"): distinct (case-insensitively), never the
+ * primary language again, each at most 40 characters, at most five.
+ */
+export function parseAdditionalLanguages(raw: unknown, primary: string | null): { ok: true; languages: string[] } | { ok: false; error: string } {
+  const list = (Array.isArray(raw) ? raw.map(String) : typeof raw === "string" ? raw.split(/[,;\n]/) : []).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const out: string[] = [];
+  for (const lang of list) {
+    if (CONTROL.test(lang) || lang.length > CLIENT_LANGUAGE_LIMITS.name) return { ok: false, error: `"${lang.slice(0, 20)}" is not a language name.` };
+    if (primary && lang.toLowerCase() === primary.toLowerCase()) continue;
+    if (!out.some((o) => o.toLowerCase() === lang.toLowerCase())) out.push(lang);
+  }
+  if (out.length > CLIENT_LANGUAGE_LIMITS.additional) return { ok: false, error: `A client can have at most ${CLIENT_LANGUAGE_LIMITS.additional} more languages.` };
+  return { ok: true, languages: out };
+}

@@ -11,6 +11,7 @@ import type { ClientFormOptions } from "@/server/clients";
 import {
   addDuration,
   CLIENT_CHANNEL_LABELS,
+  matchCatalogEntry,
   CLIENT_PHOTO_LIMITS,
   CLIENT_STATUSES,
   CLIENT_STATUS_LABELS,
@@ -24,6 +25,9 @@ import {
   type ClientRequirableField,
 } from "@support-automation/shared";
 import { countryName, countryOptions, readPhone, suggestedCurrency } from "@/lib/clientPhone";
+import { languageCodeForCountry, languageName } from "@/lib/clientLocale";
+import type { ClientChoices } from "@/server/clientConfiguration";
+import { OtherLanguages, SourceNote, TagPicker } from "./ClientFormPickers";
 import { formatDay } from "@/lib/clientDisplay";
 import { shrinkPicture } from "@/lib/clientPhotoResize";
 
@@ -44,6 +48,9 @@ export interface ClientFormValues {
   country: string;
   preferredCurrency: string;
   soldByMemberId: string;
+  businessType: string;
+  /** Comma-separated: the languages besides `preferredLanguage`. */
+  additionalLanguages: string;
 }
 
 export const EMPTY_CLIENT_VALUES: ClientFormValues = {
@@ -63,6 +70,8 @@ export const EMPTY_CLIENT_VALUES: ClientFormValues = {
   country: "",
   preferredCurrency: "",
   soldByMemberId: "",
+  businessType: "",
+  additionalLanguages: "",
 };
 
 const PREFERRED: ClientChannelKindValue[] = ["PHONE", "WHATSAPP", "EMAIL", "MESSENGER", "INSTAGRAM", "TELEGRAM"];
@@ -78,6 +87,14 @@ export interface ClientFormContext {
   canLinkGroups: boolean;
   canSellSubscriptions: boolean;
   today: string;
+  /** The project's lists (Settings → Client Lists): tags, categories, business types, plans, country choices. */
+  choices: ClientChoices;
+  /** May grow those lists from the form ("Create tag …"). */
+  canManageLists: boolean;
+  /** Every language by name, for the language pickers. */
+  languages: string[];
+  /** Favourite and project currencies first, then every ISO currency. */
+  allCurrencies: string[];
 }
 
 function Section({ step, title, hint, children, id }: { step: string; title: string; hint?: string; children: ReactNode; id?: string }) {
@@ -125,8 +142,14 @@ export function ClientForm({
   const req = (key: ClientRequirableField) => required.has(key);
 
   // Controlled where one field drives another.
-  const [country, setCountry] = useState(v("country"));
-  const [currency, setCurrency] = useState(v("preferredCurrency"));
+  // V5 §5: country, currency and language fill themselves from a certain number / the country until a person
+  // chooses one; a value the person (or the saved client) gave is never replaced. Derived, never set by an effect.
+  const [countryChoice, setCountry] = useState(v("country"));
+  const [countryTouched, setCountryTouched] = useState(Boolean(v("country")));
+  const [currencyChoice, setCurrency] = useState(v("preferredCurrency"));
+  const [currencyTouched, setCurrencyTouched] = useState(Boolean(v("preferredCurrency")));
+  const [languageChoice, setLanguage] = useState(v("preferredLanguage"));
+  const [languageTouched, setLanguageTouched] = useState(Boolean(v("preferredLanguage")));
   const [phone, setPhone] = useState(state.values?.phone ?? "");
   const [whatsappSame, setWhatsappSame] = useState((state.values?.whatsappSame ?? "1") === "1");
   const [teamId, setTeamId] = useState(v("assignedTeamId"));
@@ -136,14 +159,38 @@ export function ClientForm({
   const photoInput = useRef<HTMLInputElement>(null);
   const photoField = useRef<HTMLInputElement>(null);
   const countries = useMemo(() => countryOptions(), []);
-  const reading = readPhone(phone, country || context.defaultCountry);
-  const currencySuggestion = suggestedCurrency(country);
+  const reading = readPhone(phone, countryChoice || context.defaultCountry);
+  const country = countryTouched ? countryChoice : countryChoice || reading.country || "";
+  const countrySource = countryTouched ? (values.country && countryChoice === values.country ? "SAVED" : "MANUAL") : country ? "AUTO" : null;
+  const currencySuggestion = country ? (context.choices.currencyByCountry[country] ?? suggestedCurrency(country)) : null;
+  const currency = currencyTouched ? currencyChoice : currencyChoice || currencySuggestion || "";
+  const currencySource = currencyTouched ? (values.preferredCurrency && currencyChoice === values.preferredCurrency ? "SAVED" : "MANUAL") : currency ? "AUTO" : null;
+  const languageSuggestion = country ? (context.choices.languageByCountry[country] ?? languageName(languageCodeForCountry(country))) : null;
+  const language = languageTouched ? languageChoice : languageChoice || languageSuggestion || "";
+  const languageSource = languageTouched ? (values.preferredLanguage && languageChoice === values.preferredLanguage ? "SAVED" : "MANUAL") : language ? "AUTO" : null;
 
   // Subscription section.
   const [subOpen, setSubOpen] = useState(Boolean(state.values?.subService));
   const [subStart, setSubStart] = useState(state.values?.subStartDate ?? context.today);
   const [subValue, setSubValue] = useState(state.values?.subDurationValue ?? "1");
   const [subUnit, setSubUnit] = useState(state.values?.subDurationUnit ?? "MONTH");
+  const [subKind, setSubKind] = useState(state.values?.subKind ?? "PAID");
+  const [subService, setSubService] = useState(state.values?.subService ?? "");
+  const [exactExpiry, setExactExpiry] = useState(Boolean(state.values?.subEndDate));
+  const [subEndDate, setSubEndDate] = useState(state.values?.subEndDate ?? "");
+  const plan = subService ? matchCatalogEntry(subService, context.choices.plans) : null;
+  /** Choosing a plan OFFERS its kind and duration; the person may change them. Nothing is invoiced. */
+  function choosePlanText(text: string) {
+    setSubService(text);
+    const p = matchCatalogEntry(text, context.choices.plans);
+    if (!p || (plan && p.id === plan.id)) return;
+    setSubKind(p.defaultKind);
+    if (p.defaultDuration && p.defaultUnit) {
+      setSubValue(String(p.defaultDuration));
+      setSubUnit(p.defaultUnit);
+      setExactExpiry(false);
+    }
+  }
   const subEnd = useMemo(() => {
     const start = parseCalendarDay(subStart);
     const n = Number(subValue);
@@ -308,11 +355,24 @@ export function ClientForm({
               </Select>
             </Field>
           ) : null}
-          <Field label={label("Category", "category")}>
-            <Input name="category" defaultValue={v("category")} maxLength={80} placeholder="e.g. Reseller, Corporate" />
+          <Field label={label("Category", "category")} hint={context.choices.categories.length ? "From this project's list — or type a new one." : undefined}>
+            <Input name="category" defaultValue={v("category")} maxLength={80} placeholder="e.g. Reseller, Corporate" list="client-categories" />
+            <datalist id="client-categories">
+              {context.choices.categories.map((c) => (
+                <option key={c.name} value={c.name} />
+              ))}
+            </datalist>
           </Field>
-          <Field label="Tags" hint="Separate with commas.">
-            <Input name="tags" defaultValue={v("tags")} placeholder="vip, dhaka" />
+          <Field label="Business type">
+            <Input name="businessType" defaultValue={v("businessType")} maxLength={80} placeholder="e.g. Retail, ISP, Restaurant" list="client-business-types" />
+            <datalist id="client-business-types">
+              {context.choices.businessTypes.map((c) => (
+                <option key={c.name} value={c.name} />
+              ))}
+            </datalist>
+          </Field>
+          <Field label="Tags" hint={context.canManageLists ? "Pick from the list, or type and press Enter." : "Pick from the list, or type and press Enter (only for this client)."} className="sm:col-span-2">
+            <TagPicker name="tags" initial={v("tags")} options={context.choices.tags} canCreate={context.canManageLists} />
           </Field>
         </div>
       </Section>
@@ -331,7 +391,7 @@ export function ClientForm({
                       {reading.country && reading.country !== country ? (
                         <>
                           {" "}·{" "}
-                          <button type="button" className="underline" onClick={() => setCountry(reading.country!)}>
+                          <button type="button" className="underline" onClick={() => (setCountry(reading.country!), setCountryTouched(true))}>
                             Use {countryName(reading.country)}
                           </button>
                         </>
@@ -348,8 +408,23 @@ export function ClientForm({
               <Input name="phone" inputMode="tel" placeholder="+88017… or +97150…" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </Field>
           ) : null}
-          <Field label={label("Country", "country")} hint={country ? undefined : "Picked from the number when it is certain; you can always choose."}>
-            <Select name="country" value={country} onChange={(e) => setCountry(e.target.value)}>
+          <Field
+            label={
+              <>
+                {label("Country", "country")}
+                <SourceNote source={countrySource} />
+              </>
+            }
+            hint={country ? (countrySource === "AUTO" ? "From the phone number. Change it if that is wrong." : undefined) : "Picked from the number when it is certain; you can always choose."}
+          >
+            <Select
+              name="country"
+              value={country}
+              onChange={(e) => {
+                setCountry(e.target.value);
+                setCountryTouched(true);
+              }}
+            >
               <option value="">Not set</option>
               {countries.map((c) => (
                 <option key={c.code} value={c.code}>
@@ -378,24 +453,41 @@ export function ClientForm({
             </Field>
           ) : null}
           <Field
-            label={label("Preferred currency", "preferredCurrency")}
+            label={
+              <>
+                {label("Preferred currency", "preferredCurrency")}
+                <SourceNote source={currencySource} />
+              </>
+            }
             hint={
               currencySuggestion && currencySuggestion !== currency ? (
                 <>
                   {countryName(country)} usually pays in {currencySuggestion}.{" "}
-                  <button type="button" className="underline" onClick={() => setCurrency(currencySuggestion)}>
+                  <button type="button" className="underline" onClick={() => (setCurrency(currencySuggestion), setCurrencyTouched(true))}>
                     Use {currencySuggestion}
                   </button>{" "}
                   — a suggestion only; each invoice keeps its own currency.
                 </>
+              ) : currencySource === "AUTO" ? (
+                `Usual for ${countryName(country)}. A suggestion for new invoices, never a rule.`
               ) : (
                 "A suggestion for new invoices, never a rule."
               )
             }
           >
-            <Input name="preferredCurrency" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase().slice(0, 3))} list="client-currencies" placeholder="No preferred currency" maxLength={3} />
+            <Input
+              name="preferredCurrency"
+              value={currency}
+              onChange={(e) => {
+                setCurrency(e.target.value.toUpperCase().slice(0, 3));
+                setCurrencyTouched(true);
+              }}
+              list="client-currencies"
+              placeholder="No preferred currency"
+              maxLength={3}
+            />
             <datalist id="client-currencies">
-              {context.currencies.map((c) => (
+              {context.allCurrencies.map((c) => (
                 <option key={c} value={c} />
               ))}
             </datalist>
@@ -413,8 +505,29 @@ export function ClientForm({
               ))}
             </Select>
           </Field>
-          <Field label="Preferred language">
-            <Input name="preferredLanguage" defaultValue={v("preferredLanguage")} maxLength={40} placeholder="e.g. Bangla, Arabic" />
+          <Field
+            label={
+              <>
+                Preferred language
+                <SourceNote source={languageSource} />
+              </>
+            }
+            hint={languageSource === "AUTO" ? `Usual in ${countryName(country)}. Change it if the client prefers another.` : undefined}
+          >
+            <Input
+              name="preferredLanguage"
+              value={language}
+              onChange={(e) => {
+                setLanguage(e.target.value);
+                setLanguageTouched(true);
+              }}
+              maxLength={40}
+              placeholder="e.g. Bangla, Arabic"
+              list="client-languages"
+            />
+          </Field>
+          <Field label="Other languages" className="sm:col-span-2">
+            <OtherLanguages name="additionalLanguages" initial={v("additionalLanguages")} languages={context.languages} primary={language} />
           </Field>
         </div>
       </Section>
@@ -608,16 +721,28 @@ export function ClientForm({
           ) : (
             <div className="space-y-3">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Field label="Service / plan" className="lg:col-span-2">
-                  <Input name="subService" list="client-services" defaultValue={state.values?.subService ?? ""} placeholder="e.g. Tiger IPTV" maxLength={120} />
+                <Field
+                  label="Service / plan"
+                  className="lg:col-span-2"
+                  hint={
+                    plan ? (
+                      <span>
+                        Plan defaults offered: {SUBSCRIPTION_KIND_LABELS[plan.defaultKind as keyof typeof SUBSCRIPTION_KIND_LABELS] ?? plan.defaultKind}
+                        {plan.defaultDuration && plan.defaultUnit ? `, ${plan.defaultDuration} ${SUBSCRIPTION_DURATION_LABELS[plan.defaultUnit as keyof typeof SUBSCRIPTION_DURATION_LABELS]?.[plan.defaultDuration === 1 ? 0 : 1] ?? plan.defaultUnit}` : ""}
+                        {plan.prices.length ? ` · usual price ${plan.prices.map((x) => `${x.currency} ${x.amount}`).join(" / ")} (no invoice is created)` : ""}
+                      </span>
+                    ) : undefined
+                  }
+                >
+                  <Input name="subService" list="client-services" value={subService} onChange={(e) => choosePlanText(e.target.value)} placeholder="e.g. Tiger IPTV" maxLength={120} />
                   <datalist id="client-services">
-                    {context.services.map((s) => (
+                    {[...new Set([...context.choices.plans.map((x) => x.name), ...context.services])].map((s) => (
                       <option key={s} value={s} />
                     ))}
                   </datalist>
                 </Field>
                 <Field label="Type">
-                  <Select name="subKind" defaultValue={state.values?.subKind ?? "PAID"}>
+                  <Select name="subKind" value={subKind} onChange={(e) => setSubKind(e.target.value)}>
                     {SUBSCRIPTION_KINDS.map((k) => (
                       <option key={k} value={k}>
                         {SUBSCRIPTION_KIND_LABELS[k]}
@@ -629,10 +754,10 @@ export function ClientForm({
                   <Input type="date" name="subStartDate" value={subStart} onChange={(e) => setSubStart(e.target.value)} />
                 </Field>
                 <Field label="Duration">
-                  <Input type="number" min={1} name="subDurationValue" value={subValue} onChange={(e) => setSubValue(e.target.value)} />
+                  <Input type="number" min={1} name="subDurationValue" value={subValue} disabled={exactExpiry} onChange={(e) => setSubValue(e.target.value)} />
                 </Field>
                 <Field label="Unit">
-                  <Select name="subDurationUnit" value={subUnit} onChange={(e) => setSubUnit(e.target.value)}>
+                  <Select name="subDurationUnit" value={subUnit} disabled={exactExpiry} onChange={(e) => setSubUnit(e.target.value)}>
                     {SUBSCRIPTION_DURATION_UNITS.map((u) => (
                       <option key={u} value={u}>
                         {SUBSCRIPTION_DURATION_LABELS[u][1]}
@@ -640,11 +765,19 @@ export function ClientForm({
                     ))}
                   </Select>
                 </Field>
-                <div className="flex items-end lg:col-span-2">
-                  <p className="text-sm">
-                    Expires on <strong>{subEnd ? formatDay(subEnd) : "—"}</strong>
-                    <span className="ml-1 text-xs text-[color:var(--color-muted-foreground)]">(the seller above is credited)</span>
-                  </p>
+                <div className="flex flex-col justify-end gap-1.5 lg:col-span-2">
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={exactExpiry} onChange={(e) => setExactExpiry(e.target.checked)} />
+                    Set the exact expiry date instead
+                  </label>
+                  {exactExpiry ? (
+                    <Input type="date" name="subEndDate" aria-label="Exact expiry date" value={subEndDate} min={subStart || undefined} onChange={(e) => setSubEndDate(e.target.value)} />
+                  ) : (
+                    <p className="text-sm">
+                      Expires on <strong>{subEnd ? formatDay(subEnd) : "—"}</strong>
+                      <span className="ml-1 text-xs text-[color:var(--color-muted-foreground)]">(the seller above is credited)</span>
+                    </p>
+                  )}
                 </div>
               </div>
               <Button

@@ -454,7 +454,13 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                     <span className={muted}>Nobody yet</span>
                   )}
                 </InfoRow>
-                {client.preferredLanguage ? <InfoRow icon={Globe} label="Language">{client.preferredLanguage}</InfoRow> : null}
+                {client.preferredLanguage ? (
+                  <InfoRow icon={Globe} label="Language">
+                    {client.preferredLanguage}
+                    {client.additionalLanguages.length ? <span className={`block text-xs ${muted}`}>Also {client.additionalLanguages.join(", ")}</span> : null}
+                  </InfoRow>
+                ) : null}
+                {client.businessType ? <InfoRow icon={Shapes} label="Business type">{client.businessType}</InfoRow> : null}
               </SectionCard>
 
               <SectionCard
@@ -593,6 +599,8 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                     country: client.country ?? "",
                     preferredCurrency: client.preferredCurrency ?? "",
                     soldByMemberId: client.soldByMemberId ?? "",
+                    businessType: client.businessType ?? "",
+                    additionalLanguages: client.additionalLanguages.join(", "),
                   }}
                 />
               </div>
