@@ -51,6 +51,26 @@ export interface ParsedUpload {
   records: SheetRecords;
   /** The first rows of the sheet as read, for choosing the header row. */
   topRows: string[][];
+  /**
+   * Why this sheet was opened when the person did not choose one and the file has several: the first sheet
+   * of many workbooks is a cover or instructions page, and reading it gave "0 rows" (V5 §11). Null = the only
+   * sheet, or the one the person chose.
+   */
+  sheetReason: string | null;
+}
+
+/**
+ * Which sheet holds the client list, judged from each sheet's first rows: how many of its headers are client
+ * fields this import recognises, and how many rows are filled under them. The first sheet wins ties, so a file
+ * whose first sheet is the list behaves exactly as before.
+ */
+export function scoreSheet(grid: readonly (readonly string[])[]): { score: number; rows: number; recognised: number } {
+  if (!grid.some((r) => r.some(Boolean))) return { score: 0, rows: 0, recognised: 0 };
+  const headerIndex = detectHeaderRow(grid);
+  const headers = (grid[headerIndex] ?? []).map((c) => String(c ?? "").trim()).filter(Boolean);
+  const recognised = Object.keys(autoMapSmart(headers).mapping.fields).length;
+  const rows = grid.slice(headerIndex + 1).filter((r) => r.filter(Boolean).length >= 2).length;
+  return { score: (rows > 0 ? recognised * 10 : 0) + Math.min(rows, 20), rows, recognised };
 }
 
 const READ_OPTIONS = { cellFormula: false, cellHTML: false, cellStyles: false, cellText: true, cellDates: true, bookVBA: false, WTF: false } as const;
@@ -93,6 +113,7 @@ export function parseUpload(buffer: Buffer, fileName: string, choice: { sheet?: 
   if (buffer.length > SMART_IMPORT_LIMITS.maxBytes) return { error: `That file is ${(buffer.length / 1024 / 1024).toFixed(1)} MB. The limit is ${SMART_IMPORT_LIMITS.maxBytes / 1024 / 1024} MB.` };
 
   let workbook: XLSX.WorkBook;
+  let sheetReason: string | null = null;
   const sheetRows = SMART_IMPORT_LIMITS.maxRows + SMART_IMPORT_LIMITS.maxHeaderRow + 2;
   try {
     if (isCsv) {
@@ -104,7 +125,19 @@ export function parseUpload(buffer: Buffer, fileName: string, choice: { sheet?: 
       const zip = inspectXlsxZip(buffer);
       if (!zip.ok) return { error: zip.error };
       const names = XLSX.read(buffer, { type: "buffer", bookSheets: true }).SheetNames;
-      const wanted = choice.sheet && names.includes(choice.sheet) ? choice.sheet : undefined;
+      let wanted = choice.sheet && names.includes(choice.sheet) ? choice.sheet : undefined;
+      if (!wanted && names.length > 1) {
+        // Only the top of each sheet is read to choose (bounded), then the chosen sheet is read whole.
+        const peek = XLSX.read(buffer, { type: "buffer", sheetRows: 30, dense: true, sheets: names.slice(0, 50), ...READ_OPTIONS });
+        let best = { name: names[0]!, score: -1, rows: 0, recognised: 0 };
+        for (const name of names.slice(0, 50)) {
+          const ws = peek.Sheets[name];
+          const s = ws ? scoreSheet(sheetGrid(ws)) : { score: 0, rows: 0, recognised: 0 };
+          if (s.score > best.score) best = { name, ...s };
+        }
+        wanted = best.name;
+        if (best.name !== names[0]) sheetReason = `Opened the sheet "${best.name}": its columns look like a client list (${best.recognised} recognised), and "${names[0]}" does not. Change the sheet if that is wrong.`;
+      }
       workbook = XLSX.read(buffer, { type: "buffer", sheetRows, dense: true, sheets: wanted ?? names[0], ...READ_OPTIONS });
       workbook.SheetNames = names;
     }
@@ -112,7 +145,7 @@ export function parseUpload(buffer: Buffer, fileName: string, choice: { sheet?: 
     return { error: "That file could not be read. It may be damaged; open it in Excel, save it as .xlsx or .csv, and try again." };
   }
   const sheetNames = workbook.SheetNames.slice(0, 50);
-  const sheetName = choice.sheet && sheetNames.includes(choice.sheet) ? choice.sheet : sheetNames[0];
+  const sheetName = choice.sheet && sheetNames.includes(choice.sheet) ? choice.sheet : (Object.keys(workbook.Sheets).find((n) => sheetNames.includes(n)) ?? sheetNames[0]);
   const sheet = sheetName ? workbook.Sheets[sheetName] : undefined;
   if (!sheetName || !sheet) return { error: "The file has no sheet to read." };
   const grid = sheetGrid(sheet);
@@ -121,7 +154,7 @@ export function parseUpload(buffer: Buffer, fileName: string, choice: { sheet?: 
     choice.headerRow && choice.headerRow >= 1 && choice.headerRow <= SMART_IMPORT_LIMITS.maxHeaderRow ? choice.headerRow - 1 : detectHeaderRow(grid);
   const records = gridToRecords(grid, headerIndex);
   if ("error" in records) return records;
-  return { sheetNames, sheetName, headerRow: headerIndex + 1, records, topRows: grid.slice(0, 8).map((r) => r.slice(0, 12).map((c) => c.slice(0, 60))) };
+  return { sheetNames, sheetName, headerRow: headerIndex + 1, records, topRows: grid.slice(0, 8).map((r) => r.slice(0, 12).map((c) => c.slice(0, 60))), sheetReason };
 }
 
 // ── Sample values ──────────────────────────────────────────────────────────────────────────────
@@ -233,7 +266,7 @@ async function analyzeRows(
   job: Pick<SmartJobForAnalysis, "revision" | "headers" | "blankHeaders" | "duplicateHeaders">,
 ): Promise<SmartAnalysis> {
   const built = buildSmartRows(staged, mapping, samples);
-  const resolved = { ...resolveRows(built.valid, lookups), validBefore: new Map(built.valid.map((r) => [r.rowNumber, r])) };
+  const resolved = { ...resolveRows(built.valid, lookups, { fillLocale: mapping.fillLocale !== false }), validBefore: new Map(built.valid.map((r) => [r.rowNumber, r])) };
   const repeats = findInFileDuplicates(resolved.valid);
   const { byKey, byCode } = await loadExistingMatches(
     resolved.valid.flatMap((r) => r.matchKeys),

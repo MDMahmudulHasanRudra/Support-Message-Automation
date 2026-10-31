@@ -61,6 +61,11 @@ export interface SmartMapping {
   fields: Partial<Record<SmartRuleKey, SmartFieldRule>>;
   /** How the expiry is entered and how its gaps and conflicts are resolved (clientSmartExpiry.ts). */
   options?: SmartExpiryOptions;
+  /**
+   * V5: fill an empty country, preferred currency and language from the row's valid phone numbers (marked
+   * Auto selected). Absent = on. A value the file gives is never replaced either way.
+   */
+  fillLocale?: boolean;
 }
 
 export const SMART_FIELD_KEYS = CLIENT_IMPORT_FIELDS.map((f) => f.key) as ClientImportFieldKey[];
@@ -210,7 +215,7 @@ export function labelOf(field: SmartRuleKey): string {
 export function upgradeMapping(raw: unknown): SmartMapping {
   if (raw && typeof raw === "object" && (raw as { version?: unknown }).version === 2 && typeof (raw as { fields?: unknown }).fields === "object") {
     const m = raw as SmartMapping;
-    return { version: 2, fields: { ...(m.fields ?? {}) }, ...(m.options ? { options: { ...m.options } } : {}) };
+    return { version: 2, fields: { ...(m.fields ?? {}) }, ...(m.options ? { options: { ...m.options } } : {}), ...(m.fillLocale === false ? { fillLocale: false } : {}) };
   }
   const fields: SmartMapping["fields"] = {};
   if (raw && typeof raw === "object") {
@@ -418,7 +423,9 @@ export function sanitizeSmartMapping(raw: unknown, headers: readonly string[]): 
     if (!(EXPIRY_CONFLICT_RULES as readonly unknown[]).includes(optionsIn.expiryConflict)) return { ok: false, error: "Choose what to do when the expiry and the duration disagree." };
     options.expiryConflict = optionsIn.expiryConflict as SmartExpiryOptions["expiryConflict"];
   }
-  return { ok: true, mapping: { version: 2, fields, ...(Object.keys(options).length ? { options } : {}) } };
+  const fillLocale = (raw as { fillLocale?: unknown }).fillLocale;
+  if (fillLocale !== undefined && typeof fillLocale !== "boolean") return { ok: false, error: "Choose whether to fill the country, currency and language from phone numbers." };
+  return { ok: true, mapping: { version: 2, fields, ...(Object.keys(options).length ? { options } : {}), ...(fillLocale === false ? { fillLocale: false } : {}) } };
 }
 
 /** A mapping with every "sample" rule replaced by the sample's value, so the import does not depend on the day it runs. */
@@ -431,7 +438,7 @@ export function freezeSamples(mapping: SmartMapping, samples: SmartSamples): Sma
     else if (samples[field]) fields[field] = { mode: "constant", value: samples[field], sample: true };
   }
   for (const part of EXPIRY_PART_KEYS) if (mapping.fields[part]) fields[part] = mapping.fields[part];
-  return { version: 2, fields, ...(mapping.options ? { options: mapping.options } : {}) };
+  return { version: 2, fields, ...(mapping.options ? { options: mapping.options } : {}), ...(mapping.fillLocale === false ? { fillLocale: false } : {}) };
 }
 
 /** The columns each field reads — for showing one column feeding several fields. */

@@ -223,7 +223,12 @@ export async function updateImportedClient(tx: Prisma.TransactionClient, clientI
     if (!current || current.status === "ARCHIVED") return "ARCHIVED" as const;
     const data: Prisma.ClientUpdateInput = {};
     const changed: string[] = [];
+    // A derived value (V5: country from a number, currency and language from the country) only fills a gap: it
+    // never replaces what the client already has, unlike a value the file itself gave.
+    const derivedSkip = (key: "preferredLanguage" | "country" | "preferredCurrency") =>
+      Boolean(current[key]) && ((key === "preferredLanguage" && row.derived?.language) || (key === "country" && row.derived?.country) || (key === "preferredCurrency" && row.derived?.currency));
     const set = <K extends "name" | "companyName" | "category" | "preferredLanguage" | "address">(key: K, value: string | null) => {
+      if (key === "preferredLanguage" && derivedSkip("preferredLanguage")) return;
       if (value && value !== current[key]) {
         (data as Record<string, unknown>)[key] = value;
         changed.push(key);
@@ -236,6 +241,7 @@ export async function updateImportedClient(tx: Prisma.TransactionClient, clientI
     set("address", row.fields.address);
     // V3 columns: a value in the file replaces the client's; an empty cell leaves it alone.
     const setId = (column: "country" | "preferredCurrency" | "assignedTeamId" | "assignedMemberId" | "soldByMemberId", value: string | null, label: string) => {
+      if ((column === "country" || column === "preferredCurrency") && derivedSkip(column)) return;
       if (value && value !== current[column]) {
         (data as Record<string, unknown>)[column === "assignedTeamId" ? "assignedTeam" : column === "assignedMemberId" ? "assignedMember" : column === "soldByMemberId" ? "soldByMember" : column] =
           column === "assignedTeamId" || column === "assignedMemberId" || column === "soldByMemberId" ? { connect: { id: value } } : value;
@@ -257,7 +263,7 @@ export async function updateImportedClient(tx: Prisma.TransactionClient, clientI
       changed.push("tags");
     }
     const have = new Set(current.channels.map((c) => matchKeyOf(c.kind, c.normalizedValue)));
-    const newChannels = row.channels.filter((c) => !have.has(c.matchKey));
+    const newChannels = row.channels.filter((c) => !have.has(c.matchKey) && !(c.legacyMatchKey && have.has(c.legacyMatchKey)));
     if (newChannels.length) {
       // A new primary must not displace an existing one of the same kind.
       const primaryKinds = new Set((await tx.clientChannel.findMany({ where: { clientId, isPrimary: true }, select: { kind: true } })).map((c) => c.kind));

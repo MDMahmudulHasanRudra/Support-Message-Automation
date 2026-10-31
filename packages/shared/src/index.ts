@@ -76,6 +76,7 @@ export * from "./clientSmartImport.js";
 export * from "./clientSmartExpiry.js";
 export * from "./clientSubscriptions.js";
 export * from "./clientPayments.js";
+export * from "./currencyCatalog.js";
 export * from "./clientColumns.js";
 export * from "./clientModuleSettings.js";
 export * from "./clientPhoto.js";

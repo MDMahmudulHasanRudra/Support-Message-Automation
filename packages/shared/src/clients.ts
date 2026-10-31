@@ -158,6 +158,11 @@ export interface NormalizedChannel {
   label: string | null;
   isPrimary: boolean;
   matchKey: string;
+  /**
+   * The match key the same number had in the digits-only form older imports stored ("0551234567"), when the V5
+   * reading changed it. An update compares both, so a client's existing number is not added again in E.164.
+   */
+  legacyMatchKey?: string;
 }
 
 export function normalizeChannelDrafts(drafts: readonly ClientChannelDraft[]): { channels: NormalizedChannel[]; errors: string[] } {

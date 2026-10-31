@@ -1,7 +1,8 @@
-import { normalizeCurrencyCode, type ImportedClientRow, type ImportExtras } from "@support-automation/shared";
+import { matchKeyOf, normalizeCurrencyCode, readCurrencyName, type ImportedClientRow, type ImportExtras, type NormalizedChannel } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { countryOptions } from "@/lib/clientPhone";
-import { clientViewerCaps } from "@/server/clientModule";
+import { normalizePhone, resolveClientLocale, type PhoneNormalization } from "@/lib/clientLocale";
+import { clientViewerCaps, getClientModuleSettings } from "@/server/clientModule";
 import type { Session } from "@/server/auth";
 
 /**
@@ -16,17 +17,20 @@ export interface ImportLookups {
   membersByName: Map<string, Array<{ id: string; name: string; active: boolean; teamId: string | null; teamName: string | null }>>;
   membersByPhone: Map<string, { id: string; name: string; active: boolean; teamId: string | null; teamName: string | null }>;
   countries: Map<string, string>;
+  /** Settings → Client Module: the country a number written without a code is read in. Never stored on a client by itself. */
+  defaultCountry: string | null;
 }
 
 const key = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 const digits = (s: string) => s.replace(/\D/g, "");
 
 export async function loadImportLookups(): Promise<ImportLookups> {
-  const [teams, members] = await Promise.all([
+  const [teams, members, settings] = await Promise.all([
     prisma.team.findMany({ select: { id: true, name: true, status: true } }),
     prisma.internalTeamMember.findMany({ select: { id: true, name: true, status: true, teamId: true, phoneNumber: true, team: { select: { name: true } } } }),
+    getClientModuleSettings(),
   ]);
-  const lookups: ImportLookups = { teams: new Map(), membersByName: new Map(), membersByPhone: new Map(), countries: new Map() };
+  const lookups: ImportLookups = { teams: new Map(), membersByName: new Map(), membersByPhone: new Map(), countries: new Map(), defaultCountry: settings.defaultCountry };
   for (const t of teams) lookups.teams.set(key(t.name), { id: t.id, name: t.name, active: t.status === "ACTIVE" });
   for (const m of members) {
     const entry = { id: m.id, name: m.name, active: m.status === "ACTIVE", teamId: m.teamId, teamName: m.team?.name ?? null };
@@ -75,8 +79,16 @@ export function resolveImportExtras(extras: ImportExtras, lookups: ImportLookups
   }
   let preferredCurrency: string | null = null;
   if (extras.currency) {
-    preferredCurrency = normalizeCurrencyCode(extras.currency);
-    if (!preferredCurrency) errors.push(`Preferred currency "${extras.currency}" must be a three-letter code, such as BDT or AED.`);
+    // A code, or a name the customer's file uses ("TK", "Rand", "KSH"); a name that fits several currencies is asked about.
+    const named = readCurrencyName(extras.currency);
+    preferredCurrency = normalizeCurrencyCode(extras.currency) ?? (named && "code" in named ? named.code : null);
+    if (!preferredCurrency) {
+      errors.push(
+        named && "ambiguous" in named
+          ? `Preferred currency "${extras.currency}" can mean ${named.ambiguous.join(", ")}. Write the three-letter code.`
+          : `Preferred currency "${extras.currency}" must be a three-letter code, such as BDT or AED.`,
+      );
+    }
   }
   let assignedTeamId: string | null = null;
   if (extras.team) {
@@ -107,15 +119,86 @@ export function resolveImportExtras(extras: ImportExtras, lookups: ImportLookups
   return { ok: true, value: { country, preferredCurrency, assignedTeamId, assignedMemberId, soldByMemberId: seller?.soldByMemberId ?? null, seller, subscription: extras.subscription } };
 }
 
-export type ResolvedImportRow = ImportedClientRow & { resolved: ResolvedExtras };
+export type ResolvedImportRow = ImportedClientRow & {
+  resolved: ResolvedExtras;
+  /**
+   * Values this row did NOT give but that were derived (country from a valid number, currency and language from
+   * the country). An import fills these only where the client has nothing; it never replaces a value with one.
+   */
+  derived?: { country?: boolean; currency?: boolean; language?: boolean };
+  /** Numbers kept as written because they could not be read with certainty, with the reason (shown in the review). */
+  phoneNotes?: Array<{ field: "phone" | "whatsapp"; note: string }>;
+};
+
+export interface ImportLocaleOptions {
+  /** Fill an empty country, currency and language from the row's valid numbers (V5 §5). Default on. */
+  fillLocale?: boolean;
+}
+
+/**
+ * The V5 phone and locale rules applied to one resolved row: every PHONE / WHATSAPP channel that can be read
+ * with certainty is stored in E.164 (read in the row's country, else the project's default), and, with
+ * `fillLocale`, an empty country, currency and language are derived and marked as derived. A number already in
+ * the digits form an older import stored keeps that form as an extra match key, so it is still recognised.
+ */
+export function localizeImportRow(row: ResolvedImportRow, lookups: Pick<ImportLookups, "defaultCountry">, opts: ImportLocaleOptions = {}): ResolvedImportRow {
+  const readIn = row.resolved.country ?? lookups.defaultCountry;
+  const readings: PhoneNormalization[] = [];
+  const phoneNotes: NonNullable<ResolvedImportRow["phoneNotes"]> = [];
+  const matchKeys = new Set(row.matchKeys);
+  const seen = new Set<string>();
+  const channels: NormalizedChannel[] = [];
+  for (const c of row.channels) {
+    if (c.kind !== "PHONE" && c.kind !== "WHATSAPP") {
+      channels.push(c);
+      continue;
+    }
+    const reading = normalizePhone(c.value, readIn);
+    readings.push(reading);
+    let next: NormalizedChannel = c;
+    if (reading.status === "VALID") {
+      const digits = reading.e164!.slice(1);
+      next = { ...c, value: reading.e164!, normalizedValue: digits, matchKey: matchKeyOf(c.kind, digits), ...(c.matchKey !== matchKeyOf(c.kind, digits) ? { legacyMatchKey: c.matchKey } : {}) };
+      matchKeys.add(next.matchKey);
+    } else if (reading.note) phoneNotes.push({ field: c.kind === "PHONE" ? "phone" : "whatsapp", note: reading.note });
+    // One number written twice ("+966…" and "966…") is one channel.
+    if (seen.has(`${next.kind}:${next.normalizedValue}`)) continue;
+    seen.add(`${next.kind}:${next.normalizedValue}`);
+    channels.push(next);
+  }
+  const out: ResolvedImportRow = { ...row, channels, matchKeys: [...matchKeys], ...(phoneNotes.length ? { phoneNotes } : {}) };
+  if (opts.fillLocale === false) return out;
+  const locale = resolveClientLocale({
+    file: { country: row.resolved.country, currency: row.resolved.preferredCurrency, language: row.fields.preferredLanguage },
+    phones: readings,
+    // The default country reads local numbers; it is never written onto a client as if the file had said it.
+    projectCountry: null,
+  });
+  const derived: NonNullable<ResolvedImportRow["derived"]> = {};
+  const resolved = { ...row.resolved };
+  let fields = row.fields;
+  if (!row.resolved.country && locale.country.source === "PHONE") {
+    resolved.country = locale.country.value;
+    derived.country = true;
+  }
+  if (!row.resolved.preferredCurrency && locale.currency.source === "SUGGESTED" && locale.currency.value) {
+    resolved.preferredCurrency = locale.currency.value;
+    derived.currency = true;
+  }
+  if (!row.fields.preferredLanguage && locale.language.source === "SUGGESTED" && locale.language.value) {
+    fields = { ...fields, preferredLanguage: locale.language.value };
+    derived.language = true;
+  }
+  return { ...out, resolved, fields, ...(Object.keys(derived).length ? { derived } : {}) };
+}
 
 /** Splits built rows into resolved ones and rows refused with their reasons. */
-export function resolveRows(rows: readonly ImportedClientRow[], lookups: ImportLookups): { valid: ResolvedImportRow[]; invalid: Array<{ rowNumber: number; errors: string[] }> } {
+export function resolveRows(rows: readonly ImportedClientRow[], lookups: ImportLookups, locale: ImportLocaleOptions = {}): { valid: ResolvedImportRow[]; invalid: Array<{ rowNumber: number; errors: string[] }> } {
   const valid: ResolvedImportRow[] = [];
   const invalid: Array<{ rowNumber: number; errors: string[] }> = [];
   for (const row of rows) {
     const r = resolveImportExtras(row.extras, lookups);
-    if (r.ok) valid.push({ ...row, resolved: r.value });
+    if (r.ok) valid.push(localizeImportRow({ ...row, resolved: r.value }, lookups, locale));
     else invalid.push({ rowNumber: row.rowNumber, errors: r.errors });
   }
   return { valid, invalid };
