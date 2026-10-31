@@ -211,3 +211,17 @@ export function fitsCurrencyDecimals(amount: string, currency: string): boolean 
   const allowed = currencyMinorUnits(currency);
   return fraction.length <= allowed || /^0*$/.test(fraction.slice(allowed));
 }
+
+/**
+ * Why an amount cannot be stored in this currency, when the reason is precision: invoices and payments are kept
+ * to two decimals, so a third decimal that is not zero (KWD 2.555) is refused with the reason — never rounded.
+ * Null when precision is not the problem. (V5 §8: posting stays closed for values that do not fit.)
+ */
+export function storedPrecisionRefusal(raw: string, currency: string | null): string | null {
+  const m = /^\d+\.(\d+)$/.exec(raw.trim().replace(/,/g, ""));
+  if (!m || m[1]!.length <= 2 || /^0+$/.test(m[1]!.slice(2))) return null;
+  const native = currency ? currencyMinorUnits(currency) : 2;
+  return native > 2
+    ? `${currency} has ${native} decimal places, but invoices and payments here are stored to 2. ${raw.trim()} needs the third decimal, so it cannot be recorded yet — nothing is rounded. An amount like ${m[0]!.split(".")[0]}.${m[1]!.slice(0, 2)}0 can be.`
+    : `${currency ?? "This currency"} has at most 2 decimal places; ${raw.trim()} has more.`;
+}

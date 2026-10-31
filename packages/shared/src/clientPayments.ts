@@ -13,6 +13,8 @@
 
 import { CLIENT_DUE_STATUSES, MAX_DUE_AMOUNT, type ClientDueStatusValue } from "./clientBilling.js";
 
+import { storedPrecisionRefusal } from "./currencyCatalog.js";
+
 export const PAYMENT_METHODS = ["CASH", "BANK_TRANSFER", "MOBILE_BANKING", "CARD", "CHEQUE", "ONLINE", "OTHER"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
@@ -32,13 +34,20 @@ export const PAYMENT_LIMITS = { reference: 120, note: 1000, reversalReason: 500,
 
 // ── Money in minor units ────────────────────────────────────────────────────────────────────────
 
-/** "1,250.5" → 125050n. Null when it is not a non-negative amount with at most two decimals. */
+/**
+ * "1,250.5" → 125050n. Null when it is not a non-negative amount that fits two stored decimals. Zeros past the
+ * second decimal are the same value ("2.550" is 2.55) and are accepted; a real third decimal ("2.555") is not —
+ * it is refused, never rounded.
+ */
 export function toMinor(raw: string): bigint | null {
   const text = raw.trim().replace(/,/g, "");
-  const m = /^(\d+)(?:\.(\d{1,2}))?$/.exec(text);
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(text);
   if (!m) return null;
-  return BigInt(m[1]!) * 100n + BigInt((m[2] ?? "").padEnd(2, "0"));
+  const fraction = m[2] ?? "";
+  if (fraction.length > 2 && !/^0+$/.test(fraction.slice(2))) return null;
+  return BigInt(m[1]!) * 100n + BigInt(fraction.slice(0, 2).padEnd(2, "0"));
 }
+
 
 /** 125050n → "1250.50" (the stored form). */
 export function fromMinor(n: bigint): string {
@@ -75,7 +84,7 @@ export function parsePaymentAmount(raw: string, currency: string): { ok: true; m
   const text = raw.trim().replace(/,/g, "");
   if (!text) return { ok: false, error: "Enter an amount." };
   const minor = toMinor(text);
-  if (minor === null) return { ok: false, error: "The amount must be a number with at most two decimals." };
+  if (minor === null) return { ok: false, error: storedPrecisionRefusal(text, currency) ?? "The amount must be a number with at most two decimals." };
   if (minor <= 0n) return { ok: false, error: "The amount must be more than zero." };
   const decimals = currencyDecimals(currency);
   if (decimals < 2 && minor % 10n ** BigInt(2 - decimals) !== 0n) {
