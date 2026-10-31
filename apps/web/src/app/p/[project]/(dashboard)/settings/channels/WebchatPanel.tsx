@@ -148,7 +148,7 @@ export function WidgetStudio(props: {
               type="button"
               onClick={() => setSection(key)}
               aria-current={section === key ? "page" : undefined}
-              className={`shrink-0 rounded-[var(--radius-md)] px-2.5 py-1.5 text-[12.5px] font-medium ${section === key ? "bg-[var(--color-primary)] text-[color:var(--color-primary-foreground)]" : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]"}`}
+              className={`shrink-0 rounded-[var(--radius-md)] px-2.5 py-1.5 text-[12.5px] font-medium ${section === key ? "bg-[var(--color-primary)] text-[color:var(--color-on-primary)]" : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]"}`}
             >
               {label}
             </button>
@@ -481,7 +481,6 @@ function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey }: { se
   const [sample, setSample] = useState(true);
   const [typing, setTyping] = useState(false);
   const [darkSite, setDarkSite] = useState(false);
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
 
   const config = useMemo(
     () => ({
@@ -508,10 +507,12 @@ function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey }: { se
   const srcDoc = useMemo(
     () =>
       `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font-family:system-ui,sans-serif;background:${darkSite ? "#0b0d12" : "#ffffff"};color:${darkSite ? "#e5e7eb" : "#111827"}}header{padding:18px 22px;border-bottom:1px solid ${darkSite ? "#222" : "#eee"};font-weight:700}main{padding:28px 22px;max-width:640px}h1{font-size:26px;margin:0 0 10px}.l{height:10px;border-radius:5px;background:${darkSite ? "#1f2937" : "#f1f5f9"};margin:10px 0}</style></head><body><header>Your website</header><main><h1>Welcome to our shop</h1><div class="l" style="width:92%"></div><div class="l" style="width:80%"></div><div class="l" style="width:86%"></div><div class="l" style="width:60%"></div></main>` +
-      `<script src="${origin}/api/webchat/widget.js" data-key="${widgetKey.replace(/[^A-Za-z0-9_-]/g, "")}" data-preview="1"></script></body></html>`,
-    [origin, widgetKey, darkSite],
+      // Relative on purpose: a srcdoc document resolves against this page's address, and the same string renders on the
+      // server and the client (an origin read from window made the server and client markup differ).
+      `<script src="/api/webchat/widget.js" data-key="${widgetKey.replace(/[^A-Za-z0-9_-]/g, "")}" data-preview="1"></script></body></html>`,
+    [widgetKey, darkSite],
   );
-  const chip = (on: boolean) => `rounded-[var(--radius-md)] px-2 py-1 text-[11.5px] font-medium ${on ? "bg-[var(--color-primary)] text-[color:var(--color-primary-foreground)]" : "border border-[var(--color-border)] text-[color:var(--color-muted-foreground)]"}`;
+  const chip = (on: boolean) => `rounded-[var(--radius-md)] px-2 py-1 text-[11.5px] font-medium ${on ? "bg-[var(--color-primary)] text-[color:var(--color-on-primary)]" : "border border-[var(--color-border)] text-[color:var(--color-muted-foreground)]"}`;
 
   return (
     <div className="min-w-0 xl:sticky xl:top-4 xl:self-start">

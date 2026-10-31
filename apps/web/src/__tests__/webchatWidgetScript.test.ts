@@ -31,6 +31,21 @@ describe("website chat widget script", () => {
     expect(WIDGET_SCRIPT).toContain(widgetTeaserAllowed.toString());
   });
 
+  // Found in the browser pass (docs/website-chat-v3/02-browser-e2e.md): a host rule like `div { outline: … }` drew a box
+  // around the launcher, the launcher covered Send on a full-screen phone panel, and a reply read on one page came back
+  // as "1 new" on the next.
+  it("keeps the host page's rules off its own container", () => {
+    expect(WIDGET_SCRIPT).toContain('root.style.cssText = "all:initial!important;position:fixed!important;');
+    expect(WIDGET_SCRIPT).toContain('root.style.setProperty("display", ok && S.shown ? "block" : "none", "important")');
+    expect(WIDGET_SCRIPT).not.toMatch(/root\.style\.display\s*=/);
+  });
+
+  it("hides the launcher over a full-screen phone panel and remembers what the visitor read", () => {
+    expect(WIDGET_SCRIPT).toContain(".b.op{display:none}");
+    expect(WIDGET_SCRIPT).toContain('bubble.classList.toggle("op", open)');
+    expect(WIDGET_SCRIPT).toMatch(/!seeing && !\(readTo && m\.at <= readTo\)\) S\.unread\+\+/);
+  });
+
   it("sends no request in preview mode", () => {
     expect(WIDGET_SCRIPT).toMatch(/if \(preview\) return Promise\.reject/);
   });

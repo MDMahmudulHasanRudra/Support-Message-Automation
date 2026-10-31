@@ -2886,6 +2886,12 @@ served to agents ONLY by `/p/<slug>/api/channels/attachment/…`, never a public
 (never refuse a visitor while away), typing + seen (`seen=1` only while the panel is open and visible), a
 phone counts only with its own `phoneHash`, the visitor card labels a typed-email match as POSSIBLE, and the
 WordPress plugin zip never contains the identity secret.
+V3 (31 Oct 2026, `docs/website-chat-v3/`): the Widget Builder and its preview (the real `widget.js`, `data-preview`,
+sandboxed, never a request), photos both ways (JPEG/PNG/WebP only, no video; PDFs only for widgets saved before V3;
+agent photos only through `/api/channels/webchat-photo`, never WhatsApp's path), the visitor reads a photo only with
+its token (`/media`), builder images only through the upload route with a team photo's recorded consent, the install
+heartbeat, and the same embed line. Keep `publicWidgetSettings` the only settings a browser sees, the widget's outer
+container `all:initial!important`, and AI off unless the connection's switch is on (any photo goes to a person).
 
 ### Inbox workspace — notes, priority, tags, AI Copilot (`INBOX_WORKSPACE.md`)
 

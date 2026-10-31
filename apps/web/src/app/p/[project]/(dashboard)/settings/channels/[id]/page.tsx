@@ -73,7 +73,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
       {query.connected ? (
         <div className="mb-6">
           <Alert tone="success" title={`${c.name} is connected`}>
-            {oneClick ? "New messages will arrive in All Conversations." : meta ? "One step left: paste the Callback URL and Verify token below into your Meta app's Webhooks settings." : "Telegram will now send its messages here."}
+            {webchat ? "Design it below, then copy the install code from Installation and press Verify installation." : oneClick ? "New messages will arrive in All Conversations." : meta ? "One step left: paste the Callback URL and Verify token below into your Meta app's Webhooks settings." : "Telegram will now send its messages here."}
           </Alert>
         </div>
       ) : null}

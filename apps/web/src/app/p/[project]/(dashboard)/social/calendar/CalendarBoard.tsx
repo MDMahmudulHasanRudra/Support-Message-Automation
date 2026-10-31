@@ -82,7 +82,7 @@ export function CalendarBoard({ days, items, columns, canPublish, timezone, canC
             className={`min-h-28 bg-[var(--color-surface)] p-1.5 ${d.inRange ? "" : "bg-[var(--color-surface-sunken)] text-[color:var(--color-subtle-foreground)]"} ${over === d.key ? "outline outline-2 -outline-offset-2 outline-[var(--color-accent)]" : ""}`}
           >
             <div className="mb-1 flex items-center justify-between text-xs">
-              <span className={d.isToday ? "rounded bg-[var(--color-primary)] px-1.5 font-semibold text-[color:var(--color-primary-foreground)]" : "font-medium"}>{d.label}</span>
+              <span className={d.isToday ? "rounded bg-[var(--color-primary)] px-1.5 font-semibold text-[color:var(--color-on-primary)]" : "font-medium"}>{d.label}</span>
               {canCreate && d.inRange ? (
                 <Link href={`/social/new?date=${d.key}`} className="text-[color:var(--color-subtle-foreground)] hover:text-[color:var(--color-foreground)]" aria-label={`Create a post on ${d.key}`}>
                   +

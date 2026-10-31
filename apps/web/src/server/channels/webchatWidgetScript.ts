@@ -119,7 +119,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       ".ini{display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:" + p.text + "}",
       "*:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}",
       ".badge{position:absolute;top:-3px;" + (side === "left" ? "left" : "right") + ":-3px;min-width:20px;height:20px;border-radius:10px;background:#dc2626;color:#fff;font-size:11px;font-weight:700;line-height:20px;text-align:center;padding:0 5px;display:none}",
-      ".tz{position:absolute;bottom:" + (size + 14) + "px;" + side + ":0;max-width:260px;background:" + p.surface + ";color:" + p.text + ";border:1px solid " + p.border + ";border-radius:14px;padding:12px 32px 12px 14px;font-size:14px;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.16);cursor:pointer;" + anim + "}",
+      ".tz{position:absolute;bottom:" + (size + 14) + "px;" + side + ":0;width:max-content;max-width:260px;box-sizing:border-box;background:" + p.surface + ";color:" + p.text + ";border:1px solid " + p.border + ";border-radius:14px;padding:12px 32px 12px 14px;font-size:14px;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.16);cursor:pointer;" + anim + "}",
       ".tz.hide{opacity:0;transform:translateY(6px);pointer-events:none}.tz .x2{position:absolute;top:4px;right:4px;border:0;background:transparent;color:" + p.muted + ";cursor:pointer;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center}",
       ".p{position:absolute;bottom:" + (size + 14) + "px;" + side + ":0;width:" + w + "px;height:" + h + "px;max-height:calc(100vh - " + (size + 54) + "px);max-width:calc(100vw - 24px);background:" + p.bg + ";color:" + p.text + ";border-radius:" + r + "px;box-shadow:" + p.shadow + ";display:none;flex-direction:column;overflow:hidden;border:1px solid " + p.border + "}",
       ".p.o{display:flex}" + (reduceMotion ? "" : ".p.o{animation:pin .18s ease}@keyframes pin{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}"),
@@ -154,12 +154,12 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       ".ep{position:absolute;bottom:58px;left:8px;right:8px;max-height:260px;background:" + p.surface + ";border:1px solid " + p.border + ";border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.2);display:none;flex-direction:column;overflow:hidden;z-index:2}.ep.on{display:flex}",
       ".ep input{margin:8px;border:1px solid " + p.border + ";background:" + p.surface + ";color:" + p.text + ";border-radius:8px;padding:7px 10px;font-size:13px}",
       ".et{display:flex;gap:2px;padding:0 8px;overflow-x:auto}.et button{border:0;background:transparent;font-size:12px;color:" + p.muted + ";padding:4px 8px;border-radius:8px;cursor:pointer;white-space:nowrap}.et button.on{background:" + p.border + ";color:" + p.text + "}",
-      ".eg{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;padding:6px 8px 8px;overflow-y:auto}.eg button{border:0;background:transparent;font-size:22px;line-height:1;height:36px;border-radius:8px;cursor:pointer;font-family:'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif}.eg button:hover,.eg button:focus{background:" + p.border + "}",
+      ".eg{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:2px;padding:6px 8px 8px;overflow-x:hidden;overflow-y:auto}.eg .ee{grid-column:1/-1;padding:10px 4px;font-size:12.5px;opacity:.7}.eg button{min-width:0;padding:0;border:0;background:transparent;font-size:22px;line-height:1;height:36px;border-radius:8px;cursor:pointer;font-family:'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif}.eg button:hover,.eg button:focus{background:" + p.border + "}",
       ".dz{position:absolute;inset:0;background:rgba(37,99,235,.08);border:2px dashed " + p.brand + ";border-radius:" + r + "px;display:none;align-items:center;justify-content:center;font-weight:600;color:" + p.brand + ";z-index:3;pointer-events:none}.dz.on{display:flex}",
       ".lb{position:absolute;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;z-index:4;cursor:zoom-out}.lb.on{display:flex}.lb img{max-width:94%;max-height:90%;border-radius:8px}",
       ".pv{font-size:11px;text-align:center;color:" + p.muted + ";padding:2px 8px 6px}",
       "@media (max-width:480px){" + (c.mobileFullscreen !== false
-        ? ".p{position:fixed;inset:0;width:auto;height:100%;max-height:none;max-width:none;border-radius:0;border:0;padding-bottom:env(safe-area-inset-bottom)}"
+        ? ".p{position:fixed;inset:0;width:auto;height:100%;max-height:none;max-width:none;border-radius:0;border:0;padding-bottom:env(safe-area-inset-bottom)}.b.op{display:none}"
         : ".p{position:fixed;left:8px;right:8px;bottom:" + (size + 24) + "px;width:auto;height:min(" + h + "px,calc(100vh - " + (size + 48) + "px))}") +
         ".f textarea,.pre input,.ep input{font-size:16px}.lab{display:none}.tz{max-width:calc(100vw - 100px)}}",
     ].join("");
@@ -185,7 +185,8 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     var side = c.position === "left" ? "left" : "right";
     root = document.createElement("div");
     root.setAttribute("data-getassist-chat", VERSION);
-    root.style.cssText = "position:fixed;z-index:2147483000;bottom:" + (Number(c.bottomOffset) || 20) + "px;" + side + ":20px;" + (S.shown || preview ? "" : "display:none");
+    // all:initial + !important: the host page's own rules (div { outline/border/margin }) never reach this container.
+    root.style.cssText = "all:initial!important;position:fixed!important;z-index:2147483000!important;bottom:" + (Number(c.bottomOffset) || 20) + "px!important;" + side + ":20px!important;display:" + (S.shown || preview ? "block" : "none") + "!important";
     shadow = root.attachShadow({ mode: "closed" });
     var style = el("style"); style.textContent = css(c, p, side); shadow.appendChild(style);
 
@@ -325,7 +326,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   function applyVisibility() {
     if (!root || preview) return;
     var ok = S.open || here();
-    root.style.display = ok && S.shown ? "" : "none";
+    root.style.setProperty("display", ok && S.shown ? "block" : "none", "important");
   }
 
   var savedOverflow = null;
@@ -334,12 +335,13 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     S.open = open;
     panel.className = open ? "p o" : "p";
     bubble.setAttribute("aria-expanded", open ? "true" : "false");
+    bubble.classList.toggle("op", open);
     if (open) hideTeaser();
     if (!preview && mqMobile.matches && S.cfg.settings.mobileFullscreen !== false) {
       if (open) { savedOverflow = document.documentElement.style.overflow; document.documentElement.style.overflow = "hidden"; }
       else if (savedOverflow !== null) { document.documentElement.style.overflow = savedOverflow; savedOverflow = null; }
     }
-    if (open) { S.unread = 0; render(true); if (!touch && !(how && how.auto)) input.focus(); poll(); }
+    if (open) { S.unread = 0; markRead(); render(true); if (!touch && !(how && how.auto)) input.focus(); poll(); }
     else if (!(how && how.silent)) bubble.focus();
     if (!open) closePicker();
     applyVisibility();
@@ -444,14 +446,16 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       S.draft = null; draftEl.textContent = ""; draftEl.className = ""; input.value = ""; grow(); count(); input.placeholder = "Write a message…"; poll();
     }).catch(function (err) { d.state = "failed"; d.error = err.message; drawDraft(); });
   }
+  // A photo gets its height only once decoded, after render() has scrolled. A visitor who was at the newest message stays there.
+  function setSrc(img, src) { img.onload = function () { if (list && list.scrollHeight - list.scrollTop - list.clientHeight - img.height < 48) list.scrollTop = list.scrollHeight; }; img.src = src; }
   function showImage(m, a, img) {
-    if (a.local) { img.src = a.local; return; }
+    if (a.local) { setSrc(img, a.local); return; }
     var k = m.id + ":" + a.index;
-    if (blobs[k]) { img.src = blobs[k]; return; }
+    if (blobs[k]) { setSrc(img, blobs[k]); return; }
     if (preview) { img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='220' height='150'><rect width='220' height='150' fill='#cbd5e1'/><circle cx='70' cy='55' r='18' fill='#f8fafc'/><path d='M0 150 L80 80 L130 120 L170 90 L220 140 L220 150Z' fill='#94a3b8'/></svg>"); return; }
     fetch(base + "/media/" + encodeURIComponent(m.id) + "/" + a.index, { headers: { Authorization: "Bearer " + S.token } })
       .then(function (r) { if (!r.ok) throw new Error(); return r.blob(); })
-      .then(function (b) { blobs[k] = URL.createObjectURL(b); img.src = blobs[k]; })
+      .then(function (b) { blobs[k] = URL.createObjectURL(b); setSrc(img, blobs[k]); })
       .catch(function () { img.replaceWith(el("span", null, "Photo unavailable")); });
   }
   function openFile(m, a) {
@@ -468,7 +472,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     Hearts: "❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❣️ 💕 💞 💓 💗 💖 💘 💝",
     Things: "🎉 🎊 🎁 🔥 ⭐ 🌟 ✨ ⚡ 💯 ✅ ❌ ❓ ❗ 💡 📦 🚚 🛒 💳 💰 📱 💻 📞 📧 📍 ⏰ 📅 🔒 🔑 🏠 🎯 🚀 ☕ 🍰 🌹 🌙 ☀️",
   };
-  var WORDS = { happy: "😀😃😄😁😊🙂🥳", laugh: "😂🤣😆😅", love: "❤️😍🥰😘💕💖", heart: "❤️🧡💛💚💙💜💔💕", sad: "😢😭🥺😥😓💔", angry: "😠😡😤", thanks: "🙏🤝👍❤️", ok: "👌👍✅", yes: "👍✅👌", no: "👎❌", party: "🎉🎊🥳🎁", fire: "🔥", star: "⭐🌟✨", money: "💰💳", phone: "📱📞", time: "⏰📅", cool: "😎", think: "🤔", wave: "👋", clap: "👏", pray: "🙏", delivery: "📦🚚", shop: "🛒💳🎁" };
+  var WORDS = { happy: "😀😃😄😁😊🙂🥳", laugh: "😂🤣😆😅", love: "❤️😍🥰😘💕💖", heart: "❤️🧡💛💚💙💜💔💕", sad: "😢😭🥺😥😓💔", angry: "😠😡😤", thanks: "🙏🤝👍❤️", ok: "👌👍✅", yes: "👍✅👌", no: "👎❌", party: "🎉🎊🥳🎁", fire: "🔥", star: "⭐🌟✨", money: "💰💳", phone: "📱📞", time: "⏰📅", cool: "😎", think: "🤔", wave: "👋", clap: "👏", pray: "🙏", delivery: "📦🚚", shop: "🛒💳🎁", smile: "😀😃😄😁😊🙂", grin: "😁😀😃", wink: "😉😜", kiss: "😘😚💋", cry: "😢😭🥺", tear: "😢😭😂", sorry: "🙏😔🥺", sick: "🤒🤕🤢", sleep: "😴", surprise: "😮😲😳😱", shock: "😱😨😲", worried: "😥😓😨", thumbs: "👍👎", like: "👍❤️😍", good: "👍👌✅💯", bad: "👎❌", hand: "👋✋🙌👏🤝", hello: "👋🙂", bye: "👋", please: "🙏", strong: "💪", point: "👆👇👈👉☝️", gift: "🎁", celebrate: "🎉🎊🥳", check: "✅", done: "✅💯", cross: "❌", question: "❓🤔", idea: "💡", box: "📦", car: "🚚", truck: "🚚", cart: "🛒", card: "💳", call: "📞📱", mail: "📧", email: "📧", location: "📍", home: "🏠", key: "🔑🔒", lock: "🔒", rocket: "🚀", coffee: "☕", cake: "🍰", flower: "🌹", sun: "☀️", moon: "🌙", hundred: "💯" };
   function split(s) { return s.split(" ").filter(Boolean); }
   function chars(s) { var out = []; var re = /(\p{Extended_Pictographic}(️|‍\p{Extended_Pictographic})*)/gu; var m; while ((m = re.exec(s))) out.push(m[0]); return out; }
   function recent() { var r = store("-emoji"); return Array.isArray(r) ? r.slice(0, 16) : []; }
@@ -481,7 +485,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       function show(list) {
         grid.textContent = "";
         list.forEach(function (e, i) { var b = el("button", null, e); b.type = "button"; b.setAttribute("aria-label", e); b.tabIndex = i === 0 ? 0 : -1; b.onclick = function () { insert(e); }; grid.appendChild(b); });
-        if (!list.length) grid.appendChild(el("span", null, "Nothing here yet"));
+        if (!list.length) grid.appendChild(el("span", "ee", search.value.trim() ? "No emoji for that word" : "Emoji you use will show here"));
       }
       function tab(name) {
         Array.prototype.forEach.call(tabs.children, function (t) { t.className = t.textContent === name ? "on" : ""; });
@@ -492,7 +496,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
         var q = search.value.trim().toLowerCase();
         if (!q) return tab(recent().length ? "Recent" : "Smileys");
         var found = [];
-        Object.keys(WORDS).forEach(function (w) { if (w.indexOf(q) === 0) chars(WORDS[w]).forEach(function (e) { if (found.indexOf(e) < 0) found.push(e); }); });
+        Object.keys(WORDS).forEach(function (w) { if (w.indexOf(q) === 0 || (q.length > w.length && q.indexOf(w) === 0)) chars(WORDS[w]).forEach(function (e) { if (found.indexOf(e) < 0) found.push(e); }); });
         show(found);
       };
       search.onkeydown = function (e) { if (e.key === "ArrowDown") { e.preventDefault(); var f = grid.querySelector("button"); if (f) f.focus(); } if (e.key === "Escape") { e.preventDefault(); closePicker(); } };
@@ -544,6 +548,8 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   }
 
   // ── Conversation ───────────────────────────────────────────────────────────────────────────────
+  // The newest message time the visitor has had in front of them, kept per browser: a reply read on one page is not "1 new" on the next.
+  function markRead() { if (S.last && !preview) store("-read", S.last); }
   function poll() {
     if (!S.token || preview) return;
     var q = [];
@@ -553,13 +559,16 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       if (S.failures) { S.failures = 0; recon.className = "rc"; }
       var fresh = r.messages || [];
       var teamNew = false;
+      var readTo = store("-read");
+      var seeing = S.open && document.visibilityState === "visible";
       fresh.forEach(function (m) {
         if (S.msgs.some(function (x) { return x.id === m.id; })) return;
         S.msgs.push(m);
         if (m.nonce) S.pending = S.pending.filter(function (p) { return p.nonce !== m.nonce; });
-        if (m.from !== "visitor") { teamNew = true; if (!(S.open && document.visibilityState === "visible")) S.unread++; }
+        if (m.from !== "visitor") { teamNew = true; if (!seeing && !(readTo && m.at <= readTo)) S.unread++; }
         S.last = m.at;
       });
+      if (seeing) markRead();
       var wasTyping = S.agentTyping;
       S.agentTyping = Boolean(r.agentTyping);
       if (fresh.length) render(false, teamNew);
