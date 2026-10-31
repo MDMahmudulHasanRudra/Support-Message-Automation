@@ -4,6 +4,7 @@ import {
   channelMessagePreview,
   normalizeMetaEvent,
   normalizeTelegramUpdate,
+  normalizeWebchatEvent,
   type ChannelDeliveryStatus,
   type NormalizedChannelEvent,
 } from "@support-automation/shared";
@@ -89,7 +90,7 @@ export function resetChannelInboundStateForTests(): void {
 
 type Connection = {
   id: string;
-  type: "MESSENGER" | "INSTAGRAM" | "TELEGRAM";
+  type: "MESSENGER" | "INSTAGRAM" | "TELEGRAM" | "WEBCHAT";
   externalAccountId: string | null;
   appId: string | null;
   authMode: "MANUAL" | "PLATFORM";
@@ -108,6 +109,8 @@ export async function processChannelEvent(event: ChannelInboundEvent, now: Date 
     const payload = event.payload as { provider?: string; item?: unknown; update?: unknown };
     let normalized: NormalizedChannelEvent;
     if (payload.provider === "TELEGRAM") normalized = normalizeTelegramUpdate(payload.update, event.receivedAt);
+    // Website chat: the web already validated the visitor and recorded a plain message (WEBSITE_CHAT.md).
+    else if (payload.provider === "WEBCHAT") normalized = connection.type === "WEBCHAT" ? normalizeWebchatEvent(payload) : { type: "IGNORED", reason: "Not a website chat connection." };
     else if (connection.externalAccountId) normalized = normalizeMetaEvent(payload.item, connection.externalAccountId, event.receivedAt);
     else normalized = { type: "IGNORED", reason: "The connection has no account id yet." };
 
@@ -199,7 +202,7 @@ async function findOrOpenConversation(connection: Connection, event: Extract<Nor
 
   let customerName = inbound && event.threadKind === "DIRECT" ? event.senderName : null;
   let customerUsername = inbound ? event.senderUsername : null;
-  if (!customerName && connection.type !== "TELEGRAM" && connection.accessTokenCiphertext) {
+  if (!customerName && (connection.type === "MESSENGER" || connection.type === "INSTAGRAM") && connection.accessTokenCiphertext) {
     try {
       const appSecret = metaAppSecretFor(connection);
       if (!appSecret) throw new Error("no app secret");

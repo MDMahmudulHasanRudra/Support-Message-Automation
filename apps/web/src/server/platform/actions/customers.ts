@@ -5,6 +5,7 @@ import { isIP } from "node:net";
 import { revalidatePath } from "next/cache";
 import { createProjectWithDefaults, ensureDefaultRoles, prisma as globalPrisma, type Prisma } from "@support-automation/db";
 import {
+  builtInModuleTemplate,
   isDomainStatus,
   nextDomainStatus,
   normalizeHostname,
@@ -23,6 +24,7 @@ import { purgeCustomerData, removeCustomerData, restoreCustomerData } from "@/se
 import { logPlatformEvent } from "@/server/platform/log";
 import { assignPlan, createOwnerLogin, inviteOwner, recordPayment } from "@/server/platform/actions/billing";
 import { checkDomainBase, checkDomainHttps, domainNetwork } from "@/server/domainVerification";
+import { applyModuleSelection } from "@/server/projectModules";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 
 /**
@@ -284,6 +286,26 @@ export async function createCustomer(_prev: CustomerFormState, formData: FormDat
       if (paid.error || paid.fieldErrors) notes.push(`First payment not recorded: ${paid.error ?? Object.values(paid.fieldErrors ?? {}).join(" ")}`);
     }
   } else notes.push("No plan was given: this customer is not billed, limited or suspended until you assign one.");
+
+  // 3b. Business type of the first workspace (PROJECT_MODULES.md §5.1): a built-in template applied on
+  // top of the plan through the one apply path, fitted to the plan. "PLAN" keeps the plan's modules.
+  const setupKey = String(formData.get("moduleSetup") ?? "PLAN");
+  const template = setupKey === "PLAN" ? undefined : builtInModuleTemplate(setupKey);
+  if (template) {
+    const applied = await applyModuleSelection(globalPrisma, {
+      projectId,
+      modules: template.modules,
+      declined: [],
+      baseType: template.baseType,
+      expectedVersion: 0,
+      reason: `Provisioned with the "${template.name}" template`,
+      actor,
+      template: { key: template.key, version: 1 },
+      mode: "fitToPlan",
+    });
+    if (applied.error) notes.push(`Business type not applied: ${applied.error}`);
+    else if (applied.leftOut?.length) notes.push(`Not in the plan, left out of the workspace: ${applied.leftOut.join(", ")}.`);
+  }
 
   // 4. The owner: the customer's own Main Admin.
   let link: string | undefined;

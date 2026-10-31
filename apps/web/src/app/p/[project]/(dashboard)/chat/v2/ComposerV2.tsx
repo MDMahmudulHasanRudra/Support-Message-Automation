@@ -5,6 +5,7 @@ import Link from "@/components/ProjectLink";
 import { useActionState, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { MentionCandidate } from "@support-automation/shared";
 import { Alert, Button, Textarea } from "@/components/ui";
+import { registerComposer } from "@/lib/composerBridge";
 import { sendChatMessage, sendPersonalChatMessage, type ChatSendState } from "@/server/actions/chat";
 import { getChatMentionCandidates } from "@/server/actions/chatThread";
 import type { OtherAccountCopy } from "@/server/chatInbox";
@@ -112,6 +113,22 @@ export function ComposerV2({
   useEffect(() => {
     autoGrow();
   }, [phone, autoGrow]);
+
+  // The inbox workspace's Copilot can fill this box (lib/composerBridge.ts). Re-registered each render
+  // so it always holds the current draft helpers; sending stays this composer's own Send button.
+  useEffect(() =>
+    registerComposer({
+      fill(text) {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.value = text;
+        textarea.focus();
+        autoGrow();
+        rememberDraft(text);
+      },
+      read: () => textareaRef.current?.value ?? "",
+    }),
+  );
 
   useEffect(() => {
     const textarea = textareaRef.current;

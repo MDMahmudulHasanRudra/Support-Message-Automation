@@ -84,11 +84,12 @@ interface SectionRule {
  */
 const SECTION_RULES: Record<string, SectionRule> = {
   // Support
-  "/conversations/all": { write: ["conversations.reply"], also: ["/conversations", "/conversations/whatsapp"] },
+  "/conversations/all": { write: ["conversations.reply"], also: ["/conversations", "/conversations/whatsapp", "/api/channels/attachment", "/api/channels/webchat-photo"] },
   "/chat": { write: ["messages.reply"], also: ["/api/whatsapp/media", "/api/whatsapp/avatar", "/api/whatsapp/send-file"] },
   "/conversations/messenger": { write: ["conversations.reply"] },
   "/conversations/instagram": { write: ["conversations.reply"] },
   "/conversations/telegram": { write: ["conversations.reply"] },
+  "/conversations/website": { write: ["conversations.reply"], also: ["/api/channels/attachment", "/api/channels/webchat-photo"] },
   "/messages": { label: "All messages (needs attention, ignored)", also: ["/ignored", "/needs-attention", "/api/whatsapp/media"] },
   "/messages/unanswered": { write: ["messages.reply"], also: ["/api/messages/support-response"] },
   "/messages/response-time": { also: ["/api/messages/support-response"] },
@@ -115,6 +116,26 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/clients/dues": { write: ["clients.edit_billing"] },
   "/clients/payments": { write: ["clients.edit_billing"] },
   "/clients/import": { fullOnly: true, also: ["/api/clients/import"] },
+  // Commerce
+  "/commerce/orders": { write: ["orders.manage"] },
+  "/commerce/products": { write: ["commerce.manage"] },
+  "/sales": { write: ["sales.manage"] },
+  "/commerce/shipments": { write: ["shipments.manage"] },
+  "/settings/couriers": { write: ["couriers.manage"] },
+  "/settings/woocommerce": { fullOnly: true },
+  "/settings/shopify": { fullOnly: true },
+  "/settings/api": { fullOnly: true },
+  // Social Studio (SOCIAL_STUDIO.md). Writing, approving and publishing are separate keys on one page.
+  "/social/posts": { write: ["social.edit", "social.approve", "social.publish"], also: ["/social/new", "/api/social/assets", "/api/social/upload"] },
+  "/social/calendar": { write: ["social.publish"], also: ["/api/social/assets"] },
+  "/social/media": { write: ["social.edit"], also: ["/api/social/assets", "/api/social/upload"] },
+  "/social/campaigns": { write: ["social.edit"] },
+  "/social/templates": { write: ["social.edit"] },
+  "/social/analytics": { also: ["/api/social/export"] },
+  "/social/ai": { write: ["social.edit"] },
+  "/social/automation": { write: ["social.manage"] },
+  "/social/accounts": { write: ["social.manage"], also: ["/api/social/meta"] },
+  "/settings/social": { fullOnly: true },
   // Team
   "/team-management": { write: ["team_management.manage"], also: ["/api/team-management/export"] },
   "/team-management/schedule": { write: ["team_management.manage"] },
@@ -179,9 +200,10 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/support-assignment/settings": { write: ["support_assignment.manage"] },
   "/team-management/shifts": { fullOnly: true, read: ["team_management.view"] },
   "/team-management/settings": { fullOnly: true, read: ["team_management.view"] },
-  "/settings/channels": { write: ["channels.manage"], also: ["/api/meta/connect", "/api/meta/claim"] },
+  "/settings/channels": { write: ["channels.manage"], also: ["/api/meta/connect", "/api/meta/claim", "/api/webchat/wordpress", "/api/webchat/brand"] },
   "/settings/email": { fullOnly: true },
   "/settings/clients": { fullOnly: true },
+  "/settings/clients/configuration": { fullOnly: true },
   "/settings/google-sheets": { write: ["google_sheets.manage"], also: ["/api/google-sheets/connect"] },
 };
 

@@ -208,3 +208,73 @@ issue check — each removed → its test failed. A browser walkthrough (desktop
 **Known limits.** A recorded expiry is shown on the client profile only (not on lists or reports, by design — it
 is not a term). Choosing a conflict rule applies to every row; a single row is resolved by correcting a cell.
 
+
+## 12. Smart Import V5 (31 Oct 2026) — Visual Mapping, phones, locale, amounts
+
+`docs/smart-import-v5/README.md` is the release write-up (screenshots, limits); this section is the rulebook.
+
+**Finding first.** The "approved horizontal Visual Mapping grid" did not exist anywhere in this repository, on
+any branch or worktree, or in the design folder supplied with the request. Before V5 the mapping screen was the
+vertical field list only. V5 builds the grid and makes it the default; nothing was "restored".
+
+**Visual Mapping grid (`MappingGrid.tsx`, `mappingView.ts`, `lib/smartMappingPreview.ts`).**
+- The first mapping screen is ALWAYS the grid: Get Assist fields across the top (grouped, required marked), the
+  Excel-column picker under each (searchable, keyboard), the fallback / constant control under that, then up to 8
+  REAL staged rows aligned under each field, and under each value what will be stored (E.164, derived country /
+  currency / language, a refused value in red). Previews come from `ClientImportRow` rows of the same import
+  (`loadSmartMappingContext.previewRows`), never from a re-read of the file, so they are the rows the import runs on.
+- The vertical "Detailed view" stays as a secondary toggle over the SAME mapping state. The choice is remembered
+  per browser (`readMappingView` defaults to "grid" whatever was stored that is not "detailed").
+- One save path for both views (`mappingToSave`), pinned by a test — the first version silently dropped
+  `fillLocale` on save. "Save mapping and review rows" moves to the editable review.
+- From File / Same value / Sample / Leave empty, fallbacks, the expiry panel, suggestions and saved mappings are
+  unchanged and available in both views.
+
+**Which sheet ("0 rows").** Root cause: the import always opened the FIRST sheet, and real workbooks often start
+with a cover or instructions sheet — every row was then "empty". Now each sheet is scored (`scoreSheet`: recognised
+headers × 10 + data rows, capped) and the best one opens, with a notice naming it and why; "Change sheet or header
+row" still overrides. A one-sheet file is unchanged.
+
+**Phones (`lib/clientLocale.ts`, libphonenumber-js).** `normalizePhone(raw, country)` returns VALID / AMBIGUOUS /
+NEEDS_COUNTRY / DAMAGED / INVALID. `966…` and `00966…` become `+966…`; a `+` is never doubled and a code never
+repeated; a local number is read in the row's country, else the project's default country; Excel damage
+(`8.80171E+12`, a lost leading zero that cannot be put back with certainty) is DAMAGED and goes to review, never
+guessed; several numbers in one cell are split (`;`, `|`, a new line, a comma before another number, ` / `). Only a VALID number is stored as
+E.164 in `ClientChannel.value`; anything else is kept exactly as written and flagged. Matching an existing client
+also tries the old digits form (`legacyMatchKey`), so numbers stored before V5 still match — removing it fails a
+test.
+
+**Country, currency, language.** Precedence: the file's value > what the person typed in review > derived from a
+VALID phone (only when "Fill an empty country, currency and language from the phone" is ticked — on by default) >
+the project's default country > left for review. Labels: From Excel / Manually selected / Auto selected / Needs
+review. A derived value only ever fills an EMPTY field: on an existing client it never replaces a stored value
+(`derivedSkip`, break-tested). The review shows an auto value in blue with an "Auto" tag, and each phone with
+"Saved as +…" when the stored form differs from the cell.
+
+**Amounts (`packages/shared/src/clientImportMoney.ts`, `MoneyPanel.tsx`).** No amounts / one amount column + a
+currency (column or fixed) / one column per currency (auto-detected from headers). Header and cell aliases:
+RAND→ZAR, TK→BDT, KSH→KES, USA→USD and every ISO code; an ambiguous word (rial, riyal, din/dinar, dirham/dh, $/dollar, rs/rupee, kr,
+shilling, franc, peso, ¥, ﷼) must be confirmed by the person and is never guessed. Cells such as `SAR30.00`, `dh30.00`,
+`Rial4.000`, `din8.000`, `din2.550`, `7.35`, `500/-` are read exactly as text; zero records nothing; a row with
+amounts in several currencies is a review WARNING that must be acknowledged before importing (`MONEY_MULTIPLE`); an
+unreadable amount is MONEY_PROBLEM on that row.
+- **What importing does with them: records only.** Each amount lands in `Client.importedAmounts` (JSON: currency,
+  amount as text, the column, the original cell, the file) and is shown on the profile under "Amounts recorded at
+  import" to viewers with `clients.view_billing`. It is NEVER a due, invoice, receipt, payment or balance, never
+  converted, never summed across currencies. Re-importing the same file does not duplicate (file | column |
+  original). An integration test asserts no billing row exists after an import with amounts.
+
+**Kept columns.** A column no field reads can be ticked (up to 20) and is stored as a custom field named after its
+header; on an update only that custom field is replaced. Unticked columns are not imported, as before.
+
+**Project lists.** Category, tags and business type are matched to Settings → Client Lists (name or alias, case-
+insensitive) and stored in the list's own spelling; a value not on a list is kept as typed (a list never blocks an
+import). A Plan column is matched to a plan's name/aliases only when mapped to Service. The legacy auto-match of a
+"Plan" header to Category is unchanged on purpose: mapping it to Service makes every row a subscription that then
+needs a start date.
+
+**Tests.** shared: `currencyCatalog`, `clientImportMoney`, `clientConfiguration`, `moneyPrecision`; web:
+`smartMappingGrid` (10), `clientLocale` (10), `smartImportSheets` (4), `smartImportV5.integration` (6),
+`clientConfiguration.integration` (12). Break-tests: `legacyMatchKey`, `derivedSkip`, `mappingToSave`.
+
+**Migrations.** `20261031090000_client_configuration`, `20261031100000_client_imported_amounts` — additive only.

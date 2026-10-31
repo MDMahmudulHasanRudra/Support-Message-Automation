@@ -9,6 +9,7 @@ import {
   isProjectFeatureKey,
   projectFeatureDefinition,
   isProjectStatus,
+  removalImpact,
   normalizeProjectName,
   PROJECT_STATUS_LABELS,
   validateProjectName,
@@ -18,9 +19,11 @@ import { globalPrisma, platformPrisma } from "@/server/db";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { forgetProjectAccessDecisions } from "@/server/projectContext";
-import { forgetProjectFeatureStates } from "@/server/projectFeatures";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
+import { applyProjectModules } from "@/server/actions/projectModules";
+import { applyModuleSelection, findModuleTemplate, getProjectModuleState } from "@/server/projectModules";
+import { forgetProjectFeatureStates } from "@/server/projectFeatures";
 
 /**
  * Main Admin Portal actions (MULTI_PROJECT_PLAN.md §7–§8). Every one requires `projects.manage` —
@@ -83,15 +86,43 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
   // A customer's new project gets the modules of its plan (every module on All Access, SAAS §12).
   await applyCustomerPlanToNewProject(globalPrisma, created.id);
 
+  // Business type / template (PROJECT_MODULES.md §5.1). "PLAN" keeps exactly the behaviour above;
+  // "CUSTOM" keeps it too and opens the Module Builder next. A template is applied on top of the plan
+  // through the one apply path, fitted to the plan: anything the plan does not include is left out
+  // and named in the history, never a reason for creating the project to fail.
+  const setup = String(formData.get("moduleSetup") ?? "PLAN");
+  let setupNote: string | null = null;
+  if (setup !== "PLAN" && setup !== "CUSTOM") {
+    const owner = (await platformPrisma.project.findUnique({ where: { id: created.id }, select: { customerId: true } }))?.customerId ?? null;
+    const template = await findModuleTemplate(setup, owner);
+    if (template) {
+      const applied = await applyModuleSelection(platformPrisma, {
+        projectId: created.id,
+        modules: template.modules,
+        declined: template.declined,
+        baseType: template.baseType,
+        expectedVersion: 0,
+        reason: `Created with the "${template.name}" template`,
+        actor: access.session.username,
+        template: { key: template.key, version: template.version },
+        mode: "fitToPlan",
+      });
+      setupNote = applied.error ? `Template not applied: ${applied.error}` : applied.leftOut?.length ? `Left out (not in the plan): ${applied.leftOut.join(", ")}` : null;
+      forgetProjectFeatureStates();
+    } else setupNote = "Template not found; the plan's modules were kept.";
+  }
+
   forgetProjectAccessDecisions();
   await logSystemEvent("INFO", "projects", `Project "${name}" created`, {
     projectId: created.id,
     slug,
     status,
+    moduleSetup: setup,
+    moduleSetupNote: setupNote,
     createdBy: access.session.username,
   });
   revalidatePath("/admin", "layout");
-  redirect(`/admin/projects/${created.id}?created=1`);
+  redirect(setup === "CUSTOM" ? `/admin/projects/${created.id}/modules?created=1` : `/admin/projects/${created.id}?created=1`);
 }
 
 export interface ProjectActionResult {
@@ -226,32 +257,26 @@ export async function setProjectAccess(projectId: string, userId: string, grante
 }
 
 /**
- * Switch one feature on or off for one project (MULTI_PROJECT_PLAN.md §9). An entitlement, not a
- * setting: off means the project cannot use the module at all — its pages and actions refuse and the
- * worker skips its background work. The project's own settings for the module are left exactly as
- * they are, so switching it back on resumes where it stopped. Nothing is deleted.
+ * Switch one feature on or off for one project — kept for compatibility, and routed through the Module
+ * Builder's own validation (PROJECT_MODULES.md) so this endpoint cannot store what the builder would
+ * refuse: a hard dependency removed under a module that needs it, or a module the plan does not include.
+ * Removing a module that others need is refused here, naming them; the builder offers to switch them
+ * off together.
  */
 export async function setProjectFeature(projectId: string, keyRaw: string, enabled: boolean): Promise<ProjectActionResult> {
   const access = await requireManage();
   if ("denied" in access) return { error: access.denied };
   if (!isProjectFeatureKey(keyRaw)) return { error: "Unknown feature." };
-  const project = await platformPrisma.project.findUnique({ where: { id: projectId }, select: { id: true, name: true } });
-  if (!project) return { error: "That project no longer exists." };
-
-  await platformPrisma.projectFeature.upsert({
-    where: { projectId_key: { projectId, key: keyRaw } },
-    update: { enabled },
-    create: { projectId, key: keyRaw, enabled },
-  });
-
-  forgetProjectFeatureStates();
-  const label = projectFeatureDefinition(keyRaw).label;
-  await logSystemEvent("WARN", "projects", `${label} ${enabled ? "enabled" : "disabled"} for "${project.name}"`, {
-    projectId,
-    feature: keyRaw,
-    enabled,
-    changedBy: access.session.username,
-  });
-  revalidatePath(`/admin/projects/${projectId}`);
-  return { success: `${label} is now ${enabled ? "on" : "off"} for ${project.name}.` };
+  const state = await getProjectModuleState(projectId);
+  if (!state) return { error: "That project no longer exists." };
+  if (!enabled) {
+    const dependents = removalImpact(state.enabled, keyRaw);
+    if (dependents.length > 0) {
+      return { error: `${projectFeatureDefinition(keyRaw).label} is needed by ${dependents.map((k) => projectFeatureDefinition(k as typeof keyRaw)?.label ?? k).join(", ")}. Switch them off in the Module Builder.` };
+    }
+  }
+  const modules = enabled ? [...new Set([...state.enabled, keyRaw])] : state.enabled.filter((k) => k !== keyRaw);
+  const result = await applyProjectModules(projectId, { modules, declined: [], baseType: state.projectBaseType, expectedVersion: state.version, reason: "Single feature switch" });
+  if (result.error) return { error: [result.error, ...(result.issues ?? []).map((i) => i.message)].join(" ") };
+  return { success: result.success };
 }

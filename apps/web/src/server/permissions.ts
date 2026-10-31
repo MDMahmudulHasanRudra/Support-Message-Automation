@@ -224,6 +224,16 @@ async function membershipInThisProject(userId: string): Promise<(ProjectMembersh
 }
 
 /**
+ * Whether ANOTHER user's role (in this project, project role applied) holds a key — for deciding who
+ * may be offered or notified (inbox @mentions), never for authorising the current request. Access
+ * levels only ever narrow write keys, so a read key answered here is not widened by them.
+ */
+export async function userHoldsKey(userId: string, tenant: string | null | undefined, key: PermissionKey): Promise<boolean> {
+  const access = await accessForRequest({ userId, tenant: tenant ?? null } as Session);
+  return Boolean(access?.keys.has(key));
+}
+
+/**
  * Every permission key this user's role grants — for PRESENTATION only (which sidebar links and
  * assistant to show). Never a substitute for `requirePermission`/`hasPermission` at the point of
  * use: a hidden link is not a check, and every page and action makes its own. Answers an empty

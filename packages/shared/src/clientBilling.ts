@@ -7,6 +7,8 @@
  * invented either: no default currency, no placeholder amount.
  */
 
+import { storedPrecisionRefusal } from "./currencyCatalog.js";
+
 export const CLIENT_DUE_STATUSES = ["UNPAID", "PARTIALLY_PAID", "PAID", "WAIVED", "CANCELLED"] as const;
 export type ClientDueStatusValue = (typeof CLIENT_DUE_STATUSES)[number];
 
@@ -21,7 +23,8 @@ export const CLIENT_DUE_STATUS_LABELS: Record<ClientDueStatusValue, string> = {
 /** A due that still expects money, so it can be upcoming or overdue. */
 export const OPEN_DUE_STATUSES: readonly ClientDueStatusValue[] = ["UNPAID", "PARTIALLY_PAID"];
 
-export const CLIENT_BILLING_LIMITS = { note: 1000, currencies: 30 } as const;
+/** No cap on how many currencies a project lists (V5): every ISO 4217 currency may be offered. */
+export const CLIENT_BILLING_LIMITS = { note: 1000 } as const;
 /** Decimal(12,2) holds 10 integer digits. */
 export const MAX_DUE_AMOUNT = 9_999_999_999.99;
 
@@ -41,11 +44,16 @@ export function normalizeCurrencyCode(raw: string): string | null {
 export function parseAmount(raw: string, label = "Amount"): { ok: true; value: string | null } | { ok: false; error: string } {
   const text = raw.trim().replace(/,/g, "");
   if (!text) return { ok: true, value: null };
-  if (!/^\d+(\.\d{1,2})?$/.test(text)) return { ok: false, error: `${label} must be a number with at most two decimals.` };
-  const n = Number(text);
-  if (!(n > 0)) return { ok: false, error: `${label} must be more than zero.` };
-  if (n > MAX_DUE_AMOUNT) return { ok: false, error: `${label} is too large.` };
-  return { ok: true, value: n.toFixed(2) };
+  // Exact string work, no floating point (V5 §8). Zeros past the second decimal are the same value ("2.550" is
+  // 2.55); a real third decimal is refused, never rounded.
+  const m = /^(\d+)(?:\.(\d{1,2})0*)?$/.exec(text);
+  if (!m) return { ok: false, error: `${label} must be a number with at most two decimals.` };
+  const whole = m[1]!.replace(/^0+(?=\d)/, "");
+  const cents = (m[2] ?? "").padEnd(2, "0");
+  if (/^0+$/.test(whole + cents)) return { ok: false, error: `${label} must be more than zero.` };
+  // MAX_DUE_AMOUNT is 9,999,999,999.99: ten whole digits.
+  if (whole.length > 10) return { ok: false, error: `${label} is too large.` };
+  return { ok: true, value: `${whole}.${cents}` };
 }
 
 /** `YYYY-MM-DD` that is a real calendar day, or null. */
@@ -105,7 +113,7 @@ export function validateDue(input: DueInput, enabledCurrencies: readonly string[
   if (!isClientDueStatus(input.status)) errors.push("Choose a status.");
 
   const amount = parseAmount(input.amount);
-  if (!amount.ok) errors.push(amount.error);
+  if (!amount.ok) errors.push(storedPrecisionRefusal(input.amount, normalizeCurrencyCode(input.currency ?? "")) ?? amount.error);
   const paid = parseAmount(input.paidAmount, "Paid amount");
   if (!paid.ok) errors.push(paid.error);
 

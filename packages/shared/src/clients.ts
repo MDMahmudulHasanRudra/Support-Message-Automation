@@ -1,5 +1,6 @@
 import { readImportExtras, type ImportExtras } from "./clientImportExtras.js";
 import { normalizePhoneNumber } from "./groupParticipantAdd.js";
+import type { ImportedAmount } from "./clientImportMoney.js";
 
 /**
  * Client Management (CLIENT_CENTER.md): the pure rules, shared by the dashboard, its import and its
@@ -158,6 +159,11 @@ export interface NormalizedChannel {
   label: string | null;
   isPrimary: boolean;
   matchKey: string;
+  /**
+   * The match key the same number had in the digits-only form older imports stored ("0551234567"), when the V5
+   * reading changed it. An update compares both, so a client's existing number is not added again in E.164.
+   */
+  legacyMatchKey?: string;
 }
 
 export function normalizeChannelDrafts(drafts: readonly ClientChannelDraft[]): { channels: NormalizedChannel[]; errors: string[] } {
@@ -382,6 +388,7 @@ export const CLIENT_IMPORT_FIELDS = [
   { key: "name", label: "Name", required: true, synonyms: ["name", "client name", "full name", "customer name", "client"] },
   { key: "code", label: "Client code", required: false, synonyms: ["code", "client code", "customer code", "client id", "reference", "ref"] },
   { key: "company", label: "Company", required: false, synonyms: ["company", "company name", "business", "business name", "organisation", "organization"] },
+  { key: "businessType", label: "Business type", required: false, synonyms: ["business type", "company type", "industry", "sector", "business category"] },
   { key: "phone", label: "Phone", required: false, synonyms: ["phone", "phone number", "mobile", "mobile number", "contact number", "tel", "telephone"] },
   { key: "email", label: "Email", required: false, synonyms: ["email", "e-mail", "email address", "mail"] },
   { key: "whatsapp", label: "WhatsApp number", required: false, synonyms: ["whatsapp", "whatsapp number", "wa", "whatsapp no"] },
@@ -446,6 +453,13 @@ export interface ImportedClientRow {
    * record") rather than invented into a subscription term. Absent on every other import.
    */
   recordedExpiry?: { date: string; service: string | null } | null;
+  /** V5: the business / company type the file gives (free text, matched to the project's list on the server). */
+  businessType?: string | null;
+  /**
+   * Smart Import V5 only: amounts the file states for this client, retained as written (clientImportMoney.ts).
+   * Never an invoice, a receipt or a due.
+   */
+  importedAmounts?: ImportedAmount[];
 }
 
 export interface ImportRowError {
@@ -511,14 +525,29 @@ export function buildImportRows(
       expiryDate: get(row, "expiryDate"),
     });
     const note = get(row, "note").trim();
+    // Same rule as the form's business type (clientConfiguration.cleanBusinessType), kept here so this module
+    // does not import the one that imports it.
+    const businessType = get(row, "businessType").replace(/\s+/g, " ").trim();
     const errors = [...fields.errors, ...normalized.errors, ...(extras.ok ? [] : extras.errors)];
+    if (businessType && (businessType.length > 80 || /^[=+\-@]/.test(businessType) || /[\u0000-\u001f\u007f]/.test(businessType))) {
+      errors.push("Business type must be at most 80 characters and cannot start with = + - or @.");
+    }
     if (note.length > CLIENT_LIMITS.note) errors.push(`Note is longer than ${CLIENT_LIMITS.note.toLocaleString()} characters.`);
     if (fields.value?.status === "ARCHIVED") errors.push("A file cannot archive clients; archive them from the client list.");
     if (errors.length || !fields.value || !extras.ok) {
       invalid.push({ rowNumber, errors: errors.length ? errors : ["The row could not be read."] });
       return;
     }
-    valid.push({ rowNumber, extras: extras.value, fields: fields.value, statusGiven: Boolean(statusText), note: note || null, channels: normalized.channels, matchKeys: normalized.channels.map((c) => c.matchKey) });
+    valid.push({
+      rowNumber,
+      extras: extras.value,
+      fields: fields.value,
+      statusGiven: Boolean(statusText),
+      note: note || null,
+      channels: normalized.channels,
+      matchKeys: normalized.channels.map((c) => c.matchKey),
+      ...(businessType ? { businessType } : {}),
+    });
   });
   return { valid, invalid };
 }

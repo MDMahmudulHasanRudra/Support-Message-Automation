@@ -75,15 +75,15 @@ export async function updateAiSettings(
       aiEngineEnabled: flag("aiEngineEnabled"),
       learningEnabled: flag("learningEnabled"),
       autoResponseEnabled: flag("autoResponseEnabled"),
-      screenshotResponseEnabled: flag("screenshotResponseEnabled"),
-      chatLearningEnabled: flag("chatLearningEnabled"),
-      softwareLearningEnabled: flag("softwareLearningEnabled"),
-      requirementLearningEnabled: flag("requirementLearningEnabled"),
-      announcementAiEnabled: flag("announcementAiEnabled"),
-      duplicateSimilarityThreshold: percent("duplicateSimilarityThreshold", 95),
-      learningConfidenceThreshold: percent("learningConfidenceThreshold", 90),
-      autoApprovalThreshold: percent("autoApprovalThreshold", 95),
+      // Eight columns read by nothing (screenshot, chat/software/requirement learning, announcement AI and
+      // three thresholds) are no longer written: their stored values stay as they were (AI_COMMERCE.md).
       humanReviewThreshold: percent("humanReviewThreshold", 70),
+      // Commerce answers (AI_COMMERCE.md). Each takes effect only while its module is on.
+      commerceProductAnswers: flag("commerceProductAnswers"),
+      commerceShowStockCount: flag("commerceShowStockCount"),
+      commerceOrderAnswers: flag("commerceOrderAnswers"),
+      commerceDeliveryAnswers: flag("commerceDeliveryAnswers"),
+      commerceHandoverRequests: flag("commerceHandoverRequests"),
       autoResponseConfidenceThreshold: percent("autoResponseConfidenceThreshold", 90),
       aiReplyCooldownSeconds: nonNegativeInt("aiReplyCooldownSeconds", 300),
       humanTakeoverCooldownMinutes: nonNegativeInt("humanTakeoverCooldownMinutes", 30),

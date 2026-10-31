@@ -1,8 +1,12 @@
-import { dhakaToday } from "@support-automation/shared";
+import { dhakaToday, ISO_CURRENCY_CODES } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import type { Session } from "@/server/auth";
 import { clientViewerCaps } from "@/server/clientModule";
 import { listLinkableAccounts } from "@/server/clientChatLinks";
+import { loadClientChoices } from "@/server/clientConfiguration";
+import { hasPermission } from "@/server/permissions";
+import { languageOptions } from "@/lib/clientLocale";
+import { countryOptions } from "@/lib/clientPhone";
 import type { ClientFormContext } from "@/app/p/[project]/(dashboard)/clients/ClientForm";
 
 /**
@@ -12,10 +16,12 @@ import type { ClientFormContext } from "@/app/p/[project]/(dashboard)/clients/Cl
  */
 export async function loadClientFormContext(session: Session): Promise<ClientFormContext> {
   const caps = await clientViewerCaps(session);
-  const [currencies, services, accounts] = await Promise.all([
+  const [currencies, services, accounts, choices, canManageLists] = await Promise.all([
     prisma.clientBillingCurrency.findMany({ where: { enabled: true }, select: { code: true }, orderBy: { code: "asc" } }),
     caps.subscriptions ? prisma.clientSubscription.findMany({ distinct: ["service"], select: { service: true }, orderBy: { service: "asc" }, take: 200 }) : Promise.resolve([]),
     caps.canLinkGroups ? listLinkableAccounts() : Promise.resolve([]),
+    loadClientChoices(),
+    hasPermission(session, "clients.manage_settings"),
   ]);
   return {
     requiredFields: caps.settings.requiredFields,
@@ -25,6 +31,12 @@ export async function loadClientFormContext(session: Session): Promise<ClientFor
     accounts: accounts.map((a) => ({ id: a.id, label: a.label, phoneNumber: a.phoneNumber, status: a.status })),
     canLinkGroups: caps.canLinkGroups,
     canSellSubscriptions: caps.canManageSubscriptions,
+    choices,
+    canManageLists,
+    languages: languageOptions().map((l) => l.name),
+    // Favourites first, then the project's own, then every other ISO currency (V5: no 30-currency list).
+    allCurrencies: [...new Set([...choices.favoriteCurrencies, ...currencies.map((c) => c.code), ...ISO_CURRENCY_CODES])],
+    countries: countryOptions(),
     today: dhakaToday(new Date()),
   };
 }

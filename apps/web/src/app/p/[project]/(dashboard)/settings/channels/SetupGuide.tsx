@@ -5,6 +5,17 @@ import type { ChannelType } from "@support-automation/shared";
  * words for its screens. Kept beside the form that needs the results, so nobody has to find a wiki.
  */
 export function SetupGuide({ type }: { type: ChannelType }) {
+  if (type === "WEBCHAT") {
+    return (
+      <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+        <li>Name the widget and list your website (a domain like example.com is enough).</li>
+        <li>Design it in the Widget Builder: colours, logo, button, team photos, greeting — with a live preview on computer and phone.</li>
+        <li>Copy the one-line install code (or download the WordPress plugin) and add it to your site. Step-by-step guides for WordPress, Shopify, React, Next.js, Webflow and Wix are on the widget page.</li>
+        <li>Press “Verify installation” to confirm the widget started on your site.</li>
+        <li>Optional: switch AI answers on, and let signed-in customers chat as themselves.</li>
+      </ol>
+    );
+  }
   if (type === "TELEGRAM") {
     return (
       <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">

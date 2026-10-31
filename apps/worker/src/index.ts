@@ -39,6 +39,8 @@ import { startGroupKnowledgeProcessor } from "./knowledge/groupKnowledgeProcesso
 import { startKnowledgeImportProcessor } from "./knowledge/knowledgeImportProcessor.js";
 import { startCommunicationStyleProcessor } from "./knowledge/communicationStyleProcessor.js";
 import { startSandboxProcessor } from "./sandbox/sandboxProcessor.js";
+import { startCopilotProcessor } from "./copilot/copilotProcessor.js";
+import { startSocialAiProcessor } from "./social/socialAiProcessor.js";
 import { startConversationAnalysisProcessor } from "./knowledge/conversationAnalysisProcessor.js";
 import {
   ensureForgeSettings,
@@ -182,6 +184,9 @@ async function main() {
     // it sends nothing, notifies nobody, and writes no production record (see sandboxJob.ts).
     // No-ops every tick unless somebody is actually using the sandbox.
     startSandboxProcessor(),
+    startCopilotProcessor(),
+    // Social Studio's AI Content Studio: suggestions only, through the project's Response model; publishes nothing.
+    startSocialAiProcessor(),
     // Knowledge Builder's on-demand "Learn from Conversations". Reads the groups an admin
     // selected and proposes candidates; never writes the scheduled builder's watermark and never
     // creates a knowledge entry on its own. No-ops every tick unless a run is queued.

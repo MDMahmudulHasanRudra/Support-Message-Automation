@@ -1,6 +1,6 @@
 import "./helpers/requireTestDatabase";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createProjectWithDefaults, ensureDefaultRoles, prisma as rawPrisma, recomputeCustomerBilling } from "@support-automation/db";
 import { PERMISSIONS } from "@support-automation/shared";
 
@@ -16,6 +16,10 @@ import { PERMISSIONS } from "@support-automation/shared";
  *   - an invitation works once, not after expiry, and gives the owner no platform permission;
  *   - a plan's modules become the workspace's features only when asked.
  */
+
+// The owner invitation keeps its link encrypted for the worker to email; without a key it is stored
+// as copy-by-hand only (linkCiphertext null), by design. Test-only key, like the other suites here.
+process.env.AI_CREDENTIALS_ENCRYPTION_KEY ??= randomBytes(32).toString("base64");
 
 const tag = randomUUID().replace(/-/g, "").slice(0, 8);
 const PASSWORD = "Test-password-123";

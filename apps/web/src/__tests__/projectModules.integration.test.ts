@@ -1,0 +1,303 @@
+import "./helpers/requireTestDatabase";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { createProjectWithDefaults, prisma as rawPrisma } from "@support-automation/db";
+import { templateModules } from "@support-automation/shared";
+import type { Session } from "@/server/auth";
+
+/**
+ * Applying a module configuration (PROJECT_MODULES.md) through the real action, scoped client and
+ * permission check: hard dependencies come back, the plan holds back new additions only, a stale
+ * version is refused, only changed feature rows are written, history is append-only, Restore goes
+ * through the same validation, and another customer's project is not reachable.
+ */
+
+const tag = randomUUID().replace(/-/g, "").slice(0, 8);
+let current: Session;
+vi.mock("@/server/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/auth")>()),
+  requireSession: async () => current,
+  getSession: async () => current,
+}));
+vi.mock("next/headers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/headers")>()),
+  headers: async () => new Headers(),
+  cookies: async () => ({ get: () => undefined, set: () => undefined, delete: () => undefined }),
+}));
+vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+vi.mock("next/navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/navigation")>()),
+  redirect: (to: string) => {
+    throw Object.assign(new Error(`REDIRECT ${to}`), { redirectTo: to });
+  },
+}));
+
+const { runWithTenant } = await import("@/server/tenant");
+const { applyProjectModules, restoreProjectModules } = await import("@/server/actions/projectModules");
+const { getProjectModuleState } = await import("@/server/projectModules");
+const templates = await import("@/server/actions/moduleTemplates");
+const { createProject } = await import("@/server/actions/projects");
+
+const form = (fields: Record<string, string>) => {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
+};
+
+/** Create a project through the real action; returns its id (the action redirects on success). */
+async function createVia(label: string, moduleSetup: string): Promise<{ id: string; redirect: string }> {
+  try {
+    const r = await inA(() => createProject({}, form({ name: `Mod ${label} ${tag}`, slug: `mod-${label}-${tag}`, status: "SETUP", moduleSetup })));
+    throw new Error(`createProject returned instead of redirecting: ${JSON.stringify(r)}`);
+  } catch (err) {
+    const to = (err as { redirectTo?: string }).redirectTo;
+    if (!to) throw err;
+    const id = /\/admin\/projects\/([a-z0-9]+)/.exec(to)![1]!;
+    created.projects.push(id);
+    return { id, redirect: to };
+  }
+}
+
+const created = { customers: [] as string[], projects: [] as string[], users: [] as string[], roles: [] as string[] };
+let customerA = "";
+let customerB = "";
+let projectA = "";
+let projectB = "";
+let admin: Session;
+let adminB: Session;
+let viewer: Session;
+
+async function person(name: string, keys: string[], customerId: string): Promise<Session> {
+  const permissions = await Promise.all(keys.map((key) => rawPrisma.permission.upsert({ where: { key }, create: { key, label: key, category: "Test" }, update: {}, select: { id: true } })));
+  const role = await rawPrisma.permissionModule.create({ data: { name: `${name} ${tag}`, customerId, permissions: { create: permissions.map((p) => ({ permissionId: p.id })) } } });
+  created.roles.push(role.id);
+  const u = await rawPrisma.user.create({ data: { username: `${name}_${tag}`, email: `${name}_${tag}@example.test`, name, passwordHash: "x", permissionModuleId: role.id, customerId } });
+  created.users.push(u.id);
+  return { userId: u.id, username: u.username, email: u.email ?? "", name };
+}
+
+const inA = <T,>(fn: () => Promise<T>) => runWithTenant(customerA, fn);
+const state = (id: string) => inA(() => getProjectModuleState(id));
+const featureRows = (projectId: string) => rawPrisma.projectFeature.findMany({ where: { projectId }, select: { key: true, enabled: true, updatedAt: true } });
+
+beforeAll(async () => {
+  customerA = (await rawPrisma.customer.create({ data: { name: `Modules A ${tag}` } })).id;
+  customerB = (await rawPrisma.customer.create({ data: { name: `Modules B ${tag}` } })).id;
+  created.customers.push(customerA, customerB);
+  admin = await person("modadmin", ["projects.view", "projects.manage"], customerA);
+  viewer = await person("modviewer", ["projects.view"], customerA);
+  adminB = await person("modadminb", ["projects.view", "projects.manage"], customerB);
+  projectA = (await createProjectWithDefaults({ name: `Modules A ${tag}`, slug: `mod-a-${tag}`, status: "ACTIVE", creatorUserId: null, customerId: customerA }, rawPrisma)).id;
+  projectB = (await createProjectWithDefaults({ name: `Modules B ${tag}`, slug: `mod-b-${tag}`, status: "ACTIVE", creatorUserId: null, customerId: customerB }, rawPrisma)).id;
+  created.projects.push(projectA, projectB);
+  // A fresh project has no feature rows: its modules are the defaults, i.e. the Default template.
+  await rawPrisma.projectFeature.deleteMany({ where: { projectId: { in: [projectA, projectB] } } });
+});
+
+afterAll(async () => {
+  // History is append-only by trigger; lift it only to clean up this suite's rows.
+  await rawPrisma.$executeRawUnsafe('ALTER TABLE "ProjectModuleConfigChange" DISABLE TRIGGER "ProjectModuleConfigChange_append_only"');
+  try {
+    await rawPrisma.projectModuleConfigChange.deleteMany({ where: { projectId: { in: created.projects } } });
+  } finally {
+    await rawPrisma.$executeRawUnsafe('ALTER TABLE "ProjectModuleConfigChange" ENABLE TRIGGER "ProjectModuleConfigChange_append_only"');
+  }
+  await rawPrisma.subscription.deleteMany({ where: { customerId: { in: created.customers } } });
+  await rawPrisma.moduleTemplate.deleteMany({ where: { customerId: { in: created.customers } } });
+  await rawPrisma.projectFeature.deleteMany({ where: { projectId: { in: created.projects } } });
+  await rawPrisma.projectAccess.deleteMany({ where: { projectId: { in: created.projects } } });
+  await rawPrisma.user.deleteMany({ where: { id: { in: created.users } } });
+  await rawPrisma.permissionModule.deleteMany({ where: { id: { in: created.roles } } });
+  await rawPrisma.project.updateMany({ where: { id: { in: created.projects } }, data: { status: "ARCHIVED", customerId: null } });
+  await rawPrisma.customer.deleteMany({ where: { id: { in: created.customers } } });
+});
+
+describe("reading", () => {
+  it("an existing project is DEFAULT at version 0 with exactly today's defaults", async () => {
+    const s = await state(projectA);
+    expect(s).toMatchObject({ projectType: "DEFAULT", version: 0, enabled: templateModules("DEFAULT") });
+  });
+
+  it("another customer's project is not reachable", async () => {
+    expect(await state(projectB)).toBeNull();
+  });
+});
+
+describe("applying", () => {
+  it("refuses a viewer without projects.manage, and writes nothing", async () => {
+    current = viewer;
+    const r = await inA(() => applyProjectModules(projectA, { modules: ["CLIENT_CENTER"], declined: [], baseType: null, expectedVersion: 0, reason: "" }));
+    expect(r.error).toMatch(/Manage Projects/);
+    expect(await featureRows(projectA)).toEqual([]);
+  });
+
+  it("adds hard dependencies, writes only changed rows, records history and becomes Custom Mix", async () => {
+    current = admin;
+    const modules = [...templateModules("DEFAULT"), "CLIENT_SMART_IMPORT"];
+    const r = await inA(() => applyProjectModules(projectA, { modules, declined: [], baseType: "DEFAULT", expectedVersion: 0, reason: "Bought Smart Import" }));
+    expect(r.error).toBeUndefined();
+    expect(r.version).toBe(1);
+    const rows = await featureRows(projectA);
+    expect(rows.map((x) => [x.key, x.enabled]).sort()).toEqual([["CLIENT_CENTER", true], ["CLIENT_SMART_IMPORT", true]]);
+    const s = await state(projectA);
+    expect(s).toMatchObject({ projectType: "CUSTOM_MIX", projectBaseType: "DEFAULT", version: 1 });
+    expect(s!.history[0]).toMatchObject({ version: 1, autoAdded: ["CLIENT_CENTER"], reason: "Bought Smart Import", actorUsername: admin.username });
+    await expect(rawPrisma.projectModuleConfigChange.updateMany({ where: { projectId: projectA }, data: { reason: "rewritten" } })).rejects.toThrow();
+  });
+
+  it("refuses a stale version: two admins cannot overwrite each other unseen", async () => {
+    current = admin;
+    const r = await inA(() => applyProjectModules(projectA, { modules: templateModules("DEFAULT"), declined: [], baseType: "DEFAULT", expectedVersion: 0, reason: "" }));
+    expect(r.error).toMatch(/changed this project's modules/);
+    expect((await state(projectA))!.version).toBe(1);
+  });
+
+  it("a removed hard dependency comes back instead of being saved", async () => {
+    current = admin;
+    const s = (await state(projectA))!;
+    const r = await inA(() => applyProjectModules(projectA, { modules: s.enabled.filter((k) => k !== "CLIENT_CENTER"), declined: [], baseType: "DEFAULT", expectedVersion: s.version, reason: "" }));
+    expect(r.success).toMatch(/Nothing to change/);
+    expect((await state(projectA))!.enabled).toContain("CLIENT_CENTER");
+  });
+
+  it("refuses unknown and planned modules", async () => {
+    current = admin;
+    const s = (await state(projectA))!;
+    const r = await inA(() => applyProjectModules(projectA, { modules: [...s.enabled, "SOCIAL_MANAGEMENT", "NOPE"], declined: [], baseType: null, expectedVersion: s.version, reason: "" }));
+    expect(r.issues?.map((i) => i.code).sort()).toEqual(["NOT_AVAILABLE", "UNKNOWN_MODULE"]);
+  });
+
+  it("the plan holds back new additions, but never switches off what is already on", async () => {
+    current = admin;
+    await rawPrisma.subscription.create({
+      data: { customerId: customerA, planName: "Basic", currency: "BDT", priceMinor: BigInt(100), startsAt: new Date(), paidThrough: new Date(Date.now() + 86_400_000), features: ["WHATSAPP_CHAT"], allModules: false },
+    });
+    const s = (await state(projectA))!;
+    expect(s.entitlement.restricted).toBe(true);
+    const add = await inA(() => applyProjectModules(projectA, { modules: [...s.enabled, "GOOGLE_SHEETS"], declined: [], baseType: null, expectedVersion: s.version, reason: "" }));
+    expect(add.issues).toEqual([expect.objectContaining({ code: "NOT_IN_PLAN", key: "GOOGLE_SHEETS" })]);
+    // Removing one module keeps every other already-on module, although the plan would not add them today.
+    const remove = await inA(() => applyProjectModules(projectA, { modules: s.enabled.filter((k) => k !== "BULK_MESSAGING"), declined: [], baseType: null, expectedVersion: s.version, reason: "" }));
+    expect(remove.error).toBeUndefined();
+    const after = (await state(projectA))!;
+    expect(after.enabled).not.toContain("BULK_MESSAGING");
+    expect(after.enabled).toContain("CLIENT_CENTER");
+    await rawPrisma.subscription.deleteMany({ where: { customerId: customerA } });
+  });
+
+  it("Restore re-applies an earlier configuration through the same validation", async () => {
+    current = admin;
+    const s = (await state(projectA))!;
+    const first = s.history.find((h) => h.version === 1)!;
+    const r = await inA(() => restoreProjectModules(projectA, first.id, s.version));
+    expect(r.error).toBeUndefined();
+    const after = (await state(projectA))!;
+    expect(after.enabled).toEqual([...first.modules].sort());
+    expect(after.history[0]!.reason).toBe("Restored configuration v1");
+  });
+
+  it("cannot change another customer's project", async () => {
+    current = admin;
+    const r = await inA(() => applyProjectModules(projectB, { modules: ["WHATSAPP_CHAT"], declined: [], baseType: null, expectedVersion: 0, reason: "" }));
+    expect(r.error).toMatch(/no longer exists/);
+    expect(await featureRows(projectB)).toEqual([]);
+  });
+});
+
+describe("templates", () => {
+  let templateId = "";
+
+  it("a customer's template is saved under that customer, resolved, and refused to a viewer", async () => {
+    current = viewer;
+    expect((await inA(() => templates.saveModuleTemplate(null, { name: "Shop", description: "", baseType: "ECOMMERCE", modules: ["CLIENT_SMART_IMPORT"], declined: [] }))).error).toMatch(/Manage Projects/);
+    current = admin;
+    const r = await inA(() => templates.saveModuleTemplate(null, { name: "Shop", description: "Our shop setup", baseType: "ECOMMERCE", modules: ["CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"], declined: [] }));
+    expect(r.error).toBeUndefined();
+    templateId = r.id!;
+    const row = await rawPrisma.moduleTemplate.findUniqueOrThrow({ where: { id: templateId } });
+    expect(row).toMatchObject({ customerId: customerA, version: 1, modules: ["CLIENT_CENTER", "CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"] });
+    // Same name again (any case): refused while the first is in use.
+    expect((await inA(() => templates.saveModuleTemplate(null, { name: "shop", description: "", baseType: "DEFAULT", modules: ["WHATSAPP_CHAT"], declined: [] }))).fieldErrors?.name).toBeTruthy();
+    // A planned module cannot be in a template.
+    expect((await inA(() => templates.saveModuleTemplate(null, { name: "Social", description: "", baseType: "ECOMMERCE", modules: ["SOCIAL_MANAGEMENT"], declined: [] }))).issues?.[0]?.code).toBe("NOT_AVAILABLE");
+  });
+
+  it("another customer can neither see nor change it", async () => {
+    const inB = <T,>(fn: () => Promise<T>) => runWithTenant(customerB, fn);
+    // Customer A's admin has no permissions in customer B's software at all: refused before any lookup.
+    current = admin;
+    expect((await inB(() => templates.duplicateModuleTemplate(templateId))).error).toMatch(/Manage Projects/);
+    // Customer B's own admin passes the permission check and still cannot reach A's template.
+    current = adminB;
+    expect((await inB(() => templates.saveModuleTemplate(templateId, { name: "Hijack", description: "", baseType: "DEFAULT", modules: ["WHATSAPP_CHAT"], declined: [], expectedVersion: 1 }))).error).toBeTruthy();
+    expect((await inB(() => templates.setModuleTemplateArchived(templateId, true))).error).toBeTruthy();
+    expect((await inB(() => templates.duplicateModuleTemplate(templateId))).error).toMatch(/no longer exists/);
+    expect((await rawPrisma.moduleTemplate.findUniqueOrThrow({ where: { id: templateId } })).name).toBe("Shop");
+  });
+
+  it("applying it records the template and its version; editing it later never changes the project", async () => {
+    current = admin;
+    const s = (await state(projectA))!;
+    expect(s.templates.map((t) => t.key)).toContain(templateId);
+    const r = await inA(() => applyProjectModules(projectA, { modules: ["CLIENT_CENTER", "CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"], declined: [], baseType: "ECOMMERCE", expectedVersion: s.version, reason: "", templateKey: templateId }));
+    expect(r.error).toBeUndefined();
+    const applied = (await state(projectA))!;
+    expect(applied.history[0]).toMatchObject({ templateKey: templateId, templateVersion: 1 });
+    expect(applied.enabled).toEqual(["CLIENT_CENTER", "CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"]);
+
+    const edited = await inA(() => templates.saveModuleTemplate(templateId, { name: "Shop", description: "", baseType: "ECOMMERCE", modules: ["WHATSAPP_CHAT", "OMNICHANNEL"], declined: [], expectedVersion: 1 }));
+    expect(edited.error).toBeUndefined();
+    expect((await rawPrisma.moduleTemplate.findUniqueOrThrow({ where: { id: templateId } })).version).toBe(2);
+    expect((await state(projectA))!.enabled).toEqual(["CLIENT_CENTER", "CLIENT_SMART_IMPORT", "WHATSAPP_CHAT"]);
+    // A stale editor is refused.
+    expect((await inA(() => templates.saveModuleTemplate(templateId, { name: "Shop", description: "", baseType: "ECOMMERCE", modules: ["WHATSAPP_CHAT"], declined: [], expectedVersion: 1 }))).error).toMatch(/changed or archived/);
+  });
+
+  it("a built-in can be duplicated into the customer's own; archiving frees the name", async () => {
+    current = admin;
+    const copy = await inA(() => templates.duplicateModuleTemplate("builtin:SALES_CRM"));
+    expect(copy.error).toBeUndefined();
+    expect(await rawPrisma.moduleTemplate.findUniqueOrThrow({ where: { id: copy.id! } })).toMatchObject({ customerId: customerA, name: "Sales & CRM (copy)" });
+    expect((await inA(() => templates.setModuleTemplateArchived(templateId, true))).error).toBeUndefined();
+    expect((await state(projectA))!.templates.map((t) => t.key)).not.toContain(templateId);
+    expect((await inA(() => templates.saveModuleTemplate(null, { name: "Shop", description: "", baseType: "DEFAULT", modules: ["WHATSAPP_CHAT"], declined: [] }))).error).toBeUndefined();
+  });
+});
+
+describe("creating a project with a business type", () => {
+  it("the plan's modules keeps today's behaviour exactly", async () => {
+    current = admin;
+    const { id, redirect } = await createVia("plan", "PLAN");
+    expect(redirect).toBe(`/admin/projects/${id}?created=1`);
+    expect(await state(id)).toMatchObject({ projectType: "DEFAULT", version: 0, history: [] });
+  });
+
+  it("a built-in template is applied on top of the plan and recorded", async () => {
+    current = admin;
+    const { id } = await createVia("crm", "builtin:SALES_CRM");
+    const s = (await state(id))!;
+    expect(s.enabled).toEqual(["AI_COPILOT", "AI_LEARNING", "CLIENT_CENTER", "INBOX_COLLABORATION", "OMNICHANNEL", "SALES_PIPELINE", "WHATSAPP_CHAT"]);
+    expect(s).toMatchObject({ projectType: "CUSTOM_MIX", projectBaseType: "ECOMMERCE", version: 1 });
+    expect(s.history[0]).toMatchObject({ templateKey: "builtin:SALES_CRM", templateVersion: 1, actorUsername: admin.username });
+  });
+
+  it("a template larger than the plan is fitted to it, never a failed creation", async () => {
+    current = admin;
+    await rawPrisma.subscription.create({ data: { customerId: customerA, planName: "Basic", currency: "BDT", priceMinor: BigInt(100), startsAt: new Date(), features: ["WHATSAPP_CHAT", "OMNICHANNEL"], allModules: false } });
+    try {
+      const { id } = await createVia("fit", "builtin:SALES_CRM");
+      const s = (await state(id))!;
+      // The plan's own application switched everything else off; the template could add nothing more.
+      expect(s.enabled).toEqual(["OMNICHANNEL", "WHATSAPP_CHAT"]);
+      expect(s.history[0]!.reason).toMatch(/left out: .*CLIENT_CENTER/);
+    } finally {
+      await rawPrisma.subscription.deleteMany({ where: { customerId: customerA } });
+    }
+  });
+
+  it("Custom Mix opens the Module Builder next", async () => {
+    current = admin;
+    const { id, redirect } = await createVia("custom", "CUSTOM");
+    expect(redirect).toBe(`/admin/projects/${id}/modules?created=1`);
+  });
+});

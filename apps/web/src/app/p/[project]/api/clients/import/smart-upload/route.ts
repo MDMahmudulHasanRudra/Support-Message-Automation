@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
       "INFO",
       "clients",
       `Smart import draft created: ${records.rows.length} rows from ${fileName}`,
-      { jobId: job.id, rows: records.rows.length, columns: records.headers.length, sheets: parsed.sheetNames.length, bytes: buffer.length, readMs: Date.now() - started },
+      { jobId: job.id, rows: records.rows.length, columns: records.headers.length, sheets: parsed.sheetNames.length, sheet: parsed.sheetName, sheetReason: parsed.sheetReason, bytes: buffer.length, readMs: Date.now() - started },
       { actorUserId: userId, targetType: "ClientImportJob", targetId: job.id },
     );
     return NextResponse.json({ ok: true, jobId: job.id }, { headers: { "Cache-Control": "no-store" } });

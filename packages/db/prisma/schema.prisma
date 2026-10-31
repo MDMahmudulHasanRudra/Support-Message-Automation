@@ -554,27 +554,36 @@ enum ProjectStatus {
 /// `proj_isp_digital`) and any created later. Everything project-scoped carries its `projectId`.
 /// See MULTI_PROJECT_PLAN.md. A status change never deletes data.
 model Project {
-  id            String        @id @default(cuid())
-  name          String
-  slug          String        @unique
-  description   String?
-  status        ProjectStatus @default(SETUP)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id                  String        @id @default(cuid())
+  name                String
+  slug                String        @unique
+  description         String?
+  status              ProjectStatus @default(SETUP)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
   /// The SaaS customer this project belongs to (SAAS_PLATFORM_PLAN.md). NULL = the original
   /// installation (the founding customer). A customer has as many projects as its Main Admin creates.
-  customerId    String?
-  customer      Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId          String?
+  customer            Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
   /// Set while the customer's SaaS subscription holds this project (suspended or cancelled -
   /// SAAS_PLATFORM_PLAN.md section 10). Held = treated exactly like a SUSPENDED project: read-only,
   /// no automation or outbound, incoming messages still stored. Never set for a project with no
   /// subscription, and never by anything but recomputeCustomerBilling (packages/db).
-  billingHoldAt DateTime?
+  billingHoldAt       DateTime?
+  /// The business profile (PROJECT_MODULES.md): a label and the template it started from. It never
+  /// grants anything by itself — the modules are the `ProjectFeature` rows, which every check reads.
+  projectType         ProjectType   @default(DEFAULT)
+  /// The template a CUSTOM_MIX started from ("Custom Mix (E-commerce base)"); null = none.
+  projectBaseType     ProjectType?
+  /// Bumped by every module configuration change; a change names the version it was made from, so
+  /// two admins cannot overwrite each other unseen.
+  moduleConfigVersion Int           @default(0)
 
-  access             ProjectAccess[]
-  projectRoles       ProjectRole[]
-  projectMemberRoles ProjectMemberRole[]
-  features           ProjectFeature[]
+  access              ProjectAccess[]
+  moduleConfigChanges ProjectModuleConfigChange[]
+  projectRoles        ProjectRole[]
+  projectMemberRoles  ProjectMemberRole[]
+  features            ProjectFeature[]
 
   whatsAppAccountRows                  WhatsAppAccount[]
   whatsAppServiceRouteRows             WhatsAppServiceRoute[]
@@ -655,6 +664,9 @@ model Project {
   clientPaymentAllocations             ClientPaymentAllocation[]
   clientGroupLinks                     ClientWhatsAppGroupLink[]
   clientModuleSettings                 ClientModuleSettings?
+  clientCatalogEntries                 ClientCatalogEntry[]
+  clientServicePlans                   ClientServicePlan[]
+  clientCountrySettings                ClientCountrySetting[]
   listViewPreferences                  ListViewPreference[]
   groupResponsibilityChanges           GroupResponsibilityChange[]
   identityReattributions               IdentityReattribution[]
@@ -700,6 +712,43 @@ model Project {
   teamManagementSettings               TeamManagementSettings?
   mediaStorageSettings                 MediaStorageSettings?
   communicationStyleProfile            CommunicationStyleProfile?
+  conversationLabels                   ConversationLabel[]
+  conversationNotes                    ConversationNote[]
+  aiDrafts                             AiDraft[]
+  inboxSavedViews                      InboxSavedView[]
+  inboxMentions                        InboxMention[]
+  conversationEvents                   ConversationEvent[]
+  webChatVisitors                      WebChatVisitor[]
+  productCategories                    ProductCategory[]
+  products                             Product[]
+  productVariants                      ProductVariant[]
+  inventoryMovements                   InventoryMovement[]
+  commerceOrders                       CommerceOrder[]
+  commerceOrderItems                   CommerceOrderItem[]
+  commerceOrderEvents                  CommerceOrderEvent[]
+  salesLeads                           SalesLead[]
+  salesLeadEvents                      SalesLeadEvent[]
+  courierConnections                   CourierConnection[]
+  shipments                            Shipment[]
+  shipmentEvents                       ShipmentEvent[]
+  shopConnections                      ShopConnection[]
+  shopSyncRuns                         ShopSyncRun[]
+  apiKeys                              ApiKey[]
+  listSavedViews                       ListSavedView[]
+  webhookEndpoints                     WebhookEndpoint[]
+  webhookDeliveries                    WebhookDelivery[]
+  socialConnections                    SocialConnection[]
+  socialAccounts                       SocialAccount[]
+  socialPosts                          SocialPost[]
+  socialPostTargets                    SocialPostTarget[]
+  socialPublishAttempts                SocialPublishAttempt[]
+  socialPostEvents                     SocialPostEvent[]
+  socialMediaAssets                    SocialMediaAsset[]
+  socialCampaigns                      SocialCampaign[]
+  socialTemplates                      SocialTemplate[]
+  socialAiRequests                     SocialAiRequest[]
+  socialRssFeeds                       SocialRssFeed[]
+  socialRssItems                       SocialRssItem[]
 
   @@index([customerId])
 }
@@ -883,27 +932,34 @@ model User {
   listViewPreferences            ListViewPreference[]
   emailsQueued                   EmailOutbox[]             @relation("EmailQueuedBy")
 
-  projectAccess           ProjectAccess[]
-  projectMemberRoles      ProjectMemberRole[]
+  projectAccess             ProjectAccess[]
+  projectMemberRoles        ProjectMemberRole[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
-  employee                Employee?
+  employee                  Employee?
   /// Google accounts this person connected (GOOGLE_SHEETS.md). Audit only; grants nothing.
-  googleAccountsConnected GoogleIntegrationAccount[] @relation("GoogleAccountConnectedBy")
-  googleSheetMemberships  GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberUser")
-  googleSheetMembersAdded GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberAddedBy")
-  googleSheetMembersEnded GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberEndedBy")
+  googleAccountsConnected   GoogleIntegrationAccount[] @relation("GoogleAccountConnectedBy")
+  googleSheetMemberships    GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberUser")
+  googleSheetMembersAdded   GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberAddedBy")
+  googleSheetMembersEnded   GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberEndedBy")
   /// Google identities this person proved are theirs by signing in with Google (Phase 4).
-  googleIdentities        UserGoogleIdentity[]
-  googleSheetActivities   GoogleSheetActivity[]      @relation("GoogleSheetActivityUser")
-  googleSheetWorkSessions GoogleSheetWorkSession[]   @relation("GoogleSheetWorkSessionUser")
+  googleIdentities          UserGoogleIdentity[]
+  googleSheetActivities     GoogleSheetActivity[]      @relation("GoogleSheetActivityUser")
+  googleSheetWorkSessions   GoogleSheetWorkSession[]   @relation("GoogleSheetWorkSessionUser")
   /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
   /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
-  customerId              String?
-  customer                Customer?                  @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
+  customerId                String?
+  customer                  Customer?                  @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
   /// Set on the support identity a RELQIVO operator uses inside this customer's workspace (never a
   /// person's account; no password works for it; shown as "RELQIVO Support").
-  supportOperatorId       String?
-  supportOperator         PlatformOperator?          @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
+  supportOperatorId         String?
+  supportOperator           PlatformOperator?          @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
+  conversationNotes         ConversationNote[]         @relation("ConversationNoteAuthor")
+  aiDraftsRequested         AiDraft[]                  @relation("AiDraftRequester")
+  conversationLabelsUpdated ConversationLabel[]        @relation("ConversationLabelUpdater")
+  inboxSavedViews           InboxSavedView[]           @relation("InboxSavedViewOwner")
+  listSavedViews            ListSavedView[]            @relation("ListSavedViewOwner")
+  inboxMentions             InboxMention[]             @relation("InboxMentionUser")
+  conversationEvents        ConversationEvent[]        @relation("ConversationEventActor")
 
   @@index([customerId])
 }
@@ -1136,6 +1192,9 @@ model WhatsAppAccount {
   personalChatReviews  PersonalChatReview[]
   pictures             WhatsAppPicture[]
   scopedKnowledge      AiKnowledgeItem[]         @relation("AiKnowledgeScopeAccount")
+  conversationLabels   ConversationLabel[]
+  conversationNotes    ConversationNote[]
+  aiDrafts             AiDraft[]
 }
 
 /// One row per WhatsAppServiceKey (seeded lazily, like every other settings model in this app —
@@ -1505,11 +1564,12 @@ model Team {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  members           InternalTeamMember[]
-  memberships       TeamMembership[]
-  supportEpisodes   SupportResponseEpisode[]
-  assignedClients   Client[]
-  soldSubscriptions ClientSubscription[]
+  members                      InternalTeamMember[]
+  memberships                  TeamMembership[]
+  supportEpisodes              SupportResponseEpisode[]
+  assignedClients              Client[]
+  soldSubscriptions            ClientSubscription[]
+  assignedChannelConversations ChannelConversation[]    @relation("ChannelConversationTeam")
 
   @@unique([projectId, name])
   @@unique([projectId, code])
@@ -3090,18 +3150,31 @@ model AiSettings {
   /// Distinct from knowledgeFromChatEnabled, which learns WHAT the team knows. This learns manner,
   /// not fact, and produces no knowledge entries at all. Off by default, and even when on the
   /// learned guidance does nothing until a person approves it — see CommunicationStyleProfile.
-  communicationStyleLearningEnabled Boolean  @default(false)
-  screenshotResponseEnabled         Boolean  @default(false)
-  chatLearningEnabled               Boolean  @default(false)
-  softwareLearningEnabled           Boolean  @default(false)
-  requirementLearningEnabled        Boolean  @default(false)
-  announcementAiEnabled             Boolean  @default(false)
-  /// Percentage (0-100). Two pieces of knowledge at/above this similarity are treated as duplicates.
-  duplicateSimilarityThreshold      Int      @default(95)
-  learningConfidenceThreshold       Int      @default(90)
-  autoApprovalThreshold             Int      @default(95)
-  humanReviewThreshold              Int      @default(70)
-  updatedAt                         DateTime @updatedAt
+  communicationStyleLearningEnabled Boolean @default(false)
+  /// LIVE: a Conversation Learning pattern scoring below this is not surfaced for review.
+  humanReviewThreshold              Int     @default(70)
+  /// The next eight columns are read by nothing and no longer shown or written (AI_COMMERCE.md
+  /// §Settings review, 30 Oct 2026). Kept so no stored value is lost; a later cleanup may drop them.
+  screenshotResponseEnabled         Boolean @default(false)
+  chatLearningEnabled               Boolean @default(false)
+  softwareLearningEnabled           Boolean @default(false)
+  requirementLearningEnabled        Boolean @default(false)
+  announcementAiEnabled             Boolean @default(false)
+  duplicateSimilarityThreshold      Int     @default(95)
+  learningConfidenceThreshold       Int     @default(90)
+  autoApprovalThreshold             Int     @default(95)
+
+  /// Commerce-aware AI (AI_COMMERCE.md). Each takes effect only while its module is on, so switching a
+  /// project's type never rewrites them. All off by default: a project that never opens these answers
+  /// exactly as before.
+  commerceProductAnswers   Boolean  @default(false)
+  commerceOrderAnswers     Boolean  @default(false)
+  commerceDeliveryAnswers  Boolean  @default(false)
+  /// Say how many are in stock rather than only whether something is.
+  commerceShowStockCount   Boolean  @default(false)
+  /// Hand a request to buy, cancel, return or change an order straight to a person.
+  commerceHandoverRequests Boolean  @default(true)
+  updatedAt                DateTime @updatedAt
 }
 
 /// A configured AI provider account (e.g. one Anthropic API key). apiKeyCiphertext
@@ -6141,6 +6214,8 @@ enum ChannelType {
   MESSENGER
   INSTAGRAM
   TELEGRAM
+  /// Website live chat (WEBSITE_CHAT.md): our own widget; no outside provider.
+  WEBCHAT
 }
 
 enum ChannelAuthMode {
@@ -6372,9 +6447,21 @@ model ChannelConnection {
   createdAt                    DateTime                @default(now())
   updatedAt                    DateTime                @updatedAt
 
-  conversations ChannelConversation[]
-  messages      ChannelMessage[]
-  events        ChannelInboundEvent[]
+  conversations   ChannelConversation[]
+  messages        ChannelMessage[]
+  events          ChannelInboundEvent[]
+  /// WEBCHAT only: the widget's look and wording (parseWidgetSettings, packages/shared webchat.ts).
+  widgetSettings  Json?
+  /// WEBCHAT only: the website origins (https://shop.example.com) allowed to use the widget. Empty = none.
+  allowedOrigins  String[]              @default([])
+  /// WEBCHAT only (V3 installation check): when the widget last started on a listed website, which one, and the
+  /// script version; and the last website that tried but is not listed. Written at most once a minute.
+  widgetSeenAt        DateTime?
+  widgetSeenOrigin    String?
+  widgetSeenVersion   String?
+  widgetRefusedAt     DateTime?
+  widgetRefusedOrigin String?
+  webChatVisitors WebChatVisitor[]
 
   @@unique([projectId, type, externalAccountId])
   @@index([projectId, type])
@@ -6399,6 +6486,10 @@ model ChannelConversation {
   status               ChannelConversationStatus @default(OPEN)
   assignedUserId       String?
   assignedUser         User?                     @relation("ChannelConversationAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  /// Team-level ownership (Inbox workspace, INBOX_COLLABORATION). Independent of `assignedUserId`:
+  /// a conversation can sit with a Team before any one person picks it up.
+  assignedTeamId       String?
+  assignedTeam         Team?                     @relation("ChannelConversationTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
   lastMessageAt        DateTime?
   lastMessagePreview   String?
   lastMessageDirection ChannelMessageDirection?
@@ -6409,11 +6500,17 @@ model ChannelConversation {
   reviewedAt           DateTime?
   /// A person replied: AI stays quiet until this passes (the same rule as WhatsApp's takeover).
   aiSuppressedUntil    DateTime?
+  /// Website chat: when an agent last typed in this conversation; the widget shows "typing…" briefly.
+  agentTypingAt        DateTime?
   closedAt             DateTime?
   createdAt            DateTime                  @default(now())
   updatedAt            DateTime                  @updatedAt
 
-  messages ChannelMessage[]
+  messages          ChannelMessage[]
+  conversationLabel ConversationLabel?
+  notes             ConversationNote[]
+  aiDrafts          AiDraft[]
+  events            ConversationEvent[]
 
   @@unique([projectId, connectionId, externalThreadId])
   @@index([projectId, lastMessageAt])
@@ -6621,20 +6718,29 @@ model Client {
   recordedExpiryDate    DateTime?           @db.Date
   recordedExpiryService String?
   recordedExpiryAt      DateTime?
+  /// V5 Configuration Center: the business / company type, from the project's list (free text kept as given).
+  businessType          String?
+  /// V5: languages besides `preferredLanguage` (the primary one), by English name.
+  additionalLanguages   String[]            @default([])
+  /// V5 §7: amounts a spreadsheet stated for this client, kept exactly as written ([{ currency, amount, original,
+  /// column, problem?, file, at }]). A record of what a file said — never an invoice, receipt, due or payment.
+  importedAmounts       Json                @default("[]")
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
-  channels      ClientChannel[]
-  notes         ClientNote[]
-  activities    ClientActivity[]
-  dues          ClientDue[]
-  dueEvents     ClientDueEvent[]
-  chatLinks     ClientWhatsAppChatLink[]
-  subscriptions ClientSubscription[]      @relation("ClientSubscriptions")
-  photo         ClientPhoto?
-  payments      ClientPayment[]
-  groupLinks    ClientWhatsAppGroupLink[]
-  importRows    ClientImportRow[]
+  channels       ClientChannel[]
+  notes          ClientNote[]
+  activities     ClientActivity[]
+  dues           ClientDue[]
+  dueEvents      ClientDueEvent[]
+  chatLinks      ClientWhatsAppChatLink[]
+  subscriptions  ClientSubscription[]      @relation("ClientSubscriptions")
+  photo          ClientPhoto?
+  payments       ClientPayment[]
+  groupLinks     ClientWhatsAppGroupLink[]
+  importRows     ClientImportRow[]
+  commerceOrders CommerceOrder[]
+  salesLeads     SalesLead[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -6904,6 +7010,8 @@ model ClientBillingCurrency {
   /// ISO 4217, upper case.
   code      String
   enabled   Boolean  @default(true)
+  /// V5: shown first in every currency picker of this project.
+  favorite  Boolean  @default(false)
   addedById String?
   addedBy   User?    @relation("ClientCurrencyAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
@@ -7031,6 +7139,70 @@ model EmailOutbox {
 }
 
 // ── Clients V3 (CLIENTS_V3.md) ─────────────────────────────────────────────────────────────────
+
+/// V5 Configuration Center (CLIENT_CONFIGURATION.md): the project's own lists of tags, categories and business
+/// types. One table, three kinds. A name is unique per project and kind, case-insensitively (index in the
+/// migration). Archiving hides an entry from pickers and keeps every client that uses it as it is.
+enum ClientCatalogKind {
+  TAG
+  CATEGORY
+  BUSINESS_TYPE
+}
+
+model ClientCatalogEntry {
+  id         String            @id @default(cuid())
+  projectId  String            @default(dbgenerated("project_id_required()"))
+  project    Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  kind       ClientCatalogKind
+  name       String
+  /// Other spellings an import maps to this entry ("Corp", "Corporate").
+  aliases    String[]          @default([])
+  color      String?
+  archivedAt DateTime?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@index([projectId, kind, archivedAt])
+}
+
+/// V5: a reusable service / plan. Its defaults are OFFERED when a person picks it (kind, duration, unit, a price
+/// suggestion per currency); nothing is billed because a plan was chosen. `ClientSubscription.service` keeps the
+/// plan's name as text, so history never depends on this row.
+model ClientServicePlan {
+  id              String                 @id @default(cuid())
+  projectId       String                 @default(dbgenerated("project_id_required()"))
+  project         Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name            String
+  /// An optional parent service ("Internet" for "Home 20 Mbps").
+  service         String?
+  defaultKind     ClientSubscriptionKind @default(PAID)
+  defaultDuration Int?
+  defaultUnit     ClientDurationUnit?
+  /// [{ "currency": "SAR", "amount": "30.00" }] — exact decimal text, never a float; a suggestion only.
+  prices          Json                   @default("[]")
+  aliases         String[]               @default([])
+  archivedAt      DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@index([projectId, archivedAt])
+}
+
+/// V5: the project's own choices per country — a favourite, and the currency / language to suggest for it when
+/// they differ from the general rule (CLDR / country-to-currency).
+model ClientCountrySetting {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// ISO 3166-1 alpha-2.
+  country   String
+  favorite  Boolean  @default(false)
+  currency  String?
+  language  String?
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, country])
+}
 
 enum ClientSubscriptionKind {
   PAID
@@ -7336,6 +7508,7 @@ model Customer {
   securitySettings      SecuritySettings?      @relation("CustomerSecurity")
   branding              PlatformBranding?      @relation("CustomerBranding")
   supportAccessSessions SupportAccessSession[]
+  moduleTemplates       ModuleTemplate[]       @relation("CustomerModuleTemplates")
 }
 
 /// A hostname that opens one customer's workspace. Status flow (packages/shared/src/saasDomains.ts):
@@ -7683,4 +7856,1126 @@ model WhatsAppPicture {
 
   @@unique([projectId, accountId, jid])
   @@index([state, nextAttemptAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inbox workspace: internal notes, priority/tags, AI Copilot drafts (INBOX_WORKSPACE.md).
+// Every row names exactly ONE conversation: a WhatsApp chat (accountId + chatId, the same pair
+// Message rows carry) or a ChannelConversation. A CHECK in the migration enforces that, and partial
+// unique indexes keep one label row per conversation. No send path reads any of these tables.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ConversationPriority {
+  NONE
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// Priority and tags for one conversation. Triage only: never read by automation.
+model ConversationLabel {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// WhatsApp chat id with its domain (`…@g.us`, `…@c.us`, `…@lid`), as on Message.chatId.
+  chatId                String?
+  channelConversationId String?              @unique
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  priority              ConversationPriority @default(NONE)
+  /// Lowercase, unique, at most 12 (normaliseConversationTags in packages/shared).
+  tags                  String[]             @default([])
+  updatedById           String?
+  updatedBy             User?                @relation("ConversationLabelUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([projectId, priority])
+  @@index([projectId, accountId, chatId])
+}
+
+/// An internal note on a conversation. Seen only by the team; no send path reads this table.
+model ConversationNote {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  body                  String
+  /// Dashboard users @mentioned in the note (validated against who may enter the project).
+  mentionedUserIds      String[]             @default([])
+  authorId              String?
+  author                User?                @relation("ConversationNoteAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt             DateTime             @default(now())
+  /// Soft delete: gone from the panel, kept for the audit trail.
+  deletedAt             DateTime?
+  deletedById           String?
+  mentions              InboxMention[]
+
+  @@index([projectId, accountId, chatId, createdAt])
+  @@index([channelConversationId, createdAt])
+}
+
+enum AiDraftMode {
+  /// Read the conversation: summary, intent, verified knowledge, suggested next steps. No reply text.
+  ASSIST
+  /// A complete suggested reply, through the production fallback prompt and its gates.
+  DRAFT
+  /// Rewrite text the agent supplies (shorter, friendlier, more formal, translate, fix grammar).
+  REWRITE
+}
+
+enum AiDraftStatus {
+  PENDING
+  PROCESSING
+  COMPLETE
+  FAILED
+  /// Stopped by the person who asked, or because AI Copilot was switched off before it ran.
+  CANCELLED
+}
+
+/// One AI Copilot request and its result. Nothing ever sends it: the agent puts the text into the
+/// composer and sends it through the ordinary reply path. Also the copilot's usage ledger
+/// (provider, model, tokens per request).
+model AiDraft {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  mode                  AiDraftMode
+  /// REWRITE only, one of COPILOT_REWRITE_INSTRUCTIONS (packages/shared).
+  instruction           String?
+  /// REWRITE only: the agent's text being rewritten.
+  baseText              String?
+  status                AiDraftStatus        @default(PENDING)
+  /// Claims so far. A claim whose lease expired (worker died mid-call) is re-queued while
+  /// attempts < COPILOT_MAX_ATTEMPTS, then FAILED. The provider may have answered the lost attempt,
+  /// so a retry can cost a second call — bounded, never unbounded.
+  attempts              Int                  @default(0)
+  /// While PROCESSING: when the claim is considered abandoned.
+  leaseExpiresAt        DateTime?
+  responseText          String?
+  summary               String?
+  intent                String?
+  /// BUSINESS_SPECIFIC | GENERAL, from the production parser.
+  scope                 String?
+  confidence            Int?
+  /// True when at least one verified knowledge entry grounded the answer.
+  grounded              Boolean              @default(false)
+  knowledgeTitles       String[]             @default([])
+  nextSteps             String[]             @default([])
+  /// Shown above the text, e.g. business-specific but not grounded in verified knowledge.
+  warning               String?
+  /// Why no text was produced (AI_UNAVAILABLE, NO_CUSTOMER_MESSAGE, AI_DECLINED…).
+  reason                String?
+  error                 String?
+  providerId            String?
+  modelId               String?
+  tokensUsed            Int?
+  requestedById         String?
+  requestedBy           User?                @relation("AiDraftRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  /// Set when the agent put the text into the composer.
+  usedAt                DateTime?
+  /// UP | DOWN — the agent's rating.
+  feedback              String?
+  createdAt             DateTime             @default(now())
+  completedAt           DateTime?
+
+  @@index([status, createdAt])
+  @@index([status, leaseExpiresAt])
+  @@index([projectId, createdAt])
+  @@index([projectId, accountId, chatId, createdAt])
+  @@index([channelConversationId, createdAt])
+  @@index([requestedById, createdAt])
+}
+
+/// A named set of unified-inbox filters (INBOX_WORKSPACE.md § Saved views). `filters` holds only what
+/// parseInboxFilterSet accepts and is re-validated on every read; a view never grants access.
+model InboxSavedView {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// The creator. A personal view is theirs alone; a shared one is visible to everyone who can read the inbox.
+  ownerId   String?
+  owner     User?    @relation("InboxSavedViewOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  name      String
+  shared    Boolean  @default(false)
+  /// `all` or one channel slug (InboxScope).
+  scope     String   @default("all")
+  filters   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, ownerId])
+  @@index([projectId, shared])
+}
+
+/// "You were mentioned" for one person and one internal note. Unique per note and person, so saving
+/// can never notify twice; the note text itself is read only through the conversation's own checks.
+model InboxMention {
+  id        String           @id @default(cuid())
+  projectId String           @default(dbgenerated("project_id_required()"))
+  project   Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  noteId    String
+  note      ConversationNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation("InboxMentionUser", fields: [userId], references: [id], onDelete: Cascade)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@unique([noteId, userId])
+  @@index([projectId, userId, readAt])
+}
+
+/// What happened to a Messenger / Instagram / Telegram conversation's ownership and state: the
+/// assignment history. WhatsApp group ownership history stays in GroupResponsibilityChange.
+model ConversationEvent {
+  id                    String              @id @default(cuid())
+  projectId             String              @default(dbgenerated("project_id_required()"))
+  project               Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  channelConversationId String
+  channelConversation   ChannelConversation @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  /// ASSIGNEE | TEAM | STATUS
+  kind                  String
+  /// User id / Team id / status before and after (null = none).
+  fromValue             String?
+  toValue               String?
+  actorId               String?
+  actor                 User?               @relation("ConversationEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt             DateTime            @default(now())
+
+  @@index([channelConversationId, createdAt])
+}
+
+/// One website visitor of one website chat widget (WEBSITE_CHAT.md). The id is the conversation's
+/// `externalThreadId`; the token the widget holds is stored only as a SHA-256 hash. Unverified unless the
+/// site signed the visitor's id with the widget's identity secret.
+model WebChatVisitor {
+  id                 String            @id
+  projectId          String            @default(dbgenerated("project_id_required()"))
+  project            Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId       String
+  connection         ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  tokenHash          String            @unique
+  /// The site's own user id, only when its signature checked out.
+  verifiedExternalId String?
+  name               String?
+  email              String?
+  /// SHA-256 of the IP and a server secret, for rate limiting only.
+  ipHash             String?
+  /// The site's own signed phone number (only with a valid signature), for linking to a client.
+  phone              String?
+  /// The page the visitor was on when they last wrote (an address on a listed website only).
+  pageUrl            String?
+  /// When the visitor last typed; the inbox shows "typing…" for a few seconds after it.
+  typingAt           DateTime?
+  createdAt          DateTime          @default(now())
+  lastSeenAt         DateTime          @default(now())
+
+  @@index([connectionId, createdAt])
+  @@index([ipHash, createdAt])
+}
+
+/// The business profile of a project (PROJECT_MODULES.md). Kept in sync with PROJECT_TYPES in
+/// packages/shared/src/projectModules.ts by convention.
+enum ProjectType {
+  DEFAULT
+  ECOMMERCE
+  CUSTOM_MIX
+}
+
+/// One applied module configuration (PROJECT_MODULES.md §7): what the modules were before and after,
+/// who changed them and why. Append-only (a database trigger refuses updates); "Restore" re-applies a
+/// row's `modules` through the same validation, never by writing feature rows directly.
+model ProjectModuleConfigChange {
+  id              String       @id @default(cuid())
+  projectId       String       @default(dbgenerated("project_id_required()"))
+  project         Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// The project's moduleConfigVersion this change produced.
+  version         Int
+  projectType     ProjectType
+  projectBaseType ProjectType?
+  previousModules String[]
+  modules         String[]
+  /// Hard dependencies the resolver added, and recommended modules the admin declined.
+  autoAdded       String[]
+  declined        String[]
+  reason          String?
+  actorUsername   String
+  /// The template the selection was taken from ("builtin:<KEY>" or a ModuleTemplate id) and that
+  /// template's version at the time. A later edit of the template never changes this project.
+  templateKey     String?
+  templateVersion Int?
+  createdAt       DateTime     @default(now())
+
+  @@unique([projectId, version])
+  @@index([projectId, createdAt])
+}
+
+/// A customer's own reusable module selection (PROJECT_MODULES.md §8). Private to the customer (the
+/// customer-scoped client confines it); built-in templates live in code. Editing bumps `version`;
+/// projects that applied an earlier version keep what they applied (their history records which).
+model ModuleTemplate {
+  id                String      @id @default(cuid())
+  /// NULL = the original installation (the founding customer), like every customer-owned row.
+  customerId        String?
+  customer          Customer?   @relation("CustomerModuleTemplates", fields: [customerId], references: [id], onDelete: Restrict)
+  /// Unique per customer among templates in use (partial unique indexes in SQL).
+  name              String
+  description       String?
+  baseType          ProjectType
+  modules           String[]
+  declined          String[]
+  version           Int         @default(1)
+  archivedAt        DateTime?
+  createdByUsername String
+  updatedByUsername String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([customerId])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Commerce core (COMMERCE.md): catalogue and stock, orders, sales pipeline. Every table is
+// project-owned. Money is BigInt minor units, one currency per order; never the SaaS billing.
+// ---------------------------------------------------------------------------------------------
+
+enum ProductStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+enum CommerceOrderStatus {
+  DRAFT
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum CommercePaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  REFUNDED
+}
+
+enum SalesLeadStage {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  WON
+  LOST
+}
+
+model ProductCategory {
+  id        String            @id @default(cuid())
+  projectId String            @default(dbgenerated("project_id_required()"))
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name      String
+  parentId  String?
+  parent    ProductCategory?  @relation("ProductCategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  ProductCategory[] @relation("ProductCategoryTree")
+  position  Int               @default(0)
+  products  Product[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@unique([projectId, name])
+}
+
+model Product {
+  id                String              @id @default(cuid())
+  projectId         String              @default(dbgenerated("project_id_required()"))
+  project           Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  categoryId        String?
+  category          ProductCategory?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  name              String
+  description       String?
+  /// Unique within the project when given (partial unique index in SQL).
+  sku               String?
+  status            ProductStatus       @default(ACTIVE)
+  currency          String
+  priceMinor        BigInt
+  compareAtMinor    BigInt?
+  /// When false, stock is not counted (services, made to order).
+  trackInventory    Boolean             @default(true)
+  stockQuantity     Int                 @default(0)
+  imageUrl          String?
+  /// Set when the product came from an external shop (WooCommerce / Shopify), for re-syncing.
+  externalSource    String?
+  externalId        String?
+  createdByUsername String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  variants          ProductVariant[]
+  movements         InventoryMovement[]
+  orderItems        CommerceOrderItem[]
+
+  @@index([projectId, status])
+  @@index([projectId, name])
+}
+
+model ProductVariant {
+  id            String              @id @default(cuid())
+  projectId     String              @default(dbgenerated("project_id_required()"))
+  project       Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  productId     String
+  product       Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// "Red / XL".
+  name          String
+  sku           String?
+  /// Null = the product's price.
+  priceMinor    BigInt?
+  stockQuantity Int                 @default(0)
+  isActive      Boolean             @default(true)
+  /// The shop's variant id when imported (WooCommerce variation / Shopify variant).
+  externalId    String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  movements     InventoryMovement[]
+  orderItems    CommerceOrderItem[]
+
+  @@index([productId])
+}
+
+/// Every change of stock, append-only: the stock figure is explained by its movements.
+model InventoryMovement {
+  id            String          @id @default(cuid())
+  projectId     String          @default(dbgenerated("project_id_required()"))
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  productId     String
+  product       Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId     String?
+  variant       ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  /// Positive adds stock, negative removes it.
+  delta         Int
+  /// ADJUSTMENT | ORDER | RETURN | CANCEL | SYNC
+  reason        String
+  orderId       String?
+  order         CommerceOrder?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  note          String?
+  balanceAfter  Int
+  actorUsername String
+  createdAt     DateTime        @default(now())
+
+  @@index([productId, createdAt])
+}
+
+model CommerceOrder {
+  id                String                @id @default(cuid())
+  projectId         String                @default(dbgenerated("project_id_required()"))
+  project           Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// "ORD-000042" from `commerce_order_seq`.
+  number            String
+  clientId          String?
+  client            Client?               @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  customerName      String
+  customerPhone     String?
+  customerEmail     String?
+  shippingAddress   String?
+  /// Where the order came from: WHATSAPP, MESSENGER, WEBSITE, PHONE and so on.
+  channel           String?
+  status            CommerceOrderStatus   @default(DRAFT)
+  paymentStatus     CommercePaymentStatus @default(UNPAID)
+  currency          String
+  subtotalMinor     BigInt
+  discountMinor     BigInt                @default(0)
+  shippingMinor     BigInt                @default(0)
+  totalMinor        BigInt
+  paidMinor         BigInt                @default(0)
+  notes             String?
+  externalSource    String?
+  externalId        String?
+  createdByUsername String
+  confirmedAt       DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  items             CommerceOrderItem[]
+  events            CommerceOrderEvent[]
+  movements         InventoryMovement[]
+  wonLeads          SalesLead[]
+  shipments         Shipment[]
+
+  @@unique([projectId, number])
+  @@index([projectId, status, createdAt])
+  @@index([clientId])
+}
+
+model CommerceOrderItem {
+  id             String          @id @default(cuid())
+  projectId      String          @default(dbgenerated("project_id_required()"))
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  orderId        String
+  order          CommerceOrder   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId      String?
+  product        Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variantId      String?
+  variant        ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  /// Snapshots: what was sold, as it was when ordered.
+  name           String
+  sku            String?
+  quantity       Int
+  unitPriceMinor BigInt
+  totalMinor     BigInt
+
+  @@index([orderId])
+}
+
+/// The order's audit trail, append-only: every status move, payment and edit, with who and when.
+model CommerceOrderEvent {
+  id            String               @id @default(cuid())
+  projectId     String               @default(dbgenerated("project_id_required()"))
+  project       Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  orderId       String
+  order         CommerceOrder        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  kind          String
+  fromStatus    CommerceOrderStatus?
+  toStatus      CommerceOrderStatus?
+  detail        Json?
+  actorUsername String
+  createdAt     DateTime             @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model SalesLead {
+  id                String           @id @default(cuid())
+  projectId         String           @default(dbgenerated("project_id_required()"))
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId          String?
+  client            Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  name              String
+  phone             String?
+  email             String?
+  company           String?
+  source            String           @default("OTHER")
+  stage             SalesLeadStage   @default(NEW)
+  currency          String?
+  valueMinor        BigInt?
+  assignedUserId    String?
+  nextFollowUpAt    DateTime?
+  notes             String?
+  lostReason        String?
+  wonOrderId        String?
+  wonOrder          CommerceOrder?   @relation(fields: [wonOrderId], references: [id], onDelete: SetNull)
+  closedAt          DateTime?
+  createdByUsername String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  events            SalesLeadEvent[]
+  socialCampaigns   SocialCampaign[]
+
+  @@index([projectId, stage])
+  @@index([projectId, nextFollowUpAt])
+}
+
+model SalesLeadEvent {
+  id            String          @id @default(cuid())
+  projectId     String          @default(dbgenerated("project_id_required()"))
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  leadId        String
+  lead          SalesLead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  kind          String
+  fromStage     SalesLeadStage?
+  toStage       SalesLeadStage?
+  note          String?
+  actorUsername String
+  createdAt     DateTime        @default(now())
+
+  @@index([leadId, createdAt])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Commerce integrations (COMMERCE_INTEGRATIONS.md): couriers and shops. Project-owned; credentials
+// are encryptSecret envelopes, never plaintext.
+// ---------------------------------------------------------------------------------------------
+
+enum CourierProvider {
+  STEADFAST
+  PATHAO
+  REDX
+}
+
+enum ShipmentStatus {
+  BOOKING
+  BOOKED
+  PICKED_UP
+  IN_TRANSIT
+  ON_HOLD
+  DELIVERED
+  PARTIAL_DELIVERED
+  RETURNED
+  CANCELLED
+  FAILED
+  UNKNOWN
+}
+
+enum ShopProvider {
+  WOOCOMMERCE
+  SHOPIFY
+}
+
+/// One courier account per provider per project.
+model CourierConnection {
+  id                    String          @id @default(cuid())
+  projectId             String          @default(dbgenerated("project_id_required()"))
+  project               Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  provider              CourierProvider
+  label                 String
+  /// The provider's sandbox instead of live (Pathao and RedX have one).
+  sandbox               Boolean         @default(false)
+  credentialsCiphertext String
+  /// Provider settings that are not secret: Pathao store id, RedX pickup store, default weight.
+  settings              Json?
+  isActive              Boolean         @default(true)
+  lastCheckedAt         DateTime?
+  lastCheckOk           Boolean?
+  lastError             String?
+  createdByUsername     String
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  shipments             Shipment[]
+
+  @@unique([projectId, provider])
+}
+
+/// A delivery booked with a courier for an order. Provider-neutral status, the provider's own beside it.
+model Shipment {
+  id               String             @id @default(cuid())
+  projectId        String             @default(dbgenerated("project_id_required()"))
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  orderId          String
+  order            CommerceOrder      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  connectionId     String?
+  connection       CourierConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  provider         CourierProvider
+  status           ShipmentStatus     @default(BOOKING)
+  providerStatus   String?
+  /// Our reference sent to the courier as the merchant invoice / order id. Unique per project.
+  invoice          String
+  consignmentId    String?
+  trackingCode     String?
+  codAmountMinor   BigInt
+  currency         String
+  recipientName    String
+  recipientPhone   String
+  recipientAddress String
+  note             String?
+  /// What was sent beyond the basics (area, weight, store) — never a credential.
+  details          Json?
+  error            String?
+  bookedByUsername String
+  bookedAt         DateTime?
+  lastCheckedAt    DateTime?
+  deliveredAt      DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  events           ShipmentEvent[]
+
+  @@unique([projectId, invoice])
+  @@index([projectId, status, lastCheckedAt])
+  @@index([orderId])
+}
+
+/// The shipment's history, append-only.
+model ShipmentEvent {
+  id             String         @id @default(cuid())
+  projectId      String         @default(dbgenerated("project_id_required()"))
+  project        Project        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  shipmentId     String
+  shipment       Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  status         ShipmentStatus
+  providerStatus String?
+  note           String?
+  actorUsername  String?
+  createdAt      DateTime       @default(now())
+
+  @@index([shipmentId, createdAt])
+}
+
+/// One shop per provider per project. The webhook key in the URL selects it.
+model ShopConnection {
+  id                      String        @id @default(cuid())
+  projectId               String        @default(dbgenerated("project_id_required()"))
+  project                 Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  provider                ShopProvider
+  label                   String
+  shopUrl                 String
+  credentialsCiphertext   String
+  webhookSecretCiphertext String?
+  webhookKey              String        @unique
+  currency                String?
+  isActive                Boolean       @default(true)
+  /// Import the shop's orders too (products are always imported).
+  importOrders            Boolean       @default(false)
+  lastSyncAt              DateTime?
+  lastSyncOk              Boolean?
+  lastError               String?
+  lastWebhookAt           DateTime?
+  createdByUsername       String
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  runs                    ShopSyncRun[]
+
+  @@unique([projectId, provider])
+}
+
+/// One import or reconciliation, with its counts and the first errors.
+model ShopSyncRun {
+  id            String         @id @default(cuid())
+  projectId     String         @default(dbgenerated("project_id_required()"))
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId  String
+  connection    ShopConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  /// PRODUCTS | ORDERS | PUSH_ORDER
+  kind          String
+  /// PUSH_ORDER only: the order sent. One live push per order per shop (partial unique index).
+  orderId       String?
+  /// PUSH_ORDER only: the shop's id for the order it created.
+  externalId    String?
+  /// RUNNING | SUCCEEDED | PARTIAL | FAILED
+  status        String
+  created       Int            @default(0)
+  updated       Int            @default(0)
+  unchanged     Int            @default(0)
+  skipped       Int            @default(0)
+  failed        Int            @default(0)
+  errors        Json?
+  actorUsername String?
+  startedAt     DateTime       @default(now())
+  finishedAt    DateTime?
+
+  @@index([connectionId, startedAt])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Integration Hub (INTEGRATION_HUB.md): scoped API keys and signed outbound webhooks. Project-owned.
+// ---------------------------------------------------------------------------------------------
+
+/// A key for the public API. Only its SHA-256 is stored; the key itself is shown once.
+model ApiKey {
+  id                String    @id @default(cuid())
+  projectId         String    @default(dbgenerated("project_id_required()"))
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name              String
+  /// The first characters, to recognise a key in a list ("ga_x7Kp…").
+  prefix            String
+  keyHash           String    @unique
+  scopes            String[]
+  createdByUsername String
+  lastUsedAt        DateTime?
+  expiresAt         DateTime?
+  revokedAt         DateTime?
+  revokedByUsername String?
+  createdAt         DateTime  @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+model WebhookEndpoint {
+  id                String            @id @default(cuid())
+  projectId         String            @default(dbgenerated("project_id_required()"))
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  url               String
+  description       String?
+  events            String[]
+  secretCiphertext  String
+  isActive          Boolean           @default(true)
+  createdByUsername String
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  deliveries        WebhookDelivery[]
+
+  @@index([projectId, isActive])
+}
+
+/// One event to one endpoint, with its retries. PENDING → SUCCEEDED, or DEAD after the last retry.
+model WebhookDelivery {
+  id             String          @id @default(cuid())
+  projectId      String          @default(dbgenerated("project_id_required()"))
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  endpointId     String
+  endpoint       WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event          String
+  /// The event's id, the same for every endpoint and every retry (receivers deduplicate on it).
+  eventId        String
+  payload        Json
+  /// PENDING | SENDING | SUCCEEDED | DEAD
+  status         String          @default("PENDING")
+  attempts       Int             @default(0)
+  nextAttemptAt  DateTime        @default(now())
+  lastStatusCode Int?
+  lastError      String?
+  deliveredAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([endpointId, eventId])
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+}
+
+/// A saved filter on a list page (Orders, Products, Shipments, Sales — PROJECT_MODULES.md §Saved views).
+/// Personal unless shared; a shared view is visible to everyone who can open that page.
+model ListSavedView {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  ownerId   String?
+  owner     User?    @relation("ListSavedViewOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  /// The project-relative list page, from a fixed list ("/commerce/orders").
+  path      String
+  name      String
+  /// The page's own query string, reduced to the filters that page understands.
+  query     String
+  shared    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, path, ownerId])
+}
+
+// ── Social Studio (SOCIAL_STUDIO.md) ─────────────────────────────────────────────────────────────
+// Get Assist's own social publishing. A connection is one person's authorization at a network (Meta);
+// it brings accounts (Pages, Instagram accounts). A post is written and approved once; each chosen
+// account is one publish TARGET — a durable job the engine claims, publishes and records attempts for.
+// Every table is project-owned; disabling the module keeps every row.
+
+/// One authorization at a network, by one person, for this project. The user token is encrypted;
+/// disconnecting wipes it and keeps the row, its accounts and every post.
+model SocialConnection {
+  id                   String          @id @default(cuid())
+  projectId            String          @default(dbgenerated("project_id_required()"))
+  project              Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// META (Facebook Pages + Instagram). Further networks add values; see socialPlatforms.ts.
+  provider             String
+  /// CONNECTED | NEEDS_RECONNECT | ERROR | DISCONNECTED
+  status               String          @default("CONNECTED")
+  /// The network's id for the person who authorised (app-scoped for Meta).
+  externalUserId       String
+  externalUserName     String?
+  /// The long-lived user token, encrypted (encryptSecret). Null once disconnected.
+  credentialCiphertext String?
+  tokenExpiresAt       DateTime?
+  grantedScopes        String[]        @default([])
+  declinedScopes       String[]        @default([])
+  connectedByUsername  String
+  lastCheckedAt        DateTime?
+  lastError            String?
+  disconnectedAt       DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  accounts             SocialAccount[]
+
+  @@unique([projectId, provider, externalUserId])
+}
+
+/// A publishable account (a Facebook Page, an Instagram professional account). One row per account per
+/// project, so the same Page can never be published to twice through two connections.
+model SocialAccount {
+  id               String             @id @default(cuid())
+  projectId        String             @default(dbgenerated("project_id_required()"))
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId     String
+  connection       SocialConnection   @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  /// SOCIAL_PLATFORM_KEYS: FACEBOOK_PAGE | INSTAGRAM | ...
+  platform         String
+  externalId       String
+  /// Instagram: the Facebook Page it is linked to (and published through).
+  parentExternalId String?
+  name             String
+  username         String?
+  pictureUrl       String?
+  /// The account's own token, encrypted (a Page token for both a Page and its Instagram account).
+  tokenCiphertext  String?
+  /// ACTIVE | NEEDS_RECONNECT | REMOVED
+  status           String             @default("ACTIVE")
+  /// The project may switch an account off for publishing without disconnecting it.
+  enabled          Boolean            @default(true)
+  lastError        String?
+  lastSeenAt       DateTime
+  removedAt        DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  targets          SocialPostTarget[]
+
+  @@unique([projectId, platform, externalId])
+  @@index([connectionId])
+}
+
+/// One post, written and approved here, published to one or more accounts.
+model SocialPost {
+  id                  String             @id @default(cuid())
+  projectId           String             @default(dbgenerated("project_id_required()"))
+  project             Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// An internal name for lists and the calendar; never published.
+  title               String?
+  /// The main text; an account may have its own (SocialPostTarget.contentOverride).
+  content             String
+  /// SocialMediaAsset ids, in order (checked against this project's rows on every use).
+  mediaIds            String[]           @default([])
+  /// SOCIAL_POST_STATUSES (packages/shared/src/socialStudio.ts).
+  status              String             @default("DRAFT")
+  /// SCHEDULE | NOW
+  publishMode         String             @default("SCHEDULE")
+  /// The instant it is due (UTC). Shown and entered on the wall clock of `timezone`.
+  scheduledAt         DateTime?
+  timezone            String             @default("Asia/Dhaka")
+  campaignId          String?
+  campaign            SocialCampaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  /// AI wrote or rewrote some of the text (AI Content Studio). It still needs a person's approval.
+  aiAssisted          Boolean            @default(false)
+  /// The reviewer asked to approve it (a username); anyone with social.approve still may.
+  reviewerUsername    String?
+  createdByUsername   String
+  updatedByUsername   String?
+  submittedAt         DateTime?
+  submittedByUsername String?
+  /// SHA-256 of the material the approval covers (socialApprovalMaterial). Any change clears it.
+  approvalHash        String?
+  approvedAt          DateTime?
+  approvedByUsername  String?
+  reviewNote          String?
+  scheduledAtRequest  DateTime?
+  scheduledByUsername String?
+  duplicatedFromId    String?
+  revision            Int                @default(1)
+  lastError           String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  targets             SocialPostTarget[]
+  events              SocialPostEvent[]
+
+  @@index([projectId, status])
+  @@index([projectId, scheduledAt])
+  @@index([campaignId])
+}
+
+/// The post on one account: its own text and settings, and the durable publish job.
+model SocialPostTarget {
+  id                   String                 @id @default(cuid())
+  projectId            String                 @default(dbgenerated("project_id_required()"))
+  project              Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  postId               String
+  post                 SocialPost             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  accountId            String
+  account              SocialAccount          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  /// This account's own text (a channel-specific variant); null = the post's main text.
+  contentOverride      String?
+  /// Platform settings for this account (a JSON object), e.g. {"igMediaType":"REELS"}.
+  settings             Json?
+  /// SOCIAL_TARGET_STATUSES: PENDING | DUE | PUBLISHING | PUBLISHED | FAILED | UNKNOWN | CANCELLED
+  status               String                 @default("PENDING")
+  dueAt                DateTime?
+  /// After a refusal that is safe to repeat (rate limit, unreachable): not before this.
+  nextAttemptAt        DateTime?
+  /// While PUBLISHING: the claim and when it is considered abandoned.
+  claimToken           String?
+  leaseExpiresAt       DateTime?
+  attempts             Int                    @default(0)
+  externalId           String?
+  /// Instagram: the media containers made for this attempt (publishing them is the separate step).
+  externalContainerIds String[]               @default([])
+  permalink            String?
+  error                String?
+  publishedAt          DateTime?
+  lastCheckedAt        DateTime?
+  /// The platform's own counts for the publication (SocialMetricValue[]), as last read, and when.
+  metrics              Json?
+  metricsAt            DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  publishAttempts      SocialPublishAttempt[]
+
+  @@unique([postId, accountId])
+  @@index([status, dueAt])
+  @@index([accountId, publishedAt])
+}
+
+/// Every attempt to publish one target: when it started, whether the publishing request left, and
+/// what came back. `requestSentAt` null = the request never left, so a lost lease may run it again.
+model SocialPublishAttempt {
+  id            String           @id @default(cuid())
+  projectId     String           @default(dbgenerated("project_id_required()"))
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  targetId      String
+  target        SocialPostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  attemptNo     Int
+  claimToken    String
+  startedAt     DateTime
+  requestSentAt DateTime?
+  finishedAt    DateTime?
+  /// PUBLISHED | REFUSED | AUTH | RETRY_LATER | UNKNOWN | REQUEUED (lease lost before sending)
+  outcome       String?
+  message       String?
+  externalId    String?
+
+  @@index([targetId, attemptNo])
+}
+
+/// What happened to a post, and the team's comments on it. Append-only (a trigger refuses changes).
+model SocialPostEvent {
+  id            String     @id @default(cuid())
+  projectId     String     @default(dbgenerated("project_id_required()"))
+  project       Project    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  postId        String
+  post          SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  /// CREATED, EDITED, SUBMITTED, APPROVED, REJECTED, SCHEDULED, CANCELLED, PUBLISHED, FAILED, UNKNOWN,
+  /// RETRY, SEND_AGAIN, MARKED, MATCHED, COMMENT, DUPLICATED, AI
+  kind          String
+  actorUsername String?
+  detail        Json?
+  createdAt     DateTime   @default(now())
+
+  @@index([postId, createdAt])
+}
+
+/// A file in the project's Social Studio media library, kept on the media volume (MEDIA_STORAGE.md).
+/// Platforms fetch it through a short-lived signed address. Deleting marks it; posts keep their history.
+model SocialMediaAsset {
+  id                 String    @id @default(cuid())
+  projectId          String    @default(dbgenerated("project_id_required()"))
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// social/<projectId>/<id>.<ext> — ids only.
+  storageKey         String    @unique
+  name               String
+  /// IMAGE | VIDEO
+  kind               String
+  mimeType           String
+  sizeBytes          Int
+  folder             String?
+  tags               String[]  @default([])
+  altText            String?
+  uploadedByUsername String
+  createdAt          DateTime  @default(now())
+  deletedAt          DateTime?
+
+  @@index([projectId, deletedAt, createdAt])
+}
+
+/// A campaign groups posts (and may be linked to a sales lead).
+model SocialCampaign {
+  id                String       @id @default(cuid())
+  projectId         String       @default(dbgenerated("project_id_required()"))
+  project           Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name              String
+  description       String?
+  /// #rrggbb for the calendar.
+  color             String?
+  startsOn          DateTime?
+  endsOn            DateTime?
+  /// ACTIVE | ARCHIVED
+  status            String       @default("ACTIVE")
+  leadId            String?
+  lead              SalesLead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  createdByUsername String
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  posts             SocialPost[]
+
+  @@index([projectId, status])
+}
+
+/// Reusable text: a post template, a signature added to posts, or a set of hashtags.
+model SocialTemplate {
+  id                String   @id @default(cuid())
+  projectId         String   @default(dbgenerated("project_id_required()"))
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// TEMPLATE | SIGNATURE | HASHTAGS
+  kind              String
+  name              String
+  content           String
+  createdByUsername String
+  updatedByUsername String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([projectId, kind])
+}
+
+/// An AI Content Studio request (SOCIAL_STUDIO.md §AI): answered by the worker through the project's
+/// own Response model (resolveAiClient). The answer is only ever a suggestion for a person.
+model SocialAiRequest {
+  id                  String    @id @default(cuid())
+  projectId           String    @default(dbgenerated("project_id_required()"))
+  project             Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// SOCIAL_AI_KINDS (packages/shared/src/socialAi.ts).
+  kind                String
+  /// The validated SocialAiInput.
+  input               Json
+  /// PENDING | PROCESSING | COMPLETE | FAILED | CANCELLED
+  status              String    @default("PENDING")
+  attempts            Int       @default(0)
+  leaseExpiresAt      DateTime?
+  options             String[]  @default([])
+  /// Why there is no answer (AI_UNAVAILABLE, EMPTY_RESPONSE, ...).
+  reason              String?
+  providerId          String?
+  modelId             String?
+  tokensUsed          Int?
+  requestedByUsername String
+  createdAt           DateTime  @default(now())
+  completedAt         DateTime?
+
+  @@index([projectId, status, createdAt])
+}
+
+/// An RSS / Atom feed whose new items become Social Studio DRAFTS (SOCIAL_STUDIO.md §Automation).
+/// Never publishes: every imported item still needs approval and scheduling.
+model SocialRssFeed {
+  id                String          @id @default(cuid())
+  projectId         String          @default(dbgenerated("project_id_required()"))
+  project           Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name              String
+  url               String
+  /// The accounts each draft is prepared for (checked against this project's accounts when used).
+  accountIds        String[]        @default([])
+  /// A line put above each item's title (optional).
+  prefix            String?
+  includeSummary    Boolean         @default(true)
+  enabled           Boolean         @default(true)
+  intervalMinutes   Int             @default(360)
+  /// Nothing older than this is imported (the moment the feed was added, so its back catalogue is skipped).
+  importFrom        DateTime        @default(now())
+  lastFetchedAt     DateTime?
+  lastError         String?
+  draftsCreated     Int             @default(0)
+  createdByUsername String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  items             SocialRssItem[]
+
+  @@index([projectId, enabled])
+}
+
+/// One feed item seen, kept once (feed + guid), and the draft made from it.
+model SocialRssItem {
+  id        String        @id @default(cuid())
+  projectId String        @default(dbgenerated("project_id_required()"))
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  feedId    String
+  feed      SocialRssFeed @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  guid      String
+  title     String
+  link      String?
+  postId    String?
+  seenAt    DateTime      @default(now())
+
+  @@unique([feedId, guid])
 }

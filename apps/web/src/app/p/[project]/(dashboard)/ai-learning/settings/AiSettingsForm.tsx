@@ -6,27 +6,18 @@ import { ReplyLanguageField } from "./ReplyLanguageField";
 import { UnableToUnderstandFields } from "./UnableToUnderstandFields";
 import { updateAiSettings, type AiSettingsFormState } from "@/server/actions/aiSettings";
 import type { AiSettings } from "@prisma/client";
+import { AI_COMMERCE_CAPABILITY_LABELS, type AiCommercePolicy } from "@support-automation/shared";
 
 /**
- * `notImplemented` marks a switch that is saved and read by NOTHING at runtime — verified by
- * grepping every worker/engine/ai-client reader for each column. They are shown, and shown as
- * inert, rather than quietly removed: the columns exist, an operator may already have toggled
- * one, and a switch that silently does nothing is the failure this project keeps deleting.
- *
- * "Screenshot Response" is the one with a real consequence if believed. There is no image
- * understanding anywhere in this pipeline — a photo arrives as the literal text "[Image]". The
- * AI now hands those to a person instead of answering them (see isMediaOnlyBody), so this switch
- * genuinely does nothing in either position.
+ * Only switches something reads. Five more (Screenshot Response, Chat Learning, Software Learning,
+ * Requirement Learning, Announcement AI) and three thresholds were saved and read by nothing; they were
+ * removed from the form on 30 Oct 2026 (AI_COMMERCE.md §Settings review). Their columns and stored
+ * values stay, untouched — the save no longer writes them.
  */
-const ENGINE_TOGGLES: Array<{ key: keyof AiSettings; label: string; notImplemented?: true }> = [
+const ENGINE_TOGGLES: Array<{ key: keyof AiSettings; label: string }> = [
   { key: "aiEngineEnabled", label: "AI Engine" },
   { key: "learningEnabled", label: "Learning" },
   { key: "autoResponseEnabled", label: "Auto Response" },
-  { key: "screenshotResponseEnabled", label: "Screenshot Response", notImplemented: true },
-  { key: "chatLearningEnabled", label: "Chat Learning", notImplemented: true },
-  { key: "softwareLearningEnabled", label: "Software Learning", notImplemented: true },
-  { key: "requirementLearningEnabled", label: "Requirement Learning", notImplemented: true },
-  { key: "announcementAiEnabled", label: "Announcement AI", notImplemented: true },
 ];
 
 const MODE_COPY: Record<string, { title: string; detail: string }> = {
@@ -52,12 +43,19 @@ const MODE_COPY: Record<string, { title: string; detail: string }> = {
   },
 };
 
+export interface CommerceStatus {
+  modules: { catalog: boolean; orders: boolean; courier: boolean };
+  policy: AiCommercePolicy;
+}
+
 export function AiSettingsForm({
   settings,
   groups,
+  commerce,
 }: {
   settings: AiSettings;
   groups: PickableGroup[];
+  commerce: CommerceStatus;
 }) {
   const [state, formAction, pending] = useActionState<AiSettingsFormState, FormData>(updateAiSettings, {});
   const [responseMode, setResponseMode] = useState(settings.aiResponseMode as string);
@@ -74,35 +72,65 @@ export function AiSettingsForm({
       <Card>
         <SectionHeader
           title="Master Controls"
-          description="AI Engine and Auto Response together gate the live AI reply layer. The switches marked “not implemented yet” are saved but read by nothing at runtime — changing them has no effect in either position."
+          description="AI Engine and Auto Response together gate the live AI reply layer. Learning gates the optional AI re-scoring in Conversation Learning."
         />
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {ENGINE_TOGGLES.map((t) => (
-            <SwitchField
-              key={t.key}
-              name={t.key}
-              label={t.notImplemented ? `${t.label} — not implemented yet` : t.label}
-              defaultChecked={Boolean(settings[t.key])}
-            />
+            <SwitchField key={t.key} name={t.key} label={t.label} defaultChecked={Boolean(settings[t.key])} />
           ))}
+        </div>
+        <div className="mt-4 max-w-xs">
+          <Field label="Human Review threshold (%)" hint="A Conversation Learning pattern scoring below this is not surfaced for review.">
+            <Input name="humanReviewThreshold" type="number" min={0} max={100} defaultValue={settings.humanReviewThreshold} />
+          </Field>
         </div>
       </Card>
 
       <Card>
-        <SectionHeader title="Learning Thresholds" description="Percentages (0-100). Only Human Review is live today — it decides whether a Conversation Learning pattern is surfaced for review. The other three are saved but read by nothing." />
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <Field label="Duplicate Similarity — not implemented yet" hint="Saved, but no code reads it. Duplicate knowledge is currently detected by exact title match only.">
-            <Input name="duplicateSimilarityThreshold" type="number" min={0} max={100} defaultValue={settings.duplicateSimilarityThreshold} />
-          </Field>
-          <Field label="Learning Confidence — not implemented yet" hint="Saved, but no code reads it.">
-            <Input name="learningConfidenceThreshold" type="number" min={0} max={100} defaultValue={settings.learningConfidenceThreshold} />
-          </Field>
-          <Field label="Auto Approval — not implemented yet" hint="Saved, but no code reads it. The live auto-approval bar is on Settings → Conversation Learning.">
-            <Input name="autoApprovalThreshold" type="number" min={0} max={100} defaultValue={settings.autoApprovalThreshold} />
-          </Field>
-          <Field label="Human Review" hint="LIVE. A Conversation Learning pattern scoring below this is not surfaced for review.">
-            <Input name="humanReviewThreshold" type="number" min={0} max={100} defaultValue={settings.humanReviewThreshold} />
-          </Field>
+        <SectionHeader
+          title="Commerce answers"
+          description="What AI may tell customers from your catalogue and orders. Each works only while its module is on; switching modules or the project's type never changes these switches. Off by default."
+        />
+        <div className="space-y-3">
+          <SwitchField
+            name="commerceProductAnswers"
+            defaultChecked={settings.commerceProductAnswers}
+            label="Answer product questions from the catalogue"
+            description={`${AI_COMMERCE_CAPABILITY_LABELS.PRODUCT_INFO}. Active products only; a reply naming a price that is not in the catalogue is never sent.${commerce.modules.catalog ? "" : " Needs the Product Catalog module, which is off."}`}
+          />
+          <SwitchField
+            name="commerceShowStockCount"
+            defaultChecked={settings.commerceShowStockCount}
+            label="Say how many are in stock"
+            description="Off: AI only says whether something is in stock."
+          />
+          <SwitchField
+            name="commerceOrderAnswers"
+            defaultChecked={settings.commerceOrderAnswers}
+            label="Tell customers the status of their own orders"
+            description={`WhatsApp only, only to the number the order was placed with, and never another customer's order even when its number is given. Messenger, Instagram, Telegram and website chat carry no verified number, so they never get order details.${commerce.modules.orders ? "" : " Needs the Order Management module, which is off."}`}
+          />
+          <SwitchField
+            name="commerceDeliveryAnswers"
+            defaultChecked={settings.commerceDeliveryAnswers}
+            label="Tell them where their delivery is"
+            description={`As the courier last reported it, with the time it was checked. Needs order answers on.${commerce.modules.courier ? "" : " Needs the Courier Management module, which is off."}`}
+          />
+          <SwitchField
+            name="commerceHandoverRequests"
+            defaultChecked={settings.commerceHandoverRequests}
+            label="Hand requests to buy, cancel, return or change an order to a person"
+            description="Recommended. AI cannot do any of these; with this on, such a message goes straight to your team instead of the AI trying to reply."
+          />
+          {commerce.policy.blocked.length ? (
+            <Alert tone="warning" title="Switched on but not active">
+              {commerce.policy.blocked.map((b) => (
+                <span key={b.capability} className="block">
+                  {AI_COMMERCE_CAPABILITY_LABELS[b.capability]}: {b.reason}
+                </span>
+              ))}
+            </Alert>
+          ) : null}
         </div>
       </Card>
 

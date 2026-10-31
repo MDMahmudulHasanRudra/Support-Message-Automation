@@ -83,6 +83,18 @@ export function SmartImportJob({ job, initialStep, initialStatus }: { job: Smart
         ) : null}
       </div>
       {note ? <Alert tone="info">{note}</Alert> : null}
+      {editing && job.sheetNames.length > 1 && job.sheetName && job.sheetName !== job.sheetNames[0] ? (
+        <Alert tone="info">
+          This file has {job.sheetNames.length} sheets. &ldquo;{job.sheetName}&rdquo; was opened because its columns look like a client list; the first sheet, &ldquo;{job.sheetNames[0]}&rdquo;, does not. Use &ldquo;Change sheet or header row&rdquo; if that is wrong.
+        </Alert>
+      ) : null}
+      {editing && job.totalRows === 0 ? (
+        <Alert tone="warning">
+          No client rows were found under the header row of &ldquo;{job.sheetName ?? "this sheet"}&rdquo;.{" "}
+          {job.sheetNames.length > 1 ? "The list may be on another sheet, or the header row may be wrong: " : "The header row may be wrong: "}
+          use &ldquo;{job.sheetNames.length > 1 ? "Change sheet or header row" : "Change header row"}&rdquo;.
+        </Alert>
+      ) : null}
 
       {step === "map" ? <MappingEditor jobId={job.id} onSaved={() => setStep("review")} /> : null}
       {step === "review" ? <ReviewGrid jobId={job.id} onBackToMapping={() => setStep("map")} onQueued={() => (setQueuedHere(true), setStep("import"), router.refresh())} /> : null}

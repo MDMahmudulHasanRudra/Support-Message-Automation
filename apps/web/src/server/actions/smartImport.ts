@@ -45,6 +45,7 @@ import {
   type SmartSummary,
 } from "@/server/smartImport";
 import { deleteStagedFile, readSmartCounts, type SmartCounts } from "@/server/smartImportJobs";
+import { getClientModuleSettings } from "@/server/clientModule";
 
 /**
  * Smart Bulk Import actions (SMART_IMPORT.md). Every one is a public endpoint and checks for itself:
@@ -104,6 +105,11 @@ export interface SmartReviewRow {
   recordedExpiry: boolean;
   /** The file's own cells for the mapped columns, so a correction can be compared with the source. */
   source: Record<string, string>;
+  /** V5: the amounts this row states (recorded only), values filled from the phone / country, and unread numbers. */
+  money: RowAnalysis["money"];
+  derived: RowAnalysis["derived"];
+  phoneNotes: RowAnalysis["phoneNotes"];
+  stored: RowAnalysis["stored"];
 }
 
 export interface SmartReview {
@@ -166,6 +172,10 @@ export async function loadSmartReview(jobId: string, query: { filter?: string; s
         expiryBasis: r.expiryBasis,
         recordedExpiry: r.recordedExpiry,
         source: Object.fromEntries([...columns].map((c) => [c, src[c] ?? ""])),
+        money: r.money,
+        derived: r.derived,
+        phoneNotes: r.phoneNotes,
+        stored: r.stored,
       };
     }),
   };
@@ -177,20 +187,31 @@ export interface SmartMappingContext {
   mapping: SmartMapping;
   suggestions: MappingSuggestion[];
   samples: SmartSamples;
-  /** The first values of each column, for the mapping editor's preview. */
+  /** The first values of each column, for the column list (not for a row preview: these are not one row). */
   columnPreview: Record<string, string[]>;
   /** How many rows have a value in each column. */
   columnFilled: Record<string, number>;
+  /**
+   * The first rows of the file as staged, whole, for the Visual Mapping grid: each preview row is one client,
+   * so a phone is never shown beside another client's name (V5 §3).
+   */
+  previewRows: Array<{ rowNumber: number; cells: Record<string, string> }>;
+  /** The project's default country (Settings → Client Module), for reading local numbers in the preview. */
+  defaultCountry: string | null;
 }
+
+/** How many whole rows the mapping grid previews. */
+const MAPPING_PREVIEW_ROWS = 8;
 
 export async function loadSmartMappingContext(jobId: string): Promise<SmartMappingContext | { error: string }> {
   const g = await gate();
   if ("error" in g) return g;
   const job = await draft(jobId);
   if (!job) return { error: NOT_FOUND };
-  const [rows, samples] = await Promise.all([
-    prisma.clientImportRow.findMany({ where: { jobId }, orderBy: { rowNumber: "asc" }, select: { source: true } }),
+  const [rows, samples, settings] = await Promise.all([
+    prisma.clientImportRow.findMany({ where: { jobId }, orderBy: { rowNumber: "asc" }, select: { rowNumber: true, source: true } }),
     projectSamples(),
+    getClientModuleSettings(),
   ]);
   const columnPreview: Record<string, string[]> = {};
   const columnFilled: Record<string, number> = {};
@@ -210,7 +231,11 @@ export async function loadSmartMappingContext(jobId: string): Promise<SmartMappi
   const mapping = upgradeMapping(job.mapping);
   const used = new Set(Object.values(mapping.fields).flatMap((r) => (r?.mode === "source" ? [r.column] : [])));
   const suggestions = autoMapSmart(job.headers).suggestions.filter((s) => !mapping.fields[s.field] && !used.has(s.column));
-  return { revision: job.revision, headers: job.headers, mapping, suggestions, samples, columnPreview, columnFilled };
+  const previewRows = rows.slice(0, MAPPING_PREVIEW_ROWS).map((r) => {
+    const src = r.source as Record<string, string>;
+    return { rowNumber: r.rowNumber, cells: Object.fromEntries(job.headers.flatMap((h) => (src[h] ? [[h, src[h].slice(0, 200)]] : []))) };
+  });
+  return { revision: job.revision, headers: job.headers, mapping, suggestions, samples, columnPreview, columnFilled, previewRows, defaultCountry: settings.defaultCountry };
 }
 
 // ── Changing the draft ─────────────────────────────────────────────────────────────────────────

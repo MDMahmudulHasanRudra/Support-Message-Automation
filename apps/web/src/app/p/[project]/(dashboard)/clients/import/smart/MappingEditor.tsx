@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Bookmark, Check, Columns3, KeyRound, Lightbulb, Loader2, Trash2, Wand2 } from "lucide-react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { ArrowRight, Bookmark, Check, Columns3, KeyRound, LayoutList, Lightbulb, Loader2, Table2, Trash2, Wand2 } from "lucide-react";
 import {
   CLIENT_IMPORT_FIELDS,
   CLIENT_STATUSES,
@@ -18,6 +18,9 @@ import {
   type SmartRuleKey,
 } from "@support-automation/shared";
 import { ExpiryPanel } from "./ExpiryPanel";
+import { MappingGrid } from "./MappingGrid";
+import { MoneyPanel } from "./MoneyPanel";
+import { mappingToSave, readMappingView, subscribeMappingView, writeMappingView, type MappingView } from "./mappingView";
 import { Alert, Badge, Button, Card, Checkbox, Input, Select } from "@/components/ui";
 import {
   applySmartPreset,
@@ -100,6 +103,7 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
   }, [jobId]);
 
   const usage = useMemo(() => columnUsage(mapping), [mapping]);
+  const view = useSyncExternalStore(subscribeMappingView, readMappingView, () => "grid" as MappingView);
 
   if (loadError) return <Alert tone="danger">{loadError}</Alert>;
   if (!ctx) {
@@ -121,6 +125,26 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
     setDirty(true);
     setMessage(null);
   };
+  const setMoney = (money: SmartMapping["money"]) => {
+    setMapping((m) => {
+      const next: SmartMapping = { ...m };
+      if (money) next.money = money;
+      else delete next.money;
+      return next;
+    });
+    setDirty(true);
+    setMessage(null);
+  };
+  const setKeep = (columns: string[]) => {
+    setMapping((m) => {
+      const next: SmartMapping = { ...m };
+      if (columns.length) next.keepColumns = columns;
+      else delete next.keepColumns;
+      return next;
+    });
+    setDirty(true);
+    setMessage(null);
+  };
   const setOptions = (options: SmartExpiryOptions) => {
     setMapping((m) => ({ ...m, options }));
     setDirty(true);
@@ -137,13 +161,7 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
 
   async function save(): Promise<boolean> {
     if (!ctx) return false;
-    // A "From file" rule with no column chosen yet means nothing: send it as empty, never as a guess.
-    const fields: SmartMapping["fields"] = {};
-    for (const [k, rule] of Object.entries(mapping.fields) as Array<[SmartRuleKey, SmartFieldRule]>) {
-      if (rule.mode === "source" && !rule.column) continue;
-      fields[k] = rule;
-    }
-    const next: SmartMapping = { version: 2, fields, ...(mapping.options ? { options: mapping.options } : {}) };
+    const next = mappingToSave(mapping);
     setSaving(true);
     const r = await saveSmartMapping(jobId, ctx.revision, next);
     setSaving(false);
@@ -167,12 +185,138 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
     const first = ctx.columnPreview[rule.column] ?? [];
     return first.length ? first.slice(0, 3) : rule.fallback ? (ctx.columnPreview[rule.fallback] ?? []).slice(0, 3) : [];
   };
-  const unused = ctx.headers.filter((h) => !usage.has(h));
+  const moneyColumns = new Set(mapping.money?.mode === "MULTI" ? mapping.money.columns.map((c) => c.column) : mapping.money ? [mapping.money.amountColumn, mapping.money.currencyColumn ?? ""] : []);
+  const unused = ctx.headers.filter((h) => !usage.has(h) && !moneyColumns.has(h));
+  const moneyPanel = (
+    <MoneyPanel
+      headers={ctx.headers}
+      unused={unused}
+      previewRows={ctx.previewRows}
+      money={mapping.money}
+      keepColumns={mapping.keepColumns ?? []}
+      onMoney={setMoney}
+      onKeep={setKeep}
+    />
+  );
   const visibleSuggestions = ctx.suggestions.filter((s) => !mapping.fields[s.field]);
 
+  const toggle = (
+    <div role="radiogroup" aria-label="Mapping view" className="inline-flex gap-1 rounded-[var(--radius-md)] bg-[var(--color-neutral-bg)] p-1">
+      {(
+        [
+          ["grid", "Spreadsheet view", Table2],
+          ["detailed", "Detailed view", LayoutList],
+        ] as const
+      ).map(([key, label, Icon]) => (
+        <button
+          key={key}
+          type="button"
+          role="radio"
+          aria-checked={view === key}
+          onClick={() => writeMappingView(key)}
+          className={`inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] px-3 py-1.5 text-[12.5px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${view === key ? "bg-[var(--color-surface)] text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)]" : "text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"}`}
+        >
+          <Icon className="size-3.5" aria-hidden />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const presetBar = (
+    <PresetBar
+      jobId={jobId}
+      presets={presets}
+      dirty={dirty}
+      onSaveFirst={save}
+      onApplied={async (msg) => {
+        await load();
+        setMessage({ tone: "info", text: msg });
+      }}
+      onChanged={async () => setPresets(await listSmartPresets())}
+    />
+  );
+
+  const saveBar = (
+    <div className="sticky bottom-0 z-30 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]/95 p-3 shadow-[var(--shadow-lg)] backdrop-blur">
+      <div className="min-w-0 text-[12.5px]" aria-live="polite">
+        {message ? (
+          <span className={message.tone === "danger" ? "text-[color:var(--color-danger-fg)]" : "text-[color:var(--color-muted-foreground)]"}>{message.text}</span>
+        ) : dirty ? (
+          <span className="text-[color:var(--color-muted-foreground)]">Unsaved changes</span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-[color:var(--color-success-fg)]">
+            <Check className="size-3.5" aria-hidden />
+            Saved
+          </span>
+        )}
+      </div>
+      <Button
+        loading={saving}
+        onClick={async () => {
+          if (!dirty || (await save())) onSaved(ctx.revision);
+        }}
+      >
+        Save mapping and review rows
+        <ArrowRight className="size-4" aria-hidden />
+      </Button>
+    </div>
+  );
+
+  if (view === "grid") {
+    return (
+      <div className="min-w-0 space-y-4" data-mapping-editor>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {toggle}
+          <p className="text-[12px] text-[color:var(--color-muted-foreground)]">
+            Your fields across the top · the Excel column for each below it · {ctx.previewRows.length} of your rows below that
+          </p>
+        </div>
+        {presetBar}
+        <label className="flex items-start gap-2 text-[12.5px]">
+          <Checkbox
+            checked={mapping.fillLocale !== false}
+            onChange={(e) => {
+              setMapping((m) => {
+                const next: SmartMapping = { ...m };
+                if (e.target.checked) delete next.fillLocale;
+                else next.fillLocale = false;
+                return next;
+              });
+              setDirty(true);
+              setMessage(null);
+            }}
+          />
+          <span>
+            Fill an empty country, preferred currency and language from each client&apos;s valid phone number
+            <span className="block text-[11.5px] text-[color:var(--color-muted-foreground)]">
+              Shown as <span className="text-[color:var(--color-info-fg)]">Auto selected</span> below and in the review. A value your file gives is always kept; an existing client&apos;s value is never replaced by a suggestion.
+            </span>
+          </span>
+        </label>
+        <MappingGrid
+          groups={SMART_FIELD_GROUPS}
+          headers={ctx.headers}
+          columnFilled={ctx.columnFilled}
+          mapping={mapping}
+          samples={ctx.samples}
+          previewRows={ctx.previewRows}
+          defaultCountry={ctx.defaultCountry}
+          suggestions={visibleSuggestions}
+          choices={CHOICES}
+          onRule={setRule}
+        />
+        {moneyPanel}
+        <ExpiryPanel mapping={mapping} headers={ctx.headers} preview={ctx.columnPreview} setRule={setRule} setOptions={setOptions} />
+        {saveBar}
+      </div>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_300px]" data-mapping-editor>
       <div className="min-w-0 space-y-4">
+        {toggle}
         {visibleSuggestions.length ? (
           <Card className="border-[var(--color-info-border)] bg-[var(--color-info-bg)] p-4!">
             <p className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[color:var(--color-info-fg)]">
@@ -198,17 +342,7 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
           </Card>
         ) : null}
 
-        <PresetBar
-          jobId={jobId}
-          presets={presets}
-          dirty={dirty}
-          onSaveFirst={save}
-          onApplied={async (msg) => {
-            await load();
-            setMessage({ tone: "info", text: msg });
-          }}
-          onChanged={async () => setPresets(await listSmartPresets())}
-        />
+        {presetBar}
 
         {SMART_FIELD_GROUPS.map((group) => (
           <Card key={group.title} className="overflow-hidden p-0!">
@@ -344,30 +478,9 @@ export function MappingEditor({ jobId, onSaved }: { jobId: string; onSaved: (rev
         ))}
 
         <ExpiryPanel mapping={mapping} headers={ctx.headers} preview={ctx.columnPreview} setRule={setRule} setOptions={setOptions} />
+        {moneyPanel}
 
-        <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]/95 p-3 shadow-[var(--shadow-lg)] backdrop-blur">
-          <div className="min-w-0 text-[12.5px]" aria-live="polite">
-            {message ? (
-              <span className={message.tone === "danger" ? "text-[color:var(--color-danger-fg)]" : "text-[color:var(--color-muted-foreground)]"}>{message.text}</span>
-            ) : dirty ? (
-              <span className="text-[color:var(--color-muted-foreground)]">Unsaved changes</span>
-            ) : (
-              <span className="inline-flex items-center gap-1 text-[color:var(--color-success-fg)]">
-                <Check className="size-3.5" aria-hidden />
-                Saved
-              </span>
-            )}
-          </div>
-          <Button
-            loading={saving}
-            onClick={async () => {
-              if (!dirty || (await save())) onSaved(ctx.revision);
-            }}
-          >
-            Save and check rows
-            <ArrowRight className="size-4" aria-hidden />
-          </Button>
-        </div>
+        {saveBar}
       </div>
 
       <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">

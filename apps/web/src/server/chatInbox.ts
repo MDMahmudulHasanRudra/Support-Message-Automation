@@ -128,7 +128,13 @@ export type ConversationView =
   | { kind: "all" }
   | { kind: "waiting" }
   | { kind: "seen-unanswered" }
-  | { kind: "category"; id: string };
+  | { kind: "category"; id: string }
+  /**
+   * The unified inbox's label / assignment filters (INBOX_WORKSPACE.md): restrict to (or exclude) a set
+   * of chat ids decided elsewhere over the FULL dataset, plus an optional reply state — so a filter is
+   * applied before the 300-row limit, never to the rows that happened to be loaded.
+   */
+  | { kind: "chats"; chatIds: string[] | null; exclude?: boolean; state?: "waiting" | "unanswered" };
 
 /**
  * Saved replies for the composer picker, most-used first.
@@ -322,6 +328,12 @@ function viewSql(view: ConversationView): Prisma.Sql {
       return Prisma.sql`AND ${SEEN_UNANSWERED_SQL}`;
     case "category":
       return Prisma.sql`AND b."chatCategoryId" = ${view.id}`;
+    case "chats": {
+      const state = view.state === "waiting" ? Prisma.sql`AND ${AWAITING_SQL}` : view.state === "unanswered" ? Prisma.sql`AND b."unanswered"` : Prisma.empty;
+      if (view.chatIds === null) return state;
+      if (view.exclude) return view.chatIds.length ? Prisma.sql`AND b."chatId" NOT IN (${Prisma.join(view.chatIds)}) ${state}` : state;
+      return view.chatIds.length ? Prisma.sql`AND b."chatId" IN (${Prisma.join(view.chatIds)}) ${state}` : Prisma.sql`AND false`;
+    }
     default:
       return Prisma.empty;
   }

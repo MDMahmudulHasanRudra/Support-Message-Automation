@@ -154,6 +154,15 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "Client", "ClientChannel", "ClientNote", "ClientActivity", "ClientImportJob", "ClientImportRow", "ClientImportPreset", "ClientDue", "ClientDueEvent", "ClientBillingCurrency", "ClientWhatsAppChatLink", "ClientSubscription", "ClientPhoto", "ClientPayment", "ClientPaymentAllocation", "ClientWhatsAppGroupLink", "ClientModuleSettings", "ListViewPreference", "EmailSettings", "EmailOutbox", "ProjectRole", "ProjectMemberRole",
   "TeamAttendanceGroup",
   "GroupResponsibilityChange", "IdentityReattribution",
+  "ConversationLabel", "ConversationNote", "AiDraft", "InboxSavedView", "InboxMention", "ConversationEvent", "WebChatVisitor",
+  "ProjectModuleConfigChange",
+  "ProductCategory", "Product", "ProductVariant", "InventoryMovement", "CommerceOrder", "CommerceOrderItem",
+  "CommerceOrderEvent", "SalesLead", "SalesLeadEvent",
+  "CourierConnection", "Shipment", "ShipmentEvent", "ShopConnection", "ShopSyncRun",
+  "ApiKey", "WebhookEndpoint", "WebhookDelivery",
+  "ListSavedView",
+  "SocialConnection", "SocialAccount", "SocialPost", "SocialPostTarget", "SocialPublishAttempt", "SocialPostEvent", "SocialMediaAsset", "SocialCampaign", "SocialTemplate", "SocialAiRequest", "SocialRssFeed", "SocialRssItem",
+  "ClientCatalogEntry", "ClientServicePlan", "ClientCountrySetting",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
@@ -476,6 +485,8 @@ export function createProjectScopedPrisma(base: PrismaClient, resolveProjectId: 
  */
 export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "User", "PermissionModule", "Department", "JobTitle", "Employee", "SecuritySettings", "PlatformBranding", "Project",
+  // A customer's own module templates (PROJECT_MODULES.md §8).
+  "ModuleTemplate",
 ]);
 
 /** Rows reached through a tenant-scoped parent: filtered by that parent's customer. */

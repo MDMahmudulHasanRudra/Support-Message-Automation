@@ -102,7 +102,17 @@ describe("the constraints later phases depend on", () => {
     // + WhatsAppPicture (WHATSAPP_AVATARS.md, 20261023090000_whatsapp_pictures).
     // + ClientImportRow and ClientImportPreset (SMART_IMPORT.md, 20261024090000_client_smart_import).
     // + MetaOAuthSession (docs/meta-integration, 20261025090000_meta_platform_oauth).
-    expect(refusing).toHaveLength(125);
+    // + ConversationLabel, ConversationNote, AiDraft (20261029090000_inbox_workspace), InboxSavedView,
+    //   InboxMention, ConversationEvent (20261029110000_inbox_views_mentions), WebChatVisitor
+    //   (20261029120000_website_chat) and ProjectModuleConfigChange (20261029130000_project_modules).
+    // + the nine commerce tables (COMMERCE.md, 20261029150000_commerce_core).
+    // + the five commerce integration tables (20261029160000_commerce_integrations).
+    // + the three Integration Hub tables (20261029170000_integration_hub).
+    // + ListSavedView (20261030100000_list_saved_views).
+    // + the nine Social Studio tables (20261030120000_social_studio) + SocialAiRequest (20261030130000_social_ai)
+    //   + SocialRssFeed, SocialRssItem (20261030140000_social_rss).
+    // + ClientCatalogEntry, ClientServicePlan, ClientCountrySetting (20261031090000_client_configuration).
+    expect(refusing).toHaveLength(166);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -130,8 +140,15 @@ describe("the constraints later phases depend on", () => {
     // + the nine Google Sheets tables + the four Messaging Channels tables + the five Client Management
     // tables + the three client billing tables + the chat-link table + the two email tables + ProjectRole
     // + ProjectMemberRole + the seven Clients v3 tables + WhatsAppPicture + ClientImportRow + ClientImportPreset
-    // + MetaOAuthSession) + SystemLog + ProjectAccess + ProjectFeature.
-    expect(rows).toHaveLength(128);
+    // + MetaOAuthSession + the three inbox workspace tables + the three inbox views/mentions tables
+    // + WebChatVisitor + ProjectModuleConfigChange) + SystemLog + ProjectAccess + ProjectFeature.
+    // + the nine commerce tables.
+    // + the five commerce integration tables.
+    // + the three Integration Hub tables.
+    // + ListSavedView.
+    // + the nine Social Studio tables + SocialAiRequest + the two RSS tables.
+    // + the three Client Configuration Center tables.
+    expect(rows).toHaveLength(169);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

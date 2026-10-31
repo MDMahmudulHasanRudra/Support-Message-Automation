@@ -52,7 +52,45 @@ async function revoke(metaUserId: string, now: Date, forget: boolean): Promise<n
     await platformPrisma.channelConnection.updateMany({ where: { metaUserId }, data: { metaUserId: null } });
     await platformPrisma.metaOAuthSession.updateMany({ where: { metaUserId }, data: { metaUserId: null, metaUserName: null, userTokenCiphertext: null } });
   }
-  return rows.length;
+  return rows.length + (await revokeSocialStudio(metaUserId, now, forget));
+}
+
+/**
+ * Social Studio's publishing connections (SOCIAL_STUDIO.md §Meta) use the same Meta app, so the same
+ * person's removal reaches them too: the stored user token and every Page / Instagram token it gave are
+ * wiped and the accounts need reconnecting — a scheduled post then fails with "reconnect", it is never
+ * sent with a dead token. A data-deletion request also removes the person's Facebook id and name (the id
+ * is part of a unique key, so it becomes an anonymous marker). Posts and their history stay: they are the
+ * business's own.
+ */
+async function revokeSocialStudio(metaUserId: string, now: Date, forget: boolean): Promise<number> {
+  const connections = await platformPrisma.socialConnection.findMany({ where: { provider: "META", externalUserId: metaUserId }, select: { id: true, projectId: true, status: true } });
+  if (connections.length === 0) return 0;
+  const live = connections.filter((c) => c.status !== "DISCONNECTED");
+  const ids = connections.map((c) => c.id);
+  await platformPrisma.socialConnection.updateMany({ where: { id: { in: live.map((c) => c.id) } }, data: { status: "NEEDS_RECONNECT", lastError: REVOKED, lastCheckedAt: now } });
+  await platformPrisma.socialConnection.updateMany({ where: { id: { in: ids } }, data: { credentialCiphertext: null, tokenExpiresAt: null } });
+  const accounts = await platformPrisma.socialAccount.updateMany({ where: { connectionId: { in: ids }, status: { not: "REMOVED" } }, data: { status: "NEEDS_RECONNECT", tokenCiphertext: null, lastError: REVOKED } });
+  await platformPrisma.socialAccount.updateMany({ where: { connectionId: { in: ids }, status: "REMOVED" }, data: { tokenCiphertext: null } });
+  if (live.length > 0) {
+    await platformPrisma.systemLog.createMany({
+      data: live.map((c) => ({
+        projectId: c.projectId,
+        level: "WARN" as const,
+        scope: "social",
+        message: forget ? "Meta data-deletion request: Social Studio connection needs reconnecting" : "Facebook access removed: Social Studio connection needs reconnecting",
+        metadata: { accounts: accounts.count },
+        targetType: "SocialConnection",
+        targetId: c.id,
+      })),
+    });
+  }
+  if (forget) {
+    for (const c of connections) {
+      await platformPrisma.socialConnection.update({ where: { id: c.id }, data: { externalUserId: `deleted-${randomBytes(9).toString("hex")}`, externalUserName: null } });
+    }
+  }
+  return live.length;
 }
 
 export async function handleMetaDeauthorize(signedRequest: string | null, now = new Date()): Promise<{ status: number }> {

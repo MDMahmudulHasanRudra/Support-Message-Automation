@@ -15,6 +15,15 @@ import { loadImportLookups, resolveRows, type ResolvedImportRow } from "@/server
 import { lockClient, refreshCurrentSubscription } from "@/server/clientSubscriptionStore";
 
 /** What this import may do beyond plain client records. */
+/**
+ * The amounts a file stated for a client (V5 §7), as stored on `Client.importedAmounts`: what the cell said, the
+ * file and the time. A record only — never money owed or paid.
+ */
+function importedAmountRecords(row: ResolvedImportRow, fileName: string): Prisma.InputJsonValue[] {
+  const at = new Date().toISOString();
+  return (row.importedAmounts ?? []).map((a) => ({ ...a, file: fileName, at }) as unknown as Prisma.InputJsonValue);
+}
+
 export interface ImportOptions {
   /** The person may sell subscriptions and the sub-module is on: subscription columns are imported. */
   subscriptions: boolean;
@@ -176,8 +185,13 @@ async function createRow(row: ResolvedImportRow, fileName: string, actorUserId: 
 export async function createImportedClient(tx: Prisma.TransactionClient, row: ResolvedImportRow, fileName: string, actorUserId: string | null, options: ImportOptions): Promise<string> {
   {
     const code = row.fields.code ?? (await nextClientCode(tx));
+    const amounts = importedAmountRecords(row, fileName);
     const created = await tx.client.create({
       data: {
+        ...(amounts.length ? { importedAmounts: amounts } : {}),
+        ...(row.businessType ? { businessType: row.businessType } : {}),
+        // Columns the person chose to keep (V5 §11) arrive as custom fields named after their headers.
+        ...(Object.keys(row.fields.customFields ?? {}).length ? { customFields: row.fields.customFields } : {}),
         code,
         name: row.fields.name,
         companyName: row.fields.companyName,
@@ -223,7 +237,12 @@ export async function updateImportedClient(tx: Prisma.TransactionClient, clientI
     if (!current || current.status === "ARCHIVED") return "ARCHIVED" as const;
     const data: Prisma.ClientUpdateInput = {};
     const changed: string[] = [];
+    // A derived value (V5: country from a number, currency and language from the country) only fills a gap: it
+    // never replaces what the client already has, unlike a value the file itself gave.
+    const derivedSkip = (key: "preferredLanguage" | "country" | "preferredCurrency") =>
+      Boolean(current[key]) && ((key === "preferredLanguage" && row.derived?.language) || (key === "country" && row.derived?.country) || (key === "preferredCurrency" && row.derived?.currency));
     const set = <K extends "name" | "companyName" | "category" | "preferredLanguage" | "address">(key: K, value: string | null) => {
+      if (key === "preferredLanguage" && derivedSkip("preferredLanguage")) return;
       if (value && value !== current[key]) {
         (data as Record<string, unknown>)[key] = value;
         changed.push(key);
@@ -236,6 +255,7 @@ export async function updateImportedClient(tx: Prisma.TransactionClient, clientI
     set("address", row.fields.address);
     // V3 columns: a value in the file replaces the client's; an empty cell leaves it alone.
     const setId = (column: "country" | "preferredCurrency" | "assignedTeamId" | "assignedMemberId" | "soldByMemberId", value: string | null, label: string) => {
+      if ((column === "country" || column === "preferredCurrency") && derivedSkip(column)) return;
       if (value && value !== current[column]) {
         (data as Record<string, unknown>)[column === "assignedTeamId" ? "assignedTeam" : column === "assignedMemberId" ? "assignedMember" : column === "soldByMemberId" ? "soldByMember" : column] =
           column === "assignedTeamId" || column === "assignedMemberId" || column === "soldByMemberId" ? { connect: { id: value } } : value;
@@ -257,12 +277,37 @@ export async function updateImportedClient(tx: Prisma.TransactionClient, clientI
       changed.push("tags");
     }
     const have = new Set(current.channels.map((c) => matchKeyOf(c.kind, c.normalizedValue)));
-    const newChannels = row.channels.filter((c) => !have.has(c.matchKey));
+    const newChannels = row.channels.filter((c) => !have.has(c.matchKey) && !(c.legacyMatchKey && have.has(c.legacyMatchKey)));
     if (newChannels.length) {
       // A new primary must not displace an existing one of the same kind.
       const primaryKinds = new Set((await tx.clientChannel.findMany({ where: { clientId, isPrimary: true }, select: { kind: true } })).map((c) => c.kind));
       await tx.clientChannel.createMany({ data: newChannels.map((c) => ({ clientId, ...channelFields({ ...c, isPrimary: c.isPrimary && !primaryKinds.has(c.kind) }, "import") })), skipDuplicates: true });
       changed.push("channels");
+    }
+    if (row.businessType && row.businessType !== current.businessType) {
+      data.businessType = row.businessType;
+      changed.push("business type");
+    }
+    // Kept columns: the file's value replaces that one custom field; every other custom field stays.
+    const kept = row.fields.customFields ?? {};
+    if (Object.keys(kept).length) {
+      const existing = current.customFields && typeof current.customFields === "object" && !Array.isArray(current.customFields) ? (current.customFields as Record<string, string>) : {};
+      const merged = { ...existing, ...kept };
+      if (JSON.stringify(merged) !== JSON.stringify(existing)) {
+        data.customFields = merged;
+        changed.push("custom fields");
+      }
+    }
+    // Amounts this file states are added to what earlier files stated; the same cell from the same file is not added twice.
+    const amounts = importedAmountRecords(row, fileName);
+    if (amounts.length) {
+      const before = Array.isArray(current.importedAmounts) ? (current.importedAmounts as Array<Record<string, unknown>>) : [];
+      const seen = new Set(before.map((a) => `${a.file}|${a.column}|${a.original}`));
+      const fresh = amounts.filter((a) => !seen.has(`${(a as Record<string, unknown>).file}|${(a as Record<string, unknown>).column}|${(a as Record<string, unknown>).original}`));
+      if (fresh.length) {
+        data.importedAmounts = [...(before as unknown as Prisma.InputJsonValue[]), ...fresh];
+        changed.push("amounts recorded at import");
+      }
     }
     if (Object.keys(data).length) await tx.client.update({ where: { id: clientId }, data });
     if (options.subscriptions && (await addImportedTerm(tx, clientId, row, actorUserId))) changed.push("subscription");

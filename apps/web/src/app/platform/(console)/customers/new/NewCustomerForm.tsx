@@ -2,7 +2,7 @@
 
 import NextLink from "next/link";
 import { useActionState, useState } from "react";
-import { BILLING_INTERVAL_LABELS, formatMoneyMinor, isBillingInterval, PROJECT_NAME_MAX, PROJECT_SLUG_MAX, SAAS_PAYMENT_METHODS, SAAS_PAYMENT_METHOD_LABELS, suggestProjectSlug } from "@support-automation/shared";
+import { BILLING_INTERVAL_LABELS, BUILT_IN_MODULE_TEMPLATES, formatMoneyMinor, isBillingInterval, PROJECT_NAME_MAX, PROJECT_SLUG_MAX, SAAS_PAYMENT_METHODS, SAAS_PAYMENT_METHOD_LABELS, suggestProjectSlug } from "@support-automation/shared";
 import { Alert, Button, Field, Input, Select, Textarea } from "@/components/ui";
 import { createCustomer, type CustomerFormState } from "@/server/platform/actions/customers";
 
@@ -170,6 +170,20 @@ export function NewCustomerForm({
                 />
               </Field>
             </div>
+            <Field
+              label="Business type of the first workspace"
+              htmlFor="c-modules"
+              hint="The plan's modules, or a business type / template applied on top of the plan (anything the plan does not include is left out and noted). Their Main Admin can change it later under Type & modules."
+            >
+              <Select id="c-modules" name="moduleSetup" defaultValue="PLAN">
+                <option value="PLAN">The plan&apos;s modules</option>
+                {BUILT_IN_MODULE_TEMPLATES.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <Field label="Customer address" htmlFor="c-host" error={e.hostname} hint={`Their own subdomain, for example customer2.${rootDomain ?? "udboy.com"}. You can add it later.`}>
               <Input id="c-host" name="hostname" maxLength={253} autoComplete="off" className="font-mono" placeholder={`customer2.${rootDomain ?? "udboy.com"}`} />
             </Field>

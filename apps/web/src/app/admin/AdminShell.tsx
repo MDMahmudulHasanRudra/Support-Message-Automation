@@ -2,7 +2,7 @@
 
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, FolderKanban, LayoutDashboard, LogOut, Palette, ShieldCheck } from "lucide-react";
+import { Blocks, Building2, ChevronRight, FolderKanban, LayoutDashboard, LogOut, Palette, ShieldCheck } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
 import { SupportSessionBanner, type SupportSessionBannerInfo } from "@/components/SupportSessionBanner";
@@ -42,6 +42,8 @@ function buildSections(granted: ReadonlySet<string>): Array<{ title: string; ite
       items: [
         { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
         { href: "/admin/projects", label: "Projects", icon: FolderKanban, exact: false },
+        // Reusable module selections (PROJECT_MODULES.md §8); editing needs projects.manage.
+        { href: "/admin/module-templates", label: "Module templates", icon: Blocks, exact: false },
         // SaaS (SAAS_PLATFORM_PLAN.md): customers and the addresses that open their workspaces.
         ...(granted.has("configuration.view") ? [{ href: "/admin/configuration", label: "Configuration", icon: Building2, exact: false }] : []),
         // Users & Permissions: the overview, then App Users and Permission Modules (the same in every

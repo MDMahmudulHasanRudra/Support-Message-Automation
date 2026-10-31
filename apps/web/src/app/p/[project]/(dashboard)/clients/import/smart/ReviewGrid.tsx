@@ -232,6 +232,7 @@ export function ReviewGrid({ jobId, onBackToMapping, onQueued }: { jobId: string
                     {labelOf(f)}
                   </th>
                 ))}
+                {data.rows.some((r) => r.money) ? <th className="min-w-56 px-2 py-2 font-semibold">Amounts (recorded only)</th> : null}
                 <th className="w-20 px-2 py-2" aria-label="Row actions" />
               </tr>
             </thead>
@@ -250,6 +251,7 @@ export function ReviewGrid({ jobId, onBackToMapping, onQueued }: { jobId: string
                     jobId={jobId}
                     row={row}
                     fields={fields}
+                    showMoney={data.rows.some((r) => r.money)}
                     selected={selected.has(row.id)}
                     onSelect={(on) => setSelected((s) => (on ? new Set([...s, row.id]) : new Set([...s].filter((id) => id !== row.id))))}
                     onChanged={refresh}
@@ -368,7 +370,25 @@ function moveFocus(from: HTMLElement, key: string) {
   }
 }
 
-function ReviewRow({ index, jobId, row, fields, selected, onSelect, onChanged }: { index: number; jobId: string; row: SmartReviewRow; fields: ClientImportFieldKey[]; selected: boolean; onSelect: (on: boolean) => void; onChanged: () => Promise<void> }) {
+function ReviewRow({
+  index,
+  jobId,
+  row,
+  fields,
+  showMoney,
+  selected,
+  onSelect,
+  onChanged,
+}: {
+  index: number;
+  jobId: string;
+  row: SmartReviewRow;
+  fields: ClientImportFieldKey[];
+  showMoney: boolean;
+  selected: boolean;
+  onSelect: (on: boolean) => void;
+  onChanged: () => Promise<void>;
+}) {
   const badge = STATUS_BADGE[row.status];
   const muted = row.status === "IGNORED" || row.status === "REPEAT";
   const errors = row.issues.filter((i) => i.severity === "error");
@@ -401,11 +421,29 @@ function ReviewRow({ index, jobId, row, fields, selected, onSelect, onChanged }:
             value={row.values[f] ?? ""}
             edited={row.edited.includes(f)}
             issues={row.issues.filter((i) => i.field === f)}
-            note={f === "expiryDate" ? (row.expiryBasis ?? null) : null}
+            note={
+              f === "expiryDate"
+                ? (row.expiryBasis ?? null)
+                : f === "country" || f === "currency" || f === "language"
+                  ? row.derived[f]
+                    ? `Auto selected: ${row.derived[f]} (from the ${f === "country" ? "phone number" : "country"})`
+                    : null
+                  : f === "phone" || f === "whatsapp"
+                    ? (row.phoneNotes.find((n) => n.field === f)?.note ?? null)
+                    : null
+            }
             disabled={row.status === "IGNORED"}
+            shown={
+              (f === "country" || f === "currency" || f === "language") && row.derived[f]
+                ? { value: f === "country" ? `${row.derived[f]}` : row.derived[f]!, kind: "auto" }
+                : (f === "phone" || f === "whatsapp") && row.stored[f] && row.stored[f] !== row.values[f]
+                  ? { value: row.stored[f]!, kind: "stored" }
+                  : null
+            }
             onSaved={onChanged}
           />
         ))}
+        {showMoney ? <MoneyCell money={row.money} /> : null}
         <td className="whitespace-nowrap px-2 py-2 text-right">
           {row.status === "IGNORED" ? (
             <IconButton label={`Bring back row ${row.rowNumber}`} onClick={async () => (await setSmartRowsIgnored(jobId, { rowIds: [row.id] }, false), await onChanged())}>
@@ -426,7 +464,7 @@ function ReviewRow({ index, jobId, row, fields, selected, onSelect, onChanged }:
       {listed.length ? (
         <tr className="[&>td]:border-b [&>td]:border-[var(--color-border)]">
           <td className={`${sticky} left-0`} />
-          <td colSpan={fields.length + 3} className="px-2 pb-2.5 pt-0">
+          <td colSpan={fields.length + (showMoney ? 4 : 3)} className="px-2 pb-2.5 pt-0">
             <ul className="sticky left-24 w-fit max-w-[min(42rem,calc(100vw-8rem))] space-y-0.5 text-[12px] text-[color:var(--color-danger-fg)]">
               {listed.map((e, i) => (
                 <li key={i} className="flex gap-1.5">
@@ -464,6 +502,7 @@ function EditableCell({
   edited,
   issues,
   note,
+  shown,
   disabled,
   onSaved,
 }: {
@@ -475,6 +514,8 @@ function EditableCell({
   edited: boolean;
   issues: FieldIssue[];
   note: string | null;
+  /** V5: what the client will actually get when it is not the cell itself — a derived value, or a number as stored. */
+  shown?: { value: string; kind: "auto" | "stored" } | null;
   disabled: boolean;
   onSaved: () => Promise<void>;
 }) {
@@ -573,14 +614,25 @@ function EditableCell({
         aria-invalid={severity === "error" || undefined}
         className={`group flex min-h-8 w-full items-center gap-1.5 rounded-[var(--radius-sm)] px-1.5 py-1 text-left transition-colors hover:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:cursor-default ${severity ? ISSUE_STYLE[severity] : "hover:bg-[var(--color-neutral-bg)]"} ${state === "error" ? "ring-1 ring-[var(--color-danger)]" : ""}`}
       >
-        <span className={`min-w-0 flex-1 truncate ${value ? (severity === "error" ? "text-[color:var(--color-danger-fg)]" : "") : "text-[color:var(--color-muted-foreground)]/60"}`} dir="auto">
-          {value || "—"}
-        </span>
+        {!value && shown?.kind === "auto" ? (
+          <span className="min-w-0 flex-1 truncate text-[color:var(--color-info-fg)]" dir="auto" data-auto>
+            {shown.value} <span className="rounded bg-[var(--color-info-bg)] px-1 text-[10px] font-semibold">Auto</span>
+          </span>
+        ) : (
+          <span className={`min-w-0 flex-1 truncate ${value ? (severity === "error" ? "text-[color:var(--color-danger-fg)]" : "") : "text-[color:var(--color-muted-foreground)]/60"}`} dir="auto">
+            {value || "—"}
+          </span>
+        )}
         {severity === "error" ? <AlertTriangle className="size-3 shrink-0 text-[color:var(--color-danger-fg)]" aria-hidden /> : null}
         {severity === "warning" ? <Info className="size-3 shrink-0 text-[color:var(--color-warning-fg)]" aria-hidden /> : null}
         {state === "saving" ? <Loader2 className="size-3 shrink-0 animate-spin" aria-label="Saving" /> : null}
         {edited && state !== "saving" ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" aria-label="Corrected" title="Corrected on this screen" /> : null}
       </button>
+      {shown?.kind === "stored" ? (
+        <span className="block max-w-56 truncate px-1.5 text-[10.5px] text-[color:var(--color-success-fg)]" title="How this number is saved" data-stored>
+          Saved as {shown.value}
+        </span>
+      ) : null}
       {note && field === "expiryDate" && value ? <span className="block max-w-56 truncate px-1.5 text-[10.5px] text-[color:var(--color-muted-foreground)]" title={note}>{note}</span> : null}
       {problem ? <span className="block max-w-56 px-1.5 text-[11px] text-[color:var(--color-warning-fg)]">{problem}</span> : null}
     </td>
@@ -747,5 +799,33 @@ function ConfirmPanel({ jobId, data, problemsHref, onBackToMapping, onQueued, on
         </Button>
       </div>
     </Card>
+  );
+}
+
+/**
+ * The amounts a row states (V5 §7), as recorded on the client: each in its own currency, never added up, never an
+ * invoice. Several currencies or an unreadable cell are shown with the reason and need acknowledging at import.
+ */
+function MoneyCell({ money }: { money: SmartReviewRow["money"] }) {
+  if (!money || money.status === "NONE") return <td className="px-2 py-2 text-[color:var(--color-subtle-foreground)]">—</td>;
+  if (money.status === "ZERO") return <td className="px-2 py-2 text-[12px] text-[color:var(--color-muted-foreground)]">Zero — nothing recorded</td>;
+  return (
+    <td className="px-2 py-2 text-[12.5px]" data-money={money.status}>
+      <ul className="space-y-0.5">
+        {money.amounts.map((a, i) => (
+          <li key={i} className={a.problem ? "text-[color:var(--color-danger-fg)]" : ""} title={a.problem ?? `From the ${a.column} column`}>
+            {a.amount && a.currency ? (
+              <span className="tabular-nums">
+                {a.currency} {a.amount}
+              </span>
+            ) : (
+              <span>&ldquo;{a.original.trim()}&rdquo;</span>
+            )}
+            {a.problem ? <span className="block text-[11px]">{a.problem}</span> : null}
+          </li>
+        ))}
+      </ul>
+      {money.status === "MULTIPLE" ? <span className="mt-0.5 block text-[11px] text-[color:var(--color-warning-fg)]">Several currencies — each kept separately</span> : null}
+    </td>
   );
 }

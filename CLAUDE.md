@@ -381,6 +381,7 @@ since `setInterval` doesn't await its callback)
 | `startChannelInboundProcessor` | 2s | Messenger / Instagram / Telegram: recorded webhook events → conversations, echoes, receipts (no-op unless the project has `OMNICHANNEL`; `OMNICHANNEL.md`) |
 | `startChannelOutboundProcessor` | 2s | the channels' send queue (`ChannelMessage` QUEUED → SENT), retries, UNKNOWN on an unknowable outcome |
 | `startChannelAiProcessor` | 3s | AI replies on the channels — the WhatsApp answering logic and gates, 1:1 only, ≤15 min old |
+| `startCopilotProcessor` | 2s | AI Copilot: answers agents' `AiDraft` requests (summary, reply draft, rewrite) through the production AI path; never sends (`INBOX_WORKSPACE.md`, feature `AI_COPILOT`) |
 | `startGroupRecoveryProcessor` | 60s | re-reads (ADD_ONLY, never deactivates) the group list of a CONNECTED account a sync left FAILED/PARTIAL (RETRY, 2 min → 6 h), one connected in the last 24 h whose phone may still be sending chats (FOLLOW, 2 → 30 min, never touches the status — `GROUP_SYNC.md` §10), a COMPLETED one holding inactive groups (VERIFY, bounded, never touches the status), or any other connected account once a day (DAILY, 17 Oct 2026, ADD_ONLY, never touches the status, `WHATSAPP_GROUP_DAILY_CHECK_HOURS=0` turns it off — catches a list shown as 500 of 1,800 after the FOLLOW window); an unavailable or empty read is unknown and writes nothing (`GROUP_SYNC.md` §8) |
 | `startIdentityReattributionProcessor` | 30s | after a Team Members identity change, re-decides the stored `isFromTeamMember` stamp (every member, "count from" date at the message's time), `SupportActivity.teamMemberId`, and Duty History days (last 120) for the identifiers involved — one `IdentityReattribution` request per project per tick (`teamManagement/reattribution.ts`) |
 | heartbeat | 15s | health state + DB connectivity log |
@@ -2874,6 +2875,32 @@ Feature `WHATSAPP_AVATARS`, **off by default and never switched by a plan** (`ma
   Team Members record (roster viewers) or a linked client (`clients.view`), with its source; otherwise
   "Phone number unavailable".
 
+### Website live chat (`WEBSITE_CHAT.md`)
+
+`ChannelType.WEBCHAT`: our own widget as a fourth channel. The public API (`/api/webchat/<key>`) checks the
+listed Origin (fails closed) and a hashed visitor token, and only RECORDS a `ChannelInboundEvent`; the
+worker's inbound processor makes the conversation and the send queue marks a WEBCHAT reply SENT on store.
+Never trust a visitor identity without the site's HMAC signature; never render visitor or agent text as HTML.
+WP9 (30 Oct 2026): visitor photos/PDFs (type from the bytes, `webchat/<projectId>/…` on the media volume,
+served to agents ONLY by `/p/<slug>/api/channels/attachment/…`, never a public address), business hours
+(never refuse a visitor while away), typing + seen (`seen=1` only while the panel is open and visible), a
+phone counts only with its own `phoneHash`, the visitor card labels a typed-email match as POSSIBLE, and the
+WordPress plugin zip never contains the identity secret.
+V3 (31 Oct 2026, `docs/website-chat-v3/`): the Widget Builder and its preview (the real `widget.js`, `data-preview`,
+sandboxed, never a request), photos both ways (JPEG/PNG/WebP only, no video; PDFs only for widgets saved before V3;
+agent photos only through `/api/channels/webchat-photo`, never WhatsApp's path), the visitor reads a photo only with
+its token (`/media`), builder images only through the upload route with a team photo's recorded consent, the install
+heartbeat, and the same embed line. Keep `publicWidgetSettings` the only settings a browser sees, the widget's outer
+container `all:initial!important`, and AI off unless the connection's switch is on (any photo goes to a person).
+
+### Inbox workspace — notes, priority, tags, AI Copilot (`INBOX_WORKSPACE.md`)
+
+A side panel on every WhatsApp Chat and All Conversations conversation, behind `INBOX_COLLABORATION` and
+`AI_COPILOT` (both off). A conversation is a WhatsApp chat (`accountId` + `chatId`) or a `ChannelConversation`
+(`ConversationRef`, packages/shared `inboxWorkspace.ts`). Notes and Copilot drafts are never sent by
+anything: "Use in reply" only fills the composer through `lib/composerBridge.ts`. The Copilot reuses the
+production prompt/parser and verified-only retrieval in the worker; never add a second AI path for it.
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →
@@ -2998,6 +3025,86 @@ original import, untouched. Up to 5,000 rows / 15 MB from any file. Rules worth 
 - Cancel stops between batches and never undoes; retry re-runs only FAILED and never-attempted rows. Drafts expire
   after 7 days; finished imports' staged rows are deleted after 7 days. The upload checks the zip directory before
   parsing (`inspectXlsxZip`).
+- **V5 (31 Oct 2026, SMART_IMPORT.md §12, `CLIENT_CONFIGURATION.md`)**. Rules worth not undoing:
+  - The first mapping screen is the horizontal Visual Mapping grid (`MappingGrid.tsx`), previews from staged rows.
+    The vertical view is a secondary toggle over the same state. Both views save through `mappingToSave`.
+  - The best-scoring sheet opens (`scoreSheet`); always opening the first sheet was the "0 rows" bug.
+  - A phone is stored as E.164 only when libphonenumber says it is valid. Otherwise it is kept as written and flagged,
+    never guessed. Matching also tries the old digits form (`legacyMatchKey`).
+  - A country / currency / language derived from a phone only fills an EMPTY field, never an existing client's value
+    (`derivedSkip`).
+  - Imported amounts are RECORDS ONLY (`Client.importedAmounts`, exact text, per currency). Never a due, invoice,
+    receipt, payment or balance, never converted or summed. An ambiguous currency word is confirmed by a person.
+  - Money is stored exactly or refused (string arithmetic). Billing is still 2 decimals: a real third decimal
+    (KWD/OMR/BHD/JOD) is refused, not rounded. Widening the ledger is a separate, unbuilt migration.
+  - Client Lists (`ClientCatalogEntry`, `ClientServicePlan`, `ClientCountrySetting`, key
+    `clients.manage_settings`) never take a value from a client. Renames and merges propagate in one transaction;
+    archive only hides. Every currency is ISO, with no cap. Country names for client components are made on the
+    server (Node and browser ICU differ, which broke hydration).
+
+### Commerce — products, stock, orders, sales pipeline (`COMMERCE.md`)
+
+Features `PRODUCT_CATALOG`, `ORDERS`, `SALES_PIPELINE`, all **off by default** (on in the E-commerce type). The
+customer's own selling, never the platform's billing; nothing here sends a message. Rules worth not undoing: one
+currency per order, BigInt minor units; stock changes only through `orderStockEffect` inside the status move's
+transaction, conditional (`stockQuantity >= qty`), each with an `InventoryMovement`; items editable only on a
+draft and re-priced on the server; order and lead histories are append-only (trigger).
+
+### Couriers, shops, API and webhooks (`COMMERCE_INTEGRATIONS.md`, `INTEGRATION_HUB.md`)
+
+Features `COURIER`, `WOOCOMMERCE`, `SHOPIFY`, `API_ACCESS`, all **off by default**. NOT live-verified with any
+provider. Rules worth not undoing: a booking or shop send is written first (unique invoice / partial unique index)
+and sent once; no answer is UNKNOWN, never retried by itself; no cancellation is offered (no courier documents one);
+imported orders never move our stock; webhooks in are accepted only with the provider's HMAC, the URL key picks the
+project; API keys are stored as SHA-256 only and run inside their project; outbound webhooks are signed, at least
+once, and never sent to an address that resolves privately. Background work runs in the APP process
+(`server/integrationsProcessor.ts`, `INTEGRATIONS_PROCESSOR_DISABLED=true`).
+
+### Commerce-aware AI (`AI_COMMERCE.md`)
+
+Five `AiSettings.commerce*` switches, all off by default except the request hand-over; each works only while its module
+is on. Rules worth not undoing: catalogue and order data reach the AI only as GROUNDING (`findCommerceGrounding`, shared
+by the WhatsApp fallback, channel AI, Sandbox and Copilot), never as a reply; with everything off nothing is queried and
+the prompt is byte-identical; order details only for an order whose phone IS the sender's WhatsApp-delivered number
+(`@c.us`, never a LID, never an order number someone typed); buy/cancel/return/change requests hand over as
+`COMMERCE_REQUEST`; a money amount not in the commerce entries hands over as `UNGROUNDED_PRICE`. The eight AI settings
+that nothing read are off the page and no longer written; their columns stay.
+
+The Overview adds a Commerce section and a setup checklist only for modules that are ON (`server/moduleOverview.ts`);
+commerce lists have personal/shared saved views (`ListSavedView`, query reduced to the page's own filters); the Module
+Builder shows "Data kept" on switched-off modules (PROJECT_MODULES.md §9).
+
+### Social Studio — native social publishing (`SOCIAL_STUDIO.md`, `docs/social-studio/`)
+
+Feature `SOCIAL_STUDIO`, **off by default and `manualOnly`**; keys `social.view/edit/approve/publish/manage`.
+Owned code, no Postiz or other publishing service. Rules worth not undoing:
+- **Each account is a durable publish job** (`SocialPostTarget`), claimed `DUE → PUBLISHING` by a conditional update with a lease;
+  every attempt is a `SocialPublishAttempt` written BEFORE sending; the adapter calls `markSent()` right before the request that
+  makes a post public. A safe refusal (rate/quota, never sent) retries with backoff then dead-letters; an unseen answer after
+  `markSent` is UNKNOWN and is NEVER re-sent by the engine — reconciliation (exactly one matching publication) or a person who
+  confirms "not there" settles it. A lost lease re-queues only when `requestSentAt` is null.
+- **`markSent` is a FENCE, not a stamp** (30 Oct 2026): one transaction checks the claim token AND an unexpired lease
+  on the job row, renews the lease and stamps `requestSentAt`; a lost job throws `SocialClaimLostError` and sends
+  nothing. Recovery takes the row FIRST, then reads `requestSentAt`. Long Instagram waits call `renewLease()`. Never
+  claim exactly-once (Meta has no idempotency key). `socialStudio.integration.test.ts` pins all of it.
+- **Background ticks read feature flags INSIDE `runWithProject`** with `tenantOfCustomer(customerId)`:
+  `disabledFeaturesFor` uses the customer-scoped client, which outside a project falls through to `cookies()` and
+  throws — the Social processor did that on every tick until the DB test caught it.
+- **An approval covers exact material** (`approvalHash` over text, per-account text and settings, media); any edit clears it and
+  the engine re-checks it when publishing. The engine runs in the APP process (`server/socialProcessor.ts`), never the WhatsApp worker.
+- **Meta publishing is separate from Meta messaging**: own callback `/api/social/meta/callback`, own scopes (`META_SOCIAL_SCOPES`,
+  never `pages_messaging`), own tables; it reuses the platform app env and `META_ALLOWED_PROJECT_IDS`. Tokens are decrypted only in
+  `server/social/accounts.ts`. Platforms fetch media only through 2-hour HMAC-signed URLs (`signedAssetUrl`).
+- **Adapters exist only for Facebook Pages and Instagram** (`socialMetaAdapter.test.ts` keeps the registry and the catalogue in agreement);
+  mock-tested, NOT live-verified, Meta App Review pending. A metric a platform does not return is absent, never 0.
+- **AI Content Studio** (`SocialAiRequest`, worker loop `social-ai`) answers through `resolveAiClient("RESPONSE")` — never a second
+  AI system; gated on SOCIAL_STUDIO + the AI Engine, NOT on AI Copilot. Its prompt forbids facts beyond the brief and the chosen
+  products; an answer only fills a draft (`aiAssisted`), which still needs approval. Recurring posts are separate scheduled
+  copies of the approved material (`repeatTimes`, wall-clock, ≤12), never a hidden repeat.
+- **RSS import only makes DRAFTS** (`server/social/rss.ts`): the connection resolves the name itself and connects only to
+  the address it checked (DNS rebinding), redirects re-checked, 2 MB (after decompression) / 15 s caps, only items newer
+  than the feed. An item and its draft are ONE transaction (a failure leaves nothing; the next run retries), the
+  (feed, guid) row locked while its draft is made. The media allowance is decided under a per-project advisory lock.
 
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 

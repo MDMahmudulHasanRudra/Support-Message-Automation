@@ -7,10 +7,13 @@ import { pageAccess } from "@/server/authorize";
 import { getChannelConnection } from "@/server/channels/connections";
 import { metaAllowedForProject, metaPlatformConfig } from "@/server/channels/metaOAuth";
 import { activeProjectId } from "@/server/projectContext";
+import { projectPath } from "@/server/projectPaths";
 import { ChannelMark } from "../../../conversations/ChannelMark";
 import { ConnectionStatusBadge } from "../ConnectionStatusBadge";
 import { SetupGuide } from "../SetupGuide";
 import { ConnectChannelForm } from "../ConnectChannelForm";
+import { WidgetStudio } from "../WebchatPanel";
+import { getWebchatDetails } from "@/server/channels/webchat";
 import { ConnectionHealth, ConnectionSwitches, CopyValue, DisconnectConnection, RenameConnection } from "../ConnectionPanel";
 
 export const metadata = { title: "Messaging channel" };
@@ -31,6 +34,9 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
   const def = CHANNELS[c.type];
   const disconnected = c.status === "DISCONNECTED";
   const meta = def.webhookKind === "META";
+  // Website chat: our own widget — no webhook, provider health or credentials (WEBSITE_CHAT.md).
+  const webchat = c.type === "WEBCHAT";
+  const wc = webchat ? await getWebchatDetails(c.id) : null;
   // Connected with "Connect with Facebook": the platform's app, no webhook or secret for anyone to paste.
   const oneClick = c.authMode === "PLATFORM";
   const canOneClick = meta && metaPlatformConfig().ok && metaAllowedForProject(await activeProjectId());
@@ -67,7 +73,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
       {query.connected ? (
         <div className="mb-6">
           <Alert tone="success" title={`${c.name} is connected`}>
-            {oneClick ? "New messages will arrive in All Conversations." : meta ? "One step left: paste the Callback URL and Verify token below into your Meta app's Webhooks settings." : "Telegram will now send its messages here."}
+            {webchat ? "Design it below, then copy the install code from Installation and press Verify installation." : oneClick ? "New messages will arrive in All Conversations." : meta ? "One step left: paste the Callback URL and Verify token below into your Meta app's Webhooks settings." : "Telegram will now send its messages here."}
           </Alert>
         </div>
       ) : null}
@@ -94,6 +100,45 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
         </div>
       ) : null}
 
+      {wc && !disconnected ? (
+        // Website chat (V3): the Widget Builder — every setting with the real widget beside it.
+        <div className="space-y-6">
+          <WidgetStudio
+            connectionId={c.id}
+            widgetKey={wc.key}
+            widgetName={c.name}
+            canManage={canManage}
+            settings={wc.settings}
+            origins={wc.allowedOrigins}
+            assets={wc.settings.assets.map((a) => ({ id: a.id, kind: a.kind, url: `${wc.scriptUrl ? new URL(wc.scriptUrl).origin : ""}/api/webchat/${encodeURIComponent(wc.key)}/brand/${encodeURIComponent(a.id)}` }))}
+            scriptUrl={wc.scriptUrl}
+            wordpressHref={canManage && wc.scriptUrl ? await projectPath(`/api/webchat/wordpress/${c.id}`) : null}
+            install={wc.install}
+            enabled={wc.enabled}
+            aiEnabled={c.aiAutomationEnabled}
+            hasIdentitySecret={wc.hasIdentitySecret}
+            stats={wc.stats}
+            general={
+              <div className="space-y-4 border-b border-[var(--color-border)] pb-4">
+                <ConnectionSwitches id={c.id} type={c.type} enabled={c.enabled} aiAutomationEnabled={c.aiAutomationEnabled} humanAgentEnabled={c.humanAgentEnabled} aiDisclosureEnabled={c.aiDisclosureEnabled} aiDisclosureText={c.aiDisclosureText} aiDisclosureIdleHours={c.aiDisclosureIdleHours} disconnected={disconnected} canManage={canManage} />
+                <div>
+                  <p className="mb-1.5 text-[12.5px] font-medium text-[color:var(--color-foreground)]">Name in this app</p>
+                  <RenameConnection id={c.id} name={c.name} canManage={canManage} />
+                </div>
+              </div>
+            }
+          />
+          <Card>
+            <SectionHeader title="Record" />
+            <dl className="space-y-1 text-[12.5px] text-[color:var(--color-muted-foreground)]">
+              <div>Created by {c.createdByUsername ?? "—"} · {when(c.createdAt)}</div>
+            </dl>
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <DisconnectConnection id={c.id} name={c.name} canManage={canManage} />
+            </div>
+          </Card>
+        </div>
+      ) : (
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <div className="space-y-6">
           <Card>
@@ -123,7 +168,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
             </Card>
           ) : null}
 
-          {!disconnected && !oneClick ? (
+          {!disconnected && !oneClick && !webchat ? (
             <Card>
               <SectionHeader title="Webhook" description={meta ? "Paste these into your Meta app: Webhooks (Messenger or Instagram product) → Callback URL and Verify token." : "Registered with Telegram automatically. Shown for reference."} />
               <div className="space-y-3">
@@ -137,7 +182,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
             </Card>
           ) : null}
 
-          {!disconnected ? (
+          {!disconnected && !webchat ? (
             <Card>
               <SectionHeader title="Health" description="Asks the provider whether the credentials, subscription and webhook still work." />
               <ConnectionHealth id={c.id} canManage={canManage} />
@@ -154,7 +199,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
               </ButtonLink>
             </Card>
           ) : null}
-          {canManage ? (
+          {canManage && !webchat ? (
             <Card>
               <SectionHeader
                 title={oneClick && !disconnected ? "Use your own Meta app instead" : disconnected ? (canOneClick ? "Or reconnect with your own Meta app" : "Reconnect") : meta ? "Replace credentials" : "Bot token"}
@@ -191,6 +236,7 @@ export default async function ChannelConnectionPage({ params, searchParams }: { 
           </Card>
         </div>
       </div>
+      )}
     </div>
   );
 }

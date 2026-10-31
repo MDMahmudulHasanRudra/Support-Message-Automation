@@ -82,7 +82,7 @@ async function planJob(job: { mapping: unknown }, staged: Array<{ rowNumber: num
     mapping,
     {} as SmartSamples,
   );
-  const resolved = resolveRows(built.valid, await loadImportLookups());
+  const resolved = resolveRows(built.valid, await loadImportLookups(), { fillLocale: mapping.fillLocale !== false });
   const repeats = findInFileDuplicates(resolved.valid);
   const rows: Plan["rows"] = new Map();
   for (const r of built.blank) rows.set(r, { blank: true });

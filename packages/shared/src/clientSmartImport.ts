@@ -8,7 +8,8 @@
  * old import and this one cannot disagree about what a client is.
  */
 
-import { buildImportRows, CLIENT_IMPORT_FIELDS, type ClientImportFieldKey, type ImportedClientRow, type ImportRowError } from "./clients.js";
+import { buildImportRows, CLIENT_IMPORT_FIELDS, CLIENT_LIMITS, type ClientImportFieldKey, type ImportedClientRow, type ImportRowError } from "./clients.js";
+import { readRowMoney, sanitizeMoneyMapping, type RowMoney, type SmartMoneyMapping } from "./clientImportMoney.js";
 import { parseDurationUnit, parseImportDate, parseSubscriptionKind } from "./clientImportExtras.js";
 import {
   EXPIRY_CONFLICT_RULES,
@@ -61,7 +62,22 @@ export interface SmartMapping {
   fields: Partial<Record<SmartRuleKey, SmartFieldRule>>;
   /** How the expiry is entered and how its gaps and conflicts are resolved (clientSmartExpiry.ts). */
   options?: SmartExpiryOptions;
+  /**
+   * V5: fill an empty country, preferred currency and language from the row's valid phone numbers (marked
+   * Auto selected). Absent = on. A value the file gives is never replaced either way.
+   */
+  fillLocale?: boolean;
+  /** V5 §7: how amounts are laid out (one column + currency, or one column per currency). Absent = no amounts read. */
+  money?: SmartMoneyMapping;
+  /**
+   * V5 §11: columns no field reads that the person chose to keep, each as a custom field named after its header —
+   * so data the import does not understand is kept on purpose, never dropped without a word.
+   */
+  keepColumns?: string[];
 }
+
+/** At most this many file columns can be kept as custom fields (the client's own limit leaves room for others). */
+export const SMART_KEEP_COLUMNS_MAX = 20;
 
 export const SMART_FIELD_KEYS = CLIENT_IMPORT_FIELDS.map((f) => f.key) as ClientImportFieldKey[];
 const FIELD_KEY_SET = new Set<string>(SMART_FIELD_KEYS);
@@ -73,7 +89,7 @@ export const isExpiryPartKey = (key: unknown): key is ExpiryPartKey => typeof ke
  * field always present. A test pins it against the template.
  */
 export const SMART_REVIEW_ORDER: readonly ClientImportFieldKey[] = [
-  "name", "company", "code", "phone", "whatsapp", "email", "country", "currency", "address", "category", "tags", "status", "language",
+  "name", "company", "code", "phone", "whatsapp", "email", "country", "currency", "address", "category", "businessType", "tags", "status", "language",
   "team", "assignedTo", "soldBy", "service", "subscriptionType", "startDate", "duration", "durationUnit", "expiryDate",
   "facebook", "instagram", "telegram", "note",
 ];
@@ -92,6 +108,7 @@ export const SMART_SAMPLE_VALUES: Record<ClientImportFieldKey, string> = {
   name: "Sample Client",
   code: "SAMPLE-001",
   company: "Sample Company Ltd",
+  businessType: "Retail",
   phone: "+8801700000000",
   email: "client@example.com",
   whatsapp: "+8801700000000",
@@ -120,7 +137,7 @@ export const SMART_SAMPLE_VALUES: Record<ClientImportFieldKey, string> = {
 /** Groups for the mapping editor, most-used first. */
 export const SMART_FIELD_GROUPS: ReadonlyArray<{ title: string; fields: readonly ClientImportFieldKey[] }> = [
   { title: "Essentials", fields: ["name", "phone", "email", "whatsapp", "company"] },
-  { title: "Details", fields: ["code", "status", "category", "tags", "language", "address", "country", "currency", "note"] },
+  { title: "Details", fields: ["code", "status", "category", "businessType", "tags", "language", "address", "country", "currency", "note"] },
   { title: "Other channels", fields: ["facebook", "instagram", "telegram"] },
   { title: "People", fields: ["team", "soldBy", "assignedTo"] },
   { title: "Subscription", fields: ["service", "subscriptionType", "startDate", "duration", "durationUnit", "expiryDate"] },
@@ -210,7 +227,14 @@ export function labelOf(field: SmartRuleKey): string {
 export function upgradeMapping(raw: unknown): SmartMapping {
   if (raw && typeof raw === "object" && (raw as { version?: unknown }).version === 2 && typeof (raw as { fields?: unknown }).fields === "object") {
     const m = raw as SmartMapping;
-    return { version: 2, fields: { ...(m.fields ?? {}) }, ...(m.options ? { options: { ...m.options } } : {}) };
+    return {
+      version: 2,
+      fields: { ...(m.fields ?? {}) },
+      ...(m.options ? { options: { ...m.options } } : {}),
+      ...(m.fillLocale === false ? { fillLocale: false } : {}),
+      ...(m.money ? { money: m.money } : {}),
+      ...(m.keepColumns?.length ? { keepColumns: [...m.keepColumns] } : {}),
+    };
   }
   const fields: SmartMapping["fields"] = {};
   if (raw && typeof raw === "object") {
@@ -303,6 +327,8 @@ export interface SmartBuildResult {
   /** Rows with nothing in them at all (no cell, no correction) — skipped, as the old import skips a blank line. */
   blank: number[];
   outputs: Map<number, Record<ClientImportFieldKey, string>>;
+  /** Per row: the amounts it states (V5 §7). Rows without a money mapping are absent. */
+  money: Map<number, RowMoney>;
   /** Per row: the problems and notes attached to the field they concern (the review grid colours that cell). */
   issues: Map<number, FieldIssue[]>;
   /** Per row: the exact expiry it will have and how it was reached — for display. */
@@ -311,7 +337,7 @@ export interface SmartBuildResult {
 
 /** Staged rows → the existing import's valid/invalid rows, keeping each row's own number. */
 export function buildSmartRows(rows: readonly StagedRow[], mapping: SmartMapping, samples: SmartSamples): SmartBuildResult {
-  const result: SmartBuildResult = { valid: [], invalid: [], ignored: [], blank: [], outputs: new Map(), issues: new Map(), expiry: new Map() };
+  const result: SmartBuildResult = { valid: [], invalid: [], ignored: [], blank: [], outputs: new Map(), money: new Map(), issues: new Map(), expiry: new Map() };
   for (const row of rows) {
     const raw = materializeRow(row.source, mapping, samples, row.edits ?? {});
     const expiryEdited = Object.prototype.hasOwnProperty.call(row.edits ?? {}, "expiryDate");
@@ -320,6 +346,8 @@ export function buildSmartRows(rows: readonly StagedRow[], mapping: SmartMapping
     // The review shows what the row says, with the expiry in its exact form — not what is passed on.
     result.outputs.set(row.rowNumber, { ...raw, expiryDate: resolution.finalExpiry ?? (resolution.output.expiryDate || raw.expiryDate) });
     result.expiry.set(row.rowNumber, { finalExpiry: resolution.finalExpiry, basis: resolution.basis });
+    const money = mapping.money ? readRowMoney(row.source, mapping.money) : null;
+    if (money) result.money.set(row.rowNumber, money);
     if (row.ignored) {
       result.ignored.push(row.rowNumber);
       continue;
@@ -342,9 +370,32 @@ export function buildSmartRows(rows: readonly StagedRow[], mapping: SmartMapping
     // Judged on what the row says WITH its expiry composed (parts → one date), or a valid row would show a red cell.
     result.issues.set(row.rowNumber, fieldIssues({ ...raw, expiryDate: resolution.finalExpiry ?? raw.expiryDate }, resolution.issues, errors));
     if (errors.length || !built.valid[0]) result.invalid.push({ rowNumber: row.rowNumber, errors: errors.length ? errors : ["The row could not be read."] });
-    else result.valid.push({ ...built.valid[0], rowNumber: row.rowNumber, recordedExpiry: resolution.recordedExpiry });
+    else {
+      const valid = built.valid[0];
+      const kept = keptCustomFields(row.source, mapping.keepColumns);
+      result.valid.push({
+        ...valid,
+        rowNumber: row.rowNumber,
+        recordedExpiry: resolution.recordedExpiry,
+        ...(Object.keys(kept).length ? { fields: { ...valid.fields, customFields: { ...valid.fields.customFields, ...kept } } } : {}),
+        ...(money?.amounts.length ? { importedAmounts: money.amounts } : {}),
+      });
+    }
   }
   return result;
+}
+
+/** The kept columns of one row, as custom fields: named after the header, values cut to the client's limit. */
+export function keptCustomFields(source: Readonly<Record<string, string>>, keep: readonly string[] | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const header of keep ?? []) {
+    const value = (source[header] ?? "").trim();
+    if (!value) continue;
+    const key = header.trim().slice(0, CLIENT_LIMITS.customFieldKey);
+    if (!key || key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    out[key] = value.slice(0, CLIENT_LIMITS.customFieldValue);
+  }
+  return out;
 }
 
 /**
@@ -418,7 +469,31 @@ export function sanitizeSmartMapping(raw: unknown, headers: readonly string[]): 
     if (!(EXPIRY_CONFLICT_RULES as readonly unknown[]).includes(optionsIn.expiryConflict)) return { ok: false, error: "Choose what to do when the expiry and the duration disagree." };
     options.expiryConflict = optionsIn.expiryConflict as SmartExpiryOptions["expiryConflict"];
   }
-  return { ok: true, mapping: { version: 2, fields, ...(Object.keys(options).length ? { options } : {}) } };
+  const fillLocale = (raw as { fillLocale?: unknown }).fillLocale;
+  if (fillLocale !== undefined && typeof fillLocale !== "boolean") return { ok: false, error: "Choose whether to fill the country, currency and language from phone numbers." };
+  const money = sanitizeMoneyMapping((raw as { money?: unknown }).money, headers);
+  if (!money.ok) return { ok: false, error: money.error };
+  const keepIn = (raw as { keepColumns?: unknown }).keepColumns;
+  const keepColumns: string[] = [];
+  if (keepIn !== undefined) {
+    if (!Array.isArray(keepIn)) return { ok: false, error: "The kept columns could not be read." };
+    for (const c of keepIn) {
+      if (typeof c !== "string" || !headerSet.has(c)) return { ok: false, error: `The file has no column called "${String(c).slice(0, 40)}" to keep.` };
+      if (!keepColumns.includes(c)) keepColumns.push(c);
+    }
+    if (keepColumns.length > SMART_KEEP_COLUMNS_MAX) return { ok: false, error: `At most ${SMART_KEEP_COLUMNS_MAX} columns can be kept as custom fields.` };
+  }
+  return {
+    ok: true,
+    mapping: {
+      version: 2,
+      fields,
+      ...(Object.keys(options).length ? { options } : {}),
+      ...(fillLocale === false ? { fillLocale: false } : {}),
+      ...(money.money ? { money: money.money } : {}),
+      ...(keepColumns.length ? { keepColumns } : {}),
+    },
+  };
 }
 
 /** A mapping with every "sample" rule replaced by the sample's value, so the import does not depend on the day it runs. */
@@ -431,7 +506,14 @@ export function freezeSamples(mapping: SmartMapping, samples: SmartSamples): Sma
     else if (samples[field]) fields[field] = { mode: "constant", value: samples[field], sample: true };
   }
   for (const part of EXPIRY_PART_KEYS) if (mapping.fields[part]) fields[part] = mapping.fields[part];
-  return { version: 2, fields, ...(mapping.options ? { options: mapping.options } : {}) };
+  return {
+    version: 2,
+    fields,
+    ...(mapping.options ? { options: mapping.options } : {}),
+    ...(mapping.fillLocale === false ? { fillLocale: false } : {}),
+    ...(mapping.money ? { money: mapping.money } : {}),
+    ...(mapping.keepColumns?.length ? { keepColumns: mapping.keepColumns } : {}),
+  };
 }
 
 /** The columns each field reads — for showing one column feeding several fields. */
@@ -514,6 +596,9 @@ export function assessSmartFile(input: {
   totalRows: number;
   readyRows: number;
   invalidRows: number;
+  /** V5 §7: ready rows stating amounts in more than one currency, and money cells that could not be read. */
+  moneyMultipleRows?: number;
+  moneyProblemRows?: number;
 }): FileAssessment {
   const blocks: FileCheck[] = [];
   const warnings: FileCheck[] = [];
@@ -535,6 +620,18 @@ export function assessSmartFile(input: {
     warnings.push({
       code: "IDENTITY_SAME_VALUE",
       message: `${repeated.map(labelOf).join(", ")} ${repeated.length === 1 ? "has" : "have"} the same value on every row. Clients are recognised by these, so every row after the first will be treated as the same client.`,
+    });
+  }
+  if (input.moneyMultipleRows) {
+    warnings.push({
+      code: "MONEY_MULTIPLE",
+      message: `${input.moneyMultipleRows} row(s) state amounts in more than one currency. Each amount is kept on the client in its own currency, never added together or converted, and no invoice or payment is created. Exclude those rows instead if that is not what you want.`,
+    });
+  }
+  if (input.moneyProblemRows) {
+    warnings.push({
+      code: "MONEY_PROBLEM",
+      message: `${input.moneyProblemRows} row(s) have an amount that could not be read with certainty (shown in the review). The cell is kept exactly as written, with the reason; nothing is guessed.`,
     });
   }
   if (input.blankHeaders || input.duplicateHeaders) {

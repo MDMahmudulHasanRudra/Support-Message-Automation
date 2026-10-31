@@ -1,4 +1,5 @@
-import { channelMessagePreview, decideReplyWindow, validateChannelText } from "@support-automation/shared";
+import { Prisma } from "@prisma/client";
+import { channelMessagePreview, decideReplyWindow, validateChannelText, type ChannelAttachment } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
 import { connectionProblem } from "@/server/channels/inbox";
@@ -26,7 +27,7 @@ const NONCE = /^[A-Za-z0-9_-]{8,64}$/;
  * a retried request or a network hiccup that re-submits finds the same row (`idempotencyKey`) and
  * never queues it twice.
  */
-export async function queueChannelReply(input: { conversationId: string; text: string; nonce: string; userId: string; now?: Date }): Promise<{ messageId: string; duplicate: boolean }> {
+export async function queueChannelReply(input: { conversationId: string; text: string; nonce: string; userId: string; attachments?: ChannelAttachment[]; now?: Date }): Promise<{ messageId: string; duplicate: boolean }> {
   const now = input.now ?? new Date();
   if (!NONCE.test(input.nonce)) throw new ChannelReplyError("This reply could not be identified. Reload the page and send it again.");
   const conversation = await prisma.channelConversation.findUnique({
@@ -43,8 +44,12 @@ export async function queueChannelReply(input: { conversationId: string; text: s
   const problem = connectionProblem({ connectionStatus: conversation.connection.status, connectionEnabled: conversation.connection.enabled, connectionName: conversation.connection.name });
   if (problem) throw new ChannelReplyError(problem);
   const text = input.text.trim();
-  const invalid = validateChannelText(conversation.type, text);
+  // A photo reply exists only for website chat (V3), where the file is ours to store and serve; the caption is optional.
+  const attachments = input.attachments ?? [];
+  if (attachments.length > 0 && conversation.type !== "WEBCHAT") throw new ChannelReplyError("Photos can be sent only in website chat conversations.");
+  const invalid = attachments.length > 0 && !text ? null : validateChannelText(conversation.type, text);
   if (invalid) throw new ChannelReplyError(invalid);
+  const contentType = attachments.length > 0 ? "IMAGE" : "TEXT";
   const window = decideReplyWindow({ type: conversation.type, lastInboundAt: conversation.lastInboundAt, now, humanAgentEnabled: conversation.connection.humanAgentEnabled, automated: false });
   if (!window.allowed) throw new ChannelReplyError(window.reason);
 
@@ -61,8 +66,9 @@ export async function queueChannelReply(input: { conversationId: string; text: s
         type: conversation.type,
         direction: "OUTBOUND",
         senderType: "AGENT",
-        text,
-        contentType: "TEXT",
+        text: text || null,
+        contentType,
+        ...(attachments.length > 0 ? { attachments: attachments as unknown as Prisma.InputJsonValue } : {}),
         occurredAt: now,
         deliveryStatus: "QUEUED",
         idempotencyKey,
@@ -87,7 +93,7 @@ export async function queueChannelReply(input: { conversationId: string; text: s
     where: { id: conversation.id },
     data: {
       lastMessageAt: now,
-      lastMessagePreview: channelMessagePreview(text, "TEXT"),
+      lastMessagePreview: channelMessagePreview(text || null, contentType),
       lastMessageDirection: "OUTBOUND",
       reviewedAt: now,
       aiSuppressedUntil: until,
@@ -124,14 +130,36 @@ export async function markChannelConversationRead(conversationId: string, now: D
   await prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { reviewedAt: now } });
 }
 
-export async function setChannelConversationStatus(conversationId: string, status: "OPEN" | "CLOSED", now: Date = new Date()): Promise<void> {
-  const updated = await prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { status, closedAt: status === "CLOSED" ? now : null } });
-  if (updated.count === 0) throw new ChannelReplyError("That conversation no longer exists.");
+export async function setChannelConversationStatus(conversationId: string, status: "OPEN" | "CLOSED", now: Date = new Date(), actorId: string | null = null): Promise<void> {
+  const before = await prisma.channelConversation.findFirst({ where: { id: conversationId }, select: { status: true, projectId: true } });
+  if (!before) throw new ChannelReplyError("That conversation no longer exists.");
+  if (before.status === status) return;
+  await prisma.$transaction([
+    prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { status, closedAt: status === "CLOSED" ? now : null } }),
+    // The conversation's history (INBOX_WORKSPACE.md): who closed or reopened it, and when.
+    prisma.conversationEvent.create({ data: { projectId: before.projectId, channelConversationId: conversationId, kind: "STATUS", fromValue: before.status, toValue: status, actorId } }),
+  ]);
 }
 
-export async function assignChannelConversation(conversationId: string, userId: string | null): Promise<void> {
-  const updated = await prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { assignedUserId: userId } });
-  if (updated.count === 0) throw new ChannelReplyError("That conversation no longer exists.");
+export async function assignChannelConversation(conversationId: string, userId: string | null, actorId: string | null = null): Promise<void> {
+  const before = await prisma.channelConversation.findFirst({ where: { id: conversationId }, select: { assignedUserId: true, projectId: true } });
+  if (!before) throw new ChannelReplyError("That conversation no longer exists.");
+  if (before.assignedUserId === userId) return;
+  await prisma.$transaction([
+    prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { assignedUserId: userId } }),
+    prisma.conversationEvent.create({ data: { projectId: before.projectId, channelConversationId: conversationId, kind: "ASSIGNEE", fromValue: before.assignedUserId, toValue: userId, actorId } }),
+  ]);
+}
+
+/** Team ownership of a channel conversation (null = none), with its history row. */
+export async function assignChannelConversationTeam(conversationId: string, teamId: string | null, actorId: string | null = null): Promise<void> {
+  const before = await prisma.channelConversation.findFirst({ where: { id: conversationId }, select: { assignedTeamId: true, projectId: true } });
+  if (!before) throw new ChannelReplyError("That conversation no longer exists.");
+  if (before.assignedTeamId === teamId) return;
+  await prisma.$transaction([
+    prisma.channelConversation.updateMany({ where: { id: conversationId }, data: { assignedTeamId: teamId } }),
+    prisma.conversationEvent.create({ data: { projectId: before.projectId, channelConversationId: conversationId, kind: "TEAM", fromValue: before.assignedTeamId, toValue: teamId, actorId } }),
+  ]);
 }
 
 /** Hand the conversation back to AI now, instead of waiting for the takeover period to pass. */

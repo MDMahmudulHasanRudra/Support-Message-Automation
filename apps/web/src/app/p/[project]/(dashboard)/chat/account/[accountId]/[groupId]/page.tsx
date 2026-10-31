@@ -1,3 +1,4 @@
+import { ConversationWorkspace } from "../../../../inbox/ConversationWorkspace";
 import { requireProjectPage } from "@/server/authorize";
 import { runWithProject } from "@/server/projectContext";
 import { ArrowLeft, Bot, ExternalLink, Smartphone, Users } from "lucide-react";
@@ -180,6 +181,8 @@ export default async function ChatConversationPage({
     <>
       {contactProfile ? <ContactPanel profile={contactProfile} accountId={group.accountId} closeHref={basePath} picturePath={pictures[contactProfile.senderId]} /> : null}
       {groupProfile ? <GroupPanel profile={groupProfile} contactHref={contactHref} closeHref={basePath} picturePath={pictures[group.whatsappGroupId]} /> : null}
+      {/* INBOX_WORKSPACE.md: notes, priority, tags and the AI Copilot; nothing unless the project has them on. */}
+      {!contactProfile && !groupProfile ? <ConversationWorkspace conversation={{ kind: "whatsapp", accountId: group.accountId, chatId: group.whatsappGroupId }} /> : null}
     </>
   );
 

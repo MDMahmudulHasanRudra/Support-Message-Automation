@@ -1,12 +1,15 @@
+import { ConversationWorkspace } from "../../../../inbox/ConversationWorkspace";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
-import { AlertTriangle, ArrowLeft, Bot, Check, CheckCheck, Clock, Paperclip, Settings2, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bot, Check, CheckCheck, Clock, Globe, Paperclip, Settings2, ShieldCheck, Users } from "lucide-react";
 import { CHANNELS, channelContentLabel, DELIVERY_STATUS_LABEL, isInboxScope } from "@support-automation/shared";
 import Link from "@/components/ProjectLink";
 import { pageAccess, requireProjectPage } from "@/server/authorize";
 import { runWithProject } from "@/server/projectContext";
 import { getChannelThread, type ChannelThreadMessage } from "@/server/channels/inbox";
 import { markChannelConversationRead } from "@/server/channels/replies";
+import { getWebchatVisitorCard, type WebchatVisitorCard } from "@/server/channels/webchatVisitorCard";
+import { projectPath } from "@/server/projectPaths";
 import { ThreadScroller } from "../../../../chat/ThreadScroller";
 import { conversationAvatar } from "../../../../chat/avatar";
 import { ChannelMark } from "../../../ChannelMark";
@@ -39,9 +42,14 @@ export default async function ChannelConversationPage({ params }: { params: Prom
   const aiPaused = Boolean(conversation.aiSuppressedUntil && new Date(conversation.aiSuppressedUntil) > new Date());
   const disabledReason = !canReply ? "Your role can read conversations but not reply. Ask an administrator for “Reply on Messenger, Instagram & Telegram”." : thread.replyBlocked;
   const def = CHANNELS[conversation.type];
+  // Website chat: who the visitor is, how sure we are, and their client record and orders (WEBSITE_CHAT.md).
+  const visitorCard = conversation.type === "WEBCHAT" ? await getWebchatVisitorCard(session, conversation.id) : null;
+  // A visitor's file is served only through the project's own checked route, never from a public address.
+  const attachmentBase = await projectPath("/api/channels/attachment");
 
   return (
-    <>
+    <div className="relative flex min-h-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 sm:px-6">
         <Link
           href={`/conversations/${scope}`}
@@ -83,6 +91,7 @@ export default async function ChannelConversationPage({ params }: { params: Prom
           canReply={canReply}
         />
       </header>
+      {visitorCard ? <VisitorStrip card={visitorCard} /> : null}
 
       <ThreadScroller key={conversation.id} latestEntryId={messages.at(-1)?.id ?? null}>
         {hasMore ? <p className="px-6 pt-4 text-center text-[11px] text-[color:var(--color-muted-foreground)]">Showing the most recent 200 messages.</p> : null}
@@ -99,7 +108,7 @@ export default async function ChannelConversationPage({ params }: { params: Prom
                     <span className="h-px flex-1 bg-[var(--color-border)]" />
                   </div>
                 ) : null}
-                <Bubble message={m} channelLabel={def.label} deliveryReceipts={def.deliveryReceipts || def.readReceipts} />
+                <Bubble message={m} channelLabel={def.label} deliveryReceipts={def.deliveryReceipts || def.readReceipts} attachmentBase={attachmentBase} />
               </li>
             );
           })}
@@ -115,11 +124,14 @@ export default async function ChannelConversationPage({ params }: { params: Prom
           </Link>
         </p>
       ) : null}
-    </>
+      </div>
+      {/* INBOX_WORKSPACE.md: notes, priority, tags, Team and the AI Copilot. */}
+      <ConversationWorkspace conversation={{ kind: "channel", conversationId: conversation.id }} />
+    </div>
   );
 }
 
-function Bubble({ message: m, channelLabel, deliveryReceipts }: { message: ChannelThreadMessage; channelLabel: string; deliveryReceipts: boolean }) {
+function Bubble({ message: m, channelLabel, deliveryReceipts, attachmentBase }: { message: ChannelThreadMessage; channelLabel: string; deliveryReceipts: boolean; attachmentBase: string }) {
   const outbound = m.direction === "OUTBOUND";
   const failed = m.deliveryStatus === "FAILED";
   const unknown = m.deliveryStatus === "UNKNOWN";
@@ -151,21 +163,36 @@ function Bubble({ message: m, channelLabel, deliveryReceipts }: { message: Chann
           {m.text ? <p className="whitespace-pre-wrap">{m.text}</p> : null}
           {m.attachments.length > 0 ? (
             <ul className={`${m.text ? "mt-1.5" : ""} space-y-1`}>
-              {m.attachments.map((a, i) => (
-                <li key={i} className="flex items-center gap-1.5 text-[12px] text-[color:var(--color-muted-foreground)]">
-                  <Paperclip className="size-3 shrink-0" aria-hidden />
-                  {a.url ? (
-                    <a href={a.url} target="_blank" rel="noopener noreferrer nofollow" className="link">
-                      {a.name ?? channelContentLabel(a.type)}
-                    </a>
-                  ) : (
-                    <span>
-                      {a.name ?? channelContentLabel(a.type)}
-                      {a.fileId ? " (open it in Telegram)" : ""}
-                    </span>
-                  )}
-                </li>
-              ))}
+              {m.attachments.map((a, i) => {
+                // A website chat visitor's file is stored here; every other channel's is a provider link.
+                const stored = a.storageKey ? `${attachmentBase}/${m.id}/${i}` : null;
+                if (stored && a.type === "IMAGE") {
+                  return (
+                    <li key={i}>
+                      <a href={stored} target="_blank" rel="noopener noreferrer" className="block w-fit">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- served by our own checked route, not optimisable */}
+                        <img src={stored} alt={a.name ?? "Photo from the visitor"} loading="lazy" className="max-h-56 max-w-full rounded-[var(--radius-md)] ring-1 ring-inset ring-[var(--color-border)]" />
+                      </a>
+                    </li>
+                  );
+                }
+                const href = stored ?? a.url ?? null;
+                return (
+                  <li key={i} className="flex items-center gap-1.5 text-[12px] text-[color:var(--color-muted-foreground)]">
+                    <Paperclip className="size-3 shrink-0" aria-hidden />
+                    {href ? (
+                      <a href={href} target="_blank" rel="noopener noreferrer nofollow" className="link">
+                        {a.name ?? channelContentLabel(a.type)}
+                      </a>
+                    ) : (
+                      <span>
+                        {a.name ?? channelContentLabel(a.type)}
+                        {a.fileId ? " (open it in Telegram)" : ""}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           ) : null}
           {!m.text && m.attachments.length === 0 ? <p className="italic text-[color:var(--color-muted-foreground)]">[{channelContentLabel(m.contentType)}]</p> : null}
@@ -196,5 +223,64 @@ function Bubble({ message: m, channelLabel, deliveryReceipts }: { message: Chann
         ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * The website chat visitor, under the header. Every identifier says how far it can be trusted: "Signed in"
+ * only when the site signed it; otherwise the name and email are what the visitor typed, and a client or
+ * order found through a typed email is a POSSIBLE match, never who they are.
+ */
+function VisitorStrip({ card }: { card: WebchatVisitorCard }) {
+  const possible = "possible match: the visitor typed this email, check who they are before sharing details";
+  return (
+    <section aria-label="Website visitor" className="shrink-0 space-y-1 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-2 text-[11.5px] text-[color:var(--color-muted-foreground)] sm:px-6">
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {card.verified ? (
+          <span className="inline-flex items-center gap-1 font-medium text-[color:var(--color-success-fg)]">
+            <ShieldCheck className="size-3.5" aria-hidden />
+            Signed in on the website
+          </span>
+        ) : (
+          <span>Not signed in: name and email are as the visitor typed them</span>
+        )}
+        {card.email ? <span className="[overflow-wrap:anywhere]">{card.email}</span> : null}
+        {card.phone ? <span className="tabular">+{card.phone}</span> : null}
+        {card.pageUrl ? (
+          <a href={card.pageUrl} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex min-w-0 max-w-full items-center gap-1 hover:underline" title={card.pageUrl}>
+            <Globe className="size-3 shrink-0" aria-hidden />
+            <span className="truncate">{card.pageUrl}</span>
+          </a>
+        ) : null}
+        <span>
+          Last seen {dayFormat.format(new Date(card.lastSeenAt))}, {timeFormat.format(new Date(card.lastSeenAt))}
+        </span>
+        {card.typing ? <span className="font-medium text-[color:var(--color-info-fg)]">Typing…</span> : null}
+      </p>
+      {card.clients && card.clients.length > 0 ? (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium text-[color:var(--color-foreground)]">Client</span>
+          {card.clients.map((c) => (
+            <span key={c.id}>
+              <Link href={`/clients/${c.id}`} className="link">
+                {c.name} ({c.code})
+              </Link>
+              <span className="text-[color:var(--color-subtle-foreground)]">{c.verified ? ` · by ${c.matchedBy}` : ` · ${possible}`}</span>
+            </span>
+          ))}
+        </p>
+      ) : null}
+      {card.orders && card.orders.length > 0 ? (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium text-[color:var(--color-foreground)]">Orders</span>
+          {card.orders.map((o) => (
+            <Link key={o.id} href={`/commerce/orders/${o.id}`} className="link tabular">
+              {o.number} · {o.status} · {o.total}
+            </Link>
+          ))}
+          {card.orders.some((o) => !o.verified) ? <span className="text-[color:var(--color-subtle-foreground)]">({possible})</span> : null}
+        </p>
+      ) : null}
+    </section>
   );
 }

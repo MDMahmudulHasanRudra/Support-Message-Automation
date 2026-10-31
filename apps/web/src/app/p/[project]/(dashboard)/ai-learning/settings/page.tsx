@@ -1,7 +1,9 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 
+import { PROJECT_FEATURES, resolveAiCommercePolicy } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { pageAccess } from "@/server/authorize";
+import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { AiSettingsForm } from "./AiSettingsForm";
 
@@ -15,6 +17,13 @@ export default async function AiSettingsPage() {
       orderBy: { name: "asc" },
     }),
   ]);
+
+  const disabled = await activeDisabledFeatures();
+  const enabled = new Set<string>(PROJECT_FEATURES.map((f) => f.key).filter((k) => !disabled.has(k)));
+  const commerce = {
+    modules: { catalog: enabled.has("PRODUCT_CATALOG"), orders: enabled.has("ORDERS"), courier: enabled.has("COURIER") },
+    policy: resolveAiCommercePolicy(enabled, settings),
+  };
 
   return (
     <div>
@@ -35,23 +44,34 @@ export default async function AiSettingsPage() {
                 mode, cooldown, and rate-limit checks. Once a recurring pattern becomes an approved,
                 activated rule, the deterministic engine handles it and AI is never called again for
                 that pattern. Learning is live — it gates the optional AI
-                re-scoring step in Conversation Learning. Screenshot Response, Chat Learning,
-                Software Learning, Requirement Learning and Announcement AI are saved but read by
-                nothing at runtime, so changing them has no effect in either position. In
-                particular there is no image understanding anywhere in this system: a photo
-                arrives as the text "[Image]", and the AI now hands those to a person rather than
-                answering a screenshot it cannot see.
+                re-scoring step in Conversation Learning. Five switches and three thresholds that
+                were saved but read by nothing (Screenshot Response, Chat Learning, Software
+                Learning, Requirement Learning, Announcement AI, Duplicate Similarity, Learning
+                Confidence, Auto Approval) were removed from this page; their stored values are
+                kept. There is no image understanding anywhere in this system: a photo arrives as
+                the text "[Image]", and the AI hands those to a person rather than answering a
+                screenshot it cannot see.
               </p>
             </HelpSection>
             <HelpSection title="Thresholds">
               <p>
                 Human Review is live: a Conversation Learning pattern scoring below
                 it is never surfaced for review, so setting it high quietly stops patterns
-                appearing. Duplicate Similarity, Learning Confidence and Auto Approval are saved
-                but read by nothing — the live auto-approval bar is on Conversation Learning →
-                Settings, not here. Auto-Response
+                appearing. The live auto-approval bar is on Conversation Learning → Settings, not
+                here. Auto-Response
                 Confidence Threshold (below, in its own section) is live today — it's the AI fallback
                 layer's own reply-vs-human-fallback decision point, default 90%.
+              </p>
+            </HelpSection>
+            <HelpSection title="Commerce answers">
+              <p>
+                With the Product Catalog on, AI can answer price and availability questions from your
+                catalogue; with Order Management on, a customer writing from their own WhatsApp number can
+                hear the status of their own orders; with Courier Management on as well, where their
+                delivery is. Each is a separate switch, off by default. AI never creates, changes,
+                cancels or refunds an order, and a reply naming a price that is not in the catalogue or the
+                order is handed to a person instead of sent. Switching the project's type or modules never
+                changes these switches; an answer simply stops while its module is off.
               </p>
             </HelpSection>
           </HelpButton>
@@ -59,7 +79,7 @@ export default async function AiSettingsPage() {
       />
 
       {canManage ? null : <ViewOnlyNotice />}
-      <AiSettingsForm settings={settings} groups={groups} />
+      <AiSettingsForm settings={settings} groups={groups} commerce={commerce} />
     </div>
   );
 }

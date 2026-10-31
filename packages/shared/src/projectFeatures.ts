@@ -238,6 +238,104 @@ export const PROJECT_FEATURES = [
     workerEffect:
       "Nothing runs in the WhatsApp worker. Off stops new smart imports; one already running finishes in the app's background processor, and the original import is used again.",
   },
+  {
+    key: "INBOX_COLLABORATION",
+    label: "Inbox workspace — notes, priority, tags",
+    description:
+      "A side panel in WhatsApp Chat and All Conversations: internal notes with @mentions, priority, tags and Team assignment (INBOX_WORKSPACE.md). Notes are never sent to a customer. Off = the conversation views exactly as before; saved notes and tags are kept.",
+    // A presentation switch over existing pages (messages.view to read, the reply keys to write).
+    defaultEnabled: false,
+    routes: [],
+    permissionKeys: [],
+    workerEffect: "Nothing runs in the background for it.",
+  },
+  {
+    key: "AI_COPILOT",
+    label: "AI Copilot for agents",
+    description:
+      "The Copilot tab in the conversation side panel: a summary with verified knowledge and next steps, a suggested reply, and rewrites of the agent's own text (INBOX_WORKSPACE.md). Nothing is ever sent by it — the agent edits and sends. Needs the AI Engine and a Response model.",
+    defaultEnabled: false,
+    routes: [],
+    permissionKeys: [],
+    workerEffect: "Stops answering Copilot requests; requests already waiting stay unanswered until it is on again.",
+  },
+  {
+    key: "PRODUCT_CATALOG",
+    label: "Product Catalog",
+    description: "Products, categories, variants, SKUs, prices and stock (COMMERCE.md).",
+    // Additive and new: no project gets it until it is chosen in the Module Builder.
+    defaultEnabled: false,
+    routes: ["/commerce/products"],
+    permissionKeys: ["commerce.view", "commerce.manage"],
+    workerEffect: "Nothing runs in the background for it. Products and stock history are kept; AI stops looking products up.",
+  },
+  {
+    key: "ORDERS",
+    label: "Order Management",
+    description: "Draft, confirm and track orders: items, totals, payment state, stock, cancellations and returns (COMMERCE.md).",
+    defaultEnabled: false,
+    routes: ["/commerce/orders"],
+    permissionKeys: ["orders.view", "orders.manage"],
+    workerEffect: "Nothing runs in the background for it. Orders and their history are kept; no new order can be created or moved.",
+  },
+  {
+    key: "SALES_PIPELINE",
+    label: "Leads & Sales Pipeline",
+    description: "Leads, stages, follow-ups and conversion to clients and orders (COMMERCE.md).",
+    defaultEnabled: false,
+    routes: ["/sales"],
+    permissionKeys: ["sales.view", "sales.manage"],
+    workerEffect: "Nothing runs in the background for it. Leads and their history are kept.",
+  },
+  {
+    key: "COURIER",
+    label: "Courier Management",
+    description: "Book and track deliveries with Steadfast, Pathao Courier and RedX (COMMERCE_INTEGRATIONS.md).",
+    defaultEnabled: false,
+    routes: ["/commerce/shipments", "/settings/couriers"],
+    permissionKeys: ["shipments.view", "shipments.manage", "couriers.manage"],
+    workerEffect: "Delivery statuses stop being refreshed. Shipments and their history are kept; nothing is booked.",
+  },
+  {
+    key: "WOOCOMMERCE",
+    label: "WooCommerce",
+    description: "Import a WooCommerce shop's products, stock and orders, keep them updated by webhook, and send approved orders to it.",
+    defaultEnabled: false,
+    routes: ["/settings/woocommerce"],
+    permissionKeys: ["woocommerce.manage"],
+    workerEffect: "The shop's webhooks are refused and nothing is imported. Imported products and orders are kept.",
+  },
+  {
+    key: "SHOPIFY",
+    label: "Shopify",
+    description: "Import a Shopify store's products, stock and orders, keep them updated by webhook, and send approved orders to it as drafts.",
+    defaultEnabled: false,
+    routes: ["/settings/shopify"],
+    permissionKeys: ["shopify.manage"],
+    workerEffect: "The store's webhooks are refused and nothing is imported. Imported products and orders are kept.",
+  },
+  {
+    key: "API_ACCESS",
+    label: "API & Webhooks",
+    description: "Scoped API keys for the public API, and signed webhooks to your own systems, n8n or Zapier (INTEGRATION_HUB.md).",
+    defaultEnabled: false,
+    routes: ["/settings/api"],
+    permissionKeys: ["api.manage"],
+    workerEffect: "API keys stop working and no webhook is sent. Keys, endpoints and delivery history are kept.",
+  },
+  {
+    key: "SOCIAL_STUDIO",
+    label: "Social Studio",
+    description:
+      "Get Assist's own social media publishing: connect Facebook Pages and Instagram accounts, write, approve, schedule and follow posts, with a calendar, media library, campaigns, templates and AI help (SOCIAL_STUDIO.md). Nothing is published without a person's approval.",
+    defaultEnabled: false,
+    // It publishes to a business's public channels: switched on by a person, never by a plan.
+    manualOnly: true,
+    routes: ["/social", "/settings/social"],
+    permissionKeys: ["social.view", "social.edit", "social.approve", "social.publish", "social.manage"],
+    workerEffect:
+      "Nothing is published and nothing is checked: scheduled posts wait, and publish when it is on again only if their time has not passed. Drafts, history, media and connections are kept.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];

@@ -1,4 +1,5 @@
 import "./helpers/requireTestDatabase";
+import { EMPTY_INBOX_FILTERS } from "@support-automation/shared";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
@@ -390,13 +391,13 @@ describe("3. the unified inbox", () => {
   });
 
   it("filters: closed, assigned to me, needs reply, search by message text", async () => {
-    const closed = await as(people.agent, A, () => inbox.loadInbox({ scope: "all", view: "closed", viewerId: people.agent.userId }));
+    const closed = await as(people.agent, A, () => inbox.loadInbox({ scope: "all", filters: { ...EMPTY_INBOX_FILTERS, view: "closed" }, viewerId: people.agent.userId }));
     expect(closed.items.map((i) => i.title)).toEqual([`Branch ${tag}`]);
-    const mine = await as(people.agent, A, () => inbox.loadInbox({ scope: "all", view: "mine", viewerId: people.agent.userId }));
+    const mine = await as(people.agent, A, () => inbox.loadInbox({ scope: "all", filters: { ...EMPTY_INBOX_FILTERS, view: "mine" }, viewerId: people.agent.userId }));
     expect(mine.items.map((i) => i.title)).toEqual([`@nusrat_${tag}`]);
-    const needs = await as(people.agent, A, () => inbox.loadInbox({ scope: "all", view: "needs-reply", viewerId: people.agent.userId }));
+    const needs = await as(people.agent, A, () => inbox.loadInbox({ scope: "all", filters: { ...EMPTY_INBOX_FILTERS, view: "needs-reply" }, viewerId: people.agent.userId }));
     expect(needs.items.map((i) => i.title).sort()).toEqual([`@nusrat_${tag}`, `Rahim ${tag}`, `WA group ${tag}`].sort());
-    const found = await as(people.agent, A, () => inbox.loadInbox({ scope: "all", search: "since morning", viewerId: people.agent.userId }));
+    const found = await as(people.agent, A, () => inbox.loadInbox({ scope: "all", filters: { ...EMPTY_INBOX_FILTERS, search: "since morning" }, viewerId: people.agent.userId }));
     expect(found.items.map((i) => i.title)).toEqual([`Rahim ${tag}`]);
   });
 
@@ -404,7 +405,7 @@ describe("3. the unified inbox", () => {
     expect(await as(people.agent, A, () => inbox.getChannelThread(conv.other))).toBeNull();
     const reply = await as(people.agent, A, () => inboxActions.sendChannelReplyAction(conv.other, "hi", `nonce-${tag}-x`));
     expect(reply.error).toMatch(/no longer exists/);
-    const listed = await as(people.agent, A, () => inboxActions.listInboxAction({ scope: "all", search: "Other project" }));
+    const listed = await as(people.agent, A, () => inboxActions.listInboxAction({ scope: "all", filters: { search: "Other project" } }));
     expect(listed!.items).toEqual([]);
   });
 
@@ -435,7 +436,7 @@ describe("3. the unified inbox", () => {
     expect(c.reviewedAt).not.toBeNull();
     expect(c.lastMessageDirection).toBe("OUTBOUND");
     // Answered now: it leaves "needs reply".
-    const needs = await as(people.agent, A, () => inbox.loadInbox({ scope: "messenger", view: "needs-reply", viewerId: people.agent.userId }));
+    const needs = await as(people.agent, A, () => inbox.loadInbox({ scope: "messenger", filters: { ...EMPTY_INBOX_FILTERS, view: "needs-reply" }, viewerId: people.agent.userId }));
     expect(needs.items).toEqual([]);
   });
 
