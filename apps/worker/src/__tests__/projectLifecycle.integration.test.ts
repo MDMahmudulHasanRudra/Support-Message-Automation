@@ -106,6 +106,8 @@ describe("creating a project", () => {
       ShiftTemplate: DEFAULT_SHIFT_TEMPLATES.length,
       ProjectAccess: 1,
       ProjectFeature: PROJECT_FEATURES.length,
+      // Its own client code series (CLIENT_CODES.md): the project's codes start there, nothing is copied.
+      ProjectClientCodeSeries: 1,
     };
     // Everything else — messages, groups, knowledge, rules, AI providers and keys, teams, members,
     // notifications, templates, WhatsApp accounts, reports' rows — is empty.

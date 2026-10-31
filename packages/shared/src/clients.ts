@@ -330,10 +330,6 @@ export function validateClientFields(input: ClientInput, options: { allowBlankNa
   };
 }
 
-/** Client code used when none is typed: stable, sortable, and unique per installation (a database sequence feeds `n`). */
-export function formatClientCode(n: number): string {
-  return `CL-${String(n).padStart(6, "0")}`;
-}
 
 // ── Duplicates ──────────────────────────────────────────────────────────────────────────────────
 

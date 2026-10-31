@@ -1,13 +1,14 @@
 import type { Prisma } from "@prisma/client";
+import { allocateClientCode } from "@support-automation/db";
 import {
   findDuplicateMatches,
-  formatClientCode,
   matchKeyOf,
   type ClientChannelKindValue,
   type DuplicateMatch,
   type NormalizedChannel,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
+import { activeProjectId } from "@/server/projectContext";
 
 /**
  * Shared plumbing for the client actions and the import. Not a "use server" file: nothing here is an
@@ -17,10 +18,12 @@ import { prisma } from "@/server/db";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
-/** The next free client code. A typed code that collides is the caller's validation error, not this one's. */
+/**
+ * The project's next client code ("0001", "N0001" — CLIENT_CODES.md), from its own series inside the caller's
+ * transaction. A typed code that collides is the caller's validation error, not this one's.
+ */
 export async function nextClientCode(db: Db = prisma): Promise<string> {
-  const rows = await db.$queryRaw<Array<{ n: bigint }>>`SELECT nextval('client_code_seq')::bigint AS n`;
-  return formatClientCode(Number(rows[0]!.n));
+  return allocateClientCode(db, await activeProjectId());
 }
 
 export interface TimelineEntry {
@@ -130,6 +133,9 @@ export async function loadExistingMatches(
   for (let i = 0; i < wanted.length; i += 500) {
     const rows = await db.client.findMany({ where: { OR: wanted.slice(i, i + 500).map((code) => ({ code: { equals: code, mode: "insensitive" as const } })) }, select: { id: true, code: true } });
     for (const row of rows) byCode.set(row.code.toLowerCase(), row.id);
+    // A former code, or the code a file gave the client, still names it (CLIENT_CODES.md §Aliases).
+    const aliases = await db.clientCodeAlias.findMany({ where: { canonical: { in: wanted.slice(i, i + 500).map((c) => c.trim().toUpperCase()) } }, select: { canonical: true, clientId: true } });
+    for (const alias of aliases) if (!byCode.has(alias.canonical.toLowerCase())) byCode.set(alias.canonical.toLowerCase(), alias.clientId);
   }
   return { byKey, byCode };
 }
