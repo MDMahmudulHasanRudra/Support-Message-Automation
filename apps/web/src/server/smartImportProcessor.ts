@@ -2,10 +2,9 @@ import type { Prisma } from "@prisma/client";
 import { buildSmartRows, findInFileDuplicates, upgradeMapping, type ClientDuplicatePolicy, type ClientImportFieldKey, type SmartSamples } from "@support-automation/shared";
 import { globalPrisma, prisma } from "@/server/db";
 import { runWithProject, type ActiveProject } from "@/server/projectContext";
-import { isUniqueViolation } from "@/lib/prismaErrors";
 import { loadExistingMatches } from "@/server/clientRecords";
 import { loadImportLookups, resolveRows, type ResolvedImportRow } from "@/server/clientImportExtras";
-import { createImportedClient, matchOf, updateImportedClient } from "@/server/clientImport";
+import { createImportedClient, importRowFailure, matchOf, updateImportedClient } from "@/server/clientImport";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { deleteStagedFile, historyCounters, readSmartCounts, SMART_KEEP_DAYS, type RowOutcome } from "@/server/smartImportJobs";
 import { forgetSmartAnalysis } from "@/server/smartImport";
@@ -100,7 +99,7 @@ async function settle(rowId: string, outcome: RowOutcome, message: string | null
 async function writeRow(
   rowId: string,
   row: ResolvedImportRow,
-  job: { projectId: string; fileName: string; duplicatePolicy: ClientDuplicatePolicy; createdById: string | null; allowSubscriptions: boolean },
+  job: { projectId: string; fileName: string; duplicatePolicy: ClientDuplicatePolicy; createdById: string | null; allowSubscriptions: boolean; useFileCodes: boolean },
 ): Promise<void> {
   const codes = row.fields.code ? [row.fields.code] : [];
   const lockKeys = [...new Set([...row.matchKeys, ...codes.map((c) => `code:${c.toLowerCase()}`)])].sort();
@@ -110,7 +109,7 @@ async function writeRow(
       // Read again inside the locks: another import may have created this client since the plan was made.
       const { byKey, byCode } = await loadExistingMatches(row.matchKeys, codes, tx);
       const matched = matchOf(row, byKey, byCode);
-      const options = { subscriptions: job.allowSubscriptions };
+      const options = { subscriptions: job.allowSubscriptions, codeMode: job.useFileCodes ? ("AS_CODE" as const) : ("REFERENCE" as const) };
       if (matched && job.duplicatePolicy === "SKIP") return settle(rowId, "SKIPPED", "Matches a client you already have.", tx, matched);
       if (matched && job.duplicatePolicy === "UPDATE") {
         const outcome = await updateImportedClient(tx, matched, row, job.fileName, job.createdById, options);
@@ -182,12 +181,12 @@ export async function processClaimedJob(jobId: string, budgetMs = TICK_BUDGET_MS
         if (!p || p.blank) await settle(row.id, "SKIPPED", "Empty row.");
         else if (p.errors) await settle(row.id, "INVALID", p.errors.join(" "));
         else if (p.repeatsRow !== undefined) await settle(row.id, "SKIPPED", `Repeats row ${p.repeatsRow} of this file.`);
-        else await writeRow(row.id, p.valid!, job);
+        else await writeRow(row.id, p.valid!, { ...job, useFileCodes: upgradeMapping(job.mapping).useFileCodes === true });
       } catch (err) {
         if (err instanceof RowAlreadySettled) continue;
         // The error's type only: a database error can carry the values of the row it failed on.
         console.error("[clients] smart import row failed", (err as { code?: string }).code ?? (err as Error).name);
-        await settle(row.id, "FAILED", isUniqueViolation(err) ? "That client code is already used by another client." : "The row could not be saved.").catch(() => undefined);
+        await settle(row.id, "FAILED", importRowFailure(err)).catch(() => undefined);
       }
     }
     const counts = await readSmartCounts(jobId);

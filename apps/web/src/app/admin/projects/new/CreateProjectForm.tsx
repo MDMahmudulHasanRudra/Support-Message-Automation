@@ -12,6 +12,7 @@ import {
 } from "@support-automation/shared";
 import { Alert, Button, Field, Input, Select, Textarea } from "@/components/ui";
 import { createProject, type ProjectFormState } from "@/server/actions/projects";
+import { ClientCodeFields, type ClientCodeContext } from "./ClientCodeFields";
 
 /**
  * Name, slug, description, status. The slug follows the name until somebody edits it by hand.
@@ -26,7 +27,17 @@ export interface ModuleSetupOption {
   moduleCount: number;
 }
 
-export function CreateProjectForm({ defaultName = "", templates = [], planName = null }: { defaultName?: string; templates?: ModuleSetupOption[]; planName?: string | null }) {
+export function CreateProjectForm({
+  defaultName = "",
+  templates = [],
+  planName = null,
+  codeContext,
+}: {
+  defaultName?: string;
+  templates?: ModuleSetupOption[];
+  planName?: string | null;
+  codeContext: ClientCodeContext;
+}) {
   const [state, formAction, pending] = useActionState<ProjectFormState, FormData>(createProject, {});
   const [name, setName] = useState(defaultName);
   const [slug, setSlug] = useState("");
@@ -130,6 +141,8 @@ export function CreateProjectForm({ defaultName = "", templates = [], planName =
           <option value="CUSTOM">Custom Mix — choose modules next</option>
         </Select>
       </Field>
+
+      <ClientCodeFields context={codeContext} name={name} slug={shownSlug} errors={state.fieldErrors} />
 
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
 

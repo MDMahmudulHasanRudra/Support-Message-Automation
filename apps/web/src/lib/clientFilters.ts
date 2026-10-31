@@ -197,6 +197,8 @@ export function buildClientSearchWhere(filters: ClientFilters, ctx: ClientFilter
       OR: [
         { name: { contains: q, mode: "insensitive" } },
         { code: { contains: q, mode: "insensitive" } },
+        // A former code (CL-000041 before a conversion) or the code a file gave the client still finds it.
+        { codeAliases: { some: { canonical: { contains: q.toUpperCase() } } } },
         { companyName: { contains: q, mode: "insensitive" } },
         { channels: { some: { value: { contains: q, mode: "insensitive" } } } },
         { currentSubscription: { service: { contains: q, mode: "insensitive" } } },

@@ -1,4 +1,7 @@
 import { notFound } from "next/navigation";
+import { readClientCodeSeries } from "@support-automation/db";
+import { previewClientCodes } from "@support-automation/shared";
+import { globalPrisma } from "@/server/db";
 import { ArrowRight, CheckCircle2, Circle } from "lucide-react";
 import { moduleDefinition, PROJECT_STATUS_DESCRIPTIONS, PROJECT_TYPE_LABELS } from "@support-automation/shared";
 import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader } from "@/components/ui";
@@ -26,7 +29,8 @@ export default async function ProjectDetailPage({
   const detail = await getProjectDetail(session.userId, id);
   if (!detail) notFound();
   const { project, users, configuration } = detail;
-  const modules = await getProjectModuleState(id);
+  const [modules, codeSeries] = await Promise.all([getProjectModuleState(id), readClientCodeSeries(globalPrisma, id)]);
+  const liveCodes = codeSeries.find((s) => !s.retiredAt);
   const created = (await searchParams).created === "1";
   const wa = whatsappLine(project.whatsapp);
 
@@ -109,6 +113,29 @@ export default async function ProjectDetailPage({
               </li>
             ))}
           </ul>
+        </Card>
+      </div>
+
+      <div className="mt-8">
+        <SectionHeader
+          title="Client codes"
+          description="The codes people see for this project's clients. Changing the format never renames a client; converting existing codes is a separate, previewed step."
+          action={
+            <ButtonLink href={`/admin/projects/${project.id}/client-codes`} variant="secondary">
+              {canManage ? "Manage client codes" : "View client codes"}
+              <ArrowRight className="size-3.5" aria-hidden />
+            </ButtonLink>
+          }
+        />
+        <Card>
+          {liveCodes ? (
+            <p className="text-sm">
+              <span className="font-semibold">{liveCodes.isPrimary ? "Numbers only (primary project)" : `Prefix ${liveCodes.prefix}`}</span> · next codes{" "}
+              <span className="font-mono">{previewClientCodes(liveCodes.prefix, liveCodes.nextSerial, liveCodes.minWidth).join(", ")}</span>
+            </p>
+          ) : (
+            <p className="text-sm text-[color:var(--color-muted-foreground)]">No code series yet; one is created with the first client.</p>
+          )}
         </Card>
       </div>
 

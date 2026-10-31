@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { applyCustomerPlanToNewProject, createProjectWithDefaults } from "@support-automation/db";
+import { applyCustomerPlanToNewProject, ClientCodeSeriesError, createProjectWithDefaults } from "@support-automation/db";
 import {
   canTransitionProject,
   CREATABLE_PROJECT_STATUSES,
@@ -35,7 +35,7 @@ import { forgetProjectFeatureStates } from "@/server/projectFeatures";
 
 export interface ProjectFormState {
   error?: string;
-  fieldErrors?: { name?: string; slug?: string };
+  fieldErrors?: { name?: string; slug?: string; codePrefix?: string; codeWidth?: string; codeStart?: string };
 }
 
 const MANAGE_DENIED = "Managing projects needs the “Manage Projects and Project Access” permission.";
@@ -77,8 +77,20 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
 
   let created: { id: string; slug: string };
   try {
-    created = await createProjectWithDefaults({ name, slug, description, status, creatorUserId: access.session.userId }, platformPrisma);
+    // The client code series (CLIENT_CODES.md): numbers only for the customer's first project, otherwise the prefix
+    // chosen here — checked again inside the creating transaction, under a per-customer lock.
+    const width = Number(formData.get("codeWidth") ?? "");
+    const clientCode = {
+      prefix: String(formData.get("codePrefix") ?? "").trim() || null,
+      minWidth: Number.isFinite(width) && width > 0 ? width : null,
+      startSerial: String(formData.get("codeStart") ?? "").trim() || null,
+    };
+    created = await createProjectWithDefaults({ name, slug, description, status, creatorUserId: access.session.userId, clientCode }, platformPrisma);
   } catch (err) {
+    if (err instanceof ClientCodeSeriesError) {
+      const key = err.field === "minWidth" ? "codeWidth" : err.field === "nextSerial" ? "codeStart" : "codePrefix";
+      return { fieldErrors: { [key]: err.message } };
+    }
     // Slugs are unique across every customer; "not available" does not confirm whose it is.
     if (isUniqueViolation(err)) return { fieldErrors: { slug: `The address "${slug}" is not available. Choose another.` } };
     throw err;

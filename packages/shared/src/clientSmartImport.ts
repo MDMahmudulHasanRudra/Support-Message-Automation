@@ -67,6 +67,11 @@ export interface SmartMapping {
    * Auto selected). Absent = on. A value the file gives is never replaced either way.
    */
   fillLocale?: boolean;
+  /**
+   * V6 (CLIENT_CODES.md §Import): a NEW client takes the file's own client code as its code. Absent = the client gets
+   * the project's next code and the file's code is kept as an alias. Allowed only to someone who manages client settings.
+   */
+  useFileCodes?: boolean;
   /** V5 §7: how amounts are laid out (one column + currency, or one column per currency). Absent = no amounts read. */
   money?: SmartMoneyMapping;
   /**
@@ -232,6 +237,7 @@ export function upgradeMapping(raw: unknown): SmartMapping {
       fields: { ...(m.fields ?? {}) },
       ...(m.options ? { options: { ...m.options } } : {}),
       ...(m.fillLocale === false ? { fillLocale: false } : {}),
+      ...(m.useFileCodes === true ? { useFileCodes: true } : {}),
       ...(m.money ? { money: m.money } : {}),
       ...(m.keepColumns?.length ? { keepColumns: [...m.keepColumns] } : {}),
     };
@@ -471,6 +477,8 @@ export function sanitizeSmartMapping(raw: unknown, headers: readonly string[]): 
   }
   const fillLocale = (raw as { fillLocale?: unknown }).fillLocale;
   if (fillLocale !== undefined && typeof fillLocale !== "boolean") return { ok: false, error: "Choose whether to fill the country, currency and language from phone numbers." };
+  const useFileCodes = (raw as { useFileCodes?: unknown }).useFileCodes;
+  if (useFileCodes !== undefined && typeof useFileCodes !== "boolean") return { ok: false, error: "Choose whether the file's client codes become the clients' codes." };
   const money = sanitizeMoneyMapping((raw as { money?: unknown }).money, headers);
   if (!money.ok) return { ok: false, error: money.error };
   const keepIn = (raw as { keepColumns?: unknown }).keepColumns;
@@ -490,6 +498,7 @@ export function sanitizeSmartMapping(raw: unknown, headers: readonly string[]): 
       fields,
       ...(Object.keys(options).length ? { options } : {}),
       ...(fillLocale === false ? { fillLocale: false } : {}),
+      ...(useFileCodes === true ? { useFileCodes: true } : {}),
       ...(money.money ? { money: money.money } : {}),
       ...(keepColumns.length ? { keepColumns } : {}),
     },
@@ -511,6 +520,7 @@ export function freezeSamples(mapping: SmartMapping, samples: SmartSamples): Sma
     fields,
     ...(mapping.options ? { options: mapping.options } : {}),
     ...(mapping.fillLocale === false ? { fillLocale: false } : {}),
+    ...(mapping.useFileCodes === true ? { useFileCodes: true } : {}),
     ...(mapping.money ? { money: mapping.money } : {}),
     ...(mapping.keepColumns?.length ? { keepColumns: mapping.keepColumns } : {}),
   };

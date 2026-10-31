@@ -50,6 +50,7 @@ export function mappingToSave(mapping: SmartMapping): SmartMapping {
     fields,
     ...(mapping.options ? { options: mapping.options } : {}),
     ...(mapping.fillLocale === false ? { fillLocale: false } : {}),
+    ...(mapping.useFileCodes === true ? { useFileCodes: true } : {}),
     ...(money ? { money } : {}),
     ...(mapping.keepColumns?.length ? { keepColumns: mapping.keepColumns } : {}),
   };

@@ -46,6 +46,7 @@ import {
 } from "@/server/smartImport";
 import { deleteStagedFile, readSmartCounts, type SmartCounts } from "@/server/smartImportJobs";
 import { getClientModuleSettings } from "@/server/clientModule";
+import { hasPermission } from "@/server/permissions";
 
 /**
  * Smart Bulk Import actions (SMART_IMPORT.md). Every one is a public endpoint and checks for itself:
@@ -198,6 +199,8 @@ export interface SmartMappingContext {
   previewRows: Array<{ rowNumber: number; cells: Record<string, string> }>;
   /** The project's default country (Settings → Client Module), for reading local numbers in the preview. */
   defaultCountry: string | null;
+  /** May make the file's client codes the clients' codes (CLIENT_CODES.md §Import): Manage Client Module Settings. */
+  canChooseCodes: boolean;
 }
 
 /** How many whole rows the mapping grid previews. */
@@ -235,7 +238,8 @@ export async function loadSmartMappingContext(jobId: string): Promise<SmartMappi
     const src = r.source as Record<string, string>;
     return { rowNumber: r.rowNumber, cells: Object.fromEntries(job.headers.flatMap((h) => (src[h] ? [[h, src[h].slice(0, 200)]] : []))) };
   });
-  return { revision: job.revision, headers: job.headers, mapping, suggestions, samples, columnPreview, columnFilled, previewRows, defaultCountry: settings.defaultCountry };
+  const canChooseCodes = await hasPermission(g.session, "clients.manage_settings");
+  return { revision: job.revision, headers: job.headers, mapping, suggestions, samples, columnPreview, columnFilled, previewRows, defaultCountry: settings.defaultCountry, canChooseCodes };
 }
 
 // ── Changing the draft ─────────────────────────────────────────────────────────────────────────
@@ -479,6 +483,9 @@ export async function confirmSmartImport(jobId: string, input: { revision: numbe
   const options = await importOptionsFor(g.session);
   // Samples become fixed values now, so the import does not depend on the day or the roster it runs with.
   const frozen = freezeSamples(upgradeMapping(job.mapping), await projectSamples());
+  if (frozen.useFileCodes && !(await hasPermission(g.session, "clients.manage_settings"))) {
+    return { ok: false, message: "Using the file's codes as client codes needs the Manage Client Module Settings permission. Untick it in Match columns: new clients then get the project's codes, and the file's codes still find them." };
+  }
   const claimed = await prisma.$transaction(async (tx) => {
     const claim = await tx.clientImportJob.updateMany({
       where: { id: jobId, status: "PREVIEW", revision: input.revision },

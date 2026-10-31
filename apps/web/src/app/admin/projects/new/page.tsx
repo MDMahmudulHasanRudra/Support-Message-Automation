@@ -1,6 +1,7 @@
 import { Card, PageHeader } from "@/components/ui";
-import { nextDefaultProjectName } from "@support-automation/shared";
-import { platformPrisma } from "@/server/db";
+import { reservedClientCodePrefixes } from "@support-automation/db";
+import { codeTenantKey, nextDefaultProjectName } from "@support-automation/shared";
+import { globalPrisma, platformPrisma } from "@/server/db";
 import { requireMainAdminManagePage } from "@/server/mainAdmin";
 import { currentTenant } from "@/server/tenant";
 import { moduleTemplateOptions, projectEntitlement } from "@/server/projectModules";
@@ -13,7 +14,11 @@ export default async function NewProjectPage() {
   // The form starts with the next free "RELQIVO Project N" (BRANDING.md §Defaults); the admin can type anything.
   const existing = await platformPrisma.project.findMany({ select: { name: true, slug: true } });
   const tenant = await currentTenant();
-  const [templates, { planName }] = await Promise.all([moduleTemplateOptions(tenant), projectEntitlement(tenant)]);
+  const [templates, { planName }, reserved] = await Promise.all([
+    moduleTemplateOptions(tenant),
+    projectEntitlement(tenant),
+    reservedClientCodePrefixes(globalPrisma, codeTenantKey(tenant)),
+  ]);
   return (
     <div className="max-w-2xl">
       <PageHeader
@@ -24,6 +29,7 @@ export default async function NewProjectPage() {
         <CreateProjectForm
           defaultName={nextDefaultProjectName(existing)}
           planName={planName}
+          codeContext={{ primary: !reserved.some((r) => r.prefix === ""), reserved: reserved.map((r) => ({ prefix: r.prefix, projectName: r.projectName })) }}
           templates={templates.map((t) => ({ key: t.key, name: t.name, description: t.description, builtIn: t.builtIn, moduleCount: t.modules.length }))}
         />
       </Card>
