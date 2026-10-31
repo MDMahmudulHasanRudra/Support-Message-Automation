@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { CLIENT_BILLING_LIMITS, decimalToMinor, dhakaToday, diffDue, formatMinor, normalizeCurrencyCode, toMinor, validateDue, type ValidDue } from "@support-automation/shared";
+import { decimalToMinor, isIsoCurrency, dhakaToday, diffDue, formatMinor, normalizeCurrencyCode, toMinor, validateDue, type ValidDue } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
 import { projectPath } from "@/server/projectPaths";
@@ -154,7 +154,9 @@ export async function addBillingCurrency(_prev: DueFormState, formData: FormData
   if ("denied" in granted) return { error: granted.denied, values: echo(formData) };
   const code = normalizeCurrencyCode(text(formData, "code"));
   if (!code) return { error: "Enter a three-letter currency code, such as BDT.", values: echo(formData) };
-  if ((await prisma.clientBillingCurrency.count()) >= CLIENT_BILLING_LIMITS.currencies) return { error: `A project can list at most ${CLIENT_BILLING_LIMITS.currencies} currencies.`, values: echo(formData) };
+  // Any ISO 4217 currency (V5: the old 30-currency limit is gone). A code older records already use stays valid
+  // there, but a NEW entry must be a real currency, so a typo cannot become a billing currency.
+  if (!isIsoCurrency(code)) return { error: `${code} is not an ISO 4217 currency code. Check the code, for example SAR, AED or BDT.`, values: echo(formData) };
   try {
     await prisma.clientBillingCurrency.create({ data: { code, enabled: true, addedById: granted.session.userId } });
   } catch (err) {

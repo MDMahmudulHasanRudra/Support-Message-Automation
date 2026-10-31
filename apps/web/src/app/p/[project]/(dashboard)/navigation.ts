@@ -220,8 +220,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     label: "Clients",
-    description: "Which parts of Client Management this project uses, which fields are required, and the renewal window.",
-    links: [{ href: "/settings/clients", label: "Client Module", icon: Contact }],
+    description: "Which parts of Client Management this project uses, which fields are required, the renewal window, and the project's own tags, categories, business types, plans, currencies and countries.",
+    links: [
+      { href: "/settings/clients", label: "Client Module", icon: Contact },
+      { href: "/settings/clients/configuration", label: "Client Lists", icon: Contact },
+    ],
   },
   {
     label: "Email",
@@ -688,6 +691,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/settings/google-sheets", "google_sheets.view"],
   ["/settings/channels", "channels.view"],
   ["/settings/email", "communications.manage_email"],
+  ["/settings/clients/configuration", "clients.manage_settings"],
   ["/settings/clients", "clients.manage_settings"],
   ["/conversations", "messages.view"],
   ["/google-sheets/activity", "google_sheets.monitor"],

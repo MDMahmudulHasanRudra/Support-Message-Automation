@@ -162,6 +162,7 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "ApiKey", "WebhookEndpoint", "WebhookDelivery",
   "ListSavedView",
   "SocialConnection", "SocialAccount", "SocialPost", "SocialPostTarget", "SocialPublishAttempt", "SocialPostEvent", "SocialMediaAsset", "SocialCampaign", "SocialTemplate", "SocialAiRequest", "SocialRssFeed", "SocialRssItem",
+  "ClientCatalogEntry", "ClientServicePlan", "ClientCountrySetting",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([

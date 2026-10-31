@@ -111,7 +111,8 @@ describe("the constraints later phases depend on", () => {
     // + ListSavedView (20261030100000_list_saved_views).
     // + the nine Social Studio tables (20261030120000_social_studio) + SocialAiRequest (20261030130000_social_ai)
     //   + SocialRssFeed, SocialRssItem (20261030140000_social_rss).
-    expect(refusing).toHaveLength(163);
+    // + ClientCatalogEntry, ClientServicePlan, ClientCountrySetting (20261031090000_client_configuration).
+    expect(refusing).toHaveLength(166);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -146,7 +147,8 @@ describe("the constraints later phases depend on", () => {
     // + the three Integration Hub tables.
     // + ListSavedView.
     // + the nine Social Studio tables + SocialAiRequest + the two RSS tables.
-    expect(rows).toHaveLength(166);
+    // + the three Client Configuration Center tables.
+    expect(rows).toHaveLength(169);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

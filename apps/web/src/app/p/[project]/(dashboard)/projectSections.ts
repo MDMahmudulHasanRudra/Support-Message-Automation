@@ -203,6 +203,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/settings/channels": { write: ["channels.manage"], also: ["/api/meta/connect", "/api/meta/claim", "/api/webchat/wordpress", "/api/webchat/brand"] },
   "/settings/email": { fullOnly: true },
   "/settings/clients": { fullOnly: true },
+  "/settings/clients/configuration": { fullOnly: true },
   "/settings/google-sheets": { write: ["google_sheets.manage"], also: ["/api/google-sheets/connect"] },
 };
 

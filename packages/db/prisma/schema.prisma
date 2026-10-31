@@ -664,6 +664,9 @@ model Project {
   clientPaymentAllocations             ClientPaymentAllocation[]
   clientGroupLinks                     ClientWhatsAppGroupLink[]
   clientModuleSettings                 ClientModuleSettings?
+  clientCatalogEntries                 ClientCatalogEntry[]
+  clientServicePlans                   ClientServicePlan[]
+  clientCountrySettings                ClientCountrySetting[]
   listViewPreferences                  ListViewPreference[]
   groupResponsibilityChanges           GroupResponsibilityChange[]
   identityReattributions               IdentityReattribution[]
@@ -6715,6 +6718,10 @@ model Client {
   recordedExpiryDate    DateTime?           @db.Date
   recordedExpiryService String?
   recordedExpiryAt      DateTime?
+  /// V5 Configuration Center: the business / company type, from the project's list (free text kept as given).
+  businessType          String?
+  /// V5: languages besides `preferredLanguage` (the primary one), by English name.
+  additionalLanguages   String[]            @default([])
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
@@ -7000,6 +7007,8 @@ model ClientBillingCurrency {
   /// ISO 4217, upper case.
   code      String
   enabled   Boolean  @default(true)
+  /// V5: shown first in every currency picker of this project.
+  favorite  Boolean  @default(false)
   addedById String?
   addedBy   User?    @relation("ClientCurrencyAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
@@ -7127,6 +7136,70 @@ model EmailOutbox {
 }
 
 // ── Clients V3 (CLIENTS_V3.md) ─────────────────────────────────────────────────────────────────
+
+/// V5 Configuration Center (CLIENT_CONFIGURATION.md): the project's own lists of tags, categories and business
+/// types. One table, three kinds. A name is unique per project and kind, case-insensitively (index in the
+/// migration). Archiving hides an entry from pickers and keeps every client that uses it as it is.
+enum ClientCatalogKind {
+  TAG
+  CATEGORY
+  BUSINESS_TYPE
+}
+
+model ClientCatalogEntry {
+  id         String            @id @default(cuid())
+  projectId  String            @default(dbgenerated("project_id_required()"))
+  project    Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  kind       ClientCatalogKind
+  name       String
+  /// Other spellings an import maps to this entry ("Corp", "Corporate").
+  aliases    String[]          @default([])
+  color      String?
+  archivedAt DateTime?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@index([projectId, kind, archivedAt])
+}
+
+/// V5: a reusable service / plan. Its defaults are OFFERED when a person picks it (kind, duration, unit, a price
+/// suggestion per currency); nothing is billed because a plan was chosen. `ClientSubscription.service` keeps the
+/// plan's name as text, so history never depends on this row.
+model ClientServicePlan {
+  id              String                 @id @default(cuid())
+  projectId       String                 @default(dbgenerated("project_id_required()"))
+  project         Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name            String
+  /// An optional parent service ("Internet" for "Home 20 Mbps").
+  service         String?
+  defaultKind     ClientSubscriptionKind @default(PAID)
+  defaultDuration Int?
+  defaultUnit     ClientDurationUnit?
+  /// [{ "currency": "SAR", "amount": "30.00" }] — exact decimal text, never a float; a suggestion only.
+  prices          Json                   @default("[]")
+  aliases         String[]               @default([])
+  archivedAt      DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@index([projectId, archivedAt])
+}
+
+/// V5: the project's own choices per country — a favourite, and the currency / language to suggest for it when
+/// they differ from the general rule (CLDR / country-to-currency).
+model ClientCountrySetting {
+  id        String   @id @default(cuid())
+  projectId String   @default(dbgenerated("project_id_required()"))
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// ISO 3166-1 alpha-2.
+  country   String
+  favorite  Boolean  @default(false)
+  currency  String?
+  language  String?
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, country])
+}
 
 enum ClientSubscriptionKind {
   PAID

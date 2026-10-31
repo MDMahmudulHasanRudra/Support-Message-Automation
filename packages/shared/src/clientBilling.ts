@@ -21,7 +21,8 @@ export const CLIENT_DUE_STATUS_LABELS: Record<ClientDueStatusValue, string> = {
 /** A due that still expects money, so it can be upcoming or overdue. */
 export const OPEN_DUE_STATUSES: readonly ClientDueStatusValue[] = ["UNPAID", "PARTIALLY_PAID"];
 
-export const CLIENT_BILLING_LIMITS = { note: 1000, currencies: 30 } as const;
+/** No cap on how many currencies a project lists (V5): every ISO 4217 currency may be offered. */
+export const CLIENT_BILLING_LIMITS = { note: 1000 } as const;
 /** Decimal(12,2) holds 10 integer digits. */
 export const MAX_DUE_AMOUNT = 9_999_999_999.99;
 
