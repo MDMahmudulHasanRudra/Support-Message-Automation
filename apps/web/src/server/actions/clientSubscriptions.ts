@@ -19,8 +19,8 @@ import { hasPermission } from "@/server/permissions";
 import { projectPath } from "@/server/projectPaths";
 import { recordClientActivity } from "@/server/clientRecords";
 import { subModuleOff } from "@/server/clientModule";
-import { lockClient, refreshCurrentSubscription, sellerSnapshot, type SellerSnapshot } from "@/server/clientSubscriptionStore";
-import { createInvoice } from "@/server/clientBillingStore";
+import { lockClient, refreshCurrentSubscription, sellerSnapshot } from "@/server/clientSubscriptionStore";
+import { createTermInTx, type TermWrite } from "@/server/clientTermStore";
 
 /**
  * Subscriptions (CLIENTS_V3.md §3). Every action is a public endpoint and checks its own key,
@@ -82,58 +82,8 @@ async function readSaleInvoice(formData: FormData, userSession: Parameters<typeo
  * The shared write: creates the term (and its invoice), recomputes the client's current term, records
  * the timeline. Runs under the client row lock.
  */
-async function writeTerm(opts: {
-  clientId: string;
-  actorUserId: string;
-  term: ValidSubscription;
-  seller: SellerSnapshot;
-  renewedFromId: string | null;
-  invoice: ValidDue | null;
-  today: string;
-}): Promise<{ ok: true; subscriptionId: string; invoiceNumber: string | null } | { ok: false; message: string }> {
-  return prisma.$transaction(async (tx) => {
-    if (!(await lockClient(tx, opts.clientId))) return { ok: false, message: "That client no longer exists." };
-    const client = await tx.client.findFirst({ where: { id: opts.clientId }, select: { status: true } });
-    if (!client) return { ok: false, message: "That client no longer exists." };
-    if (client.status === "ARCHIVED") return { ok: false, message: "This client is archived. Restore it first." };
-    // A repeat purchase: renewing, or buying again after an earlier term (any, cancelled ones included).
-    const hadBefore = (await tx.clientSubscription.count({ where: { clientId: opts.clientId } })) > 0;
-    const created = await tx.clientSubscription.create({
-      data: {
-        clientId: opts.clientId,
-        service: opts.term.service,
-        kind: opts.term.kind,
-        startDate: new Date(`${opts.term.startDate}T00:00:00.000Z`),
-        endDate: new Date(`${opts.term.endDate}T00:00:00.000Z`),
-        durationValue: opts.term.durationValue,
-        durationUnit: opts.term.durationUnit,
-        isRenewal: Boolean(opts.renewedFromId) || hadBefore,
-        renewedFromId: opts.renewedFromId,
-        ...opts.seller,
-        note: opts.term.note,
-        createdById: opts.actorUserId,
-      },
-      select: { id: true },
-    });
-    await refreshCurrentSubscription(tx, opts.clientId);
-    await recordClientActivity(tx, opts.clientId, opts.actorUserId, {
-      type: opts.renewedFromId ? "SUBSCRIPTION_RENEWED" : "SUBSCRIPTION_ADDED",
-      summary: `${opts.renewedFromId ? "Renewed" : "Subscription added"}: ${opts.term.service} (${SUBSCRIPTION_KIND_LABELS[opts.term.kind as SubscriptionKind]}, ${opts.term.startDate} → ${opts.term.endDate})`,
-      details: { subscriptionId: created.id, renewedFromId: opts.renewedFromId, soldByMemberId: opts.seller.soldByMemberId },
-    });
-    let invoiceNumber: string | null = null;
-    if (opts.invoice) {
-      const invoice = await createInvoice(tx, opts.clientId, opts.actorUserId, opts.invoice, {
-        kind: opts.renewedFromId ? "RENEWAL" : "SUBSCRIPTION",
-        issuedDate: opts.today,
-        service: opts.term.service,
-        subscriptionId: created.id,
-        soldByMemberId: opts.seller.soldByMemberId,
-      });
-      invoiceNumber = invoice.invoiceNumber;
-    }
-    return { ok: true, subscriptionId: created.id, invoiceNumber };
-  });
+async function writeTerm(opts: TermWrite): Promise<{ ok: true; subscriptionId: string; invoiceNumber: string | null } | { ok: false; message: string }> {
+  return prisma.$transaction((tx) => createTermInTx(tx, opts));
 }
 
 async function guard(formData?: FormData) {

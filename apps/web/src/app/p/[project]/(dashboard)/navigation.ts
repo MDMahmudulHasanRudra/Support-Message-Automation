@@ -49,6 +49,8 @@ import {
   ListChecks,
   ListTodo,
   Mail,
+  MailCheck,
+  RefreshCcw,
   Megaphone,
   MessageCircleMore,
   MessageSquareOff,
@@ -224,6 +226,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     links: [
       { href: "/settings/clients", label: "Client Module", icon: Contact },
       { href: "/settings/clients/configuration", label: "Client Lists", icon: Contact },
+      { href: "/settings/clients/documents", label: "Invoice & Receipt", icon: ReceiptText },
     ],
   },
   {
@@ -412,10 +415,29 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: Contact,
     links: [
       { href: "/clients", label: "All Clients", icon: Contact },
-      { href: "/clients/subscriptions", label: "Subscriptions", icon: CalendarClock },
+      {
+        href: "/clients/subscriptions",
+        label: "Subscriptions",
+        icon: CalendarClock,
+        // CLIENT_CRM_V7.md §4: renewal offers and follow-ups beside the terms they renew.
+        tabs: [
+          { href: "/clients/subscriptions", label: "Subscriptions", icon: CalendarClock },
+          { href: "/clients/subscriptions/renewals", label: "Renewals", icon: RefreshCcw },
+        ],
+      },
       // The route is still /clients/dues (bookmarks keep working); the page is the Billing List now.
       { href: "/clients/dues", label: "Billing List", icon: ReceiptText },
       { href: "/clients/payments", label: "Payments & Receipts", icon: Wallet },
+      {
+        href: "/clients/messages",
+        label: "Client Messages",
+        icon: MailCheck,
+        // CLIENT_CRM_V7.md §6–§7: bulk email (prepared by one person, approved by another) and the reusable wording.
+        tabs: [
+          { href: "/clients/messages", label: "Bulk email", icon: MailCheck },
+          { href: "/clients/templates", label: "Message Templates", icon: FileText },
+        ],
+      },
       { href: "/clients/import", label: "Import Clients", icon: FileUp },
     ],
   },
@@ -645,6 +667,8 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/clients/dues", "clients.view_billing"],
   ["/clients/payments", "clients.view_billing"],
   ["/clients/import", "clients.import"],
+  ["/clients/templates", "clients.view"],
+  ["/clients/messages", "clients.view"],
   ["/clients/new", "clients.create"],
   ["/clients", "clients.view"],
   ["/commerce/products/new", "commerce.manage"],

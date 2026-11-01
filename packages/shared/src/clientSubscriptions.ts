@@ -34,6 +34,8 @@ export const SUBSCRIPTION_DURATION_LABELS: Record<SubscriptionDurationUnit, [sin
 
 /** The upper bound per unit: ten years in any unit. Longer is a typo, not a plan. */
 const MAX_DURATION: Record<SubscriptionDurationUnit, number> = { DAY: 3660, WEEK: 522, MONTH: 120, YEAR: 10 };
+/** The longest single term per unit (exported for offers, which propose a term with the same limits). */
+export const MAX_SUBSCRIPTION_DURATION: Readonly<Record<SubscriptionDurationUnit, number>> = MAX_DURATION;
 
 /**
  * What a client's subscription looks like today. Derived at read time, never stored, so it moves with

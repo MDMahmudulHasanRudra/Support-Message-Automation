@@ -671,6 +671,14 @@ model Project {
   clientCountrySettings                ClientCountrySetting[]
   clientCodeSeries                     ProjectClientCodeSeries[]
   clientCodeAliases                    ClientCodeAlias[]
+  clientRenewalOffers                  ClientRenewalOffer[]
+  clientRenewalOfferEvents             ClientRenewalOfferEvent[]
+  clientMessageTemplates               ClientMessageTemplate[]
+  clientMessageTemplateVersions        ClientMessageTemplateVersion[]
+  clientMessageBatches                 ClientMessageBatch[]
+  clientMessages                       ClientMessage[]
+  clientDocumentSettingsVersions       ClientDocumentSettingsVersion[]
+  clientDocumentAssets                 ClientDocumentAsset[]
   listViewPreferences                  ListViewPreference[]
   groupResponsibilityChanges           GroupResponsibilityChange[]
   identityReattributions               IdentityReattribution[]
@@ -1539,6 +1547,7 @@ model InternalTeamMember {
   soldClients               Client[]                           @relation("ClientSoldBy")
   soldSubscriptions         ClientSubscription[]
   soldDues                  ClientDue[]
+  renewalOffersSold         ClientRenewalOffer[]               @relation("ClientRenewalOfferSeller")
 
   /// The shift this person normally works, used to pre-fill a weekly pattern and nothing else.
   ///
@@ -6750,20 +6759,23 @@ model Client {
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
-  channels       ClientChannel[]
-  notes          ClientNote[]
-  activities     ClientActivity[]
-  dues           ClientDue[]
-  dueEvents      ClientDueEvent[]
-  chatLinks      ClientWhatsAppChatLink[]
-  subscriptions  ClientSubscription[]      @relation("ClientSubscriptions")
-  photo          ClientPhoto?
-  payments       ClientPayment[]
-  groupLinks     ClientWhatsAppGroupLink[]
-  importRows     ClientImportRow[]
-  commerceOrders CommerceOrder[]
-  salesLeads     SalesLead[]
-  codeAliases    ClientCodeAlias[]
+  channels           ClientChannel[]
+  notes              ClientNote[]
+  activities         ClientActivity[]
+  dues               ClientDue[]
+  dueEvents          ClientDueEvent[]
+  chatLinks          ClientWhatsAppChatLink[]
+  subscriptions      ClientSubscription[]      @relation("ClientSubscriptions")
+  photo              ClientPhoto?
+  payments           ClientPayment[]
+  groupLinks         ClientWhatsAppGroupLink[]
+  importRows         ClientImportRow[]
+  commerceOrders     CommerceOrder[]
+  salesLeads         SalesLead[]
+  codeAliases        ClientCodeAlias[]
+  renewalOffers      ClientRenewalOffer[]
+  renewalOfferEvents ClientRenewalOfferEvent[]
+  messages           ClientMessage[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -6993,8 +7005,10 @@ model ClientDue {
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
 
-  events      ClientDueEvent[]
-  allocations ClientPaymentAllocation[]
+  events         ClientDueEvent[]
+  allocations    ClientPaymentAllocation[]
+  renewalOffers  ClientRenewalOffer[]      @relation("ClientRenewalOfferInvoice")
+  clientMessages ClientMessage[]           @relation("ClientMessageDue")
 
   @@unique([projectId, invoiceNumber])
   @@index([clientId, dueDate])
@@ -7083,6 +7097,9 @@ enum EmailTlsMode {
 enum EmailPurpose {
   /// A test message to the signed-in administrator's own address — the only way the channel becomes "connected".
   TEST
+  /// A message to a client (CLIENT_CRM_V7.md §6), written by a person or approved in a batch. Sent only while the
+  /// channel is switched on and verified, and re-checked against the client's opt-out when it is sent.
+  CLIENT_MESSAGE
 }
 
 /// SMTP only says the server ACCEPTED the message, so the state is ACCEPTED, never "delivered".
@@ -7155,6 +7172,8 @@ model EmailOutbox {
   createdBy         User?             @relation("EmailQueuedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
+
+  clientMessage ClientMessage?
 
   @@unique([projectId, idempotencyKey])
   @@index([projectId, status, nextAttemptAt])
@@ -7350,8 +7369,11 @@ model ClientSubscription {
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
 
-  currentFor Client[]    @relation("ClientCurrentSubscription")
-  dues       ClientDue[]
+  currentFor     Client[]             @relation("ClientCurrentSubscription")
+  dues           ClientDue[]
+  renewalOffers  ClientRenewalOffer[] @relation("ClientRenewalOfferFor")
+  renewedByOffer ClientRenewalOffer?  @relation("ClientRenewalOfferResult")
+  clientMessages ClientMessage[]      @relation("ClientMessageSubscription")
 
   @@index([clientId, endDate])
   @@index([projectId, endDate])
@@ -7406,7 +7428,8 @@ model ClientPayment {
   reversedBy     User?               @relation("ClientPaymentReversedBy", fields: [reversedById], references: [id], onDelete: SetNull)
   reversalReason String?
 
-  allocations ClientPaymentAllocation[]
+  allocations    ClientPaymentAllocation[]
+  clientMessages ClientMessage[]           @relation("ClientMessagePayment")
 
   @@unique([projectId, receiptNumber])
   @@unique([projectId, idempotencyKey])
@@ -9096,4 +9119,251 @@ model ModuleApproval {
 
   @@index([customerId, featureKey])
   @@index([targetProjectId])
+}
+
+// ── Client CRM & Billing V7 (CLIENT_CRM_V7.md) ─────────────────────────────────────────────────────
+// Renewal offers, client communication templates and messages, and the Invoice & Receipt setup. None of
+// these is money: an offer is a proposal, a message is words, a document setup is presentation. Invoices,
+// payments and their ledger rules are unchanged (CLIENTS_V3.md). Actor columns keep the id AND the name as
+// they were, with no foreign key, so a removed login never rewrites history (and never UPDATEs an
+// append-only row).
+
+enum ClientRenewalOfferStatus {
+  PREPARED
+  CONTACTED
+  AWAITING_RESPONSE
+  ACCEPTED
+  DECLINED
+  RENEWED
+  WITHDRAWN
+}
+
+/// A proposal to renew one term (packages/shared clientRenewalOffers.ts). At most one OPEN offer per term
+/// (partial unique index). Accepting creates nothing; renewing from an accepted offer creates the new term
+/// through the ordinary subscription path, and an invoice only when a person asks for one.
+model ClientRenewalOffer {
+  id                    String                   @id @default(cuid())
+  projectId             String                   @default(dbgenerated("project_id_required()"))
+  project               Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId              String
+  client                Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// The term being renewed.
+  subscriptionId        String
+  subscription          ClientSubscription       @relation("ClientRenewalOfferFor", fields: [subscriptionId], references: [id], onDelete: Cascade)
+  status                ClientRenewalOfferStatus @default(PREPARED)
+  service               String
+  durationValue         Int
+  durationUnit          ClientDurationUnit
+  /// The proposed price. Not an invoice and not owed: null = no price proposed yet.
+  amount                Decimal?                 @db.Decimal(12, 2)
+  currency              String?
+  validUntil            DateTime?                @db.Date
+  followUpDate          DateTime?                @db.Date
+  note                  String?
+  /// What the customer said when accepting or declining.
+  responseNote          String?
+  contactCount          Int                      @default(0)
+  lastContactAt         DateTime?
+  soldByMemberId        String?
+  soldByMember          InternalTeamMember?      @relation("ClientRenewalOfferSeller", fields: [soldByMemberId], references: [id], onDelete: SetNull)
+  createdById           String?
+  createdByName         String?
+  decidedAt             DateTime?
+  decidedById           String?
+  decidedByName         String?
+  /// The term created by "Renew from offer". Unique: one offer renews once.
+  renewedSubscriptionId String?                  @unique
+  renewedSubscription   ClientSubscription?      @relation("ClientRenewalOfferResult", fields: [renewedSubscriptionId], references: [id], onDelete: SetNull)
+  /// The invoice raised in the same step, when a person asked for one.
+  invoiceDueId          String?
+  invoiceDue            ClientDue?               @relation("ClientRenewalOfferInvoice", fields: [invoiceDueId], references: [id], onDelete: SetNull)
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  events   ClientRenewalOfferEvent[]
+  messages ClientMessage[]
+
+  @@index([projectId, status, followUpDate])
+  @@index([clientId, createdAt])
+  @@index([subscriptionId])
+}
+
+/// The offer's history, append-only (a trigger refuses UPDATE): prepared, each contact, each status, each follow-up.
+model ClientRenewalOfferEvent {
+  id          String             @id @default(cuid())
+  projectId   String             @default(dbgenerated("project_id_required()"))
+  project     Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  offerId     String
+  offer       ClientRenewalOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  clientId    String
+  client      Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// PREPARED, EDITED, CONTACT, STATUS, FOLLOW_UP, RENEWED.
+  type        String
+  fromStatus  String?
+  toStatus    String?
+  /// For a CONTACT: how the customer was reached (packages/shared CONTACT_CHANNELS).
+  channel     String?
+  note        String?
+  actorUserId String?
+  actorName   String?
+  createdAt   DateTime           @default(now())
+
+  @@index([offerId, createdAt])
+}
+
+/// Reusable wording for messages to clients (packages/shared clientMessageTemplates.ts). Plain text, never HTML.
+/// `category`, `channel` and `status` are validated against the shared catalogue rather than enums, so adding one
+/// needs no migration.
+model ClientMessageTemplate {
+  id            String   @id @default(cuid())
+  projectId     String   @default(dbgenerated("project_id_required()"))
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name          String
+  category      String
+  channel       String   @default("ANY")
+  language      String?
+  subject       String?
+  body          String
+  /// DRAFT / ACTIVE / ARCHIVED. Only ACTIVE templates are offered when preparing a message.
+  status        String   @default("DRAFT")
+  version       Int      @default(1)
+  createdById   String?
+  createdByName String?
+  updatedById   String?
+  updatedByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  versions ClientMessageTemplateVersion[]
+  batches  ClientMessageBatch[]
+  messages ClientMessage[]
+
+  @@unique([projectId, name])
+  @@index([projectId, status, category])
+}
+
+/// Every saved wording of a template, append-only: what a message said is answerable by template + version.
+model ClientMessageTemplateVersion {
+  id          String                @id @default(cuid())
+  projectId   String                @default(dbgenerated("project_id_required()"))
+  project     Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  templateId  String
+  template    ClientMessageTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version     Int
+  name        String
+  category    String
+  channel     String
+  language    String?
+  subject     String?
+  body        String
+  actorUserId String?
+  actorName   String?
+  createdAt   DateTime              @default(now())
+
+  @@unique([templateId, version])
+}
+
+/// A bulk email to several clients: prepared by one person, approved by ANOTHER within 24 hours, then queued
+/// (CLIENT_CENTER_PLAN.md decisions 8, 9, 11). Never sent by itself.
+model ClientMessageBatch {
+  id              String                 @id @default(cuid())
+  projectId       String                 @default(dbgenerated("project_id_required()"))
+  project         Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  templateId      String?
+  template        ClientMessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateVersion Int
+  templateName    String
+  channel         String                 @default("EMAIL")
+  /// PENDING_APPROVAL / QUEUED / REJECTED / EXPIRED / CANCELLED.
+  status          String                 @default("PENDING_APPROVAL")
+  submittedById   String?
+  submittedByName String?
+  submittedAt     DateTime               @default(now())
+  decidedById     String?
+  decidedByName   String?
+  decidedAt       DateTime?
+  decisionNote    String?
+  recipientCount  Int
+  eligibleCount   Int
+  skippedCount    Int
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  messages ClientMessage[]
+
+  @@index([projectId, status, submittedAt])
+}
+
+/// One message to one client: what it said (rendered), through which channel, and for which record. An email's
+/// delivery state is its EmailOutbox row's; a WhatsApp/Messenger/Instagram message here is PREPARED — copied or
+/// opened in WhatsApp by a person — and never recorded as sent.
+model ClientMessage {
+  id                    String                 @id @default(cuid())
+  projectId             String                 @default(dbgenerated("project_id_required()"))
+  project               Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId              String
+  client                Client                 @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  batchId               String?
+  batch                 ClientMessageBatch?    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  templateId            String?
+  template              ClientMessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateVersion       Int?
+  /// EMAIL / WHATSAPP / MESSENGER / INSTAGRAM / COPY.
+  channel               String
+  category              String?
+  /// PREPARED / WAITING_APPROVAL / QUEUED / SKIPPED / CANCELLED. Delivery is read from the outbox row.
+  status                String
+  skipReason            String?
+  toAddress             String?
+  subject               String?
+  body                  String
+  emailOutboxId         String?                @unique
+  emailOutbox           EmailOutbox?           @relation(fields: [emailOutboxId], references: [id], onDelete: SetNull)
+  relatedDueId          String?
+  relatedDue            ClientDue?             @relation("ClientMessageDue", fields: [relatedDueId], references: [id], onDelete: SetNull)
+  relatedPaymentId      String?
+  relatedPayment        ClientPayment?         @relation("ClientMessagePayment", fields: [relatedPaymentId], references: [id], onDelete: SetNull)
+  relatedOfferId        String?
+  relatedOffer          ClientRenewalOffer?    @relation(fields: [relatedOfferId], references: [id], onDelete: SetNull)
+  relatedSubscriptionId String?
+  relatedSubscription   ClientSubscription?    @relation("ClientMessageSubscription", fields: [relatedSubscriptionId], references: [id], onDelete: SetNull)
+  createdById           String?
+  createdByName         String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  @@index([clientId, createdAt])
+  @@index([batchId])
+  @@index([projectId, createdAt])
+}
+
+/// The Invoice & Receipt setup, one row per save, never changed (trigger). The newest is the current setup; a
+/// document is drawn with the version in force when it was issued (packages/shared effectiveSettingsVersion).
+model ClientDocumentSettingsVersion {
+  id            String   @id @default(cuid())
+  projectId     String   @default(dbgenerated("project_id_required()"))
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  version       Int
+  /// packages/shared DocumentSettingsValue.
+  data          Json
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime @default(now())
+
+  @@unique([projectId, version])
+}
+
+/// A logo or signature image for documents, addressed by its SHA-256 and never changed: an old setup version keeps
+/// pointing at exactly the image it was saved with. PNG/JPEG, sniffed, at most 256 KB (CHECK).
+model ClientDocumentAsset {
+  id         String   @id @default(cuid())
+  projectId  String   @default(dbgenerated("project_id_required()"))
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sha256     String
+  mimeType   String
+  bytes      Bytes
+  byteLength Int
+  createdAt  DateTime @default(now())
+
+  @@unique([projectId, sha256])
 }

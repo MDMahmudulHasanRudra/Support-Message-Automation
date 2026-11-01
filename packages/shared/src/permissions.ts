@@ -145,6 +145,10 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "clients.manage_subscriptions", label: "Sell, Renew and Cancel Client Subscriptions", category: "Clients" },
   { key: "clients.link_whatsapp_group", label: "Link WhatsApp Groups to Clients", category: "Clients" },
   { key: "clients.manage_settings", label: "Manage Client Module Settings", category: "Clients" },
+  // Client CRM V7 (CLIENT_CRM_V7.md §6). Writing to a client and approving a bulk send are separate keys, so one
+  // person prepares and ANOTHER approves (CLIENT_CENTER_PLAN.md decision 8).
+  { key: "clients.send_messages", label: "Send and Prepare Messages to Clients", category: "Clients" },
+  { key: "clients.approve_messages", label: "Approve Bulk Messages to Clients", category: "Clients" },
   // SMTP settings hold a credential and decide where mail leaves from: an authorized admin's key.
   { key: "communications.manage_email", label: "Manage Email Settings", category: "Communications" },
   // Commerce (COMMERCE.md): catalogue and stock, orders, and the sales pipeline, each a view/manage pair.

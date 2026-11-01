@@ -21,8 +21,10 @@ import { checkHostIsAllowed, resolveHostAddresses, sendWithNodemailer, type Host
  * A row stuck in SENDING (the worker died mid-send) becomes UNKNOWN for the same reason.
  *
  * Per-minute and per-day limits are the project's own (`EmailSettings`); the loop leaves rows queued
- * rather than exceed them. Nothing here is a campaign: the only purpose today is TEST, a message to
- * the signed-in administrator's own address, which is how the channel becomes "connected".
+ * rather than exceed them. Two purposes: TEST, a message to the signed-in administrator's own address,
+ * which is how the channel becomes "connected"; and CLIENT_MESSAGE (CLIENT_CRM_V7.md §6), a message to a
+ * client that a person sent or that ANOTHER person approved in a batch — re-checked here (channel on and
+ * verified, client not opted out) at the moment it is sent. Nothing here decides to send anything.
  */
 
 const LOOP_NAME = "email-outbox";
@@ -98,6 +100,15 @@ export async function sendNextQueued(now: Date = new Date(), send: SmtpSender = 
     await fail("Not sent: the settings were changed after this test was queued. Send a new test.");
     return true;
   }
+  // A message to a CLIENT (CLIENT_CRM_V7.md §6) goes only through a channel that is switched on and verified as it
+  // is now, and never to someone who opted out since it was queued.
+  if (message.purpose === "CLIENT_MESSAGE") {
+    const refusal = await clientMessageRefusal(message.id, message.toAddress, settings);
+    if (refusal) {
+      await fail(refusal);
+      return true;
+    }
+  }
 
   let password: string;
   try {
@@ -156,7 +167,25 @@ async function handleFailure(id: string, attempts: number, failure: SmtpFailure,
   }
 }
 
-async function finish(id: string, data: Parameters<typeof prisma.emailOutbox.update>[0]["data"]): Promise<void> {
+/**
+ * Why a client message must not go now, or null. Checked when SENDING, not only when queued: the channel may have
+ * been switched off, its settings changed (no longer verified), or the client may have opted out meanwhile. A bulk
+ * message (part of an approved batch) also still needs recorded consent.
+ */
+export async function clientMessageRefusal(outboxId: string, toAddress: string, settings: { enabled: boolean; settingsVersion: number; verifiedVersion: number | null }): Promise<string | null> {
+  if (!settings.enabled) return "Not sent: email is switched off for this project.";
+  if (settings.verifiedVersion !== settings.settingsVersion) return "Not sent: the email settings changed and have not been tested again.";
+  const message = await prisma.clientMessage.findFirst({ where: { emailOutboxId: outboxId }, select: { clientId: true, batchId: true } });
+  if (!message) return "Not sent: the client message this email belongs to no longer exists.";
+  const channels = await prisma.clientChannel.findMany({ where: { clientId: message.clientId, kind: "EMAIL" }, select: { value: true, consentStatus: true } });
+  const address = channels.find((c) => c.value.toLowerCase() === toAddress.toLowerCase());
+  if (!address) return "Not sent: this address is no longer on the client's record.";
+  if (address.consentStatus === "OPTED_OUT") return "Not sent: the client opted out of email.";
+  if (message.batchId && address.consentStatus !== "OPTED_IN") return "Not sent: the client's email consent is no longer recorded, so a bulk email cannot include them.";
+  return null;
+}
+
+async function finish(id: string, data:Parameters<typeof prisma.emailOutbox.update>[0]["data"]): Promise<void> {
   await prisma.emailOutbox.updateMany({ where: { id, status: "SENDING" }, data: data as never });
 }
 
