@@ -9,6 +9,7 @@ import {
   PROJECT_TYPE_LABELS,
   removalImpact,
   resolveModuleSelection,
+  TEMPLATE_ENTITLEMENT,
   templateModules,
   type ModuleIssue,
 } from "@support-automation/shared";
@@ -24,7 +25,8 @@ interface Initial {
   version: number;
 }
 
-const OPEN = { restricted: false, allowedFeatures: [] };
+// A template only lists modules; applying it is checked against the project (MODULE_APPROVALS.md).
+const OPEN = TEMPLATE_ENTITLEMENT;
 
 /**
  * Template editor: the same shared resolver as the Module Builder, without a plan (a template is

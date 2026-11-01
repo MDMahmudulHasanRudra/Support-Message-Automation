@@ -92,6 +92,9 @@ beforeAll(async () => {
   created.projects.push(projectA, projectB);
   // A fresh project has no feature rows: its modules are the defaults, i.e. the Default template.
   await rawPrisma.projectFeature.deleteMany({ where: { projectId: { in: [projectA, projectB] } } });
+  // Smart Import is approval-only (MODULE_APPROVALS.md): approved here for customer A so these tests can switch it
+  // on; refusing it without approval is moduleApprovals.integration.test.ts's job.
+  await rawPrisma.moduleApproval.create({ data: { customerId: customerA, featureKey: "CLIENT_SMART_IMPORT", reason: "test fixture", approvedByUsername: "test" } });
 });
 
 afterAll(async () => {

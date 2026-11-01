@@ -7,6 +7,8 @@ import {
   moduleDefinition,
   moduleDependencyCycles,
   moduleSelectionDiff,
+  APPROVAL_REQUIRED_MODULES,
+  moduleEntitled,
   PROJECT_MODULES,
   removalImpact,
   resolveModuleSelection,
@@ -15,7 +17,8 @@ import {
   type ModuleDefinition,
 } from "../projectModules.js";
 
-const OPEN = { restricted: false, allowedFeatures: [] };
+// No plan limit, and every approval-only module approved: the pre-approval behaviour these tests describe.
+const OPEN = { restricted: false, allowedFeatures: [], approvedFeatures: APPROVAL_REQUIRED_MODULES };
 
 describe("the module registry", () => {
   it("has exactly one available module per feature, reading the feature's own label, keys and routes", () => {
@@ -88,7 +91,7 @@ describe("resolveModuleSelection", () => {
   });
 
   it("refuses adding what the plan does not include, but keeps a module that was already on", () => {
-    const plan = { restricted: true, allowedFeatures: ["WHATSAPP_CHAT"] };
+    const plan = { restricted: true, allowedFeatures: ["WHATSAPP_CHAT"], approvedFeatures: [] };
     const added = resolveModuleSelection({ requested: ["WHATSAPP_CHAT", "OMNICHANNEL"], entitlement: plan });
     expect(added.ok).toBe(false);
     expect(added.issues).toEqual([expect.objectContaining({ code: "NOT_IN_PLAN", key: "OMNICHANNEL" })]);
@@ -98,16 +101,48 @@ describe("resolveModuleSelection", () => {
   });
 
   it("reports a hard dependency the plan does not include, instead of adding it", () => {
-    const r = resolveModuleSelection({ requested: ["CLIENT_SMART_IMPORT"], entitlement: { restricted: true, allowedFeatures: [] } });
+    const r = resolveModuleSelection({ requested: ["CLIENT_SMART_IMPORT"], entitlement: { restricted: true, allowedFeatures: [], approvedFeatures: ["CLIENT_SMART_IMPORT"] } });
     // Smart Import is manual-only (never decided by a plan); Client Management is not, and is missing.
     expect(r.ok).toBe(false);
     expect(r.issues).toEqual([expect.objectContaining({ code: "DEPENDENCY_NOT_IN_PLAN", key: "CLIENT_SMART_IMPORT" })]);
     expect(r.issues).toHaveLength(1);
   });
 
-  it("never lets a plan hold back a manual-only module", () => {
-    const r = resolveModuleSelection({ requested: ["WHATSAPP_AVATARS", "WHATSAPP_CHAT"], entitlement: { restricted: true, allowedFeatures: ["WHATSAPP_CHAT"] } });
+  it("never lets a plan hold back an APPROVED manual-only module", () => {
+    const r = resolveModuleSelection({ requested: ["WHATSAPP_AVATARS", "WHATSAPP_CHAT"], entitlement: { restricted: true, allowedFeatures: ["WHATSAPP_CHAT"], approvedFeatures: ["WHATSAPP_AVATARS"] } });
     expect(r.ok).toBe(true);
+  });
+
+  it("refuses switching on an approval-only module without platform approval, whatever the plan", () => {
+    for (const key of APPROVAL_REQUIRED_MODULES) {
+      for (const plan of [{ restricted: false, allowedFeatures: [] }, { restricted: true, allowedFeatures: [key] }]) {
+        const entitlement = { ...plan, approvedFeatures: [] };
+        expect(moduleEntitled(entitlement, key)).toBe(false);
+        const r = resolveModuleSelection({ requested: [key, "WHATSAPP_CHAT", "CLIENT_CENTER"], entitlement });
+        expect(r.ok, key).toBe(false);
+        expect(r.issues).toContainEqual(expect.objectContaining({ code: "NEEDS_APPROVAL", key }));
+        expect(r.selected).not.toContain(key);
+      }
+    }
+  });
+
+  it("approval of one module approves only that module", () => {
+    const entitlement = { restricted: false, allowedFeatures: [], approvedFeatures: ["SOCIAL_STUDIO"] };
+    expect(moduleEntitled(entitlement, "SOCIAL_STUDIO")).toBe(true);
+    expect(moduleEntitled(entitlement, "WHATSAPP_AVATARS")).toBe(false);
+    expect(moduleEntitled(entitlement, "CLIENT_SMART_IMPORT")).toBe(false);
+  });
+
+  it("switching an unapproved module OFF is always allowed, and one already on is kept by the resolver", () => {
+    const entitlement = { restricted: false, allowedFeatures: [], approvedFeatures: [] };
+    expect(resolveModuleSelection({ requested: ["WHATSAPP_CHAT"], entitlement, currentlyEnabled: ["WHATSAPP_AVATARS", "WHATSAPP_CHAT"] }).ok).toBe(true);
+    const kept = resolveModuleSelection({ requested: ["WHATSAPP_AVATARS", "WHATSAPP_CHAT"], entitlement, currentlyEnabled: ["WHATSAPP_AVATARS", "WHATSAPP_CHAT"] });
+    expect(kept.ok).toBe(true);
+    expect(kept.grandfathered).toEqual(["WHATSAPP_AVATARS"]);
+  });
+
+  it("the approval-only modules are exactly the manualOnly features", () => {
+    expect([...APPROVAL_REQUIRED_MODULES].sort()).toEqual(["CLIENT_SMART_IMPORT", "SOCIAL_STUDIO", "WHATSAPP_AVATARS"]);
   });
 
   it("is deterministic whatever order the browser sends", () => {
