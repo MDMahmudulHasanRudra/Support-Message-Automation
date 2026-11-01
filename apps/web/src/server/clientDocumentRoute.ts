@@ -53,6 +53,7 @@ export async function serveClientDocument(kind: "invoice" | "receipt", request: 
     );
   }
   const bytes = await renderDocumentPdf(branding, record.doc);
+  // No Content-Length: the server may compress the body, and a length set here would then be wrong.
   await logSystemEvent(
     "INFO",
     "clients",
@@ -65,7 +66,6 @@ export async function serveClientDocument(kind: "invoice" | "receipt", request: 
     headers: {
       ...PRIVATE,
       "Content-Type": "application/pdf",
-      "Content-Length": String(bytes.byteLength),
       "Content-Disposition": contentDisposition(documentFileName(kind === "invoice" ? "INVOICE" : "RECEIPT", record.doc.number, id)),
     },
   });
