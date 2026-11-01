@@ -573,23 +573,43 @@ export function typeForSelection(selected: readonly string[], base: ProjectBaseT
 }
 
 /**
- * What the customer's subscription allows to be ADDED. `restricted: false` = no subscription, or an
- * "All Access" plan: nothing is held back (a customer with no plan is never limited — SAAS_PLATFORM_PLAN
- * §10). A manualOnly module is never decided by a plan, so a plan never holds it back.
+ * What may be ADDED to a project. Two separate gates (MODULE_APPROVALS.md):
+ *
+ *   - the PLAN: `restricted: false` = no subscription, or an "All Access" plan: nothing is held back (a
+ *     customer with no plan is never limited — SAAS_PLATFORM_PLAN §10). A plan never decides a manualOnly module.
+ *   - PLATFORM APPROVAL, for the manualOnly (approval-only) modules only: `approvedFeatures` lists those the
+ *     platform has approved for this customer or this project. Required, never defaulted: a caller that forgets
+ *     it does not compile, and an empty list approves nothing.
  */
 export interface ModuleEntitlement {
   restricted: boolean;
   allowedFeatures: readonly string[];
+  approvedFeatures: readonly string[];
 }
+
+/** The modules that need platform approval before a customer may switch them on. */
+export const APPROVAL_REQUIRED_MODULES: readonly string[] = PROJECT_FEATURES.filter((f) => "manualOnly" in f && f.manualOnly).map((f) => f.key);
+
+export function moduleNeedsApproval(key: string): boolean {
+  return Boolean(MODULE_BY_KEY.get(key)?.manualOnly);
+}
+
+/**
+ * For describing a TEMPLATE, which only lists modules and switches nothing on: no plan limit and every
+ * approval-only module allowed. Applying the template to a project is checked against that project's real
+ * entitlement. Never use it for a project.
+ */
+export const TEMPLATE_ENTITLEMENT: ModuleEntitlement = { restricted: false, allowedFeatures: [], approvedFeatures: APPROVAL_REQUIRED_MODULES };
 
 export function moduleEntitled(entitlement: ModuleEntitlement, key: string): boolean {
   const def = MODULE_BY_KEY.get(key);
   if (!def) return false;
-  if (!entitlement.restricted || def.manualOnly) return true;
+  if (def.manualOnly) return entitlement.approvedFeatures.includes(key);
+  if (!entitlement.restricted) return true;
   return entitlement.allowedFeatures.includes(key);
 }
 
-export type ModuleIssueCode = "UNKNOWN_MODULE" | "NOT_AVAILABLE" | "NOT_IN_PLAN" | "CONFLICT" | "DEPENDENCY_NOT_IN_PLAN";
+export type ModuleIssueCode = "UNKNOWN_MODULE" | "NOT_AVAILABLE" | "NOT_IN_PLAN" | "NEEDS_APPROVAL" | "CONFLICT" | "DEPENDENCY_NOT_IN_PLAN";
 
 export interface ModuleIssue {
   code: ModuleIssueCode;
@@ -633,6 +653,7 @@ export function resolveModuleSelection(input: {
     const def = MODULE_BY_KEY.get(key);
     if (!def) issues.push({ code: "UNKNOWN_MODULE", key, message: `Unknown module "${key}".` });
     else if (def.status !== "AVAILABLE") issues.push({ code: "NOT_AVAILABLE", key, message: `${def.name} is not available yet.` });
+    else if (!allowed(key) && def.manualOnly) issues.push({ code: "NEEDS_APPROVAL", key, message: `${def.name} needs approval from the platform before it can be switched on. Ask your provider to approve it.` });
     else if (!allowed(key)) issues.push({ code: "NOT_IN_PLAN", key, message: `${def.name} is not included in this customer's plan.` });
     else selected.add(key);
   }
@@ -648,7 +669,7 @@ export function resolveModuleSelection(input: {
         const pick = dep.anyOf.find((k) => MODULE_BY_KEY.get(k)?.status === "AVAILABLE" && allowed(k));
         if (!pick) {
           const names = dep.anyOf.map((k) => MODULE_BY_KEY.get(k)?.name ?? k).join(" or ");
-          issues.push({ code: "DEPENDENCY_NOT_IN_PLAN", key, message: `${MODULE_BY_KEY.get(key)!.name} needs ${names}, which this customer's plan does not include.` });
+          issues.push({ code: "DEPENDENCY_NOT_IN_PLAN", key, message: `${MODULE_BY_KEY.get(key)!.name} needs ${names}, which this customer's plan (or platform approval) does not include.` });
           continue;
         }
         selected.add(pick);

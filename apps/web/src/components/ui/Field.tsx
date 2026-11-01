@@ -1,9 +1,14 @@
-import type {
-  InputHTMLAttributes,
-  ReactNode,
-  Ref,
-  SelectHTMLAttributes,
-  TextareaHTMLAttributes,
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useId,
+  type InputHTMLAttributes,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
 } from "react";
 
 const fieldBase =
@@ -106,16 +111,32 @@ export function Label({
   );
 }
 
-export function FieldHint({ children }: { children: ReactNode }) {
+export function FieldHint({ children, id }: { children: ReactNode; id?: string }) {
   return (
-    <p className="mt-1.5 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">{children}</p>
+    <p id={id} className="mt-1.5 text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">{children}</p>
   );
 }
 
-export function FieldError({ children }: { children: ReactNode }) {
-  return <p className="mt-1.5 text-xs font-medium text-[color:var(--color-danger)]">{children}</p>;
+export function FieldError({ children, id }: { children: ReactNode; id?: string }) {
+  return <p id={id} className="mt-1.5 text-xs font-medium text-[color:var(--color-danger)]">{children}</p>;
 }
 
+/** The controls Field links its label to on its own: native fields and this kit's wrappers of them. */
+function isLinkableControl(type: unknown): boolean {
+  return type === "input" || type === "select" || type === "textarea" || type === Input || type === Select || type === Textarea;
+}
+
+/**
+ * A label, one control, and its hint or error.
+ *
+ * The label is linked to the control without the caller doing anything: when the only child is an
+ * input, select or textarea (native or this kit's) without an `id`, Field gives it one (`htmlFor` if
+ * passed, otherwise a `useId()`), and points `aria-describedby` at the hint/error and `aria-invalid`
+ * at the error. A child that already has an `id` keeps it, and the label follows it unless `htmlFor`
+ * names something else. Anything else as a child (a composite picker, several controls) renders
+ * exactly as before, linked only through `htmlFor`. `useId` and `cloneElement` both work in Server
+ * Components, so this stays usable from server pages.
+ */
 export function Field({
   label,
   htmlFor,
@@ -133,15 +154,33 @@ export function Field({
   className?: string;
   children: ReactNode;
 }) {
+  const generatedId = useId();
+  const messageId = `${generatedId}-message`;
+  const hasMessage = Boolean(error || hint);
+
+  let labelFor = htmlFor;
+  let control = children;
+  if (Children.count(children) === 1 && isValidElement(children) && isLinkableControl(children.type)) {
+    const child = children as ReactElement<{ id?: string; "aria-describedby"?: string; "aria-invalid"?: boolean | "true" | "false" }>;
+    const ownId = child.props.id;
+    labelFor = htmlFor ?? ownId ?? generatedId;
+    const describedBy = [child.props["aria-describedby"], hasMessage ? messageId : null].filter(Boolean).join(" ") || undefined;
+    control = cloneElement(child, {
+      id: ownId ?? labelFor,
+      "aria-describedby": describedBy,
+      "aria-invalid": error ? true : child.props["aria-invalid"],
+    });
+  }
+
   return (
     <div className={className}>
       {label ? (
-        <Label htmlFor={htmlFor} required={required}>
+        <Label htmlFor={labelFor} required={required}>
           {label}
         </Label>
       ) : null}
-      {children}
-      {error ? <FieldError>{error}</FieldError> : hint ? <FieldHint>{hint}</FieldHint> : null}
+      {control}
+      {error ? <FieldError id={messageId}>{error}</FieldError> : hint ? <FieldHint id={messageId}>{hint}</FieldHint> : null}
     </div>
   );
 }

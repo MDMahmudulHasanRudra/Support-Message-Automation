@@ -554,17 +554,19 @@ enum ProjectStatus {
 /// `proj_isp_digital`) and any created later. Everything project-scoped carries its `projectId`.
 /// See MULTI_PROJECT_PLAN.md. A status change never deletes data.
 model Project {
-  id                  String        @id @default(cuid())
+  id                  String           @id @default(cuid())
+  /// Platform approvals naming this project (MODULE_APPROVALS.md). Not project-owned data: see ModuleApproval.
+  moduleApprovals     ModuleApproval[]
   name                String
-  slug                String        @unique
+  slug                String           @unique
   description         String?
-  status              ProjectStatus @default(SETUP)
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  status              ProjectStatus    @default(SETUP)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
   /// The SaaS customer this project belongs to (SAAS_PLATFORM_PLAN.md). NULL = the original
   /// installation (the founding customer). A customer has as many projects as its Main Admin creates.
   customerId          String?
-  customer            Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customer            Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
   /// Set while the customer's SaaS subscription holds this project (suspended or cancelled -
   /// SAAS_PLATFORM_PLAN.md section 10). Held = treated exactly like a SUSPENDED project: read-only,
   /// no automation or outbound, incoming messages still stored. Never set for a project with no
@@ -572,12 +574,12 @@ model Project {
   billingHoldAt       DateTime?
   /// The business profile (PROJECT_MODULES.md): a label and the template it started from. It never
   /// grants anything by itself — the modules are the `ProjectFeature` rows, which every check reads.
-  projectType         ProjectType   @default(DEFAULT)
+  projectType         ProjectType      @default(DEFAULT)
   /// The template a CUSTOM_MIX started from ("Custom Mix (E-commerce base)"); null = none.
   projectBaseType     ProjectType?
   /// Bumped by every module configuration change; a change names the version it was made from, so
   /// two admins cannot overwrite each other unseen.
-  moduleConfigVersion Int           @default(0)
+  moduleConfigVersion Int              @default(0)
 
   access              ProjectAccess[]
   moduleConfigChanges ProjectModuleConfigChange[]
@@ -857,6 +859,23 @@ model User {
   // and would otherwise make the rolling-window check unreliable
   lockedUntil         DateTime? // set once failedLoginAttempts crosses SecuritySettings'
   // loginLockoutThreshold within loginLockoutWindowMinutes; checked before the password itself
+
+  /// My account (ACCOUNT_SELF_SERVICE.md): a contact number the person typed themselves. Display only.
+  phone                      String?
+  /// When the password was last set by anyone (the person or an administrator). Null = before this was recorded.
+  passwordChangedAt          DateTime?
+  /// When the person last changed their own username.
+  usernameChangedAt          DateTime?
+  /// Two-step sign-in (TOTP, RFC 6238). The secret is an encryptSecret envelope; null = off.
+  mfaSecretCiphertext        String?
+  /// A secret being set up, not yet confirmed with a code. Never used to sign in.
+  mfaPendingSecretCiphertext String?
+  mfaEnabledAt               DateTime?
+  /// One-time recovery codes, stored only as SHA-256 hashes; a used code is removed.
+  mfaRecoveryCodeHashes      String[]    @default([])
+  /// The last TOTP time step accepted, so one code cannot be replayed inside its window.
+  mfaLastUsedStep            BigInt?
+  avatar                     UserAvatar?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5952,7 +5971,8 @@ model Employee {
   /// "EMP-000123": assigned once, from the `employee_code_seq` sequence, never reused or edited.
   employeeCode String         @unique
   fullName     String
-  email        String?        @unique
+  /// Unique per customer (partial indexes in 20261101100000_account_self_service), not across customers.
+  email        String?
   phone        String?
   departmentId String?
   department   Department?    @relation(fields: [departmentId], references: [id], onDelete: Restrict)
@@ -7525,6 +7545,8 @@ model ListViewPreference {
 
 /// One customer (tenant) of the platform: a company with its own project and its own address.
 model Customer {
+  /// Platform approvals for the approval-only modules (MODULE_APPROVALS.md).
+  moduleApprovals       ModuleApproval[]
   id                    String                 @id @default(cuid())
   name                  String
   contactName           String?
@@ -9035,4 +9057,43 @@ model SocialRssItem {
   seenAt    DateTime      @default(now())
 
   @@unique([feedId, guid])
+}
+
+/// A person's own profile photo (ACCOUNT_SELF_SERVICE.md). Its own table so the bytes are never loaded with
+/// every User query. Sniffed and bounded at upload; served only to signed-in people of the same customer.
+model UserAvatar {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bytes     Bytes
+  mimeType  String
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+}
+
+/// Platform approval for an approval-only (manualOnly) module (MODULE_APPROVALS.md): WHATSAPP_AVATARS,
+/// CLIENT_SMART_IMPORT, SOCIAL_STUDIO. Separate from the plan and from the project's switch: a customer's Main
+/// Admin may switch an approved module on or off, only a platform operator approves or revokes. Platform data —
+/// the project is `targetProjectId`, never `projectId`, because the row is not owned by the project (a project's
+/// own tables carry `projectId` and its isolation triggers). Rows are history: revoking stamps `revoked*` and the
+/// row is kept; a trigger refuses any other change. One ACTIVE row per (customer, project-or-all, module).
+model ModuleApproval {
+  id                   String    @id @default(cuid())
+  customerId           String
+  customer             Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// Null = every project of the customer, including later ones; otherwise only this project.
+  targetProjectId      String?
+  targetProject        Project?  @relation(fields: [targetProjectId], references: [id], onDelete: Cascade)
+  featureKey           String
+  reason               String
+  approvedAt           DateTime  @default(now())
+  /// Null = recorded by the migration for a module that was already on.
+  approvedByOperatorId String?
+  approvedByUsername   String
+  revokedAt            DateTime?
+  revokedByOperatorId  String?
+  revokedByUsername    String?
+  revokeReason         String?
+
+  @@index([customerId, featureKey])
+  @@index([targetProjectId])
 }

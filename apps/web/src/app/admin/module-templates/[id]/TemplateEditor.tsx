@@ -9,6 +9,7 @@ import {
   PROJECT_TYPE_LABELS,
   removalImpact,
   resolveModuleSelection,
+  TEMPLATE_ENTITLEMENT,
   templateModules,
   type ModuleIssue,
 } from "@support-automation/shared";
@@ -24,7 +25,8 @@ interface Initial {
   version: number;
 }
 
-const OPEN = { restricted: false, allowedFeatures: [] };
+// A template only lists modules; applying it is checked against the project (MODULE_APPROVALS.md).
+const OPEN = TEMPLATE_ENTITLEMENT;
 
 /**
  * Template editor: the same shared resolver as the Module Builder, without a plan (a template is
@@ -100,7 +102,17 @@ export function TemplateEditor({ id, initial }: { id: string | null; initial: In
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="text-[color:var(--color-muted-foreground)]">Start from:</span>
         {(["DEFAULT", "ECOMMERCE"] as const).map((t) => (
-          <Button key={t} size="sm" variant="ghost" onClick={() => setRequested(templateModules(t))}>
+          <Button
+            key={t}
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              // Starting from a type's modules also makes it the base, so the two never disagree.
+              setBaseType(t);
+              setRequested(templateModules(t));
+              setDeclined([]);
+            }}
+          >
             {PROJECT_TYPE_LABELS[t]} modules
           </Button>
         ))}

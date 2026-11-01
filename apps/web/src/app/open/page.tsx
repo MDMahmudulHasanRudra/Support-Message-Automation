@@ -37,6 +37,11 @@ export default async function OpenProject({ searchParams }: { searchParams: Prom
             </NextLink>
           </p>
         ) : null}
+        <p className="mt-3 text-sm">
+          <NextLink href="/account" className="text-[color:var(--color-muted-foreground)] hover:underline">
+            My account
+          </NextLink>
+        </p>
       </main>
     );
   }

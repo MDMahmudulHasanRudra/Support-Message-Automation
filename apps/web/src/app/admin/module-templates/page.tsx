@@ -4,6 +4,7 @@ import { Badge, ButtonLink, Card, PageHeader, SectionHeader, ViewOnlyNotice } fr
 import { platformPrisma } from "@/server/db";
 import { requireMainAdminPage } from "@/server/mainAdmin";
 import { currentTenant } from "@/server/tenant";
+import { getBranding } from "@/server/branding";
 import { moduleTemplateOptions } from "@/server/projectModules";
 import { TemplateRowActions } from "./TemplateRowActions";
 
@@ -17,9 +18,10 @@ export const metadata = { title: "Module templates" };
 export default async function ModuleTemplatesPage() {
   const { canManage } = await requireMainAdminPage();
   const tenant = await currentTenant();
-  const [templates, archived] = await Promise.all([
+  const [templates, archived, { productName }] = await Promise.all([
     moduleTemplateOptions(tenant),
     platformPrisma.moduleTemplate.findMany({ where: { archivedAt: { not: null } }, orderBy: { archivedAt: "desc" }, select: { id: true, name: true, archivedAt: true } }),
+    getBranding(),
   ]);
   const builtIns = templates.filter((t) => t.builtIn);
   const own = templates.filter((t) => !t.builtIn);
@@ -60,7 +62,7 @@ export default async function ModuleTemplatesPage() {
       )}
 
       <div className="mt-8">
-        <SectionHeader title="Built-in" description="Provided with Get Assist. Duplicate one to make your own version." />
+        <SectionHeader title="Built-in" description={`Provided with ${productName}. Duplicate one to make your own version.`} />
         <div className="grid gap-3 md:grid-cols-2">
           {builtIns.map((t) => (
             <TemplateCard key={t.key} name={t.name} description={t.description} baseType={t.baseType} modules={t.modules} badge="Built-in">

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { ImageUp, RotateCcw, Trash2 } from "lucide-react";
-import { BrandMark, Button, Card, Field, Input, SectionHeader, Textarea, useToast } from "@/components/ui";
+import { BrandMark, Button, Card, ConfirmDialog, Field, Input, SectionHeader, Textarea, useToast } from "@/components/ui";
 import {
   removeBrandAsset,
   saveBranding,
@@ -144,7 +144,11 @@ export function BrandingEditor({ canManage, defaults, settings }: { canManage: b
                 ) : null}
               </div>
             </Field>
-            {state.error ? <p className="text-[13px] font-medium text-[color:var(--color-danger)]">{state.error}</p> : null}
+            {state.error ? (
+              <p role="alert" className="text-[13px] font-medium text-[color:var(--color-danger)]">
+                {state.error}
+              </p>
+            ) : null}
             {canManage ? (
               <div className="flex flex-wrap items-center gap-3">
                 <Button type="submit" loading={pending}>
@@ -206,6 +210,7 @@ function AssetCard({
   const [chosen, setChosen] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [removing, startRemoving] = useTransition();
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [state, formAction, pending] = useActionState(
     (prev: BrandAssetState, formData: FormData) => uploadBrandAsset(kind, prev, formData),
     {} as BrandAssetState,
@@ -282,27 +287,44 @@ function AssetCard({
                   size="sm"
                   variant="ghost"
                   loading={removing}
-                  onClick={() =>
-                    startRemoving(async () => {
-                      const result = await removeBrandAsset(kind);
-                      if (result.error) showToast({ tone: "danger", title: result.error });
-                      else {
-                        showToast({ tone: "success", title: `${title} removed` });
-                        router.refresh();
-                      }
-                    })
-                  }
+                  onClick={() => setConfirmRemove(true)}
                 >
                   <Trash2 className="size-3.5" aria-hidden />
                   Remove
                 </Button>
               ) : null}
             </form>
+            <ConfirmDialog
+              open={confirmRemove}
+              onClose={() => setConfirmRemove(false)}
+              onConfirm={() =>
+                startRemoving(async () => {
+                  const result = await removeBrandAsset(kind);
+                  setConfirmRemove(false);
+                  if (result.error) showToast({ tone: "danger", title: result.error });
+                  else {
+                    showToast({ tone: "success", title: `${title} removed` });
+                    router.refresh();
+                  }
+                })
+              }
+              title={`Remove the ${title.toLowerCase()}?`}
+              description={
+                kind === "logo"
+                  ? "The uploaded logo is deleted and the sign-in page goes back to the built-in mark and product name, for everyone. To use it again, upload the file again."
+                  : "The uploaded icon is deleted and the built-in mark is shown again wherever the icon appeared, for everyone. To use it again, upload the file again."
+              }
+              confirmLabel={`Remove ${title.toLowerCase()}`}
+              tone="danger"
+              loading={removing}
+            />
             <p className="text-[12px] text-[color:var(--color-muted-foreground)]">
               PNG, JPEG, WebP, GIF, ICO or SVG, up to {BRANDING_LIMITS.assetBytes / 1024} KB.
             </p>
             {localError || state.error ? (
-              <p className="text-[12px] font-medium text-[color:var(--color-danger)]">{localError ?? state.error}</p>
+              <p role="alert" className="text-[12px] font-medium text-[color:var(--color-danger)]">
+                {localError ?? state.error}
+              </p>
             ) : null}
           </div>
         ) : null}

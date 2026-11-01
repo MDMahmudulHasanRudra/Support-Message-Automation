@@ -304,6 +304,18 @@ colour moves only the accent tokens, never the ink primary. Images are sniffed f
 capped at 512 KB, stored in the database and served by `/api/brand/<logo|icon>` with a sandbox CSP.
 A project's NAME is editable on its Main Admin page; its slug never is.
 
+**My account (`ACCOUNT_SELF_SERVICE.md`, 1 Nov 2026)**: `/account` for everybody and `/admin/account` in the portal (one
+view). The person changes their profile, photo, username and password, turns on TOTP two-step sign-in, and manages their devices.
+Self only (user from the session); username, password and two-step changes need the current password; a wrong one counts toward
+the login lockout (`server/loginLockout.ts`); a TOTP step or recovery code is claimed by a conditional update; a Main Admin resets
+someone else's two-step sign-in with `privilegeRefusal`. `/account` is in `OUTSIDE_PROJECT`.
+
+**Approval-only modules (`MODULE_APPROVALS.md`, 1 Nov 2026)**: WHATSAPP_AVATARS, CLIENT_SMART_IMPORT, SOCIAL_STUDIO (every
+`manualOnly` feature) need a platform operator's `ModuleApproval` (per customer or per workspace) before a customer's Main Admin
+may switch them on. `moduleEntitled` reads `ModuleEntitlement.approvedFeatures` (required field); `applyModuleSelection`
+re-checks additions under the `module-approval:<customer>` lock; revoking switches the module off in the same transaction
+through the module history. The column is `targetProjectId` on purpose (platform data, not project-owned).
+
 **Two administration layers (`SAAS_PLATFORM_PLAN.md` §12, 22 Oct 2026) — read this before touching users,
 roles, projects, hostnames or anything under `/admin` or `/platform`.**
 - **Layer 1, the RELQIVO platform** (`/platform/*`, `server/platform/`): the software owner's control centre —

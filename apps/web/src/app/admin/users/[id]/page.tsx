@@ -4,7 +4,7 @@ import { platformPrisma } from "@/server/db";
 import { requireAdminSection } from "@/server/mainAdmin";
 import { userAccessMatrix } from "@/server/adminUsers";
 import { Alert, Badge, Card, PageHeader, SectionHeader } from "@/components/ui";
-import { AccessMatrix, EmployeeLink, RoleControl } from "./UserAdminControls";
+import { AccessMatrix, EmployeeLink, RoleControl, TwoStepReset } from "./UserAdminControls";
 
 export const metadata = { title: "User" };
 
@@ -33,6 +33,8 @@ export default async function AdminUserPage({ params, searchParams }: { params: 
       isActive: true,
       lastLoginAt: true,
       createdAt: true,
+      mfaEnabledAt: true,
+      mfaSecretCiphertext: true,
       permissionModuleId: true,
       permissionModule: { select: { name: true, permissions: { where: { permission: { key: "projects.manage" } }, select: { permissionId: true } } } },
       employee: { select: { id: true, employeeCode: true, fullName: true, department: { select: { name: true } }, jobTitle: { select: { name: true } } } },
@@ -105,6 +107,14 @@ export default async function AdminUserPage({ params, searchParams }: { params: 
         />
         <AccessMatrix userId={user.id} rows={matrix} canEdit={canAccess} />
         {!canAccess ? <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">Changing project access needs Manage Projects and Project Access.</p> : null}
+      </Card>
+
+      <Card>
+        <SectionHeader
+          title="Two-step sign-in"
+          description="Set by the person on their own My account page. Reset it only when they lost both their phone and their recovery codes — it signs them out everywhere."
+        />
+        <TwoStepReset userId={user.id} enabled={Boolean(user.mfaSecretCiphertext)} canEdit={canEditRole && user.id !== session.userId} />
       </Card>
 
       <p className="text-xs text-[color:var(--color-muted-foreground)]">

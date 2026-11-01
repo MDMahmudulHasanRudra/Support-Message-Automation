@@ -13,14 +13,19 @@ import { CustomerHealthPanel } from "./CustomerHealthPanel";
 import { SupportAccessPanel } from "./SupportAccessPanel";
 import { CopyText } from "./CopyText";
 import { CustomerRemovalPanel, RemovedCustomerPanel } from "./CustomerRemovalPanel";
+import { ModuleApprovalsPanel } from "./ModuleApprovalsPanel";
+import { listCustomerModuleApprovals } from "@/server/moduleApprovals";
+import { APPROVAL_REQUIRED_MODULES, moduleDefinition } from "@support-automation/shared";
 
 export const metadata = { title: "Customer" };
+
+const APPROVAL_TIME = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dhaka", dateStyle: "medium", timeStyle: "short" });
 
 export default async function CustomerPage({ params }: { params: Promise<{ id: string }> }) {
   const operator = await requireOperatorPage();
   const canManage = true;
   const { id } = await params;
-  const [customer, settings, billing, plans, billingSettings, invitations, people, health, support] = await Promise.all([
+  const [customer, settings, billing, plans, billingSettings, invitations, people, health, support, approvals] = await Promise.all([
     getCustomer(id),
     getDomainSettings(),
     getCustomerBilling(id, { events: true }),
@@ -30,6 +35,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
     customerPeople(id),
     customerHealth(id),
     listSupportSessions({ customerId: id, take: 10 }),
+    listCustomerModuleApprovals(id),
   ]);
   if (!customer) notFound();
   const scheme = (process.env.NEXTAUTH_URL ?? "").startsWith("http://") ? "http" : "https";
@@ -127,6 +133,27 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
       <Card>
         <SectionHeader title="Owner and people" description="The owner is the customer's own Main Admin: they run their software, its projects, users and roles. They can never reach the platform." />
         <OwnerPanel customerId={customer.id} people={people} invitations={invitations} canManage={canManage} />
+      </Card>
+
+      <Card>
+        <SectionHeader
+          title="Approval-only modules"
+          description="WhatsApp profile pictures, Smart Bulk Import and Social Studio are never part of a plan. Approve them here; the customer's Main Admin then decides whether to switch them on."
+        />
+        <ModuleApprovalsPanel
+          customerId={customer.id}
+          modules={APPROVAL_REQUIRED_MODULES.map((key) => ({ key, name: moduleDefinition(key)?.name ?? key }))}
+          projects={customer.projects.map((p) => ({ id: p.id, name: p.name }))}
+          approvals={approvals.map((a) => ({
+            id: a.id,
+            moduleName: a.moduleName,
+            scope: a.targetProjectId ? `${a.targetProjectName ?? "a workspace"} only` : "Every workspace",
+            reason: a.reason,
+            approved: `${APPROVAL_TIME.format(a.approvedAt)} by ${a.approvedByUsername}`,
+            revoked: a.revokedAt ? `${APPROVAL_TIME.format(a.revokedAt)} by ${a.revokedByUsername ?? "?"}` : null,
+            revokeReason: a.revokeReason,
+          }))}
+        />
       </Card>
 
       <Card>

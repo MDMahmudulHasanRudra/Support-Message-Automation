@@ -157,7 +157,7 @@ export async function setUserRole(userId: string, permissionModuleIdRaw: string)
   const permissionModuleId = permissionModuleIdRaw || null;
   if (userId === session.userId) return { error: "You cannot change your own role — ask another administrator." };
   const [user, role] = await Promise.all([
-    platformPrisma.user.findUnique({ where: { id: userId }, select: { id: true } }),
+    platformPrisma.user.findUnique({ where: { id: userId }, select: { id: true, permissionModule: { select: { name: true } } } }),
     permissionModuleId ? platformPrisma.permissionModule.findUnique({ where: { id: permissionModuleId }, select: { id: true, name: true } }) : null,
   ]);
   if (!user) return { error: "That user no longer exists." };
@@ -167,7 +167,7 @@ export async function setUserRole(userId: string, permissionModuleIdRaw: string)
   await platformPrisma.user.update({ where: { id: userId }, data: { permissionModuleId } });
   // A role can make or unmake a Main Admin, which decides project entry: forget cached decisions.
   forgetProjectAccessDecisions();
-  await logSystemEvent("WARN", "users", "USER_ROLE_CHANGED", { actorId: session.userId, targetUserId: userId, role: role?.name ?? null });
+  await logSystemEvent("WARN", "users", "USER_ROLE_CHANGED", { actorId: session.userId, targetUserId: userId, from: user.permissionModule?.name ?? null, to: role?.name ?? null, role: role?.name ?? null }, { actorUserId: session.userId, targetType: "User", targetId: userId });
   revalidatePath(`/admin/users/${userId}`);
   revalidatePath("/admin/users");
   return { success: role ? `Role set to ${role.name}.` : "Role removed." };
@@ -190,4 +190,30 @@ export async function setUserEmployee(userId: string, employeeId: string | null)
   revalidatePath(`/admin/users/${userId}`);
   revalidatePath("/admin/users");
   return { success: employeeId ? "Employee linked." : "Employee unlinked." };
+}
+
+/**
+ * Turns off a person's two-step sign-in (ACCOUNT_SELF_SERVICE.md) when they lost their phone AND their
+ * recovery codes. `users.edit`, never on oneself (use My account), and taking it off a Main Admin needs a
+ * Main Admin (privilegeRefusal) — it is half of taking over their account. Signs them out everywhere.
+ */
+export async function resetUserTwoStep(userId: string): Promise<AdminUserFormState> {
+  const session = await portalSession();
+  if (!session || !(await hasPermission(session, "users.edit"))) return { error: NEEDS("reset two-step sign-in") };
+  if (userId === session.userId) return { error: "Turn your own two-step sign-in off on My account." };
+  const user = await platformPrisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, mfaSecretCiphertext: true } });
+  if (!user) return { error: "That user no longer exists." };
+  if (!user.mfaSecretCiphertext) return { success: "Two-step sign-in is already off for this user." };
+  const privileged = await privilegeRefusal(session.userId, { targetUserId: userId });
+  if (privileged) return { error: privileged };
+  await platformPrisma.$transaction([
+    platformPrisma.user.update({
+      where: { id: userId },
+      data: { mfaSecretCiphertext: null, mfaPendingSecretCiphertext: null, mfaEnabledAt: null, mfaLastUsedStep: null, mfaRecoveryCodeHashes: [] },
+    }),
+    platformPrisma.userSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: "ADMIN_REVOKED" } }),
+  ]);
+  await logSystemEvent("WARN", "users", "USER_MFA_RESET", { actorId: session.userId, targetUserId: userId, username: user.username }, { actorUserId: session.userId, targetType: "User", targetId: userId });
+  revalidatePath(`/admin/users/${userId}`);
+  return { success: `Two-step sign-in is off for ${user.username}, and they were signed out everywhere. They can turn it on again on My account.` };
 }

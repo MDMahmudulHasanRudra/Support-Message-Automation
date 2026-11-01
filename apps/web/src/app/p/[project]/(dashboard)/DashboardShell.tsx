@@ -1,7 +1,7 @@
 "use client";
 
 import { SupportSessionBanner, type SupportSessionBannerInfo } from "@/components/SupportSessionBanner";
-import { ChevronRight, LogOut, Menu, Search } from "lucide-react";
+import { ChevronRight, LogOut, Menu, Search, UserRound } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -83,6 +83,16 @@ function UserMenu({ username, onLogout }: { username: string; onLogout: () => Pr
             {username}
           </div>
           <div className="my-1 border-t border-[var(--color-border)]" />
+          {/* My account (ACCOUNT_SELF_SERVICE.md): outside every project, so a plain link, never ProjectLink. */}
+          <NextLink
+            href="/account"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2.5 py-1.5 text-[13px] text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
+          >
+            <UserRound className="size-3.5" aria-hidden />
+            My account
+          </NextLink>
           <form
             action={async () => {
               setOpen(false);

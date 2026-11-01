@@ -28,7 +28,7 @@ export async function resetCustomerUserPassword(customerId: string, userId: stri
 
   const now = new Date();
   await globalPrisma.$transaction([
-    globalPrisma.user.update({ where: { id: user.id }, data: { passwordHash: hashPassword(password), failedLoginAttempts: 0, lastFailedLoginAt: null, lockedUntil: null } }),
+    globalPrisma.user.update({ where: { id: user.id }, data: { passwordHash: hashPassword(password), passwordChangedAt: new Date(), failedLoginAttempts: 0, lastFailedLoginAt: null, lockedUntil: null } }),
     globalPrisma.userSession.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: now, revokedReason: "PASSWORD_CHANGED" } }),
   ]);
   await logPlatformEvent("WARN", "Customer user's password reset", { customerId, username: user.username, by: access.operator.username }, { type: "Customer", id: customerId });

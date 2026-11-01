@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Alert, BrandMark, Button, Field, Input } from "@/components/ui";
 import { useBranding } from "@/components/BrandingProvider";
 import { login, type LoginState } from "./actions";
@@ -15,6 +15,13 @@ const CAPABILITIES = [
 
 export default function LoginPage() {
   const [state, formAction, pending] = useActionState(login, initialState);
+  // Controlled, because React resets an action form after every submit: the two-step code is asked on a
+  // second submit that must carry the same username and password (ACCOUNT_SELF_SERVICE.md).
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [restarted, setRestarted] = useState(0);
+  const askingCode = Boolean(state.needsCode) && restarted === 0;
   // White labeling (BRANDING.md): name, headline, text and logo are the installation's own.
   const brand = useBranding();
 
@@ -103,41 +110,91 @@ export default function LoginPage() {
 
           <div className="mb-7">
             <h1 className="text-[26px] font-semibold leading-tight tracking-[-0.025em] text-[color:var(--color-foreground)]">
-              Sign in
+              {askingCode ? "Two-step sign-in" : "Sign in"}
             </h1>
             <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">
-              Use your dashboard account to continue.
+              {askingCode
+                ? "Enter the 6-digit code from your authenticator app. Lost your phone? Use one of your recovery codes instead."
+                : "Use your dashboard account to continue."}
             </p>
           </div>
 
-          <form action={formAction} className="space-y-4">
-            <Field label="Username" htmlFor="username">
-              <Input
-                id="username"
-                name="username"
-                type="text"
-                required
-                autoComplete="username"
-                placeholder="admin"
-              />
-            </Field>
+          <form
+            action={(form) => {
+              setRestarted(0);
+              formAction(form);
+            }}
+            className="space-y-4"
+          >
+            {askingCode ? (
+              <>
+                <input type="hidden" name="username" value={username} />
+                <input type="hidden" name="password" value={password} />
+                <Field label="Code" htmlFor="code">
+                  <Input
+                    id="code"
+                    name="code"
+                    type="text"
+                    required
+                    autoFocus
+                    inputMode="text"
+                    autoComplete="one-time-code"
+                    placeholder="123456"
+                    maxLength={20}
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                  />
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="Username" htmlFor="username">
+                  <Input
+                    id="username"
+                    name="username"
+                    type="text"
+                    required
+                    autoComplete="username"
+                    placeholder="admin"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                  />
+                </Field>
 
-            <Field label="Password" htmlFor="password">
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                required
-                autoComplete="current-password"
-                placeholder="Enter your password"
-              />
-            </Field>
+                <Field label="Password" htmlFor="password">
+                  <Input
+                    id="password"
+                    name="password"
+                    type="password"
+                    required
+                    autoComplete="current-password"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </Field>
+              </>
+            )}
 
-            {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
+            {state.error && (askingCode || !state.needsCode) ? <Alert tone="danger">{state.error}</Alert> : null}
 
             <Button type="submit" loading={pending} className="h-10 w-full">
-              Sign in
+              {askingCode ? "Verify and sign in" : "Sign in"}
             </Button>
+            {askingCode ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => {
+                  setCode("");
+                  setPassword("");
+                  setRestarted((n) => n + 1);
+                }}
+              >
+                Use a different account
+              </Button>
+            ) : null}
           </form>
 
           <p className="mt-8 border-t border-[var(--color-border)] pt-6 text-xs text-[color:var(--color-muted-foreground)]">
