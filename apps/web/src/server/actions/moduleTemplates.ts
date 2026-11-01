@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { builtInModuleTemplate, isProjectType, resolveModuleSelection, type ModuleIssue } from "@support-automation/shared";
+import { builtInModuleTemplate, isProjectType, resolveModuleSelection, type ModuleIssue, TEMPLATE_ENTITLEMENT } from "@support-automation/shared";
 import { platformPrisma } from "@/server/db";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
@@ -28,7 +28,8 @@ export interface ModuleTemplateResult {
 }
 
 const DENIED = "Managing module templates needs the “Manage Projects and Project Access” permission.";
-const OPEN = { restricted: false, allowedFeatures: [] };
+// A template only lists modules; applying it is checked against the project (MODULE_APPROVALS.md).
+const OPEN = TEMPLATE_ENTITLEMENT;
 
 async function requireManage(): Promise<Session | null> {
   const session = await requireSession();

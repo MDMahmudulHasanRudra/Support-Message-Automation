@@ -15,6 +15,7 @@ import {
 } from "@support-automation/shared";
 import { platformPrisma } from "@/server/db";
 import { tenantOfCustomer } from "@/server/tenant";
+import { approvedModules, assertAdditionsApproved, ModuleNotApprovedError } from "@/server/moduleApprovals";
 
 /**
  * A project's module configuration (PROJECT_MODULES.md): reading it for the Module Builder, and the ONE
@@ -78,13 +79,22 @@ async function ownerOf(db: Db, customerId: string | null): Promise<string | null
   return customerId ?? (await db.customer.findFirst({ where: { isFounding: true }, select: { id: true } }))?.id ?? null;
 }
 
-/** The customer's plan as the module resolver needs it. No subscription, or All Access = unrestricted. */
-export async function projectEntitlement(customerId: string | null, db: Db = platformPrisma): Promise<{ entitlement: ModuleEntitlement; planName: string | null }> {
+/**
+ * What may be added to a project: the customer's plan (no subscription, or All Access = unrestricted) and
+ * the platform's approvals for the approval-only modules (MODULE_APPROVALS.md). With no project (a project
+ * being created) only the customer-wide approvals count.
+ */
+export async function projectEntitlement(
+  customerId: string | null,
+  db: Db = platformPrisma,
+  projectId: string | null = null,
+): Promise<{ entitlement: ModuleEntitlement; planName: string | null }> {
   const owner = await ownerOf(db, customerId);
-  if (!owner) return { entitlement: { restricted: false, allowedFeatures: [] }, planName: null };
+  const approvedFeatures = await approvedModules(db, owner, projectId);
+  if (!owner) return { entitlement: { restricted: false, allowedFeatures: [], approvedFeatures }, planName: null };
   const sub = await db.subscription.findFirst({ where: { customerId: owner, endedAt: null }, select: { planName: true, features: true, allModules: true } });
-  if (!sub) return { entitlement: { restricted: false, allowedFeatures: [] }, planName: null };
-  return { entitlement: { restricted: !sub.allModules, allowedFeatures: sub.features }, planName: sub.planName };
+  if (!sub) return { entitlement: { restricted: false, allowedFeatures: [], approvedFeatures }, planName: null };
+  return { entitlement: { restricted: !sub.allModules, allowedFeatures: sub.features, approvedFeatures }, planName: sub.planName };
 }
 
 export function enabledModuleKeys(rows: ReadonlyArray<{ key: string; enabled: boolean }>): string[] {
@@ -124,7 +134,7 @@ export async function getProjectModuleState(projectId: string, db: Db = platform
   });
   if (!project) return null;
   const [{ entitlement, planName }, history, templates] = await Promise.all([
-    projectEntitlement(project.customerId, db),
+    projectEntitlement(project.customerId, db, project.id),
     db.projectModuleConfigChange.findMany({ where: { projectId }, orderBy: { version: "desc" }, take: 20 }),
     moduleTemplateOptions(project.customerId, db),
   ]);
@@ -190,7 +200,7 @@ export async function applyModuleSelection(db: Db, input: ApplyModuleSelectionIn
   if (project.moduleConfigVersion !== input.expectedVersion) return { error: STALE };
 
   const before = enabledModuleKeys(project.features);
-  const { entitlement } = await projectEntitlement(project.customerId, db);
+  const { entitlement } = await projectEntitlement(project.customerId, db, project.id);
   let requested = [...new Set(input.modules.map(String))];
   let leftOut: string[] = [];
   if (input.mode === "fitToPlan") {
@@ -218,6 +228,9 @@ export async function applyModuleSelection(db: Db, input: ApplyModuleSelectionIn
         data: { projectType, projectBaseType: recordedBase, moduleConfigVersion: nextVersion },
       });
       if (moved.count !== 1) throw new StaleVersion();
+      // Approval-only modules being switched on are checked again here, under the customer's approval lock, so a
+      // revocation that landed after the check above cannot be undone by this change (MODULE_APPROVALS.md).
+      await assertAdditionsApproved(tx, await ownerOf(db, project.customerId), input.projectId, diff.added);
       for (const m of changes) {
         const enabled = selected.has(m.key);
         await tx.projectFeature.upsert({
@@ -245,6 +258,9 @@ export async function applyModuleSelection(db: Db, input: ApplyModuleSelectionIn
     });
   } catch (err) {
     if (err instanceof StaleVersion) return { error: STALE };
+    if (err instanceof ModuleNotApprovedError) {
+      return { error: err.message, issues: err.keys.map((key) => ({ code: "NEEDS_APPROVAL" as const, key, message: err.message })) };
+    }
     throw err;
   }
   return { success: "Applied.", version: nextVersion, added: diff.added, removed: diff.removed, autoAdded, leftOut, projectType, projectBaseType: recordedBase };
