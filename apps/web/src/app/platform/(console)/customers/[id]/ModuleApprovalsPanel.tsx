@@ -31,17 +31,20 @@ export function ModuleApprovalsPanel({
 }) {
   const [state, action, pending] = useActionState<ModuleApprovalState, FormData>(approveModule.bind(null, customerId), {});
   const [values, setValues] = useState({ featureKey: modules[0]?.key ?? "", scope: "ALL", reason: "" });
+  // A revoked row leaves the active list (and its own message with it), so the outcome is shown here.
+  const [revokedNotice, setRevokedNotice] = useState<string | null>(null);
   const active = approvals.filter((a) => !a.revoked);
   const history = approvals.filter((a) => a.revoked);
 
   return (
     <div className="space-y-5">
+      <div role="status">{revokedNotice ? <Alert tone="success">{revokedNotice}</Alert> : null}</div>
       {active.length === 0 ? (
         <p className="text-sm text-[color:var(--color-muted-foreground)]">Nothing approved. The customer&apos;s Main Admin cannot switch any of these modules on.</p>
       ) : (
         <ul className="divide-y divide-[var(--color-border)] text-sm">
           {active.map((a) => (
-            <ApprovalRow key={a.id} row={a} />
+            <ApprovalRow key={a.id} row={a} onRevoked={setRevokedNotice} />
           ))}
         </ul>
       )}
@@ -106,10 +109,14 @@ export function ModuleApprovalsPanel({
   );
 }
 
-function ApprovalRow({ row }: { row: ApprovalRowView }) {
+function ApprovalRow({ row, onRevoked }: { row: ApprovalRowView; onRevoked: (message: string) => void }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
-  const [state, action, pending] = useActionState<ModuleApprovalState, FormData>(revokeModuleApproval.bind(null, row.id), {});
+  const [state, action, pending] = useActionState<ModuleApprovalState, FormData>(async (prev, form) => {
+    const result = await revokeModuleApproval(row.id, prev, form);
+    if (result.success) onRevoked(result.success);
+    return result;
+  }, {});
   return (
     <li className="py-3">
       <div className="flex flex-wrap items-start justify-between gap-2">

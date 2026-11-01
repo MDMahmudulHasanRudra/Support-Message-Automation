@@ -90,7 +90,7 @@ afterAll(async () => {
   } finally {
     await rawPrisma.$executeRawUnsafe('ALTER TABLE "ProjectModuleConfigChange" ENABLE TRIGGER "ProjectModuleConfigChange_append_only"');
   }
-  await rawPrisma.moduleApproval.deleteMany({ where: { customerId: { in: created.customers } } });
+  // Approvals cannot be deleted directly (audit trail); they go with their customer, deleted below.
   await rawPrisma.projectFeature.deleteMany({ where: { projectId: { in: created.projects } } });
   await rawPrisma.projectAccess.deleteMany({ where: { projectId: { in: created.projects } } });
   await rawPrisma.user.deleteMany({ where: { id: { in: created.users } } });
@@ -221,3 +221,93 @@ describe("revoking", () => {
     expect(await isOn(projectB, "SOCIAL_STUDIO")).toBe(false);
   });
 });
+
+describe("the audit record", () => {
+  let id = "";
+  beforeAll(async () => {
+    id = (await rawPrisma.moduleApproval.create({ data: { customerId: customerA, targetProjectId: projectA2, featureKey: "WHATSAPP_AVATARS", reason: "audit test", approvedByUsername: "test" } })).id;
+  });
+
+  it("refuses revocation details on an active approval, and a partial or reasonless revocation", async () => {
+    await expect(rawPrisma.moduleApproval.update({ where: { id }, data: { revokeReason: "sneaky" } })).rejects.toThrow(/together with the revocation/);
+    await expect(rawPrisma.moduleApproval.update({ where: { id }, data: { revokedByUsername: "x", revokedByOperatorId: "x" } })).rejects.toThrow(/together with the revocation/);
+    await expect(rawPrisma.moduleApproval.update({ where: { id }, data: { revokedAt: new Date() } })).rejects.toThrow(/operator and a reason/);
+    await expect(rawPrisma.moduleApproval.update({ where: { id }, data: { revokedAt: new Date(), revokedByOperatorId: "op", revokedByUsername: "op", revokeReason: "  " } })).rejects.toThrow(/operator and a reason/);
+    await expect(
+      rawPrisma.moduleApproval.update({ where: { id }, data: { revokedAt: new Date(Date.now() + 86_400_000), revokedByOperatorId: "op", revokedByUsername: "op", revokeReason: "future" } }),
+    ).rejects.toThrow(/after the approval and not in the future/);
+    expect(await rawPrisma.moduleApproval.findUnique({ where: { id } })).toMatchObject({ revokedAt: null, revokeReason: null, revokedByUsername: null, revokedByOperatorId: null });
+  });
+
+  it("accepts one complete revocation, then never changes again", async () => {
+    await rawPrisma.moduleApproval.update({ where: { id }, data: { revokedAt: new Date(), revokedByOperatorId: "op", revokedByUsername: "op", revokeReason: "complete" } });
+    await expect(rawPrisma.moduleApproval.update({ where: { id }, data: { revokeReason: "edited later" } })).rejects.toThrow(/revoked module approval cannot be changed/);
+    await expect(rawPrisma.moduleApproval.update({ where: { id }, data: { revokedByUsername: "someone else" } })).rejects.toThrow(/revoked module approval cannot be changed/);
+  });
+
+  it("cannot be deleted directly", async () => {
+    await expect(rawPrisma.moduleApproval.delete({ where: { id } })).rejects.toThrow(/audit trail/);
+    expect(await rawPrisma.moduleApproval.findUnique({ where: { id } })).not.toBeNull();
+  });
+});
+
+describe("concurrency (real PostgreSQL locks)", () => {
+  beforeAll(() => {
+    operator = { sessionId: "s", operatorId: "op_test", username: `op_${tag}`, name: "Operator", canSupport: true, stepUpAt: new Date() };
+  });
+
+  it("an enable waiting on the approval lock holds no Project row, so a revocation in flight cannot deadlock with it", async () => {
+    expect((await approve(customerA, { featureKey: "SOCIAL_STUDIO", scope: projectA2 })).success).toBeTruthy();
+    const opened = await state(projectA2);
+
+    // A revocation in flight, in the order revoke uses: the customer's approval lock first, then the Project row.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let lockHeld!: () => void;
+    const held = new Promise<void>((resolve) => (lockHeld = resolve));
+    const revocation = rawPrisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`module-approval:${customerA}`}))`;
+        lockHeld();
+        await gate;
+        await tx.project.update({ where: { id: projectA2 }, data: { moduleConfigVersion: { increment: 1 } } });
+      },
+      { timeout: 20_000, maxWait: 20_000 },
+    );
+    await held;
+
+    // The Main Admin's enable starts while the lock is held. With the old order it took the Project row and then
+    // waited for the lock; the revocation then waited for the row — PostgreSQL's deadlock detector aborted one.
+    const enabling = inA(() =>
+      applyProjectModules(projectA2, { modules: [...opened.enabled, "SOCIAL_STUDIO"], declined: [], baseType: null, expectedVersion: opened.version, reason: "race" }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    release();
+
+    await expect(revocation).resolves.toBeUndefined();
+    const r = await enabling;
+    // The revocation moved the version on first, so the enable is refused as stale — never a deadlock error.
+    expect(r.error).toMatch(/changed this project's modules/);
+    expect(await isOn(projectA2, "SOCIAL_STUDIO")).toBe(false);
+    const row = (await activeApproval(customerA, "SOCIAL_STUDIO", projectA2))!;
+    expect((await revokeModuleApproval(row.id, {}, form({ reason: "cleanup", operatorPassword: "operator-password" }))).success).toBeTruthy();
+  });
+
+  it("enable and revoke fired together, repeatedly: no deadlock, and the module always ends switched off", async () => {
+    for (let round = 0; round < 12; round++) {
+      expect((await approve(customerA, { featureKey: "SOCIAL_STUDIO", scope: projectA2 })).success, `round ${round}`).toBeTruthy();
+      const row = (await activeApproval(customerA, "SOCIAL_STUDIO", projectA2))!;
+      const opened = await state(projectA2);
+      const enable = () =>
+        inA(() => applyProjectModules(projectA2, { modules: [...opened.enabled, "SOCIAL_STUDIO"], declined: [], baseType: null, expectedVersion: opened.version, reason: `round ${round}` }));
+      const revoke = () => revokeModuleApproval(row.id, {}, form({ reason: `round ${round}`, operatorPassword: "operator-password" }));
+      // Alternate which one starts first, with a little stagger, so both interleavings are exercised.
+      const [first, second] = round % 2 === 0 ? [enable, revoke] : [revoke, enable];
+      const results = await Promise.allSettled([first(), new Promise((resolve) => setTimeout(resolve, round % 3)).then(second)]);
+      for (const result of results) expect(result.status, `round ${round}: ${result.status === "rejected" ? String(result.reason) : ""}`).toBe("fulfilled");
+      expect((await rawPrisma.moduleApproval.findUnique({ where: { id: row.id } }))!.revokedAt).not.toBeNull();
+      expect(await isOn(projectA2, "SOCIAL_STUDIO"), `round ${round}`).toBe(false);
+    }
+  });
+});
+

@@ -46,7 +46,8 @@ export async function approvedModules(db: Db, owner: string | null, projectId: s
 
 /**
  * Serialises every approval change and every module change of one customer, so "is it approved?" and "switch
- * it on" cannot interleave with a revocation. Held until the transaction ends.
+ * it on" cannot interleave with a revocation. Held until the transaction ends. Always the FIRST lock a module or
+ * approval transaction takes: before the Project row and its ProjectFeature rows, never after.
  */
 export async function lockCustomerModules(tx: Tx, owner: string): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`module-approval:${owner}`}))`;
@@ -61,12 +62,15 @@ export class ModuleNotApprovedError extends Error {
   }
 }
 
-/** Inside a module change's transaction: refuse any approval-only module being ADDED without approval. */
+/**
+ * Inside a module change's transaction: refuse any approval-only module being ADDED without approval. The caller
+ * must already hold `lockCustomerModules` for this owner, taken before any project row is touched — the one lock
+ * order every module and approval change follows (lock → Project → ProjectFeature).
+ */
 export async function assertAdditionsApproved(tx: Tx, owner: string | null, projectId: string, added: readonly string[]): Promise<void> {
   const needing = added.filter((k) => APPROVAL_REQUIRED_MODULES.includes(k));
   if (needing.length === 0) return;
   if (!owner) throw new ModuleNotApprovedError(needing);
-  await lockCustomerModules(tx, owner);
   const approved = await approvedModules(tx, owner, projectId);
   const missing = needing.filter((k) => !approved.includes(k));
   if (missing.length) throw new ModuleNotApprovedError(missing);
