@@ -3077,6 +3077,20 @@ original import, untouched. Up to 5,000 rows / 15 MB from any file. Rules worth 
     archive only hides. Every currency is ISO, with no cap. Country names for client components are made on the
     server (Node and browser ICU differ, which broke hydration).
 
+**Client CRM & Billing V7 (`CLIENT_CRM_V7.md`, 1 Nov 2026)** — invoice/receipt documents, renewal offers, client
+messages. Rules worth not undoing:
+- **A document is a view**: figures come from the Billing List's functions in `server/clientDocuments.ts`; the HTML and
+  PDF renderers never compute. A document uses the Invoice & Receipt setup version in force when it was issued
+  (`effectiveSettingsVersion`); versions and images are append-only. The PDF uses standard fonts only, so a non-Latin
+  document is refused as PDF (Print → Save as PDF instead) — never drawn wrongly.
+- **An offer is never money owed.** Renew from offer claims ACCEPTED → RENEWED and creates the term in ONE transaction
+  through `createTermInTx` (`server/clientTermStore.ts`), which also refuses renewing the same term twice.
+- **Templates are plain text with catalogued variables**; values come only from the client's own records, money only
+  for billing viewers. WhatsApp is PREPARED (click-to-chat or the linked chat), never sent; email goes through
+  `EmailOutbox` as `CLIENT_MESSAGE`, and the worker re-checks channel on + verified + opt-out when sending.
+- **Bulk email**: prepared by one person, approved by ANOTHER within 24 h (CHECK `ClientMessageBatch_no_self_approval`),
+  recorded consent only, re-checked at approval. Keys `clients.send_messages` / `clients.approve_messages`.
+
 ### Commerce — products, stock, orders, sales pipeline (`COMMERCE.md`)
 
 Features `PRODUCT_CATALOG`, `ORDERS`, `SALES_PIPELINE`, all **off by default** (on in the E-commerce type). The

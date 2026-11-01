@@ -67,6 +67,12 @@ import { ChannelsPanel, ClientLifecycle, NotesPanel } from "../ClientPanels";
 import { BillingPanel } from "../ClientBilling";
 import { ChatLinksPanel } from "../ClientChatLinks";
 import { CopyCode } from "./CopyCode";
+import { clientRenewalOffers } from "@/server/clientRenewals";
+import { listClientMessages } from "@/server/clientMessages";
+import { PrepareMessageButton } from "../messages/PrepareMessage";
+import { MessageHistory } from "../messages/MessageHistory";
+import { PrepareOfferButton } from "../subscriptions/renewals/RenewalParts";
+import { RenewalOffersPanel } from "../subscriptions/renewals/RenewalOffersPanel";
 import { ActivityItem, CardLink, currencyName, FactCard, flagOf, InfoRow, muted, panel, ProfileTabs, SectionCard, Timeline, type TabSpec } from "./ProfileParts";
 
 const STATUS_COLOR: Record<string, "green" | "gray" | "yellow" | "red"> = { ACTIVE: "green", INACTIVE: "gray", PENDING: "yellow", ARCHIVED: "gray", BLOCKED: "red" };
@@ -124,6 +130,12 @@ export default async function ClientDetailPage({ params, searchParams }: { param
   // Amounts and dates are read only for someone holding the billing key; the rest of the page never sees them.
   const billing = canViewBilling && caps.settings.billing ? await getClientBilling(client.id) : null;
   const showPayments = Boolean(billing && caps.settings.payments);
+  // CLIENT_CRM_V7.md: renewal offers (Subscriptions tab) and messages to the client (Activity tab), read only for those tabs.
+  const requestedTab = typeof query.tab === "string" ? query.tab : "overview";
+  const [offers, messages] = await Promise.all([
+    caps.subscriptions && requestedTab === "subscriptions" ? clientRenewalOffers(client.id, caps.billing) : Promise.resolve(null),
+    requestedTab === "activity" ? listClientMessages({ clientId: client.id }) : Promise.resolve(null),
+  ]);
 
   // ── Tabs: URL state. A tab the viewer cannot see falls back to Overview.
   const tabs: TabSpec[] = [{ id: "overview", label: "Overview", icon: LayoutDashboard }];
@@ -219,7 +231,13 @@ export default async function ClientDetailPage({ params, searchParams }: { param
             <ButtonLink href={(groupHref ?? personalHref)!} variant="primary" size="md">
               <MessageCircle className="size-4" aria-hidden /> {groupHref ? "Open WhatsApp group" : "Open WhatsApp chat"}
             </ButtonLink>
+          ) : phone ? (
+            // No linked conversation: the WhatsApp page finds an existing one to confirm, or offers WhatsApp's own click-to-chat.
+            <ButtonLink href={`${base}/whatsapp`} size="md">
+              <MessageCircle className="size-4" aria-hidden /> Open WhatsApp
+            </ButtonLink>
           ) : null}
+          {!archived ? <PrepareMessageButton clientId={client.id} context={current ? { subscriptionId: current.id } : {}} size="md" /> : null}
           {canArchive || canDelete ? (
             <details className="relative">
               <summary className="flex size-9.5 cursor-pointer list-none items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-xs)] hover:bg-[var(--color-neutral-bg)]" aria-label="More actions">
@@ -631,6 +649,24 @@ export default async function ClientDetailPage({ params, searchParams }: { param
           />
         </Card>
       ) : null}
+      {tab === "subscriptions" && offers ? (
+        <Card className="p-6">
+          <SectionHeader title="Renewal offers" />
+          <RenewalOffersPanel offers={offers} today={view.today} canManage={caps.canManageSubscriptions && !archived} canInvoice={caps.canEditBilling} currentTerm={current ? { id: current.id, endDate: current.endDate } : null} />
+          {current && caps.canManageSubscriptions && !archived && !offers.some((o) => o.subscriptionId === current.id && ["PREPARED", "CONTACTED", "AWAITING_RESPONSE", "ACCEPTED"].includes(o.status)) ? (
+            <div className="mt-4">
+              <PrepareOfferButton
+                subscriptionId={current.id}
+                defaults={{ service: current.service, durationValue: current.durationValue, durationUnit: current.durationUnit, currency: client.preferredCurrency }}
+                currencies={formContext.currencies}
+                sellers={options.roster.filter((m) => m.active).map((m) => ({ id: m.id, name: m.name }))}
+                canPrice={caps.billing}
+                label="Prepare renewal offer"
+              />
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
 
       {/* ── Billing. */}
       {tab === "billing" && billing ? (
@@ -716,6 +752,11 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                 canDelete={caps.canDelete}
                 notes={notes.map((n) => ({ id: n.id, body: n.body, author: n.author?.name ?? null, at: formatDateTime(n.createdAt) }))}
               />
+            </Card>
+            <Card className="mt-6 p-6">
+              <SectionHeader title="Messages to the client" />
+              {/* Kept apart from internal notes: these are words meant for the client (CLIENT_CRM_V7.md §8). */}
+              <MessageHistory messages={messages ?? []} empty="No message prepared or sent to this client yet." />
             </Card>
           </div>
           <div className="xl:col-span-3">

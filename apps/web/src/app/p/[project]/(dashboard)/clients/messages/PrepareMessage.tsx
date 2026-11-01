@@ -31,7 +31,7 @@ export function PrepareMessageButton({ clientId, context, category, label = "Mes
   );
 }
 
-function PrepareMessageDialog({ clientId, context, category, onClose }: { clientId: string; context: MessageContext; category?: MessageTemplateCategory; onClose: () => void }) {
+export function PrepareMessageDialog({ clientId, context, category, onClose }: { clientId: string; context: MessageContext; category?: MessageTemplateCategory; onClose: () => void }) {
   const router = useRouter();
   const { showToast } = useToast();
   const [templates, setTemplates] = useState<TemplateOption[] | null>(null);
@@ -44,19 +44,6 @@ function PrepareMessageDialog({ clientId, context, category, onClose }: { client
   const [busy, start] = useTransition();
   const [submissionKey, setSubmissionKey] = useState(newKey);
   const contextKey = JSON.stringify(context);
-
-  useEffect(() => {
-    let live = true;
-    void listTemplateOptions().then((list) => {
-      if (!live) return;
-      setTemplates(list);
-      const preferred = list.find((t) => t.category === category) ?? null;
-      setTemplateId(preferred?.id ?? "");
-    });
-    return () => {
-      live = false;
-    };
-  }, [category]);
 
   const load = useCallback(
     (id: string) => {
@@ -76,9 +63,21 @@ function PrepareMessageDialog({ clientId, context, category, onClose }: { client
     },
     [clientId, contextKey],
   );
+
+  // The templates arrive once; the first preview is loaded from that answer (never set state in an effect body).
   useEffect(() => {
-    if (templates !== null) load(templateId);
-  }, [templates, templateId, load]);
+    let live = true;
+    void listTemplateOptions().then((list) => {
+      if (!live) return;
+      setTemplates(list);
+      const preferred = list.find((t) => t.category === category)?.id ?? "";
+      setTemplateId(preferred);
+      load(preferred);
+    });
+    return () => {
+      live = false;
+    };
+  }, [category, load]);
 
   const waUrl = useMemo(() => (preview?.whatsapp.clickToChatNumber ? whatsappClickToChatUrl(preview.whatsapp.clickToChatNumber, body) : null), [preview, body]);
   const emailBlock = !preview
@@ -101,7 +100,14 @@ function PrepareMessageDialog({ clientId, context, category, onClose }: { client
     <Dialog open onClose={onClose} size="lg" title="Message client" description="Choose wording, check it, then send it by email or prepare it for WhatsApp. Nothing is sent until you press a send button.">
       <div className="space-y-4">
         <Field label="Template" hint={templates && templates.length === 0 ? "No active template yet — write the message yourself, or create templates under Clients → Message Templates." : undefined}>
-          <Select value={templateId} onChange={(e) => setTemplateId(e.target.value)} disabled={templates === null}>
+          <Select
+            value={templateId}
+            onChange={(e) => {
+              setTemplateId(e.target.value);
+              load(e.target.value);
+            }}
+            disabled={templates === null}
+          >
             <option value="">No template — write it myself</option>
             {(templates ?? []).map((t) => (
               <option key={t.id} value={t.id}>

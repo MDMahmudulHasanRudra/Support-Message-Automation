@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
 import { LIST_SCROLL_BOX } from "@/lib/listPageSizes";
-import { Eye, Plus, Search, Trash2, Wallet } from "lucide-react";
+import { Eye, FileText, Mail, Plus, Printer, Search, Trash2, Wallet } from "lucide-react";
 import Link, { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Badge, Button, Checkbox, ConfirmDialog, Dialog, Input, useToast } from "@/components/ui";
 import type { BillingRow } from "@/server/clientBilling";
@@ -16,6 +16,8 @@ import { DueForm, type InvoiceSellers } from "../ClientBilling";
 import { PaymentDialog, type PayableInvoice } from "../PaymentDialog";
 import { RowMenu } from "../RowMenu";
 import { deleteDues } from "@/server/actions/clientDeletes";
+import { PrepareMessageDialog } from "../messages/PrepareMessage";
+import { BulkEmailButton } from "../messages/BatchParts";
 
 const muted = "text-[color:var(--color-muted-foreground)]";
 const Sub = ({ children }: { children: ReactNode }) => <div className={`mt-0.5 text-xs ${muted}`}>{children}</div>;
@@ -100,16 +102,17 @@ const toPayable = (r: BillingRow): PayableInvoice => ({
  * currency, never converted. Only invoices that can take money are selectable; "Pay selected" opens
  * the payment dialog with an editable amount per invoice.
  */
-export function BillingTable({ rows, columns, labels, canPay, canDelete = false, today }: { rows: BillingRow[]; columns: string[]; labels: Record<string, string>; canPay: boolean; canDelete?: boolean; today: string }) {
+export function BillingTable({ rows, columns, labels, canPay, canDelete = false, canMessage = false, today }: { rows: BillingRow[]; columns: string[]; labels: Record<string, string>; canPay: boolean; canDelete?: boolean; canMessage?: boolean; today: string }) {
   const router = useRouter();
   const { showToast } = useToast();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [paying, setPaying] = useState<PayableInvoice[] | null>(null);
   const [deleting, setDeleting] = useState<string[] | null>(null);
+  const [messaging, setMessaging] = useState<{ clientId: string; dueId: string; overdue: boolean } | null>(null);
   const [busy, start] = useTransition();
   // Selecting is for paying (payable invoices) or, for someone allowed to delete, for deleting (any).
   const selectable = rows.filter((r) => r.payable || canDelete);
-  const canSelect = canPay || canDelete;
+  const canSelect = canPay || canDelete || canMessage;
   const allSelected = selectable.length > 0 && selectable.every((r) => selected.has(r.id));
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -131,6 +134,9 @@ export function BillingTable({ rows, columns, labels, canPay, canDelete = false,
         horizontal
         label={`More actions for ${r.invoiceNumber ?? "this due"}`}
         items={[
+          { label: "View invoice", icon: <FileText className="size-4" aria-hidden />, href: `/clients/dues/${r.id}` },
+          { label: "Edit, print or download", icon: <Printer className="size-4" aria-hidden />, href: `/clients/dues/${r.id}` },
+          { label: "Payment reminder…", icon: <Mail className="size-4" aria-hidden />, onSelect: () => setMessaging({ clientId: r.client.id, dueId: r.id, overdue: r.state === "OVERDUE" }), hidden: !canMessage || r.client.archived || !r.payable },
           { label: "Open client", icon: <Eye className="size-4" aria-hidden />, href: `/clients/${r.client.id}?tab=billing` },
           { label: "Delete invoice", icon: <Trash2 className="size-4" aria-hidden />, onSelect: () => setDeleting([r.id]), danger: true, hidden: !canDelete },
         ]}
@@ -143,7 +149,9 @@ export function BillingTable({ rows, columns, labels, canPay, canDelete = false,
 
   const invoiceCell = (r: BillingRow) => (
     <>
-      <div className="whitespace-nowrap font-semibold">{r.invoiceNumber ?? "Older due"}</div>
+      <Link href={`/clients/dues/${r.id}`} className="whitespace-nowrap font-semibold hover:underline">
+        {r.invoiceNumber ?? "Older due"}
+      </Link>
       <Sub>{r.kind ? DUE_KIND_LABELS[r.kind as DueKind] : "Due"}</Sub>
     </>
   );
@@ -158,6 +166,7 @@ export function BillingTable({ rows, columns, labels, canPay, canDelete = false,
               <Trash2 className="size-3.5" aria-hidden /> Delete selected
             </Button>
           ) : null}
+          {canMessage ? <BulkEmailButton label="Reminder email…" recipients={picked.filter((r) => r.payable).map((r) => ({ clientId: r.client.id, context: { dueId: r.id } }))} /> : null}
           {canPay ? (
             <Button size="sm" disabled={!chosen.length} onClick={() => setPaying(chosen.map(toPayable))}>
               <Wallet className="size-3.5" aria-hidden /> Pay selected{chosen.length && chosen.length !== picked.length ? ` (${chosen.length})` : ""}
@@ -264,6 +273,7 @@ export function BillingTable({ rows, columns, labels, canPay, canDelete = false,
           }}
         />
       ) : null}
+      {messaging ? <PrepareMessageDialog clientId={messaging.clientId} context={{ dueId: messaging.dueId }} category={messaging.overdue ? "PAYMENT_REMINDER" : "INVOICE"} onClose={() => setMessaging(null)} /> : null}
     </div>
   );
 }

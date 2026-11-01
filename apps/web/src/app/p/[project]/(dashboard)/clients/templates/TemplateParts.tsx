@@ -62,21 +62,21 @@ export interface TemplateInitial {
 export function TemplateEditor({ initial, canEdit }: { initial: TemplateInitial; canEdit: boolean }) {
   const router = useRouter();
   const { showToast } = useToast();
-  const [state, action, pending] = useActionState<TemplateFormState, FormData>(saveMessageTemplate.bind(null, initial.id), {});
-  const [fields, setFields] = useState({ name: initial.name, category: initial.category || "CUSTOM", channel: initial.channel || "ANY", language: initial.language, subject: initial.subject, body: initial.body });
   const [dirty, setDirty] = useState(false);
+  const [state, action, pending] = useActionState<TemplateFormState, FormData>(async (prev, form) => {
+    const result = await saveMessageTemplate(initial.id, prev, form);
+    if (result.success) {
+      showToast({ tone: "success", title: result.success });
+      setDirty(false);
+      if (!initial.id && result.templateId) router.replace(`/clients/templates/${result.templateId}`);
+      else router.refresh();
+    }
+    return result;
+  }, {});
+  const [fields, setFields] = useState({ name: initial.name, category: initial.category || "CUSTOM", channel: initial.channel || "ANY", language: initial.language, subject: initial.subject, body: initial.body });
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const subjectRef = useRef<HTMLInputElement>(null);
   const [focus, setFocus] = useState<"subject" | "body">("body");
-
-  useEffect(() => {
-    if (!state.success) return;
-    showToast({ tone: "success", title: state.success });
-    setDirty(false);
-    if (!initial.id && state.templateId) router.replace(`/clients/templates/${state.templateId}`);
-    else router.refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per result
-  }, [state]);
 
   // Leaving with unsaved changes asks first.
   useEffect(() => {

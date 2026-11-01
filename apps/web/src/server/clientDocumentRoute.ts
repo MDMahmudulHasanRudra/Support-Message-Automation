@@ -10,18 +10,18 @@ import { contentDisposition } from "@/server/reports/exportFile";
 import { logSystemEvent } from "@/server/logSystemEvent";
 
 /**
- * An invoice or a money receipt as a document (CLIENT_CRM_V7.md §3): `?format=html` (the preview and the print
+ * An invoice or a money receipt as a document (CLIENT_CRM_V7.md §3), behind `/api/clients/documents/<invoice|receipt>/<id>`
+ * — two routes so each belongs to its own page for project roles: `?format=html` (the preview and the print
  * view, the default) or `?format=pdf` (a download). Session → project access → `clients.view_billing` (with the
  * CLIENT_CENTER feature, which `checkPermission` applies) → Billing switched on → the row through the
  * project-scoped client, so another project's id is a 404. Never cached by a shared cache; the HTML carries a CSP
  * that allows no script and no remote resource at all. A PDF download is recorded in the System Log.
  */
-export const dynamic = "force-dynamic";
 
 const PRIVATE = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" } as const;
 const refuse = (status: number, text: string) => new NextResponse(text, { status, headers: { ...PRIVATE, "Content-Type": "text/plain; charset=utf-8" } });
 
-export async function GET(request: NextRequest, { params }: { params: Promise<{ kind: string; id: string }> }) {
+export async function serveClientDocument(kind: "invoice" | "receipt", request: NextRequest, id: string) {
   const session = await getSession();
   if (!session) return refuse(401, "Sign in to view this document.");
   const access = await checkPermission("clients.view_billing");
@@ -29,8 +29,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const off = await subModuleOff("billing");
   if (off) return refuse(403, off);
 
-  const { kind, id } = await params;
-  if (kind !== "invoice" && kind !== "receipt") return refuse(404, "No such document.");
   const record = kind === "invoice" ? await loadInvoice(id) : await loadReceipt(id);
   if (!record) return refuse(404, "That document does not exist in this project.");
   const branding = await brandingFor(record.issuedAt);

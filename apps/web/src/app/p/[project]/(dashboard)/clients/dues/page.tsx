@@ -1,6 +1,7 @@
 import { AlarmClock, CircleCheck, CircleDollarSign, FileText, Filter, Hourglass, Search } from "lucide-react";
 import { dhakaToday } from "@support-automation/shared";
 import { pageAccess } from "@/server/authorize";
+import { hasPermission } from "@/server/permissions";
 import { prisma } from "@/server/db";
 import { BILLING_PAGE_SIZES, BILLING_VIEWS, billingWhere, getBillingFilterOptions, getBillingKpis, listBillingCurrencies, listBillingRegister, parseBillingFilters, type BillingFilters } from "@/server/clientBilling";
 import { clientViewerCaps, columnNeeds, getColumnPreference } from "@/server/clientModule";
@@ -51,6 +52,7 @@ export default async function BillingListPage({ searchParams }: { searchParams: 
   const order = typeof raw.order === "string" && /^[a-z]+:(asc|desc)$/.test(raw.order) ? raw.order.split(":") : null;
   const f = parseBillingFilters(order ? { ...raw, sort: order[0], dir: order[1] } : raw);
   const caps = await clientViewerCaps(session);
+  const canSendMessages = await hasPermission(session, "clients.send_messages");
   if (!caps.settings.billing) {
     return (
       <div className="space-y-4">
@@ -210,7 +212,7 @@ export default async function BillingListPage({ searchParams }: { searchParams: 
         <EmptyState>{f.view === "open" ? "Nothing open. Every invoice is settled, waived or cancelled." : "No invoice matches."}</EmptyState>
       ) : (
         <>
-          <BillingTable rows={rows} columns={prefs.columns} labels={labels} canPay={caps.canRecordPayments} canDelete={caps.canDelete} today={today} />
+          <BillingTable rows={rows} columns={prefs.columns} labels={labels} canPay={caps.canRecordPayments} canDelete={caps.canDelete} canMessage={canSendMessages} today={today} />
           <Pagination
             page={f.page}
             pageSize={f.pageSize}

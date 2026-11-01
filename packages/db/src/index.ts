@@ -172,6 +172,9 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "ListSavedView",
   "SocialConnection", "SocialAccount", "SocialPost", "SocialPostTarget", "SocialPublishAttempt", "SocialPostEvent", "SocialMediaAsset", "SocialCampaign", "SocialTemplate", "SocialAiRequest", "SocialRssFeed", "SocialRssItem",
   "ClientCatalogEntry", "ClientServicePlan", "ClientCountrySetting", "ProjectClientCodeSeries", "ClientCodeAlias",
+  // Client CRM & Billing V7 (CLIENT_CRM_V7.md).
+  "ClientRenewalOffer", "ClientRenewalOfferEvent", "ClientMessageTemplate", "ClientMessageTemplateVersion", "ClientMessageBatch", "ClientMessage",
+  "ClientDocumentSettingsVersion", "ClientDocumentAsset",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([

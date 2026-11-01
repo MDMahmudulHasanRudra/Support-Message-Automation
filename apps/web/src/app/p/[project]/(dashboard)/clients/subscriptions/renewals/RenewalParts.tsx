@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { CalendarPlus, CheckCircle2, Clock, PhoneCall, RefreshCw, Send, Undo2, XCircle } from "lucide-react";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Alert, Button, Checkbox, Dialog, Field, Input, Select, Textarea, useToast } from "@/components/ui";
@@ -20,14 +20,15 @@ export function PrepareOfferButton({ subscriptionId, defaults, currencies, selle
   const router = useRouter();
   const { showToast } = useToast();
   const [open, setOpen] = useState(false);
-  const [state, action, pending] = useActionState<OfferFormState, FormData>(prepareRenewalOffer.bind(null, subscriptionId), {});
-  useEffect(() => {
-    if (!state.success) return;
-    showToast({ tone: "success", title: state.success });
-    setOpen(false);
-    router.refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per result
-  }, [state]);
+  const [state, action, pending] = useActionState<OfferFormState, FormData>(async (prev, form) => {
+    const result = await prepareRenewalOffer(subscriptionId, prev, form);
+    if (result.success) {
+      showToast({ tone: "success", title: result.success });
+      setOpen(false);
+      router.refresh();
+    }
+    return result;
+  }, {});
   const v = (k: string, d: string) => state.values?.[k] ?? d;
   return (
     <>
@@ -211,15 +212,16 @@ export function OfferActions({ offerId, status, offerPrice, termEnd, today, canI
 function RenewFromOfferDialog({ offerId, offerPrice, termEnd, today, canInvoice, onClose }: { offerId: string; offerPrice: string | null; termEnd: string; today: string; canInvoice: boolean; onClose: () => void }) {
   const router = useRouter();
   const { showToast } = useToast();
-  const [state, action, pending] = useActionState<OfferFormState, FormData>(renewFromOffer.bind(null, offerId), {});
+  const [state, action, pending] = useActionState<OfferFormState, FormData>(async (prev, form) => {
+    const result = await renewFromOffer(offerId, prev, form);
+    if (result.success) {
+      showToast({ tone: "success", title: result.success });
+      router.refresh();
+      onClose();
+    }
+    return result;
+  }, {});
   const [invoice, setInvoice] = useState(false);
-  useEffect(() => {
-    if (!state.success) return;
-    showToast({ tone: "success", title: state.success });
-    router.refresh();
-    onClose();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per result
-  }, [state]);
   const suggestedStart = termEnd > today ? termEnd : today;
   return (
     <Dialog open onClose={onClose} title="Renew from the accepted offer" description="Creates the new term with the offer's service and duration. The old term stays as history. A payment, when it arrives, is recorded separately.">

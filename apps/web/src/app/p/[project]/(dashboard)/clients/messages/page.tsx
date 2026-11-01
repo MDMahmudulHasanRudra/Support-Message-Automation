@@ -14,6 +14,8 @@ export const metadata = { title: "Client messages" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 const VIEWS = ["pending", "queued", "closed", "all"] as const;
+/** The moment this page is drawn: whether a batch is past its approval window is read against it. */
+const pageTime = () => Date.now();
 
 /**
  * Bulk email to clients (CLIENT_CRM_V7.md §7). A batch is prepared by one person (All Clients or the Billing List →
@@ -37,7 +39,7 @@ export default async function ClientMessagesPage({ searchParams }: { searchParam
   ]);
   const recipients = selected ? await listClientMessages({ batchId: selected.id }, 500) : [];
   const count = (s: string[]) => counts.filter((c) => s.includes(c.status)).reduce((n, c) => n + c._count._all, 0);
-  const now = Date.now();
+  const now = pageTime();
   const expired = (b: { status: string; submittedAt: Date }) => b.status === "PENDING_APPROVAL" && now - b.submittedAt.getTime() > MESSAGE_BATCH_APPROVAL_HOURS * 3_600_000;
   const chips: Chip[] = [
     { key: "pending", label: "Waiting for approval", count: count(["PENDING_APPROVAL"]), href: "/clients/messages", active: view === "pending", tone: "warning" },
