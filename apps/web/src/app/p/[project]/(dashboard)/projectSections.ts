@@ -296,7 +296,7 @@ function buildModules(): AccessModule[] {
       entries = group.links.filter((link) => link !== SETTINGS_LINK).flatMap((link) => entryFor(link, taken) ?? []);
     }
     if (entries.length) {
-      modules.push({ id: isReports ? REPORTS_MODULE_ID : slug(group.label), label: group.label, description: "", groups: [{ label: null, entries }] });
+      modules.push({ id: isReports ? REPORTS_MODULE_ID : slug(group.id ?? group.label), label: group.label, description: "", groups: [{ label: null, entries }] });
     }
     if (group.links.includes(SETTINGS_LINK)) {
       // Settings sits right after System, where its one sidebar link lives, split like its own rail.

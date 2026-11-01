@@ -1,4 +1,4 @@
-import { pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
+import { LEGACY_WHATSAPP_LABEL, pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
   AlertCircle,
@@ -123,6 +123,8 @@ export interface NavLink {
  * opens them). A group with a single link renders as that link directly, with no parent row.
  */
 export interface NavGroup {
+  /** A stable id where the label is not one (project-role module ids and the open-module preference). */
+  id?: string;
   label: string;
   icon: LucideIcon;
   links: NavLink[];
@@ -171,7 +173,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     ],
   },
   {
-    label: "WhatsApp",
+    label: LEGACY_WHATSAPP_LABEL,
     description: "Which number sends each kind of notification, and what media is kept.",
     links: [
       { href: "/accounts/routing", label: "Account Routing", icon: Route },
@@ -504,7 +506,9 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     // Bulk Messaging lives here now: broadcasting to groups and adding a number to groups are
     // WhatsApp work done with the same accounts and the same groups listed right above them.
-    label: "WhatsApp",
+    // Shown as "WhatsApp (Legacy)" (the OpenWA engine); the id keeps the module id it always had.
+    id: "whatsapp",
+    label: LEGACY_WHATSAPP_LABEL,
     icon: Smartphone,
     links: [
       { href: "/accounts", label: "Accounts", icon: Smartphone },

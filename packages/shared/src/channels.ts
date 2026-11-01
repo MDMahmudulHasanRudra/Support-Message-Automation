@@ -148,9 +148,16 @@ export function isInboxScope(value: unknown): value is InboxScope {
   return typeof value === "string" && (INBOX_SCOPES as readonly string[]).includes(value);
 }
 
+/**
+ * How the OpenWA (WhatsApp Web) channel is SHOWN, beside the official WhatsApp Business API that may be
+ * added later (docs/meta-expansion/09 A1). Words on screen only: the scope `whatsapp`, routes, feature and
+ * permission keys, nav module and section ids never change with it.
+ */
+export const LEGACY_WHATSAPP_LABEL = "WhatsApp (Legacy)";
+
 export function inboxScopeLabel(scope: InboxScope): string {
   if (scope === "all") return "All conversations";
-  if (scope === "whatsapp") return "WhatsApp";
+  if (scope === "whatsapp") return LEGACY_WHATSAPP_LABEL;
   return CHANNELS[channelBySlug(scope)!].label;
 }
 

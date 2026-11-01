@@ -45,6 +45,7 @@ import {
   type InboxFilterSet,
   type InboxScope,
   type InboxViewKey,
+  LEGACY_WHATSAPP_LABEL,
 } from "@support-automation/shared";
 import { conversationAvatar } from "../chat/avatar";
 import { ChannelMark, CHANNEL_PRESENTATION } from "./ChannelMark";
@@ -72,7 +73,7 @@ export interface InboxOptions {
 
 const SCOPES: Array<{ scope: InboxScope; channel: InboxChannel | null; label: string }> = [
   { scope: "all", channel: null, label: "All" },
-  { scope: "whatsapp", channel: "WHATSAPP", label: "WhatsApp" },
+  { scope: "whatsapp", channel: "WHATSAPP", label: LEGACY_WHATSAPP_LABEL },
   { scope: "messenger", channel: "MESSENGER", label: "Messenger" },
   { scope: "instagram", channel: "INSTAGRAM", label: "Instagram" },
   { scope: "telegram", channel: "TELEGRAM", label: "Telegram" },
