@@ -22,7 +22,7 @@ import {
   type ProjectBaseType,
   type ProjectType,
 } from "@support-automation/shared";
-import { Alert, Badge, Button, ConfirmDialog, Dialog, Switch, Textarea, useToast } from "@/components/ui";
+import { Alert, Badge, Button, ConfirmDialog, Dialog, Select, Switch, Textarea, useToast } from "@/components/ui";
 import { applyProjectModules, restoreProjectModules } from "@/server/actions/projectModules";
 import type { ModuleTemplateOption, ProjectModuleChangeView } from "@/server/projectModules";
 
@@ -44,6 +44,15 @@ interface Props {
 const names = (keys: readonly string[]) => keys.map((k) => moduleDefinition(k)?.name ?? k);
 
 /**
+ * History times in one fixed zone and locale, so the server's render and the browser's agree (a bare
+ * toLocaleString() differs between them and breaks hydration). Dhaka, like every other report here.
+ */
+const HISTORY_TIME = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dhaka", dateStyle: "medium", timeStyle: "short" });
+
+/** A change that switches something off, held until a person confirms it. */
+type PendingConfirm = { kind: "apply" } | { kind: "restore"; change: ProjectModuleChangeView };
+
+/**
  * The Module Builder (PROJECT_MODULES.md §5). Every rule it shows is the shared resolver's — the same
  * function the server runs again before saving — so the preview here is exactly what Apply will do.
  */
@@ -61,6 +70,7 @@ export function ModuleBuilder(props: Props) {
   const [serverIssues, setServerIssues] = useState<ModuleIssue[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [templateKey, setTemplateKey] = useState<string>("");
+  const [confirming, setConfirming] = useState<PendingConfirm | null>(null);
 
   const resolved = useMemo(
     () => resolveModuleSelection({ requested, declined, entitlement: props.entitlement, currentlyEnabled: props.enabled }),
@@ -87,11 +97,7 @@ export function ModuleBuilder(props: Props) {
     setDeclined(t.declined);
   }
 
-  function chooseTemplate(next: ProjectBaseType | "CUSTOM_MIX") {
-    if (next === "CUSTOM_MIX") {
-      setBase(base);
-      return;
-    }
+  function chooseTemplate(next: ProjectBaseType) {
     setBase(next);
     setRequested(templateModules(next));
     setDeclined([]);
@@ -117,7 +123,14 @@ export function ModuleBuilder(props: Props) {
     setRemoving(null);
   }
 
+  /** Apply asks first only when something would be switched off; adding modules takes nothing away. */
+  function requestApply() {
+    if (diff.removed.length > 0) setConfirming({ kind: "apply" });
+    else apply();
+  }
+
   function apply() {
+    setConfirming(null);
     setError(null);
     setServerIssues([]);
     startTransition(async () => {
@@ -142,6 +155,7 @@ export function ModuleBuilder(props: Props) {
   }
 
   function restore(change: ProjectModuleChangeView) {
+    setConfirming(null);
     startTransition(async () => {
       const result = await restoreProjectModules(props.projectId, change.id, props.version);
       if (result.error) {
@@ -155,6 +169,21 @@ export function ModuleBuilder(props: Props) {
   }
 
   const typeLabel = type.projectType === "CUSTOM_MIX" && type.baseType ? `Custom Mix (${PROJECT_TYPE_LABELS[type.baseType]} base)` : PROJECT_TYPE_LABELS[type.projectType];
+  // What the open confirmation would turn on and off, from the live configuration.
+  const confirmDiff =
+    confirming?.kind === "restore" ? moduleSelectionDiff(props.enabled, confirming.change.modules) : confirming?.kind === "apply" ? diff : null;
+  const changeSummary = dirty ? (
+    <div className="space-y-1 text-xs">
+      <p className="font-medium">Changes</p>
+      {diff.added.length > 0 ? <p className="text-[color:var(--color-success)]">On: {names(diff.added).join(", ")}</p> : null}
+      {diff.removed.length > 0 ? (
+        <p className="text-[color:var(--color-danger)]">Off (pages hidden, background work stops, data kept): {names(diff.removed).join(", ")}</p>
+      ) : null}
+      {diff.added.length === 0 && diff.removed.length === 0 ? <p>Only the business type changes.</p> : null}
+    </div>
+  ) : (
+    <p className="text-xs text-[color:var(--color-muted-foreground)]">No changes.</p>
+  );
 
   return (
     <div className="space-y-6">
@@ -163,8 +192,8 @@ export function ModuleBuilder(props: Props) {
           Business type
         </h2>
         <div className="grid gap-3 sm:grid-cols-3">
-          {(["DEFAULT", "ECOMMERCE", "CUSTOM_MIX"] as const).map((t) => {
-            const active = t === "CUSTOM_MIX" ? type.projectType === "CUSTOM_MIX" : type.projectType === t;
+          {(["DEFAULT", "ECOMMERCE"] as const).map((t) => {
+            const active = type.projectType === t;
             return (
               <button
                 key={t}
@@ -178,26 +207,34 @@ export function ModuleBuilder(props: Props) {
               >
                 <span className="block text-sm font-semibold">{PROJECT_TYPE_LABELS[t]}</span>
                 <span className="mt-1 block text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">{PROJECT_TYPE_DESCRIPTIONS[t]}</span>
-                {t !== "CUSTOM_MIX" ? (
-                  <span className="mt-2 block text-[11px] text-[color:var(--color-subtle-foreground)]">Loads its recommended modules; change any of them after.</span>
-                ) : (
-                  <span className="mt-2 block text-[11px] text-[color:var(--color-subtle-foreground)]">Keeps the current selection; switch any module below.</span>
-                )}
+                <span className="mt-2 block text-[11px] text-[color:var(--color-subtle-foreground)]">Loads its recommended modules; change any of them after.</span>
               </button>
             );
           })}
+          {/* Not a button: Custom Mix is not chosen, it is what a selection BECOMES once it differs from
+              a type's recommended modules. The card says whether that is the case now. */}
+          <div
+            className={`rounded-[var(--radius-lg)] border border-dashed p-4 ${
+              type.projectType === "CUSTOM_MIX" ? "border-[var(--color-primary)] bg-[var(--color-neutral-bg)]" : "border-[var(--color-border)]"
+            }`}
+          >
+            <span className="flex items-center gap-2 text-sm font-semibold">
+              {PROJECT_TYPE_LABELS.CUSTOM_MIX}
+              {type.projectType === "CUSTOM_MIX" ? <Badge color="blue">Current selection</Badge> : null}
+            </span>
+            <span className="mt-1 block text-xs leading-relaxed text-[color:var(--color-muted-foreground)]">{PROJECT_TYPE_DESCRIPTIONS.CUSTOM_MIX}</span>
+            <span className="mt-2 block text-[11px] text-[color:var(--color-subtle-foreground)]">
+              Set automatically when you switch modules on or off below so the selection no longer matches a type.
+            </span>
+          </div>
         </div>
         {props.templates.length > 0 && props.canManage ? (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
             <label htmlFor="module-template" className="text-[color:var(--color-muted-foreground)]">
               Or start from a template:
             </label>
-            <select
-              id="module-template"
-              value={templateKey}
-              onChange={(e) => chooseSavedTemplate(e.target.value)}
-              className="rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
-            >
+            <div className="w-full max-w-xs">
+            <Select id="module-template" value={templateKey} onChange={(e) => chooseSavedTemplate(e.target.value)}>
               <option value="">Choose a template…</option>
               <optgroup label="Built-in">
                 {props.templates
@@ -219,7 +256,8 @@ export function ModuleBuilder(props: Props) {
                     ))}
                 </optgroup>
               ) : null}
-            </select>
+            </Select>
+            </div>
             {template ? (
               <span className="text-xs text-[color:var(--color-muted-foreground)]">
                 {appliesTemplate ? "The changes below show what this template changes here." : "Edited after choosing the template: it will be saved as your own selection."}
@@ -229,21 +267,32 @@ export function ModuleBuilder(props: Props) {
         ) : null}
       </section>
 
+      {/* On a narrow screen the summary column comes after every module card; what will change, and the
+          button that does it, are repeated here so nobody scrolls past forty cards to find them. */}
+      {props.canManage && dirty ? (
+        <div className="space-y-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:hidden">
+          {changeSummary}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={requestApply} loading={pending} disabled={!resolved.ok}>
+              Apply configuration
+            </Button>
+            <a href="#selected-configuration" className="text-xs text-[color:var(--color-muted-foreground)] underline-offset-2 hover:underline">
+              Add a reason or review issues
+            </a>
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid gap-6 lg:grid-cols-[180px_minmax(0,1fr)_300px]">
         <nav aria-label="Module categories" className="lg:sticky lg:top-4 lg:self-start">
           <label className="sr-only" htmlFor="module-category">
             Category
           </label>
-          <select
-            id="module-category"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className="w-full rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm lg:hidden"
-          >
+          <Select id="module-category" value={category} onChange={(e) => setCategory(e.target.value)} className="lg:hidden">
             {["All", ...MODULE_CATEGORIES].map((c) => (
               <option key={c}>{c}</option>
             ))}
-          </select>
+          </Select>
           <ul className="hidden space-y-0.5 lg:block">
             {["All", ...MODULE_CATEGORIES].map((c) => {
               const count = c === "All" ? resolved.selected.length : PROJECT_MODULES.filter((m) => m.category === c && selected.has(m.key)).length;
@@ -252,7 +301,7 @@ export function ModuleBuilder(props: Props) {
                   <button
                     type="button"
                     onClick={() => setCategory(c)}
-                    aria-current={category === c}
+                    aria-pressed={category === c}
                     className={`flex w-full items-center justify-between rounded-[var(--radius-md)] px-3 py-1.5 text-left text-sm ${
                       category === c ? "bg-[var(--color-neutral-bg)] font-medium" : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]"
                     }`}
@@ -317,7 +366,7 @@ export function ModuleBuilder(props: Props) {
           })}
         </div>
 
-        <aside aria-label="Selected configuration" className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+        <aside id="selected-configuration" aria-label="Selected configuration" className="scroll-mt-4 space-y-4 lg:sticky lg:top-4 lg:self-start">
           <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
             <p className="text-xs text-[color:var(--color-muted-foreground)]">Will be recorded as</p>
             <p className="text-base font-semibold">{typeLabel}</p>
@@ -356,18 +405,7 @@ export function ModuleBuilder(props: Props) {
               </p>
             ) : null}
 
-            {dirty ? (
-              <div className="mt-4 space-y-1 border-t border-[var(--color-border)] pt-3 text-xs">
-                <p className="font-medium">Changes</p>
-                {diff.added.length > 0 ? <p className="text-[color:var(--color-success)]">On: {names(diff.added).join(", ")}</p> : null}
-                {diff.removed.length > 0 ? (
-                  <p className="text-[color:var(--color-danger)]">Off (pages hidden, background work stops, data kept): {names(diff.removed).join(", ")}</p>
-                ) : null}
-                {diff.added.length === 0 && diff.removed.length === 0 ? <p>Only the business type changes.</p> : null}
-              </div>
-            ) : (
-              <p className="mt-4 text-xs text-[color:var(--color-muted-foreground)]">No changes.</p>
-            )}
+            <div className={`mt-4 ${dirty ? "border-t border-[var(--color-border)] pt-3" : ""}`}>{changeSummary}</div>
 
             {resolved.grandfathered.length > 0 ? (
               <p className="mt-3 text-xs text-[color:var(--color-muted-foreground)]">
@@ -395,7 +433,7 @@ export function ModuleBuilder(props: Props) {
                 </label>
                 <Textarea id="module-reason" rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Customer bought the Team Report add-on" />
                 <div className="flex gap-2">
-                  <Button onClick={apply} loading={pending} disabled={!dirty || !resolved.ok}>
+                  <Button onClick={requestApply} loading={pending} disabled={!dirty || !resolved.ok}>
                     Apply configuration
                   </Button>
                   <Button
@@ -426,7 +464,7 @@ export function ModuleBuilder(props: Props) {
                         v{h.version} · {h.projectType === "CUSTOM_MIX" && h.projectBaseType ? `Custom Mix (${PROJECT_TYPE_LABELS[h.projectBaseType]} base)` : PROJECT_TYPE_LABELS[h.projectType]}
                       </p>
                       <p className="text-[color:var(--color-muted-foreground)]">
-                        {new Date(h.createdAt).toLocaleString()} · {h.actorUsername}
+                        <time dateTime={new Date(h.createdAt).toISOString()}>{HISTORY_TIME.format(new Date(h.createdAt))}</time> · {h.actorUsername}
                       </p>
                       {d.added.length ? <p>On: {names(d.added).join(", ")}</p> : null}
                       {d.removed.length ? <p>Off: {names(d.removed).join(", ")}</p> : null}
@@ -438,7 +476,7 @@ export function ModuleBuilder(props: Props) {
                       ) : null}
                       {h.reason ? <p className="italic">{h.reason}</p> : null}
                       {props.canManage && h.version !== props.version ? (
-                        <Button size="sm" variant="ghost" className="mt-1" disabled={pending} onClick={() => restore(h)}>
+                        <Button size="sm" variant="ghost" className="mt-1" disabled={pending} onClick={() => setConfirming({ kind: "restore", change: h })}>
                           <RotateCcw className="size-3" aria-hidden />
                           Restore this configuration
                         </Button>
@@ -469,6 +507,56 @@ export function ModuleBuilder(props: Props) {
               <li key={n}>{n}</li>
             ))}
           </ul>
+        ) : null}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={confirming !== null}
+        onClose={() => setConfirming(null)}
+        onConfirm={() => {
+          if (confirming?.kind === "restore") restore(confirming.change);
+          else apply();
+        }}
+        title={
+          confirming?.kind === "restore"
+            ? `Restore configuration v${confirming.change.version}?`
+            : `Switch off ${confirmDiff?.removed.length ?? 0} module${confirmDiff?.removed.length === 1 ? "" : "s"}?`
+        }
+        description={
+          confirming?.kind === "restore"
+            ? "This project goes back to that version's modules straight away. The change is recorded in the history as a new version."
+            : "These modules switch off for this project as soon as you apply: their pages are hidden and their background work stops. Their data and settings are kept, and they come back unchanged when switched on again."
+        }
+        confirmLabel={confirming?.kind === "restore" ? "Restore configuration" : "Apply configuration"}
+        tone={confirmDiff && confirmDiff.removed.length > 0 ? "danger" : "primary"}
+        loading={pending}
+      >
+        {confirmDiff ? (
+          <div className="space-y-3 text-sm">
+            {confirmDiff.removed.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-semibold text-[color:var(--color-danger)]">Switches off</p>
+                <ul className="list-disc pl-5">
+                  {names(confirmDiff.removed).map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {confirmDiff.added.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-semibold text-[color:var(--color-success)]">Switches on</p>
+                <ul className="list-disc pl-5">
+                  {names(confirmDiff.added).map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {confirmDiff.added.length === 0 && confirmDiff.removed.length === 0 ? (
+              <p className="text-[color:var(--color-muted-foreground)]">No module changes; only the business type is recorded again.</p>
+            ) : null}
+          </div>
         ) : null}
       </ConfirmDialog>
     </div>

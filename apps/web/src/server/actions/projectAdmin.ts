@@ -1,5 +1,7 @@
 "use server";
 
+import { CustomerLimitError, lockAndCheckCustomerLimit } from "@/server/customerLimits";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { checkPermission } from "@/server/authorize";
@@ -142,10 +144,10 @@ export async function resetProjectMemberPassword(userId: string, newPassword: st
   if (!facts.can.resetPassword) return { error: "This login is also used outside this project, so only a Main Admin can reset its password." };
   if (newPassword.length < MIN_PASSWORD_LENGTH) return { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
   await platformPrisma.$transaction([
-    platformPrisma.user.update({ where: { id: userId }, data: { passwordHash: hashPassword(newPassword) } }),
+    platformPrisma.user.update({ where: { id: userId }, data: { passwordHash: hashPassword(newPassword), passwordChangedAt: new Date() } }),
     platformPrisma.userSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: "PASSWORD_CHANGED" } }),
   ]);
-  await logSystemEvent("WARN", "users", "PASSWORD_RESET", { actorId: admin.session.userId, targetUserId: userId, from: "project-members" });
+  await logSystemEvent("WARN", "users", "PASSWORD_RESET", { actorId: admin.session.userId, targetUserId: userId, from: "project-members" }, { actorUserId: admin.session.userId, targetType: "User", targetId: userId });
   return { success: "Password reset. Every existing session for this member has been signed out." };
 }
 
@@ -158,7 +160,17 @@ export async function setProjectMemberActive(userId: string, isActive: boolean):
   if (!facts.can.setActive) return { error: "This login is also used outside this project, so only a Main Admin can deactivate it." };
   if (facts.user.isActive === isActive) return { success: "No change." };
   if (isActive) {
-    await platformPrisma.user.update({ where: { id: userId }, data: { isActive: true } });
+    // Reactivating brings a user back, so the plan's user limit applies as it does to a new login.
+    try {
+      await platformPrisma.$transaction(async (tx) => {
+        const refusal = await lockAndCheckCustomerLimit(tx, admin.project.id, "USERS");
+        if (refusal) throw new CustomerLimitError(refusal);
+        await tx.user.update({ where: { id: userId }, data: { isActive: true } });
+      });
+    } catch (err) {
+      if (err instanceof CustomerLimitError) return { error: err.message };
+      throw err;
+    }
   } else {
     await platformPrisma.$transaction([
       platformPrisma.user.update({ where: { id: userId }, data: { isActive: false } }),

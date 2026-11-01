@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { startTransition, useActionState, type FormEvent } from "react";
 import { Alert, Button, Card, Field, Input, Select } from "@/components/ui";
 import { saveEmployee } from "@/server/actions/configuration";
 
@@ -36,8 +36,16 @@ export function EmployeeForm({
   const [state, action, pending] = useActionState(saveEmployee, {});
   // An inactive department or title stays selectable only if it is already this person's.
   const offer = (options: Option[], current?: string | null) => options.filter((o) => o.isActive || o.id === current);
+
+  // Submitted from onSubmit rather than <form action>: React resets an uncontrolled form after an
+  // action, which would throw away everything typed whenever the server refuses it.
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    startTransition(() => action(formData));
+  }
   return (
-    <form action={action}>
+    <form onSubmit={onSubmit}>
       <Card>
         {defaults.id ? <input type="hidden" name="id" value={defaults.id} /> : null}
         <fieldset disabled={!canManage} className="grid gap-4 md:grid-cols-2">

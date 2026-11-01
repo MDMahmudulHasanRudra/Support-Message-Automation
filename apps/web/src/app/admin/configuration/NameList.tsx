@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { startTransition as startActionTransition, useActionState, useEffect, useState, useTransition, type FormEvent } from "react";
 import { Alert, Badge, Button, ConfirmDialog, Field, Input, useToast } from "@/components/ui";
 import type { ConfigFormState } from "@/server/actions/configuration";
 
@@ -40,13 +40,17 @@ export function NameList({
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<NameRow | null>(null);
-  const [, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition();
+  /** The row whose Deactivate / Reactivate / Delete is in flight, so its button shows it. */
+  const [busyId, setBusyId] = useState<string | null>(null);
   const router = useRouter();
   const { showToast } = useToast();
 
-  function run(action: () => Promise<ConfigFormState>) {
+  function run(id: string, action: () => Promise<ConfigFormState>) {
+    setBusyId(id);
     startTransition(async () => {
       const result = await action();
+      setBusyId(null);
       if (result.error) showToast({ tone: "danger", title: result.error });
       else {
         showToast({ tone: "success", title: result.success ?? "Saved" });
@@ -88,11 +92,17 @@ export function NameList({
                     <Button size="sm" variant="ghost" onClick={() => setEditing(row.id)}>
                       Edit
                     </Button>
-                    <Button size="sm" variant="secondary" onClick={() => run(() => toggle(row.id, !row.isActive))}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={pending && busyId === row.id}
+                      disabled={pending && busyId !== row.id}
+                      onClick={() => run(row.id, () => toggle(row.id, !row.isActive))}
+                    >
                       {row.isActive ? "Deactivate" : "Reactivate"}
                     </Button>
                     {row.employeeCount === 0 ? (
-                      <Button size="sm" variant="ghost" onClick={() => setDeleting(row)}>
+                      <Button size="sm" variant="ghost" disabled={pending} onClick={() => setDeleting(row)}>
                         Delete
                       </Button>
                     ) : null}
@@ -110,7 +120,7 @@ export function NameList({
         onConfirm={() => {
           const row = deleting;
           setDeleting(null);
-          if (row) run(() => remove(row.id));
+          if (row) run(row.id, () => remove(row.id));
         }}
         title={`Delete ${deleting?.name ?? ""}?`}
         description={`Nobody is filed under this ${noun}, so it can be deleted. This cannot be undone.`}
@@ -138,6 +148,15 @@ function NameForm({
   const [formKey, setFormKey] = useState(0);
   const router = useRouter();
 
+  // Submitted from onSubmit rather than <form action>: React resets an uncontrolled form after an
+  // action, which would throw away what was typed whenever the server refuses it. The add form is
+  // still cleared on success, by remounting it below.
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    startActionTransition(() => action(formData));
+  }
+
   useEffect(() => {
     if (!state.success) return;
     router.refresh();
@@ -146,7 +165,7 @@ function NameForm({
   }, [state, onDone, router]);
 
   return (
-    <form key={formKey} action={action} className="space-y-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+    <form key={formKey} onSubmit={onSubmit} className="space-y-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       {row ? <input type="hidden" name="id" value={row.id} /> : null}
       <div className={`grid gap-3 ${withCode ? "sm:grid-cols-[1fr_8rem]" : ""}`}>
         <Field label={row ? "Name" : `New ${noun}`} required>

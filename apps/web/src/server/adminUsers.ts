@@ -155,7 +155,14 @@ export async function setUserProjectAccess(
   if (!existing) {
     if (project.status === "ARCHIVED") return { ok: false, error: "That project is archived; nobody new can be given access." };
     // Access to another of the customer's workspaces adds no user, so no plan limit applies here.
-    await db.projectAccess.create({ data: { projectId, userId, level: stored } });
+    try {
+      await db.projectAccess.create({ data: { projectId, userId, level: stored } });
+    } catch (err) {
+      // Granted by another admin in the same instant: the access exists, so set its level instead.
+      if (!isUniqueViolation(err)) throw err;
+      await db.projectAccess.update({ where: { projectId_userId: { projectId, userId } }, data: { level: stored } });
+      return { ok: true, changed: "updated" };
+    }
     return { ok: true, changed: "granted" };
   }
   if ((existing.level ?? null) === stored) return { ok: true, changed: "unchanged" };
@@ -218,13 +225,24 @@ export interface AdminUserRow {
   access: Array<{ projectId: string; projectName: string; projectSlug: string; level: ProjectAccessLevelValue; isLead: boolean }>;
 }
 
-export async function listAdminUsers(db: PrismaClient, search = ""): Promise<AdminUserRow[]> {
+function adminUserSearchWhere(search: string) {
   const q = search.trim();
+  return q
+    ? { OR: [{ username: { contains: q, mode: "insensitive" as const } }, { name: { contains: q, mode: "insensitive" as const } }, { email: { contains: q, mode: "insensitive" as const } }] }
+    : {};
+}
+
+/** How many logins `listAdminUsers` would return for this search, without a page — for the pager. */
+export async function countAdminUsers(db: PrismaClient, search = ""): Promise<number> {
+  return db.user.count({ where: adminUserSearchWhere(search) });
+}
+
+/** Every login matching the search, by username. `page` narrows it to one page; without it, all of them (as before). */
+export async function listAdminUsers(db: PrismaClient, search = "", page?: { skip: number; take: number }): Promise<AdminUserRow[]> {
   const users = await db.user.findMany({
-    where: q
-      ? { OR: [{ username: { contains: q, mode: "insensitive" } }, { name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }] }
-      : {},
+    where: adminUserSearchWhere(search),
     orderBy: { username: "asc" },
+    ...(page ? { skip: page.skip, take: page.take } : {}),
     select: {
       id: true,
       username: true,

@@ -60,6 +60,8 @@ const OUTSIDE_PROJECT = [
   /^\/open(\/|$|\?)/,
   /^\/invite\//,
   /^\/admin(\/|$|\?)/,
+  // My account (ACCOUNT_SELF_SERVICE.md): a person's own profile, password and sign-in security, in no project.
+  /^\/account(\/|$|\?)/,
   // The RELQIVO platform (Layer 1) and the support-access handoff (SAAS_PLATFORM_PLAN.md §12).
   /^\/platform(\/|$|\?)/,
   /^\/support-access\//,

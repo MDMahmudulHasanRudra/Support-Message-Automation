@@ -3,15 +3,22 @@ import { Plus } from "lucide-react";
 import type { Prisma } from "@prisma/client";
 import { platformPrisma } from "@/server/db";
 import { requireAdminSection } from "@/server/mainAdmin";
-import { Badge, Button, ButtonLink, Input, Select, Table, Td, Th } from "@/components/ui";
+import { Badge, Button, ButtonLink, Input, Pagination, Select, Td, Th } from "@/components/ui";
+import { LIST_SCROLL_BOX } from "@/lib/listPageSizes";
+import { ADMIN_LIST_DEFAULT_SIZE, ADMIN_LIST_PAGE_SIZES, listHref, readListPaging, SCROLL_TABLE_CLASS } from "../../listPaging";
 
 export const metadata = { title: "Employees" };
 
 /** The people in the organisation. A GET form filters, so a filtered list can be bookmarked like every other list here. */
-export default async function EmployeesPage({ searchParams }: { searchParams: Promise<{ q?: string; department?: string; status?: string }> }) {
+export default async function EmployeesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; department?: string; status?: string; page?: string; size?: string }>;
+}) {
   const { allowed, can } = await requireAdminSection("configuration.view");
   if (!allowed) return null;
-  const { q = "", department = "", status = "ACTIVE" } = await searchParams;
+  const params = await searchParams;
+  const { q = "", department = "", status = "ACTIVE" } = params;
   const where: Prisma.EmployeeWhereInput = {};
   const term = q.trim();
   if (term) {
@@ -25,11 +32,17 @@ export default async function EmployeesPage({ searchParams }: { searchParams: Pr
   if (department) where.departmentId = department;
   if (status === "ACTIVE" || status === "INACTIVE") where.status = status;
 
+  const total = await platformPrisma.employee.count({ where });
+  const { page, size, skip } = readListPaging(params, total);
+  const href = (next: { page?: number; size?: number }) =>
+    listHref("/admin/configuration/employees", { q: term, department, status: status === "ACTIVE" ? undefined : status, page: next.page, size: next.size ?? size });
+
   const [employees, departments, canManage] = await Promise.all([
     platformPrisma.employee.findMany({
       where,
       orderBy: { employeeCode: "asc" },
-      take: 500,
+      skip,
+      take: size,
       select: {
         id: true,
         employeeCode: true,
@@ -69,6 +82,7 @@ export default async function EmployeesPage({ searchParams }: { searchParams: Pr
               <option value="ALL">All</option>
             </Select>
           </div>
+          {size !== ADMIN_LIST_DEFAULT_SIZE ? <input type="hidden" name="size" value={size} /> : null}
           <Button type="submit" variant="secondary">
             Filter
           </Button>
@@ -86,7 +100,13 @@ export default async function EmployeesPage({ searchParams }: { searchParams: Pr
           {term || department || status !== "ACTIVE" ? "No employees match those filters." : "No employees recorded yet."}
         </p>
       ) : (
-        <Table>
+        <>
+        <p className="text-xs text-[color:var(--color-muted-foreground)] tabular-nums">
+          Showing {employees.length.toLocaleString("en-US")} of {total.toLocaleString("en-US")} employee{total === 1 ? "" : "s"}
+          {term || department || status !== "ACTIVE" ? " matching these filters" : ""}.
+        </p>
+        <div className={`${LIST_SCROLL_BOX} rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)]`}>
+        <table className={SCROLL_TABLE_CLASS}>
           <thead>
             <tr>
               <Th>Employee ID</Th>
@@ -122,7 +142,17 @@ export default async function EmployeesPage({ searchParams }: { searchParams: Pr
               </tr>
             ))}
           </tbody>
-        </Table>
+        </table>
+        </div>
+        <Pagination
+          page={page}
+          pageSize={size}
+          total={total}
+          buildHref={(n) => href({ page: n })}
+          pageSizeOptions={ADMIN_LIST_PAGE_SIZES}
+          buildPageSizeHref={(n) => href({ size: n })}
+        />
+        </>
       )}
     </div>
   );

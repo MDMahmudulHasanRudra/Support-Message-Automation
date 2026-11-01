@@ -1532,6 +1532,16 @@ export interface CreateProjectInput {
   /** The customer whose software this project belongs to (SAAS_PLATFORM_PLAN.md §12). Omitted: the
    *  client decides — a customer-scoped client stamps its own customer; unscoped = the original installation. */
   customerId?: string | null;
+  /** The customer's current plan modules, applied INSIDE the creating transaction so a project never exists
+   *  with the default modules instead of its plan's. Null/omitted: the defaults (a customer with no plan). */
+  plan?: { features: readonly string[]; allModules: boolean } | null;
+}
+
+/** The plan a customer's NEW project should follow, read before creating it (null = no current subscription). */
+export async function customerPlanForNewProject(db: PrismaClient, customerId: string | null): Promise<{ features: string[]; allModules: boolean } | null> {
+  const id = customerId ?? (await db.customer.findFirst({ where: { isFounding: true }, select: { id: true } }))?.id ?? null;
+  if (!id) return null;
+  return db.subscription.findFirst({ where: { customerId: id, endedAt: null }, select: { features: true, allModules: true } });
 }
 
 /**
@@ -1575,6 +1585,7 @@ export async function createProjectWithDefaults(input: CreateProjectInput, db: P
     await tx.projectFeature.createMany({
       data: PROJECT_FEATURES.map((feature) => ({ projectId: project.id, key: feature.key, enabled: feature.defaultEnabled })),
     });
+    if (input.plan) await applyPlanFeatures(tx, [project.id], input.plan);
     // Every event on, both channels, no groups of its own (so it inherits the project's global
     // destinations) — exactly what an absent row means, written down so the project starts with
     // a row for each alert it can raise.

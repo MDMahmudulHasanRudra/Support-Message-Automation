@@ -13,6 +13,7 @@ import {
 import { Alert, Button, Field, Input, Select, Textarea } from "@/components/ui";
 import { createProject, type ProjectFormState } from "@/server/actions/projects";
 import { ClientCodeFields, type ClientCodeContext } from "./ClientCodeFields";
+import { useBranding } from "@/components/BrandingProvider";
 
 /**
  * Name, slug, description, status. The slug follows the name until somebody edits it by hand.
@@ -45,6 +46,8 @@ export function CreateProjectForm({
   const [status, setStatus] = useState<"SETUP" | "ACTIVE">("SETUP");
   const [setup, setSetup] = useState("PLAN");
   const chosen = templates.find((t) => t.key === setup);
+  // The placeholder follows the product name (BRANDING.md), never a hard-coded one.
+  const exampleName = `${useBranding().productName} Project 2`;
 
   const shownSlug = slugEdited ? slug : suggestProjectSlug(name);
   const nameError = state.fieldErrors?.name ?? (name ? validateProjectName(name.trim()) : null);
@@ -58,7 +61,7 @@ export function CreateProjectForm({
           name="name"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="e.g. Get Assist Project 2"
+          placeholder={`e.g. ${exampleName}`}
           maxLength={PROJECT_NAME_MAX}
           required
           autoComplete="off"
@@ -80,7 +83,7 @@ export function CreateProjectForm({
             setSlugEdited(true);
             setSlug(event.target.value);
           }}
-          placeholder="e.g. get-assist-project-2"
+          placeholder={`e.g. ${suggestProjectSlug(exampleName) || "project-2"}`}
           maxLength={PROJECT_SLUG_MAX}
           required
           autoComplete="off"

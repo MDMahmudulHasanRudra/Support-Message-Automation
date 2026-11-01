@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { readClientCodeSeries } from "@support-automation/db";
 import { previewClientCodes } from "@support-automation/shared";
 import { globalPrisma } from "@/server/db";
-import { ArrowRight, CheckCircle2, Circle } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Circle } from "lucide-react";
 import { moduleDefinition, PROJECT_STATUS_DESCRIPTIONS, PROJECT_TYPE_LABELS } from "@support-automation/shared";
 import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader } from "@/components/ui";
 import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
@@ -36,6 +36,10 @@ export default async function ProjectDetailPage({
 
   return (
     <div>
+      <ButtonLink href="/admin/projects" variant="ghost" size="sm" className="mb-3">
+        <ArrowLeft className="size-3.5" aria-hidden />
+        Projects
+      </ButtonLink>
       <PageHeader
         title={
           <span className="flex flex-wrap items-center gap-3">

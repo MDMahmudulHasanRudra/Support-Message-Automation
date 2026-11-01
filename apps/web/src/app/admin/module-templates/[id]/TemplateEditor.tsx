@@ -100,7 +100,17 @@ export function TemplateEditor({ id, initial }: { id: string | null; initial: In
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="text-[color:var(--color-muted-foreground)]">Start from:</span>
         {(["DEFAULT", "ECOMMERCE"] as const).map((t) => (
-          <Button key={t} size="sm" variant="ghost" onClick={() => setRequested(templateModules(t))}>
+          <Button
+            key={t}
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              // Starting from a type's modules also makes it the base, so the two never disagree.
+              setBaseType(t);
+              setRequested(templateModules(t));
+              setDeclined([]);
+            }}
+          >
             {PROJECT_TYPE_LABELS[t]} modules
           </Button>
         ))}

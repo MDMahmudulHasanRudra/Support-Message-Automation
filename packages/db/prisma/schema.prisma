@@ -858,6 +858,23 @@ model User {
   lockedUntil         DateTime? // set once failedLoginAttempts crosses SecuritySettings'
   // loginLockoutThreshold within loginLockoutWindowMinutes; checked before the password itself
 
+  /// My account (ACCOUNT_SELF_SERVICE.md): a contact number the person typed themselves. Display only.
+  phone              String?
+  /// When the password was last set by anyone (the person or an administrator). Null = before this was recorded.
+  passwordChangedAt  DateTime?
+  /// When the person last changed their own username.
+  usernameChangedAt  DateTime?
+  /// Two-step sign-in (TOTP, RFC 6238). The secret is an encryptSecret envelope; null = off.
+  mfaSecretCiphertext        String?
+  /// A secret being set up, not yet confirmed with a code. Never used to sign in.
+  mfaPendingSecretCiphertext String?
+  mfaEnabledAt               DateTime?
+  /// One-time recovery codes, stored only as SHA-256 hashes; a used code is removed.
+  mfaRecoveryCodeHashes      String[]  @default([])
+  /// The last TOTP time step accepted, so one code cannot be replayed inside its window.
+  mfaLastUsedStep            BigInt?
+  avatar                     UserAvatar?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -5952,7 +5969,8 @@ model Employee {
   /// "EMP-000123": assigned once, from the `employee_code_seq` sequence, never reused or edited.
   employeeCode String         @unique
   fullName     String
-  email        String?        @unique
+  /// Unique per customer (partial indexes in 20261101100000_account_self_service), not across customers.
+  email        String?
   phone        String?
   departmentId String?
   department   Department?    @relation(fields: [departmentId], references: [id], onDelete: Restrict)
@@ -9036,3 +9054,15 @@ model SocialRssItem {
 
   @@unique([feedId, guid])
 }
+
+/// A person's own profile photo (ACCOUNT_SELF_SERVICE.md). Its own table so the bytes are never loaded with
+/// every User query. Sniffed and bounded at upload; served only to signed-in people of the same customer.
+model UserAvatar {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bytes     Bytes
+  mimeType  String
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+}
+

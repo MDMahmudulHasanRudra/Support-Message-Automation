@@ -1,7 +1,7 @@
 "use server";
 
 import { projectPath } from "@/server/projectPaths";
-import { prisma } from "@/server/db";
+import { platformPrisma, prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { redirect } from "next/navigation";
@@ -12,6 +12,8 @@ import { logSystemEvent } from "@/server/logSystemEvent";
 import { privilegeRefusal, userIsPrivileged } from "@/server/privilegeGuard";
 import { isMainAdmin } from "@/server/projectContext";
 import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
+import { CustomerLimitError, lockAndCheckCustomerLimit } from "@/server/customerLimits";
+import { activeProjectId } from "@/server/projectContext";
 
 const PERMISSION_DENIED_ERROR = "You do not have permission to perform this action.";
 
@@ -32,6 +34,8 @@ export async function createUser(_prevState: UserFormState, formData: FormData):
 
   if (!username) return { error: "Username is required." };
   if (!name) return { error: "Display name is required." };
+  const roleError = await roleOfThisCustomer(permissionModuleId);
+  if (roleError) return { error: roleError };
   if (password.length < MIN_PASSWORD_LENGTH) return { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
   if (password !== confirmPassword) return { error: "Passwords do not match." };
   // A login on a role holding Main Admin keys is a new Main Admin (server/privilegeGuard.ts).
@@ -47,16 +51,23 @@ export async function createUser(_prevState: UserFormState, formData: FormData):
 
   let created;
   try {
-    created = await prisma.user.create({
-      data: {
-        username,
-        name,
-        email,
-        passwordHash: hashPassword(password),
-        permissionModuleId,
-      },
+    const projectId = await activeProjectId();
+    created = await prisma.$transaction(async (tx) => {
+      // The customer's plan may cap its users (SAAS_PLATFORM_PLAN.md §10.4): checked under the customer's lock.
+      const refusal = await lockAndCheckCustomerLimit(tx, projectId, "USERS");
+      if (refusal) throw new CustomerLimitError(refusal);
+      return tx.user.create({
+        data: {
+          username,
+          name,
+          email,
+          passwordHash: hashPassword(password),
+          permissionModuleId,
+        },
+      });
     });
   } catch (err) {
+    if (err instanceof CustomerLimitError) return { error: err.message };
     // Two admins creating the same username or email in the same instant both pass the checks above.
     if (isUniqueViolation(err)) return { error: "That username or email was just taken by another user." };
     throw err;
@@ -80,6 +91,8 @@ export async function updateUser(id: string, _prevState: UserFormState, formData
 
   if (!name) return { error: "Display name is required." };
   if (permissionModuleId !== target.permissionModuleId) {
+    const roleError = await roleOfThisCustomer(permissionModuleId);
+    if (roleError) return { error: roleError };
     const privileged = await privilegeRefusal(session.userId, { assignsRoleId: permissionModuleId, targetUserId: id });
     if (privileged) return { error: privileged };
   }
@@ -101,6 +114,9 @@ export async function updateUser(id: string, _prevState: UserFormState, formData
   }
 
   await logSystemEvent("INFO", "users", "USER_UPDATED", { actorId: session.userId, targetUserId: id });
+  if (permissionModuleId !== target.permissionModuleId) {
+    await logSystemEvent("WARN", "users", "USER_ROLE_CHANGED", { actorId: session.userId, targetUserId: id, from: target.permissionModuleId, to: permissionModuleId });
+  }
   revalidatePath(await projectPath("/users"));
   redirect(await projectPath("/users"));
 }
@@ -120,7 +136,22 @@ export async function setUserActive(id: string, isActive: boolean): Promise<{ er
   const privileged = await privilegeRefusal(session.userId, { targetUserId: id });
   if (privileged) return { error: privileged };
 
-  await prisma.user.update({ where: { id }, data: { isActive } });
+  if (isActive && !target.isActive) {
+    // Reactivating a login brings a user back, so it counts against the plan's user limit like a new one.
+    try {
+      const projectId = await activeProjectId();
+      await prisma.$transaction(async (tx) => {
+        const refusal = await lockAndCheckCustomerLimit(tx, projectId, "USERS");
+        if (refusal) throw new CustomerLimitError(refusal);
+        await tx.user.update({ where: { id }, data: { isActive } });
+      });
+    } catch (err) {
+      if (err instanceof CustomerLimitError) return { error: err.message };
+      throw err;
+    }
+  } else {
+    await prisma.user.update({ where: { id }, data: { isActive } });
+  }
 
   if (!isActive) {
     // Deactivating a user must reject every session they currently hold immediately, not wait for
@@ -153,7 +184,7 @@ export async function resetUserPassword(id: string, newPassword: string): Promis
   const privileged = await privilegeRefusal(session.userId, { targetUserId: id });
   if (privileged) return { error: privileged };
 
-  await prisma.user.update({ where: { id }, data: { passwordHash: hashPassword(newPassword) } });
+  await prisma.user.update({ where: { id }, data: { passwordHash: hashPassword(newPassword), passwordChangedAt: new Date() } });
 
   // Never silently keep old sessions alive after a password reset — every session for this user
   // is invalidated immediately, forcing a fresh login everywhere.
@@ -162,7 +193,7 @@ export async function resetUserPassword(id: string, newPassword: string): Promis
     data: { revokedAt: new Date(), revokedReason: "PASSWORD_CHANGED" },
   });
 
-  await logSystemEvent("WARN", "users", "PASSWORD_RESET", { actorId: session.userId, targetUserId: id });
+  await logSystemEvent("WARN", "users", "PASSWORD_RESET", { actorId: session.userId, targetUserId: id }, { actorUserId: session.userId, targetType: "User", targetId: id });
   revalidatePath(await projectPath("/users"));
   return {};
 }
@@ -213,4 +244,14 @@ export async function deleteUser(id: string, confirmUsername: string): Promise<{
   });
   revalidatePath(await projectPath("/users"));
   return { ok: true };
+}
+
+/**
+ * A role must be one of THIS customer's roles. The id comes from the form, and the user table is not
+ * where a foreign customer's role id would be refused, so it is looked up through the customer-scoped client.
+ */
+async function roleOfThisCustomer(permissionModuleId: string | null): Promise<string | null> {
+  if (!permissionModuleId) return null;
+  const role = await platformPrisma.permissionModule.findUnique({ where: { id: permissionModuleId }, select: { id: true } });
+  return role ? null : "That role no longer exists.";
 }

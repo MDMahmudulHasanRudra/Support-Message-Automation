@@ -1,4 +1,5 @@
 import { getBrandAsset } from "@/server/branding";
+import { currentTenantOrNone } from "@/server/tenant";
 import { DEFAULT_ICON_SVG, isBrandAssetKind } from "@/lib/branding";
 
 /**
@@ -9,6 +10,9 @@ import { DEFAULT_ICON_SVG, isBrandAssetKind } from "@/lib/branding";
  *   any other request is revalidated, so a new upload is seen at once.
  * - The type served is the one sniffed from the bytes at upload, with `nosniff`, and every image is
  *   served under a sandboxing CSP: an SVG opened directly in a tab cannot run anything.
+ * - Each customer has its own brand at the SAME address, chosen by the signed-in session or the hostname,
+ *   so a shared cache must never hand one customer's image to another: the response is `private` and
+ *   `Vary: Cookie, Host`, and the ETag names the customer as well as the version.
  * - No icon uploaded: the built-in one, from the same address, so the favicon never has two sources.
  */
 export const dynamic = "force-dynamic";
@@ -30,17 +34,25 @@ export async function GET(request: Request, { params }: { params: Promise<{ asse
     console.warn("[branding] could not read a brand image", err);
   }
 
+  let tenant: string | null | undefined;
+  try {
+    tenant = await currentTenantOrNone();
+  } catch {
+    tenant = undefined;
+  }
   const version = stored?.version ?? 0;
   const requested = new URL(request.url).searchParams.get("v");
-  const cacheControl = requested === String(version) ? "public, max-age=31536000, immutable" : "public, max-age=0, must-revalidate";
+  const cacheControl = requested === String(version) ? "private, max-age=31536000, immutable" : "private, max-age=0, must-revalidate";
   const hasImage = Boolean(stored && stored.bytes.length > 0 && stored.mimeType);
-  const etag = `"brand-${asset}-${version}-${hasImage ? "custom" : "default"}"`;
+  const owner = tenant === undefined ? "platform" : (tenant ?? "original");
+  const etag = `"brand-${owner}-${asset}-${version}-${hasImage ? "custom" : "default"}"`;
+  const varyHeaders = { Vary: "Cookie, Host" };
 
   if (!hasImage && asset === "logo") {
     return new Response("No logo uploaded", { status: 404, headers: { "Cache-Control": "no-store" } });
   }
   if (request.headers.get("if-none-match") === etag) {
-    return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl } });
+    return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl, ...varyHeaders } });
   }
 
   const body = hasImage ? new Uint8Array(stored!.bytes) : new TextEncoder().encode(DEFAULT_ICON_SVG);
@@ -51,6 +63,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ asse
       "Content-Length": String(body.byteLength),
       "Cache-Control": cacheControl,
       ETag: etag,
+      ...varyHeaders,
       ...SECURITY_HEADERS,
     },
   });

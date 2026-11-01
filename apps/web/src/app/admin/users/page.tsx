@@ -3,8 +3,10 @@ import { Plus } from "lucide-react";
 import { PROJECT_ACCESS_LEVEL_LABELS } from "@support-automation/shared";
 import { platformPrisma } from "@/server/db";
 import { requireAdminSection } from "@/server/mainAdmin";
-import { listAdminUsers } from "@/server/adminUsers";
-import { Alert, Badge, Button, ButtonLink, Input, PageHeader, Table, Td, Th } from "@/components/ui";
+import { countAdminUsers, listAdminUsers } from "@/server/adminUsers";
+import { Alert, Badge, ButtonLink, PageHeader, Pagination, SearchField, Td, Th } from "@/components/ui";
+import { LIST_SCROLL_BOX } from "@/lib/listPageSizes";
+import { ADMIN_LIST_DEFAULT_SIZE, ADMIN_LIST_PAGE_SIZES, listHref, readListPaging, SCROLL_TABLE_CLASS } from "../listPaging";
 
 export const metadata = { title: "Users & Permissions" };
 
@@ -13,9 +15,10 @@ export const metadata = { title: "Users & Permissions" };
  * the person behind it, their role and the projects they may enter — one place to see all four.
  * Roles themselves (Permission Modules) stay where they are; this links there.
  */
-export default async function AdminUsersPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+export default async function AdminUsersPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string; size?: string }> }) {
   const { allowed, can } = await requireAdminSection("users.view");
-  const { q = "" } = await searchParams;
+  const params = await searchParams;
+  const { q = "" } = params;
   if (!allowed) {
     return (
       <div>
@@ -26,8 +29,16 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
       </div>
     );
   }
-  const [users, canCreate, canPermissions] = await Promise.all([listAdminUsers(platformPrisma, q), can("users.create"), can("permissions.view")]);
-  const projectCount = await platformPrisma.project.count({ where: { status: { not: "ARCHIVED" } } });
+  const total = await countAdminUsers(platformPrisma, q);
+  const { page, size, skip } = readListPaging(params, total);
+  const [users, canCreate, canPermissions, projectCount] = await Promise.all([
+    listAdminUsers(platformPrisma, q, { skip, take: size }),
+    can("users.create"),
+    can("permissions.view"),
+    platformPrisma.project.count({ where: { status: { not: "ARCHIVED" } } }),
+  ]);
+  const term = q.trim();
+  const href = (next: { page?: number; size?: number }) => listHref("/admin/users", { q: term, page: next.page, size: next.size ?? size });
 
   return (
     <div>
@@ -50,13 +61,11 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
           </div>
         }
       />
-      <form method="get" className="mb-4 flex max-w-lg gap-2">
-        <Input name="q" defaultValue={q} placeholder="Search username, name or email" aria-label="Search users" />
-        <Button type="submit" variant="secondary">
-          Search
-        </Button>
-      </form>
-      <Table>
+      <div className="mb-4">
+        <SearchField name="q" defaultValue={q} placeholder="Search username, name or email" preserve={{ size: size === ADMIN_LIST_DEFAULT_SIZE ? undefined : String(size) }} width="w-72 max-w-full" />
+      </div>
+      <div className={`${LIST_SCROLL_BOX} rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)]`}>
+      <table className={SCROLL_TABLE_CLASS}>
         <thead>
           <tr>
             <Th>User</Th>
@@ -67,6 +76,13 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
           </tr>
         </thead>
         <tbody>
+          {users.length === 0 ? (
+            <tr>
+              <Td colSpan={5} className="py-8 text-center text-[13px] text-[color:var(--color-muted-foreground)]">
+                {term ? `No user matches “${term}”. Check the spelling, or search by username, name or email.` : "There are no users yet."}
+              </Td>
+            </tr>
+          ) : null}
           {users.map((user) => (
             <tr key={user.id} data-user={user.username}>
               <Td>
@@ -111,7 +127,16 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
             </tr>
           ))}
         </tbody>
-      </Table>
+      </table>
+      </div>
+      <Pagination
+        page={page}
+        pageSize={size}
+        total={total}
+        buildHref={(n) => href({ page: n })}
+        pageSizeOptions={ADMIN_LIST_PAGE_SIZES}
+        buildPageSizeHref={(n) => href({ size: n })}
+      />
     </div>
   );
 }

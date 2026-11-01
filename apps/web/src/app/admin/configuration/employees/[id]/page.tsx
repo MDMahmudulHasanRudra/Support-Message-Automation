@@ -41,13 +41,15 @@ export default async function EmployeePage({ params, searchParams }: { params: P
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
+      <div>
         <NextLink href="/admin/configuration/employees" className="text-xs text-[color:var(--color-muted-foreground)] hover:underline">
           ← Employees
         </NextLink>
-        <span className="flex-1" />
-        <span className="font-mono text-sm text-[color:var(--color-foreground)]">{employee.employeeCode}</span>
-        {employee.status === "ACTIVE" ? <Badge color="green">Active</Badge> : <Badge color="gray">Inactive</Badge>}
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <h2 className="min-w-0 text-xl font-semibold tracking-[-0.015em] text-[color:var(--color-foreground)]">{employee.fullName}</h2>
+          <span className="font-mono text-sm text-[color:var(--color-muted-foreground)]">{employee.employeeCode}</span>
+          {employee.status === "ACTIVE" ? <Badge color="green">Active</Badge> : <Badge color="gray">Inactive</Badge>}
+        </div>
       </div>
       {saved ? <Alert tone="success">Saved.</Alert> : null}
 
@@ -82,7 +84,7 @@ export default async function EmployeePage({ params, searchParams }: { params: P
             title="Status"
             description="Employees are never deleted — their record stays for history. Deactivating does not touch their login; deactivate that separately if they have left."
           />
-          <EmployeeStatusControl employeeId={employee.id} active={employee.status === "ACTIVE"} />
+          <EmployeeStatusControl employeeId={employee.id} employeeName={employee.fullName} hasLogin={Boolean(employee.user)} active={employee.status === "ACTIVE"} />
         </Card>
       ) : null}
     </div>

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Button, Select, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, Select, useToast } from "@/components/ui";
 import { linkEmployeeLogin, toggleEmployee, type ConfigFormState } from "@/server/actions/configuration";
 
 function useRun() {
@@ -21,12 +21,44 @@ function useRun() {
   return { run, pending };
 }
 
-export function EmployeeStatusControl({ employeeId, active }: { employeeId: string; active: boolean }) {
+export function EmployeeStatusControl({
+  employeeId,
+  employeeName,
+  hasLogin,
+  active,
+}: {
+  employeeId: string;
+  employeeName: string;
+  hasLogin: boolean;
+  active: boolean;
+}) {
   const { run, pending } = useRun();
+  const [confirming, setConfirming] = useState(false);
   return (
-    <Button variant="secondary" loading={pending} onClick={() => run(() => toggleEmployee(employeeId, !active))}>
-      {active ? "Deactivate employee" : "Reactivate employee"}
-    </Button>
+    <>
+      <Button variant="secondary" loading={pending} onClick={() => (active ? setConfirming(true) : run(() => toggleEmployee(employeeId, true)))}>
+        {active ? "Deactivate employee" : "Reactivate employee"}
+      </Button>
+      <ConfirmDialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          run(() => toggleEmployee(employeeId, false));
+        }}
+        title={`Deactivate ${employeeName}?`}
+        description={`${employeeName} is marked inactive and is no longer offered when linking logins. The record and its history are kept, and you can reactivate it at any time.`}
+        confirmLabel="Deactivate employee"
+        tone="danger"
+        loading={pending}
+      >
+        {hasLogin ? (
+          <p className="text-[13px] text-[color:var(--color-muted-foreground)]">
+            Their app login is not touched and can still sign in. If they have left, deactivate the login separately under Users &amp; Permissions.
+          </p>
+        ) : null}
+      </ConfirmDialog>
+    </>
   );
 }
 

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { applyCustomerPlanToNewProject, ClientCodeSeriesError, createProjectWithDefaults } from "@support-automation/db";
+import { ClientCodeSeriesError, createProjectWithDefaults, customerPlanForNewProject } from "@support-automation/db";
 import {
   canTransitionProject,
   CREATABLE_PROJECT_STATUSES,
@@ -24,6 +24,7 @@ import { isUniqueViolation } from "@/lib/prismaErrors";
 import { applyProjectModules } from "@/server/actions/projectModules";
 import { applyModuleSelection, findModuleTemplate, getProjectModuleState } from "@/server/projectModules";
 import { forgetProjectFeatureStates } from "@/server/projectFeatures";
+import { currentTenant, customerOfTenant } from "@/server/tenant";
 
 /**
  * Main Admin Portal actions (MULTI_PROJECT_PLAN.md §7–§8). Every one requires `projects.manage` —
@@ -85,7 +86,10 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
       minWidth: Number.isFinite(width) && width > 0 ? width : null,
       startSerial: String(formData.get("codeStart") ?? "").trim() || null,
     };
-    created = await createProjectWithDefaults({ name, slug, description, status, creatorUserId: access.session.userId, clientCode }, platformPrisma);
+    // A customer's new project gets the modules of its plan (every module on All Access, SAAS §12) — in the
+    // same transaction that creates it, so a failure can never leave a project on the default modules.
+    const plan = await customerPlanForNewProject(globalPrisma, await customerOfTenant(await currentTenant()));
+    created = await createProjectWithDefaults({ name, slug, description, status, creatorUserId: access.session.userId, clientCode, plan }, platformPrisma);
   } catch (err) {
     if (err instanceof ClientCodeSeriesError) {
       const key = err.field === "minWidth" ? "codeWidth" : err.field === "nextSerial" ? "codeStart" : "codePrefix";
@@ -95,8 +99,6 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
     if (isUniqueViolation(err)) return { fieldErrors: { slug: `The address "${slug}" is not available. Choose another.` } };
     throw err;
   }
-  // A customer's new project gets the modules of its plan (every module on All Access, SAAS §12).
-  await applyCustomerPlanToNewProject(globalPrisma, created.id);
 
   // Business type / template (PROJECT_MODULES.md §5.1). "PLAN" keeps exactly the behaviour above;
   // "CUSTOM" keeps it too and opens the Module Builder next. A template is applied on top of the plan
@@ -191,6 +193,9 @@ export async function updateProjectDetails(projectId: string, _prev: ProjectDeta
       changedBy: access.session.username,
     });
   }
+  if ((project.description ?? "") !== description) {
+    await logSystemEvent("INFO", "projects", `Project "${name}" description changed`, { projectId, changedBy: access.session.username });
+  }
   revalidatePath("/", "layout");
   return { savedAt: Date.now() };
 }
@@ -235,13 +240,14 @@ export async function setProjectAccess(projectId: string, userId: string, grante
   if ("denied" in access) return { error: access.denied };
 
   const [project, user] = await Promise.all([
-    platformPrisma.project.findUnique({ where: { id: projectId }, select: { id: true, name: true } }),
+    platformPrisma.project.findUnique({ where: { id: projectId }, select: { id: true, name: true, status: true } }),
     platformPrisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true } }),
   ]);
   if (!project) return { error: "That project no longer exists." };
   if (!user) return { error: "That user no longer exists." };
 
   if (granted) {
+    if (project.status === "ARCHIVED") return { error: `${project.name} is archived; nobody new can be given access. Restore it first.` };
     // Access to another of the customer's workspaces adds no user, so no plan limit applies here.
     await platformPrisma.projectAccess.upsert({
       where: { projectId_userId: { projectId, userId } },
@@ -265,6 +271,8 @@ export async function setProjectAccess(projectId: string, userId: string, grante
     changedBy: access.session.username,
   });
   revalidatePath(`/admin/projects/${projectId}`);
+  revalidatePath(`/admin/users/${userId}`);
+  revalidatePath("/admin/users");
   return { success: granted ? `${user.username} can now enter ${project.name}.` : `${user.username} can no longer enter ${project.name}.` };
 }
 

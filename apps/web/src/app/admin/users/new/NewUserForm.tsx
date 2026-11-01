@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { startTransition, useActionState, useState, type FormEvent } from "react";
 import {
   PROJECT_ACCESS_LEVEL_DESCRIPTIONS,
   PROJECT_ACCESS_LEVEL_LABELS,
@@ -33,8 +33,16 @@ export function NewUserForm({
   const [state, action, pending] = useActionState(createUserFromAdmin, {});
   const [mode, setMode] = useState<"none" | "existing" | "new">("none");
 
+  // Submitted from onSubmit rather than <form action>: React resets an uncontrolled form after an
+  // action, which would throw away everything typed whenever the server refuses it.
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    startTransition(() => action(formData));
+  }
+
   return (
-    <form action={action} className="space-y-5">
+    <form onSubmit={onSubmit} className="space-y-5">
       <Card>
         <SectionHeader title="1. Employee" description="The person this login belongs to. Optional — a login can exist without an employee record, and one can be linked later." />
         {canEmployees ? (

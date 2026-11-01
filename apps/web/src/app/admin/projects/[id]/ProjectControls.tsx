@@ -1,12 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { startTransition as startActionTransition, useActionState, useEffect, useMemo, useState, useTransition, type FormEvent } from "react";
 import {
   allowedProjectTransitions,
   PROJECT_ACCESS_LEVEL_DESCRIPTIONS,
   PROJECT_ACCESS_LEVEL_LABELS,
   PROJECT_ACCESS_LEVELS,
+  PROJECT_NAME_MAX,
   PROJECT_STATUS_DESCRIPTIONS,
   type ProjectAccessLevelValue,
   type ProjectStatusValue,
@@ -99,6 +100,14 @@ export function ProjectAccessList({ projectId, users, canManage }: { projectId: 
   const { showToast } = useToast();
   const [pendingUser, setPendingUser] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+  const [query, setQuery] = useState("");
+  const [removing, setRemoving] = useState<AccessRow | null>(null);
+
+  const term = query.trim().toLowerCase();
+  const shown = useMemo(
+    () => (term ? users.filter((u) => u.username.toLowerCase().includes(term) || u.name.toLowerCase().includes(term) || (u.role ?? "").toLowerCase().includes(term)) : users),
+    [users, term],
+  );
 
   function changeLevel(user: AccessRow, level: string) {
     setPendingUser(user.id);
@@ -127,52 +136,97 @@ export function ProjectAccessList({ projectId, users, canManage }: { projectId: 
   }
 
   return (
-    <ul className="divide-y divide-[var(--color-border)] rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
-      {users.map((user) => (
-        <li key={user.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-medium text-[color:var(--color-foreground)]">
-              {user.name || user.username} <span className="font-normal text-[color:var(--color-muted-foreground)]">@{user.username}</span>
-            </p>
-            <p className="text-xs text-[color:var(--color-muted-foreground)]">
-              Role: {user.role ?? "none"} <span aria-hidden>·</span> unchanged by project access
-            </p>
-          </div>
-          {user.isMainAdmin ? <Badge color="blue">Main Admin — enters every project</Badge> : null}
-          {user.hasAccess ? (
-            <div className="w-28">
-            <Select
-              aria-label={`${user.username}'s access level in this project`}
-              data-level-user={user.username}
-              value={user.level ?? "FULL"}
-              disabled={!canManage || pendingUser === user.id}
-              onChange={(event) => changeLevel(user, event.target.value)}
-              title={PROJECT_ACCESS_LEVEL_DESCRIPTIONS[user.level ?? "FULL"]}
-            >
-              {PROJECT_ACCESS_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {PROJECT_ACCESS_LEVEL_LABELS[level]}
-                </option>
-              ))}
-            </Select>
-            </div>
-          ) : null}
-          <label className="flex items-center gap-2 text-[13px] text-[color:var(--color-muted-foreground)]">
-            <Switch
-              checked={user.hasAccess}
-              disabled={!canManage || pendingUser === user.id}
-              onChange={(event) => toggle(user, event.target.checked)}
-              aria-label={`${user.username} may enter this project`}
-              data-user={user.username}
-            />
-            {user.hasAccess ? "Has access" : "No access"}
-          </label>
-        </li>
-      ))}
-    </ul>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="w-full max-w-sm">
+          <Input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search username, name or role"
+            aria-label="Search users"
+          />
+        </div>
+        <p className="text-xs text-[color:var(--color-muted-foreground)] tabular-nums" aria-live="polite">
+          {term ? `${shown.length} of ${users.length} users` : `${users.length} user${users.length === 1 ? "" : "s"}`}
+        </p>
+      </div>
+      {shown.length === 0 ? (
+        <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border-strong)] px-4 py-6 text-center text-[13px] text-[color:var(--color-muted-foreground)]">
+          {term ? `No user matches “${query.trim()}”.` : "There are no users yet."}
+        </p>
+      ) : (
+        <ul className="divide-y divide-[var(--color-border)] rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+          {shown.map((user) => (
+            <li key={user.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-medium text-[color:var(--color-foreground)]">
+                  {user.name || user.username} <span className="font-normal text-[color:var(--color-muted-foreground)]">@{user.username}</span>
+                </p>
+                <p className="text-xs text-[color:var(--color-muted-foreground)]">
+                  Role: {user.role ?? "none"} <span aria-hidden>·</span> unchanged by project access
+                </p>
+                {user.hasAccess ? (
+                  <p className="text-xs text-[color:var(--color-muted-foreground)]">
+                    {PROJECT_ACCESS_LEVEL_LABELS[user.level ?? "FULL"]}: {PROJECT_ACCESS_LEVEL_DESCRIPTIONS[user.level ?? "FULL"]}
+                  </p>
+                ) : null}
+              </div>
+              {user.isMainAdmin ? <Badge color="blue">Main Admin — enters every project</Badge> : null}
+              {user.hasAccess ? (
+                <div className="w-28">
+                  <Select
+                    aria-label={`${user.username}'s access level in this project`}
+                    data-level-user={user.username}
+                    value={user.level ?? "FULL"}
+                    disabled={!canManage || pendingUser === user.id}
+                    onChange={(event) => changeLevel(user, event.target.value)}
+                    title={PROJECT_ACCESS_LEVEL_DESCRIPTIONS[user.level ?? "FULL"]}
+                  >
+                    {PROJECT_ACCESS_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {PROJECT_ACCESS_LEVEL_LABELS[level]}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              ) : null}
+              <label className="flex items-center gap-2 text-[13px] text-[color:var(--color-muted-foreground)]">
+                <Switch
+                  checked={user.hasAccess}
+                  disabled={!canManage || pendingUser === user.id}
+                  onChange={(event) => (event.target.checked ? toggle(user, true) : setRemoving(user))}
+                  aria-label={`${user.username} may enter this project`}
+                  data-user={user.username}
+                />
+                {user.hasAccess ? "Has access" : "No access"}
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      <ConfirmDialog
+        open={removing !== null}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => {
+          const user = removing;
+          setRemoving(null);
+          if (user) toggle(user, false);
+        }}
+        title={removing ? `Remove ${removing.name || removing.username}'s access?` : ""}
+        description={
+          removing
+            ? `@${removing.username} can no longer enter this project, from their next request. Any Lead status or project role they hold here is removed too. Nothing they did here is deleted, and access can be given back at any time.${
+                removing.isMainAdmin ? " As a Main Admin they can still enter every project." : ""
+              }`
+            : undefined
+        }
+        confirmLabel="Remove access"
+        tone="danger"
+      />
+    </div>
   );
 }
-
 
 /**
  * Rename the project and edit its description. The slug is shown but not editable: it is the
@@ -202,10 +256,18 @@ export function ProjectDetailsForm({
     router.refresh();
   }, [state.savedAt, showToast, router]);
 
+  // Submitted from onSubmit rather than <form action>: React resets an uncontrolled form after an
+  // action, which would throw away what was typed whenever the server refuses it.
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    startActionTransition(() => formAction(formData));
+  }
+
   return (
-    <form action={formAction} className="grid gap-4 sm:grid-cols-2">
+    <form onSubmit={onSubmit} className="grid gap-4 sm:grid-cols-2">
       <Field label="Project name" htmlFor="project-name" required error={state.fieldErrors?.name} hint="Shown in the project switcher, the breadcrumb and the Main Admin portal.">
-        <Input id="project-name" name="name" defaultValue={name} required maxLength={80} />
+        <Input id="project-name" name="name" defaultValue={name} required maxLength={PROJECT_NAME_MAX} />
       </Field>
       <Field label="Address" htmlFor="project-slug" hint="The address cannot be changed — every saved link and bookmark uses it.">
         <Input id="project-slug" value={`/p/${slug}/`} readOnly disabled />
@@ -219,7 +281,11 @@ export function ProjectDetailsForm({
       >
         <Textarea id="project-description" name="description" defaultValue={description ?? ""} maxLength={500} className="min-h-20" />
       </Field>
-      {state.error ? <p className="text-[13px] font-medium text-[color:var(--color-danger)] sm:col-span-2">{state.error}</p> : null}
+      {state.error ? (
+        <p role="alert" className="text-[13px] font-medium text-[color:var(--color-danger)] sm:col-span-2">
+          {state.error}
+        </p>
+      ) : null}
       <div className="sm:col-span-2">
         <Button type="submit" loading={pending}>
           Save details

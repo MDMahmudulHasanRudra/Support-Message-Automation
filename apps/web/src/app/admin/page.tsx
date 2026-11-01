@@ -25,7 +25,7 @@ export default async function MainAdminOverview() {
   return (
     <div>
       <PageHeader
-        title="Main Admin"
+        title="Overview"
         description={`Every project on this ${productName} installation. Open a project to work in it; its own pages and reports are where the detail lives.`}
         actions={
           canManage ? (
@@ -91,7 +91,9 @@ export default async function MainAdminOverview() {
             <Th>Messages today</Th>
             <Th>Open escalations</Th>
             <Th>Users with access</Th>
-            <Th> </Th>
+            <Th>
+              <span className="sr-only">Actions</span>
+            </Th>
           </tr>
         </thead>
         <tbody>
