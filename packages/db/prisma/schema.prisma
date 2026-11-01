@@ -6257,6 +6257,8 @@ enum ChannelAuthMode {
 enum MetaOAuthPurpose {
   CONNECT
   RECONNECT
+  /// Social Studio publishing (docs/meta-expansion/04 §2). Claimed only by the Social Studio claim.
+  SOCIAL_CONNECT
 }
 
 enum MetaOAuthStatus {

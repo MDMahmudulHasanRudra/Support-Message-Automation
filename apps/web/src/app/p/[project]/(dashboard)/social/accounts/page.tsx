@@ -17,6 +17,11 @@ const ERRORS: Record<string, string> = {
   state: "The answer from Meta did not match this attempt. Start again.",
   denied: "The connection was cancelled at Meta.",
   session: "Sign in as the same person who started connecting, then try again.",
+  binding: "Finish connecting in the same browser, on the same address, that started it. Start again from here.",
+  not_allowed: "Connecting Facebook / Instagram is not available in this workspace yet. Ask your platform administrator.",
+  too_many: "Too many connection attempts in the last hour. Wait a little and try again.",
+  exchange_failed: "Meta did not complete the authorization. Nothing was connected. Start again.",
+  not_found: "That connection attempt was not found. Start again.",
   meta: "Meta did not complete the connection. Try again; the System Log has the details.",
   failed: "Connecting failed. Try again; the System Log has the details.",
 };
