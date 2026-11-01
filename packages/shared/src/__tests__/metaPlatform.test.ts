@@ -5,7 +5,10 @@ import {
   assetKey,
   classifyMetaAssets,
   hasPageRoleFor,
+  DEFAULT_META_GRAPH_VERSION,
   META_OAUTH_CALLBACK_PATH,
+  META_PAGE_WEBHOOK_FIELDS,
+  metaGraphVersion,
   metaPlatformAppSecret,
   missingScopes,
   readGrantedScopes,
@@ -13,6 +16,7 @@ import {
   readMetaSignedRequest,
   type DiscoveredPage,
 } from "../metaPlatform.js";
+import { isMetaChannelType, META_CHANNEL_TYPES } from "../channels.js";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
 const GOOD_ENV = {
@@ -152,5 +156,25 @@ describe("metaProjectAllowed (META_ALLOWED_PROJECT_IDS)", () => {
   });
   it("\"*\" allows every workspace", () => {
     expect(metaProjectAllowed({ META_ALLOWED_PROJECT_IDS: "*" }, "anything")).toBe(true);
+  });
+});
+
+// Meta expansion A3: one reading of the version for every call, never blindly upgraded.
+describe("metaGraphVersion", () => {
+  it("uses a well-formed override, and the pinned default otherwise", () => {
+    expect(DEFAULT_META_GRAPH_VERSION).toBe("v25.0");
+    expect(metaGraphVersion({})).toBe("v25.0");
+    expect(metaGraphVersion({ META_GRAPH_API_VERSION: " v26.0 " })).toBe("v26.0");
+    for (const bad of ["26", "v26", "v26.1", "v26.0/../../me", "latest"]) expect(metaGraphVersion({ META_GRAPH_API_VERSION: bad })).toBe("v25.0");
+  });
+  it("subscribes Pages to exactly the messaging fields the inbox handles", () => {
+    expect([...META_PAGE_WEBHOOK_FIELDS]).toEqual(["messages", "message_echoes", "message_deliveries", "message_reads"]);
+  });
+});
+
+describe("isMetaChannelType", () => {
+  it("is an allow-list: only Messenger and Instagram use Meta routes, tokens and sends", () => {
+    expect([...META_CHANNEL_TYPES]).toEqual(["MESSENGER", "INSTAGRAM"]);
+    for (const t of ["TELEGRAM", "WEBCHAT", "WHATSAPP", "WHATSAPP_CLOUD", "", null, undefined]) expect(isMetaChannelType(t)).toBe(false);
   });
 });

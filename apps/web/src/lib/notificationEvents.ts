@@ -13,6 +13,8 @@ export const NOTIFICATION_EVENTS = [
   // something a customer said; this one reports that nothing a customer says is arriving at all,
   // which is what made the 18 Sep 2026 outage run for three hours unnoticed.
   "COLLECTION_BROKEN",
+  // Next for the same reason: a channel that needs reconnecting receives nothing at all.
+  "CHANNEL_NEEDS_RECONNECT",
   "SUPPORT_ESCALATION",
   "MOOD_ALERT",
   "SUPPORT_ASSIGNMENT",

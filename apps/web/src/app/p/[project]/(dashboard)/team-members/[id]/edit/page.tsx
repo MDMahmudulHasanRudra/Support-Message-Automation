@@ -19,6 +19,7 @@ const EVENT_LABELS: Record<string, string> = {
   RULE_NOTIFY_TEAMS: "A rule raised a Teams alert",
   UNKNOWN_PATTERN: "An unrecognised question keeps coming up",
   COLLECTION_BROKEN: "A WhatsApp number has stopped collecting messages",
+  CHANNEL_NEEDS_RECONNECT: "A Messenger, Instagram or Telegram connection needs reconnecting",
   MOOD_ALERT: "Mood Detection found an upset customer",
   SUPPORT_ASSIGNMENT: "Support Assignment — a case went overdue or was escalated",
 };

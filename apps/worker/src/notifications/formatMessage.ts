@@ -31,6 +31,15 @@ export async function formatSupportAlert(payload: Record<string, unknown>): Prom
     });
   }
 
+  if (payload.alertKind === "CHANNEL_NEEDS_RECONNECT") {
+    return renderNotification("CHANNEL_NEEDS_RECONNECT", {
+      connectionName: text("connectionName") ?? "(unnamed connection)",
+      channel: text("channel") ?? "Messaging channel",
+      reason: text("reason") ?? "It is no longer accepted.",
+      action: text("action") ?? "Open Settings → Messaging Channels and reconnect it.",
+    });
+  }
+
   if (payload.alertKind === "MOOD_ALERT") {
     return renderNotification("MOOD_ALERT", {
       moodLabel: text("moodLabel") ?? "Upset",

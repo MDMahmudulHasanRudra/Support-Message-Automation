@@ -4,6 +4,7 @@ import {
   classifyMetaAssets,
   META_REQUESTED_SCOPES,
   META_SOCIAL_SCOPES,
+  isMetaChannelType,
   readGrantedScopes,
   metaProjectAllowed,
   readMetaPlatformConfig,
@@ -222,7 +223,7 @@ export async function startMetaOAuth(input: {
   if (recent >= MAX_STARTS_PER_HOUR) throw new MetaOAuthError("too_many", META_ERROR_TEXT.too_many);
   if (input.purpose === "RECONNECT") {
     const target = input.connectionId ? await prisma.channelConnection.findUnique({ where: { id: input.connectionId }, select: { type: true } }) : null;
-    if (!target || target.type === "TELEGRAM") throw new MetaOAuthError("not_found", "That connection no longer exists.");
+    if (!target || !isMetaChannelType(target.type)) throw new MetaOAuthError("not_found", "That connection no longer exists.");
   }
   const state = random(32);
   const binding = random(32);

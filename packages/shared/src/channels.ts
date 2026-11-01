@@ -18,6 +18,19 @@ export function isChannelType(value: unknown): value is ChannelType {
   return typeof value === "string" && (CHANNEL_TYPES as readonly string[]).includes(value);
 }
 
+/** The channel types Meta's Messenger Platform carries (Page webhooks, Graph send API, Facebook Login). */
+export const META_CHANNEL_TYPES = ["MESSENGER", "INSTAGRAM"] as const satisfies readonly ChannelType[];
+export type MetaChannelType = (typeof META_CHANNEL_TYPES)[number];
+
+/**
+ * Whether a connection of this type may use a Meta route, token or send path. Asked as an ALLOW-list:
+ * the checks it replaced excluded Telegram only, so any other type — website chat today, a new channel
+ * tomorrow — was treated as Meta by default.
+ */
+export function isMetaChannelType(value: unknown): value is MetaChannelType {
+  return typeof value === "string" && (META_CHANNEL_TYPES as readonly string[]).includes(value);
+}
+
 /** Which webhook dialect a channel speaks. Messenger and Instagram share Meta's. */
 export type ChannelWebhookKind = "META" | "TELEGRAM" | "WEBCHAT";
 

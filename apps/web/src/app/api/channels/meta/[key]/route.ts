@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ingestMetaWebhook, MAX_WEBHOOK_BYTES, verifyMetaSubscription, type WebhookAnswer } from "@/server/channels/webhookIngest";
+import { ingestMetaWebhook, MAX_WEBHOOK_BYTES, readWebhookBody, verifyMetaSubscription, type WebhookAnswer } from "@/server/channels/webhookIngest";
 
 /**
  * Meta's webhook for Facebook Messenger and Instagram DM (OMNICHANNEL.md §7). Outside any project:
@@ -26,9 +26,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ key: string }> }): Promise<NextResponse> {
   const { key } = await params;
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_WEBHOOK_BYTES) return answer({ status: 413, body: "Too large" });
-  const rawBody = Buffer.from(await request.arrayBuffer());
-  if (rawBody.length > MAX_WEBHOOK_BYTES) return answer({ status: 413, body: "Too large" });
+  const rawBody = await readWebhookBody(request, MAX_WEBHOOK_BYTES);
+  if (!rawBody) return answer({ status: 413, body: "Too large" });
   try {
     return answer(await ingestMetaWebhook({ key, rawBody, signature: request.headers.get("x-hub-signature-256") }));
   } catch (err) {

@@ -32,9 +32,9 @@ describe("A1 — WhatsApp (Legacy) is a label, not an identifier", () => {
   });
 
   it("project-role page access keeps the module id `whatsapp` and the same section ids", () => {
-    const module = ACCESS_MODULES.find((m) => m.id === "whatsapp");
-    expect(module?.label).toBe(LEGACY_WHATSAPP_LABEL);
-    const ids = module!.groups.flatMap((g) => g.entries.flatMap((e) => e.sections.map((s) => s.id)));
+    const whatsapp = ACCESS_MODULES.find((m) => m.id === "whatsapp");
+    expect(whatsapp?.label).toBe(LEGACY_WHATSAPP_LABEL);
+    const ids = whatsapp!.groups.flatMap((g) => g.entries.flatMap((e) => e.sections.map((s) => s.id)));
     expect(ids).toEqual(expect.arrayContaining(["/accounts", "/groups", "/team-members", "/teams", "/group-message-sender", "/group-member-adder", "/group-admin-maker"]));
     expect(ACCESS_MODULES.some((m) => m.id === "whatsapp-legacy")).toBe(false);
   });

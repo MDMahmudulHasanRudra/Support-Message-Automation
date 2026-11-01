@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { metaProjectAllowed, splitMetaWebhook, telegramDedupKey, type ChannelType } from "@support-automation/shared";
+import { isMetaChannelType, metaProjectAllowed, splitMetaWebhook, telegramDedupKey, type ChannelType } from "@support-automation/shared";
 import type { Prisma } from "@prisma/client";
 import { platformPrisma } from "@/server/db";
 import { loadWebhookConnection, secretsEqual } from "@/server/channels/connections";
@@ -27,12 +27,68 @@ export interface WebhookAnswer {
   contentType?: string;
 }
 
-/** Bigger than any real Meta or Telegram webhook body by a wide margin. */
+/**
+ * A manual (per-connection) Meta or Telegram webhook body. Kept at 1 MB on purpose (docs/meta-expansion
+ * A3): a manual connection is one Page or bot, and Meta's 1,000-update batches are the PLATFORM app's
+ * case (below). Raising it is a decision for Gate B evidence, not a guess.
+ */
 export const MAX_WEBHOOK_BYTES = 1_000_000;
 
 const OK: WebhookAnswer = { status: 200, body: "EVENT_RECEIVED" };
 const NOT_FOUND: WebhookAnswer = { status: 404, body: "Not found" };
 const FORBIDDEN: WebhookAnswer = { status: 403, body: "Forbidden" };
+
+/**
+ * Reads a request body, stopping as soon as it passes `maxBytes` — whatever Content-Length claims, and
+ * when there is none (a chunked body). `request.arrayBuffer()` holds the whole body in memory before
+ * anything can measure it. Null = too large.
+ */
+export async function readWebhookBody(request: Request, maxBytes: number): Promise<Buffer | null> {
+  if (Number(request.headers.get("content-length") ?? 0) > maxBytes) return null;
+  if (!request.body) return Buffer.alloc(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, total);
+}
+
+/**
+ * The shape every Meta webhook body has: a JSON object with an `object` name and an `entry` array. A
+ * signed body without it is not something Meta sends; it is answered 400 and nothing is recorded.
+ */
+function readMetaEnvelope(raw: Buffer): { ok: true; body: Record<string, unknown>; object: string } | { ok: false; answer: WebhookAnswer } {
+  let body: unknown;
+  try {
+    body = JSON.parse(raw.toString("utf8"));
+  } catch {
+    return { ok: false, answer: { status: 400, body: "Body is not JSON" } };
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return { ok: false, answer: { status: 400, body: "Not a webhook body" } };
+  const { object, entry } = body as { object?: unknown; entry?: unknown };
+  if (typeof object !== "string" || !/^[a-z_]{1,64}$/.test(object) || !Array.isArray(entry)) return { ok: false, answer: { status: 400, body: "Not a webhook body" } };
+  return { ok: true, body: body as Record<string, unknown>, object };
+}
+
+/** Logged once per process per object: a product subscribed at Meta that this server does not handle. */
+const reportedObjects = new Set<string>();
+function unhandledObject(object: string, where: string): WebhookAnswer {
+  if (!reportedObjects.has(object)) {
+    reportedObjects.add(object);
+    console.warn(`[channels] ${where}: Meta sent "${object}" events, which this server does not handle; acknowledged, nothing recorded. Unsubscribe it in the Meta app, or deploy the release that handles it.`);
+  }
+  // Acknowledged, so Meta does not retry it forever.
+  return OK;
+}
 
 /** How often `lastEventAt` is rewritten — a busy Page must not turn every webhook into an UPDATE. */
 const LAST_EVENT_RESOLUTION_MS = 60_000;
@@ -40,7 +96,7 @@ const LAST_EVENT_RESOLUTION_MS = 60_000;
 /** Meta's one-time GET handshake when the callback URL is saved in the app dashboard. */
 export async function verifyMetaSubscription(input: { key: string; mode: string | null; token: string | null; challenge: string | null; now?: Date }): Promise<WebhookAnswer> {
   const connection = await loadWebhookConnection(input.key);
-  if (!connection || connection.type === "TELEGRAM") return NOT_FOUND;
+  if (!connection || !isMetaChannelType(connection.type)) return NOT_FOUND;
   if (input.mode !== "subscribe" || !input.challenge || !secretsEqual(input.token, connection.verifyToken)) return FORBIDDEN;
   // The challenge is echoed back verbatim as text/plain — Meta checks the body equals what it sent.
   // Limited to what Meta sends (digits), so this endpoint cannot be used to reflect arbitrary text.
@@ -61,23 +117,18 @@ const META_TYPE_BY_OBJECT: Record<string, "MESSENGER" | "INSTAGRAM"> = { page: "
 export async function ingestMetaWebhook(input: { key: string; rawBody: Buffer; signature: string | null; receivedAt?: Date }): Promise<WebhookAnswer> {
   const receivedAt = input.receivedAt ?? new Date();
   const connection = await loadWebhookConnection(input.key);
-  if (!connection || connection.type === "TELEGRAM") return NOT_FOUND;
+  if (!connection || !isMetaChannelType(connection.type)) return NOT_FOUND;
   if (!metaSignatureValid(input.rawBody, input.signature, connection.appSecret)) {
     console.warn(`[channels] Meta webhook with a missing or wrong signature for connection ${connection.id}; refused.`);
     return { status: 401, body: "Invalid signature" };
   }
 
-  let body: unknown;
-  try {
-    body = JSON.parse(input.rawBody.toString("utf8"));
-  } catch {
-    return { status: 400, body: "Body is not JSON" };
-  }
-  const object = typeof body === "object" && body !== null ? (body as { object?: unknown }).object : null;
-  const type = typeof object === "string" ? META_TYPE_BY_OBJECT[object] : undefined;
-  // Something Meta sends for a product this inbox does not use: acknowledged, so Meta does not retry it.
-  if (!type) return OK;
-  const events = splitMetaWebhook(body, type, receivedAt) ?? [];
+  const envelope = readMetaEnvelope(input.rawBody);
+  if (!envelope.ok) return envelope.answer;
+  const type = META_TYPE_BY_OBJECT[envelope.object];
+  // Something Meta sends for a product this inbox does not use.
+  if (!type) return unhandledObject(envelope.object, "manual Meta webhook");
+  const events = splitMetaWebhook(envelope.body, type, receivedAt) ?? [];
   if (events.length === 0) return OK;
 
   // One Meta app has ONE callback URL for all its Pages and Instagram accounts, so a body reaching
@@ -127,16 +178,11 @@ export async function ingestPlatformMetaWebhook(input: { rawBody: Buffer; signat
     console.warn("[channels] platform Meta webhook with a missing or wrong signature; refused.");
     return { status: 401, body: "Invalid signature" };
   }
-  let body: unknown;
-  try {
-    body = JSON.parse(input.rawBody.toString("utf8"));
-  } catch {
-    return { status: 400, body: "Body is not JSON" };
-  }
-  const object = typeof body === "object" && body !== null ? (body as { object?: unknown }).object : null;
-  const type = typeof object === "string" ? META_TYPE_BY_OBJECT[object] : undefined;
-  if (!type) return OK;
-  const events = splitMetaWebhook(body, type, receivedAt) ?? [];
+  const envelope = readMetaEnvelope(input.rawBody);
+  if (!envelope.ok) return envelope.answer;
+  const type = META_TYPE_BY_OBJECT[envelope.object];
+  if (!type) return unhandledObject(envelope.object, "platform Meta webhook");
+  const events = splitMetaWebhook(envelope.body, type, receivedAt) ?? [];
   const accountIds = [...new Set(events.map((e) => e.accountId).filter((id): id is string => Boolean(id)))];
   if (accountIds.length === 0) return OK;
 

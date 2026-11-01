@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ingestPlatformMetaWebhook, MAX_PLATFORM_WEBHOOK_BYTES, type WebhookAnswer } from "@/server/channels/webhookIngest";
+import { ingestPlatformMetaWebhook, MAX_PLATFORM_WEBHOOK_BYTES, readWebhookBody, type WebhookAnswer } from "@/server/channels/webhookIngest";
 import { secretsEqual } from "@/server/channels/connections";
 import { metaPlatformConfig } from "@/server/channels/metaOAuth";
 
@@ -34,9 +34,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const config = metaPlatformConfig();
   if (!config.ok) return answer({ status: 404, body: "Not found" });
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_PLATFORM_WEBHOOK_BYTES) return answer({ status: 413, body: "Too large" });
-  const rawBody = Buffer.from(await request.arrayBuffer());
-  if (rawBody.length > MAX_PLATFORM_WEBHOOK_BYTES) return answer({ status: 413, body: "Too large" });
+  const rawBody = await readWebhookBody(request, MAX_PLATFORM_WEBHOOK_BYTES);
+  if (!rawBody) return answer({ status: 413, body: "Too large" });
   try {
     return answer(await ingestPlatformMetaWebhook({ rawBody, signature: request.headers.get("x-hub-signature-256"), appSecret: config.config.appSecret }));
   } catch (err) {

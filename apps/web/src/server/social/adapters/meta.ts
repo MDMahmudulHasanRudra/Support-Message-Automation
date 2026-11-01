@@ -9,6 +9,7 @@ import {
   readRecentFacebookPosts,
   readRecentInstagramMedia,
   type PublishOutcome,
+  metaGraphVersion,
 } from "@support-automation/shared";
 import type { AdapterAccount, AdapterContext, PublishInput, ReadContext, SocialAdapter } from "./types";
 
@@ -29,8 +30,7 @@ const IG_POLL_TRIES = 6;
 const IG_POLL_MS = 5_000;
 
 function graphBase(): string {
-  const version = process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
-  return `https://graph.facebook.com/${version}`;
+  return `https://graph.facebook.com/${metaGraphVersion(process.env)}`;
 }
 
 type GraphResult = { ok: true; data: Record<string, unknown> } | { ok: false; outcome: PublishOutcome; status: number };

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ingestTelegramWebhook, MAX_WEBHOOK_BYTES, type WebhookAnswer } from "@/server/channels/webhookIngest";
+import { ingestTelegramWebhook, MAX_WEBHOOK_BYTES, readWebhookBody, type WebhookAnswer } from "@/server/channels/webhookIngest";
 
 /**
  * A Telegram bot's webhook (OMNICHANNEL.md §7), registered by this app with `setWebhook`. Outside any
@@ -15,9 +15,8 @@ function answer(result: WebhookAnswer): NextResponse {
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ key: string }> }): Promise<NextResponse> {
   const { key } = await params;
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_WEBHOOK_BYTES) return answer({ status: 413, body: "Too large" });
-  const rawBody = Buffer.from(await request.arrayBuffer());
-  if (rawBody.length > MAX_WEBHOOK_BYTES) return answer({ status: 413, body: "Too large" });
+  const rawBody = await readWebhookBody(request, MAX_WEBHOOK_BYTES);
+  if (!rawBody) return answer({ status: 413, body: "Too large" });
   try {
     return answer(await ingestTelegramWebhook({ key, rawBody, secret: request.headers.get("x-telegram-bot-api-secret-token") }));
   } catch (err) {

@@ -180,6 +180,13 @@ function computeOne(key: string, input: Inputs): TemplateLiveness {
     return { live: true };
   }
 
+  if (key === "CHANNEL_NEEDS_RECONNECT") {
+    if (!input.eventEnabled("CHANNEL_NEEDS_RECONNECT")) {
+      return { live: false, reason: "Channel reconnect alerts are muted.", ...NOTIFICATION_CENTER };
+    }
+    return { live: true };
+  }
+
   if (key === "MOOD_ALERT") {
     if (!input.moodEnabled) return { live: false, reason: "Mood Detection is off.", ...MOOD_SETTINGS };
     if (!input.eventEnabled("MOOD_ALERT")) return { live: false, reason: "Mood alerts are muted.", ...NOTIFICATION_CENTER };

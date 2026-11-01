@@ -253,6 +253,9 @@ enum NotificationEvent {
   /// SLA, was escalated, or was completed. Who receives it is the module's own settings; muting
   /// this event in the Notification Center stops all of them.
   SUPPORT_ASSIGNMENT
+  /// A Messenger, Instagram or Telegram connection needs reconnecting: Meta or Telegram stopped
+  /// accepting its access, so nothing more is received or sent on it until somebody reconnects it.
+  CHANNEL_NEEDS_RECONNECT
 }
 
 /// One team member's opt-in to be alerted directly about one kind of event.
@@ -6457,6 +6460,9 @@ model ChannelConnection {
   lastCheckedAt                DateTime?
   lastError                    String?
   lastErrorAt                  DateTime?
+  /// When the worker announced that this connection needs reconnecting (Notification Center event
+  /// CHANNEL_NEEDS_RECONNECT). Set once per breakage, cleared when it is no longer NEEDS_RECONNECT.
+  reconnectAlertedAt           DateTime?
   credentialsUpdatedAt         DateTime?
   credentialsUpdatedByUsername String?
   createdByUsername            String?
