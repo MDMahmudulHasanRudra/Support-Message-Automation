@@ -1,6 +1,6 @@
 # 09 — Implementation work packages
 
-**Nothing below is built yet. Each package needs the owner's go-ahead.** Each ends with: summary, files,
+**Status (1 Nov 2026):** A1, A2, A3 and B1 are built on `feature/meta-expansion`, each in its own commit (`11-release-a-implementation.md`); none is deployed. Everything else needs the owner's go-ahead. Each ends with: summary, files,
 migration impact, tests, security review, Meta setup, remaining approvals, rollback. Incomplete integrations stay
 behind flags (off).
 
@@ -39,5 +39,6 @@ for Audience Network, Fundraisers, Jobs, Meta Pay.
 ## Suggested order and effort (engineering only, excluding Meta's review time)
 A1 small · A2 medium · A3 small → A4/A5 owner-driven → B1 medium · B2–B5 large · B6 medium → C large → D large → E medium.
 
-**Critical path:** the platform Meta app does not exist yet. Until the owner creates it and starts Business
-Verification, everything Meta-facing can only be mock-tested.
+**Critical path:** the platform Meta app exists (App ID 1780470116576079, Development mode) and the server has its
+credentials. The path is now: deploy A1–A3 → Gate B live tests with app-role testers → Business Verification → App
+Review → Live → one pilot workspace. The owner's steps are `META_OWNER_SETUP.md` §7–§9.

@@ -61,7 +61,7 @@ Status: **read-only audit, 1 Nov 2026.** No code was changed to produce it.
 | Social Studio Facebook/Instagram | yes | yes | yes (20) | yes | **no** | **no** | staging runbook only |
 | Social Studio OAuth start/callback | yes | **no tests** | **no** | — | **no** | — | — |
 
-The platform Meta app "does not exist yet" (`docs/meta-integration/09-release-candidate.md` §7); the Gate B results table is empty. Nothing Meta-related may be described as production-ready.
+**Correction (1 Nov 2026, from the owner):** the platform Meta app EXISTS — "Get Assist", App ID 1780470116576079, Business type, Development mode, with Messenger, Facebook Login for Business and Webhooks added — and the server already carries its credentials (read-only check in `META_OWNER_SETUP.md` §0). `docs/meta-integration/09-release-candidate.md` §7 predates it. What is still missing is the Gate B results (the table is empty), Business Verification and App Review; nothing Meta-related may be described as production-ready until those are done.
 
 ## 4. Defects and gaps found
 
