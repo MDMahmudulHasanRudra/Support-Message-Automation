@@ -1,5 +1,5 @@
 import { decryptSecret } from "@support-automation/db";
-import { channelRetryDelayMs, decideReplyWindow, type ChannelType } from "@support-automation/shared";
+import { assertNeverProvider, CHANNEL_PROVIDERS, channelRetryDelayMs, decideReplyWindow, providerForChannelType, type ChannelType } from "@support-automation/shared";
 import { prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -104,9 +104,16 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
     await fail(`Not sent: ${connection.name} is switched off or disconnected.`);
     return true;
   }
+  // Who sends it is decided once, from the channel type, exhaustively (Meta expansion B1). A provider this
+  // release does not implement sends nothing and says so; nothing falls through to Meta by default.
+  const provider = providerForChannelType(message.type as ChannelType);
+  if (!CHANNEL_PROVIDERS[provider].implemented) {
+    await fail(`Not sent: ${CHANNEL_PROVIDERS[provider].label} cannot send in this release.`);
+    return true;
+  }
   // Website chat has no provider: a stored reply IS delivered — the visitor's widget reads it from
   // here. The same empty-text and kill-switch rules apply as for every other channel.
-  if (message.type === "WEBCHAT") {
+  if (provider === "WEBCHAT") {
     // A photo the team sent (Website Chat V3) is already stored; the visitor reads it with their own token.
     const hasPhoto = Array.isArray(message.attachments) && message.attachments.length > 0;
     if (!message.text?.trim() && !hasPhoto) {
@@ -154,31 +161,42 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
   let outcome: SendOutcome;
   try {
     const token = decryptSecret(connection.accessTokenCiphertext);
-    if (message.type === "TELEGRAM") {
-      outcome = await sendTelegramText({ token, chatId: conversation.externalThreadId, text: message.text, replyToMessageId: null, fetchImpl });
-    } else {
-      const appSecret = metaAppSecretFor(connection);
-      if (!connection.pageId || !appSecret) {
-        await fail(
-          connection.authMode === "PLATFORM"
-            ? `Not sent: Connect with Facebook is not configured on this server any more (no platform app secret). Ask the platform administrator.`
-            : `Not sent: ${connection.name}'s credentials are incomplete. Enter them again.`,
-        );
-        return true;
+    switch (provider) {
+      case "TELEGRAM":
+        outcome = await sendTelegramText({ token, chatId: conversation.externalThreadId, text: message.text, replyToMessageId: null, fetchImpl });
+        break;
+      case "META_MESSENGER":
+      case "META_INSTAGRAM": {
+        const appSecret = metaAppSecretFor(connection);
+        if (!connection.pageId || !appSecret) {
+          await fail(
+            connection.authMode === "PLATFORM"
+              ? `Not sent: Connect with Facebook is not configured on this server any more (no platform app secret). Ask the platform administrator.`
+              : `Not sent: ${connection.name}'s credentials are incomplete. Enter them again.`,
+          );
+          return true;
+        }
+        outcome = await sendMetaText({
+          pageId: connection.pageId,
+          token,
+          appSecret,
+          recipientId: conversation.externalThreadId,
+          text: message.text,
+          messagingType: window.messagingType === "MESSAGE_TAG" ? "MESSAGE_TAG" : "RESPONSE",
+          tag: window.tag,
+          // Messenger echoes it back, which is how the echo of this send is recognised. Instagram's send
+          // API has no such field; its echo is matched by the id returned below instead.
+          metadata: provider === "META_MESSENGER" ? message.id : null,
+          fetchImpl,
+        });
+        break;
       }
-      outcome = await sendMetaText({
-        pageId: connection.pageId,
-        token,
-        appSecret,
-        recipientId: conversation.externalThreadId,
-        text: message.text,
-        messagingType: window.messagingType === "MESSAGE_TAG" ? "MESSAGE_TAG" : "RESPONSE",
-        tag: window.tag,
-        // Messenger echoes it back, which is how the echo of this send is recognised. Instagram's send
-        // API has no such field; its echo is matched by the id returned below instead.
-        metadata: message.type === "MESSENGER" ? message.id : null,
-        fetchImpl,
-      });
+      case "WHATSAPP_CLOUD":
+        // Not reachable: an unimplemented provider was refused above (website chat returned before it).
+        await fail(`Not sent: ${CHANNEL_PROVIDERS[provider].label} has no sender here.`);
+        return true;
+      default:
+        return assertNeverProvider(provider, "channel provider");
     }
   } catch (err) {
     // A credential that cannot be decrypted: nothing was sent.

@@ -85,6 +85,35 @@ A search of the Meta code found none of these in use.
 **Recommendation.** Move to v26.0 by setting `META_GRAPH_API_VERSION=v26.0` on staging during Gate B, and re-run the
 Gate B checks. Then change the default in code in its own commit.
 
+## B1 — explicit provider dispatch (foundation only)
+**What it is.** `packages/shared/src/channelProviders.ts` names every messaging provider: META_MESSENGER,
+META_INSTAGRAM, TELEGRAM, WEBCHAT and WHATSAPP_CLOUD.
+- WHATSAPP_CLOUD is listed, NOT implemented, and maps to no channel type.
+- Each decision is an exhaustive `switch` with a `never` check. A new provider or channel type fails to compile
+  until every place below has handled it.
+
+**Where it decides:**
+- **Webhook objects** (`classifyMetaWebhookObject`, used by both Meta webhooks):
+  - `page` goes to Messenger and `instagram` to Instagram.
+  - `whatsapp_business_account` is refused by name: acknowledged, recorded nowhere, logged once.
+  - Anything else is unknown.
+- **Recorded events** (`routeInboundEvent`, in the worker's inbound processor): an event is read only by its own
+  connection's provider, and for Meta only with the same channel type.
+  - A WhatsApp Cloud event, a missing provider or a mismatch is **FAILED** with the reason, never retried, never
+    PROCESSED, and creates no conversation or message.
+  - Before B1, anything that was not Telegram or website chat went to the Meta normaliser.
+- **Sends** (`providerForChannelType`, in the worker's outbound processor): an unimplemented provider sends nothing
+  and says so. Meta is a named case, no longer the `else`.
+- **Connection test** (web): only Telegram and Meta connections reach a provider check.
+
+**Not built here, by design:**
+- no `WHATSAPP_CLOUD` channel type or migration (that is B2);
+- no Embedded Signup;
+- no sending;
+- no billable action.
+
+WhatsApp (Legacy) is not a provider in this file and never passes through it.
+
 ## Tests added
 | File | Count | Confirmed to fail without the code |
 |---|---|---|
@@ -93,3 +122,5 @@ Gate B checks. Then change the default in code in its own commit.
 | web `metaWebhookHardening.integration.test.ts` | 7 | yes (Telegram-only check restored → 1 fails) |
 | worker `channelReconnectAlert.integration.test.ts` | 5 | yes (stamp removed → 3 fail) |
 | shared `metaPlatform.test.ts` (+2) | 19 | — |
+| shared `channelProviders.test.ts` (B1) | 5 | — (pure; pins the mapping and the refusals) |
+| worker `channelProviderDispatch.integration.test.ts` (B1) | 3 | yes (old inbound processor → 2 fail: the WhatsApp Cloud event was stored as a Messenger message) |

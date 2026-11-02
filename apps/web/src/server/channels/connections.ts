@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { CHANNELS, isAiDisclosureChannel, metaPlatformAppSecret, validateAiDisclosureIdleHours, validateAiDisclosureText, type ChannelType } from "@support-automation/shared";
+import { CHANNEL_PROVIDERS, CHANNELS, isAiDisclosureChannel, providerForChannelType, metaPlatformAppSecret, validateAiDisclosureIdleHours, validateAiDisclosureText, type ChannelType } from "@support-automation/shared";
 import { decryptSecret, encryptSecret } from "@support-automation/db";
 import type { ChannelAuthMode, ChannelConnectionStatus } from "@prisma/client";
 import { platformPrisma, prisma } from "@/server/db";
@@ -602,6 +602,12 @@ export async function testConnection(id: string, input: { fetchImpl?: FetchImpl;
     select: { id: true, type: true, status: true, authMode: true, appId: true, pageId: true, webhookKey: true, externalAccountId: true, webhookVerifiedAt: true, lastEventAt: true, accessTokenCiphertext: true, appSecretCiphertext: true },
   });
   if (!row) throw new ChannelConnectionError("That connection no longer exists.");
+  // Only Telegram and Meta have a provider to ask; below, "not Telegram" means Meta, so say so explicitly
+  // (Meta expansion B1) rather than let a website chat or a future channel reach the Meta checks.
+  const provider = providerForChannelType(row.type);
+  if (provider !== "TELEGRAM" && provider !== "META_MESSENGER" && provider !== "META_INSTAGRAM") {
+    throw new ChannelConnectionError(`${CHANNEL_PROVIDERS[provider].label} has no provider connection to test.`);
+  }
   if (row.authMode === "PLATFORM" && !row.accessTokenCiphertext && row.status !== "DISCONNECTED") {
     throw new ChannelConnectionError("Facebook no longer gives this connection access. Use Reconnect with Facebook.");
   }

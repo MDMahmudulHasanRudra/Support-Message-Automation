@@ -56,6 +56,7 @@ export * from "./googleSheetTime.js";
 export * from "./googleSheetReports.js";
 export * from "./googleOAuthClient.js";
 export * from "./channels.js";
+export * from "./channelProviders.js";
 export * from "./metaPlatform.js";
 export * from "./aiDisclosure.js";
 export * from "./whatsappIdentity.js";

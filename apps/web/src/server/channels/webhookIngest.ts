@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { isMetaChannelType, metaProjectAllowed, splitMetaWebhook, telegramDedupKey, type ChannelType } from "@support-automation/shared";
+import { assertNeverProvider, classifyMetaWebhookObject, isMetaChannelType, metaProjectAllowed, splitMetaWebhook, telegramDedupKey, type ChannelType, type MetaChannelType } from "@support-automation/shared";
 import type { Prisma } from "@prisma/client";
 import { platformPrisma } from "@/server/db";
 import { loadWebhookConnection, secretsEqual } from "@/server/channels/connections";
@@ -79,15 +79,27 @@ function readMetaEnvelope(raw: Buffer): { ok: true; body: Record<string, unknown
   return { ok: true, body: body as Record<string, unknown>, object };
 }
 
-/** Logged once per process per object: a product subscribed at Meta that this server does not handle. */
+/**
+ * The channel a Meta body is for, or the answer to give when it is for none we handle (Meta expansion B1,
+ * `classifyMetaWebhookObject`). WhatsApp Cloud API bodies are refused by name, so they can never be cut up
+ * as Page events. Logged once per process per object; acknowledged, so Meta does not retry it forever.
+ */
 const reportedObjects = new Set<string>();
-function unhandledObject(object: string, where: string): WebhookAnswer {
-  if (!reportedObjects.has(object)) {
-    reportedObjects.add(object);
-    console.warn(`[channels] ${where}: Meta sent "${object}" events, which this server does not handle; acknowledged, nothing recorded. Unsubscribe it in the Meta app, or deploy the release that handles it.`);
+function metaChannelOf(object: string, where: string): { type: MetaChannelType } | { answer: WebhookAnswer } {
+  const route = classifyMetaWebhookObject(object);
+  switch (route.kind) {
+    case "CHANNEL":
+      return { type: route.type };
+    case "UNSUPPORTED":
+    case "UNKNOWN":
+      if (!reportedObjects.has(object)) {
+        reportedObjects.add(object);
+        console.warn(`[channels] ${where}: ${route.reason} Acknowledged, nothing recorded. Unsubscribe it in the Meta app, or deploy the release that handles it.`);
+      }
+      return { answer: OK };
+    default:
+      return assertNeverProvider(route, "Meta webhook object");
   }
-  // Acknowledged, so Meta does not retry it forever.
-  return OK;
 }
 
 /** How often `lastEventAt` is rewritten — a busy Page must not turn every webhook into an UPDATE. */
@@ -112,8 +124,6 @@ export function metaSignatureValid(rawBody: Buffer, header: string | null, appSe
   return secretsEqual(header.trim().toLowerCase(), expected);
 }
 
-const META_TYPE_BY_OBJECT: Record<string, "MESSENGER" | "INSTAGRAM"> = { page: "MESSENGER", instagram: "INSTAGRAM" };
-
 export async function ingestMetaWebhook(input: { key: string; rawBody: Buffer; signature: string | null; receivedAt?: Date }): Promise<WebhookAnswer> {
   const receivedAt = input.receivedAt ?? new Date();
   const connection = await loadWebhookConnection(input.key);
@@ -125,9 +135,9 @@ export async function ingestMetaWebhook(input: { key: string; rawBody: Buffer; s
 
   const envelope = readMetaEnvelope(input.rawBody);
   if (!envelope.ok) return envelope.answer;
-  const type = META_TYPE_BY_OBJECT[envelope.object];
-  // Something Meta sends for a product this inbox does not use.
-  if (!type) return unhandledObject(envelope.object, "manual Meta webhook");
+  const channel = metaChannelOf(envelope.object, "manual Meta webhook");
+  if ("answer" in channel) return channel.answer;
+  const { type } = channel;
   const events = splitMetaWebhook(envelope.body, type, receivedAt) ?? [];
   if (events.length === 0) return OK;
 
@@ -180,8 +190,9 @@ export async function ingestPlatformMetaWebhook(input: { rawBody: Buffer; signat
   }
   const envelope = readMetaEnvelope(input.rawBody);
   if (!envelope.ok) return envelope.answer;
-  const type = META_TYPE_BY_OBJECT[envelope.object];
-  if (!type) return unhandledObject(envelope.object, "platform Meta webhook");
+  const channel = metaChannelOf(envelope.object, "platform Meta webhook");
+  if ("answer" in channel) return channel.answer;
+  const { type } = channel;
   const events = splitMetaWebhook(envelope.body, type, receivedAt) ?? [];
   const accountIds = [...new Set(events.map((e) => e.accountId).filter((id): id is string => Boolean(id)))];
   if (accountIds.length === 0) return OK;
